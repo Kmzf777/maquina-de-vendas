@@ -12,6 +12,21 @@ export interface Lead {
   assigned_to: string | null;
   human_control: boolean;
   channel: string;
+  // B2B fields
+  cnpj: string | null;
+  razao_social: string | null;
+  nome_fantasia: string | null;
+  endereco: string | null;
+  telefone_comercial: string | null;
+  email: string | null;
+  instagram: string | null;
+  inscricao_estadual: string | null;
+  // Sale
+  sale_value: number;
+  // Metrics
+  entered_stage_at: string | null;
+  first_response_at: string | null;
+  on_hold: boolean;
 }
 
 export interface Message {
@@ -54,7 +69,10 @@ export interface EvolutionMessage {
     imageMessage?: { caption?: string; url?: string };
     audioMessage?: { url?: string };
     documentMessage?: { fileName?: string; url?: string };
+    stickerMessage?: Record<string, unknown>;
+    videoMessage?: { caption?: string; url?: string };
   };
+  messageType?: string;
   messageTimestamp: number;
   pushName?: string;
 }
