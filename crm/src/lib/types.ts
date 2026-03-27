@@ -24,6 +24,41 @@ export interface Message {
   created_at: string;
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  created_at: string;
+}
+
+export interface EvolutionChat {
+  id: string;
+  remoteJid: string;
+  pushName: string | null;
+  profilePicUrl: string | null;
+  lastMessage: {
+    content: string;
+    timestamp: number;
+  } | null;
+  unreadCount: number;
+}
+
+export interface EvolutionMessage {
+  key: {
+    remoteJid: string;
+    fromMe: boolean;
+    id: string;
+  };
+  message: {
+    conversation?: string;
+    imageMessage?: { caption?: string; url?: string };
+    audioMessage?: { url?: string };
+    documentMessage?: { fileName?: string; url?: string };
+  };
+  messageTimestamp: number;
+  pushName?: string;
+}
+
 export interface Campaign {
   id: string;
   name: string;
