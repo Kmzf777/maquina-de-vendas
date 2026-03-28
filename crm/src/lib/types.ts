@@ -101,6 +101,9 @@ export interface Campaign {
   cadence_responded: number;
   cadence_exhausted: number;
   cadence_cooled: number;
+  // Campaign type
+  type: "bot" | "seller";
+  instance_name: string | null;
 }
 
 export interface CadenceStep {
