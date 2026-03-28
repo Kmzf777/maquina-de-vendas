@@ -36,18 +36,6 @@ def get_cadence_state(lead_id: str, status: str = "active") -> dict[str, Any] | 
     return result.data[0] if result.data else None
 
 
-def get_cadence_state_any(lead_id: str) -> dict[str, Any] | None:
-    """Get cadence state regardless of status (active or responded)."""
-    sb = get_supabase()
-    result = (
-        sb.table("cadence_state")
-        .select("*")
-        .eq("lead_id", lead_id)
-        .in_("status", ["active", "responded"])
-        .execute()
-    )
-    return result.data[0] if result.data else None
-
 
 def pause_cadence(state_id: str) -> dict[str, Any]:
     sb = get_supabase()
@@ -69,6 +57,7 @@ def resume_cadence(state_id: str, next_send_at: datetime) -> dict[str, Any]:
         sb.table("cadence_state")
         .update({
             "status": "active",
+            "current_step": 0,
             "next_send_at": next_send_at.isoformat(),
             "cooldown_until": None,
         })
@@ -146,13 +135,14 @@ def get_due_cadences(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     return result.data
 
 
-def get_reengagement_cadences(now: datetime) -> list[dict[str, Any]]:
+def get_reengagement_cadences(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (
         sb.table("cadence_state")
         .select("*, leads!inner(phone, last_msg_at, human_control), campaigns!inner(status, cadence_cooldown_hours)")
         .eq("status", "responded")
         .lte("responded_at", now.isoformat())
+        .limit(limit)
         .execute()
     )
     return result.data

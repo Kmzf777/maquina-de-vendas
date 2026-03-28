@@ -12,6 +12,7 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cadence_max_messages int DEFAULT 
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cadence_sent int DEFAULT 0;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cadence_responded int DEFAULT 0;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cadence_exhausted int DEFAULT 0;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cadence_cooled int DEFAULT 0;
 
 -- Cadence steps: pre-written messages per stage per campaign
 CREATE TABLE IF NOT EXISTS cadence_steps (
@@ -67,6 +68,14 @@ CREATE OR REPLACE FUNCTION increment_cadence_exhausted(campaign_id_param uuid)
 RETURNS void AS $$
 BEGIN
     UPDATE campaigns SET cadence_exhausted = cadence_exhausted + 1 WHERE id = campaign_id_param;
+END;
+$$ LANGUAGE plpgsql;
+
+-- RPC: increment cadence_cooled counter
+CREATE OR REPLACE FUNCTION increment_cadence_cooled(campaign_id_param uuid)
+RETURNS void AS $$
+BEGIN
+    UPDATE campaigns SET cadence_cooled = cadence_cooled + 1 WHERE id = campaign_id_param;
 END;
 $$ LANGUAGE plpgsql;
 

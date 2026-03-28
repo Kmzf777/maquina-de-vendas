@@ -79,7 +79,7 @@ async def process_due_cadences(now: datetime | None = None):
             # No more steps for this stage
             cool_cadence(cadence["id"])
             sb = get_supabase()
-            sb.rpc("increment_cadence_exhausted", {"campaign_id_param": cadence["campaign_id"]}).execute()
+            sb.rpc("increment_cadence_cooled", {"campaign_id_param": cadence["campaign_id"]}).execute()
             logger.info(f"[CADENCE] Lead {lead['phone']} cooled — no more steps for stage {stage}")
             continue
 
@@ -94,6 +94,7 @@ async def process_due_cadences(now: datetime | None = None):
                 role="assistant",
                 content=step["message_text"],
                 stage=stage,
+                sent_by="cadence",
             )
 
             # Increment campaign counter

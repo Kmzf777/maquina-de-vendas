@@ -41,13 +41,14 @@ def reset_lead(lead_id: str) -> None:
     }).eq("id", lead_id).execute()
 
 
-def save_message(lead_id: str, role: str, content: str, stage: str | None = None) -> dict[str, Any]:
+def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent") -> dict[str, Any]:
     sb = get_supabase()
     msg = {
         "lead_id": lead_id,
         "role": role,
         "content": content,
         "stage": stage,
+        "sent_by": sent_by,
     }
     result = sb.table("messages").insert(msg).execute()
     return result.data[0]
