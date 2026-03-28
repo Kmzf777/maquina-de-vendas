@@ -90,4 +90,39 @@ export interface Campaign {
   send_interval_min: number;
   send_interval_max: number;
   created_at: string;
+  // Cadence config
+  cadence_interval_hours: number;
+  cadence_send_start_hour: number;
+  cadence_send_end_hour: number;
+  cadence_cooldown_hours: number;
+  cadence_max_messages: number;
+  // Cadence counters
+  cadence_sent: number;
+  cadence_responded: number;
+  cadence_exhausted: number;
+  cadence_cooled: number;
+}
+
+export interface CadenceStep {
+  id: string;
+  campaign_id: string;
+  stage: string;
+  step_order: number;
+  message_text: string;
+  created_at: string;
+}
+
+export interface CadenceState {
+  id: string;
+  lead_id: string;
+  campaign_id: string;
+  current_step: number;
+  status: "active" | "responded" | "exhausted" | "cooled";
+  total_messages_sent: number;
+  max_messages: number;
+  next_send_at: string | null;
+  cooldown_until: string | null;
+  responded_at: string | null;
+  created_at: string;
+  leads?: Lead;
 }
