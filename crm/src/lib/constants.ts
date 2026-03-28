@@ -35,3 +35,17 @@ export const LEAD_CHANNELS = [
   { key: "campaign", label: "Campanha", color: "#5b8aad" },
   { key: "manual", label: "Manual", color: "#ad9c4a" },
 ] as const;
+
+export const CADENCE_STATUS_COLORS: Record<string, { dot: string; bg: string; text: string }> = {
+  active: { dot: "#f59e0b", bg: "bg-[#fef3c7]", text: "text-[#92400e]" },
+  responded: { dot: "#4ade80", bg: "bg-[#d8f0dc]", text: "text-[#2d6a3f]" },
+  exhausted: { dot: "#f87171", bg: "bg-[#fee2e2]", text: "text-[#991b1b]" },
+  cooled: { dot: "#9ca3af", bg: "bg-[#f4f4f0]", text: "text-[#5f6368]" },
+};
+
+export const CADENCE_STATUS_LABELS: Record<string, string> = {
+  active: "Ativo",
+  responded: "Respondeu",
+  exhausted: "Esgotado",
+  cooled: "Esfriado",
+};
