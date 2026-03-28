@@ -13,6 +13,11 @@ class CampaignCreate(BaseModel):
     template_params: dict | None = None
     send_interval_min: int = 3
     send_interval_max: int = 8
+    cadence_interval_hours: int = 24
+    cadence_send_start_hour: int = 7
+    cadence_send_end_hour: int = 18
+    cadence_cooldown_hours: int = 48
+    cadence_max_messages: int = 8
 
 
 @router.get("")
