@@ -83,6 +83,13 @@ export function WhatsAppTab() {
       const res = await fetch("/api/evolution/connect", { method: "POST" });
       const data = await res.json();
 
+      if (data.connected) {
+        // Instance is already connected — no QR needed
+        setStatus("connected");
+        checkStatus();
+        return;
+      }
+
       if (data.qrcode) {
         setQrCode(data.qrcode);
         startPolling();
@@ -108,25 +115,28 @@ export function WhatsAppTab() {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="font-medium text-gray-900 mb-4">Conexao WhatsApp</h2>
+    <div className="card p-6">
+      <h2 className="text-[16px] font-semibold text-[#1f1f1f] mb-5">Conexao WhatsApp</h2>
 
       {status === "checking" && (
-        <p className="text-gray-500 text-sm">Verificando status...</p>
+        <div className="flex items-center gap-3">
+          <div className="w-4 h-4 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
+          <p className="text-[#5f6368] text-[13px]">Verificando status...</p>
+        </div>
       )}
 
       {status === "connected" && (
         <div>
-          <div className="flex items-center gap-2 mb-4">
-            <span className="w-3 h-3 bg-green-500 rounded-full" />
-            <span className="text-green-700 font-medium">Conectado</span>
+          <div className="flex items-center gap-2.5 mb-4">
+            <span className="w-2.5 h-2.5 bg-green-500 rounded-full ring-4 ring-green-500/20" />
+            <span className="text-green-700 font-medium text-[14px]">Conectado</span>
           </div>
           {phoneNumber && (
-            <p className="text-gray-600 text-sm mb-4">Numero: {phoneNumber}</p>
+            <p className="text-[#5f6368] text-[13px] mb-5">Numero: {phoneNumber}</p>
           )}
           <button
             onClick={handleDisconnect}
-            className="border border-gray-300 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-50"
+            className="btn-secondary px-5 py-2.5 rounded-xl text-[13px] font-medium"
           >
             Desconectar
           </button>
@@ -135,22 +145,22 @@ export function WhatsAppTab() {
 
       {status === "disconnected" && (
         <div>
-          <div className="flex items-center gap-2 mb-4">
-            <span className="w-3 h-3 bg-gray-400 rounded-full" />
-            <span className="text-gray-500">Desconectado</span>
+          <div className="flex items-center gap-2.5 mb-4">
+            <span className="w-2.5 h-2.5 bg-[#9ca3af] rounded-full ring-4 ring-[#9ca3af]/20" />
+            <span className="text-[#5f6368] text-[14px]">Desconectado</span>
           </div>
           <button
             onClick={handleConnect}
-            className="bg-gray-900 text-white px-4 py-2 rounded text-sm hover:bg-gray-800"
+            className="btn-primary px-5 py-2.5 rounded-xl text-[13px] font-medium"
           >
             Conectar
           </button>
           {qrExpired && (
-            <div className="mt-4">
-              <p className="text-amber-600 text-sm mb-2">QR code expirado.</p>
+            <div className="mt-5">
+              <p className="text-amber-600 text-[13px] mb-3">QR code expirado.</p>
               <button
                 onClick={handleConnect}
-                className="border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50"
+                className="btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium"
               >
                 Gerar novo QR
               </button>
@@ -161,28 +171,31 @@ export function WhatsAppTab() {
 
       {status === "connecting" && qrCode && (
         <div>
-          <p className="text-gray-600 text-sm mb-3">
+          <p className="text-[#5f6368] text-[13px] mb-4">
             Escaneie o QR code com seu WhatsApp:
           </p>
-          <div className="bg-white p-4 rounded-lg border border-gray-200 inline-block">
+          <div className="inline-flex flex-col items-center p-6 bg-white rounded-2xl border border-[#e5e5dc] shadow-sm">
             <img
-              src={`data:image/png;base64,${qrCode}`}
+              src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
               alt="QR Code WhatsApp"
               className="w-64 h-64"
             />
           </div>
-          <p className="text-gray-400 text-xs mt-2">
+          <p className="text-[#9ca3af] text-[12px] mt-3">
             O QR code expira em 60 segundos.
           </p>
         </div>
       )}
 
       {status === "connecting" && !qrCode && (
-        <p className="text-gray-500 text-sm">Gerando QR code...</p>
+        <div className="flex items-center gap-3">
+          <div className="w-4 h-4 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
+          <p className="text-[#5f6368] text-[13px]">Gerando QR code...</p>
+        </div>
       )}
 
       {error && (
-        <p className="text-red-600 text-sm mt-3">{error}</p>
+        <p className="text-red-500 text-[13px] mt-4">{error}</p>
       )}
     </div>
   );

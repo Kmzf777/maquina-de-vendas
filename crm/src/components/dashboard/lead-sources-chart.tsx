@@ -8,14 +8,14 @@ interface LeadSourcesChartProps {
 }
 
 export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
-  const counts = LEAD_CHANNELS.map((ch) => ({
+  const counts: { key: string; label: string; color: string; count: number }[] = LEAD_CHANNELS.map((ch) => ({
     ...ch,
     count: leads.filter((l) => l.channel === ch.key).length,
   }));
 
   // Add "Outros" for unmatched channels
-  const knownKeys = new Set(LEAD_CHANNELS.map((c) => c.key));
-  const othersCount = leads.filter((l) => !knownKeys.has(l.channel)).length;
+  const knownKeys: Set<string> = new Set(LEAD_CHANNELS.map((c) => c.key));
+  const othersCount = leads.filter((l) => !knownKeys.has(l.channel as string)).length;
   if (othersCount > 0) {
     counts.push({ key: "outros", label: "Outros", color: "#8a8a80", count: othersCount });
   }

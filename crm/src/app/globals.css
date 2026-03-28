@@ -1,26 +1,151 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-canvas: #f6f7ed;
+  --bg-card: #ffffff;
+  --bg-muted: #f4f4f4;
+  --bg-dark: #1f1f1f;
+  --bg-dark-hover: #2a2a2a;
+  --bg-dark-active: #333333;
+  --text-primary: #1f1f1f;
+  --text-secondary: #5f6368;
+  --text-muted: #9ca3af;
+  --border-default: #e5e5dc;
+  --border-subtle: #ededea;
+  --accent-olive: #c8cc8e;
+  --accent-olive-bg: #f0f1d8;
+  --accent-yellow: #e8d44d;
+  --accent-yellow-bg: #faf5d0;
+  --accent-green: #4ade80;
+  --accent-red: #f87171;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: var(--bg-canvas);
+  --color-foreground: var(--text-primary);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d1c7;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #b0b0a6;
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-olive);
+  color: var(--bg-dark);
+}
+
+/* Card base */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(31, 31, 31, 0.04), 0 1px 2px rgba(31, 31, 31, 0.02);
+}
+
+.card-hover {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.card-hover:hover {
+  box-shadow: 0 4px 12px rgba(31, 31, 31, 0.08), 0 2px 4px rgba(31, 31, 31, 0.04);
+  transform: translateY(-1px);
+}
+
+/* Button base */
+.btn-primary {
+  background: var(--bg-dark);
+  color: white;
+  border-radius: 10px;
+  font-weight: 500;
+  transition: background 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: var(--bg-dark-hover);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-muted);
+}
+
+/* Input base */
+.input-field {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+
+.input-field:focus {
+  border-color: var(--bg-dark);
+  box-shadow: 0 0 0 3px rgba(31, 31, 31, 0.06);
+}
+
+.input-field::placeholder {
+  color: var(--text-muted);
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+}
+
+/* Subtle noise texture for canvas */
+.canvas-texture {
+  position: relative;
+}
+
+.canvas-texture::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  z-index: 0;
 }

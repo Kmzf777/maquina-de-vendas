@@ -60,7 +60,7 @@ export function TagsTab() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Excluir esta tag? Ela será removida de todos os leads.")) return;
+    if (!confirm("Excluir esta tag? Ela sera removida de todos os leads.")) return;
 
     const res = await fetch(`/api/tags/${id}`, { method: "DELETE" });
     if (res.ok) {
@@ -75,47 +75,56 @@ export function TagsTab() {
   }
 
   if (loading) {
-    return <p className="text-gray-500 text-sm">Carregando tags...</p>;
+    return (
+      <div className="flex items-center gap-3 py-6">
+        <div className="w-4 h-4 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
+        <p className="text-[#5f6368] text-[13px]">Carregando tags...</p>
+      </div>
+    );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-medium text-gray-900">Tags</h2>
+    <div className="card p-6">
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-[16px] font-semibold text-[#1f1f1f]">Tags</h2>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="bg-gray-900 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800"
+          className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium"
         >
-          + Nova Tag
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="7" y1="2" x2="7" y2="12" />
+            <line x1="2" y1="7" x2="12" y2="7" />
+          </svg>
+          Nova Tag
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleCreate} className="flex items-center gap-2 mb-4 p-3 bg-gray-50 rounded">
+        <form onSubmit={handleCreate} className="flex items-center gap-3 mb-5 p-4 bg-[#f6f7ed] rounded-xl">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Nome da tag"
-            className="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm text-gray-900"
+            className="input-field flex-1"
             autoFocus
           />
           <input
             type="color"
             value={newColor}
             onChange={(e) => setNewColor(e.target.value)}
-            className="w-8 h-8 rounded cursor-pointer border-0"
+            className="w-10 h-10 rounded-lg cursor-pointer border border-[#e5e5dc] p-0.5"
           />
           <button
             type="submit"
-            className="bg-gray-900 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800"
+            className="btn-primary px-4 py-2 rounded-xl text-[13px] font-medium"
           >
             Salvar
           </button>
           <button
             type="button"
             onClick={() => setShowForm(false)}
-            className="text-gray-500 text-sm hover:text-gray-700"
+            className="btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium"
           >
             Cancelar
           </button>
@@ -124,60 +133,70 @@ export function TagsTab() {
 
       <div className="space-y-2">
         {tags.length === 0 && (
-          <p className="text-gray-400 text-sm">Nenhuma tag criada ainda.</p>
+          <p className="text-[#9ca3af] text-[13px] py-4">Nenhuma tag criada ainda.</p>
         )}
         {tags.map((tag) => (
           <div key={tag.id} className="flex items-center gap-2">
             {editingId === tag.id ? (
-              <div className="flex items-center gap-2 flex-1 p-2 bg-gray-50 rounded">
+              <div className="flex items-center gap-3 flex-1 p-3 bg-[#f6f7ed] rounded-xl">
                 <input
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm text-gray-900"
+                  className="input-field flex-1"
                   autoFocus
                 />
                 <input
                   type="color"
                   value={editColor}
                   onChange={(e) => setEditColor(e.target.value)}
-                  className="w-8 h-8 rounded cursor-pointer border-0"
+                  className="w-10 h-10 rounded-lg cursor-pointer border border-[#e5e5dc] p-0.5"
                 />
                 <button
                   onClick={() => handleEdit(tag.id)}
-                  className="text-sm text-green-600 hover:text-green-800"
+                  className="btn-primary px-4 py-2 rounded-xl text-[13px] font-medium"
                 >
                   Salvar
                 </button>
                 <button
                   onClick={() => setEditingId(null)}
-                  className="text-sm text-gray-500 hover:text-gray-700"
+                  className="btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium"
                 >
                   Cancelar
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2 flex-1">
+              <div className="flex items-center gap-3 flex-1 py-2">
                 <span
-                  className="inline-flex items-center px-3 py-1 rounded-full text-sm text-white"
+                  className="inline-flex items-center px-3 py-1 rounded-full text-[13px] text-white font-medium"
                   style={{ backgroundColor: tag.color }}
                 >
                   {tag.name}
                 </span>
-                <button
-                  onClick={() => startEdit(tag)}
-                  className="text-gray-400 hover:text-gray-600 text-sm"
-                  title="Editar"
-                >
-                  &#9998;
-                </button>
-                <button
-                  onClick={() => handleDelete(tag.id)}
-                  className="text-gray-400 hover:text-red-600 text-sm"
-                  title="Excluir"
-                >
-                  &#128465;
-                </button>
+                <div className="flex items-center gap-1 ml-auto">
+                  <button
+                    onClick={() => startEdit(tag)}
+                    className="p-2 rounded-lg text-[#9ca3af] hover:text-[#1f1f1f] hover:bg-[#f6f7ed] transition-colors"
+                    title="Editar"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(tag.id)}
+                    className="p-2 rounded-lg text-[#9ca3af] hover:text-red-500 hover:bg-red-50 transition-colors"
+                    title="Excluir"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <line x1="10" y1="11" x2="10" y2="17" />
+                      <line x1="14" y1="11" x2="14" y2="17" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             )}
           </div>

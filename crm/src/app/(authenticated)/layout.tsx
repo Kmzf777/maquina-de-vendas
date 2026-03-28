@@ -12,11 +12,11 @@ export default function AuthenticatedLayout({
   const isConversas = pathname === "/conversas";
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen canvas-texture">
       <Sidebar />
       <main
-        className={`flex-1 ${
-          isConversas ? "overflow-hidden" : "bg-gray-50 p-6 overflow-auto"
+        className={`flex-1 relative z-10 ${
+          isConversas ? "overflow-hidden" : "p-8 overflow-auto"
         }`}
       >
         {children}

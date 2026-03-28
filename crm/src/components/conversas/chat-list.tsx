@@ -18,16 +18,15 @@ function extractPhone(remoteJid: string): string {
 }
 
 function getStageColor(stage: string | undefined): string {
-  const found = AGENT_STAGES.find((s) => s.key === stage);
-  if (!found) return "bg-gray-600";
-  const colorMap: Record<string, string> = {
-    "bg-gray-100": "bg-gray-600",
-    "bg-blue-100": "bg-blue-600",
-    "bg-purple-100": "bg-purple-600",
-    "bg-green-100": "bg-green-600",
-    "bg-yellow-100": "bg-yellow-600",
+  const avatarColorMap: Record<string, string> = {
+    secretaria: "bg-[#8a8a80]",
+    atacado: "bg-[#5b8aad]",
+    private_label: "bg-[#8b6bab]",
+    exportacao: "bg-[#5aad65]",
+    consumo: "bg-[#ad9c4a]",
   };
-  return colorMap[found.color] || "bg-gray-600";
+  if (!stage) return "bg-[#8a8a80]";
+  return avatarColorMap[stage] || "bg-[#8a8a80]";
 }
 
 function getInitial(name: string | null): string {
@@ -92,7 +91,7 @@ export function ChatList({
     });
 
   return (
-    <div className="w-80 bg-gray-900 border-r border-gray-800 flex flex-col h-full">
+    <div className="w-[320px] bg-white border-r border-[#e5e5dc] flex flex-col h-full">
       {/* Search */}
       <div className="p-3">
         <input
@@ -100,7 +99,7 @@ export function ChatList({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar conversa..."
-          className="w-full bg-gray-800 text-white text-sm rounded-full px-4 py-2 placeholder-gray-500 outline-none focus:ring-1 focus:ring-violet-500"
+          className="input-field w-full text-[13px] rounded-xl px-4 py-2"
         />
       </div>
 
@@ -112,8 +111,8 @@ export function ChatList({
             onClick={() => onTabChange(tab.key)}
             className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
               activeTab === tab.key
-                ? "bg-violet-600 text-white"
-                : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+                ? "bg-[#1f1f1f] text-white"
+                : "text-[#5f6368] hover:text-[#1f1f1f] hover:bg-[#f6f7ed]"
             }`}
           >
             {tab.label}
@@ -124,7 +123,7 @@ export function ChatList({
       {/* Chat list */}
       <div className="flex-1 overflow-y-auto">
         {filteredChats.length === 0 && (
-          <p className="text-gray-500 text-sm text-center py-8">
+          <p className="text-[#9ca3af] text-sm text-center py-8">
             Nenhuma conversa encontrada.
           </p>
         )}
@@ -134,8 +133,8 @@ export function ChatList({
             onClick={() => onSelectChat(chat.phone, chat.pushName)}
             className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors ${
               selectedPhone === chat.phone
-                ? "bg-gray-800"
-                : "hover:bg-gray-800/50"
+                ? "bg-[#f6f7ed]"
+                : "hover:bg-[#f6f7ed]/60"
             }`}
           >
             {/* Avatar */}
@@ -148,21 +147,21 @@ export function ChatList({
             {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-white truncate font-medium">
+                <span className="text-[13px] text-[#1f1f1f] truncate font-semibold">
                   {chat.displayName}
                 </span>
                 {chat.lastMessage && (
-                  <span className="text-xs text-gray-500 flex-shrink-0 ml-2">
+                  <span className="text-[11px] text-[#9ca3af] flex-shrink-0 ml-2">
                     {formatTime(chat.lastMessage.timestamp)}
                   </span>
                 )}
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400 truncate">
+                <span className="text-[12px] text-[#9ca3af] truncate">
                   {chat.lastMessage?.content || ""}
                 </span>
                 {chat.unreadCount > 0 && (
-                  <span className="bg-violet-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 ml-2">
+                  <span className="bg-[#1f1f1f] text-white text-[11px] rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 ml-2">
                     {chat.unreadCount}
                   </span>
                 )}

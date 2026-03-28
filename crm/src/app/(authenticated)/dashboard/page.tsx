@@ -95,7 +95,7 @@ export default function DashboardPage() {
 
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
-  const funnelData = AGENT_STAGES.map((stage) => {
+  const funnelData: { name: string; count: number; value: number }[] = AGENT_STAGES.map((stage) => {
     const stageLeads = leads.filter((l) => l.stage === stage.key);
     return {
       name: stage.label,
