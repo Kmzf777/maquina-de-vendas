@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campanha - Detalhe</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-canvas: #f6f7ed;
+    --bg-card: #ffffff;
+    --bg-muted: #f4f4f4;
+    --bg-dark: #1f1f1f;
+    --bg-dark-hover: #2a2a2a;
+    --text-primary: #1f1f1f;
+    --text-secondary: #5f6368;
+    --text-muted: #9ca3af;
+    --border-default: #e5e5dc;
+    --border-subtle: #ededea;
+    --accent-olive: #c8cc8e;
+    --accent-olive-bg: #f0f1d8;
+    --accent-green: #4ade80;
+    --accent-red: #f87171;
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    display: flex;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.015;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    z-index: 0;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    background: var(--bg-dark);
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 1;
+    min-height: 100vh;
+  }
+  .sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 28px;
+    padding: 0 8px;
+  }
+  .logo-circle {
+    width: 32px; height: 32px;
+    background: var(--accent-olive);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bg-dark);
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .sidebar-item {
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    color: #888;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: all 0.15s;
+  }
+  .sidebar-item:hover { color: #ccc; }
+  .sidebar-item.active {
+    background: var(--accent-olive);
+    color: var(--bg-dark);
+    font-weight: 600;
+  }
+
+  /* Main */
+  .main {
+    flex: 1;
+    padding: 32px;
+    overflow-y: auto;
+    z-index: 1;
+  }
+
+  /* Header */
+  .page-header { margin-bottom: 8px; }
+  .page-title { font-size: 28px; font-weight: 700; }
+  .page-subtitle { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; }
+
+  .campaign-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 24px;
+  }
+  .back-link {
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    margin-bottom: 8px;
+    display: inline-block;
+    cursor: pointer;
+  }
+  .back-link:hover { color: var(--text-primary); }
+  .campaign-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .campaign-name { font-size: 28px; font-weight: 700; }
+  .badge-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 12px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .badge-running { background: #d8f0dc; color: #2d6a3f; }
+  .badge-draft { background: var(--bg-muted); color: var(--text-secondary); }
+  .badge-completed { background: #dce8f0; color: #2a5a8a; }
+  .badge-paused { background: #f0ecd0; color: #8a7a2a; }
+  .campaign-meta { font-size: 13px; color: var(--text-secondary); }
+
+  .header-actions { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; }
+  .btn {
+    padding: 9px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .btn-dark { background: var(--bg-dark); color: #fff; }
+  .btn-dark:hover { background: var(--bg-dark-hover); }
+  .btn-outline {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+  }
+  .btn-outline:hover { background: var(--bg-muted); }
+  .btn-danger {
+    background: transparent;
+    color: var(--accent-red);
+    border: 1px solid #fecaca;
+  }
+  .btn-danger:hover { background: #fef2f2; }
+
+  /* KPI Cards — dark style matching screenshots */
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .kpi {
+    background: var(--bg-dark);
+    border-radius: 16px;
+    padding: 20px;
+    color: #fff;
+  }
+  .kpi-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #888;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .kpi-value {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .kpi-sub { font-size: 12px; color: #666; }
+  .c-white { color: #fff; }
+  .c-olive { color: var(--accent-olive); }
+  .c-green { color: var(--accent-green); }
+  .c-amber { color: #f59e0b; }
+  .c-red { color: var(--accent-red); }
+  .c-gray { color: #888; }
+
+  /* Config Bar */
+  .config-bar {
+    display: flex;
+    gap: 20px;
+    padding: 14px 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    margin-bottom: 24px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    box-shadow: 0 1px 3px rgba(31,31,31,0.04);
+  }
+  .config-bar strong { color: var(--text-primary); }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: 20px;
+  }
+  .tab {
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--bg-dark);
+  }
+  .tab .count {
+    background: var(--bg-muted);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    margin-left: 6px;
+    color: var(--text-secondary);
+  }
+  .tab.active .count {
+    background: var(--bg-dark);
+    color: #fff;
+  }
+
+  /* Filter Bar */
+  .filter-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .filter-pills { display: flex; gap: 6px; }
+  .pill {
+    padding: 7px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+  }
+  .pill:hover { background: var(--bg-muted); }
+  .pill.active {
+    background: var(--bg-dark);
+    border-color: var(--bg-dark);
+    color: #fff;
+  }
+  .search-input {
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
+    padding: 9px 14px 9px 36px;
+    border-radius: 10px;
+    font-size: 13px;
+    width: 260px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-input:focus { border-color: var(--bg-dark); }
+  .search-wrap {
+    position: relative;
+  }
+  .search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  /* Table */
+  .table-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(31,31,31,0.04);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th {
+    text-align: left;
+    padding: 12px 16px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-muted);
+  }
+  td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: #fafaf2; }
+
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .dot-active { background: var(--accent-green); }
+  .dot-responded { background: #60a5fa; }
+  .dot-exhausted { background: var(--accent-red); }
+  .dot-cooled { background: #aaa; }
+
+  .action-btn {
+    background: transparent;
+    border: 1px solid var(--border-default);
+    color: var(--text-secondary);
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    cursor: pointer;
+    margin-right: 4px;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .action-btn:hover {
+    border-color: var(--bg-dark);
+    color: var(--text-primary);
+  }
+
+  .progress-mini { display: flex; align-items: center; gap: 8px; }
+  .progress-bar-mini {
+    width: 60px; height: 4px;
+    background: var(--border-subtle);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-fill-mini { height: 100%; border-radius: 2px; }
+
+  .lead-name { font-weight: 500; }
+  .lead-phone { font-size: 11px; color: var(--text-muted); }
+  .stage-tag {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-weight: 500;
+  }
+  .stage-atacado { background: #f0f1d8; color: #6b6e35; }
+  .stage-private { background: #ede9fe; color: #6d28d9; }
+  .stage-export { background: #fef3c7; color: #92400e; }
+
+  /* Bottom user */
+  .sidebar-bottom {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 8px;
+    font-size: 13px;
+    color: #888;
+  }
+  .user-circle {
+    width: 32px; height: 32px;
+    background: #333;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-olive);
+    font-weight: 700;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-circle">V</div>
+    ValerIA
+  </div>
+  <div class="sidebar-item">Dashboard</div>
+  <div class="sidebar-item">Qualificacao</div>
+  <div class="sidebar-item">Vendas</div>
+  <div class="sidebar-item">Conversas</div>
+  <div class="sidebar-item active">Campanhas</div>
+  <div class="sidebar-item">Configuracoes</div>
+  <div class="sidebar-bottom">
+    <div class="user-circle">N</div>
+    Cafe Canastra
+  </div>
+</div>
+
+<div class="main">
+  <!-- Back link -->
+  <a class="back-link">&larr; Campanhas</a>
+
+  <!-- Campaign Header -->
+  <div class="campaign-header">
+    <div>
+      <div class="campaign-title-row">
+        <span class="campaign-name">Atacado Q2 - Sudeste</span>
+        <span class="badge-status badge-running">running</span>
+      </div>
+      <div class="campaign-meta">Criada 25 Mar 2026 · Template: hello_atacado · 1.247 leads</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-dark">Configurar Cadencia</button>
+      <button class="btn btn-danger">Pausar</button>
+    </div>
+  </div>
+
+  <!-- KPI Cards (dark, matching existing design) -->
+  <div class="kpis">
+    <div class="kpi">
+      <div class="kpi-label">Total Leads</div>
+      <div class="kpi-value c-white">1.247</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Templates Enviados</div>
+      <div class="kpi-value c-white">847</div>
+      <div class="kpi-sub">67.8% do total</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Responderam</div>
+      <div class="kpi-value c-green">234</div>
+      <div class="kpi-sub">27.6% dos enviados</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Em Cadencia</div>
+      <div class="kpi-value c-amber">156</div>
+      <div class="kpi-sub">18.4% ativos</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Esgotados</div>
+      <div class="kpi-value c-red">89</div>
+      <div class="kpi-sub">bateram limite</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Esfriados</div>
+      <div class="kpi-value c-gray">52</div>
+      <div class="kpi-sub">sem mais steps</div>
+    </div>
+  </div>
+
+  <!-- Config Summary -->
+  <div class="config-bar">
+    <span><strong>Intervalo:</strong> 24h entre msgs</span>
+    <span><strong>Janela:</strong> 7h – 18h</span>
+    <span><strong>Cooldown:</strong> 48h apos resposta</span>
+    <span><strong>Max mensagens:</strong> 8 por lead</span>
+    <span><strong>Follow-ups enviados:</strong> 2.341</span>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active">Leads em Cadencia <span class="count">156</span></div>
+    <div class="tab">Steps de Cadencia <span class="count">12</span></div>
+    <div class="tab">Atividade</div>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar">
+    <div class="filter-pills">
+      <div class="pill active">Leads ativos</div>
+      <div class="pill"><span class="status-dot dot-responded"></span>Responderam</div>
+      <div class="pill"><span class="status-dot dot-exhausted"></span>Esgotados</div>
+      <div class="pill"><span class="status-dot dot-cooled"></span>Esfriados</div>
+    </div>
+    <div class="search-wrap">
+      <span class="search-icon">&#x1F50D;</span>
+      <input class="search-input" placeholder="Buscar por nome, empresa ou telefone...">
+    </div>
+  </div>
+
+  <!-- Leads Table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Lead</th>
+          <th>Stage</th>
+          <th>Status Cadencia</th>
+          <th>Progresso</th>
+          <th>Proximo Envio</th>
+          <th>Acoes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="lead-name">Maria Silva</div>
+            <div class="lead-phone">+55 11 99999-1234</div>
+          </td>
+          <td><span class="stage-tag stage-atacado">atacado</span></td>
+          <td><span class="status-dot dot-active"></span>Ativo</td>
+          <td>
+            <div class="progress-mini">
+              <span>3/5</span>
+              <div class="progress-bar-mini">
+                <div class="progress-fill-mini" style="width:60%; background:var(--accent-olive);"></div>
+              </div>
+            </div>
+          </td>
+          <td style="color:var(--text-secondary);">Amanha 10:00</td>
+          <td>
+            <button class="action-btn">Pausar</button>
+            <button class="action-btn">Conversa</button>
+            <button class="action-btn">Humano</button>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="lead-name">Joao Ferreira</div>
+            <div class="lead-phone">+55 21 98888-5678</div>
+          </td>
+          <td><span class="stage-tag stage-atacado">atacado</span></td>
+          <td><span class="status-dot dot-responded"></span>Respondeu</td>
+          <td>
+            <div class="progress-mini">
+              <span>2/5</span>
+              <div class="progress-bar-mini">
+                <div class="progress-fill-mini" style="width:40%; background:#60a5fa;"></div>
+              </div>
+            </div>
+          </td>
+          <td style="color:#60a5fa;">Com a Valeria</td>
+          <td>
+            <button class="action-btn">Conversa</button>
+            <button class="action-btn">Humano</button>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="lead-name">Ana Costa</div>
+            <div class="lead-phone">+55 31 97777-9012</div>
+          </td>
+          <td><span class="stage-tag stage-private">private_label</span></td>
+          <td><span class="status-dot dot-active"></span>Ativo</td>
+          <td>
+            <div class="progress-mini">
+              <span>1/4</span>
+              <div class="progress-bar-mini">
+                <div class="progress-fill-mini" style="width:25%; background:var(--accent-olive);"></div>
+              </div>
+            </div>
+          </td>
+          <td style="color:var(--text-secondary);">Hoje 14:30</td>
+          <td>
+            <button class="action-btn">Pausar</button>
+            <button class="action-btn">Conversa</button>
+            <button class="action-btn">Humano</button>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="lead-name">Pedro Santos</div>
+            <div class="lead-phone">+55 41 96666-3456</div>
+          </td>
+          <td><span class="stage-tag stage-atacado">atacado</span></td>
+          <td><span class="status-dot dot-exhausted"></span>Esgotado</td>
+          <td>
+            <div class="progress-mini">
+              <span>8/8</span>
+              <div class="progress-bar-mini">
+                <div class="progress-fill-mini" style="width:100%; background:var(--accent-red);"></div>
+              </div>
+            </div>
+          </td>
+          <td style="color:var(--text-muted);">—</td>
+          <td>
+            <button class="action-btn">Resetar</button>
+            <button class="action-btn">Conversa</button>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="lead-name">Lucia Mendes</div>
+            <div class="lead-phone">+55 51 95555-7890</div>
+          </td>
+          <td><span class="stage-tag stage-export">exportacao</span></td>
+          <td><span class="status-dot dot-cooled"></span>Esfriado</td>
+          <td>
+            <div class="progress-mini">
+              <span>3/3</span>
+              <div class="progress-bar-mini">
+                <div class="progress-fill-mini" style="width:100%; background:#aaa;"></div>
+              </div>
+            </div>
+          </td>
+          <td style="color:var(--text-muted);">—</td>
+          <td>
+            <button class="action-btn">Resetar</button>
+            <button class="action-btn">Conversa</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>

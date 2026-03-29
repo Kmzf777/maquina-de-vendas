@@ -1,0 +1,99 @@
+<h2>Página /leads — Barra de KPIs + Ações</h2>
+<p class="subtitle">Topo da página com métricas resumidas e botões de ação</p>
+
+<div class="mockup">
+  <div class="mockup-header">Topo da página /leads</div>
+  <div class="mockup-body" style="padding: 24px; background: #f6f7ed; font-family: 'DM Sans', system-ui, sans-serif;">
+
+    <!-- Header row -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <div>
+        <h2 style="margin: 0; font-size: 24px; color: #1f1f1f; font-weight: 700;">Leads</h2>
+        <p style="margin: 4px 0 0; color: #9ca3af; font-size: 14px;">Gestão completa dos seus contatos</p>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button style="padding: 8px 16px; border-radius: 8px; border: 1px solid #e5e5dc; background: white; color: #1f1f1f; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 16px;">📥</span> Importar
+        </button>
+        <button style="padding: 8px 16px; border-radius: 8px; border: 1px solid #e5e5dc; background: white; color: #1f1f1f; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 16px;">📤</span> Exportar
+        </button>
+        <button style="padding: 8px 16px; border-radius: 8px; border: none; background: #1f1f1f; color: white; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 16px;">+</span> Novo Lead
+        </button>
+      </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;">
+      <!-- Total -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc;">
+        <p style="margin: 0; font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Total de Leads</p>
+        <p style="margin: 8px 0 0; font-size: 28px; font-weight: 700; color: #1f1f1f;">1.247</p>
+      </div>
+      <!-- Quentes -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc;">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+          <p style="margin: 0; font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Quentes</p>
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: #f87171; display: inline-block;"></span>
+        </div>
+        <p style="margin: 8px 0 0; font-size: 28px; font-weight: 700; color: #f87171;">342</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">Última msg &lt; 48h</p>
+      </div>
+      <!-- Mornos -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc;">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+          <p style="margin: 0; font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Mornos</p>
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: #e8d44d; display: inline-block;"></span>
+        </div>
+        <p style="margin: 8px 0 0; font-size: 28px; font-weight: 700; color: #e8d44d;">518</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">Última msg 48h–7d</p>
+      </div>
+      <!-- Frios -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc;">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+          <p style="margin: 0; font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Frios</p>
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: #60a5fa; display: inline-block;"></span>
+        </div>
+        <p style="margin: 8px 0 0; font-size: 28px; font-weight: 700; color: #60a5fa;">387</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">Última msg &gt; 7d</p>
+      </div>
+      <!-- Valor Total -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc;">
+        <p style="margin: 0; font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Valor Total Pipeline</p>
+        <p style="margin: 8px 0 0; font-size: 28px; font-weight: 700; color: #4ade80;">R$ 2.4M</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>Regras de Temperatura</h3>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px;">
+    <div style="background: #fef2f2; border-radius: 10px; padding: 16px; border: 1px solid #fecaca;">
+      <strong style="color: #f87171;">🔥 Quente</strong>
+      <ul style="margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: #5f6368;">
+        <li>Última mensagem < 48 horas</li>
+        <li>Lead ativo e engajado</li>
+      </ul>
+    </div>
+    <div style="background: #fefce8; border-radius: 10px; padding: 16px; border: 1px solid #fde68a;">
+      <strong style="color: #ca8a04;">🌤 Morno</strong>
+      <ul style="margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: #5f6368;">
+        <li>Última mensagem entre 48h e 7 dias</li>
+        <li>Atividade moderada</li>
+      </ul>
+    </div>
+    <div style="background: #eff6ff; border-radius: 10px; padding: 16px; border: 1px solid #bfdbfe;">
+      <strong style="color: #60a5fa;">❄️ Frio</strong>
+      <ul style="margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: #5f6368;">
+        <li>Última mensagem > 7 dias</li>
+        <li>Ou nunca respondeu</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <p class="subtitle">Essa barra de KPIs + ações fica ok como topo da página? Os thresholds de temperatura fazem sentido (48h / 7d)?</p>
+</div>

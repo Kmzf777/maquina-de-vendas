@@ -1,0 +1,252 @@
+<h2>Página /leads — Filtros + Grid de Cards</h2>
+<p class="subtitle">Barra de filtros e visualização dos leads em cards</p>
+
+<div class="mockup">
+  <div class="mockup-header">Filtros e Grid de Leads</div>
+  <div class="mockup-body" style="padding: 24px; background: #f6f7ed; font-family: 'DM Sans', system-ui, sans-serif;">
+
+    <!-- Filter Bar -->
+    <div style="background: white; border-radius: 12px; padding: 16px; border: 1px solid #e5e5dc; margin-bottom: 20px;">
+      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <!-- Search -->
+        <div style="flex: 1; min-width: 220px; position: relative;">
+          <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #9ca3af;">🔍</span>
+          <input type="text" placeholder="Buscar por nome, telefone, empresa..." style="width: 100%; padding: 9px 12px 9px 36px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; outline: none; box-sizing: border-box;" />
+        </div>
+        <!-- Temperatura -->
+        <select style="padding: 9px 12px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; color: #5f6368; background: white; cursor: pointer;">
+          <option>Temperatura</option>
+          <option>🔥 Quente</option>
+          <option>🌤 Morno</option>
+          <option>❄️ Frio</option>
+        </select>
+        <!-- Stage -->
+        <select style="padding: 9px 12px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; color: #5f6368; background: white; cursor: pointer;">
+          <option>Stage</option>
+          <option>Secretária</option>
+          <option>Atacado</option>
+          <option>Private Label</option>
+          <option>Exportação</option>
+          <option>Consumo</option>
+        </select>
+        <!-- Seller Stage -->
+        <select style="padding: 9px 12px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; color: #5f6368; background: white; cursor: pointer;">
+          <option>Etapa Vendas</option>
+          <option>Novo</option>
+          <option>Em Contato</option>
+          <option>Negociação</option>
+          <option>Fechado</option>
+          <option>Perdido</option>
+        </select>
+        <!-- Tags -->
+        <select style="padding: 9px 12px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; color: #5f6368; background: white; cursor: pointer;">
+          <option>Tags</option>
+          <option>VIP</option>
+          <option>Revendedor</option>
+          <option>Indústria</option>
+        </select>
+        <!-- Canal -->
+        <select style="padding: 9px 12px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; color: #5f6368; background: white; cursor: pointer;">
+          <option>Canal</option>
+          <option>WhatsApp</option>
+          <option>Campanha</option>
+          <option>Manual</option>
+        </select>
+        <!-- Clear -->
+        <button style="padding: 9px 14px; border-radius: 8px; border: 1px solid #e5e5dc; background: white; color: #9ca3af; font-size: 13px; cursor: pointer;">Limpar</button>
+      </div>
+      <!-- Active filter chips -->
+      <div style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+        <span style="background: #fef2f2; color: #f87171; padding: 4px 12px; border-radius: 20px; font-size: 12px; display: flex; align-items: center; gap: 4px;">🔥 Quente <span style="cursor: pointer; margin-left: 2px;">×</span></span>
+        <span style="background: #f0fdf4; color: #22c55e; padding: 4px 12px; border-radius: 20px; font-size: 12px; display: flex; align-items: center; gap: 4px;">Atacado <span style="cursor: pointer; margin-left: 2px;">×</span></span>
+        <span style="font-size: 12px; color: #9ca3af; padding: 4px 0;">Mostrando 142 de 1.247 leads</span>
+      </div>
+    </div>
+
+    <!-- Cards Grid -->
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;">
+
+      <!-- Lead Card 1 - Quente -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc; cursor: pointer; transition: all 0.15s; border-left: 4px solid #f87171;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: #c8cc8e; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #1f1f1f; font-size: 14px;">ML</div>
+            <div>
+              <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1f1f1f;">Maria Luísa Santos</p>
+              <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">+55 11 99876-5432</p>
+            </div>
+          </div>
+          <span style="font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #fef2f2; color: #f87171; font-weight: 600;">QUENTE</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+          <span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #5f6368;">Atacado</span>
+          <span style="background: #dbeafe; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #3b82f6;">VIP</span>
+          <span style="background: #fef3c7; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #d97706;">Revendedor</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af;">
+          <span>Distribuidora Santos Ltda</span>
+          <span style="font-weight: 600; color: #4ade80;">R$ 45.000</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b0b0b0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f3f0;">
+          <span>Em contato · Vendas</span>
+          <span>Última msg: 2h atrás</span>
+        </div>
+      </div>
+
+      <!-- Lead Card 2 - Morno -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc; cursor: pointer; transition: all 0.15s; border-left: 4px solid #e8d44d;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: #bfdbfe; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #1f1f1f; font-size: 14px;">JP</div>
+            <div>
+              <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1f1f1f;">João Pedro Almeida</p>
+              <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">+55 21 98765-1234</p>
+            </div>
+          </div>
+          <span style="font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #fefce8; color: #ca8a04; font-weight: 600;">MORNO</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+          <span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #5f6368;">Exportação</span>
+          <span style="background: #fce7f3; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #db2777;">Indústria</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af;">
+          <span>Almeida Exportações ME</span>
+          <span style="font-weight: 600; color: #4ade80;">R$ 120.000</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b0b0b0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f3f0;">
+          <span>Negociação · Vendas</span>
+          <span>Última msg: 3d atrás</span>
+        </div>
+      </div>
+
+      <!-- Lead Card 3 - Frio -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc; cursor: pointer; transition: all 0.15s; border-left: 4px solid #60a5fa;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: #fde68a; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #1f1f1f; font-size: 14px;">CF</div>
+            <div>
+              <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1f1f1f;">Carlos Ferreira</p>
+              <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">+55 31 97654-3210</p>
+            </div>
+          </div>
+          <span style="font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #eff6ff; color: #60a5fa; font-weight: 600;">FRIO</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+          <span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #5f6368;">Consumo</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af;">
+          <span>Ferreira & Cia</span>
+          <span style="font-weight: 600; color: #4ade80;">R$ 8.500</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b0b0b0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f3f0;">
+          <span>Novo · Qualificação</span>
+          <span>Última msg: 12d atrás</span>
+        </div>
+      </div>
+
+      <!-- Lead Card 4 - Quente -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc; cursor: pointer; transition: all 0.15s; border-left: 4px solid #f87171;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: #c4b5fd; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #1f1f1f; font-size: 14px;">AS</div>
+            <div>
+              <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1f1f1f;">Ana Silva Rodrigues</p>
+              <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">+55 41 99988-7766</p>
+            </div>
+          </div>
+          <span style="font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #fef2f2; color: #f87171; font-weight: 600;">QUENTE</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+          <span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #5f6368;">Private Label</span>
+          <span style="background: #dbeafe; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #3b82f6;">VIP</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af;">
+          <span>Silva Cosméticos Ltda</span>
+          <span style="font-weight: 600; color: #4ade80;">R$ 230.000</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b0b0b0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f3f0;">
+          <span>Negociação · Vendas</span>
+          <span>Última msg: 30min atrás</span>
+        </div>
+      </div>
+
+      <!-- Lead Card 5 - Morno -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc; cursor: pointer; transition: all 0.15s; border-left: 4px solid #e8d44d;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: #fed7aa; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #1f1f1f; font-size: 14px;">RM</div>
+            <div>
+              <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1f1f1f;">Roberto Mendes</p>
+              <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">+55 51 98877-6655</p>
+            </div>
+          </div>
+          <span style="font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #fefce8; color: #ca8a04; font-weight: 600;">MORNO</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+          <span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #5f6368;">Atacado</span>
+          <span style="background: #fef3c7; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #d97706;">Revendedor</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af;">
+          <span>Mendes Distribuidora</span>
+          <span style="font-weight: 600; color: #4ade80;">R$ 67.000</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b0b0b0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f3f0;">
+          <span>Em contato · Vendas</span>
+          <span>Última msg: 4d atrás</span>
+        </div>
+      </div>
+
+      <!-- Lead Card 6 - Frio -->
+      <div style="background: white; border-radius: 12px; padding: 18px; border: 1px solid #e5e5dc; cursor: pointer; transition: all 0.15s; border-left: 4px solid #60a5fa;">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: #a7f3d0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #1f1f1f; font-size: 14px;">LC</div>
+            <div>
+              <p style="margin: 0; font-weight: 600; font-size: 14px; color: #1f1f1f;">Lucia Costa</p>
+              <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">+55 61 99776-5544</p>
+            </div>
+          </div>
+          <span style="font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #eff6ff; color: #60a5fa; font-weight: 600;">FRIO</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
+          <span style="background: #f3f4f6; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #5f6368;">Secretária</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9ca3af;">
+          <span>—</span>
+          <span style="font-weight: 600; color: #9ca3af;">—</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #b0b0b0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f3f0;">
+          <span>Secretária · Qualificação</span>
+          <span>Última msg: 15d atrás</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Pagination -->
+    <div style="display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 20px;">
+      <button style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e5e5dc; background: white; color: #9ca3af; font-size: 13px; cursor: pointer;">←</button>
+      <button style="padding: 6px 12px; border-radius: 6px; border: none; background: #1f1f1f; color: white; font-size: 13px; cursor: pointer;">1</button>
+      <button style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e5e5dc; background: white; color: #5f6368; font-size: 13px; cursor: pointer;">2</button>
+      <button style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e5e5dc; background: white; color: #5f6368; font-size: 13px; cursor: pointer;">3</button>
+      <span style="color: #9ca3af; font-size: 13px;">...</span>
+      <button style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e5e5dc; background: white; color: #5f6368; font-size: 13px; cursor: pointer;">42</button>
+      <button style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e5e5dc; background: white; color: #9ca3af; font-size: 13px; cursor: pointer;">→</button>
+    </div>
+
+  </div>
+</div>
+
+<div style="margin-top: 20px;">
+  <h3>O que cada card mostra</h3>
+  <ul style="font-size: 14px; color: #5f6368; line-height: 1.8;">
+    <li><strong>Borda esquerda colorida</strong> — indica temperatura visual (vermelho/amarelo/azul)</li>
+    <li><strong>Avatar</strong> com iniciais + <strong>nome e telefone</strong></li>
+    <li><strong>Badge de temperatura</strong> no canto superior direito</li>
+    <li><strong>Tags</strong> — stage de qualificação + tags personalizadas</li>
+    <li><strong>Empresa + valor de venda</strong></li>
+    <li><strong>Rodapé</strong> — etapa atual (qual funil) + tempo desde última mensagem</li>
+  </ul>
+</div>
+
+<p class="subtitle">Grid de 3 colunas com cards, filtros com chips ativos, e paginação. Tá ok?</p>

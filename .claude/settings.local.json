@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest crm --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)"
+    ]
+  },
+  "enabledPlugins": {
+    "claude-session-driver@superpowers-marketplace": true,
+    "frontend-design@claude-plugins-official": true
+  }
+}

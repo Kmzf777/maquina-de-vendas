@@ -1,0 +1,287 @@
+<h2>Modal de Detalhes do Lead</h2>
+<p class="subtitle">Abre ao clicar em um card — 4 abas: Dados, Campanhas, Tags & Notas, Métricas</p>
+
+<div class="mockup">
+  <div class="mockup-header">Modal — Aba "Dados Gerais"</div>
+  <div class="mockup-body" style="padding: 0; background: #f6f7ed; font-family: 'DM Sans', system-ui, sans-serif;">
+
+    <!-- Modal overlay simulation -->
+    <div style="background: rgba(0,0,0,0.3); padding: 24px; min-height: 500px; display: flex; align-items: start; justify-content: center;">
+      <div style="background: white; border-radius: 16px; width: 100%; max-width: 720px; overflow: hidden; box-shadow: 0 25px 50px rgba(0,0,0,0.15);">
+
+        <!-- Modal Header -->
+        <div style="padding: 20px 24px; border-bottom: 1px solid #f3f3f0; display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <div style="width: 48px; height: 48px; border-radius: 50%; background: #c8cc8e; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #1f1f1f; font-size: 16px;">ML</div>
+            <div>
+              <h3 style="margin: 0; font-size: 18px; color: #1f1f1f;">Maria Luísa Santos</h3>
+              <p style="margin: 2px 0 0; font-size: 13px; color: #9ca3af;">+55 11 99876-5432 · Distribuidora Santos Ltda</p>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 10px; padding: 4px 10px; border-radius: 12px; background: #fef2f2; color: #f87171; font-weight: 600;">🔥 QUENTE</span>
+            <button style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid #e5e5dc; background: white; cursor: pointer; font-size: 16px; color: #9ca3af;">✕</button>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div style="display: flex; border-bottom: 1px solid #f3f3f0; padding: 0 24px;">
+          <button style="padding: 12px 20px; font-size: 13px; font-weight: 600; color: #1f1f1f; border: none; background: none; border-bottom: 2px solid #1f1f1f; cursor: pointer;">Dados Gerais</button>
+          <button style="padding: 12px 20px; font-size: 13px; color: #9ca3af; border: none; background: none; border-bottom: 2px solid transparent; cursor: pointer;">Campanhas</button>
+          <button style="padding: 12px 20px; font-size: 13px; color: #9ca3af; border: none; background: none; border-bottom: 2px solid transparent; cursor: pointer;">Tags & Notas</button>
+          <button style="padding: 12px 20px; font-size: 13px; color: #9ca3af; border: none; background: none; border-bottom: 2px solid transparent; cursor: pointer;">Métricas</button>
+        </div>
+
+        <!-- Tab Content: Dados Gerais -->
+        <div style="padding: 24px; max-height: 400px; overflow-y: auto;">
+          <!-- Two column layout -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <!-- Contact Info -->
+            <div>
+              <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Contato</p>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Nome</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">Maria Luísa Santos</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Telefone</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">+55 11 99876-5432</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Email</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">maria@distribuidorasantos.com.br</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Instagram</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">@distribuidorasantos</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Canal de Entrada</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">WhatsApp</p>
+                </div>
+              </div>
+            </div>
+            <!-- Business Info -->
+            <div>
+              <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Empresa (B2B)</p>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Razão Social</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">Distribuidora Santos Ltda</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Nome Fantasia</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">Santos Distribuição</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">CNPJ</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">12.345.678/0001-99</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Telefone Comercial</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">(11) 3456-7890</p>
+                </div>
+                <div>
+                  <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Endereço</p>
+                  <p style="margin: 2px 0 0; font-size: 14px; color: #1f1f1f;">Rua Augusta, 1234 - São Paulo/SP</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Status row -->
+          <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #f3f3f0;">
+            <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Status no CRM</p>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+              <div style="background: #f6f7ed; border-radius: 8px; padding: 12px;">
+                <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Stage (IA)</p>
+                <p style="margin: 4px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">Atacado</p>
+              </div>
+              <div style="background: #f6f7ed; border-radius: 8px; padding: 12px;">
+                <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Etapa Vendas</p>
+                <p style="margin: 4px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">Em Contato</p>
+              </div>
+              <div style="background: #f6f7ed; border-radius: 8px; padding: 12px;">
+                <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Atribuído a</p>
+                <p style="margin: 4px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">Rafael</p>
+              </div>
+              <div style="background: #f6f7ed; border-radius: 8px; padding: 12px;">
+                <p style="margin: 0; font-size: 11px; color: #b0b0b0;">Valor de Venda</p>
+                <p style="margin: 4px 0 0; font-size: 13px; font-weight: 600; color: #4ade80;">R$ 45.000</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Aba Campanhas -->
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Modal — Aba "Campanhas"</div>
+  <div class="mockup-body" style="padding: 24px; background: white; font-family: 'DM Sans', system-ui, sans-serif;">
+    <p style="margin: 0 0 16px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Campanhas participadas (2)</p>
+
+    <!-- Campaign 1 -->
+    <div style="border: 1px solid #e5e5dc; border-radius: 10px; padding: 16px; margin-bottom: 12px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div>
+          <p style="margin: 0; font-size: 14px; font-weight: 600; color: #1f1f1f;">Promoção Verão 2026</p>
+          <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">Criada em 15/01/2026</p>
+        </div>
+        <span style="font-size: 11px; padding: 3px 10px; border-radius: 10px; background: #f0fdf4; color: #22c55e; font-weight: 600;">Respondeu</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        <div style="background: #f6f7ed; border-radius: 6px; padding: 8px 12px;">
+          <p style="margin: 0; font-size: 10px; color: #b0b0b0;">Cadência</p>
+          <p style="margin: 2px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">Step 3 de 5</p>
+        </div>
+        <div style="background: #f6f7ed; border-radius: 6px; padding: 8px 12px;">
+          <p style="margin: 0; font-size: 10px; color: #b0b0b0;">Mensagens</p>
+          <p style="margin: 2px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">3 enviadas</p>
+        </div>
+        <div style="background: #f6f7ed; border-radius: 6px; padding: 8px 12px;">
+          <p style="margin: 0; font-size: 10px; color: #b0b0b0;">Respondeu em</p>
+          <p style="margin: 2px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">18/01/2026</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Campaign 2 -->
+    <div style="border: 1px solid #e5e5dc; border-radius: 10px; padding: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div>
+          <p style="margin: 0; font-size: 14px; font-weight: 600; color: #1f1f1f;">Reativação Q1</p>
+          <p style="margin: 2px 0 0; font-size: 12px; color: #9ca3af;">Criada em 01/03/2026</p>
+        </div>
+        <span style="font-size: 11px; padding: 3px 10px; border-radius: 10px; background: #fefce8; color: #ca8a04; font-weight: 600;">Ativa</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        <div style="background: #f6f7ed; border-radius: 6px; padding: 8px 12px;">
+          <p style="margin: 0; font-size: 10px; color: #b0b0b0;">Cadência</p>
+          <p style="margin: 2px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">Step 1 de 3</p>
+        </div>
+        <div style="background: #f6f7ed; border-radius: 6px; padding: 8px 12px;">
+          <p style="margin: 0; font-size: 10px; color: #b0b0b0;">Mensagens</p>
+          <p style="margin: 2px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">1 enviada</p>
+        </div>
+        <div style="background: #f6f7ed; border-radius: 6px; padding: 8px 12px;">
+          <p style="margin: 0; font-size: 10px; color: #b0b0b0;">Próximo envio</p>
+          <p style="margin: 2px 0 0; font-size: 13px; font-weight: 600; color: #1f1f1f;">29/03/2026</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Aba Tags & Notas -->
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Modal — Aba "Tags & Notas"</div>
+  <div class="mockup-body" style="padding: 24px; background: white; font-family: 'DM Sans', system-ui, sans-serif;">
+    <!-- Tags section -->
+    <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Tags</p>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+      <span style="background: #dbeafe; padding: 5px 12px; border-radius: 20px; font-size: 12px; color: #3b82f6; display: flex; align-items: center; gap: 6px;">VIP <span style="cursor: pointer; color: #93c5fd;">×</span></span>
+      <span style="background: #fef3c7; padding: 5px 12px; border-radius: 20px; font-size: 12px; color: #d97706; display: flex; align-items: center; gap: 6px;">Revendedor <span style="cursor: pointer; color: #fde68a;">×</span></span>
+      <button style="padding: 5px 12px; border-radius: 20px; font-size: 12px; border: 1px dashed #d1d5db; background: none; color: #9ca3af; cursor: pointer;">+ Adicionar tag</button>
+    </div>
+
+    <!-- Notes section -->
+    <p style="margin: 20px 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Notas</p>
+    <div style="border: 1px solid #e5e5dc; border-radius: 10px; padding: 14px; margin-bottom: 10px;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+        <p style="margin: 0; font-size: 12px; font-weight: 600; color: #1f1f1f;">Rafael</p>
+        <p style="margin: 0; font-size: 11px; color: #b0b0b0;">27/03/2026 14:30</p>
+      </div>
+      <p style="margin: 0; font-size: 13px; color: #5f6368; line-height: 1.5;">Cliente tem interesse forte em private label. Pediu amostras do catálogo premium. Agendar call para semana que vem.</p>
+    </div>
+    <div style="border: 1px solid #e5e5dc; border-radius: 10px; padding: 14px; margin-bottom: 14px;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+        <p style="margin: 0; font-size: 12px; font-weight: 600; color: #1f1f1f;">Rafael</p>
+        <p style="margin: 0; font-size: 11px; color: #b0b0b0;">20/03/2026 10:15</p>
+      </div>
+      <p style="margin: 0; font-size: 13px; color: #5f6368; line-height: 1.5;">Primeiro contato via WhatsApp. Distribuem em 3 estados do Sudeste.</p>
+    </div>
+    <!-- Add note -->
+    <div style="display: flex; gap: 8px;">
+      <input type="text" placeholder="Adicionar uma nota..." style="flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #e5e5dc; font-size: 13px; outline: none;" />
+      <button style="padding: 10px 18px; border-radius: 8px; border: none; background: #1f1f1f; color: white; font-size: 13px; cursor: pointer;">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Aba Métricas -->
+<div class="mockup" style="margin-top: 20px;">
+  <div class="mockup-header">Modal — Aba "Métricas"</div>
+  <div class="mockup-body" style="padding: 24px; background: white; font-family: 'DM Sans', system-ui, sans-serif;">
+    <!-- Metric cards -->
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px;">
+      <div style="background: #f6f7ed; border-radius: 10px; padding: 16px; text-align: center;">
+        <p style="margin: 0; font-size: 11px; color: #b0b0b0; text-transform: uppercase;">Temperatura</p>
+        <p style="margin: 8px 0 0; font-size: 28px;">🔥</p>
+        <p style="margin: 4px 0 0; font-size: 14px; font-weight: 700; color: #f87171;">Quente</p>
+        <p style="margin: 2px 0 0; font-size: 11px; color: #9ca3af;">Última msg há 2h</p>
+      </div>
+      <div style="background: #f6f7ed; border-radius: 10px; padding: 16px; text-align: center;">
+        <p style="margin: 0; font-size: 11px; color: #b0b0b0; text-transform: uppercase;">Valor de Venda</p>
+        <p style="margin: 8px 0 0; font-size: 24px; font-weight: 700; color: #4ade80;">R$ 45.000</p>
+        <p style="margin: 2px 0 0; font-size: 11px; color: #9ca3af;">Negociação ativa</p>
+      </div>
+      <div style="background: #f6f7ed; border-radius: 10px; padding: 16px; text-align: center;">
+        <p style="margin: 0; font-size: 11px; color: #b0b0b0; text-transform: uppercase;">Primeira Resposta</p>
+        <p style="margin: 8px 0 0; font-size: 24px; font-weight: 700; color: #1f1f1f;">12min</p>
+        <p style="margin: 2px 0 0; font-size: 11px; color: #9ca3af;">Tempo até 1ª resposta</p>
+      </div>
+    </div>
+
+    <!-- Stage timeline -->
+    <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Tempo por Stage</p>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="width: 100px; font-size: 12px; color: #5f6368;">Secretária</span>
+        <div style="flex: 1; height: 24px; background: #f3f3f0; border-radius: 6px; overflow: hidden;">
+          <div style="width: 15%; height: 100%; background: #c8cc8e; border-radius: 6px; display: flex; align-items: center; padding-left: 8px; font-size: 11px; color: #1f1f1f; font-weight: 600;">2h</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="width: 100px; font-size: 12px; color: #5f6368;">Atacado</span>
+        <div style="flex: 1; height: 24px; background: #f3f3f0; border-radius: 6px; overflow: hidden;">
+          <div style="width: 45%; height: 100%; background: #e8d44d; border-radius: 6px; display: flex; align-items: center; padding-left: 8px; font-size: 11px; color: #1f1f1f; font-weight: 600;">3d 6h</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="width: 100px; font-size: 12px; color: #5f6368; font-weight: 600;">Atual ▸</span>
+        <div style="flex: 1; height: 24px; background: #f3f3f0; border-radius: 6px; overflow: hidden;">
+          <div style="width: 70%; height: 100%; background: #4ade80; border-radius: 6px; display: flex; align-items: center; padding-left: 8px; font-size: 11px; color: #1f1f1f; font-weight: 600;">Em Contato · 5d</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Engagement stats -->
+    <p style="margin: 24px 0 12px; font-size: 12px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px;">Engajamento</p>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+      <div style="border: 1px solid #e5e5dc; border-radius: 8px; padding: 12px; text-align: center;">
+        <p style="margin: 0; font-size: 20px; font-weight: 700; color: #1f1f1f;">47</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">Mensagens trocadas</p>
+      </div>
+      <div style="border: 1px solid #e5e5dc; border-radius: 8px; padding: 12px; text-align: center;">
+        <p style="margin: 0; font-size: 20px; font-weight: 700; color: #1f1f1f;">2</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">Campanhas</p>
+      </div>
+      <div style="border: 1px solid #e5e5dc; border-radius: 8px; padding: 12px; text-align: center;">
+        <p style="margin: 0; font-size: 20px; font-weight: 700; color: #1f1f1f;">8d</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">No CRM</p>
+      </div>
+      <div style="border: 1px solid #e5e5dc; border-radius: 8px; padding: 12px; text-align: center;">
+        <p style="margin: 0; font-size: 20px; font-weight: 700; color: #1f1f1f;">85%</p>
+        <p style="margin: 4px 0 0; font-size: 11px; color: #9ca3af;">Taxa de resposta</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 20px;">4 abas do modal de detalhes. Alguma aba precisa de ajuste ou falta alguma informação?</p>

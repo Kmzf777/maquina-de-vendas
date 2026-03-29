@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campanhas - Lista</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: #0f0f0f;
+    color: #e8e8e4;
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    width: 220px;
+    background: #141414;
+    border-right: 1px solid #1f1f1f;
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sidebar-logo { font-size: 18px; font-weight: 700; margin-bottom: 24px; padding: 0 8px; }
+  .sidebar-logo span { color: #c8cc8e; }
+  .sidebar-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #888;
+    cursor: pointer;
+  }
+  .sidebar-item.active {
+    background: rgba(200,204,142,0.1);
+    color: #c8cc8e;
+  }
+  .main { flex: 1; padding: 32px; overflow-y: auto; }
+
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .page-title { font-size: 24px; font-weight: 600; }
+  .btn {
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+  .btn-primary { background: #c8cc8e; color: #1a1a1a; }
+
+  /* Campaign Cards */
+  .campaign-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .campaign-card {
+    background: #161616;
+    border: 1px solid #1f1f1f;
+    border-radius: 14px;
+    padding: 20px 24px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .campaign-card:hover {
+    border-color: #2a2a2a;
+    background: #1a1a1a;
+  }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+  }
+  .card-title-row { display: flex; align-items: center; gap: 12px; }
+  .card-name { font-size: 16px; font-weight: 600; }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .badge-draft { background: #f4f4f0; color: #5f6368; }
+  .badge-running { background: #d8f0dc; color: #2d6a3f; }
+  .badge-paused { background: #f0ecd0; color: #8a7a2a; }
+  .badge-completed { background: #dce8f0; color: #2a5a8a; }
+  .card-date { font-size: 12px; color: #555; }
+
+  .card-metrics {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .metric {
+    display: flex;
+    flex-direction: column;
+  }
+  .metric-value { font-size: 20px; font-weight: 600; }
+  .metric-label { font-size: 11px; color: #666; margin-top: 2px; }
+  .c-olive { color: #c8cc8e; }
+  .c-green { color: #4ade80; }
+  .c-amber { color: #f59e0b; }
+  .c-red { color: #ef4444; }
+  .c-blue { color: #60a5fa; }
+  .c-gray { color: #888; }
+
+  .card-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .progress-section { display: flex; align-items: center; gap: 12px; flex: 1; }
+  .progress-bar {
+    flex: 1;
+    max-width: 300px;
+    height: 6px;
+    background: #2a2a2a;
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+  }
+  .progress-segment { height: 100%; }
+  .seg-sent { background: #c8cc8e; }
+  .seg-responded { background: #4ade80; }
+  .seg-cadence { background: #f59e0b; }
+  .seg-exhausted { background: #ef4444; }
+  .progress-label { font-size: 12px; color: #666; }
+
+  .card-config {
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    color: #555;
+  }
+  .config-tag {
+    padding: 3px 8px;
+    background: #1a1a1a;
+    border: 1px solid #222;
+    border-radius: 4px;
+  }
+
+  .card-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .action-sm {
+    background: none;
+    border: 1px solid #2a2a2a;
+    color: #888;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .action-sm:hover { border-color: #c8cc8e; color: #c8cc8e; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-logo">Valer<span>IA</span></div>
+  <div class="sidebar-item">Dashboard</div>
+  <div class="sidebar-item">Qualificacao</div>
+  <div class="sidebar-item">Vendas</div>
+  <div class="sidebar-item">Conversas</div>
+  <div class="sidebar-item active">Campanhas</div>
+  <div class="sidebar-item">Configuracoes</div>
+</div>
+
+<div class="main">
+  <div class="page-header">
+    <div class="page-title">Campanhas</div>
+    <button class="btn btn-primary">+ Nova Campanha</button>
+  </div>
+
+  <div class="campaign-grid">
+
+    <!-- Campaign 1: Running with cadence -->
+    <div class="campaign-card">
+      <div class="card-top">
+        <div>
+          <div class="card-title-row">
+            <span class="card-name">Atacado Q2 - Sudeste</span>
+            <span class="badge badge-running">running</span>
+          </div>
+          <div class="card-date">Criada 25 Mar 2026 &middot; Template: hello_atacado</div>
+        </div>
+        <div class="card-actions">
+          <button class="action-sm">Pausar</button>
+          <button class="action-sm">Abrir &rarr;</button>
+        </div>
+      </div>
+
+      <div class="card-metrics">
+        <div class="metric">
+          <div class="metric-value c-olive">1.247</div>
+          <div class="metric-label">Total</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-olive">847</div>
+          <div class="metric-label">Enviados</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-green">234</div>
+          <div class="metric-label">Responderam</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-amber">156</div>
+          <div class="metric-label">Em Cadencia</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-red">89</div>
+          <div class="metric-label">Esgotados</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">52</div>
+          <div class="metric-label">Esfriados</div>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="progress-section">
+          <div class="progress-bar">
+            <div class="progress-segment seg-responded" style="width:27.6%"></div>
+            <div class="progress-segment seg-cadence" style="width:18.4%"></div>
+            <div class="progress-segment seg-exhausted" style="width:10.5%"></div>
+            <div class="progress-segment seg-sent" style="width:11.3%"></div>
+          </div>
+          <span class="progress-label">67.8% enviados &middot; 27.6% responderam</span>
+        </div>
+        <div class="card-config">
+          <span class="config-tag">24h intervalo</span>
+          <span class="config-tag">7-18h janela</span>
+          <span class="config-tag">8 msgs max</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Campaign 2: Completed -->
+    <div class="campaign-card">
+      <div class="card-top">
+        <div>
+          <div class="card-title-row">
+            <span class="card-name">Private Label - Cafeterias SP</span>
+            <span class="badge badge-completed">completed</span>
+          </div>
+          <div class="card-date">Criada 10 Mar 2026 &middot; Template: hello_pl</div>
+        </div>
+        <div class="card-actions">
+          <button class="action-sm">Abrir &rarr;</button>
+        </div>
+      </div>
+
+      <div class="card-metrics">
+        <div class="metric">
+          <div class="metric-value c-olive">320</div>
+          <div class="metric-label">Total</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-olive">320</div>
+          <div class="metric-label">Enviados</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-green">87</div>
+          <div class="metric-label">Responderam</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-amber">0</div>
+          <div class="metric-label">Em Cadencia</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-red">145</div>
+          <div class="metric-label">Esgotados</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">88</div>
+          <div class="metric-label">Esfriados</div>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="progress-section">
+          <div class="progress-bar">
+            <div class="progress-segment seg-responded" style="width:27.2%"></div>
+            <div class="progress-segment seg-exhausted" style="width:45.3%"></div>
+            <div class="progress-segment seg-sent" style="width:27.5%"></div>
+          </div>
+          <span class="progress-label">100% enviados &middot; 27.2% responderam</span>
+        </div>
+        <div class="card-config">
+          <span class="config-tag">24h intervalo</span>
+          <span class="config-tag">7-18h janela</span>
+          <span class="config-tag">6 msgs max</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Campaign 3: Draft -->
+    <div class="campaign-card">
+      <div class="card-top">
+        <div>
+          <div class="card-title-row">
+            <span class="card-name">Exportacao - LATAM</span>
+            <span class="badge badge-draft">draft</span>
+          </div>
+          <div class="card-date">Criada 27 Mar 2026 &middot; Template: hello_export</div>
+        </div>
+        <div class="card-actions">
+          <button class="action-sm">Iniciar</button>
+          <button class="action-sm">Abrir &rarr;</button>
+        </div>
+      </div>
+
+      <div class="card-metrics">
+        <div class="metric">
+          <div class="metric-value c-olive">89</div>
+          <div class="metric-label">Total</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">0</div>
+          <div class="metric-label">Enviados</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">0</div>
+          <div class="metric-label">Responderam</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">0</div>
+          <div class="metric-label">Em Cadencia</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">0</div>
+          <div class="metric-label">Esgotados</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value c-gray">0</div>
+          <div class="metric-label">Esfriados</div>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="progress-section">
+          <div class="progress-bar"></div>
+          <span class="progress-label">Aguardando inicio</span>
+        </div>
+        <div class="card-config">
+          <span class="config-tag">24h intervalo</span>
+          <span class="config-tag">7-18h janela</span>
+          <span class="config-tag">8 msgs max</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

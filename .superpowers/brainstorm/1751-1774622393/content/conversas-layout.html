@@ -1,0 +1,151 @@
+<h2>Pagina /conversas — Layout WhatsApp Web</h2>
+<p class="subtitle">Qual estilo de layout para o clone de WhatsApp Web?</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;font-family:sans-serif;font-size:12px;color:#e0e0e0;display:flex;height:320px;">
+        <!-- Sidebar -->
+        <div style="width:35%;background:#111827;border-right:1px solid #333;display:flex;flex-direction:column;">
+          <!-- Search + Tabs -->
+          <div style="padding:10px;border-bottom:1px solid #333;">
+            <div style="background:#222;border-radius:6px;padding:6px 10px;color:#888;font-size:11px;margin-bottom:8px;">Buscar conversa...</div>
+            <div style="display:flex;gap:0;font-size:10px;overflow-x:auto;">
+              <div style="padding:4px 8px;background:#8b5cf6;border-radius:12px;color:#fff;white-space:nowrap;">Todos</div>
+              <div style="padding:4px 8px;color:#888;white-space:nowrap;">Atacado</div>
+              <div style="padding:4px 8px;color:#888;white-space:nowrap;">PL</div>
+              <div style="padding:4px 8px;color:#888;white-space:nowrap;">Export</div>
+              <div style="padding:4px 8px;color:#888;white-space:nowrap;">Consumo</div>
+            </div>
+          </div>
+          <!-- Conversations list -->
+          <div style="flex:1;overflow:hidden;">
+            <div style="padding:10px;background:#1e293b;border-bottom:1px solid #333;display:flex;gap:8px;align-items:center;">
+              <div style="width:36px;height:36px;border-radius:50%;background:#8b5cf6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">J</div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;"><span style="font-weight:600;font-size:12px;">Joao Silva</span><span style="color:#888;font-size:10px;">14:32</span></div>
+                <div style="color:#aaa;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Opa, quero saber sobre atacado...</div>
+              </div>
+            </div>
+            <div style="padding:10px;border-bottom:1px solid #333;display:flex;gap:8px;align-items:center;">
+              <div style="width:36px;height:36px;border-radius:50%;background:#3b82f6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">M</div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;"><span style="font-weight:600;font-size:12px;">Maria Cafe</span><span style="color:#888;font-size:10px;">13:10</span></div>
+                <div style="color:#aaa;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Preciso de um orcamento...</div>
+              </div>
+            </div>
+            <div style="padding:10px;border-bottom:1px solid #333;display:flex;gap:8px;align-items:center;">
+              <div style="width:36px;height:36px;border-radius:50%;background:#10b981;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">P</div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;"><span style="font-weight:600;font-size:12px;">Pedro (pessoal)</span><span style="color:#888;font-size:10px;">ontem</span></div>
+                <div style="color:#aaa;font-size:11px;">Beleza, valeu!</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Chat area -->
+        <div style="flex:1;display:flex;flex-direction:column;background:#0f172a;">
+          <!-- Header -->
+          <div style="padding:10px 16px;border-bottom:1px solid #333;display:flex;align-items:center;gap:10px;">
+            <div style="width:36px;height:36px;border-radius:50%;background:#8b5cf6;display:flex;align-items:center;justify-content:center;font-size:14px;">J</div>
+            <div>
+              <div style="font-weight:600;font-size:13px;">Joao Silva</div>
+              <div style="font-size:10px;color:#888;">+55 34 99999-0001</div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:6px;">
+              <span style="background:#8b5cf6;padding:2px 8px;border-radius:10px;font-size:10px;">atacado</span>
+              <span style="background:#10b981;padding:2px 8px;border-radius:10px;font-size:10px;">lead</span>
+            </div>
+          </div>
+          <!-- Messages -->
+          <div style="flex:1;padding:16px;display:flex;flex-direction:column;gap:8px;justify-content:flex-end;">
+            <div style="align-self:flex-start;background:#1e293b;padding:8px 12px;border-radius:8px;max-width:70%;font-size:11px;">opa, quero saber sobre atacado de cafe especial</div>
+            <div style="align-self:flex-end;background:#8b5cf6;padding:8px 12px;border-radius:8px;max-width:70%;font-size:11px;">oi joao! que legal seu interesse. voce trabalha com cafe em qual segmento?</div>
+            <div style="align-self:flex-start;background:#1e293b;padding:8px 12px;border-radius:8px;max-width:70%;font-size:11px;">tenho uma cafeteria aqui em uberlandia</div>
+          </div>
+          <!-- Input -->
+          <div style="padding:12px 16px;border-top:1px solid #333;display:flex;gap:8px;align-items:center;">
+            <div style="flex:1;background:#222;border-radius:20px;padding:8px 16px;color:#888;font-size:11px;">Digitar mensagem...</div>
+            <div style="width:32px;height:32px;background:#8b5cf6;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;">→</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A) Classico 2 paineis</h3>
+      <p>Lista de conversas a esquerda, chat a direita. Tags e info do contato no header do chat. Fiel ao WhatsApp Web.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;font-family:sans-serif;font-size:12px;color:#e0e0e0;display:flex;height:320px;">
+        <!-- Sidebar -->
+        <div style="width:28%;background:#111827;border-right:1px solid #333;display:flex;flex-direction:column;">
+          <div style="padding:10px;border-bottom:1px solid #333;">
+            <div style="background:#222;border-radius:6px;padding:6px 10px;color:#888;font-size:11px;margin-bottom:8px;">Buscar...</div>
+            <div style="display:flex;gap:0;font-size:9px;overflow-x:auto;">
+              <div style="padding:3px 6px;background:#8b5cf6;border-radius:10px;color:#fff;white-space:nowrap;">Todos</div>
+              <div style="padding:3px 6px;color:#888;white-space:nowrap;">Atacado</div>
+              <div style="padding:3px 6px;color:#888;white-space:nowrap;">PL</div>
+            </div>
+          </div>
+          <div style="flex:1;">
+            <div style="padding:8px;background:#1e293b;border-bottom:1px solid #333;display:flex;gap:6px;align-items:center;">
+              <div style="width:30px;height:30px;border-radius:50%;background:#8b5cf6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;">J</div>
+              <div style="flex:1;min-width:0;"><div style="font-size:11px;font-weight:600;">Joao Silva</div><div style="color:#aaa;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Opa, quero saber...</div></div>
+            </div>
+            <div style="padding:8px;border-bottom:1px solid #333;display:flex;gap:6px;align-items:center;">
+              <div style="width:30px;height:30px;border-radius:50%;background:#3b82f6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;">M</div>
+              <div style="flex:1;min-width:0;"><div style="font-size:11px;font-weight:600;">Maria Cafe</div><div style="color:#aaa;font-size:10px;">Preciso de um...</div></div>
+            </div>
+          </div>
+        </div>
+        <!-- Chat area -->
+        <div style="flex:1;display:flex;flex-direction:column;background:#0f172a;">
+          <div style="padding:8px 12px;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px;">
+            <div style="width:30px;height:30px;border-radius:50%;background:#8b5cf6;display:flex;align-items:center;justify-content:center;font-size:12px;">J</div>
+            <div><div style="font-weight:600;font-size:12px;">Joao Silva</div></div>
+          </div>
+          <div style="flex:1;padding:12px;display:flex;flex-direction:column;gap:6px;justify-content:flex-end;">
+            <div style="align-self:flex-start;background:#1e293b;padding:6px 10px;border-radius:8px;font-size:11px;">opa, quero saber sobre atacado</div>
+            <div style="align-self:flex-end;background:#8b5cf6;padding:6px 10px;border-radius:8px;font-size:11px;">oi joao! que legal</div>
+          </div>
+          <div style="padding:10px;border-top:1px solid #333;display:flex;gap:6px;">
+            <div style="flex:1;background:#222;border-radius:20px;padding:6px 14px;color:#888;font-size:11px;">Digitar...</div>
+            <div style="width:28px;height:28px;background:#8b5cf6;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;">→</div>
+          </div>
+        </div>
+        <!-- Detail panel -->
+        <div style="width:25%;background:#111827;border-left:1px solid #333;padding:12px;display:flex;flex-direction:column;gap:12px;">
+          <div style="text-align:center;">
+            <div style="width:50px;height:50px;border-radius:50%;background:#8b5cf6;margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:20px;">J</div>
+            <div style="font-weight:600;font-size:12px;">Joao Silva</div>
+            <div style="color:#888;font-size:10px;">+55 34 99999-0001</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#888;margin-bottom:4px;">TAGS</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              <span style="background:#8b5cf6;padding:2px 8px;border-radius:10px;font-size:9px;">atacado</span>
+              <span style="background:#10b981;padding:2px 8px;border-radius:10px;font-size:9px;">lead</span>
+              <span style="background:#333;padding:2px 8px;border-radius:10px;font-size:9px;cursor:pointer;">+ tag</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#888;margin-bottom:4px;">INFO</div>
+            <div style="font-size:11px;">Empresa: Cafe UDI</div>
+            <div style="font-size:11px;color:#888;">Stage: atacado</div>
+            <div style="font-size:11px;color:#888;">Desde: 25/03/2026</div>
+          </div>
+          <div style="margin-top:auto;">
+            <div style="background:#8b5cf6;padding:6px;border-radius:6px;text-align:center;font-size:11px;cursor:pointer;">Criar Lead</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B) 3 paineis (lista + chat + detalhes)</h3>
+      <p>Painel extra a direita com info do contato, tags, e acoes. Mais contexto sem sair do chat.</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,234 @@
+<h2>Direção Visual — Kanban Qualificação & Vendas</h2>
+<p class="subtitle">Escolha o tom geral. Vamos refinar depois.</p>
+
+<div class="cards" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:24px; margin-top:24px;">
+
+  <!-- Option A: Subtle Polish -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)" style="cursor:pointer;">
+    <div class="card-image" style="padding:20px; background:#fafaf5;">
+      <!-- Mini kanban mockup -->
+      <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">Direção A — Polish Sutil</div>
+
+      <!-- Metrics bar mock -->
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div style="background:white;border:1px solid #e5e5dc;border-radius:10px;padding:10px 14px;flex:1;">
+          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;">Total</div>
+          <div style="font-size:18px;font-weight:700;color:#1f1f1f;">3 leads</div>
+          <div style="font-size:11px;color:#5aad65;">R$ 4.200</div>
+        </div>
+        <div style="background:white;border:1px solid #e5e5dc;border-radius:10px;padding:10px 14px;flex:1;">
+          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;">Novos hoje</div>
+          <div style="font-size:18px;font-weight:700;color:#1f1f1f;">2</div>
+          <div style="font-size:11px;color:#9ca3af;">+1 ontem</div>
+        </div>
+      </div>
+
+      <!-- Column headers -->
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:#b8c4d0;"></span>
+            <span style="font-size:12px;font-weight:600;color:#1f1f1f;">Secretaria</span>
+            <span style="font-size:10px;color:#9ca3af;background:#f4f4f0;border-radius:10px;padding:1px 6px;">1</span>
+          </div>
+          <!-- Card -->
+          <div style="background:white;border:1px solid #e5e5dc;border-radius:10px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <div style="width:28px;height:28px;border-radius:50%;background:#dce8f0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#5f6368;">K</div>
+              <div>
+                <div style="font-size:12px;font-weight:600;">Kelwin</div>
+                <div style="font-size:10px;color:#9ca3af;">5534966...</div>
+              </div>
+            </div>
+            <div style="font-size:10px;color:#9ca3af;font-style:italic;">oi, tudo bem?</div>
+          </div>
+        </div>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:#7ba3c4;"></span>
+            <span style="font-size:12px;font-weight:600;color:#1f1f1f;">Atacado</span>
+            <span style="font-size:10px;color:#9ca3af;background:#f4f4f0;border-radius:10px;padding:1px 6px;">1</span>
+          </div>
+          <div style="background:white;border:1px solid #e5e5dc;border-radius:10px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <div style="width:28px;height:28px;border-radius:50%;background:#d8f0dc;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#2d6a3f;">M</div>
+              <div>
+                <div style="font-size:12px;font-weight:600;">Marcos</div>
+                <div style="font-size:10px;color:#2d6a3f;">R$ 2.100</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <span style="font-size:9px;background:#dce8f0;color:#5f6368;padding:1px 6px;border-radius:8px;">atacado</span>
+              <span style="font-size:9px;background:#f0ecd0;color:#8a7a2a;padding:1px 6px;border-radius:8px;">5h</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Polish Sutil</h3>
+      <p>Mantem a base atual, adiciona: avatares com iniciais, metricas em cards separados, badges de valor nos cards, dots de cor mais saturados nos headers. Mudanca minima, impacto visual bom.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Rich Kanban -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)" style="cursor:pointer;">
+    <div class="card-image" style="padding:20px; background:#fafaf5;">
+      <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">Direção B — Kanban Rico</div>
+
+      <!-- Metrics bar - richer -->
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div style="background:linear-gradient(135deg,#f8faf5,#eef2e8);border:1px solid #d4dcc4;border-radius:12px;padding:12px 16px;flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:16px;">📊</span>
+            <div>
+              <div style="font-size:10px;color:#6b7a5a;text-transform:uppercase;font-weight:600;">Pipeline</div>
+              <div style="font-size:20px;font-weight:700;color:#1f1f1f;">R$ 4.200</div>
+            </div>
+          </div>
+          <div style="margin-top:6px;height:4px;background:#e5e5dc;border-radius:2px;">
+            <div style="width:35%;height:100%;background:#5aad65;border-radius:2px;"></div>
+          </div>
+        </div>
+        <div style="background:linear-gradient(135deg,#f5f8fa,#e8eef2);border:1px solid #c4d0dc;border-radius:12px;padding:12px 16px;flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:16px;">🆕</span>
+            <div>
+              <div style="font-size:10px;color:#5a6b7a;text-transform:uppercase;font-weight:600;">Novos</div>
+              <div style="font-size:20px;font-weight:700;color:#1f1f1f;">2 <span style="font-size:12px;color:#9ca3af;font-weight:400;">hoje</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Columns with colored header strip -->
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;">
+          <div style="background:#e8edf2;border-radius:10px;padding:8px;margin-bottom:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="width:10px;height:10px;border-radius:3px;background:#7ba3c4;"></span>
+                <span style="font-size:12px;font-weight:700;color:#1f1f1f;">Secretaria</span>
+              </div>
+              <span style="font-size:10px;font-weight:700;color:white;background:#7ba3c4;border-radius:10px;padding:1px 7px;">1</span>
+            </div>
+            <!-- Card with left border accent -->
+            <div style="background:white;border-radius:8px;padding:10px;border-left:3px solid #7ba3c4;box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <div style="width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#dce8f0,#c4d4e0);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#4a6a82;">K</div>
+                <div>
+                  <div style="font-size:12px;font-weight:700;">Kelwin</div>
+                  <div style="font-size:10px;color:#9ca3af;">2d atras</div>
+                </div>
+              </div>
+              <div style="font-size:10px;color:#5f6368;background:#f8f8f5;padding:4px 8px;border-radius:6px;font-style:italic;">"oi, tudo bem?"</div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;">
+          <div style="background:#e3edf3;border-radius:10px;padding:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="width:10px;height:10px;border-radius:3px;background:#4a8ab5;"></span>
+                <span style="font-size:12px;font-weight:700;color:#1f1f1f;">Atacado</span>
+              </div>
+              <span style="font-size:10px;font-weight:700;color:white;background:#4a8ab5;border-radius:10px;padding:1px 7px;">1</span>
+            </div>
+            <div style="background:white;border-radius:8px;padding:10px;border-left:3px solid #4a8ab5;box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <div style="width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#d8f0dc,#b8dcc0);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#2d6a3f;">M</div>
+                <div>
+                  <div style="font-size:12px;font-weight:700;">Marcos</div>
+                  <div style="font-size:10px;font-weight:600;color:#2d6a3f;">R$ 2.100</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:6px;">
+                <span style="font-size:9px;background:#e8dff0;color:#6b4a82;padding:2px 8px;border-radius:8px;font-weight:500;">cafe especial</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Kanban Rico</h3>
+      <p>Colunas com fundo colorido, cards com borda lateral de stage, avatares com gradiente, metricas com icones e mini progress bar, badges de contagem coloridos. Visual de ferramenta profissional tipo Linear/Pipedrive.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Premium Dark Headers -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)" style="cursor:pointer;">
+    <div class="card-image" style="padding:20px; background:#fafaf5;">
+      <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">Direção C — Headers Premium</div>
+
+      <!-- Metrics - dark themed cards -->
+      <div style="display:flex;gap:12px;margin-bottom:16px;">
+        <div style="background:#1f1f1f;border-radius:12px;padding:12px 16px;flex:1;">
+          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;font-weight:600;letter-spacing:0.5px;">Pipeline total</div>
+          <div style="font-size:22px;font-weight:700;color:white;margin-top:2px;">R$ 4.200</div>
+          <div style="font-size:11px;color:#5aad65;margin-top:2px;">↑ 3 leads ativos</div>
+        </div>
+        <div style="background:#1f1f1f;border-radius:12px;padding:12px 16px;flex:1;">
+          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;font-weight:600;letter-spacing:0.5px;">Conversao</div>
+          <div style="font-size:22px;font-weight:700;color:white;margin-top:2px;">33%</div>
+          <div style="margin-top:6px;height:3px;background:#333;border-radius:2px;">
+            <div style="width:33%;height:100%;background:#c8cc8e;border-radius:2px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Columns with dark header -->
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;">
+          <div style="background:#1f1f1f;border-radius:10px 10px 0 0;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:8px;height:8px;border-radius:50%;background:#c8cc8e;"></span>
+              <span style="font-size:11px;font-weight:600;color:white;">Secretaria</span>
+            </div>
+            <span style="font-size:10px;color:#9ca3af;">1</span>
+          </div>
+          <div style="background:#f8f8f5;border-radius:0 0 10px 10px;padding:8px;min-height:80px;">
+            <div style="background:white;border-radius:10px;padding:10px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <div style="width:30px;height:30px;border-radius:50%;background:#1f1f1f;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#c8cc8e;">K</div>
+                <div>
+                  <div style="font-size:12px;font-weight:700;">Kelwin</div>
+                  <div style="font-size:10px;color:#9ca3af;">2d</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;">
+          <div style="background:#1f1f1f;border-radius:10px 10px 0 0;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:8px;height:8px;border-radius:50%;background:#5b8aad;"></span>
+              <span style="font-size:11px;font-weight:600;color:white;">Atacado</span>
+            </div>
+            <span style="font-size:10px;color:#9ca3af;">1</span>
+          </div>
+          <div style="background:#f5f8fa;border-radius:0 0 10px 10px;padding:8px;min-height:80px;">
+            <div style="background:white;border-radius:10px;padding:10px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <div style="width:30px;height:30px;border-radius:50%;background:#1f1f1f;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#5aad65;">M</div>
+                <div>
+                  <div style="font-size:12px;font-weight:700;">Marcos</div>
+                  <div style="font-size:10px;font-weight:600;color:#2d6a3f;">R$ 2.100</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Headers Premium</h3>
+      <p>Metricas em cards dark com numeros grandes brancos, headers de coluna dark com fundo claro por stage, avatares dark com letra colorida. Visual premium, contraste forte, autoridade. Combina com a sidebar dark que ja existe.</p>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:24px;padding:16px;background:#f8f8f5;border-radius:12px;border:1px solid #e5e5dc;">
+  <p style="font-size:13px;color:#5f6368;margin:0;"><strong>Dica:</strong> Clique no card pra selecionar. Depois responde no terminal qual preferiu e o que gostou/nao gostou.</p>
+</div>
