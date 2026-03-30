@@ -21,8 +21,12 @@ async def download_media(media_url: str) -> tuple[bytes, str]:
         return resp.content, resp.headers.get("content-type", "application/octet-stream")
 
 
-async def transcribe_audio(media_url: str) -> str:
-    """Download audio and transcribe with Whisper."""
+async def transcribe_audio(media_url: str) -> tuple[str, dict]:
+    """Download audio and transcribe with Whisper.
+
+    Returns (transcription_text, usage_info).
+    usage_info has keys: model, prompt_tokens, completion_tokens, estimated_cost
+    """
     audio_bytes, content_type = await download_media(media_url)
 
     ext = "ogg" if "ogg" in content_type else "mp4"
@@ -30,11 +34,26 @@ async def transcribe_audio(media_url: str) -> str:
         model="whisper-1",
         file=(f"audio.{ext}", audio_bytes, content_type),
     )
-    return transcript.text
+
+    # Whisper charges ~$0.006/min. Estimate 30s average per message.
+    estimated_cost = 0.003
+
+    usage_info = {
+        "model": "whisper-1",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "estimated_cost": estimated_cost,
+    }
+
+    return transcript.text, usage_info
 
 
-async def describe_image(media_url: str) -> str:
-    """Download image and describe with GPT-4o Vision."""
+async def describe_image(media_url: str) -> tuple[str, dict]:
+    """Download image and describe with GPT-4o Vision.
+
+    Returns (description_text, usage_info).
+    usage_info has keys: model, prompt_tokens, completion_tokens
+    """
     import base64
 
     image_bytes, content_type = await download_media(media_url)
@@ -51,4 +70,11 @@ async def describe_image(media_url: str) -> str:
         }],
         max_tokens=150,
     )
-    return response.choices[0].message.content
+
+    usage_info = {
+        "model": "gpt-4o",
+        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+    }
+
+    return response.choices[0].message.content, usage_info
