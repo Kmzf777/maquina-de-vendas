@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { WhatsAppTab } from "@/components/config/whatsapp-tab";
 import { TagsTab } from "@/components/config/tags-tab";
+import { PricingTab } from "@/components/config/pricing-tab";
 
 const TABS = [
   { key: "whatsapp", label: "WhatsApp" },
   { key: "tags", label: "Tags" },
+  { key: "pricing", label: "Precos IA" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -38,6 +40,7 @@ export default function ConfigPage() {
 
       {activeTab === "whatsapp" && <WhatsAppTab />}
       {activeTab === "tags" && <TagsTab />}
+      {activeTab === "pricing" && <PricingTab />}
     </div>
   );
 }
