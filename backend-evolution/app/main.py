@@ -40,12 +40,16 @@ from app.webhook.router import router as webhook_router
 from app.leads.router import router as leads_router
 from app.campaign.router import router as campaign_router
 from app.cadence.router import router as cadence_router, lead_router as cadence_lead_router
+from app.stats.router import router as stats_router
+from app.stats.pricing_router import router as pricing_router
 
 app.include_router(webhook_router)
 app.include_router(leads_router)
 app.include_router(campaign_router)
 app.include_router(cadence_router)
 app.include_router(cadence_lead_router)
+app.include_router(stats_router)
+app.include_router(pricing_router)
 
 
 @app.get("/health")
