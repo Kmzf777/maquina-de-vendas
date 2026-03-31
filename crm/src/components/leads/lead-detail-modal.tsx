@@ -239,18 +239,18 @@ export function LeadDetailModal({
                   <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Contato</p>
                   <div className="space-y-3">
                     {([
-                      { label: "Nome", field: "name", type: "text" },
-                      { label: "Telefone", field: "phone", type: "text", readonly: true },
-                      { label: "Email", field: "email", type: "text" },
-                      { label: "Instagram", field: "instagram", type: "text" },
-                    ] as const).map(({ label, field, readonly }) => (
+                      { label: "Nome", field: "name" as const, isReadonly: false },
+                      { label: "Telefone", field: "phone" as const, isReadonly: true },
+                      { label: "Email", field: "email" as const, isReadonly: false },
+                      { label: "Instagram", field: "instagram" as const, isReadonly: false },
+                    ]).map(({ label, field, isReadonly }) => (
                       <div key={field}>
                         <label className="text-[11px] text-[#b0b0b0] block mb-0.5">{label}</label>
                         <input
                           value={(form[field] as string) || ""}
                           onChange={(e) => updateField(field, e.target.value)}
-                          readOnly={readonly}
-                          className={`w-full text-[14px] text-[#1f1f1f] px-2.5 py-1.5 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] transition-colors ${readonly ? "bg-[#f6f7ed] text-[#9ca3af]" : ""}`}
+                          readOnly={isReadonly}
+                          className={`w-full text-[14px] text-[#1f1f1f] px-2.5 py-1.5 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] transition-colors ${isReadonly ? "bg-[#f6f7ed] text-[#9ca3af]" : ""}`}
                         />
                       </div>
                     ))}
