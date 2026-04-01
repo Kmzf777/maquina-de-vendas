@@ -147,3 +147,42 @@ export interface LeadEvent {
   metadata: Record<string, unknown> | null;
   created_at: string;
 }
+
+export interface Channel {
+  id: string;
+  name: string;
+  phone: string;
+  provider: "meta_cloud" | "evolution";
+  provider_config: Record<string, string>;
+  agent_profile_id: string | null;
+  agent_profiles?: { id: string; name: string } | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AgentProfile {
+  id: string;
+  name: string;
+  model: string;
+  stages: Record<string, {
+    prompt: string;
+    model: string;
+    tools: string[];
+  }>;
+  base_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  lead_id: string;
+  channel_id: string;
+  stage: string;
+  status: string;
+  campaign_id: string | null;
+  last_msg_at: string | null;
+  created_at: string;
+  leads?: Lead;
+  channels?: { id: string; name: string; phone: string; provider: string };
+}
