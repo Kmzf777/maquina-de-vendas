@@ -2,10 +2,10 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Evolution API
-    evolution_api_url: str
-    evolution_api_key: str
-    evolution_instance: str
+    # Evolution API (optional — per-channel config used instead)
+    evolution_api_url: str = ""
+    evolution_api_key: str = ""
+    evolution_instance: str = ""
 
     # OpenAI
     openai_api_key: str
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # App
     api_base_url: str = "http://localhost:8000"
-    frontend_url: str = "http://localhost:5173"
+    frontend_url: str = "http://localhost:3000"
 
     # Buffer
     buffer_base_timeout: int = 15
