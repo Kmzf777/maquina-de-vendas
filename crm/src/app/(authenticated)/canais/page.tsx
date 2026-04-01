@@ -244,7 +244,7 @@ export default function CanaisPage() {
     setQrStatus("idle");
   };
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  const backendUrl = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000";
 
   if (loading) {
     return (
