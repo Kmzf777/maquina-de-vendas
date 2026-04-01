@@ -47,6 +47,9 @@ async def process_single_campaign(campaign: dict):
         return
 
     channel = get_channel(channel_id)
+    if not channel.get("is_active"):
+        logger.warning(f"Campaign {campaign_id} channel {channel_id} is inactive, skipping")
+        return
     provider = get_provider(channel)
 
     # Get next batch of conversations to send

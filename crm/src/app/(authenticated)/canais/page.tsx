@@ -185,7 +185,7 @@ export default function CanaisPage() {
     await fetch(`/api/channels/${ch.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...ch, is_active: !ch.is_active }),
+      body: JSON.stringify({ is_active: !ch.is_active }),
     });
     await fetchData();
   }

@@ -15,6 +15,7 @@ from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
 from app.humanizer.typing import calculate_typing_delay
 from app.providers.registry import get_provider
+from app.agent_profiles.service import get_agent_profile
 
 logger = logging.getLogger(__name__)
 
@@ -51,16 +52,7 @@ async def process_buffered_messages(phone: str, combined_text: str, channel: dic
 
         if agent_profile_id:
             # Load agent profile
-            from app.db.supabase import get_supabase
-            sb = get_supabase()
-            profile = (
-                sb.table("agent_profiles")
-                .select("*")
-                .eq("id", agent_profile_id)
-                .single()
-                .execute()
-                .data
-            )
+            profile = get_agent_profile(agent_profile_id)
 
             # Enrich conversation with lead data for the agent
             conversation["leads"] = lead

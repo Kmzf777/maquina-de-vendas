@@ -83,19 +83,32 @@ export default function AgentesPage() {
   function openEdit(p: AgentProfile) {
     setEditingId(p.id);
     setError(null);
+    // Convert stages dict (from DB) to array (for form)
+    const stagesObj = p.stages as unknown;
+    let stagesArr: Stage[] = [{ ...EMPTY_STAGE }];
+    if (stagesObj && typeof stagesObj === "object" && !Array.isArray(stagesObj)) {
+      // Dict format: { "secretaria": { prompt, model, tools } }
+      stagesArr = Object.entries(stagesObj as Record<string, { prompt?: string; model?: string; tools?: string[] }>).map(
+        ([name, s]) => ({
+          name,
+          model: s.model ?? "",
+          prompt: s.prompt ?? "",
+          tools: s.tools ?? [],
+        })
+      );
+    } else if (Array.isArray(stagesObj) && stagesObj.length > 0) {
+      stagesArr = (stagesObj as Stage[]).map((s) => ({
+        name: s.name ?? "",
+        model: s.model ?? "",
+        prompt: s.prompt ?? "",
+        tools: s.tools ?? [],
+      }));
+    }
     setForm({
       name: p.name,
       model: p.model ?? "gpt-4.1",
       base_prompt: p.base_prompt ?? "",
-      stages:
-        p.stages && p.stages.length > 0
-          ? p.stages.map((s) => ({
-              name: s.name ?? "",
-              model: s.model ?? "",
-              prompt: s.prompt ?? "",
-              tools: s.tools ?? [],
-            }))
-          : [{ ...EMPTY_STAGE }],
+      stages: stagesArr.length > 0 ? stagesArr : [{ ...EMPTY_STAGE }],
     });
     setShowForm(true);
   }
@@ -148,11 +161,22 @@ export default function AgentesPage() {
     setSaving(true);
     setError(null);
     try {
+      // Convert stages array to dict keyed by stage name (backend expects Record<string, StageConfig>)
+      const stagesDict: Record<string, { prompt: string; model: string; tools: string[] }> = {};
+      for (const s of form.stages) {
+        if (s.name.trim()) {
+          stagesDict[s.name.trim()] = {
+            prompt: s.prompt,
+            model: s.model || form.model,
+            tools: s.tools,
+          };
+        }
+      }
       const payload = {
         name: form.name,
         model: form.model,
         base_prompt: form.base_prompt,
-        stages: form.stages,
+        stages: stagesDict,
       };
       const url = editingId ? `/api/agent-profiles/${editingId}` : "/api/agent-profiles";
       const method = editingId ? "PUT" : "POST";

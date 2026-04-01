@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
 from app.db.supabase import get_supabase
+
+logger = logging.getLogger(__name__)
 from app.campaign.importer import parse_csv
 from app.channels.service import get_channel
 
@@ -89,8 +93,8 @@ async def import_leads(campaign_id: str, file: UploadFile = File(...)):
             }).execute()
             created += 1
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to import phone {phone}: {e}")
 
     sb.table("campaigns").update({"total_leads": created}).eq("id", campaign_id).execute()
 

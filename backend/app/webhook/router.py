@@ -48,6 +48,10 @@ async def receive_meta_webhook(request: Request):
         logger.warning(f"No channel found for phone_number_id={phone_number_id}")
         return {"status": "ok"}
 
+    if not channel.get("is_active"):
+        logger.info(f"Channel {channel['name']} is inactive, ignoring message")
+        return {"status": "ok"}
+
     provider = get_provider(channel)
 
     for msg in messages:
@@ -78,6 +82,10 @@ async def receive_evolution_webhook(channel_id: str, request: Request):
         channel = get_channel(channel_id)
     except Exception:
         logger.warning(f"No channel found for id={channel_id}")
+        return {"status": "ok"}
+
+    if not channel.get("is_active"):
+        logger.info(f"Channel {channel['name']} is inactive, ignoring message")
         return {"status": "ok"}
 
     provider = get_provider(channel)
