@@ -94,7 +94,6 @@ export function ContactDetail({
               <span className="text-[14px] text-[#1f1f1f]">{stageInfo?.label || lead.stage}</span>
             </div>
             </div>
-          </div>
 
           {activeDeal && (
             <div className="bg-[#f6f7ed] border border-[#e5e5dc] rounded-xl p-3">
