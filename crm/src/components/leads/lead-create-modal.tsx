@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AGENT_STAGES, SELLER_STAGES, LEAD_CHANNELS } from "@/lib/constants";
+import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
 
 interface LeadCreateModalProps {
   onClose: () => void;
@@ -17,7 +17,6 @@ export function LeadCreateModal({ onClose, onCreate }: LeadCreateModalProps) {
     company: "",
     cnpj: "",
     stage: "secretaria",
-    seller_stage: "novo",
     channel: "manual",
   });
   const [saving, setSaving] = useState(false);
@@ -122,7 +121,7 @@ export function LeadCreateModal({ onClose, onCreate }: LeadCreateModalProps) {
             </div>
 
             {/* Selects */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[11px] text-[#b0b0b0] uppercase block mb-1">Stage</label>
                 <select
@@ -131,18 +130,6 @@ export function LeadCreateModal({ onClose, onCreate }: LeadCreateModalProps) {
                   className="w-full text-[13px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none bg-white"
                 >
                   {AGENT_STAGES.map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[11px] text-[#b0b0b0] uppercase block mb-1">Etapa Vendas</label>
-                <select
-                  value={form.seller_stage}
-                  onChange={(e) => update("seller_stage", e.target.value)}
-                  className="w-full text-[13px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none bg-white"
-                >
-                  {SELLER_STAGES.map((s) => (
                     <option key={s.key} value={s.key}>{s.label}</option>
                   ))}
                 </select>

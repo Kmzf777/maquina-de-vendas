@@ -14,7 +14,7 @@ export function LeadDetailSidebar({ lead, onClose }: LeadDetailSidebarProps) {
   async function markAsLost() {
     await supabase
       .from("leads")
-      .update({ seller_stage: "perdido" })
+      .update({ status: "lost" })
       .eq("id", lead.id);
     onClose();
   }
@@ -26,7 +26,6 @@ export function LeadDetailSidebar({ lead, onClose }: LeadDetailSidebarProps) {
     { label: "TELEFONE", value: lead.phone },
     { label: "EMPRESA", value: lead.company || "\u2014" },
     { label: "STAGE (AGENTE)", value: lead.stage },
-    { label: "STAGE (VENDEDOR)", value: lead.seller_stage },
     { label: "CANAL", value: lead.channel },
     {
       label: "CRIADO EM",

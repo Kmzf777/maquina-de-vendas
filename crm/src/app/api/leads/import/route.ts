@@ -13,7 +13,6 @@ interface ImportLead {
   endereco?: string;
   telefone_comercial?: string;
   stage?: string;
-  seller_stage?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -63,7 +62,6 @@ export async function POST(request: NextRequest) {
       endereco: l.endereco || null,
       telefone_comercial: l.telefone_comercial || null,
       stage: l.stage || "secretaria",
-      seller_stage: l.seller_stage || "novo",
       channel: "manual" as const,
       status: "active" as const,
     }));

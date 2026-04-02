@@ -16,7 +16,6 @@ const LEAD_FIELDS = [
   { key: "endereco", label: "Endereco" },
   { key: "telefone_comercial", label: "Telefone Comercial" },
   { key: "stage", label: "Stage" },
-  { key: "seller_stage", label: "Etapa Vendas" },
 ];
 
 const AUTO_MAP: Record<string, string> = {
@@ -31,7 +30,6 @@ const AUTO_MAP: Record<string, string> = {
   endereco: "endereco", address: "endereco",
   "telefone comercial": "telefone_comercial",
   stage: "stage", etapa: "stage",
-  seller_stage: "seller_stage", "etapa vendas": "seller_stage",
 };
 
 interface LeadImportModalProps {

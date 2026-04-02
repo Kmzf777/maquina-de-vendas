@@ -48,7 +48,6 @@ export async function POST(req: NextRequest) {
           name: null,
           status: "active",
           stage: "secretaria",
-          seller_stage: "novo",
           human_control: true,
           channel: "evolution",
         })

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SELLER_STAGES, AGENT_STAGES } from "@/lib/constants";
+import { AGENT_STAGES } from "@/lib/constants";
 import { EditableField } from "./editable-field";
 import { createClient } from "@/lib/supabase/client";
 import type { Lead, Tag, Conversation } from "@/lib/types";
@@ -11,7 +11,6 @@ interface ContactDetailProps {
   tags: Tag[];
   leadTags: Tag[];
   onTagToggle: (tagId: string, add: boolean) => void;
-  onSellerStageChange: (stage: string) => void;
 }
 
 export function ContactDetail({
@@ -19,7 +18,6 @@ export function ContactDetail({
   tags,
   leadTags,
   onTagToggle,
-  onSellerStageChange,
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const lead = conversation.leads as Lead | undefined | null;
@@ -33,8 +31,7 @@ export function ContactDetail({
 
   async function updateLeadField(field: string, value: string) {
     if (!lead) return;
-    const numericFields = ["sale_value"];
-    const updateValue = numericFields.includes(field) ? Number(value) || 0 : value;
+    const updateValue = value;
     await supabase.from("leads").update({ [field]: updateValue }).eq("id", lead.id);
   }
 
@@ -79,28 +76,8 @@ export function ContactDetail({
               <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-0.5">Stage (Agente)</span>
               <span className="text-[14px] text-[#1f1f1f]">{stageInfo?.label || lead.stage}</span>
             </div>
-            <div>
-              <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-0.5">Stage (Vendedor)</span>
-              <select
-                value={lead.seller_stage}
-                onChange={(e) => onSellerStageChange(e.target.value)}
-                className="input-field text-[14px] rounded-xl px-3 py-1.5 mt-1 w-full"
-              >
-                {SELLER_STAGES.map((s) => (
-                  <option key={s.key} value={s.key}>{s.label}</option>
-                ))}
-              </select>
             </div>
           </div>
-
-          {/* Sale Value */}
-          <EditableField
-            label="Valor da Venda"
-            value={String(lead.sale_value || 0)}
-            onSave={(v) => updateLeadField("sale_value", v)}
-            placeholder="0"
-            mask="currency"
-          />
 
           {/* B2B Fields */}
           <div className="border-t border-[#e5e5dc] pt-4 space-y-3">

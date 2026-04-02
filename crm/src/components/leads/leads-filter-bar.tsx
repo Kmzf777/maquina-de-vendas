@@ -1,6 +1,6 @@
 "use client";
 
-import { AGENT_STAGES, SELLER_STAGES, LEAD_CHANNELS } from "@/lib/constants";
+import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
 import type { Temperature } from "@/lib/temperature";
 import { TEMPERATURE_CONFIG } from "@/lib/temperature";
 import type { Tag } from "@/lib/types";
@@ -9,7 +9,6 @@ export interface LeadFilters {
   search: string;
   temperature: Temperature | "";
   stage: string;
-  sellerStage: string;
   tagId: string;
   channel: string;
 }
@@ -34,7 +33,7 @@ export function LeadsFilterBar({
   }
 
   function clearAll() {
-    onChange({ search: "", temperature: "", stage: "", sellerStage: "", tagId: "", channel: "" });
+    onChange({ search: "", temperature: "", stage: "", tagId: "", channel: "" });
   }
 
   const activeFilters: { label: string; key: keyof LeadFilters }[] = [];
@@ -44,10 +43,6 @@ export function LeadsFilterBar({
   if (filters.stage) {
     const s = AGENT_STAGES.find((a) => a.key === filters.stage);
     activeFilters.push({ label: s?.label || filters.stage, key: "stage" });
-  }
-  if (filters.sellerStage) {
-    const s = SELLER_STAGES.find((a) => a.key === filters.sellerStage);
-    activeFilters.push({ label: s?.label || filters.sellerStage, key: "sellerStage" });
   }
   if (filters.tagId) {
     const t = tags.find((tag) => tag.id === filters.tagId);
@@ -95,18 +90,6 @@ export function LeadsFilterBar({
         >
           <option value="">Stage</option>
           {AGENT_STAGES.map((s) => (
-            <option key={s.key} value={s.key}>{s.label}</option>
-          ))}
-        </select>
-
-        {/* Seller Stage */}
-        <select
-          value={filters.sellerStage}
-          onChange={(e) => update({ sellerStage: e.target.value })}
-          className="py-2 px-3 rounded-lg border border-[#e5e5dc] text-[13px] text-[#5f6368] bg-white cursor-pointer"
-        >
-          <option value="">Etapa Vendas</option>
-          {SELLER_STAGES.map((s) => (
             <option key={s.key} value={s.key}>{s.label}</option>
           ))}
         </select>

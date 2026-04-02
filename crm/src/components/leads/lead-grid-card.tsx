@@ -2,7 +2,7 @@
 
 import type { Lead, Tag } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
-import { AGENT_STAGES, SELLER_STAGES } from "@/lib/constants";
+import { AGENT_STAGES } from "@/lib/constants";
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "Nunca";
@@ -16,11 +16,6 @@ function timeAgo(dateStr: string | null): string {
   return `${days}d atras`;
 }
 
-function formatCurrency(value: number): string {
-  if (value === 0) return "\u2014";
-  return `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
-}
-
 interface LeadGridCardProps {
   lead: Lead;
   tags: Tag[];
@@ -31,7 +26,6 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
   const temp = getTemperature(lead.last_msg_at);
   const tempConfig = TEMPERATURE_CONFIG[temp];
   const stageInfo = AGENT_STAGES.find((s) => s.key === lead.stage);
-  const sellerInfo = SELLER_STAGES.find((s) => s.key === lead.seller_stage);
   const initials = (lead.name || lead.phone)
     .split(" ")
     .slice(0, 2)
@@ -89,18 +83,15 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
         )}
       </div>
 
-      {/* Company + Value */}
-      <div className="flex justify-between text-[12px] text-[#9ca3af]">
+      {/* Company */}
+      <div className="text-[12px] text-[#9ca3af]">
         <span>{lead.company || lead.razao_social || "\u2014"}</span>
-        <span className="font-semibold text-[#4ade80]">
-          {formatCurrency(lead.sale_value || 0)}
-        </span>
       </div>
 
       {/* Footer */}
       <div className="flex justify-between text-[11px] text-[#b0b0b0] mt-2 pt-2 border-t border-[#f3f3f0]">
         <span>
-          {sellerInfo?.label || "Novo"} · {stageInfo?.label || lead.stage}
+          {stageInfo?.label || lead.stage}
         </span>
         <span>Ultima msg: {timeAgo(lead.last_msg_at)}</span>
       </div>

@@ -18,7 +18,7 @@ export default function LeadsPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [leadTagsMap, setLeadTagsMap] = useState<Record<string, string[]>>({});
   const [filters, setFilters] = useState<LeadFilters>({
-    search: "", temperature: "", stage: "", sellerStage: "", tagId: "", channel: "",
+    search: "", temperature: "", stage: "", tagId: "", channel: "",
   });
   const [page, setPage] = useState(1);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -60,7 +60,6 @@ export default function LeadsPage() {
       }
       if (filters.temperature && getTemperature(lead.last_msg_at) !== filters.temperature) return false;
       if (filters.stage && lead.stage !== filters.stage) return false;
-      if (filters.sellerStage && lead.seller_stage !== filters.sellerStage) return false;
       if (filters.channel && lead.channel !== filters.channel) return false;
       if (filters.tagId) {
         const leadTags = leadTagsMap[lead.id] || [];
@@ -80,15 +79,14 @@ export default function LeadsPage() {
   // KPIs
   const kpis = useMemo(() => {
     const total = leads.length;
-    let quentes = 0, mornos = 0, frios = 0, totalValue = 0;
+    let quentes = 0, mornos = 0, frios = 0;
     for (const lead of leads) {
       const temp = getTemperature(lead.last_msg_at);
       if (temp === "quente") quentes++;
       else if (temp === "morno") mornos++;
       else frios++;
-      totalValue += lead.sale_value || 0;
     }
-    return { total, quentes, mornos, frios, totalValue };
+    return { total, quentes, mornos, frios };
   }, [leads]);
 
   function getLeadTags(leadId: string): Tag[] {
@@ -136,11 +134,6 @@ export default function LeadsPage() {
     a.click();
     URL.revokeObjectURL(url);
   }
-
-  const fmt = (v: number) =>
-    v >= 1000000
-      ? `R$ ${(v / 1000000).toFixed(1)}M`
-      : `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
   if (loading) {
     return (
@@ -205,7 +198,7 @@ export default function LeadsPage() {
       </div>
 
       {/* KPI Bar */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 mb-6">
         <div className="card p-4">
           <p className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Total de Leads</p>
           <p className="text-[28px] font-bold text-[#1f1f1f] mt-1">{kpis.total}</p>
@@ -233,10 +226,6 @@ export default function LeadsPage() {
           </div>
           <p className="text-[28px] font-bold text-[#60a5fa] mt-1">{kpis.frios}</p>
           <p className="text-[11px] text-[#9ca3af]">Ultima msg &gt; 7d</p>
-        </div>
-        <div className="card p-4">
-          <p className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Valor Total Pipeline</p>
-          <p className="text-[28px] font-bold text-[#4ade80] mt-1">{fmt(kpis.totalValue)}</p>
         </div>
       </div>
 

@@ -43,7 +43,6 @@ export async function POST(request: NextRequest) {
       company: body.company || null,
       cnpj: body.cnpj || null,
       stage: body.stage || "secretaria",
-      seller_stage: body.seller_stage || "novo",
       channel: body.channel || "manual",
       status: "active",
     })

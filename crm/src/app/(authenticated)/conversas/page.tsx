@@ -119,39 +119,6 @@ export default function ConversasPage() {
     }
   }
 
-  async function handleSellerStageChange(stage: string) {
-    if (!selectedLead) return;
-
-    await supabase
-      .from("leads")
-      .update({ seller_stage: stage })
-      .eq("id", selectedLead.id);
-
-    // Update the conversation's nested lead data
-    setConversations((prev) =>
-      prev.map((conv) => {
-        if (conv.id === selectedConversation?.id && conv.leads) {
-          return {
-            ...conv,
-            leads: { ...(conv.leads as Lead), seller_stage: stage },
-          };
-        }
-        return conv;
-      })
-    );
-
-    if (selectedConversation?.leads) {
-      setSelectedConversation((prev) =>
-        prev
-          ? {
-              ...prev,
-              leads: { ...(prev.leads as Lead), seller_stage: stage },
-            }
-          : prev
-      );
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full bg-[#f6f7ed]">
@@ -187,7 +154,6 @@ export default function ConversasPage() {
             tags={tags}
             leadTags={selectedLeadTags}
             onTagToggle={handleTagToggle}
-            onSellerStageChange={handleSellerStageChange}
           />
         </>
       ) : (

@@ -59,7 +59,6 @@ export function ChatActive({ lead, onClose, onOpenDetails }: ChatActiveProps) {
           </h2>
           <div className="flex items-center gap-2 mt-0.5">
             <span className="badge text-[11px]">{lead.stage}</span>
-            <span className="badge text-[11px]">{lead.seller_stage}</span>
           </div>
         </div>
         <button

@@ -12,11 +12,6 @@ function timeAgo(dateStr: string | null): string {
   return `${days}d`;
 }
 
-function formatCurrency(value: number): string {
-  if (value === 0) return "";
-  return `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
-}
-
 interface LeadCardProps {
   lead: Lead;
   onClick: (lead: Lead) => void;
@@ -36,7 +31,6 @@ export function LeadCard({
   lastMessage,
   avatarColor = "#c8cc8e",
 }: LeadCardProps) {
-  const currencyStr = formatCurrency(lead.sale_value ?? 0);
   const initial = (lead.name || lead.phone)?.[0]?.toUpperCase() || "?";
 
   return (
@@ -69,11 +63,6 @@ export function LeadCard({
               </span>
             </div>
           </div>
-          {currencyStr && (
-            <span className="text-[11px] font-semibold text-[#2d6a3f]">
-              {currencyStr}
-            </span>
-          )}
         </div>
       </div>
 

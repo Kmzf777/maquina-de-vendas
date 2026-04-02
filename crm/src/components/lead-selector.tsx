@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { AGENT_STAGES, SELLER_STAGES } from "@/lib/constants";
+import { AGENT_STAGES } from "@/lib/constants";
 import type { Lead, Tag } from "@/lib/types";
 
 interface LeadSelectorProps {
@@ -18,7 +18,6 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
 
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<string[]>([]);
-  const [sellerStageFilter, setSellerStageFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
 
   const supabase = createClient();
@@ -54,7 +53,6 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
   const filtered = useMemo(() => {
     return leads.filter((l) => {
       if (stageFilter.length > 0 && !stageFilter.includes(l.stage)) return false;
-      if (sellerStageFilter.length > 0 && !sellerStageFilter.includes(l.seller_stage)) return false;
       if (tagFilter.length > 0) {
         const lt = leadTagsMap[l.id] || [];
         if (!tagFilter.some((tid) => lt.some((t) => t.id === tid))) return false;
@@ -70,7 +68,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
       }
       return true;
     });
-  }, [leads, stageFilter, sellerStageFilter, tagFilter, search, leadTagsMap]);
+  }, [leads, stageFilter, tagFilter, search, leadTagsMap]);
 
   function toggleAll() {
     if (filtered.every((l) => selectedIds.has(l.id))) {
@@ -113,12 +111,6 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
           onChange={setStageFilter}
         />
         <MultiSelect
-          label="Funil Vendedor"
-          options={SELLER_STAGES.map((s) => ({ value: s.key, label: s.label }))}
-          selected={sellerStageFilter}
-          onChange={setSellerStageFilter}
-        />
-        <MultiSelect
           label="Tags"
           options={tags.map((t) => ({ value: t.id, label: t.name }))}
           selected={tagFilter}
@@ -148,14 +140,12 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
               <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Nome</th>
               <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Telefone</th>
               <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Stage</th>
-              <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Vendedor</th>
               <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Tags</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((l) => {
               const stageInfo = AGENT_STAGES.find((s) => s.key === l.stage);
-              const sellerInfo = SELLER_STAGES.find((s) => s.key === l.seller_stage);
               const lt = leadTagsMap[l.id] || [];
 
               return (
@@ -184,14 +174,6 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
                     )}
                   </td>
                   <td className="px-4 py-2.5">
-                    {sellerInfo && (
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${sellerInfo.color}`}>
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: sellerInfo.dotColor }} />
-                        {sellerInfo.label}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5">
                     <div className="flex gap-1 flex-wrap">
                       {lt.slice(0, 3).map((tag) => (
                         <span
@@ -212,7 +194,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-[13px] text-[#9ca3af]">
+                <td colSpan={5} className="px-4 py-8 text-center text-[13px] text-[#9ca3af]">
                   Nenhum lead encontrado.
                 </td>
               </tr>

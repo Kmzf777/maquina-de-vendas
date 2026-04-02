@@ -16,7 +16,7 @@ export async function GET() {
   const headers = [
     "nome", "telefone", "email", "instagram", "empresa", "cnpj",
     "razao_social", "nome_fantasia", "endereco", "telefone_comercial",
-    "stage", "seller_stage", "canal", "valor_venda", "criado_em",
+    "stage", "canal", "criado_em",
   ];
 
   const rows = (leads || []).map((l) => [
@@ -31,9 +31,7 @@ export async function GET() {
     l.endereco || "",
     l.telefone_comercial || "",
     l.stage,
-    l.seller_stage,
     l.channel,
-    l.sale_value || 0,
     l.created_at,
   ]);
 

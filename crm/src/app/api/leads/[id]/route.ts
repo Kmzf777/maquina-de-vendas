@@ -11,7 +11,7 @@ export async function PATCH(
 
   const { data: currentLead } = await supabase
     .from("leads")
-    .select("stage, seller_stage")
+    .select("stage")
     .eq("id", id)
     .single();
 
@@ -34,14 +34,6 @@ export async function PATCH(
         event_type: "stage_change",
         old_value: currentLead.stage,
         new_value: body.stage,
-      });
-    }
-    if (body.seller_stage && body.seller_stage !== currentLead.seller_stage) {
-      events.push({
-        lead_id: id,
-        event_type: "seller_stage_change",
-        old_value: currentLead.seller_stage,
-        new_value: body.seller_stage,
       });
     }
     if (events.length > 0) {

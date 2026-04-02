@@ -5,11 +5,10 @@ import { createClient } from "@/lib/supabase/client";
 
 interface QuickAddLeadProps {
   stage: string;
-  sellerStage?: string;
   humanControl?: boolean;
 }
 
-export function QuickAddLead({ stage, sellerStage = "novo", humanControl = false }: QuickAddLeadProps) {
+export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -27,11 +26,9 @@ export function QuickAddLead({ stage, sellerStage = "novo", humanControl = false
       phone: phone.trim(),
       company: company.trim() || null,
       stage,
-      seller_stage: sellerStage,
       human_control: humanControl,
       status: "active",
       channel: "manual",
-      sale_value: 0,
     });
 
     setName("");

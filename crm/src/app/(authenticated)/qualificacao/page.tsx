@@ -54,7 +54,6 @@ export default function QualificacaoPage() {
   }
 
   const filteredLeads = leads.filter((l) => {
-    if (showActive && (l.seller_stage === "perdido" || l.seller_stage === "fechado")) return false;
     if (search) {
       const q = search.toLowerCase();
       const match =

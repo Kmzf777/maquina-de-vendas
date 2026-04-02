@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
-import { AGENT_STAGES, SELLER_STAGES, LEAD_CHANNELS } from "@/lib/constants";
+import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -148,8 +148,8 @@ export function LeadDetailModal({
     switch (event.event_type) {
       case "stage_change":
         return `Stage alterado de ${event.old_value} para ${event.new_value}`;
-      case "seller_stage_change":
-        return `Etapa vendas alterada de ${event.old_value} para ${event.new_value}`;
+      case "deal_stage_change":
+        return `Etapa do deal alterada de ${event.old_value} para ${event.new_value}`;
       case "campaign_added":
         return `Adicionado a campanha ${event.new_value}`;
       case "campaign_removed":
@@ -296,7 +296,7 @@ export function LeadDetailModal({
               {/* CRM Status row */}
               <div className="mt-5 pt-4 border-t border-[#f3f3f0]">
                 <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Status no CRM</p>
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="bg-[#f6f7ed] rounded-lg p-3">
                     <label className="text-[11px] text-[#b0b0b0] block mb-1">Stage (IA)</label>
                     <select
@@ -310,34 +310,12 @@ export function LeadDetailModal({
                     </select>
                   </div>
                   <div className="bg-[#f6f7ed] rounded-lg p-3">
-                    <label className="text-[11px] text-[#b0b0b0] block mb-1">Etapa Vendas</label>
-                    <select
-                      value={form.seller_stage}
-                      onChange={(e) => updateField("seller_stage", e.target.value)}
-                      className="w-full text-[13px] font-semibold text-[#1f1f1f] bg-transparent outline-none cursor-pointer"
-                    >
-                      {SELLER_STAGES.map((s) => (
-                        <option key={s.key} value={s.key}>{s.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="bg-[#f6f7ed] rounded-lg p-3">
                     <label className="text-[11px] text-[#b0b0b0] block mb-1">Atribuido a</label>
                     <input
                       value={(form.assigned_to as string) || ""}
                       onChange={(e) => updateField("assigned_to", e.target.value)}
                       placeholder="Ninguem"
                       className="w-full text-[13px] font-semibold text-[#1f1f1f] bg-transparent outline-none"
-                    />
-                  </div>
-                  <div className="bg-[#f6f7ed] rounded-lg p-3">
-                    <label className="text-[11px] text-[#b0b0b0] block mb-1">Valor de Venda</label>
-                    <input
-                      value={form.sale_value || ""}
-                      onChange={(e) => updateField("sale_value", Number(e.target.value) || 0)}
-                      type="number"
-                      placeholder="0"
-                      className="w-full text-[13px] font-semibold text-[#4ade80] bg-transparent outline-none"
                     />
                   </div>
                 </div>
@@ -517,7 +495,7 @@ export function LeadDetailModal({
           {/* TAB: Metricas */}
           {activeTab === "metricas" && (
             <div>
-              <div className="grid grid-cols-3 gap-3 mb-5">
+              <div className="grid grid-cols-2 gap-3 mb-5">
                 <div className="bg-[#f6f7ed] rounded-[10px] p-4 text-center">
                   <p className="text-[11px] text-[#b0b0b0] uppercase">Temperatura</p>
                   <p className="text-[14px] font-bold mt-2" style={{ color: tempConfig.color }}>
@@ -525,12 +503,6 @@ export function LeadDetailModal({
                   </p>
                   <p className="text-[11px] text-[#9ca3af] mt-0.5">
                     Ultima msg: {lead.last_msg_at ? new Date(lead.last_msg_at).toLocaleDateString("pt-BR") : "Nunca"}
-                  </p>
-                </div>
-                <div className="bg-[#f6f7ed] rounded-[10px] p-4 text-center">
-                  <p className="text-[11px] text-[#b0b0b0] uppercase">Valor de Venda</p>
-                  <p className="text-[24px] font-bold text-[#4ade80] mt-1">
-                    {lead.sale_value ? `R$ ${lead.sale_value.toLocaleString("pt-BR")}` : "\u2014"}
                   </p>
                 </div>
                 <div className="bg-[#f6f7ed] rounded-[10px] p-4 text-center">
