@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { SELLER_STAGES } from "@/lib/constants";
-import type { Lead } from "@/lib/types";
+import { DEAL_STAGES } from "@/lib/constants";
+import type { Deal } from "@/lib/types";
 
 interface FunnelMovementProps {
-  leads: Lead[];
+  deals: Deal[];
 }
 
 type Period = "today" | "7d" | "30d";
@@ -18,18 +18,18 @@ function getPeriodStart(period: Period): Date {
   return d;
 }
 
-export function FunnelMovement({ leads }: FunnelMovementProps) {
+export function FunnelMovement({ deals }: FunnelMovementProps) {
   const [period, setPeriod] = useState<Period>("30d");
   const periodStart = getPeriodStart(period);
 
-  const stages = SELLER_STAGES.filter((s) => s.key !== "perdido");
+  const stages = DEAL_STAGES.filter((s) => s.key !== "fechado_perdido");
 
   const data = stages.map((stage) => {
-    const inStage = leads.filter((l) => l.seller_stage === stage.key);
+    const inStage = deals.filter((d) => d.stage === stage.key);
     const entered = inStage.filter(
-      (l) => l.entered_stage_at && new Date(l.entered_stage_at) >= periodStart
+      (d) => d.updated_at && new Date(d.updated_at) >= periodStart
     );
-    const value = inStage.reduce((sum, l) => sum + (l.sale_value || 0), 0);
+    const value = inStage.reduce((sum, d) => sum + (d.value || 0), 0);
 
     return {
       ...stage,
@@ -39,13 +39,13 @@ export function FunnelMovement({ leads }: FunnelMovementProps) {
     };
   });
 
-  const lost = leads.filter(
-    (l) =>
-      l.seller_stage === "perdido" &&
-      l.entered_stage_at &&
-      new Date(l.entered_stage_at) >= periodStart
+  const lost = deals.filter(
+    (d) =>
+      d.stage === "fechado_perdido" &&
+      d.closed_at &&
+      new Date(d.closed_at) >= periodStart
   );
-  const lostValue = lost.reduce((sum, l) => sum + (l.sale_value || 0), 0);
+  const lostValue = lost.reduce((sum, d) => sum + (d.value || 0), 0);
 
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
   const periods: { key: Period; label: string }[] = [
@@ -61,7 +61,7 @@ export function FunnelMovement({ leads }: FunnelMovementProps) {
           className="text-[13px] font-semibold uppercase tracking-wider"
           style={{ color: "var(--text-secondary)" }}
         >
-          Movimentacao do Funil
+          Movimentacao do Pipeline
         </h3>
         <div className="flex gap-1">
           {periods.map((p) => (
@@ -95,7 +95,7 @@ export function FunnelMovement({ leads }: FunnelMovementProps) {
           </thead>
           <tbody>
             <tr className="border-t border-[#e5e5dc]">
-              <td className="py-2 px-3 text-[#9ca3af] text-[11px] uppercase">Dentro da etapa</td>
+              <td className="py-2 px-3 text-[#9ca3af] text-[11px] uppercase">Na etapa</td>
               {data.map((d) => (
                 <td key={d.key} className="text-center py-2 px-3">
                   <span className="text-[14px] font-bold text-[#1f1f1f]">{d.count}</span>
@@ -114,21 +114,13 @@ export function FunnelMovement({ leads }: FunnelMovementProps) {
                 </td>
               ))}
             </tr>
-            <tr className="border-t border-[#e5e5dc]">
-              <td className="py-2 px-3 text-[#9ca3af] text-[11px] uppercase">Perda</td>
-              {data.map((d) => (
-                <td key={d.key} className="text-center py-2 px-3 text-[#9ca3af] text-[12px]">
-                  0 leads, R$ 0
-                </td>
-              ))}
-            </tr>
           </tbody>
         </table>
       </div>
 
       <div className="mt-3 pt-3 border-t border-[#e5e5dc] flex items-center gap-4">
-        <span className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Total perdidos no periodo:</span>
-        <span className="text-[14px] font-bold text-[#a33]">{lost.length} leads</span>
+        <span className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Perdidos no periodo:</span>
+        <span className="text-[14px] font-bold text-[#a33]">{lost.length} deals</span>
         <span className="text-[12px] text-[#5f6368]">{fmt(lostValue)}</span>
       </div>
     </div>

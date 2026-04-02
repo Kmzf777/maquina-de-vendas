@@ -2,7 +2,8 @@
 
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
 import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
-import { AGENT_STAGES } from "@/lib/constants";
+import { useRealtimeDeals } from "@/hooks/use-realtime-deals";
+import { DEAL_STAGES } from "@/lib/constants";
 import { KpiCard } from "@/components/kpi-card";
 import { FunnelChart } from "@/components/funnel-chart";
 import { CampaignMetricsTable } from "@/components/campaign-table";
@@ -48,8 +49,9 @@ const ClockIcon = (
 export default function DashboardPage() {
   const { leads, loading: leadsLoading } = useRealtimeLeads();
   const { campaigns, loading: campaignsLoading } = useRealtimeCampaigns();
+  const { deals, loading: dealsLoading } = useRealtimeDeals();
 
-  if (leadsLoading || campaignsLoading) {
+  if (leadsLoading || campaignsLoading || dealsLoading) {
     return (
       <div className="space-y-6">
         <div>
@@ -70,14 +72,14 @@ export default function DashboardPage() {
 
   const leadsToday = leads.filter((l) => new Date(l.created_at) >= today).length;
 
-  const activeLeads = leads.filter((l) => l.seller_stage !== "perdido" && l.seller_stage !== "fechado");
-  const activeValue = activeLeads.reduce((sum, l) => sum + (l.sale_value || 0), 0);
+  const activeDeals = deals.filter((d) => d.stage !== "fechado_ganho" && d.stage !== "fechado_perdido");
+  const activeValue = activeDeals.reduce((sum, d) => sum + (d.value || 0), 0);
 
-  const wonLeads = leads.filter((l) => l.seller_stage === "fechado");
-  const wonValue = wonLeads.reduce((sum, l) => sum + (l.sale_value || 0), 0);
+  const wonDeals = deals.filter((d) => d.stage === "fechado_ganho");
+  const wonValue = wonDeals.reduce((sum, d) => sum + (d.value || 0), 0);
 
-  const lostLeads = leads.filter((l) => l.seller_stage === "perdido");
-  const lostValue = lostLeads.reduce((sum, l) => sum + (l.sale_value || 0), 0);
+  const lostDeals = deals.filter((d) => d.stage === "fechado_perdido");
+  const lostValue = lostDeals.reduce((sum, d) => sum + (d.value || 0), 0);
 
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
   const unanswered = leads.filter(
@@ -95,20 +97,16 @@ export default function DashboardPage() {
 
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
-  const funnelData: { name: string; count: number; value: number }[] = AGENT_STAGES.map((stage) => {
-    const stageLeads = leads.filter((l) => l.stage === stage.key);
-    return {
-      name: stage.label,
-      count: stageLeads.length,
-      value: stageLeads.reduce((sum, l) => sum + (l.sale_value || 0), 0),
-    };
-  });
-  const humanLeads = leads.filter((l) => l.human_control);
-  funnelData.push({
-    name: "Convertidos",
-    count: humanLeads.length,
-    value: humanLeads.reduce((sum, l) => sum + (l.sale_value || 0), 0),
-  });
+  const funnelData = DEAL_STAGES
+    .filter((s) => s.key !== "fechado_perdido")
+    .map((stage) => {
+      const stageDeals = deals.filter((d) => d.stage === stage.key);
+      return {
+        name: stage.label,
+        count: stageDeals.length,
+        value: stageDeals.reduce((sum, d) => sum + (d.value || 0), 0),
+      };
+    });
 
   return (
     <div>
@@ -123,9 +121,9 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-3 gap-5 mb-8">
         <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />
-        <KpiCard label="Leads ativos" value={activeLeads.length} subtitle={fmt(activeValue)} icon={UsersIcon} />
-        <KpiCard label="Leads ganhos" value={wonLeads.length} subtitle={fmt(wonValue)} icon={CheckIcon} />
-        <KpiCard label="Leads perdidos" value={lostLeads.length} subtitle={fmt(lostValue)} icon={XIcon} />
+        <KpiCard label="Deals ativos" value={activeDeals.length} subtitle={fmt(activeValue)} icon={UsersIcon} />
+        <KpiCard label="Deals ganhos" value={wonDeals.length} subtitle={fmt(wonValue)} icon={CheckIcon} />
+        <KpiCard label="Deals perdidos" value={lostDeals.length} subtitle={fmt(lostValue)} icon={XIcon} />
         <KpiCard label="Chats sem resposta" value={unanswered} icon={ChatIcon} />
         <KpiCard label="Tempo de resposta" value={responseStr} icon={ClockIcon} />
       </div>
@@ -136,7 +134,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="mb-8">
-        <FunnelMovement leads={leads} />
+        <FunnelMovement deals={deals} />
       </div>
 
       <CampaignMetricsTable campaigns={campaigns} />
