@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AGENT_STAGES } from "@/lib/constants";
 import { EditableField } from "./editable-field";
 import { createClient } from "@/lib/supabase/client";
@@ -20,10 +20,27 @@ export function ContactDetail({
   onTagToggle,
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
+  const [activeDeal, setActiveDeal] = useState<{ title: string; value: number; stage: string } | null>(null);
   const lead = conversation.leads as Lead | undefined | null;
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
   const supabase = createClient();
+
+  useEffect(() => {
+    if (!lead) return;
+    import("@/lib/supabase/client").then(({ createClient: createSbClient }) => {
+      const sb = createSbClient();
+      sb.from("deals")
+        .select("title, value, stage")
+        .eq("lead_id", lead.id)
+        .not("stage", "in", "(fechado_ganho,fechado_perdido)")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .then(({ data }) => {
+          if (data && data.length > 0) setActiveDeal(data[0]);
+        });
+    });
+  }, [lead?.id]);
 
   const stageInfo = lead ? AGENT_STAGES.find((s) => s.key === lead.stage) : null;
   const leadTagIds = new Set(leadTags.map((t) => t.id));
@@ -78,6 +95,16 @@ export function ContactDetail({
             </div>
             </div>
           </div>
+
+          {activeDeal && (
+            <div className="bg-[#f6f7ed] border border-[#e5e5dc] rounded-xl p-3">
+              <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-1">Oportunidade ativa</span>
+              <p className="text-[13px] font-semibold text-[#1f1f1f]">{activeDeal.title}</p>
+              <p className="text-[14px] font-bold text-[#2d6a3f]">
+                {activeDeal.value > 0 ? `R$ ${activeDeal.value.toLocaleString("pt-BR")}` : "\u2014"}
+              </p>
+            </div>
+          )}
 
           {/* B2B Fields */}
           <div className="border-t border-[#e5e5dc] pt-4 space-y-3">

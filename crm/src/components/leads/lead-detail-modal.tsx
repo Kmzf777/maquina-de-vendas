@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
-import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
+import { AGENT_STAGES, LEAD_CHANNELS, DEAL_STAGES } from "@/lib/constants";
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -50,6 +50,7 @@ export function LeadDetailModal({
   }>>([]);
   const [currentTagIds, setCurrentTagIds] = useState<string[]>(leadTagIds);
   const [showTagDropdown, setShowTagDropdown] = useState(false);
+  const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string; category: string | null }>>([]);
 
   const temp = getTemperature(lead.last_msg_at);
   const tempConfig = TEMPERATURE_CONFIG[temp];
@@ -94,6 +95,20 @@ export function LeadDetailModal({
       });
     }
   }, [activeTab, lead.id]);
+
+  useEffect(() => {
+    import("@/lib/supabase/client").then(({ createClient }) => {
+      const supabase = createClient();
+      supabase
+        .from("deals")
+        .select("id, title, value, stage, category")
+        .eq("lead_id", lead.id)
+        .order("created_at", { ascending: false })
+        .then(({ data }) => {
+          if (data) setLeadDeals(data);
+        });
+    });
+  }, [lead.id]);
 
   function updateField(field: string, value: string | number) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -318,6 +333,36 @@ export function LeadDetailModal({
                       className="w-full text-[13px] font-semibold text-[#1f1f1f] bg-transparent outline-none"
                     />
                   </div>
+                </div>
+              </div>
+
+              <div className="mt-5 pt-4 border-t border-[#f3f3f0]">
+                <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">
+                  Oportunidades ({leadDeals.length})
+                </p>
+                {leadDeals.length === 0 && (
+                  <p className="text-[13px] text-[#9ca3af]">Nenhuma oportunidade vinculada.</p>
+                )}
+                <div className="space-y-2">
+                  {leadDeals.map((deal) => {
+                    const stageInfo = DEAL_STAGES.find((s) => s.key === deal.stage);
+                    return (
+                      <div key={deal.id} className="flex items-center justify-between bg-[#f6f7ed] rounded-lg p-3">
+                        <div>
+                          <p className="text-[13px] font-semibold text-[#1f1f1f]">{deal.title}</p>
+                          <span
+                            className="text-[10px] font-medium px-2 py-0.5 rounded-md"
+                            style={{ backgroundColor: (stageInfo?.dotColor || "#9ca3af") + "22", color: stageInfo?.dotColor || "#9ca3af" }}
+                          >
+                            {stageInfo?.label || deal.stage}
+                          </span>
+                        </div>
+                        <span className="text-[14px] font-bold text-[#2d6a3f]">
+                          {deal.value > 0 ? `R$ ${deal.value.toLocaleString("pt-BR")}` : "\u2014"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

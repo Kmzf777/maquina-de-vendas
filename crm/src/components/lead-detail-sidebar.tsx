@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import type { Lead } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 
@@ -10,6 +11,18 @@ interface LeadDetailSidebarProps {
 
 export function LeadDetailSidebar({ lead, onClose }: LeadDetailSidebarProps) {
   const supabase = createClient();
+  const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string }>>([]);
+
+  useEffect(() => {
+    supabase
+      .from("deals")
+      .select("id, title, value, stage")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        if (data) setLeadDeals(data);
+      });
+  }, [lead.id]);
 
   async function markAsLost() {
     await supabase
@@ -93,6 +106,20 @@ export function LeadDetailSidebar({ lead, onClose }: LeadDetailSidebarProps) {
             ))}
           </div>
         </div>
+
+        {leadDeals.length > 0 && (
+          <div className="mt-4 border-t border-[#e5e5dc] pt-4">
+            <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-2">Oportunidades</span>
+            {leadDeals.map((deal) => (
+              <div key={deal.id} className="flex justify-between items-center py-1.5">
+                <span className="text-[13px] text-[#1f1f1f]">{deal.title}</span>
+                <span className="text-[12px] font-semibold text-[#2d6a3f]">
+                  {deal.value > 0 ? `R$ ${deal.value.toLocaleString("pt-BR")}` : "\u2014"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Actions */}
