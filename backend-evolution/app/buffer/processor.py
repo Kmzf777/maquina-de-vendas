@@ -7,7 +7,7 @@ from app.humanizer.splitter import split_into_bubbles
 from app.humanizer.typing import calculate_typing_delay
 from app.whatsapp.factory import get_whatsapp_client
 from app.whatsapp.media import transcribe_audio, describe_image
-from app.cadence.service import get_cadence_state, pause_cadence
+from app.cadence.service import get_active_enrollment, pause_enrollment
 from app.agent.token_tracker import track_token_usage
 from app.channels.service import get_channel_by_id
 from app.db.supabase import get_supabase
@@ -69,12 +69,10 @@ async def process_buffered_messages(phone: str, combined_text: str, channel_id: 
         resolved_text = await _resolve_media(combined_text, lead)
 
         # Pause cadence if active
-        cadence = get_cadence_state(lead["id"])
-        if cadence:
-            pause_cadence(cadence["id"])
-            sb = get_supabase()
-            sb.rpc("increment_cadence_responded", {"campaign_id_param": cadence["campaign_id"]}).execute()
-            logger.info(f"[CADENCE] Lead {phone} responded — pausing cadence")
+        enrollment = get_active_enrollment(lead["id"])
+        if enrollment:
+            pause_enrollment(enrollment["id"])
+            logger.info(f"[CADENCE] Lead {phone} responded — pausing enrollment")
 
         # Activate lead if pending/template_sent
         if lead.get("status") in ("imported", "template_sent"):
@@ -84,7 +82,7 @@ async def process_buffered_messages(phone: str, combined_text: str, channel_id: 
         agent_profile = channel.get("agent_profiles")
         if agent_profile:
             # Run AI agent with profile context
-            response = await run_agent(lead, resolved_text, channel)
+            response = await run_agent(lead, resolved_text, channel, conversation_id=conversation["id"])
             # Humanize and send
             bubbles = split_into_bubbles(response)
             for bubble in bubbles:
@@ -94,7 +92,7 @@ async def process_buffered_messages(phone: str, combined_text: str, channel_id: 
         else:
             # Human-only mode: just save the message, don't run agent
             from app.leads.service import save_message
-            save_message(lead["id"], "user", resolved_text, lead.get("stage", "secretaria"))
+            save_message(lead["id"], "user", resolved_text, lead.get("stage", "secretaria"), conversation_id=conversation["id"])
             logger.info(f"Human-only channel for {phone} — message saved, no agent response")
 
         # Update last_msg timestamp on lead and conversation
