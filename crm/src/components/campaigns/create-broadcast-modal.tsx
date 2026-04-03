@@ -41,7 +41,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
     fetch("/api/cadences").then((r) => r.json()).then((d) => {
       setCadences((d.data || d).filter((c: Cadence) => c.status === "active"));
     });
-    fetch("/api/template-presets").then((r) => r.json()).then(setPresets);
+    fetch("/api/template-presets").then((r) => r.json()).then((d) => setPresets(Array.isArray(d) ? d : d.data || []));
   }, [open]);
 
   const handlePresetSelect = (id: string) => {

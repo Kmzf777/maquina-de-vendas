@@ -13,16 +13,20 @@ export default function CampanhasPage() {
   const [period, setPeriod] = useState("30d");
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
+  const [cadenceName, setCadenceName] = useState("");
+  const [creatingSaving, setCreatingSaving] = useState(false);
 
   const handleCreateCadence = async () => {
-    const name = prompt("Nome da cadencia:");
-    if (!name) return;
+    if (!cadenceName.trim()) return;
+    setCreatingSaving(true);
     await fetch("/api/cadences", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name: cadenceName.trim() }),
     });
+    setCadenceName("");
     setShowCadenceModal(false);
+    setCreatingSaving(false);
   };
 
   if (bLoading || cLoading) {
@@ -57,7 +61,7 @@ export default function CampanhasPage() {
             + Disparo
           </button>
           <button
-            onClick={handleCreateCadence}
+            onClick={() => setShowCadenceModal(true)}
             className="px-4 py-2 rounded-xl text-[13px] font-medium bg-[#f6f7ed] text-[#1f1f1f] border border-[#e5e5dc] hover:bg-[#eef0e0] transition-colors"
           >
             + Cadencia
@@ -73,6 +77,49 @@ export default function CampanhasPage() {
         onClose={() => setShowBroadcastModal(false)}
         onCreated={() => {}}
       />
+
+      {/* Create Cadence Modal */}
+      {showCadenceModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md">
+            <div className="bg-[#1f1f1f] text-white px-6 py-4 rounded-t-2xl flex items-center justify-between">
+              <h2 className="text-[16px] font-semibold">Nova Cadencia</h2>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); }} className="text-[#9ca3af] hover:text-white text-xl">&times;</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Nome da cadencia</label>
+                <input
+                  value={cadenceName}
+                  onChange={(e) => setCadenceName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateCadence()}
+                  className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                  placeholder="Ex: Follow-up Atacado"
+                  autoFocus
+                />
+              </div>
+              <p className="text-[12px] text-[#9ca3af]">
+                Apos criar, voce podera configurar steps, triggers e demais opcoes na pagina de detalhe.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-[#e5e5dc] flex justify-end gap-2">
+              <button
+                onClick={() => { setShowCadenceModal(false); setCadenceName(""); }}
+                className="px-4 py-2 rounded-lg text-[13px] font-medium text-[#5f6368] hover:bg-[#f6f7ed]"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleCreateCadence}
+                disabled={!cadenceName.trim() || creatingSaving}
+                className="px-4 py-2 rounded-lg text-[13px] font-medium bg-[#1f1f1f] text-white hover:bg-[#333] disabled:opacity-50"
+              >
+                {creatingSaving ? "Criando..." : "Criar Cadencia"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
