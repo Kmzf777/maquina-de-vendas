@@ -38,9 +38,9 @@ export function LeadDetailModal({
   const [notes, setNotes] = useState<LeadNote[]>([]);
   const [events, setEvents] = useState<LeadEvent[]>([]);
   const [newNote, setNewNote] = useState("");
-  const [campaigns, setCampaigns] = useState<Array<{
-    campaign_name: string;
-    campaign_created_at: string;
+  const [enrollments, setEnrollments] = useState<Array<{
+    cadence_name: string;
+    cadence_created_at: string;
     status: string;
     current_step: number;
     max_messages: number;
@@ -70,23 +70,23 @@ export function LeadDetailModal({
       import("@/lib/supabase/client").then(({ createClient }) => {
         const supabase = createClient();
         supabase
-          .from("cadence_state")
-          .select("*, campaigns(name, created_at)")
+          .from("cadence_enrollments")
+          .select("*, cadences(name, created_at, max_messages)")
           .eq("lead_id", lead.id)
           .then(({ data }) => {
             if (data) {
-              setCampaigns(
-                data.map((cs: Record<string, unknown>) => {
-                  const camp = cs.campaigns as { name: string; created_at: string } | null;
+              setEnrollments(
+                data.map((ce: Record<string, unknown>) => {
+                  const cad = ce.cadences as { name: string; created_at: string; max_messages: number } | null;
                   return {
-                    campaign_name: camp?.name || "Campanha",
-                    campaign_created_at: camp?.created_at || "",
-                    status: cs.status as string,
-                    current_step: cs.current_step as number,
-                    max_messages: cs.max_messages as number,
-                    total_messages_sent: cs.total_messages_sent as number,
-                    next_send_at: cs.next_send_at as string | null,
-                    responded_at: cs.responded_at as string | null,
+                    cadence_name: cad?.name || "Cadência",
+                    cadence_created_at: cad?.created_at || "",
+                    status: ce.status as string,
+                    current_step: ce.current_step as number,
+                    max_messages: cad?.max_messages ?? 0,
+                    total_messages_sent: ce.total_messages_sent as number,
+                    next_send_at: ce.next_send_at as string | null,
+                    responded_at: ce.responded_at as string | null,
                   };
                 })
               );
@@ -166,9 +166,11 @@ export function LeadDetailModal({
       case "deal_stage_change":
         return `Etapa do deal alterada de ${event.old_value} para ${event.new_value}`;
       case "campaign_added":
-        return `Adicionado a campanha ${event.new_value}`;
+      case "cadence_enrolled":
+        return `Adicionado a cadência ${event.new_value}`;
       case "campaign_removed":
-        return `Removido de campanha ${event.new_value}`;
+      case "cadence_unenrolled":
+        return `Removido de cadência ${event.new_value}`;
       case "first_response":
         return "Primeira resposta recebida";
       default:
@@ -384,13 +386,13 @@ export function LeadDetailModal({
           {activeTab === "campanhas" && (
             <div>
               <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-4">
-                Campanhas participadas ({campaigns.length})
+                Cadências participadas ({enrollments.length})
               </p>
-              {campaigns.length === 0 && (
-                <p className="text-[13px] text-[#9ca3af] text-center py-8">Nenhuma campanha encontrada.</p>
+              {enrollments.length === 0 && (
+                <p className="text-[13px] text-[#9ca3af] text-center py-8">Nenhuma cadência encontrada.</p>
               )}
               <div className="space-y-3">
-                {campaigns.map((c, i) => {
+                {enrollments.map((c, i) => {
                   const statusColors: Record<string, { bg: string; text: string }> = {
                     active: { bg: "#fefce8", text: "#ca8a04" },
                     responded: { bg: "#f0fdf4", text: "#22c55e" },
@@ -405,9 +407,9 @@ export function LeadDetailModal({
                     <div key={i} className="border border-[#e5e5dc] rounded-[10px] p-4">
                       <div className="flex justify-between items-center mb-2.5">
                         <div>
-                          <p className="text-[14px] font-semibold text-[#1f1f1f]">{c.campaign_name}</p>
+                          <p className="text-[14px] font-semibold text-[#1f1f1f]">{c.cadence_name}</p>
                           <p className="text-[12px] text-[#9ca3af]">
-                            Criada em {new Date(c.campaign_created_at).toLocaleDateString("pt-BR")}
+                            Criada em {new Date(c.cadence_created_at).toLocaleDateString("pt-BR")}
                           </p>
                         </div>
                         <span
@@ -559,8 +561,8 @@ export function LeadDetailModal({
               <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Engajamento</p>
               <div className="grid grid-cols-3 gap-2.5">
                 <div className="border border-[#e5e5dc] rounded-lg p-3 text-center">
-                  <p className="text-[20px] font-bold text-[#1f1f1f]">{campaigns.length}</p>
-                  <p className="text-[11px] text-[#9ca3af] mt-1">Campanhas</p>
+                  <p className="text-[20px] font-bold text-[#1f1f1f]">{enrollments.length}</p>
+                  <p className="text-[11px] text-[#9ca3af] mt-1">Cadências</p>
                 </div>
                 <div className="border border-[#e5e5dc] rounded-lg p-3 text-center">
                   <p className="text-[20px] font-bold text-[#1f1f1f]">{daysInCrm}d</p>

@@ -91,7 +91,6 @@ async function fetchEvolutionConversations(channel: {
         channel_id: channel.id,
         stage: "secretaria",
         status: "active",
-        campaign_id: null,
         last_msg_at: lastMsgAt,
         created_at: lastMsgAt || new Date().toISOString(),
         // Nested objects matching the Conversation type
