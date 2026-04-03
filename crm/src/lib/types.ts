@@ -5,7 +5,6 @@ export interface Lead {
   company: string | null;
   stage: string;
   status: string;
-  campaign_id: string | null;
   last_msg_at: string | null;
   created_at: string;
   assigned_to: string | null;
@@ -97,57 +96,88 @@ export interface EvolutionMessage {
   pushName?: string;
 }
 
-export interface Campaign {
+export interface Broadcast {
   id: string;
   name: string;
+  channel_id: string | null;
   template_name: string;
-  template_params: Record<string, unknown> | null;
+  template_preset_id: string | null;
+  template_variables: Record<string, unknown>;
   total_leads: number;
   sent: number;
   failed: number;
-  replied: number;
-  status: string;
+  delivered: number;
+  status: "draft" | "scheduled" | "running" | "paused" | "completed";
+  scheduled_at: string | null;
   send_interval_min: number;
   send_interval_max: number;
+  cadence_id: string | null;
   created_at: string;
-  // Cadence config
-  cadence_interval_hours: number;
-  cadence_send_start_hour: number;
-  cadence_send_end_hour: number;
-  cadence_cooldown_hours: number;
-  cadence_max_messages: number;
-  // Cadence counters
-  cadence_sent: number;
-  cadence_responded: number;
-  cadence_exhausted: number;
-  cadence_cooled: number;
-  // Campaign type
-  type: "bot" | "seller";
-  instance_name: string | null;
+  updated_at: string;
+  // Joined
+  cadences?: { id: string; name: string } | null;
+}
+
+export interface BroadcastLead {
+  id: string;
+  broadcast_id: string;
+  lead_id: string;
+  status: "pending" | "sent" | "failed" | "delivered";
+  sent_at: string | null;
+  error_message: string | null;
+  leads?: { id: string; name: string | null; phone: string };
+}
+
+export interface Cadence {
+  id: string;
+  name: string;
+  description: string | null;
+  target_type: "manual" | "lead_stage" | "deal_stage";
+  target_stage: string | null;
+  stagnation_days: number | null;
+  send_start_hour: number;
+  send_end_hour: number;
+  cooldown_hours: number;
+  max_messages: number;
+  status: "active" | "paused" | "archived";
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CadenceStep {
   id: string;
-  campaign_id: string;
-  stage: string;
+  cadence_id: string;
   step_order: number;
   message_text: string;
+  delay_days: number;
   created_at: string;
 }
 
-export interface CadenceState {
+export interface CadenceEnrollment {
   id: string;
+  cadence_id: string;
   lead_id: string;
-  campaign_id: string;
+  deal_id: string | null;
+  broadcast_id: string | null;
   current_step: number;
-  status: "active" | "responded" | "exhausted" | "cooled";
+  status: "active" | "paused" | "responded" | "exhausted" | "completed";
   total_messages_sent: number;
-  max_messages: number;
   next_send_at: string | null;
   cooldown_until: string | null;
   responded_at: string | null;
+  enrolled_at: string;
+  completed_at: string | null;
+  leads?: { id: string; name: string | null; phone: string; company: string | null; stage: string };
+  deals?: { id: string; title: string; stage: string } | null;
+}
+
+export interface TemplatePreset {
+  id: string;
+  name: string;
+  template_name: string;
+  variables: Record<string, unknown>;
   created_at: string;
-  leads?: Lead;
+  updated_at: string;
 }
 
 export interface LeadNote {
@@ -200,7 +230,6 @@ export interface Conversation {
   channel_id: string;
   stage: string;
   status: string;
-  campaign_id: string | null;
   last_msg_at: string | null;
   created_at: string;
   leads?: Lead;
