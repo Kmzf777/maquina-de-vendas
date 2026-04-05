@@ -101,7 +101,7 @@ def build_messages(lead: dict, user_text: str) -> list[dict]:
     return messages
 
 
-async def run_agent(lead: dict, user_text: str, channel: dict | None = None) -> str:
+async def run_agent(lead: dict, user_text: str, channel: dict | None = None, conversation_id: str | None = None) -> str:
     """Run the AI agent for a lead and return the response text."""
     stage = lead.get("stage", "secretaria")
 
@@ -128,7 +128,7 @@ async def run_agent(lead: dict, user_text: str, channel: dict | None = None) -> 
     messages.append({"role": "user", "content": user_text})
 
     # Save user message
-    save_message(lead["id"], "user", user_text, stage)
+    save_message(lead["id"], "user", user_text, stage, conversation_id=conversation_id)
 
     # Call OpenAI
     response = await _get_openai().chat.completions.create(
@@ -196,7 +196,7 @@ async def run_agent(lead: dict, user_text: str, channel: dict | None = None) -> 
     assistant_text = message.content or ""
 
     # Save assistant message
-    save_message(lead["id"], "assistant", assistant_text, stage)
+    save_message(lead["id"], "assistant", assistant_text, stage, conversation_id=conversation_id)
 
     # Guardrail: if still in secretaria after enough conversation, force classification
     if stage == "secretaria":

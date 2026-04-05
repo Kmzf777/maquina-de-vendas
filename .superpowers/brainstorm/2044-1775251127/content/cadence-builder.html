@@ -1,0 +1,97 @@
+<h2>Como deve ser o builder de cadências?</h2>
+<p class="subtitle">A experiência de criar e configurar uma sequência de follow-up</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding: 20px; background: #1a1a1a; border-radius: 8px;">
+        <!-- Timeline visual builder -->
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+          <div style="width: 36px; height: 36px; border-radius: 50%; background: #c8cc8e; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; color: #1a1a1a;">1</div>
+          <div style="flex: 1; background: #2a2a2a; border-radius: 8px; padding: 12px;">
+            <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase;">Dia 0 — Após entrar na cadência</div>
+            <div style="font-size: 13px; color: #fff; margin-top: 4px;">Olá {{nome}}, tudo bem? Vi que ficou interessado no nosso café...</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-left: 16px; margin-bottom: 16px;">
+          <div style="width: 2px; height: 24px; background: #333;"></div>
+          <div style="font-size: 11px; color: #5f6368; margin-left: 10px;">⏳ Aguardar 2 dias</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+          <div style="width: 36px; height: 36px; border-radius: 50%; background: #5b8aad; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; color: #fff;">2</div>
+          <div style="flex: 1; background: #2a2a2a; border-radius: 8px; padding: 12px;">
+            <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase;">Dia 2 — Follow-up</div>
+            <div style="font-size: 13px; color: #fff; margin-top: 4px;">{{nome}}, conseguiu dar uma olhada na nossa proposta?</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-left: 16px; margin-bottom: 16px;">
+          <div style="width: 2px; height: 24px; background: #333;"></div>
+          <div style="font-size: 11px; color: #5f6368; margin-left: 10px;">⏳ Aguardar 5 dias</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="width: 36px; height: 36px; border-radius: 50%; background: #e07a7a; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; color: #fff;">3</div>
+          <div style="flex: 1; background: #2a2a2a; border-radius: 8px; padding: 12px;">
+            <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase;">Dia 7 — Último contato</div>
+            <div style="font-size: 13px; color: #fff; margin-top: 4px;">{{nome}}, essa é minha última tentativa. Se tiver interesse...</div>
+          </div>
+        </div>
+        <div style="text-align: center; margin-top: 16px;">
+          <div style="display: inline-block; padding: 6px 16px; border: 1px dashed #444; border-radius: 8px; font-size: 12px; color: #5f6368; cursor: pointer;">+ Adicionar step</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A) Timeline Visual</h3>
+      <p>Steps em timeline vertical com delays editáveis entre cada um. Arrasta pra reordenar. Cada step tem delay próprio (ex: "2 dias", "5 dias"). Visual claro do fluxo temporal.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding: 20px; background: #1a1a1a; border-radius: 8px;">
+        <!-- Simple table/list builder -->
+        <div style="background: #2a2a2a; border-radius: 8px; overflow: hidden;">
+          <div style="display: flex; padding: 8px 12px; background: #333; font-size: 11px; color: #9ca3af; text-transform: uppercase; gap: 12px;">
+            <div style="width: 40px;">#</div>
+            <div style="flex: 1;">Mensagem</div>
+            <div style="width: 80px;">Delay</div>
+            <div style="width: 60px;">Ações</div>
+          </div>
+          <div style="display: flex; padding: 10px 12px; border-bottom: 1px solid #333; font-size: 12px; color: #fff; align-items: center; gap: 12px;">
+            <div style="width: 40px; color: #c8cc8e; font-weight: bold;">1</div>
+            <div style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Olá {{nome}}, tudo bem? Vi que ficou interessado...</div>
+            <div style="width: 80px; color: #9ca3af;">Imediato</div>
+            <div style="width: 60px; color: #5f6368;">✏️ 🗑️</div>
+          </div>
+          <div style="display: flex; padding: 10px 12px; border-bottom: 1px solid #333; font-size: 12px; color: #fff; align-items: center; gap: 12px;">
+            <div style="width: 40px; color: #5b8aad; font-weight: bold;">2</div>
+            <div style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{nome}}, conseguiu dar uma olhada na proposta?</div>
+            <div style="width: 80px; color: #9ca3af;">2 dias</div>
+            <div style="width: 60px; color: #5f6368;">✏️ 🗑️</div>
+          </div>
+          <div style="display: flex; padding: 10px 12px; font-size: 12px; color: #fff; align-items: center; gap: 12px;">
+            <div style="width: 40px; color: #e07a7a; font-weight: bold;">3</div>
+            <div style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{nome}}, essa é minha última tentativa...</div>
+            <div style="width: 80px; color: #9ca3af;">5 dias</div>
+            <div style="width: 60px; color: #5f6368;">✏️ 🗑️</div>
+          </div>
+        </div>
+        <div style="text-align: center; margin-top: 12px;">
+          <div style="display: inline-block; padding: 6px 16px; border: 1px dashed #444; border-radius: 8px; font-size: 12px; color: #5f6368;">+ Adicionar step</div>
+        </div>
+        <div style="margin-top: 16px; padding: 12px; background: #2a2a2a; border-radius: 8px;">
+          <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase; margin-bottom: 8px;">Configurações</div>
+          <div style="display: flex; gap: 16px; font-size: 12px; color: #fff;">
+            <div>Janela: <span style="color: #c8cc8e;">07h-18h</span></div>
+            <div>Cooldown: <span style="color: #c8cc8e;">48h</span></div>
+            <div>Max msgs: <span style="color: #c8cc8e;">5</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B) Lista Simples + Config</h3>
+      <p>Tabela de steps com delay editável. Clica na row pra editar mensagem. Configurações globais abaixo (janela de envio, cooldown, max). Funcional e direto, menos visual.</p>
+    </div>
+  </div>
+</div>
