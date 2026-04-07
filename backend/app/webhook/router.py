@@ -1,6 +1,8 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request, Query, Response
+import redis.asyncio as aioredis
 
 from app.webhook.parser import parse_meta_webhook, parse_evolution_webhook
 from app.channels.service import get_channel, get_channel_by_provider_config
@@ -8,6 +10,17 @@ from app.providers.registry import get_provider
 from app.buffer.manager import push_to_buffer
 
 logger = logging.getLogger(__name__)
+
+
+async def is_duplicate_message(r: aioredis.Redis, message_id: str) -> bool:
+    """Returns True if this message_id was already seen within 24h.
+
+    Uses Redis SET NX (set-if-not-exists) for atomic check-and-set.
+    Returns False the first time (newly set), True on duplicates.
+    """
+    seen_key = f"seen:{message_id}"
+    newly_set = await r.set(seen_key, "1", ex=86400, nx=True)
+    return newly_set is None  # None = key already existed = duplicate
 
 router = APIRouter()
 
@@ -53,17 +66,17 @@ async def receive_meta_webhook(request: Request):
         return {"status": "ok"}
 
     provider = get_provider(channel)
+    redis = request.app.state.redis
 
     for msg in messages:
         msg.channel_id = channel["id"]
+
+        if await is_duplicate_message(redis, msg.message_id):
+            logger.info(f"[Meta] Duplicate message_id={msg.message_id}, skipping")
+            continue
+
         logger.info(f"[Meta] Message from {msg.from_number} on channel {channel['name']}: type={msg.type}")
-
-        try:
-            await provider.mark_read(msg.message_id)
-        except Exception as e:
-            logger.warning(f"Failed to mark read: {e}")
-
-        redis = request.app.state.redis
+        asyncio.create_task(provider.mark_read(msg.message_id))
         await push_to_buffer(redis, msg, channel)
 
     return {"status": "ok"}
@@ -89,17 +102,17 @@ async def receive_evolution_webhook(channel_id: str, request: Request):
         return {"status": "ok"}
 
     provider = get_provider(channel)
+    redis = request.app.state.redis
 
     for msg in messages:
         msg.channel_id = channel_id
+
+        if await is_duplicate_message(redis, msg.message_id):
+            logger.info(f"[Evolution] Duplicate message_id={msg.message_id}, skipping")
+            continue
+
         logger.info(f"[Evolution] Message from {msg.from_number} on channel {channel['name']}: type={msg.type}")
-
-        try:
-            await provider.mark_read(msg.message_id, remote_jid=msg.remote_jid or "")
-        except Exception as e:
-            logger.warning(f"Failed to mark read: {e}")
-
-        redis = request.app.state.redis
+        asyncio.create_task(provider.mark_read(msg.message_id, remote_jid=msg.remote_jid or ""))
         await push_to_buffer(redis, msg, channel)
 
     return {"status": "ok"}
