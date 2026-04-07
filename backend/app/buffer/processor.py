@@ -30,57 +30,87 @@ def _get_openai() -> AsyncOpenAI:
 
 
 async def process_buffered_messages(phone: str, combined_text: str, channel: dict):
-    """Process accumulated buffer messages for a specific channel."""
+    """Process accumulated buffer messages for a specific channel.
+
+    Error handling is stratified: each layer is independently protected so
+    that a failure in AI inference or message sending does not prevent the
+    incoming user message from being persisted.
+    """
+    # --- Layer 1: Setup (provider, media, lead, conversation) ---
     try:
         provider = get_provider(channel)
-
-        # Resolve any media placeholders
         resolved_text = await _resolve_media(combined_text, provider)
-
-        # Get or create lead (global by phone)
         lead = get_or_create_lead(phone)
-
-        # Get or create conversation (per lead+channel)
         conversation = get_or_create_conversation(lead["id"], channel["id"])
+    except Exception as e:
+        logger.error(
+            f"Fatal setup error for {phone} on channel {channel.get('name')}: {e}",
+            exc_info=True,
+        )
+        return
 
-        # Activate conversation if imported/template_sent
-        if conversation.get("status") in ("imported", "template_sent"):
+    if conversation.get("status") in ("imported", "template_sent"):
+        try:
             conversation = activate_conversation(conversation["id"])
+        except Exception as e:
+            logger.warning(f"Failed to activate conversation {conversation['id']}: {e}")
 
-        # Check if channel has an agent profile
-        agent_profile_id = channel.get("agent_profile_id")
+    # --- Layer 2: Always persist the incoming user message ---
+    try:
+        save_message(
+            conversation["id"], lead["id"], "user",
+            resolved_text, conversation.get("stage"),
+        )
+    except Exception as e:
+        logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
 
-        if agent_profile_id:
-            # Load agent profile
+    # --- Layer 3: AI agent (only if channel has a profile) ---
+    agent_profile_id = channel.get("agent_profile_id")
+
+    if agent_profile_id:
+        try:
             profile = get_agent_profile(agent_profile_id)
-
-            # Enrich conversation with lead data for the agent
             conversation["leads"] = lead
-
-            # Run agent
             response = await run_agent(conversation, profile, resolved_text)
-
-            # Humanize and send
-            bubbles = split_into_bubbles(response)
-            for bubble in bubbles:
-                delay = calculate_typing_delay(bubble)
-                await asyncio.sleep(delay)
-                await provider.send_text(phone, bubble)
-        else:
-            # No agent — human-only channel. Save message, no auto-reply.
-            save_message(
-                conversation["id"], lead["id"], "user", resolved_text,
-                conversation.get("stage"),
+        except Exception as e:
+            logger.error(
+                f"Agent error for {phone} on channel {channel.get('name')}: {e}",
+                exc_info=True,
             )
+            _update_last_msg(conversation["id"])
+            return
 
-        # Update last_msg timestamp
+        # --- Layer 4: Persist assistant response ---
+        try:
+            save_message(
+                conversation["id"], lead["id"], "assistant",
+                response, conversation.get("stage"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
+
+        # --- Layer 5: Send bubbles (each bubble independently) ---
+        bubbles = split_into_bubbles(response)
+        for bubble in bubbles:
+            delay = calculate_typing_delay(bubble)
+            await asyncio.sleep(delay)
+            try:
+                await provider.send_text(phone, bubble)
+            except Exception as e:
+                logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
+                break  # Don't send subsequent bubbles if one failed
+
+    _update_last_msg(conversation["id"])
+
+
+def _update_last_msg(conversation_id: str) -> None:
+    try:
         update_conversation(
-            conversation["id"],
+            conversation_id,
             last_msg_at=datetime.now(timezone.utc).isoformat(),
         )
-
     except Exception as e:
-        logger.error(f"Error processing messages for {phone} on channel {channel.get('name')}: {e}", exc_info=True)
+        logger.warning(f"Failed to update last_msg_at for {conversation_id}: {e}")
 
 
 async def _resolve_media(text: str, provider) -> str:
