@@ -29,6 +29,12 @@ def parse_meta_webhook(payload: dict) -> tuple[list[IncomingMessage], str | None
             metadata = value.get("metadata", {})
             phone_number_id = metadata.get("phone_number_id")
 
+            # Build wa_id → display name map from contacts array
+            contacts = {
+                c["wa_id"]: c.get("profile", {}).get("name")
+                for c in value.get("contacts", [])
+            }
+
             for msg in value.get("messages", []):
                 msg_type = msg.get("type", "")
                 text = None
@@ -51,14 +57,16 @@ def parse_meta_webhook(payload: dict) -> tuple[list[IncomingMessage], str | None
                 elif msg_type == "button":
                     text = msg.get("button", {}).get("text")
 
+                from_number = msg["from"]
                 messages.append(IncomingMessage(
-                    from_number=msg["from"],
+                    from_number=from_number,
                     message_id=msg["id"],
                     timestamp=msg.get("timestamp", ""),
                     type=msg_type,
                     text=text,
                     media_id=media_id,
                     media_mime=media_mime,
+                    push_name=contacts.get(from_number),
                 ))
 
     return messages, phone_number_id
