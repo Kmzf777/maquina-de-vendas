@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -6,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.buffer.flusher import run_flusher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,7 +20,17 @@ async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(
         settings.redis_url, decode_responses=True
     )
+
+    flusher_task = asyncio.create_task(run_flusher(app))
+
     yield
+
+    flusher_task.cancel()
+    try:
+        await flusher_task
+    except asyncio.CancelledError:
+        pass
+
     await app.state.redis.close()
 
 
