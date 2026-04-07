@@ -33,6 +33,10 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage, channel: dict)
 
     await r.rpush(buffer_key, text)
 
+    if msg.push_name:
+        # NX: only write if key doesn't exist yet — avoids redundant writes on every message
+        await r.set(f"lead_name:{channel_id}:{phone}", msg.push_name, ex=3600, nx=True)
+
     now = time.time()
     current_score = await r.zscore(FLUSH_QUEUE_KEY, member)
 

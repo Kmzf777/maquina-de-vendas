@@ -3,15 +3,21 @@ from typing import Any
 from app.db.supabase import get_supabase
 
 
-def get_or_create_lead(phone: str) -> dict[str, Any]:
-    """Get or create a global lead by phone."""
+def get_or_create_lead(phone: str, name: str | None = None) -> dict[str, Any]:
+    """Get or create a global lead by phone. Updates name if not yet set."""
     sb = get_supabase()
     result = sb.table("leads").select("*").eq("phone", phone).execute()
 
     if result.data:
-        return result.data[0]
+        lead = result.data[0]
+        if name and not lead.get("name"):
+            result = sb.table("leads").update({"name": name}).eq("id", lead["id"]).execute()
+            return result.data[0]
+        return lead
 
     new_lead = {"phone": phone}
+    if name:
+        new_lead["name"] = name
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 

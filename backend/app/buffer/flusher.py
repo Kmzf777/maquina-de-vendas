@@ -28,16 +28,20 @@ async def flush_due_items(r: aioredis.Redis) -> None:
 
         channel_id, phone = member.split(":", 1)
         buffer_key = f"buffer:{channel_id}:{phone}"
+        lead_name_key = f"lead_name:{channel_id}:{phone}"
 
         # Atomic read + delete using Redis pipeline
         async with r.pipeline(transaction=True) as pipe:
             pipe.lrange(buffer_key, 0, -1)
             pipe.delete(buffer_key)
+            pipe.get(lead_name_key)
             results = await pipe.execute()
 
         raw_messages = results[0]
         if not raw_messages:
             continue
+
+        push_name = results[2].decode() if results[2] else None
 
         combined = "\n".join(raw_messages)
         logger.info(
@@ -54,7 +58,7 @@ async def flush_due_items(r: aioredis.Redis) -> None:
             )
             continue
 
-        await process_buffered_messages(phone, combined, channel)
+        await process_buffered_messages(phone, combined, channel, push_name=push_name)
 
 
 async def run_flusher(app) -> None:

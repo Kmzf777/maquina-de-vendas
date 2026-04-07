@@ -29,7 +29,9 @@ def _get_openai() -> AsyncOpenAI:
     return _openai_client
 
 
-async def process_buffered_messages(phone: str, combined_text: str, channel: dict):
+async def process_buffered_messages(
+    phone: str, combined_text: str, channel: dict, push_name: str | None = None
+):
     """Process accumulated buffer messages for a specific channel.
 
     Error handling is stratified: each layer is independently protected so
@@ -40,7 +42,7 @@ async def process_buffered_messages(phone: str, combined_text: str, channel: dic
     try:
         provider = get_provider(channel)
         resolved_text = await _resolve_media(combined_text, provider)
-        lead = get_or_create_lead(phone)
+        lead = get_or_create_lead(phone, name=push_name)
         conversation = get_or_create_conversation(lead["id"], channel["id"])
     except Exception as e:
         logger.error(
@@ -64,41 +66,59 @@ async def process_buffered_messages(phone: str, combined_text: str, channel: dic
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
 
-    # --- Layer 3: AI agent (only if channel has a profile) ---
+    # --- Layer 3: AI agent or MVP auto-reply ---
     agent_profile_id = channel.get("agent_profile_id")
 
-    if agent_profile_id:
-        try:
-            profile = get_agent_profile(agent_profile_id)
-            conversation["leads"] = lead
-            response = await run_agent(conversation, profile, resolved_text)
-        except Exception as e:
-            logger.error(
-                f"Agent error for {phone} on channel {channel.get('name')}: {e}",
-                exc_info=True,
-            )
-            _update_last_msg(conversation["id"])
-            return
-
-        # --- Layer 4: Persist assistant response ---
-        try:
-            save_message(
-                conversation["id"], lead["id"], "assistant",
-                response, conversation.get("stage"),
-            )
-        except Exception as e:
-            logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
-
-        # --- Layer 5: Send bubbles (each bubble independently) ---
-        bubbles = split_into_bubbles(response)
-        for bubble in bubbles:
-            delay = calculate_typing_delay(bubble)
-            await asyncio.sleep(delay)
+    # MVP fallback: if no AI agent is configured, send a static auto-reply
+    # configured via channel.provider_config.auto_reply_message
+    if not agent_profile_id:
+        auto_reply = channel.get("provider_config", {}).get("auto_reply_message")
+        if auto_reply:
             try:
-                await provider.send_text(phone, bubble)
+                save_message(
+                    conversation["id"], lead["id"], "assistant",
+                    auto_reply, conversation.get("stage"),
+                )
             except Exception as e:
-                logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
-                break  # Don't send subsequent bubbles if one failed
+                logger.error(f"Failed to save auto-reply for {phone}: {e}", exc_info=True)
+            try:
+                await provider.send_text(phone, auto_reply)
+            except Exception as e:
+                logger.error(f"Failed to send auto-reply to {phone}: {e}", exc_info=True)
+        _update_last_msg(conversation["id"])
+        return
+
+    try:
+        profile = get_agent_profile(agent_profile_id)
+        conversation["leads"] = lead
+        response = await run_agent(conversation, profile, resolved_text)
+    except Exception as e:
+        logger.error(
+            f"Agent error for {phone} on channel {channel.get('name')}: {e}",
+            exc_info=True,
+        )
+        _update_last_msg(conversation["id"])
+        return
+
+    # --- Layer 4: Persist assistant response ---
+    try:
+        save_message(
+            conversation["id"], lead["id"], "assistant",
+            response, conversation.get("stage"),
+        )
+    except Exception as e:
+        logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
+
+    # --- Layer 5: Send bubbles (each bubble independently) ---
+    bubbles = split_into_bubbles(response)
+    for bubble in bubbles:
+        delay = calculate_typing_delay(bubble)
+        await asyncio.sleep(delay)
+        try:
+            await provider.send_text(phone, bubble)
+        except Exception as e:
+            logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
+            break  # Don't send subsequent bubbles if one failed
 
     _update_last_msg(conversation["id"])
 
