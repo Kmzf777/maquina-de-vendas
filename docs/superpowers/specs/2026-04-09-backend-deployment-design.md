@@ -1,7 +1,7 @@
 # Backend Deployment Design — ValerIA
 
 **Date:** 2026-04-09  
-**Status:** Approved  
+**Status:** Approved (rev 2 — added Redis persistence, log rotation, worker health)  
 
 ---
 
@@ -26,8 +26,8 @@ VPS Hostinger
    │
    └── Docker Compose (backend-evolution/)
          ├── api        (FastAPI, port 8000 — internal only)
-         ├── worker     (campaign worker, no exposed port)
-         └── redis      (port 6379 — internal only)
+         ├── worker     (campaign worker, no exposed port; writes heartbeat to Redis)
+         └── redis      (port 6379 — internal only; persistent via volume + appendonly)
 
 Vercel (Next.js CRM)
    └── NEXT_PUBLIC_FASTAPI_URL=https://api.<domain>
@@ -45,6 +45,58 @@ Meta → POST https://api.<domain>/webhook/meta
 - Port 8000 (FastAPI) is **not publicly exposed** — Nginx proxies to it on localhost only
 - Port 6379 (Redis) is **not publicly exposed** — Docker internal network only
 - UFW firewall: allow 22 (SSH), 80 (HTTP→redirect), 443 (HTTPS); deny all others
+
+---
+
+## docker-compose.yml changes
+
+Three additions to the existing `docker-compose.yml`:
+
+### 1. Redis persistence
+```yaml
+redis:
+  image: redis:7-alpine
+  command: redis-server --appendonly yes   # ← survive restarts
+  volumes:
+    - redis_data:/data
+  ...
+```
+
+### 2. Log rotation (all services)
+```yaml
+services:
+  api:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  worker:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  redis:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+```
+
+### 3. Worker heartbeat (code change)
+The worker writes `worker:heartbeat` key to Redis with a 60-second TTL on every processing cycle. The `/health` endpoint reads this key and reports worker status:
+
+```json
+GET /health
+{
+  "status": "ok",
+  "worker": "ok"      // "dead" if heartbeat key missing/expired
+}
+```
+
+This means: if the worker silently dies, `/health` returns `"worker": "dead"` — detectable by uptime monitors or a simple cron alert.
 
 ---
 
@@ -140,8 +192,10 @@ NEXT_PUBLIC_FASTAPI_URL=https://api.<domain>
 
 ## Success Criteria
 
-- `GET https://api.<domain>/health` returns `{"status":"ok"}`
+- `GET https://api.<domain>/health` returns `{"status":"ok","worker":"ok"}`
 - Meta webhook verification passes (green checkmark in developer console)
 - WhatsApp message triggers a response from the AI agent
-- Containers restart automatically after VPS reboot
+- Containers restart automatically after VPS reboot — including Redis queue intact
 - Ports 8000 and 6379 are not reachable from the internet
+- Docker logs don't grow unboundedly — capped at ~30MB total across all services
+- If worker dies, `/health` reports `"worker":"dead"` within 60 seconds
