@@ -33,12 +33,14 @@ Lead replies → POST /webhook/meta → push_to_buffer → process_buffered_mess
   → postgres_changes fires → useRealtimeMessages updates ChatView ✅
 ```
 
-### Outgoing message flow (after fix)
+### Outgoing message flow — optimistic UI (after fix)
 ```
-CRM user types → handleSend → POST /api/conversations/[id]/send
-  → sendViaMeta + INSERT on messages table
-  → postgres_changes fires → useRealtimeMessages updates ChatView ✅
-  (setTimeout removed)
+CRM user types → handleSend
+  → inject temp message into optimisticMessages (user sees it instantly, ~0ms)
+  → POST /api/conversations/[id]/send in background
+  → Supabase INSERT on messages table
+  → postgres_changes fires → useRealtimeMessages adds real message
+  → optimisticMessages filter removes temp (reconciled silently) ✅
 ```
 
 ---
@@ -55,13 +57,21 @@ CRM user types → handleSend → POST /api/conversations/[id]/send
 
 **Add:**
 - Import `useRealtimeMessages` from `@/hooks/use-realtime-messages`
-- Replace with: `const { messages, loading } = useRealtimeMessages(lead?.id ?? null)`
-- The hook already handles: initial fetch, real-time subscription by `lead_id`, cleanup on unmount, scroll to bottom on new messages (via the existing `bottomRef` useEffect)
+- `const { messages, loading } = useRealtimeMessages(lead?.id ?? null)`
+- `const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([])`
+- Render merged list: `[...messages, ...optimisticMessages.filter(o => !messages.some(m => m.content === o.content && o.id.startsWith('temp_')))]`
+
+**Optimistic send in `handleSend`:**
+1. Build `tempMsg: Message` with `id: 'temp_' + Date.now()`, `role: 'assistant'`, `sent_by: 'seller'`, `content: text.trim()`, `created_at: new Date().toISOString()`
+2. `setOptimisticMessages(prev => [...prev, tempMsg])` — user sees message instantly
+3. Call `POST /api/conversations/[id]/send`
+4. On success: nothing extra needed — realtime brings the real message, filter removes the temp
+5. On failure: `setOptimisticMessages(prev => prev.filter(m => m.id !== tempMsg.id))` — temp removed
 
 **Keep:**
-- `handleSend` unchanged (except removing `setTimeout` call)
+- `handleSend` structure (try/finally, setSending)
 - All JSX — header, message bubbles, input area
-- `bottomRef` scroll effect (already in the component)
+- `bottomRef` scroll effect (triggered by merged list changes)
 
 ### 2. `crm/src/app/(authenticated)/conversas/page.tsx`
 
@@ -79,7 +89,7 @@ CRM user types → handleSend → POST /api/conversations/[id]/send
 | Scenario | Behavior |
 |---|---|
 | Realtime subscription fails | Messages shown from initial load; no new real-time updates. No crash. |
-| Send fails | `handleSend` already has `try/finally`; button re-enables, message not added to UI |
+| Send fails | Temp message removed from `optimisticMessages`; button re-enables via `try/finally` |
 | `lead_id` is null | `useRealtimeMessages(null)` returns `{ messages: [], loading: false }` immediately, no subscription created |
 | No messages in conversation | Existing "Nenhuma mensagem." empty state — no change |
 
