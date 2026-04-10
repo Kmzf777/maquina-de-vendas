@@ -86,10 +86,8 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
       });
 
       if (res.ok) {
-        // Remove temp after realtime delivers the real message (~3s window)
-        setTimeout(() => {
-          setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
-        }, 3000);
+        // Remove temp immediately — realtime delivers the real message in <1s
+        setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
       } else {
         // Send failed — remove temp message and restore input
         setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));

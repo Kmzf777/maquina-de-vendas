@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView } from "@/components/conversas/chat-view";
@@ -18,13 +18,28 @@ export default function ConversasPage() {
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
 
+  const fetchConversations = useCallback(async () => {
+    try {
+      const url = selectedChannelId
+        ? `/api/conversations?channel_id=${selectedChannelId}`
+        : "/api/conversations";
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setConversations(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // ignore
+    }
+  }, [selectedChannelId]);
+
   useEffect(() => {
     loadData();
   }, []);
 
   useEffect(() => {
     fetchConversations();
-  }, [selectedChannelId]);
+  }, [fetchConversations]);
 
   // Realtime: re-sort list when any conversation's last_msg_at changes
   useEffect(() => {
@@ -42,27 +57,12 @@ export default function ConversasPage() {
     return () => {
       supabase.removeChannel(realtimeChannel);
     };
-  }, [selectedChannelId]);
+  }, [fetchConversations]);
 
   async function loadData() {
     setLoading(true);
     await Promise.all([fetchConversations(), fetchChannels(), fetchTags(), fetchLeadTags()]);
     setLoading(false);
-  }
-
-  async function fetchConversations() {
-    try {
-      const url = selectedChannelId
-        ? `/api/conversations?channel_id=${selectedChannelId}`
-        : "/api/conversations";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setConversations(Array.isArray(data) ? data : []);
-      }
-    } catch {
-      // ignore
-    }
   }
 
   async function fetchChannels() {
