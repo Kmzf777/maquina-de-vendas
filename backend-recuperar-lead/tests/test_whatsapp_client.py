@@ -9,7 +9,7 @@ def mock_evolution_api(monkeypatch):
     monkeypatch.setenv("EVOLUTION_API_URL", "https://evo.test.com")
     monkeypatch.setenv("EVOLUTION_API_KEY", "test-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE", "test-instance")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "key")
 

@@ -31,8 +31,8 @@ EVOLUTION_API_URL=https://sua-evolution.seudominio.com
 EVOLUTION_API_KEY=sua-api-key-aqui
 EVOLUTION_INSTANCE=nome-da-sua-instancia
 
-# OpenAI
-OPENAI_API_KEY=sk-...
+# Gemini
+GEMINI_API_KEY=your-gemini-api-key
 
 # Supabase
 SUPABASE_URL=https://seu-projeto.supabase.co
