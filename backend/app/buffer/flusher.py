@@ -41,7 +41,7 @@ async def flush_due_items(r: aioredis.Redis) -> None:
         if not raw_messages:
             continue
 
-        push_name = results[2].decode() if results[2] else None
+        push_name = results[2] if results[2] else None
 
         combined = "\n".join(raw_messages)
         logger.info(

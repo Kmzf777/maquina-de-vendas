@@ -35,9 +35,14 @@ async def verify_meta_webhook(
     if hub_mode != "subscribe":
         return Response(status_code=403)
 
+    import asyncio
     from app.db.supabase import get_supabase
-    sb = get_supabase()
-    channels = sb.table("channels").select("*").eq("provider", "meta_cloud").execute().data
+
+    def _fetch_channels():
+        sb = get_supabase()
+        return sb.table("channels").select("provider_config").eq("provider", "meta_cloud").execute().data
+
+    channels = await asyncio.to_thread(_fetch_channels)
 
     for ch in channels:
         config = ch.get("provider_config", {})

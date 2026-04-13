@@ -2,8 +2,9 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # OpenAI
-    openai_api_key: str
+    # Gemini (via OpenAI-compatible API)
+    gemini_api_key: str
+    openai_api_key: str = ""  # mantido para compatibilidade, não utilizado
 
     # Supabase
     supabase_url: str

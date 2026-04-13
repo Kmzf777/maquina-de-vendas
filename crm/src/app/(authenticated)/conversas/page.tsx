@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView } from "@/components/conversas/chat-view";
@@ -18,21 +18,7 @@ export default function ConversasPage() {
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    fetchConversations();
-  }, [selectedChannelId]);
-
-  async function loadData() {
-    setLoading(true);
-    await Promise.all([fetchConversations(), fetchChannels(), fetchTags(), fetchLeadTags()]);
-    setLoading(false);
-  }
-
-  async function fetchConversations() {
+  const fetchConversations = useCallback(async () => {
     try {
       const url = selectedChannelId
         ? `/api/conversations?channel_id=${selectedChannelId}`
@@ -45,6 +31,38 @@ export default function ConversasPage() {
     } catch {
       // ignore
     }
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    fetchConversations();
+  }, [fetchConversations]);
+
+  // Realtime: re-sort list when any conversation's last_msg_at changes
+  useEffect(() => {
+    const realtimeChannel = supabase
+      .channel("conversations-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations" },
+        () => {
+          fetchConversations();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(realtimeChannel);
+    };
+  }, [fetchConversations]);
+
+  async function loadData() {
+    setLoading(true);
+    await Promise.all([fetchConversations(), fetchChannels(), fetchTags(), fetchLeadTags()]);
+    setLoading(false);
   }
 
   async function fetchChannels() {

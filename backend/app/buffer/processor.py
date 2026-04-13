@@ -21,11 +21,16 @@ logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
 
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _openai_client = AsyncOpenAI(
+            api_key=settings.gemini_api_key,
+            base_url=_GEMINI_BASE_URL,
+        )
     return _openai_client
 
 
@@ -150,7 +155,7 @@ async def _resolve_media(text: str, provider) -> str:
                 audio_bytes, content_type = await provider.download_media(media_ref)
                 ext = "ogg" if "ogg" in content_type else "mp4"
                 transcript = await _get_openai().audio.transcriptions.create(
-                    model="whisper-1",
+                    model="gemini-3-flash-preview",
                     file=(f"audio.{ext}", audio_bytes, content_type),
                 )
                 text = text.replace(match.group(0), f"[audio transcrito: {transcript.text}]")
@@ -166,7 +171,7 @@ async def _resolve_media(text: str, provider) -> str:
                 image_bytes, content_type = await provider.download_media(media_ref)
                 b64 = base64.b64encode(image_bytes).decode()
                 response = await _get_openai().chat.completions.create(
-                    model="gpt-4o",
+                    model="gemini-3-flash-preview",
                     messages=[{
                         "role": "user",
                         "content": [

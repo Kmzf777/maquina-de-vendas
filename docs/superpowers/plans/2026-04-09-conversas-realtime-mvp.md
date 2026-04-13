@@ -1,7 +1,55 @@
+# /conversas Realtime MVP — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make `/conversas` show all messages in real-time (sent and received) without page refresh, using the existing Supabase realtime infrastructure.
+
+**Architecture:** Wire `useRealtimeMessages(lead_id)` into `ChatView` to replace manual `fetchMessages` + `setTimeout`. Add optimistic UI so sent messages appear instantly (temp message in local state, replaced silently by real DB record via realtime). Add a Supabase subscription in `ConversasPage` to re-sort the conversations list when `last_msg_at` changes.
+
+**Tech Stack:** Next.js App Router, React hooks, Supabase JS client (`@supabase/supabase-js`), TypeScript.
+
+---
+
+## File Map
+
+| File | Action | What changes |
+|------|--------|--------------|
+| `crm/src/components/conversas/chat-view.tsx` | Modify | Remove manual fetch; add `useRealtimeMessages` + `optimisticMessages` state + optimistic send |
+| `crm/src/app/(authenticated)/conversas/page.tsx` | Modify | Add Supabase realtime subscription on `conversations` table |
+
+No new files. No backend changes. No API route changes.
+
+---
+
+### Task 1: Create the feature branch
+
+**Files:** none (git only)
+
+- [ ] **Step 1: Create and switch to branch**
+
+```bash
+cd /home/Kelwin/Maquinadevendascanastra
+git checkout -b feat/conversas-realtime-mvp
+```
+
+Expected output: `Switched to a new branch 'feat/conversas-realtime-mvp'`
+
+---
+
+### Task 2: Replace manual fetch with realtime hook + optimistic UI in ChatView
+
+**Files:**
+- Modify: `crm/src/components/conversas/chat-view.tsx`
+
+- [ ] **Step 1: Replace the entire file with the new implementation**
+
+Open `crm/src/components/conversas/chat-view.tsx` and replace its full contents with:
+
+```tsx
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import type { Message, Conversation, Tag } from "@/lib/types";
+import type { Message, Conversation, Tag, Lead } from "@/lib/types";
 import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 
 interface ChatViewProps {
@@ -28,24 +76,22 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const sendingRef = useRef(false);
-  const abortRef = useRef<AbortController | null>(null);
 
   // Clear optimistic messages when switching conversations
   useEffect(() => {
     setOptimisticMessages([]);
   }, [conversation.id]);
 
-  // Abort in-flight fetch on conversation switch
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, [conversation.id]);
-
   // Merged display list: real messages + unconfirmed optimistic ones
+  // A temp message is removed once a real message with same content+sender arrives
   const displayMessages = useMemo(() => {
-    return [...messages, ...optimisticMessages];
+    const confirmedKeys = new Set(messages.map((m) => `${m.content}|${m.sent_by}`));
+    return [
+      ...messages,
+      ...optimisticMessages.filter(
+        (o) => !confirmedKeys.has(`${o.content}|${o.sent_by}`)
+      ),
+    ];
   }, [messages, optimisticMessages]);
 
   // Auto-scroll to latest message
@@ -54,8 +100,7 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
   }, [displayMessages]);
 
   async function handleSend() {
-    if (!text.trim() || sendingRef.current) return;
-    sendingRef.current = true;
+    if (!text.trim() || sending) return;
 
     const content = text.trim();
 
@@ -75,31 +120,24 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
     setSending(true);
 
     try {
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       const res = await fetch(`/api/conversations/${conversation.id}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: content }),
-        signal: controller.signal,
       });
 
-      if (res.ok) {
-        // Remove temp immediately — realtime delivers the real message in <1s
-        setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
-      } else {
+      if (!res.ok) {
         // Send failed — remove temp message and restore input
         setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
         setText(content);
       }
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
+      // On success: do nothing. Supabase realtime will bring the real message,
+      // and displayMessages will filter out the temp automatically.
+    } catch {
       setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
       setText(content);
     } finally {
       setSending(false);
-      sendingRef.current = false;
     }
   }
 
@@ -113,9 +151,9 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
   const displayName = lead?.name || lead?.phone || "Desconhecido";
   const isMetaCloud = channel?.provider === "meta_cloud";
 
-  const tagIdsRaw = (lead as unknown as Record<string, unknown>)?.tag_ids;
-  const tagIds = Array.isArray(tagIdsRaw) ? (tagIdsRaw as string[]) : [];
-  const leadTagIds = lead ? tags.filter((t) => tagIds.includes(t.id)) : [] as Tag[];
+  const leadTagIds = lead
+    ? tags.filter((t) => (lead as Lead & { tag_ids?: string[] }).tag_ids?.includes(t.id))
+    : [] as Tag[];
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white">
@@ -228,3 +266,121 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
     </div>
   );
 }
+```
+
+- [ ] **Step 2: Verify TypeScript compiles without errors**
+
+```bash
+cd /home/Kelwin/Maquinadevendascanastra/crm
+npx tsc --noEmit 2>&1 | head -30
+```
+
+Expected: no output (no errors). If errors appear, fix them before continuing.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add crm/src/components/conversas/chat-view.tsx
+git commit -m "feat(conversas): wire useRealtimeMessages + optimistic UI into ChatView"
+```
+
+---
+
+### Task 3: Add realtime subscription on conversations list in ConversasPage
+
+**Files:**
+- Modify: `crm/src/app/(authenticated)/conversas/page.tsx`
+
+- [ ] **Step 1: Add the realtime subscription useEffect**
+
+In `crm/src/app/(authenticated)/conversas/page.tsx`, add the following `useEffect` **after** the existing `useEffect(() => { fetchConversations(); }, [selectedChannelId]);` block (around line 27):
+
+```tsx
+  // Realtime: re-sort list when any conversation's last_msg_at changes
+  useEffect(() => {
+    const channel = supabase
+      .channel("conversations-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations" },
+        () => {
+          fetchConversations();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedChannelId]);
+```
+
+> Note: the dependency on `selectedChannelId` ensures the subscription is recreated when the user switches channels, so `fetchConversations()` inside it always uses the current filter.
+
+- [ ] **Step 2: Verify TypeScript compiles without errors**
+
+```bash
+cd /home/Kelwin/Maquinadevendascanastra/crm
+npx tsc --noEmit 2>&1 | head -30
+```
+
+Expected: no output.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add crm/src/app/(authenticated)/conversas/page.tsx
+git commit -m "feat(conversas): add supabase realtime subscription on conversations list"
+```
+
+---
+
+### Task 4: Manual end-to-end validation
+
+**Files:** none (validation only)
+
+- [ ] **Step 1: Start the dev server**
+
+```bash
+cd /home/Kelwin/Maquinadevendascanastra/crm
+npm run dev
+```
+
+Open `http://localhost:3000/conversas` in the browser.
+
+- [ ] **Step 2: Validate send — optimistic UI**
+
+1. Select any Meta Cloud conversation with an existing contact
+2. Type a message and press Enter (or click send button)
+3. The message must appear **immediately** with "Enviando..." timestamp and slightly dimmed opacity
+4. Within ~1–2s, it transitions to a real timestamp (Supabase realtime confirmed)
+5. No duplicate messages appear
+
+- [ ] **Step 3: Validate receive — incoming messages appear without refresh**
+
+1. From the lead's phone, send a WhatsApp message to the business number
+2. Without touching the browser, within a few seconds the message must appear in the chat view
+3. If the bot is configured (channel has `agent_profiles`), the bot's reply must also appear automatically
+
+- [ ] **Step 4: Validate conversations list re-sorts**
+
+1. Have a conversation open that is NOT at the top of the list
+2. Send or receive a message in it
+3. That conversation must move to the top of `ChatList` automatically
+
+- [ ] **Step 5: Validate send failure handling**
+
+Temporarily break the send route to test failure path (or simply disconnect the internet):
+1. If send fails, the "Enviando..." temp message disappears and the text is restored in the input
+
+---
+
+### Task 5: Push branch
+
+- [ ] **Step 1: Push branch to remote**
+
+```bash
+git push -u origin feat/conversas-realtime-mvp
+```
+
+Expected: branch pushed, ready for PR or direct validation on Vercel preview.
