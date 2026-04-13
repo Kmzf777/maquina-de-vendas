@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -108,6 +109,7 @@ async def process_buffered_messages(
         )
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
+        # Abort: do not run agent without persistence — avoids unlogged AI responses
         return
 
     # If human already took control, stop here — message is saved, agent skipped
@@ -194,7 +196,6 @@ async def _resolve_media(text: str, provider) -> str:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
             try:
-                import base64
                 image_bytes, content_type = await provider.download_media(media_ref)
                 b64 = base64.b64encode(image_bytes).decode()
                 response = await _get_openai().chat.completions.create(

@@ -47,8 +47,10 @@ async def test_human_control_skips_agent():
         mock_agent.assert_not_called()
         # user message saved even under human_control
         mock_save.assert_called_once()
-        args = mock_save.call_args[0]
-        assert args[2] == "user"  # role is "user"
+        call_kwargs = mock_save.call_args
+        # save_message(conversation_id, lead_id, role, content, stage)
+        # positional arg index 2 is role
+        assert call_kwargs.args[2] == "user"
 
 
 @pytest.mark.asyncio
@@ -97,5 +99,6 @@ async def test_agent_called_when_no_human_control():
         mock_agent.assert_called_once()
         # user message saved before agent
         assert mock_save.call_count >= 1
-        first_save_args = mock_save.call_args_list[0][0]
-        assert first_save_args[2] == "user"
+        first_call = mock_save.call_args_list[0]
+        # save_message(conversation_id, lead_id, role, content, stage)
+        assert first_call.args[2] == "user"
