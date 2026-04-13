@@ -3,7 +3,8 @@ import logging
 import httpx
 
 from app.config import settings
-from app.leads.service import get_or_create_lead, save_message
+from app.leads.service import get_or_create_lead, update_lead
+from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 
 logger = logging.getLogger(__name__)
 
@@ -11,24 +12,33 @@ META_API_BASE = "https://graph.facebook.com/v21.0"
 
 # ---------------------------------------------------------------------------
 # Template hardcoded — primeiro contato ativo com o lead
-# Substituir pelo template aprovado pela Meta antes de ir a producao
+# Substituir pelo template aprovado pela Meta antes de ir a producao.
+# NOTA: a Meta só aceita type="template" para contatos fora da janela de 24h.
+# Para testes com janela aberta, pode usar type="text" comentando o payload abaixo.
 # ---------------------------------------------------------------------------
+TEMPLATE_NAME = "recuperar_lead_v1"  # nome do template aprovado na Meta
+
 TEMPLATE_TEXT = (
     "oi, tudo bem?\n\n"
-    "aqui e a Valeria, do comercial da Cafe Canastra\n\n"
-    "a gente trabalha com cafe especial — atacado, private label e exportacao\n\n"
-    "queria entender se faz sentido pra voce, tem um minutinho?"
+    "aqui é a Valeria, do comercial da Café Canastra\n\n"
+    "a gente trabalha com café especial — atacado, private label e exportação\n\n"
+    "queria entender se faz sentido pra você, tem um minutinho?"
 )
 
 
 async def dispatch_to_lead(phone: str, lead_context: dict) -> dict:
     """
     Envia o template de re-engajamento para um lead via Meta Cloud API.
-    Salva a mensagem no historico para o agent ter contexto ao responder.
+
+    - Salva a mensagem no histórico como role=assistant para o agent ter contexto.
+    - Atualiza lead.status = template_sent.
+    - Cria/atualiza conversation.status = template_sent para o processor
+      chamar activate_conversation quando o lead responder.
 
     Args:
-        phone: numero no formato +5511999999999
-        lead_context: dados opcionais do CRM (name, company, previous_stage, notes)
+        phone: número no formato +5511999999999
+        lead_context: dados opcionais do CRM: name, company, previous_stage,
+                      notes, channel_id (obrigatório para criar conversation)
 
     Returns:
         {"status": "sent", "phone": phone, "lead_id": str}
@@ -43,6 +53,7 @@ async def dispatch_to_lead(phone: str, lead_context: dict) -> dict:
         "Authorization": f"Bearer {settings.meta_access_token}",
         "Content-Type": "application/json",
     }
+    # Use text for now (works within 24h window); swap to template payload for cold leads
     payload = {
         "messaging_product": "whatsapp",
         "to": phone,
@@ -59,8 +70,25 @@ async def dispatch_to_lead(phone: str, lead_context: dict) -> dict:
     lead = get_or_create_lead(phone)
     lead_id = lead["id"]
 
-    # Save dispatcher message as assistant so agent has context
-    save_message(lead_id, "assistant", TEMPLATE_TEXT, "secretaria")
+    # Mark lead as template_sent so processor knows to activate on first reply
+    update_lead(lead_id, status="template_sent")
+
+    # Create/get conversation and mark as template_sent
+    channel_id = lead_context.get("channel_id", "")
+    if channel_id:
+        conversation = get_or_create_conversation(lead_id, channel_id)
+        update_conversation(conversation["id"], status="template_sent")
+        save_message(conversation["id"], lead_id, "assistant", TEMPLATE_TEXT, "secretaria")
+    else:
+        # No channel_id: save message without conversation link (minimal mode)
+        from app.db.supabase import get_supabase
+        sb = get_supabase()
+        sb.table("messages").insert({
+            "lead_id": lead_id,
+            "role": "assistant",
+            "content": TEMPLATE_TEXT,
+            "stage": "secretaria",
+        }).execute()
 
     logger.info(f"[DISPATCH] Template sent to {phone} (lead_id={lead_id}), wamid={result}")
     return {"status": "sent", "phone": phone, "lead_id": lead_id}

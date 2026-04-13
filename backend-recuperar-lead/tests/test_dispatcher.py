@@ -3,16 +3,32 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_dispatch_sends_template_and_saves_message():
-    """dispatch_to_lead should POST to Meta API and save message to DB."""
+async def test_dispatch_sends_template_saves_message_and_sets_status():
+    """dispatch_to_lead should POST to Meta API, save message, and set lead+conversation status."""
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"messages": [{"id": "wamid.123"}]}
 
-    mock_lead = {"id": "lead-abc", "phone": "+5511999999999", "stage": "secretaria", "status": "imported", "name": None}
+    mock_lead = {
+        "id": "lead-abc",
+        "phone": "+5511999999999",
+        "stage": "secretaria",
+        "status": "imported",
+        "name": None,
+    }
+    mock_conversation = {
+        "id": "conv-xyz",
+        "lead_id": "lead-abc",
+        "channel_id": "channel-1",
+        "status": "template_sent",
+        "stage": "secretaria",
+    }
 
     with patch("app.outbound.dispatcher.settings") as mock_settings, \
          patch("app.outbound.dispatcher.get_or_create_lead", return_value=mock_lead), \
+         patch("app.outbound.dispatcher.update_lead") as mock_update_lead, \
+         patch("app.outbound.dispatcher.get_or_create_conversation", return_value=mock_conversation) as mock_get_conv, \
+         patch("app.outbound.dispatcher.update_conversation") as mock_update_conv, \
          patch("app.outbound.dispatcher.save_message") as mock_save, \
          patch("httpx.AsyncClient") as mock_client_class:
 
@@ -26,12 +42,16 @@ async def test_dispatch_sends_template_and_saves_message():
         mock_client_class.return_value = mock_client
 
         from app.outbound.dispatcher import dispatch_to_lead
-        result = await dispatch_to_lead("+5511999999999", {})
+        result = await dispatch_to_lead("+5511999999999", {"channel_id": "channel-1"})
 
         assert result["status"] == "sent"
         assert result["phone"] == "+5511999999999"
         mock_client.post.assert_called_once()
         mock_save.assert_called_once()
+        # Lead status updated to template_sent
+        mock_update_lead.assert_called_once_with("lead-abc", status="template_sent")
+        # Conversation status updated to template_sent
+        mock_update_conv.assert_called_once_with("conv-xyz", status="template_sent")
 
 
 @pytest.mark.asyncio
