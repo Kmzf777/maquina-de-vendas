@@ -28,6 +28,9 @@ export function useRealtimeMessages(leadId: string | null) {
   }, [leadId]);
 
   useEffect(() => {
+    // Reset state immediately on leadId change to avoid stale message flash
+    setMessages([]);
+    setLoading(true);
     fetchMessages();
 
     if (!leadId) return;

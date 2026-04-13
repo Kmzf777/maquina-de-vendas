@@ -15,11 +15,16 @@ _openai_client: AsyncOpenAI | None = None
 # Brazil timezone
 TZ_BR = timezone(timedelta(hours=-3))
 
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _openai_client = AsyncOpenAI(
+            api_key=settings.gemini_api_key,
+            base_url=_GEMINI_BASE_URL,
+        )
     return _openai_client
 
 
@@ -75,7 +80,7 @@ async def run_agent(conversation: dict, agent_profile: dict, user_text: str) -> 
     # Get model and tools from agent_profile stage config
     stages = agent_profile.get("stages", {})
     stage_config = stages.get(stage, {})
-    model = stage_config.get("model", agent_profile.get("model", "gpt-4.1"))
+    model = stage_config.get("model", agent_profile.get("model", "gemini-3-flash-preview"))
     tool_names = stage_config.get("tools", [])
     tools = get_tools_for_stage(tool_names)
 
@@ -90,7 +95,7 @@ async def run_agent(conversation: dict, agent_profile: dict, user_text: str) -> 
         messages=messages,
         tools=tools if tools else None,
         temperature=0.7,
-        max_tokens=500,
+        max_tokens=1024,
     )
 
     message = response.choices[0].message
@@ -118,7 +123,7 @@ async def run_agent(conversation: dict, agent_profile: dict, user_text: str) -> 
             messages=messages,
             tools=tools if tools else None,
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=1024,
         )
         message = response.choices[0].message
 

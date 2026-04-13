@@ -5,11 +5,16 @@ from app.config import settings
 
 _openai_client: AsyncOpenAI | None = None
 
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _openai_client = AsyncOpenAI(
+            api_key=settings.gemini_api_key,
+            base_url=_GEMINI_BASE_URL,
+        )
     return _openai_client
 
 
@@ -41,7 +46,7 @@ async def transcribe_audio(media_id: str) -> str:
 
     ext = "ogg" if "ogg" in content_type else "mp4"
     transcript = await _get_openai().audio.transcriptions.create(
-        model="whisper-1",
+        model="gemini-3-flash-preview",
         file=(f"audio.{ext}", audio_bytes, content_type),
     )
     return transcript.text
@@ -55,7 +60,7 @@ async def describe_image(media_id: str) -> str:
     b64 = base64.b64encode(image_bytes).decode()
 
     response = await _get_openai().chat.completions.create(
-        model="gpt-4o",
+        model="gemini-3-flash-preview",
         messages=[{
             "role": "user",
             "content": [

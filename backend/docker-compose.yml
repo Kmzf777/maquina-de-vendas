@@ -1,20 +1,36 @@
 services:
   api:
+    # Para `docker stack deploy`: comente `build` e use a imagem pré-construída.
+    # Para `docker compose up -d` com Traefik em swarmMode=false: mantenha build.
     build: .
+    image: canastra-api:latest
     ports:
       - "8000:8000"
     env_file: .env
     depends_on:
       - redis
     restart: unless-stopped
+    networks:
+      - canastrainteligencia
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=canastrainteligencia"
+        - "traefik.http.routers.meubackend.rule=Host(`api.canastrainteligencia.com`)"
+        - "traefik.http.routers.meubackend.entrypoints=websecure"
+        - "traefik.http.routers.meubackend.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.meubackend.loadbalancer.server.port=8000"
 
   worker:
     build: .
+    image: canastra-api:latest
     command: python -m app.campaign.worker
     env_file: .env
     depends_on:
       - redis
     restart: unless-stopped
+    networks:
+      - canastrainteligencia
 
   redis:
     image: redis:7-alpine
@@ -23,6 +39,12 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    networks:
+      - canastrainteligencia
+
+networks:
+  canastrainteligencia:
+    external: true
 
 volumes:
   redis_data:

@@ -1,6 +1,9 @@
 # Worktrees
 .worktrees/
 
+# MCP config (contains secrets)
+.mcp.json
+
 # Python
 __pycache__/
 *.py[cod]
