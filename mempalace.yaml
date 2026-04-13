@@ -1,0 +1,40 @@
+wing: maquinadevendascanastra
+rooms:
+- name: prompts_para_o_arthur
+  description: Files from prompts para o arthur/
+  keywords:
+  - prompts_para_o_arthur
+  - prompts para o arthur
+- name: crm
+  description: Files from crm/
+  keywords:
+  - crm
+  - crm
+- name: backend
+  description: Files from backend/
+  keywords:
+  - backend
+  - backend
+- name: backend_evolution
+  description: Files from backend-evolution/
+  keywords:
+  - backend_evolution
+  - backend-evolution
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: testing
+  description: Files from tests/
+  keywords:
+  - testing
+  - tests
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []
