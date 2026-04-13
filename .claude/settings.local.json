@@ -1,11 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx create-next-app@latest crm --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)"
+      "Bash(npx create-next-app@latest crm --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)",
+      "Bash(echo '')",
+      "Bash(echo '# Claude Code - disable terminal flicker')",
+      "Bash(echo 'export CLAUDE_CODE_NO_FLICKER=1')",
+      "Bash(mkdir -p ~/.claude/plugins/cache/superpowers-marketplace/superpowers)",
+      "Bash(cp -r ~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7 ~/.claude/plugins/cache/superpowers-marketplace/superpowers/5.0.7)"
     ]
   },
+  "enabledMcpjsonServers": [
+    "context7",
+    "mempalace",
+    "supabase"
+  ],
   "enabledPlugins": {
-    "claude-session-driver@superpowers-marketplace": true,
-    "frontend-design@claude-plugins-official": true
+    "mempalace@mempalace": true,
+    "claude-hud@claude-hud": true,
+    "superpowers@claude-plugins-official": true
   }
 }
