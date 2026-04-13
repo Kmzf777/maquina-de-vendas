@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, ANY
 from datetime import datetime, timezone, timedelta
 
 from app.cadence.scheduler import (
@@ -102,7 +102,12 @@ class TestProcessDueCadences:
         await process_due_cadences(now)
 
         mock_deps["send"].assert_called_once_with("5511999999999", "Oi! Viu nosso catalogo?")
-        mock_deps["advance"].assert_called_once()
+        mock_deps["advance"].assert_called_once_with(
+            "enroll-1",
+            new_step=1,
+            total_sent=1,
+            next_send_at=ANY,
+        )
         mock_deps["save_msg"].assert_called_once()
 
     @pytest.mark.anyio

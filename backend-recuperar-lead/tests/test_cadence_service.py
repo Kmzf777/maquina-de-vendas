@@ -101,6 +101,7 @@ class TestAdvanceEnrollment:
         update_call = mock_sb.table.return_value.update.call_args[0][0]
         assert update_call["current_step"] == 2
         assert update_call["total_messages_sent"] == 2
+        assert "next_send_at" in update_call
 
 
 class TestExhaustEnrollment:
