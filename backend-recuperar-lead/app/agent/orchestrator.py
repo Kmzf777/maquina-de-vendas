@@ -79,7 +79,7 @@ async def run_agent(
     lead_id = lead.get("id") or conversation.get("lead_id")
     conversation_id = conversation["id"]
 
-    model = STAGE_MODELS.get(stage, "gemini-2.0-flash")
+    model = STAGE_MODELS.get(stage, "gemini-3-flash-preview")
     tools = get_tools_for_stage(stage)
     system_prompt = build_system_prompt(lead, stage, lead_context=lead_context)
 

@@ -22,15 +22,6 @@ def update_lead(lead_id: str, **fields) -> dict[str, Any]:
     return result.data[0]
 
 
-def activate_lead(lead_id: str) -> dict[str, Any]:
-    return update_lead(
-        lead_id,
-        status="active",
-        stage="secretaria",
-        last_msg_at=datetime.now(timezone.utc).isoformat(),
-    )
-
-
 def reset_lead(lead_id: str) -> None:
     """Reset lead: delete message history and reset stage to secretaria."""
     sb = get_supabase()

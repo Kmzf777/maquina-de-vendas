@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Request, Response
 
 from app.webhook.meta_parser import parse_meta_webhook_payload, extract_phone_number_id
+# TODO: migrate to app.providers.registry.get_provider (matching production pattern)
 from app.whatsapp.factory import get_whatsapp_client
 from app.buffer.manager import push_to_buffer
 from app.leads.service import get_or_create_lead, reset_lead
