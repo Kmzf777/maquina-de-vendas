@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from app.leads.service import get_or_create_lead, activate_lead, update_lead
+from app.leads.service import get_or_create_lead, activate_lead, update_lead, save_message
 from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
 from app.humanizer.typing import calculate_typing_delay
@@ -78,6 +78,12 @@ async def process_buffered_messages(phone: str, combined_text: str, channel_id: 
         if lead.get("status") in ("imported", "template_sent"):
             lead = activate_lead(lead["id"])
 
+        # If human already took control, save message and skip agent
+        if lead.get("human_control"):
+            save_message(lead["id"], "user", resolved_text, lead.get("stage", "secretaria"), conversation_id=conversation["id"])
+            logger.info(f"[HUMAN CONTROL] Lead {phone} is under human control — message saved, agent skipped")
+            return
+
         # Check if channel has an agent profile
         agent_profile = channel.get("agent_profiles")
         if agent_profile:
@@ -91,7 +97,6 @@ async def process_buffered_messages(phone: str, combined_text: str, channel_id: 
                 await wa_client.send_text(phone, bubble)
         else:
             # Human-only mode: just save the message, don't run agent
-            from app.leads.service import save_message
             save_message(lead["id"], "user", resolved_text, lead.get("stage", "secretaria"), conversation_id=conversation["id"])
             logger.info(f"Human-only channel for {phone} — message saved, no agent response")
 
