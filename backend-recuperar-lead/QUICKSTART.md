@@ -1,4 +1,4 @@
-# ValerIA - Backend Evolution API - Quickstart
+# SDR Backend (recuperar-lead) - Quickstart
 
 ## Pre-requisitos
 
@@ -153,10 +153,33 @@ cd backend-evolution
 python -m pytest tests/ -v
 ```
 
+## Deploy no Swarm (produção)
+
+**IMPORTANTE:** `docker stack deploy` ignora `env_file`. As variáveis precisam ser exportadas no shell antes do deploy:
+
+```bash
+# 1. Build da imagem
+sg docker -c "docker build -t canastra-sdr:latest ./backend-recuperar-lead"
+
+# 2. Deploy passando as variáveis pelo ambiente
+sg docker -c "set -a && source backend-recuperar-lead/.env && set +a && \
+  docker stack deploy -c backend-recuperar-lead/docker-compose.yml sdr"
+
+# 3. Verificar
+sg docker -c "docker service ls | grep sdr"
+```
+
+Para inspecionar logs:
+
+```bash
+sg docker -c "docker service logs sdr_api"
+sg docker -c "docker service logs sdr_worker"
+```
+
 ## Estrutura
 
 ```
-backend-evolution/
+backend-recuperar-lead/
 ├── app/
 │   ├── main.py              # FastAPI app
 │   ├── config.py             # Settings (Evolution env vars)

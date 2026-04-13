@@ -4,6 +4,7 @@ services:
     networks:
       - canastrainteligencia
     env_file: .env
+    # depends_on is ignored by docker stack deploy — app must handle Redis unavailability
     depends_on:
       - redis
     deploy:
@@ -13,6 +14,8 @@ services:
         delay: 10s
         max_attempts: 3
       update_config:
+        parallelism: 1
+        delay: 10s
         order: start-first
         failure_action: rollback
       labels:
@@ -29,6 +32,7 @@ services:
     networks:
       - canastrainteligencia
     env_file: .env
+    # depends_on is ignored by docker stack deploy — worker must handle Redis unavailability
     depends_on:
       - redis
     deploy:
@@ -37,6 +41,11 @@ services:
         condition: on-failure
         delay: 10s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
 
   redis:
     image: redis:7-alpine
@@ -47,6 +56,8 @@ services:
     deploy:
       restart_policy:
         condition: on-failure
+        delay: 5s
+        max_attempts: 5
 
 networks:
   canastrainteligencia:
