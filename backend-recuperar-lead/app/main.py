@@ -43,6 +43,7 @@ from app.cadence.router import router as cadence_router
 from app.stats.router import router as stats_router
 from app.stats.pricing_router import router as pricing_router
 from app.webhook.meta_router import router as meta_webhook_router
+from app.outbound.router import router as outbound_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
@@ -51,6 +52,7 @@ app.include_router(broadcast_router)
 app.include_router(cadence_router)
 app.include_router(stats_router)
 app.include_router(pricing_router)
+app.include_router(outbound_router)
 
 
 @app.get("/health")
