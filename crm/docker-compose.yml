@@ -1,0 +1,29 @@
+services:
+  crm:
+    image: canastra-crm:latest
+    networks:
+      - canastrainteligencia
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=canastrainteligencia"
+
+        # Router principal — non-www (HTTPS)
+        - "traefik.http.routers.frontend.rule=Host(`canastrainteligencia.com`)"
+        - "traefik.http.routers.frontend.entrypoints=websecure"
+        - "traefik.http.routers.frontend.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+        # Router www — redireciona 301 para non-www antes de chegar ao Next.js
+        # (evita problema de CORS: backend só autoriza a origem sem www)
+        - "traefik.http.routers.frontend-www.rule=Host(`www.canastrainteligencia.com`)"
+        - "traefik.http.routers.frontend-www.entrypoints=websecure"
+        - "traefik.http.routers.frontend-www.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.frontend-www.middlewares=redirect-www"
+        - "traefik.http.middlewares.redirect-www.redirectregex.regex=^https://www\\.(.*)"
+        - "traefik.http.middlewares.redirect-www.redirectregex.replacement=https://$${1}"
+        - "traefik.http.middlewares.redirect-www.redirectregex.permanent=true"
+
+networks:
+  canastrainteligencia:
+    external: true
