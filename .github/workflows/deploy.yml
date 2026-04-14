@@ -3,15 +3,32 @@ name: Deploy to VPS
 on:
   push:
     branches: [master]
+    paths:
+      - 'crm/**'
+      - 'backend/**'
 
 jobs:
   deploy-crm:
     name: Deploy CRM (Next.js)
     runs-on: ubuntu-latest
     if: |
-      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added + github.event.commits.*.removed), '"crm/')
+      contains(github.event.head_commit.message, 'skip-crm') == false
     steps:
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if crm/ changed
+        id: crm_changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q '^crm/'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy CRM via SSH
+        if: steps.crm_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -42,10 +59,22 @@ jobs:
   deploy-backend:
     name: Deploy Backend (FastAPI)
     runs-on: ubuntu-latest
-    if: |
-      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added + github.event.commits.*.removed), '"backend/')
     steps:
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if backend/ changed
+        id: backend_changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q '^backend/'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Backend via SSH
+        if: steps.backend_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
