@@ -1,0 +1,28 @@
+services:
+  crm:
+    image: canastra-crm:latest
+    networks:
+      - canastrainteligencia
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=canastrainteligencia"
+
+        # Router — subdomínio crm
+        - "traefik.http.routers.frontend.rule=Host(`crm.canastrainteligencia.com`)"
+        - "traefik.http.routers.frontend.entrypoints=websecure"
+        - "traefik.http.routers.frontend.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+networks:
+  canastrainteligencia:
+    external: true

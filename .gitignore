@@ -11,8 +11,8 @@ __pycache__/
 .venv/
 venv/
 .env
-.env.example
 *.env*
+!.env.example
 
 # IDE
 .vscode/
