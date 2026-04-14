@@ -3,9 +3,6 @@ name: Deploy to VPS
 on:
   push:
     branches: [master]
-    paths:
-      - 'crm/**'
-      - 'backend/**'
 
 jobs:
   deploy-crm:
