@@ -1,0 +1,90 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy-crm:
+    name: Deploy CRM (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if crm/ changed
+        id: crm_changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q '^crm/'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy CRM via SSH
+        if: steps.crm_changed.outputs.changed == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/Maquinadevendascanastra
+            git pull origin master
+            source crm/.env.build
+            sg docker -c "docker build \
+              --build-arg NEXT_PUBLIC_FASTAPI_URL=$NEXT_PUBLIC_FASTAPI_URL \
+              --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+              --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+              -t canastra-crm:latest ./crm"
+            sg docker -c "docker stack deploy -c crm/docker-compose.yml crm"
+            sg docker -c "docker service update \
+              --env-add SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY \
+              crm_crm"
+            echo "CRM deployed successfully"
+
+  deploy-backend:
+    name: Deploy Backend (FastAPI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if backend/ changed
+        id: backend_changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q '^backend/'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Backend via SSH
+        if: steps.backend_changed.outputs.changed == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/Maquinadevendascanastra
+            git pull origin master
+            sg docker -c "docker build -t canastra-api:latest ./backend"
+            sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
+            sg docker -c "docker service update \
+              --env-add GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+              --env-add API_BASE_URL=https://api.canastrainteligencia.com \
+              --env-add FRONTEND_URL=https://crm.canastrainteligencia.com \
+              canastra_api"
+            sg docker -c "docker service update \
+              --env-add GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+              --env-add API_BASE_URL=https://api.canastrainteligencia.com \
+              --env-add FRONTEND_URL=https://crm.canastrainteligencia.com \
+              canastra_worker"
+            echo "Backend deployed successfully"

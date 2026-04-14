@@ -21,6 +21,39 @@ logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
 
+
+def _try_claim_message(conversation_id: str, content: str) -> bool:
+    """Atomically claim the right to process this incoming message.
+
+    Uses a DB-level PRIMARY KEY INSERT as a distributed lock. This is safe
+    across multiple backend instances sharing the same Supabase DB but running
+    separate Redis instances (which breaks the Redis-level dedup).
+
+    Returns True  → this instance claimed the message, proceed with processing.
+    Returns False → another instance already claimed it, skip entirely
+                    (no AI call, no save, no duplicate outbound send).
+
+    Lock key: "{conversation_id}:{content_hash_prefix}:{epoch_minute_bucket}"
+    The epoch-minute bucket lets the same text be sent again after ~1 minute.
+    """
+    import hashlib
+    from app.db.supabase import get_supabase
+
+    epoch_minute = int(datetime.now(timezone.utc).timestamp()) // 60
+    content_hash = hashlib.md5(content.encode()).hexdigest()[:16]
+    lock_key = f"{conversation_id}:{content_hash}:{epoch_minute}"
+
+    sb = get_supabase()
+    try:
+        sb.table("message_processing_locks").insert({"lock_key": lock_key}).execute()
+        return True  # Claimed
+    except Exception as e:
+        err = str(e)
+        if "23505" in err or "duplicate key" in err.lower() or "unique" in err.lower():
+            return False  # Another instance claimed it first
+        raise  # Unexpected error
+
+
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
@@ -63,6 +96,17 @@ async def process_buffered_messages(
             logger.warning(f"Failed to activate conversation {conversation['id']}: {e}")
 
     # --- Layer 2: Always persist the incoming user message ---
+    # Atomically claim this message using a DB-level distributed lock.
+    # If two backend instances receive the same webhook, only the first to
+    # INSERT the lock key proceeds; the second skips entirely — no duplicate
+    # save, no duplicate AI call, no duplicate outbound message to customer.
+    if not _try_claim_message(conversation["id"], resolved_text):
+        logger.warning(
+            f"Message already claimed by another instance for {phone} on "
+            f"conversation {conversation['id']}, skipping"
+        )
+        return
+
     try:
         save_message(
             conversation["id"], lead["id"], "user",

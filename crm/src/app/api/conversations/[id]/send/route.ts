@@ -42,6 +42,25 @@ export async function POST(
         evoInfo.phone,
         text.trim()
       );
+
+      // Save message to DB — look up lead by phone
+      const { data: lead } = await supabase
+        .from("leads")
+        .select("id, stage")
+        .eq("phone", evoInfo.phone)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lead) {
+        await supabase.from("messages").insert({
+          lead_id: lead.id,
+          role: "assistant",
+          content: text.trim(),
+          stage: lead.stage || "secretaria",
+        });
+      }
+
       return NextResponse.json({ status: "sent" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to send";
@@ -86,7 +105,6 @@ export async function POST(
       conversation_id: conversationId,
       role: "assistant",
       content: text.trim(),
-      sent_by: "seller",
       stage: conv.stage || "secretaria",
     });
 
