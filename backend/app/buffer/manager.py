@@ -3,6 +3,8 @@ import logging
 
 import redis.asyncio as aioredis
 
+FLUSH_QUEUE_KEY = "flush_queue"
+
 from app.config import settings
 from app.webhook.parser import IncomingMessage
 
