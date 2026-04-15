@@ -2,7 +2,7 @@ import httpx
 
 from app.providers.base import WhatsAppProvider
 
-# Explicit timeouts: 5s connect, 30s read
+# Explicit timeouts: 5s connect, 30s read (media downloads can be large)
 HTTPX_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 

@@ -38,3 +38,16 @@ def test_typing_delay_range():
 def test_typing_delay_capped():
     delay = calculate_typing_delay("a" * 1000)
     assert delay <= 12.0
+
+
+def test_split_fixes_lowercase_reais():
+    text = "o 250g sai r$23,90 a unidade\n\no pedido minimo e de 100"
+    bubbles = split_into_bubbles(text)
+    assert bubbles[0] == "o 250g sai R$23,90 a unidade"
+    assert bubbles[1] == "o pedido minimo e de 100"
+
+
+def test_split_preserves_uppercase_reais():
+    text = "o valor e R$44,90"
+    bubbles = split_into_bubbles(text)
+    assert bubbles[0] == "o valor e R$44,90"
