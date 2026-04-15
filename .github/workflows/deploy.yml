@@ -75,6 +75,10 @@ jobs:
             set -e
             cd ~/Maquinadevendascanastra
             git pull origin master
+            for f in ~/Maquinadevendascanastra/backend/migrations/*.sql; do
+              echo "Running migration: $f"
+              psql "${{ secrets.DATABASE_URL }}" -f "$f"
+            done
             sg docker -c "docker build -t canastra-api:latest ./backend"
             sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
             sg docker -c "docker service update \
