@@ -1,7 +1,52 @@
 import logging
+from fastapi import HTTPException
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+def list_channels() -> list:
+    """Return all channels."""
+    sb = get_supabase()
+    res = sb.table("channels").select("*, agent_profiles(*)").execute()
+    return res.data or []
+
+
+def get_channel(channel_id: str) -> dict:
+    """Get a channel by ID, raising 404 if not found."""
+    sb = get_supabase()
+    res = (
+        sb.table("channels")
+        .select("*, agent_profiles(*)")
+        .eq("id", channel_id)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(404, f"Channel {channel_id} not found")
+    return res.data[0]
+
+
+def create_channel(data: dict) -> dict:
+    """Create a new channel."""
+    sb = get_supabase()
+    res = sb.table("channels").insert(data).execute()
+    return res.data[0]
+
+
+def update_channel(channel_id: str, data: dict) -> dict:
+    """Update an existing channel."""
+    sb = get_supabase()
+    res = sb.table("channels").update(data).eq("id", channel_id).execute()
+    if not res.data:
+        raise HTTPException(404, f"Channel {channel_id} not found")
+    return res.data[0]
+
+
+def delete_channel(channel_id: str) -> None:
+    """Delete a channel."""
+    sb = get_supabase()
+    sb.table("channels").delete().eq("id", channel_id).execute()
 
 
 def get_channel_by_phone(phone: str, provider: str) -> dict | None:
