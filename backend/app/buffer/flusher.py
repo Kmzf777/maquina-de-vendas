@@ -6,9 +6,11 @@ import redis.asyncio as aioredis
 
 from app.buffer.manager import FLUSH_QUEUE_KEY
 from app.buffer.processor import process_buffered_messages
-from app.channels.service import get_channel
+from app.channels.service import get_channel_by_id as get_channel
 
 logger = logging.getLogger(__name__)
+
+BUFFER_FLAG_KEY = "config:buffer_enabled"
 
 
 async def flush_due_items(r: aioredis.Redis) -> None:
@@ -21,16 +23,14 @@ async def flush_due_items(r: aioredis.Redis) -> None:
     due_members = await r.zrangebyscore(FLUSH_QUEUE_KEY, "-inf", now)
 
     for member in due_members:
-        # Atomic claim: only one worker gets removed=1
         removed = await r.zrem(FLUSH_QUEUE_KEY, member)
         if removed == 0:
-            continue  # Another worker claimed it first
+            continue
 
         channel_id, phone = member.split(":", 1)
         buffer_key = f"buffer:{channel_id}:{phone}"
         lead_name_key = f"lead_name:{channel_id}:{phone}"
 
-        # Atomic read + delete using Redis pipeline
         async with r.pipeline(transaction=True) as pipe:
             pipe.lrange(buffer_key, 0, -1)
             pipe.delete(buffer_key)
@@ -42,11 +42,9 @@ async def flush_due_items(r: aioredis.Redis) -> None:
             continue
 
         push_name = results[2] if results[2] else None
-
         combined = "\n".join(raw_messages)
         logger.info(
-            f"Flushing {len(raw_messages)} message(s) for {phone} "
-            f"on channel {channel_id}"
+            f"Flushing {len(raw_messages)} message(s) for {phone} on channel {channel_id}"
         )
 
         try:
@@ -64,14 +62,19 @@ async def flush_due_items(r: aioredis.Redis) -> None:
 async def run_flusher(app) -> None:
     """Background loop started by FastAPI lifespan.
 
-    Polls flush_queue every 500ms. Runs forever until the app shuts down.
+    Checks config:buffer_enabled flag each cycle.
+    Runs forever until the app shuts down (asyncio.CancelledError).
     """
     redis: aioredis.Redis = app.state.redis
     logger.info("Buffer flusher started")
 
     while True:
         try:
-            await flush_due_items(redis)
+            flag = await redis.get(BUFFER_FLAG_KEY)
+            if flag != "0":
+                await flush_due_items(redis)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Flusher loop error: {e}", exc_info=True)
 
