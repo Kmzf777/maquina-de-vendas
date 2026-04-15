@@ -62,13 +62,17 @@ class TestCalculateNextSendAt:
 
 @pytest.fixture
 def mock_deps():
+    mock_provider = MagicMock()
+    mock_provider.send_text = AsyncMock()
+
     with patch("app.cadence.scheduler.get_due_enrollments") as mock_due, \
          patch("app.cadence.scheduler.get_next_step") as mock_step, \
          patch("app.cadence.scheduler.advance_enrollment") as mock_advance, \
          patch("app.cadence.scheduler.complete_enrollment") as mock_complete, \
          patch("app.cadence.scheduler.exhaust_enrollment") as mock_exhaust, \
          patch("app.cadence.scheduler.save_message") as mock_save_msg, \
-         patch("app.cadence.scheduler.send_text", new_callable=AsyncMock) as mock_send, \
+         patch("app.cadence.scheduler.get_channel_for_lead", return_value={"id": "chan-1"}) as mock_channel, \
+         patch("app.cadence.scheduler.get_provider", return_value=mock_provider) as mock_get_provider, \
          patch("app.cadence.scheduler.asyncio.sleep", new_callable=AsyncMock):
         yield {
             "get_due": mock_due,
@@ -77,7 +81,9 @@ def mock_deps():
             "complete": mock_complete,
             "exhaust": mock_exhaust,
             "save_msg": mock_save_msg,
-            "send": mock_send,
+            "send": mock_provider.send_text,
+            "get_channel": mock_channel,
+            "get_provider": mock_get_provider,
         }
 
 
