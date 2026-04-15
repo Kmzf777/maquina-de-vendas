@@ -3,8 +3,7 @@ import logging
 from fastapi import APIRouter, Request
 
 from app.webhook.parser import parse_webhook_payload
-# TODO: migrate to app.providers.registry.get_provider (matching production pattern)
-from app.whatsapp.factory import get_whatsapp_client
+from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
 from app.leads.service import get_or_create_lead, reset_lead
 from app.channels.service import get_channel_by_provider_config
@@ -64,8 +63,8 @@ async def receive_evolution_webhook(request: Request):
 
         # Mark as read
         try:
-            wa_client = get_whatsapp_client(channel)
-            await wa_client.mark_read(msg.message_id, msg.remote_jid)
+            provider = get_provider(channel)
+            await provider.mark_read(msg.message_id, msg.remote_jid)
         except Exception as e:
             logger.warning(f"Failed to mark read: {e}")
 
@@ -74,8 +73,8 @@ async def receive_evolution_webhook(request: Request):
             try:
                 lead = get_or_create_lead(msg.from_number)
                 reset_lead(lead["id"])
-                wa_client = get_whatsapp_client(channel)
-                await wa_client.send_text(msg.from_number, "Memoria resetada! Pode comecar uma nova conversa do zero.")
+                provider = get_provider(channel)
+                await provider.send_text(msg.from_number, "Memoria resetada! Pode comecar uma nova conversa do zero.")
             except Exception as e:
                 logger.error(f"Failed to reset lead: {e}", exc_info=True)
             continue

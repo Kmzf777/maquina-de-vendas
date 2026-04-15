@@ -4,7 +4,8 @@ import random
 from datetime import datetime, timezone
 
 from app.db.supabase import get_supabase
-from app.whatsapp.client import send_template
+from app.whatsapp.registry import get_provider
+from app.channels.service import get_active_channel
 from app.broadcast.service import (
     get_pending_broadcast_leads,
     mark_broadcast_lead_sent,
@@ -84,7 +85,14 @@ async def process_single_broadcast(broadcast: dict):
         lead = bl["leads"]
 
         try:
-            await send_template(
+            channel = get_active_channel()
+            if not channel:
+                logger.error(f"[BROADCAST] No active channel available to send template to {lead['phone']}")
+                mark_broadcast_lead_failed(bl["id"], "No active channel")
+                increment_broadcast_failed(broadcast_id)
+                continue
+            provider = get_provider(channel)
+            await provider.send_template(
                 to=lead["phone"],
                 template_name=broadcast["template_name"],
                 components=broadcast.get("template_variables", {}).get("components"),

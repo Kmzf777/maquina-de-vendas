@@ -52,6 +52,17 @@ class EvolutionClient(WhatsAppProvider):
             "audio": audio_url,
         })
 
+    async def send_template(self, to: str, template_name: str, components: dict | None = None) -> dict:
+        payload = {
+            "number": to,
+            "template": {
+                "name": template_name,
+            }
+        }
+        if components:
+            payload["template"]["components"] = components
+        return await self._post("/message/sendTemplate", payload)
+
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         return await self._post("/chat/markMessageAsRead", {
             "readMessages": [{

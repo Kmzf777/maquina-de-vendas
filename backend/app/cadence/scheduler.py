@@ -16,7 +16,8 @@ from app.cadence.service import (
     is_enrolled,
 )
 from app.leads.service import save_message
-from app.whatsapp.client import send_text
+from app.whatsapp.registry import get_provider
+from app.channels.service import get_active_channel
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,12 @@ async def process_due_cadences(now: datetime | None = None):
 
         try:
             message = _substitute_variables(step["message_text"], lead)
-            await send_text(lead["phone"], message)
+            channel = get_active_channel()
+            if not channel:
+                logger.error(f"[CADENCE] No active channel available to send message to {lead['phone']}")
+                continue
+            provider = get_provider(channel)
+            await provider.send_text(lead["phone"], message)
 
             new_total = enrollment["total_messages_sent"] + 1
 
