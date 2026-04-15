@@ -64,3 +64,23 @@ def update_channel_phone(channel_id: str, phone: str) -> None:
     """Update a channel's phone number (e.g., after Evolution QR scan)."""
     sb = get_supabase()
     sb.table("channels").update({"phone": phone}).eq("id", channel_id).execute()
+
+
+def get_channel_for_lead(lead_id: str) -> dict | None:
+    """Return the channel associated with a lead's most recent active conversation.
+
+    Returns None if no conversation or channel is found.
+    """
+    sb = get_supabase()
+    result = (
+        sb.table("conversations")
+        .select("channel_id, channels!inner(*)")
+        .eq("lead_id", lead_id)
+        .eq("status", "active")
+        .order("last_msg_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+    return result.data[0]["channels"]
