@@ -1,13 +1,13 @@
 import httpx
-from app.whatsapp.base import WhatsAppClient
+from app.whatsapp.base import WhatsAppProvider
 
 META_API_BASE = "https://graph.facebook.com/v21.0"
 
 
-class MetaCloudClient(WhatsAppClient):
-    def __init__(self, phone_number_id: str, access_token: str):
-        self.phone_number_id = phone_number_id
-        self.access_token = access_token
+class MetaCloudClient(WhatsAppProvider):
+    def __init__(self, config: dict):
+        self.phone_number_id = config["phone_number_id"]
+        self.access_token = config["access_token"]
 
     def _url(self) -> str:
         return f"{META_API_BASE}/{self.phone_number_id}/messages"
