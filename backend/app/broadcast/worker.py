@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from app.db.supabase import get_supabase
 from app.whatsapp.registry import get_provider
-from app.channels.service import get_active_channel
+from app.channels.service import get_channel_by_id
 from app.broadcast.service import (
     get_pending_broadcast_leads,
     mark_broadcast_lead_sent,
@@ -85,10 +85,19 @@ async def process_single_broadcast(broadcast: dict):
         lead = bl["leads"]
 
         try:
-            channel = get_active_channel()
+            channel_id = broadcast.get("channel_id")
+            if not channel_id:
+                logger.warning(
+                    f"[BROADCAST] broadcast {broadcast_id} has no channel_id, skipping lead {lead['phone']}"
+                )
+                mark_broadcast_lead_failed(bl["id"], "broadcast has no channel_id")
+                increment_broadcast_failed(broadcast_id)
+                continue
+
+            channel = get_channel_by_id(channel_id)
             if not channel:
-                logger.error(f"[BROADCAST] No active channel available to send template to {lead['phone']}")
-                mark_broadcast_lead_failed(bl["id"], "No active channel")
+                logger.error(f"[BROADCAST] Channel {channel_id} not found, skipping lead {lead['phone']}")
+                mark_broadcast_lead_failed(bl["id"], f"channel {channel_id} not found")
                 increment_broadcast_failed(broadcast_id)
                 continue
             provider = get_provider(channel)
