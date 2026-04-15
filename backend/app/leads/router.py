@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Query
-
 from app.db.supabase import get_supabase
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
@@ -7,15 +6,18 @@ router = APIRouter(prefix="/api/leads", tags=["leads"])
 
 @router.get("")
 async def list_leads(
+    status: str | None = None,
+    stage: str | None = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
-    search: str | None = None,
 ):
     sb = get_supabase()
     query = sb.table("leads").select("*")
 
-    if search:
-        query = query.or_(f"phone.ilike.%{search}%,name.ilike.%{search}%")
+    if status:
+        query = query.eq("status", status)
+    if stage:
+        query = query.eq("stage", stage)
 
     result = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     return {"data": result.data, "count": len(result.data)}
@@ -28,27 +30,12 @@ async def get_lead(lead_id: str):
     return result.data
 
 
-@router.get("/{lead_id}/conversations")
-async def get_lead_conversations(lead_id: str):
-    """Get all conversations for a lead across all channels."""
-    sb = get_supabase()
-    result = (
-        sb.table("conversations")
-        .select("*, channels(id, name, phone, provider)")
-        .eq("lead_id", lead_id)
-        .order("last_msg_at", desc=True, nullsfirst=False)
-        .execute()
-    )
-    return {"data": result.data}
-
-
 @router.get("/{lead_id}/messages")
 async def get_lead_messages(lead_id: str, limit: int = Query(50, le=200)):
-    """Get all messages for a lead (across all conversations)."""
     sb = get_supabase()
     result = (
         sb.table("messages")
-        .select("*, conversations(channel_id, stage)")
+        .select("*")
         .eq("lead_id", lead_id)
         .order("created_at", desc=False)
         .limit(limit)

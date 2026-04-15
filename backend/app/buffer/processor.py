@@ -1,7 +1,8 @@
 import asyncio
+import base64
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from openai import AsyncOpenAI
 
@@ -14,45 +15,14 @@ from app.conversations.service import (
 from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
 from app.humanizer.typing import calculate_typing_delay
-from app.providers.registry import get_provider
-from app.agent_profiles.service import get_agent_profile
+from app.whatsapp.registry import get_provider
+from app.channels.service import get_channel_by_id
+from app.cadence.service import get_active_enrollment, pause_enrollment
+from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
-
-
-def _try_claim_message(conversation_id: str, content: str) -> bool:
-    """Atomically claim the right to process this incoming message.
-
-    Uses a DB-level PRIMARY KEY INSERT as a distributed lock. This is safe
-    across multiple backend instances sharing the same Supabase DB but running
-    separate Redis instances (which breaks the Redis-level dedup).
-
-    Returns True  → this instance claimed the message, proceed with processing.
-    Returns False → another instance already claimed it, skip entirely
-                    (no AI call, no save, no duplicate outbound send).
-
-    Lock key: "{conversation_id}:{content_hash_prefix}:{epoch_minute_bucket}"
-    The epoch-minute bucket lets the same text be sent again after ~1 minute.
-    """
-    import hashlib
-    from app.db.supabase import get_supabase
-
-    epoch_minute = int(datetime.now(timezone.utc).timestamp()) // 60
-    content_hash = hashlib.md5(content.encode()).hexdigest()[:16]
-    lock_key = f"{conversation_id}:{content_hash}:{epoch_minute}"
-
-    sb = get_supabase()
-    try:
-        sb.table("message_processing_locks").insert({"lock_key": lock_key}).execute()
-        return True  # Claimed
-    except Exception as e:
-        err = str(e)
-        if "23505" in err or "duplicate key" in err.lower() or "unique" in err.lower():
-            return False  # Another instance claimed it first
-        raise  # Unexpected error
-
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
@@ -67,46 +37,71 @@ def _get_openai() -> AsyncOpenAI:
     return _openai_client
 
 
-async def process_buffered_messages(
-    phone: str, combined_text: str, channel: dict, push_name: str | None = None
-):
-    """Process accumulated buffer messages for a specific channel.
+def _is_recent_duplicate(
+    conversation_id: str, content: str, role: str, window_seconds: int = 30
+) -> bool:
+    """Return True if an identical message was saved in this conversation within the last N seconds."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat()
+    sb = get_supabase()
+    result = (
+        sb.table("messages")
+        .select("id")
+        .eq("conversation_id", conversation_id)
+        .eq("role", role)
+        .eq("content", content)
+        .gte("created_at", cutoff)
+        .limit(1)
+        .execute()
+    )
+    return len(result.data) > 0
 
-    Error handling is stratified: each layer is independently protected so
-    that a failure in AI inference or message sending does not prevent the
-    incoming user message from being persisted.
-    """
-    # --- Layer 1: Setup (provider, media, lead, conversation) ---
+
+async def process_buffered_messages(
+    phone: str, combined_text: str, channel_id: str = ""
+):
+    """Process accumulated buffer messages for a lead on a specific channel."""
     try:
+        lead = get_or_create_lead(phone)
+        channel = get_channel_by_id(channel_id) if channel_id else None
+        if not channel:
+            logger.warning(f"No channel found for {phone} (channel_id={channel_id}), skipping")
+            return
+
         provider = get_provider(channel)
-        resolved_text = await _resolve_media(combined_text, provider)
-        lead = get_or_create_lead(phone, name=push_name)
-        conversation = get_or_create_conversation(lead["id"], channel["id"])
+        conversation = get_or_create_conversation(lead["id"], channel_id)
     except Exception as e:
-        logger.error(
-            f"Fatal setup error for {phone} on channel {channel.get('name')}: {e}",
-            exc_info=True,
-        )
+        logger.error(f"Fatal setup error for {phone}: {e}", exc_info=True)
         return
 
+    # Activate conversation when lead first responds after template dispatch
     if conversation.get("status") in ("imported", "template_sent"):
         try:
             conversation = activate_conversation(conversation["id"])
         except Exception as e:
             logger.warning(f"Failed to activate conversation {conversation['id']}: {e}")
 
-    # --- Layer 2: Always persist the incoming user message ---
-    # Atomically claim this message using a DB-level distributed lock.
-    # If two backend instances receive the same webhook, only the first to
-    # INSERT the lock key proceeds; the second skips entirely — no duplicate
-    # save, no duplicate AI call, no duplicate outbound message to customer.
-    if not _try_claim_message(conversation["id"], resolved_text):
-        logger.warning(
-            f"Message already claimed by another instance for {phone} on "
-            f"conversation {conversation['id']}, skipping"
-        )
+    # Resolve media placeholders
+    try:
+        resolved_text = await _resolve_media(combined_text, provider)
+    except Exception as e:
+        logger.warning(f"Failed to resolve media for {phone}: {e}")
+        resolved_text = combined_text
+
+    # Dedup: skip if this exact message was already processed recently
+    if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
+        logger.warning(f"Duplicate user message detected for {phone}, skipping")
         return
 
+    # Pause cadence if lead is enrolled in one
+    try:
+        enrollment = get_active_enrollment(lead["id"])
+        if enrollment:
+            pause_enrollment(enrollment["id"])
+            logger.info(f"[CADENCE] Lead {phone} responded — pausing enrollment")
+    except Exception as e:
+        logger.warning(f"Failed to pause cadence for {phone}: {e}")
+
+    # Always save the incoming user message
     try:
         save_message(
             conversation["id"], lead["id"], "user",
@@ -114,42 +109,32 @@ async def process_buffered_messages(
         )
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
+        # Abort: do not run agent without persistence — avoids unlogged AI responses
+        return
 
-    # --- Layer 3: AI agent or MVP auto-reply ---
-    agent_profile_id = channel.get("agent_profile_id")
-
-    # MVP fallback: if no AI agent is configured, send a static auto-reply
-    # configured via channel.provider_config.auto_reply_message
-    if not agent_profile_id:
-        auto_reply = channel.get("provider_config", {}).get("auto_reply_message")
-        if auto_reply:
-            try:
-                save_message(
-                    conversation["id"], lead["id"], "assistant",
-                    auto_reply, conversation.get("stage"),
-                )
-            except Exception as e:
-                logger.error(f"Failed to save auto-reply for {phone}: {e}", exc_info=True)
-            try:
-                await provider.send_text(phone, auto_reply)
-            except Exception as e:
-                logger.error(f"Failed to send auto-reply to {phone}: {e}", exc_info=True)
+    # If human already took control, stop here — message is saved, agent skipped
+    if lead.get("human_control"):
+        logger.info(f"[HUMAN CONTROL] Lead {phone} is under human control — agent skipped")
         _update_last_msg(conversation["id"])
         return
 
+    # Check if channel has an agent profile
+    agent_profile = channel.get("agent_profiles")
+    if not agent_profile:
+        logger.info(f"No agent profile for channel {channel_id}, human-only mode")
+        _update_last_msg(conversation["id"])
+        return
+
+    # Run AI agent
     try:
-        profile = get_agent_profile(agent_profile_id)
         conversation["leads"] = lead
-        response = await run_agent(conversation, profile, resolved_text)
+        response = await run_agent(conversation, resolved_text)
     except Exception as e:
-        logger.error(
-            f"Agent error for {phone} on channel {channel.get('name')}: {e}",
-            exc_info=True,
-        )
+        logger.error(f"Agent error for {phone}: {e}", exc_info=True)
         _update_last_msg(conversation["id"])
         return
 
-    # --- Layer 4: Persist assistant response ---
+    # Save assistant response
     try:
         save_message(
             conversation["id"], lead["id"], "assistant",
@@ -158,7 +143,7 @@ async def process_buffered_messages(
     except Exception as e:
         logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
-    # --- Layer 5: Send bubbles (each bubble independently) ---
+    # Send bubbles
     bubbles = split_into_bubbles(response)
     for bubble in bubbles:
         delay = calculate_typing_delay(bubble)
@@ -167,7 +152,7 @@ async def process_buffered_messages(
             await provider.send_text(phone, bubble)
         except Exception as e:
             logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
-            break  # Don't send subsequent bubbles if one failed
+            break
 
     _update_last_msg(conversation["id"])
 
@@ -183,7 +168,7 @@ def _update_last_msg(conversation_id: str) -> None:
 
 
 async def _resolve_media(text: str, provider) -> str:
-    """Replace media placeholders with actual content."""
+    """Replace media placeholders with actual content using Gemini."""
     # Meta-style: [audio: media_id=xxx]
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
     image_id_pattern = r"\[image: media_id=(\S+)\]"
@@ -211,7 +196,6 @@ async def _resolve_media(text: str, provider) -> str:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
             try:
-                import base64
                 image_bytes, content_type = await provider.download_media(media_ref)
                 b64 = base64.b64encode(image_bytes).decode()
                 response = await _get_openai().chat.completions.create(

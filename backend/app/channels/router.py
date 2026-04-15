@@ -63,7 +63,7 @@ class SendMessage(BaseModel):
 @router.post("/{channel_id}/send")
 async def send_message(channel_id: str, body: SendMessage):
     """Send a message through a channel (used by CRM for human chat)."""
-    from app.providers.registry import get_provider
+    from app.whatsapp.registry import get_provider  # updated import (Task 9)
     from app.conversations.service import save_message
 
     channel = get_channel(channel_id)
@@ -74,7 +74,14 @@ async def send_message(channel_id: str, body: SendMessage):
     if body.conversation_id:
         from app.db.supabase import get_supabase
         sb = get_supabase()
-        conv = sb.table("conversations").select("lead_id, stage").eq("id", body.conversation_id).single().execute().data
+        conv = (
+            sb.table("conversations")
+            .select("lead_id, stage")
+            .eq("id", body.conversation_id)
+            .single()
+            .execute()
+            .data
+        )
         save_message(body.conversation_id, conv["lead_id"], "assistant", body.text, conv.get("stage"))
 
     return {"status": "sent"}
