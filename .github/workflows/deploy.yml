@@ -33,8 +33,8 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd $HOME/"Kelwin - Maquinadevendascanastra"
-            git fetch origin && git reset --hard origin/master
+            cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
+            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch origin && git reset --hard origin/master
             
             if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
             sg docker -c "docker build \
@@ -76,9 +76,9 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd $HOME/"Kelwin - Maquinadevendascanastra"
-            git fetch origin && git reset --hard origin/master
-            for f in $HOME/"Kelwin - Maquinadevendascanastra"/backend/migrations/*.sql; do
+            cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
+            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch origin && git reset --hard origin/master
+            for f in "/home/Kelwin/Kelwin - Maquinadevendascanastra"/backend/migrations/*.sql; do
               echo "Running migration: $f"
               psql "${{ secrets.DATABASE_URL }}" -f "$f"
             done
