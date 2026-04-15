@@ -34,8 +34,8 @@ jobs:
             set -e
             cd ~/Maquinadevendascanastra
             git fetch origin && git reset --hard origin/master
-            if [ -d "crm" ] && [ -f "crm/.env.build" ]; then mv crm/.env.build frontend/.env.build || true; fi
-            source frontend/.env.build
+            
+            if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
             sg docker -c "docker build \
               --build-arg NEXT_PUBLIC_FASTAPI_URL=$NEXT_PUBLIC_FASTAPI_URL \
               --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
