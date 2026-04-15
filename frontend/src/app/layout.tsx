@@ -9,8 +9,11 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "ValerIA CRM",
+  title: "CRM Canastra",
   description: "CRM Cafe Canastra",
+  icons: {
+    icon: "/logocanastra.png",
+  },
 };
 
 export default function RootLayout({
