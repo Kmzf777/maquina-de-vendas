@@ -1,12 +1,12 @@
 import httpx
-from app.whatsapp.base import WhatsAppClient
+from app.whatsapp.base import WhatsAppProvider
 
 
-class EvolutionClient(WhatsAppClient):
-    def __init__(self, api_url: str, api_key: str, instance: str):
-        self.base_url = api_url.rstrip("/")
-        self.api_key = api_key
-        self.instance = instance
+class EvolutionClient(WhatsAppProvider):
+    def __init__(self, config: dict):
+        self.base_url = config["api_url"].rstrip("/")
+        self.api_key = config["api_key"]
+        self.instance = config["instance"]
 
     def _headers(self) -> dict:
         return {"apikey": self.api_key, "Content-Type": "application/json"}
@@ -34,7 +34,9 @@ class EvolutionClient(WhatsAppClient):
             "fileName": "image.jpg",
         })
 
-    async def send_image_base64(self, to: str, base64_data: str, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
+    async def send_image_base64(
+        self, to: str, base64_data: str, mimetype: str = "image/jpeg", caption: str | None = None
+    ) -> dict:
         return await self._post("/message/sendMedia", {
             "number": to,
             "mediatype": "image",
