@@ -1,7 +1,6 @@
 -- 007_multi_channel.sql
--- Multi-channel CRM: channels, agent_profiles, conversations
+-- Multi-channel: agent_profiles, channels, conversations
 
--- Agent profiles (must come before channels due to FK)
 CREATE TABLE IF NOT EXISTS agent_profiles (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
@@ -12,7 +11,6 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
     updated_at timestamptz DEFAULT now()
 );
 
--- Channels (WhatsApp numbers)
 CREATE TABLE IF NOT EXISTS channels (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
@@ -24,10 +22,9 @@ CREATE TABLE IF NOT EXISTS channels (
     created_at timestamptz DEFAULT now()
 );
 
-CREATE INDEX idx_channels_phone ON channels(phone);
-CREATE INDEX idx_channels_provider ON channels(provider);
+CREATE INDEX IF NOT EXISTS idx_channels_phone ON channels(phone);
+CREATE INDEX IF NOT EXISTS idx_channels_provider ON channels(provider);
 
--- Conversations (lead + channel)
 CREATE TABLE IF NOT EXISTS conversations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     lead_id uuid REFERENCES leads(id) ON DELETE CASCADE,
@@ -40,24 +37,23 @@ CREATE TABLE IF NOT EXISTS conversations (
     UNIQUE(lead_id, channel_id)
 );
 
-CREATE INDEX idx_conversations_channel ON conversations(channel_id);
-CREATE INDEX idx_conversations_lead ON conversations(lead_id);
-CREATE INDEX idx_conversations_status ON conversations(status);
+CREATE INDEX IF NOT EXISTS idx_conversations_channel ON conversations(channel_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_lead ON conversations(lead_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status);
 
--- Add conversation_id to messages
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE;
+DO $$ BEGIN ALTER TABLE messages ADD COLUMN conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 
--- Add channel_id to campaigns
-ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS channel_id uuid REFERENCES channels(id) ON DELETE SET NULL;
+DO $$ BEGIN ALTER TABLE campaigns ADD COLUMN channel_id uuid REFERENCES channels(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
--- Add channel_id to templates
-ALTER TABLE templates ADD COLUMN IF NOT EXISTS channel_id uuid REFERENCES channels(id) ON DELETE SET NULL;
+DO $$ BEGIN ALTER TABLE templates ADD COLUMN channel_id uuid REFERENCES channels(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
--- Add metadata to leads
-ALTER TABLE leads ADD COLUMN IF NOT EXISTS metadata jsonb DEFAULT '{}';
+DO $$ BEGIN ALTER TABLE leads ADD COLUMN metadata jsonb DEFAULT '{}';
+EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
--- Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE channels;
 ALTER PUBLICATION supabase_realtime ADD TABLE agent_profiles;
 ALTER PUBLICATION supabase_realtime ADD TABLE conversations;
