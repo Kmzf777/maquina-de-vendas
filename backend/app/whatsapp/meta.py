@@ -43,6 +43,12 @@ class MetaCloudClient(WhatsAppProvider):
             payload["image"]["caption"] = caption
         return await self._post(payload)
 
+    async def send_image_base64(self, to: str, base64_data: str, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
+        # Meta Cloud API does not support base64 directly; requires a URL
+        # For now, we'll encode as data URL (may not work depending on Meta's implementation)
+        data_url = f"data:{mimetype};base64,{base64_data}"
+        return await self.send_image(to, data_url, caption)
+
     async def send_audio(self, to: str, audio_url: str) -> dict:
         return await self._post({
             "messaging_product": "whatsapp",
@@ -50,6 +56,19 @@ class MetaCloudClient(WhatsAppProvider):
             "type": "audio",
             "audio": {"link": audio_url},
         })
+
+    async def send_template(self, to: str, template_name: str, components: dict | None = None) -> dict:
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "template",
+            "template": {
+                "name": template_name,
+            }
+        }
+        if components:
+            payload["template"]["components"] = components
+        return await self._post(payload)
 
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         return await self._post({

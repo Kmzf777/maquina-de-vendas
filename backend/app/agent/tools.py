@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from app.leads.service import update_lead, save_message, create_deal
-from app.whatsapp.client import send_text, send_image_base64
+from app.whatsapp.registry import get_provider
+from app.channels.service import get_active_channel
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,11 @@ async def execute_tool(
             return f"Nenhuma foto encontrada para {categoria}"
 
         captions = PHOTO_CAPTIONS.get(categoria, {})
+        channel = get_active_channel()
+        if not channel:
+            return "Nenhum canal ativo disponivel"
+        provider = get_provider(channel)
+
         sent = 0
         for photo in photos:
             b64 = base64.b64encode(photo.read_bytes()).decode()
@@ -188,7 +194,7 @@ async def execute_tool(
             stem = photo.stem  # e.g. "foto_1"
             caption = captions.get(stem, "")
             try:
-                await send_image_base64(phone, b64, mimetype, caption=caption)
+                await provider.send_image_base64(phone, b64, mimetype, caption=caption)
                 sent += 1
                 await asyncio.sleep(1)
             except Exception as e:
@@ -212,10 +218,15 @@ async def execute_tool(
             return f"foto do produto '{produto}' nao encontrada"
         photo_path = matches[0]
 
+        channel = get_active_channel()
+        if not channel:
+            return "Nenhum canal ativo disponivel"
+        provider = get_provider(channel)
+
         b64 = base64.b64encode(photo_path.read_bytes()).decode()
         mimetype = "image/png" if photo_path.suffix == ".png" else "image/jpeg"
         try:
-            await send_image_base64(phone, b64, mimetype, caption=entry["caption"])
+            await provider.send_image_base64(phone, b64, mimetype, caption=entry["caption"])
             save_message(lead_id, "system", f"Foto de {produto} enviada")
             return f"foto de {produto} enviada ao lead"
         except Exception as e:

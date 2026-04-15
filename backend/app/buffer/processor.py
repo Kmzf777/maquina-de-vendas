@@ -15,7 +15,7 @@ from app.conversations.service import (
 from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
 from app.humanizer.typing import calculate_typing_delay
-from app.providers.registry import get_provider
+from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.cadence.service import get_active_enrollment, pause_enrollment
 from app.db.supabase import get_supabase
