@@ -250,10 +250,10 @@ No external migration runner (Alembic, Flyway). Files are applied via shell scri
 
 | File | Source | Action |
 |---|---|---|
-| `config.py` | `backend-recuperar-lead` | Use as-is; contains all env vars for both providers |
-| `requirements.txt` | All three | **Merge** — union of all dependencies, deduplicated |
-| `Dockerfile` | `backend-recuperar-lead` | Use as-is |
-| `docker-compose.yml` | `backend-recuperar-lead` | Use as-is |
+| `Dockerfile` | `backend/` original | **Base canônica** — contém configuração de build compatível com a VPS |
+| `docker-compose.yml` | `backend/` original | **Base canônica** — contém labels Traefik, redes externas do Docker Swarm (`canastrainteligencia`) e variáveis de ambiente reais da VPS; não substituir pelo do `backend-recuperar-lead` |
+| `config.py` | `backend/` original | **Base canônica** — contém as variáveis de ambiente da VPS; recebe acréscimo das novas vars presentes no `config.py` do `backend-recuperar-lead` (ex: `meta_access_token`, `meta_phone_number_id`, `openai_api_key`) |
+| `requirements.txt` | Todos os três | **Merge** — union de todas as dependências, deduplicadas; base do original acrescida das libs novas dos backends evoluídos |
 | `pytest.ini` | `backend-recuperar-lead` | Use as-is |
 
 ---
