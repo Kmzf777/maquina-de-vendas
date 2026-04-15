@@ -5,62 +5,62 @@ from app.config import settings
 
 _openai_client: AsyncOpenAI | None = None
 
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
 
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(
-            api_key=settings.gemini_api_key,
-            base_url=_GEMINI_BASE_URL,
-        )
+        _openai_client = AsyncOpenAI(api_key=settings.gemini_api_key)
     return _openai_client
 
 
-def _media_url() -> str:
-    return f"https://graph.facebook.com/{settings.meta_api_version}"
-
-
-def _headers() -> dict:
-    return {"Authorization": f"Bearer {settings.meta_access_token}"}
-
-
-async def download_media(media_id: str) -> tuple[bytes, str]:
-    """Download media from Meta. Returns (bytes, content_type)."""
+async def download_media(media_url: str) -> tuple[bytes, str]:
+    """Download media from URL. Returns (bytes, content_type)."""
     async with httpx.AsyncClient() as client:
-        # Step 1: get media URL
-        resp = await client.get(f"{_media_url()}/{media_id}", headers=_headers())
-        resp.raise_for_status()
-        media_url = resp.json()["url"]
-
-        # Step 2: download the file
-        resp = await client.get(media_url, headers=_headers())
+        resp = await client.get(media_url)
         resp.raise_for_status()
         return resp.content, resp.headers.get("content-type", "application/octet-stream")
 
 
-async def transcribe_audio(media_id: str) -> str:
-    """Download audio from Meta and transcribe with Whisper."""
-    audio_bytes, content_type = await download_media(media_id)
+async def transcribe_audio(media_url: str) -> tuple[str, dict]:
+    """Download audio and transcribe with Whisper.
+
+    Returns (transcription_text, usage_info).
+    usage_info has keys: model, prompt_tokens, completion_tokens, estimated_cost
+    """
+    audio_bytes, content_type = await download_media(media_url)
 
     ext = "ogg" if "ogg" in content_type else "mp4"
     transcript = await _get_openai().audio.transcriptions.create(
-        model="gemini-3-flash-preview",
+        model="whisper-1",
         file=(f"audio.{ext}", audio_bytes, content_type),
     )
-    return transcript.text
+
+    # Whisper charges ~$0.006/min. Estimate 30s average per message.
+    estimated_cost = 0.003
+
+    usage_info = {
+        "model": "whisper-1",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "estimated_cost": estimated_cost,
+    }
+
+    return transcript.text, usage_info
 
 
-async def describe_image(media_id: str) -> str:
-    """Download image from Meta and describe with GPT-4o Vision."""
+async def describe_image(media_url: str) -> tuple[str, dict]:
+    """Download image and describe with GPT-4o Vision.
+
+    Returns (description_text, usage_info).
+    usage_info has keys: model, prompt_tokens, completion_tokens
+    """
     import base64
 
-    image_bytes, content_type = await download_media(media_id)
+    image_bytes, content_type = await download_media(media_url)
     b64 = base64.b64encode(image_bytes).decode()
 
     response = await _get_openai().chat.completions.create(
-        model="gemini-3-flash-preview",
+        model="gpt-4o",
         messages=[{
             "role": "user",
             "content": [
@@ -70,4 +70,11 @@ async def describe_image(media_id: str) -> str:
         }],
         max_tokens=150,
     )
-    return response.choices[0].message.content
+
+    usage_info = {
+        "model": "gpt-4o",
+        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+    }
+
+    return response.choices[0].message.content, usage_info

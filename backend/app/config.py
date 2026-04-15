@@ -2,9 +2,13 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Evolution API (optional — per-channel config used instead)
+    evolution_api_url: str = ""
+    evolution_api_key: str = ""
+    evolution_instance: str = ""
+
     # Gemini (via OpenAI-compatible API)
     gemini_api_key: str
-    openai_api_key: str = ""  # mantido para compatibilidade, não utilizado
 
     # Supabase
     supabase_url: str
@@ -15,12 +19,16 @@ class Settings(BaseSettings):
 
     # App
     api_base_url: str = "http://localhost:8000"
-    frontend_url: str = "http://localhost:5173"
+    frontend_url: str = "http://localhost:3000"
 
     # Buffer
     buffer_base_timeout: int = 15
     buffer_extend_timeout: int = 10
     buffer_max_timeout: int = 45
+
+    # Meta Cloud API — used by outbound dispatcher
+    meta_access_token: str = ""
+    meta_phone_number_id: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
