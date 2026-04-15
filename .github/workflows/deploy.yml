@@ -33,7 +33,7 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd ~/Maquinadevendascanastra
+            cd $HOME/"Kelwin - Maquinadevendascanastra"
             git fetch origin && git reset --hard origin/master
             
             if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
@@ -76,9 +76,9 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd ~/Maquinadevendascanastra
+            cd $HOME/"Kelwin - Maquinadevendascanastra"
             git fetch origin && git reset --hard origin/master
-            for f in ~/Maquinadevendascanastra/backend/migrations/*.sql; do
+            for f in $HOME/"Kelwin - Maquinadevendascanastra"/backend/migrations/*.sql; do
               echo "Running migration: $f"
               psql "${{ secrets.DATABASE_URL }}" -f "$f"
             done
