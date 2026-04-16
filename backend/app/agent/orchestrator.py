@@ -97,7 +97,7 @@ async def run_agent(
         messages=messages,
         tools=tools if tools else None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=4096,
     )
 
     if response.usage:
@@ -132,7 +132,7 @@ async def run_agent(
             messages=messages,
             tools=tools if tools else None,
             temperature=0.7,
-            max_tokens=1024,
+            max_tokens=4096,
         )
         if response.usage:
             track_token_usage(
