@@ -77,11 +77,12 @@ def update_conversation(conversation_id: str, **fields) -> dict[str, Any]:
 
 
 def activate_conversation(conversation_id: str) -> dict[str, Any]:
-    """Activate a conversation (when lead first responds)."""
+    """Activate a conversation (when lead first responds after template dispatch).
+    Does NOT reset stage — preserves existing stage for outbound recovery flows.
+    """
     return update_conversation(
         conversation_id,
         status="active",
-        stage="secretaria",
         last_msg_at=datetime.now(timezone.utc).isoformat(),
     )
 
