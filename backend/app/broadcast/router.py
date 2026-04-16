@@ -11,6 +11,7 @@ class BroadcastCreate(BaseModel):
     name: str
     channel_id: str | None = None
     template_name: str
+    template_language_code: str = "pt_BR"
     template_preset_id: str | None = None
     template_variables: dict | None = None
     send_interval_min: int = 3
