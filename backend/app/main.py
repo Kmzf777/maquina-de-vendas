@@ -76,6 +76,56 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/debug/agent")
+async def debug_agent():
+    """Diagnostic endpoint: tests Gemini connectivity and agent pipeline."""
+    import traceback
+    from openai import AsyncOpenAI
+
+    key = settings.gemini_api_key or ""
+    result = {
+        "gemini_key_set": bool(key),
+        "gemini_key_length": len(key),
+        "gemini_key_prefix": key[:8] + "..." if len(key) > 8 else "(empty)",
+    }
+
+    try:
+        client = AsyncOpenAI(
+            api_key=key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        resp = await client.chat.completions.create(
+            model="gemini-3-flash-preview",
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=5,
+        )
+        result["gemini_test"] = "ok"
+        result["gemini_response"] = resp.choices[0].message.content
+    except Exception as e:
+        result["gemini_test"] = "error"
+        result["gemini_error"] = str(e)
+        result["gemini_traceback"] = traceback.format_exc()
+
+    try:
+        from app.agent.orchestrator import run_agent
+        from app.channels.service import get_channel_by_id
+        channel = get_channel_by_id("a3a607b1-6bff-4370-8609-b275eef270dd")
+        conv = {
+            "id": "328828de-408a-4899-aa99-26eea69b69a1",
+            "stage": "secretaria",
+            "leads": {"id": "d7a1f7bd-3f45-4579-b7bd-9173c5404149", "name": "Rafael", "phone": "553488861441"},
+        }
+        resp = await run_agent(conv, "ping de diagnostico")
+        result["agent_test"] = "ok"
+        result["agent_response"] = resp[:100]
+    except Exception as e:
+        result["agent_test"] = "error"
+        result["agent_error"] = str(e)
+        result["agent_traceback"] = traceback.format_exc()
+
+    return result
+
+
 # --- Buffer toggle API ---
 
 @app.get("/api/buffer")
