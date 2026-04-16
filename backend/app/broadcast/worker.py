@@ -24,6 +24,38 @@ from app.cadence.scheduler import (
 
 logger = logging.getLogger(__name__)
 
+# Dynamic variable tokens that get resolved from the lead record at send time.
+_LEAD_FIELD_TOKENS = {
+    "{{first_name}}": lambda lead: (lead.get("name") or "").split()[0] if lead.get("name") else "",
+    "{{lead_name}}":  lambda lead: lead.get("name") or "",
+    "{{phone}}":      lambda lead: lead.get("phone") or "",
+}
+
+
+def _resolve_value(value: str, lead: dict) -> str:
+    for token, resolver in _LEAD_FIELD_TOKENS.items():
+        if value == token:
+            return resolver(lead)
+    return value
+
+
+def _build_template_components(template_variables: dict, lead: dict) -> list | None:
+    """Convert {param_name: value} dict into Meta named-parameter components array."""
+    if not template_variables:
+        return None
+    parameters = [
+        {
+            "type": "text",
+            "parameter_name": k,
+            "text": _resolve_value(str(v), lead),
+        }
+        for k, v in template_variables.items()
+        if k != "components"  # skip legacy raw-components key
+    ]
+    if not parameters:
+        return None
+    return [{"type": "body", "parameters": parameters}]
+
 
 async def run_worker():
     """Main worker loop: processes broadcasts, cadences, and stagnation triggers."""
@@ -102,10 +134,21 @@ async def process_single_broadcast(broadcast: dict):
                 increment_broadcast_failed(broadcast_id)
                 continue
             provider = get_provider(channel)
+            components = _build_template_components(
+                broadcast.get("template_variables") or {},
+                lead,
+            )
+            logger.info(
+                "[BROADCAST] sending template '%s' (%s) to %s — components: %s",
+                broadcast["template_name"],
+                broadcast.get("template_language_code", "pt_BR"),
+                lead["phone"],
+                components,
+            )
             await provider.send_template(
                 to=lead["phone"],
                 template_name=broadcast["template_name"],
-                components=broadcast.get("template_variables", {}).get("components"),
+                components=components,
                 language_code=broadcast.get("template_language_code", "pt_BR"),
             )
             mark_broadcast_lead_sent(bl["id"])
