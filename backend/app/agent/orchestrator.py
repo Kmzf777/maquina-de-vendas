@@ -6,38 +6,18 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.agent.prompts.base import build_base_prompt
-from app.agent.prompts.secretaria import SECRETARIA_PROMPT
-from app.agent.prompts.atacado import ATACADO_PROMPT
-from app.agent.prompts.private_label import PRIVATE_LABEL_PROMPT
-from app.agent.prompts.exportacao import EXPORTACAO_PROMPT
-from app.agent.prompts.consumo import CONSUMO_PROMPT
+from app.agent.prompts import get_stage_prompts
 from app.agent.tools import get_tools_for_stage, execute_tool
 from app.conversations.service import get_history
 from app.agent.token_tracker import track_token_usage
+from app.agent_profiles.service import get_agent_profile
 
 logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
-
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
 TZ_BR = timezone(timedelta(hours=-3))
-
-STAGE_PROMPTS = {
-    "secretaria": SECRETARIA_PROMPT,
-    "atacado": ATACADO_PROMPT,
-    "private_label": PRIVATE_LABEL_PROMPT,
-    "exportacao": EXPORTACAO_PROMPT,
-    "consumo": CONSUMO_PROMPT,
-}
-
-STAGE_MODELS = {
-    "secretaria": "gemini-3-flash-preview",
-    "atacado": "gemini-3-flash-preview",
-    "private_label": "gemini-3-flash-preview",
-    "exportacao": "gemini-3-flash-preview",
-    "consumo": "gemini-3-flash-preview",
-}
+DEFAULT_MODEL = "gemini-3-flash-preview"
 
 
 def _get_openai() -> AsyncOpenAI:
@@ -50,8 +30,18 @@ def _get_openai() -> AsyncOpenAI:
     return _openai_client
 
 
+def _resolve_prompt_key(profile: dict | None) -> str:
+    """Return the prompt_key for this agent profile, defaulting to valeria_inbound."""
+    if not profile:
+        return "valeria_inbound"
+    return profile.get("prompt_key", "valeria_inbound")
+
+
 def build_system_prompt(
-    lead: dict, stage: str, lead_context: dict | None = None
+    lead: dict,
+    stage: str,
+    prompt_key: str = "valeria_inbound",
+    lead_context: dict | None = None,
 ) -> str:
     now = datetime.now(TZ_BR)
     base = build_base_prompt(
@@ -60,7 +50,8 @@ def build_system_prompt(
         now=now,
         lead_context=lead_context,
     )
-    stage_prompt = STAGE_PROMPTS.get(stage, SECRETARIA_PROMPT)
+    stage_prompts = get_stage_prompts(prompt_key)
+    stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
     return base + "\n\n" + stage_prompt
 
 
@@ -68,22 +59,25 @@ async def run_agent(
     conversation: dict,
     user_text: str,
     lead_context: dict | None = None,
+    agent_profile_id: str | None = None,
 ) -> str:
-    """Run the SDR AI agent for a conversation and return the response text.
-
-    NOTE: The caller (processor) is responsible for saving the user message
-    BEFORE calling run_agent. This function only saves the assistant message.
-    """
+    """Run the SDR AI agent for a conversation and return the response text."""
     stage = conversation.get("stage", "secretaria")
     lead = conversation.get("leads", {}) or {}
     lead_id = lead.get("id") or conversation.get("lead_id")
     conversation_id = conversation["id"]
 
-    model = STAGE_MODELS.get(stage, "gemini-3-flash-preview")
-    tools = get_tools_for_stage(stage)
-    system_prompt = build_system_prompt(lead, stage, lead_context=lead_context)
+    # Resolve agent profile
+    profile = None
+    if agent_profile_id:
+        profile = get_agent_profile(agent_profile_id)
 
-    # Build message history scoped by conversation_id (not lead_id)
+    prompt_key = _resolve_prompt_key(profile)
+    model = profile.get("model", DEFAULT_MODEL) if profile else DEFAULT_MODEL
+
+    tools = get_tools_for_stage(stage)
+    system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
+
     history = get_history(conversation_id, limit=30)
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
@@ -91,7 +85,6 @@ async def run_agent(
             messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_text})
 
-    # Call Gemini via OpenAI-compatible API
     response = await _get_openai().chat.completions.create(
         model=model,
         messages=messages,
@@ -112,7 +105,6 @@ async def run_agent(
 
     message = response.choices[0].message
 
-    # Process tool calls
     while message.tool_calls:
         messages.append(message.model_dump())
         for tool_call in message.tool_calls:
@@ -147,6 +139,6 @@ async def run_agent(
 
     assistant_text = message.content or ""
     logger.info(
-        f"SDR agent response for conv {conversation_id} (stage={stage}): {assistant_text[:100]}..."
+        f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
     )
     return assistant_text
