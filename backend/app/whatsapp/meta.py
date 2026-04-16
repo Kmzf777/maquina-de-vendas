@@ -1,7 +1,11 @@
+import json
+import logging
 import httpx
 from app.whatsapp.base import WhatsAppProvider
 
 META_API_BASE = "https://graph.facebook.com/v21.0"
+
+logger = logging.getLogger(__name__)
 
 
 class MetaCloudClient(WhatsAppProvider):
@@ -21,6 +25,18 @@ class MetaCloudClient(WhatsAppProvider):
     async def _post(self, payload: dict) -> dict:
         async with httpx.AsyncClient() as client:
             resp = await client.post(self._url(), json=payload, headers=self._headers())
+            if not resp.is_success:
+                try:
+                    error_body = resp.json()
+                except Exception:
+                    error_body = resp.text
+                logger.error(
+                    "[Meta API] %s %s — payload: %s — response: %s",
+                    resp.status_code,
+                    resp.reason_phrase,
+                    json.dumps(payload),
+                    json.dumps(error_body) if isinstance(error_body, dict) else error_body,
+                )
             resp.raise_for_status()
             return resp.json()
 
@@ -44,8 +60,6 @@ class MetaCloudClient(WhatsAppProvider):
         return await self._post(payload)
 
     async def send_image_base64(self, to: str, base64_data: str, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
-        # Meta Cloud API does not support base64 directly; requires a URL
-        # For now, we'll encode as data URL (may not work depending on Meta's implementation)
         data_url = f"data:{mimetype};base64,{base64_data}"
         return await self.send_image(to, data_url, caption)
 
@@ -57,7 +71,7 @@ class MetaCloudClient(WhatsAppProvider):
             "audio": {"link": audio_url},
         })
 
-    async def send_template(self, to: str, template_name: str, components: dict | None = None, language_code: str = "pt_BR") -> dict:
+    async def send_template(self, to: str, template_name: str, components: list | None = None, language_code: str = "pt_BR") -> dict:
         payload = {
             "messaging_product": "whatsapp",
             "to": to,

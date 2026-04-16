@@ -1,6 +1,33 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 
+interface MetaParam {
+  param_name: string;
+  example: string;
+}
+
+interface MetaComponent {
+  type: string;
+  text?: string;
+  example?: {
+    body_text_named_params?: MetaParam[];
+  };
+  buttons?: Array<{ type: string; text: string }>;
+}
+
+interface MetaTemplate {
+  name: string;
+  status: string;
+  language: string;
+  components: MetaComponent[];
+}
+
+function extractParams(components: MetaComponent[]): string[] {
+  const body = components.find((c) => c.type === "BODY");
+  if (!body?.example?.body_text_named_params) return [];
+  return body.example.body_text_named_params.map((p) => p.param_name);
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -26,7 +53,7 @@ export async function GET(
   }
 
   const version = api_version || "v20.0";
-  const url = `https://graph.facebook.com/${version}/${waba_id}/message_templates?fields=name,status,language&limit=200`;
+  const url = `https://graph.facebook.com/${version}/${waba_id}/message_templates?fields=name,status,language,components&limit=200`;
 
   const metaRes = await fetch(url, {
     headers: { Authorization: `Bearer ${access_token}` },
@@ -38,9 +65,13 @@ export async function GET(
   }
 
   const json = await metaRes.json();
-  const approved = (json.data as Array<{ name: string; status: string; language: string }>)
+  const approved = (json.data as MetaTemplate[])
     .filter((t) => t.status === "APPROVED")
-    .map((t) => ({ name: t.name, language: t.language }))
+    .map((t) => ({
+      name: t.name,
+      language: t.language,
+      params: extractParams(t.components || []),
+    }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return NextResponse.json(approved);
