@@ -79,10 +79,6 @@ jobs:
             set -e
             cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
             git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch origin && git reset --hard origin/master
-            for f in "/home/Kelwin/Kelwin - Maquinadevendascanastra"/backend/migrations/*.sql; do
-              echo "Running migration: $f"
-              psql "${{ secrets.DATABASE_URL }}" -f "$f"
-            done
             sg docker -c "docker build -t canastra-api:latest ./backend"
             sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
             sg docker -c "docker service update \
