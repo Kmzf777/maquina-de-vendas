@@ -51,3 +51,22 @@ def test_orchestrator_falls_back_to_inbound_on_missing_prompt_key():
     profile = {"model": "gemini-3-flash-preview"}  # sem prompt_key
     result = _resolve_prompt_key(profile)
     assert result == "valeria_inbound"
+
+
+def test_activate_conversation_does_not_reset_stage():
+    """activate_conversation nao deve resetar o stage existente da conversa."""
+    from app.conversations.service import activate_conversation
+    from unittest.mock import patch, MagicMock
+
+    mock_result = MagicMock()
+    mock_result.data = [{"id": "conv-1", "stage": "atacado", "status": "active"}]
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = mock_result
+
+    with patch("app.conversations.service.get_supabase", return_value=mock_sb):
+        activate_conversation("conv-1")
+
+    update_call = mock_sb.table.return_value.update.call_args[0][0]
+    assert "stage" not in update_call, "activate_conversation nao deve alterar o stage"
+    assert update_call["status"] == "active"
