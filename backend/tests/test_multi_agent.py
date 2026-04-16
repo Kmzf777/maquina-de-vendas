@@ -117,3 +117,48 @@ def test_broadcast_worker_assigns_agent_profile_to_conversation():
         agent_profile_id="ap-outbound",
         status="template_sent",
     )
+
+
+def test_processor_resolves_agent_profile_from_conversation():
+    """Processor usa agent_profile_id da conversa (prioridade sobre canal)."""
+    conv_agent = "ap-outbound"
+    channel_agent = "ap-inbound"
+
+    conversation = {
+        "id": "conv-1",
+        "stage": "atacado",
+        "status": "active",
+        "agent_profile_id": conv_agent,
+    }
+    channel = {
+        "id": "ch-1",
+        "agent_profiles": {"id": channel_agent, "name": "Inbound"},
+    }
+
+    from app.buffer.processor import _resolve_agent_profile_id
+    result = _resolve_agent_profile_id(conversation, channel)
+    assert result == conv_agent
+
+
+def test_processor_falls_back_to_channel_agent():
+    """Sem agent_profile_id na conversa, usa o agente do canal."""
+    channel_agent = "ap-inbound"
+    conversation = {"id": "conv-1", "stage": "secretaria", "status": "active"}
+    channel = {
+        "id": "ch-1",
+        "agent_profiles": {"id": channel_agent, "name": "Inbound"},
+    }
+
+    from app.buffer.processor import _resolve_agent_profile_id
+    result = _resolve_agent_profile_id(conversation, channel)
+    assert result == channel_agent
+
+
+def test_processor_returns_none_when_no_agent():
+    """Sem agente em conversa nem canal, retorna None (human-only mode)."""
+    conversation = {"id": "conv-1", "stage": "secretaria", "status": "active"}
+    channel = {"id": "ch-1"}
+
+    from app.buffer.processor import _resolve_agent_profile_id
+    result = _resolve_agent_profile_id(conversation, channel)
+    assert result is None
