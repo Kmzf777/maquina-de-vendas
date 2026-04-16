@@ -1,8 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { Channel, Cadence, TemplatePreset, AgentProfile } from "@/lib/types";
+import type { Channel, AgentProfile } from "@/lib/types";
 import { LeadSelector } from "@/components/lead-selector";
+
+interface MetaTemplate {
+  name: string;
+  language: string;
+}
 
 interface CreateBroadcastModalProps {
   open: boolean;
@@ -13,24 +18,18 @@ interface CreateBroadcastModalProps {
 export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadcastModalProps) {
   const [step, setStep] = useState(1);
   const [channels, setChannels] = useState<Channel[]>([]);
-  const [cadences, setCadences] = useState<Cadence[]>([]);
-  const [presets, setPresets] = useState<TemplatePreset[]>([]);
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  const [templates, setTemplates] = useState<MetaTemplate[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Form state
   const [name, setName] = useState("");
   const [channelId, setChannelId] = useState("");
-  const [templateName, setTemplateName] = useState("");
-  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
-  const [presetId, setPresetId] = useState("");
-  const [cadenceId, setCadenceId] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplate | null>(null);
   const [agentProfileId, setAgentProfileId] = useState("");
-  const [templateLanguageCode, setTemplateLanguageCode] = useState("pt_BR");
   const [intervalMin, setIntervalMin] = useState(3);
   const [intervalMax, setIntervalMax] = useState(8);
 
-  // Leads
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [leadTab, setLeadTab] = useState<"crm" | "csv">("crm");
@@ -38,26 +37,33 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
   useEffect(() => {
     if (!open) return;
     fetch("/api/channels").then((r) => r.json()).then((d) => {
-      const metaChannels = (d.data || d).filter((c: Channel) => c.provider === "meta_cloud" && c.is_active);
+      const metaChannels = (Array.isArray(d) ? d : d.data || []).filter(
+        (c: Channel) => c.provider === "meta_cloud" && c.is_active
+      );
       setChannels(metaChannels);
     });
-    fetch("/api/cadences").then((r) => r.json()).then((d) => {
-      setCadences((d.data || d).filter((c: Cadence) => c.status === "active"));
-    });
-    fetch("/api/template-presets").then((r) => r.json()).then((d) => setPresets(Array.isArray(d) ? d : d.data || []));
-    fetch("/api/agent-profiles").then((r) => r.json()).then((d) => setAgentProfiles(Array.isArray(d) ? d : d.data || []));
+    fetch("/api/agent-profiles").then((r) => r.json()).then((d) =>
+      setAgentProfiles(Array.isArray(d) ? d : d.data || [])
+    );
   }, [open]);
 
-  const handlePresetSelect = (id: string) => {
-    setPresetId(id);
-    const preset = presets.find((p) => p.id === id);
-    if (preset) {
-      setTemplateName(preset.template_name);
-      setTemplateVars(preset.variables as Record<string, string>);
+  useEffect(() => {
+    if (!channelId) {
+      setTemplates([]);
+      setSelectedTemplate(null);
+      return;
     }
-  };
+    setLoadingTemplates(true);
+    setSelectedTemplate(null);
+    fetch(`/api/channels/${channelId}/templates`)
+      .then((r) => r.json())
+      .then((d) => setTemplates(Array.isArray(d) ? d : []))
+      .catch(() => setTemplates([]))
+      .finally(() => setLoadingTemplates(false));
+  }, [channelId]);
 
   const handleCreate = async () => {
+    if (!selectedTemplate) return;
     setSaving(true);
     try {
       const res = await fetch("/api/broadcasts", {
@@ -66,11 +72,8 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
         body: JSON.stringify({
           name,
           channel_id: channelId || null,
-          template_name: templateName,
-          template_language_code: templateLanguageCode,
-          template_preset_id: presetId || null,
-          template_variables: templateVars,
-          cadence_id: cadenceId || null,
+          template_name: selectedTemplate.name,
+          template_language_code: selectedTemplate.language,
           agent_profile_id: agentProfileId || null,
           send_interval_min: intervalMin,
           send_interval_max: intervalMax,
@@ -106,15 +109,17 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
     setStep(1);
     setName("");
     setChannelId("");
-    setTemplateName("");
-    setTemplateLanguageCode("pt_BR");
-    setTemplateVars({});
-    setPresetId("");
-    setCadenceId("");
+    setSelectedTemplate(null);
+    setTemplates([]);
     setAgentProfileId("");
     setSelectedLeadIds(new Set());
     setCsvFile(null);
   };
+
+  const canAdvance =
+    step === 1
+      ? name.trim() !== "" && channelId !== "" && selectedTemplate !== null
+      : true;
 
   if (!open) return null;
 
@@ -131,45 +136,61 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
             <>
               <div>
                 <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Nome do disparo</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]" placeholder="Ex: Promo Black Friday" />
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                  placeholder="Ex: Promo Black Friday"
+                />
               </div>
+
               <div>
                 <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Canal (Meta Cloud)</label>
-                <select value={channelId} onChange={(e) => setChannelId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]">
+                <select
+                  value={channelId}
+                  onChange={(e) => setChannelId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                >
                   <option value="">Selecionar canal...</option>
-                  {channels.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
+                  {channels.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Preset (opcional)</label>
-                <select value={presetId} onChange={(e) => handlePresetSelect(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]">
-                  <option value="">Nenhum preset</option>
-                  {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Template</label>
-                <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]" placeholder="Nome do template na Meta" />
-              </div>
-              <div>
-                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Idioma do template</label>
-                <select value={templateLanguageCode} onChange={(e) => setTemplateLanguageCode(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]">
-                  <option value="pt_BR">Português (pt_BR)</option>
-                  <option value="en_US">Inglês (en_US)</option>
-                  <option value="es">Espanhol (es)</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Cadencia vinculada (opcional)</label>
-                <select value={cadenceId} onChange={(e) => setCadenceId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]">
-                  <option value="">Sem cadencia</option>
-                  {cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
+
               <div>
                 <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">
-                  Agente
+                  Template
+                  {loadingTemplates && <span className="ml-2 text-[#9ca3af]">carregando...</span>}
                 </label>
+                {!channelId ? (
+                  <p className="text-[12px] text-[#9ca3af] italic">Selecione um canal para ver os templates disponíveis</p>
+                ) : loadingTemplates ? (
+                  <div className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px] text-[#9ca3af]">Buscando templates...</div>
+                ) : templates.length === 0 ? (
+                  <p className="text-[12px] text-red-500">Nenhum template aprovado encontrado para este canal</p>
+                ) : (
+                  <select
+                    value={selectedTemplate ? `${selectedTemplate.name}|${selectedTemplate.language}` : ""}
+                    onChange={(e) => {
+                      if (!e.target.value) { setSelectedTemplate(null); return; }
+                      const [tname, lang] = e.target.value.split("|");
+                      setSelectedTemplate({ name: tname, language: lang });
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                  >
+                    <option value="">Selecionar template...</option>
+                    {templates.map((t) => (
+                      <option key={`${t.name}|${t.language}`} value={`${t.name}|${t.language}`}>
+                        {t.name} ({t.language})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Agente</label>
                 <select
                   value={agentProfileId}
                   onChange={(e) => setAgentProfileId(e.target.value)}
@@ -181,14 +202,25 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
                   ))}
                 </select>
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Intervalo min (s)</label>
-                  <input type="number" value={intervalMin} onChange={(e) => setIntervalMin(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]" />
+                  <input
+                    type="number"
+                    value={intervalMin}
+                    onChange={(e) => setIntervalMin(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                  />
                 </div>
                 <div>
                   <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Intervalo max (s)</label>
-                  <input type="number" value={intervalMax} onChange={(e) => setIntervalMax(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]" />
+                  <input
+                    type="number"
+                    value={intervalMax}
+                    onChange={(e) => setIntervalMax(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                  />
                 </div>
               </div>
             </>
@@ -197,10 +229,16 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
           {step === 2 && (
             <>
               <div className="flex gap-2 mb-4">
-                <button onClick={() => setLeadTab("crm")} className={`px-3 py-1.5 rounded-lg text-[12px] font-medium ${leadTab === "crm" ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] bg-[#f4f4f0]"}`}>
+                <button
+                  onClick={() => setLeadTab("crm")}
+                  className={`px-3 py-1.5 rounded-lg text-[12px] font-medium ${leadTab === "crm" ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] bg-[#f4f4f0]"}`}
+                >
                   Do CRM
                 </button>
-                <button onClick={() => setLeadTab("csv")} className={`px-3 py-1.5 rounded-lg text-[12px] font-medium ${leadTab === "csv" ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] bg-[#f4f4f0]"}`}>
+                <button
+                  onClick={() => setLeadTab("csv")}
+                  className={`px-3 py-1.5 rounded-lg text-[12px] font-medium ${leadTab === "csv" ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] bg-[#f4f4f0]"}`}
+                >
                   Importar CSV
                 </button>
               </div>
@@ -221,13 +259,12 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
 
           {step === 3 && (
             <div className="space-y-3">
-              <h3 className="text-[14px] font-semibold text-[#1f1f1f]">Revisao do disparo</h3>
+              <h3 className="text-[14px] font-semibold text-[#1f1f1f]">Revisão do disparo</h3>
               <div className="bg-[#f6f7ed] rounded-xl p-4 space-y-2 text-[13px]">
                 <p><span className="text-[#5f6368]">Nome:</span> <strong>{name}</strong></p>
-                <p><span className="text-[#5f6368]">Template:</span> <strong>{templateName}</strong> <span className="text-[#5f6368]">({templateLanguageCode})</span></p>
+                <p><span className="text-[#5f6368]">Template:</span> <strong>{selectedTemplate?.name}</strong> <span className="text-[#5f6368]">({selectedTemplate?.language})</span></p>
                 <p><span className="text-[#5f6368]">Leads:</span> <strong>{leadTab === "crm" ? selectedLeadIds.size : "CSV"}</strong></p>
                 <p><span className="text-[#5f6368]">Intervalo:</span> <strong>{intervalMin}-{intervalMax}s</strong></p>
-                {cadenceId && <p><span className="text-[#5f6368]">Cadencia:</span> <strong>{cadences.find((c) => c.id === cadenceId)?.name}</strong></p>}
                 {agentProfileId && (
                   <p>
                     <span className="text-[#5f6368]">Agente:</span>{" "}
@@ -248,13 +285,17 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
           {step < 3 ? (
             <button
               onClick={() => setStep(step + 1)}
-              disabled={step === 1 && (!name || !templateName)}
+              disabled={!canAdvance}
               className="px-4 py-2 rounded-lg text-[13px] font-medium bg-[#1f1f1f] text-white hover:bg-[#333] disabled:opacity-50"
             >
-              Proximo
+              Próximo
             </button>
           ) : (
-            <button onClick={handleCreate} disabled={saving} className="px-4 py-2 rounded-lg text-[13px] font-medium bg-[#1f1f1f] text-white hover:bg-[#333] disabled:opacity-50">
+            <button
+              onClick={handleCreate}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg text-[13px] font-medium bg-[#1f1f1f] text-white hover:bg-[#333] disabled:opacity-50"
+            >
               {saving ? "Criando..." : "Criar Disparo"}
             </button>
           )}
