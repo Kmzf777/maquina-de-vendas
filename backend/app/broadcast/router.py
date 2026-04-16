@@ -16,6 +16,7 @@ class BroadcastCreate(BaseModel):
     send_interval_min: int = 3
     send_interval_max: int = 8
     cadence_id: str | None = None
+    agent_profile_id: str | None = None
     scheduled_at: str | None = None
 
 
