@@ -106,6 +106,7 @@ async def process_single_broadcast(broadcast: dict):
                 to=lead["phone"],
                 template_name=broadcast["template_name"],
                 components=broadcast.get("template_variables", {}).get("components"),
+                language_code=broadcast.get("template_language_code", "pt_BR"),
             )
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
