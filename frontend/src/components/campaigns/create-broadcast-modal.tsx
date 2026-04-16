@@ -26,6 +26,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
   const [presetId, setPresetId] = useState("");
   const [cadenceId, setCadenceId] = useState("");
   const [agentProfileId, setAgentProfileId] = useState("");
+  const [templateLanguageCode, setTemplateLanguageCode] = useState("pt_BR");
   const [intervalMin, setIntervalMin] = useState(3);
   const [intervalMax, setIntervalMax] = useState(8);
 
@@ -66,6 +67,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
           name,
           channel_id: channelId || null,
           template_name: templateName,
+          template_language_code: templateLanguageCode,
           template_preset_id: presetId || null,
           template_variables: templateVars,
           cadence_id: cadenceId || null,
@@ -105,6 +107,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
     setName("");
     setChannelId("");
     setTemplateName("");
+    setTemplateLanguageCode("pt_BR");
     setTemplateVars({});
     setPresetId("");
     setCadenceId("");
@@ -147,6 +150,14 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
               <div>
                 <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Template</label>
                 <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]" placeholder="Nome do template na Meta" />
+              </div>
+              <div>
+                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Idioma do template</label>
+                <select value={templateLanguageCode} onChange={(e) => setTemplateLanguageCode(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]">
+                  <option value="pt_BR">Português (pt_BR)</option>
+                  <option value="en_US">Inglês (en_US)</option>
+                  <option value="es">Espanhol (es)</option>
+                </select>
               </div>
               <div>
                 <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Cadencia vinculada (opcional)</label>
@@ -213,7 +224,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
               <h3 className="text-[14px] font-semibold text-[#1f1f1f]">Revisao do disparo</h3>
               <div className="bg-[#f6f7ed] rounded-xl p-4 space-y-2 text-[13px]">
                 <p><span className="text-[#5f6368]">Nome:</span> <strong>{name}</strong></p>
-                <p><span className="text-[#5f6368]">Template:</span> <strong>{templateName}</strong></p>
+                <p><span className="text-[#5f6368]">Template:</span> <strong>{templateName}</strong> <span className="text-[#5f6368]">({templateLanguageCode})</span></p>
                 <p><span className="text-[#5f6368]">Leads:</span> <strong>{leadTab === "crm" ? selectedLeadIds.size : "CSV"}</strong></p>
                 <p><span className="text-[#5f6368]">Intervalo:</span> <strong>{intervalMin}-{intervalMax}s</strong></p>
                 {cadenceId && <p><span className="text-[#5f6368]">Cadencia:</span> <strong>{cadences.find((c) => c.id === cadenceId)?.name}</strong></p>}
