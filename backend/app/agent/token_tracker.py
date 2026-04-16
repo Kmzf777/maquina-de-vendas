@@ -10,9 +10,13 @@ _pricing_loaded = False
 
 def _load_pricing():
     global _pricing_cache, _pricing_loaded
-    sb = get_supabase()
-    result = sb.table("model_pricing").select("*").execute()
-    _pricing_cache = {row["model"]: row for row in result.data}
+    try:
+        sb = get_supabase()
+        result = sb.table("model_pricing").select("*").execute()
+        _pricing_cache = {row["model"]: row for row in result.data}
+    except Exception as e:
+        logger.warning(f"Could not load model pricing (table may not exist): {e}")
+        _pricing_cache = {}
     _pricing_loaded = True
 
 
