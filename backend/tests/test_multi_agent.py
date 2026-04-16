@@ -30,3 +30,24 @@ def test_inbound_and_outbound_secretaria_differ():
     inbound = get_stage_prompts("valeria_inbound")
     outbound = get_stage_prompts("valeria_outbound")
     assert inbound["secretaria"] != outbound["secretaria"]
+
+
+def test_orchestrator_uses_inbound_prompts_by_default():
+    """Sem agent_profile_id, o orchestrator usa valeria_inbound."""
+    from app.agent.orchestrator import _resolve_prompt_key
+    result = _resolve_prompt_key(None)
+    assert result == "valeria_inbound"
+
+
+def test_orchestrator_uses_outbound_prompts_when_profile_has_outbound_key():
+    from app.agent.orchestrator import _resolve_prompt_key
+    profile = {"prompt_key": "valeria_outbound", "model": "gemini-3-flash-preview"}
+    result = _resolve_prompt_key(profile)
+    assert result == "valeria_outbound"
+
+
+def test_orchestrator_falls_back_to_inbound_on_missing_prompt_key():
+    from app.agent.orchestrator import _resolve_prompt_key
+    profile = {"model": "gemini-3-flash-preview"}  # sem prompt_key
+    result = _resolve_prompt_key(profile)
+    assert result == "valeria_inbound"
