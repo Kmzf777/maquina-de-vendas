@@ -52,7 +52,7 @@ class EvolutionClient(WhatsAppProvider):
             "audio": audio_url,
         })
 
-    async def send_template(self, to: str, template_name: str, components: dict | None = None) -> dict:
+    async def send_template(self, to: str, template_name: str, components: dict | None = None, language_code: str = "pt_BR") -> dict:
         payload = {
             "number": to,
             "template": {
