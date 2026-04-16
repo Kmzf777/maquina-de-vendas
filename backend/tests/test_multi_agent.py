@@ -70,3 +70,50 @@ def test_activate_conversation_does_not_reset_stage():
     update_call = mock_sb.table.return_value.update.call_args[0][0]
     assert "stage" not in update_call, "activate_conversation nao deve alterar o stage"
     assert update_call["status"] == "active"
+
+
+def test_broadcast_worker_assigns_agent_profile_to_conversation():
+    """Após enviar template, worker grava agent_profile_id na conversa."""
+    import asyncio
+    import app.broadcast.worker as worker_module
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    broadcast = {
+        "id": "bc-1",
+        "status": "running",
+        "template_name": "teste",
+        "template_variables": {},
+        "channel_id": "ch-1",
+        "agent_profile_id": "ap-outbound",
+        "send_interval_min": 0,
+        "send_interval_max": 0,
+    }
+    lead = {"id": "lead-1", "phone": "5511999990000"}
+    broadcast_lead = {"id": "bl-1", "leads": lead}
+
+    mock_conv = {"id": "conv-1", "stage": "atacado"}
+    mock_get_conv = MagicMock(return_value=mock_conv)
+    mock_update_conv = MagicMock()
+    mock_provider = MagicMock()
+    mock_provider.send_template = AsyncMock()
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"status": "running"}
+    mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
+
+    with patch("app.broadcast.worker.get_pending_broadcast_leads", return_value=[broadcast_lead]), \
+         patch("app.broadcast.worker.mark_broadcast_lead_sent"), \
+         patch("app.broadcast.worker.increment_broadcast_sent"), \
+         patch("app.broadcast.worker.get_channel_by_id", return_value={"id": "ch-1"}), \
+         patch("app.broadcast.worker.get_provider", return_value=mock_provider), \
+         patch("app.broadcast.worker.get_or_create_conversation", mock_get_conv), \
+         patch("app.broadcast.worker.update_conversation", mock_update_conv), \
+         patch("app.broadcast.worker.get_supabase", return_value=mock_sb):
+
+        asyncio.run(worker_module.process_single_broadcast(broadcast))
+
+    mock_update_conv.assert_called_once_with(
+        "conv-1",
+        agent_profile_id="ap-outbound",
+        status="template_sent",
+    )
