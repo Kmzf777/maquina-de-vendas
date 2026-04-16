@@ -109,7 +109,7 @@ async def run_agent(
     message = response.choices[0].message
 
     while message.tool_calls:
-        messages.append(message.model_dump())
+        messages.append(message.model_dump(exclude_none=True))
         for tool_call in message.tool_calls:
             func_name = tool_call.function.name
             func_args = json.loads(tool_call.function.arguments)
