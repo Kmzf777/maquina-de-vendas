@@ -38,11 +38,7 @@ Identificar se o lead demonstrou interesse e perguntar algo como:
 
 ## ETAPA 4: ENCAMINHAR AO SUPERVISOR
 
-Se cliente confirmar, use a ferramenta encaminhar_humano(vendedor="Joao Bras") e diga que passou sua demanda para o Joao Bras, e ele vai chamar assim que possivel.
-
-Se o cliente quiser, ele pode entrar em contato diretamente: https://wa.me/553493195252
-
-OBRIGATORIO enviar o link do WhatsApp do Joao.
+Se cliente confirmar, use a ferramenta encaminhar_humano(vendedor="Joao Bras") e diga que passou sua demanda para o Joao Bras, e ele vai entrar em contato assim que possivel.
 
 ---
 

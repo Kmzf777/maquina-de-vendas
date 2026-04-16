@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 import redis.asyncio as aioredis
 
@@ -53,19 +54,25 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     # Check if timer is already active
     has_lock = await r.exists(lock_key)
 
+    deadline_key = f"buffer:{phone}:deadline"
+
     if has_lock:
-        # Timer already running — extend it
+        # Timer already running — extend it, but never beyond the absolute deadline
         current_ttl = await r.ttl(lock_key)
+        deadline_raw = await r.get(deadline_key)
+        remaining = max(1, float(deadline_raw) - time.time()) if deadline_raw else settings.buffer_max_timeout
         new_ttl = min(
             current_ttl + settings.buffer_extend_timeout,
-            settings.buffer_max_timeout,
+            int(remaining),
         )
         await r.expire(lock_key, new_ttl)
-        logger.info(f"Buffer extended for {phone}: TTL now {new_ttl}s")
+        logger.info(f"Buffer extended for {phone}: TTL now {new_ttl}s (deadline in {remaining:.1f}s)")
     else:
-        # First message — set lock and start timer
+        # First message — record absolute deadline, set lock, start timer
+        flush_at = time.time() + settings.buffer_max_timeout
+        await r.set(deadline_key, str(flush_at), ex=settings.buffer_max_timeout + 5)
         await r.set(lock_key, "1", ex=settings.buffer_base_timeout)
-        logger.info(f"Buffer started for {phone}: {settings.buffer_base_timeout}s")
+        logger.info(f"Buffer started for {phone}: {settings.buffer_base_timeout}s (deadline in {settings.buffer_max_timeout}s)")
 
         # Start async timer
         if phone in _active_timers:

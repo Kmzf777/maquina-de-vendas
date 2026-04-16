@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
       send_interval_min: body.send_interval_min || 3,
       send_interval_max: body.send_interval_max || 8,
       cadence_id: body.cadence_id || null,
+      agent_profile_id: body.agent_profile_id || null,
       scheduled_at: body.scheduled_at || null,
       status: body.scheduled_at ? "scheduled" : "draft",
     })

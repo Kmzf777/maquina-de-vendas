@@ -37,6 +37,23 @@ def _get_openai() -> AsyncOpenAI:
     return _openai_client
 
 
+def _resolve_agent_profile_id(conversation: dict, channel: dict) -> str | None:
+    """Resolve which agent_profile_id to use for this conversation.
+
+    Priority:
+    1. conversation.agent_profile_id (set by broadcast worker)
+    2. channel.agent_profiles.id (default channel agent)
+    3. None (human-only mode)
+    """
+    conv_agent = conversation.get("agent_profile_id")
+    if conv_agent:
+        return conv_agent
+    channel_profile = channel.get("agent_profiles")
+    if channel_profile:
+        return channel_profile.get("id")
+    return None
+
+
 def _is_recent_duplicate(
     conversation_id: str, content: str, role: str, window_seconds: int = 30
 ) -> bool:
@@ -118,9 +135,9 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # Check if channel has an agent profile
-    agent_profile = channel.get("agent_profiles")
-    if not agent_profile:
+    # Resolve agent profile: conversation takes priority over channel default
+    agent_profile_id = _resolve_agent_profile_id(conversation, channel)
+    if not agent_profile_id:
         logger.info(f"No agent profile for channel {channel_id}, human-only mode")
         _update_last_msg(conversation["id"])
         return
@@ -128,7 +145,7 @@ async def process_buffered_messages(
     # Run AI agent
     try:
         conversation["leads"] = lead
-        response = await run_agent(conversation, resolved_text)
+        response = await run_agent(conversation, resolved_text, agent_profile_id=agent_profile_id)
     except Exception as e:
         logger.error(f"Agent error for {phone}: {e}", exc_info=True)
         _update_last_msg(conversation["id"])

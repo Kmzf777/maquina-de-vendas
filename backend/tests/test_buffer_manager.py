@@ -79,6 +79,61 @@ async def test_segunda_push_estende_lock(fake_redis, monkeypatch):
     assert expire_calls[0] <= 45
 
 
+async def test_primeira_mensagem_registra_deadline_absoluto(fake_redis, monkeypatch):
+    """Primeira mensagem deve gravar um deadline absoluto em buffer:{phone}:deadline."""
+    monkeypatch.setattr("app.buffer.manager.settings.buffer_max_timeout", 45)
+    await fake_redis.set("config:buffer_enabled", "1")
+
+    msg = _make_msg("primeira mensagem")
+    before = time.time()
+
+    with patch("app.buffer.manager.asyncio.create_task"), \
+         patch.object(fake_redis, "exists", AsyncMock(return_value=0)):
+        await push_to_buffer(fake_redis, msg)
+
+    deadline_raw = await fake_redis.get("buffer:5511999999999:deadline")
+    assert deadline_raw is not None, "deadline absoluto deve ser salvo no Redis"
+    deadline = float(deadline_raw)
+    assert before + 44 <= deadline <= before + 46, \
+        f"deadline deve ser ~now+45s, mas foi {deadline - before:.1f}s no futuro"
+
+
+async def test_extensao_limitada_pelo_deadline_absoluto(fake_redis, monkeypatch):
+    """Com deadline próximo, extensão de TTL deve ser limitada ao tempo restante — não ao buffer_max_timeout."""
+    monkeypatch.setattr("app.buffer.manager.settings.buffer_base_timeout", 15)
+    monkeypatch.setattr("app.buffer.manager.settings.buffer_extend_timeout", 10)
+    monkeypatch.setattr("app.buffer.manager.settings.buffer_max_timeout", 45)
+    await fake_redis.set("config:buffer_enabled", "1")
+
+    # Simula: primeira mensagem chegou há 40s, deadline expira daqui 5s
+    deadline = time.time() + 5
+    await fake_redis.set("buffer:5511999999999:deadline", str(deadline))
+
+    msg = _make_msg("mensagem tardia", "wamid.late")
+    expire_calls = []
+
+    async def fake_exists(key):
+        return 1  # lock ativo
+
+    async def fake_expire(key, ttl):
+        expire_calls.append(ttl)
+
+    async def fake_ttl(key):
+        return 20  # TTL atual ainda é 20s
+
+    with patch("app.buffer.manager.asyncio.create_task"), \
+         patch.object(fake_redis, "exists", side_effect=fake_exists), \
+         patch.object(fake_redis, "expire", side_effect=fake_expire), \
+         patch.object(fake_redis, "ttl", side_effect=fake_ttl):
+        await push_to_buffer(fake_redis, msg)
+
+    # Sem o fix: new_ttl = min(20+10, 45) = 30s  ← ignora deadline absoluto
+    # Com o fix:  new_ttl = min(20+10, ~5s)  = ~5s ← respeita deadline absoluto
+    assert len(expire_calls) >= 1, "expire deve ter sido chamado"
+    assert expire_calls[0] <= 6, \
+        f"TTL deveria ser limitado a ~5s (deadline restante), mas foi {expire_calls[0]}s"
+
+
 async def test_media_url_gera_placeholder_no_buffer(fake_redis):
     """Mensagem de áudio com media_url deve gerar placeholder no buffer."""
     await fake_redis.set("config:buffer_enabled", "1")
