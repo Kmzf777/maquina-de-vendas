@@ -46,6 +46,7 @@ jobs:
             sg docker -c "docker service update \
               --env-add SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY \
               crm_crm"
+            sg docker -c "docker service update --force crm_crm"
             echo "CRM deployed successfully"
 
   deploy-backend:
