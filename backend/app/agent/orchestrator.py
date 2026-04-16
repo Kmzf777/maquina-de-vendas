@@ -70,7 +70,10 @@ async def run_agent(
     # Resolve agent profile
     profile = None
     if agent_profile_id:
-        profile = get_agent_profile(agent_profile_id)
+        try:
+            profile = get_agent_profile(agent_profile_id)
+        except Exception:
+            logger.warning("Failed to fetch agent_profile %s, using default", agent_profile_id, exc_info=True)
 
     prompt_key = _resolve_prompt_key(profile)
     model = profile.get("model", DEFAULT_MODEL) if profile else DEFAULT_MODEL
