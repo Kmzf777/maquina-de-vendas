@@ -11,6 +11,10 @@ const dmSans = DM_Sans({
 export const metadata: Metadata = {
   title: "CRM Canastra",
   description: "CRM Cafe Canastra",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
