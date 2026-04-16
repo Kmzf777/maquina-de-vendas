@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { Channel, Cadence, TemplatePreset } from "@/lib/types";
+import type { Channel, Cadence, TemplatePreset, AgentProfile } from "@/lib/types";
 import { LeadSelector } from "@/components/lead-selector";
 
 interface CreateBroadcastModalProps {
@@ -15,6 +15,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
   const [channels, setChannels] = useState<Channel[]>([]);
   const [cadences, setCadences] = useState<Cadence[]>([]);
   const [presets, setPresets] = useState<TemplatePreset[]>([]);
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [saving, setSaving] = useState(false);
 
   // Form state
@@ -24,6 +25,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
   const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
   const [presetId, setPresetId] = useState("");
   const [cadenceId, setCadenceId] = useState("");
+  const [agentProfileId, setAgentProfileId] = useState("");
   const [intervalMin, setIntervalMin] = useState(3);
   const [intervalMax, setIntervalMax] = useState(8);
 
@@ -42,6 +44,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
       setCadences((d.data || d).filter((c: Cadence) => c.status === "active"));
     });
     fetch("/api/template-presets").then((r) => r.json()).then((d) => setPresets(Array.isArray(d) ? d : d.data || []));
+    fetch("/api/agent-profiles").then((r) => r.json()).then((d) => setAgentProfiles(Array.isArray(d) ? d : d.data || []));
   }, [open]);
 
   const handlePresetSelect = (id: string) => {
@@ -66,6 +69,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
           template_preset_id: presetId || null,
           template_variables: templateVars,
           cadence_id: cadenceId || null,
+          agent_profile_id: agentProfileId || null,
           send_interval_min: intervalMin,
           send_interval_max: intervalMax,
         }),
@@ -104,6 +108,7 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
     setTemplateVars({});
     setPresetId("");
     setCadenceId("");
+    setAgentProfileId("");
     setSelectedLeadIds(new Set());
     setCsvFile(null);
   };
@@ -148,6 +153,21 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
                 <select value={cadenceId} onChange={(e) => setCadenceId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]">
                   <option value="">Sem cadencia</option>
                   {cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">
+                  Agente
+                </label>
+                <select
+                  value={agentProfileId}
+                  onChange={(e) => setAgentProfileId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                >
+                  <option value="">Agente padrão do canal</option>
+                  {agentProfiles.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -197,6 +217,12 @@ export function CreateBroadcastModal({ open, onClose, onCreated }: CreateBroadca
                 <p><span className="text-[#5f6368]">Leads:</span> <strong>{leadTab === "crm" ? selectedLeadIds.size : "CSV"}</strong></p>
                 <p><span className="text-[#5f6368]">Intervalo:</span> <strong>{intervalMin}-{intervalMax}s</strong></p>
                 {cadenceId && <p><span className="text-[#5f6368]">Cadencia:</span> <strong>{cadences.find((c) => c.id === cadenceId)?.name}</strong></p>}
+                {agentProfileId && (
+                  <p>
+                    <span className="text-[#5f6368]">Agente:</span>{" "}
+                    <strong>{agentProfiles.find((a) => a.id === agentProfileId)?.name}</strong>
+                  </p>
+                )}
               </div>
             </div>
           )}

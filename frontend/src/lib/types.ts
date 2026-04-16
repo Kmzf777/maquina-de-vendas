@@ -112,6 +112,7 @@ export interface Broadcast {
   send_interval_min: number;
   send_interval_max: number;
   cadence_id: string | null;
+  agent_profile_id: string | null;
   created_at: string;
   updated_at: string;
   // Joined
