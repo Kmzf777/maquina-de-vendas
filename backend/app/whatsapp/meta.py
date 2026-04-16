@@ -57,13 +57,14 @@ class MetaCloudClient(WhatsAppProvider):
             "audio": {"link": audio_url},
         })
 
-    async def send_template(self, to: str, template_name: str, components: dict | None = None) -> dict:
+    async def send_template(self, to: str, template_name: str, components: dict | None = None, language_code: str = "pt_BR") -> dict:
         payload = {
             "messaging_product": "whatsapp",
             "to": to,
             "type": "template",
             "template": {
                 "name": template_name,
+                "language": {"code": language_code},
             }
         }
         if components:
