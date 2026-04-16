@@ -18,7 +18,7 @@ def test_outbound_has_all_stages():
     prompts = get_stage_prompts("valeria_outbound")
     for stage in ("secretaria", "atacado", "private_label", "exportacao", "consumo"):
         assert stage in prompts
-        assert len(prompts[stage]) > 0
+        assert len(prompts[stage]) > 100, f"Stage {stage} outbound prompt is too short"
 
 
 def test_fallback_to_inbound_on_unknown_key():
