@@ -23,13 +23,17 @@ def update_lead(lead_id: str, **fields) -> dict[str, Any]:
 
 
 def reset_lead(lead_id: str) -> None:
-    """Reset lead: delete message history and reset stage to secretaria."""
+    """Reset lead: delete message history and reset stage to secretaria on both lead and conversations."""
     sb = get_supabase()
     sb.table("messages").delete().eq("lead_id", lead_id).execute()
     sb.table("leads").update({
         "stage": "secretaria",
         "status": "active",
     }).eq("id", lead_id).execute()
+    sb.table("conversations").update({
+        "stage": "secretaria",
+        "status": "active",
+    }).eq("lead_id", lead_id).execute()
 
 
 def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent", conversation_id: str | None = None) -> dict[str, Any]:
