@@ -81,14 +81,6 @@ jobs:
             git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch origin && git reset --hard origin/master
             sg docker -c "docker build -t canastra-api:latest ./backend"
             sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
-            sg docker -c "docker service update \
-              --env-add GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-              --env-add API_BASE_URL=https://api.canastrainteligencia.com \
-              --env-add FRONTEND_URL=https://crm.canastrainteligencia.com \
-              canastra_api"
-            sg docker -c "docker service update \
-              --env-add GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-              --env-add API_BASE_URL=https://api.canastrainteligencia.com \
-              --env-add FRONTEND_URL=https://crm.canastrainteligencia.com \
-              canastra_worker"
+            sg docker -c "docker service update --force canastra_api"
+            sg docker -c "docker service update --force canastra_worker"
             echo "Backend deployed successfully"
