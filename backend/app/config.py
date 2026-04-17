@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # LLM
-    gemini_api_key: str
+    gemini_api_key: str = ""  # used for media transcription (audio/image) via Gemini
     openai_api_key: str
 
     # Supabase
