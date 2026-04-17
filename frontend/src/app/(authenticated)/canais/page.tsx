@@ -249,7 +249,7 @@ export default function CanaisPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-[#8a8a8a] text-sm">Carregando...</div>
+        <div className="text-[#7b7b78] text-[14px]">Carregando...</div>
       </div>
     );
   }
@@ -257,94 +257,86 @@ export default function CanaisPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-[28px] font-bold text-[#1f1f1f]">Canais</h1>
+        <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Canais</h1>
         <button
           onClick={() => { setForm(EMPTY_FORM); setEditingId(null); setShowForm(true); }}
-          className="px-5 py-2.5 text-[13px] font-medium text-white rounded-xl transition-all hover:opacity-90"
-          style={{ background: "var(--accent-olive)" }}
+          className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
         >
           + Novo Canal
         </button>
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-[#e5e7eb] overflow-hidden">
+      <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-[#f0f0f0]">
-              <th className="text-left px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Nome</th>
-              <th className="text-left px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Telefone</th>
-              <th className="text-left px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Provider</th>
-              <th className="text-left px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Agente</th>
-              <th className="text-left px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Conexao</th>
-              <th className="text-left px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Ativo</th>
-              <th className="text-right px-5 py-3.5 text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wider">Acoes</th>
+            <tr className="border-b border-[#dedbd6]">
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Nome</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Telefone</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Provider</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Agente</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Conexao</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Ativo</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Acoes</th>
             </tr>
           </thead>
           <tbody>
             {channels.map((ch) => {
               const connStatus = connectionStatus[ch.id];
               return (
-                <tr key={ch.id} className="border-b border-[#f8f8f8] last:border-0 hover:bg-[#fafafa] transition-colors">
-                  <td className="px-5 py-3.5 text-[13px] font-medium text-[#1f1f1f]">{ch.name}</td>
-                  <td className="px-5 py-3.5 text-[13px] text-[#5f6368]">{ch.phone || "\u2014"}</td>
-                  <td className="px-5 py-3.5">
-                    <span className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full ${
-                      ch.provider === "meta_cloud"
-                        ? "bg-blue-50 text-blue-700"
-                        : "bg-emerald-50 text-emerald-700"
-                    }`}>
+                <tr key={ch.id} className="border-b border-[#dedbd6] hover:bg-[#faf9f6] transition-colors">
+                  <td className="px-4 py-3 text-[14px] text-[#111111]">{ch.name}</td>
+                  <td className="px-4 py-3 text-[14px] text-[#7b7b78]">{ch.phone || "\u2014"}</td>
+                  <td className="px-4 py-3">
+                    <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
                       {ch.provider === "meta_cloud" ? "Meta" : "Evolution"}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-[13px] text-[#5f6368]">
-                    {ch.agent_profiles?.name || <span className="text-[#b0b0b0]">Sem agente</span>}
+                  <td className="px-4 py-3 text-[14px] text-[#7b7b78]">
+                    {ch.agent_profiles?.name || <span className="text-[#7b7b78]">Sem agente</span>}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-4 py-3">
                     {ch.provider === "evolution" ? (
                       connStatus?.connected ? (
-                        <span className="inline-flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                        <span className="bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20">
                           Conectado
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 text-[12px] text-red-500 font-medium">
-                          <span className="w-2 h-2 rounded-full bg-red-400" />
+                        <span className="bg-[#c41c1c]/10 text-[#c41c1c] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#c41c1c]/20">
                           Desconectado
                         </span>
                       )
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-[12px] text-blue-600 font-medium">
-                        <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
                         Webhook
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-4 py-3">
                     <button
                       onClick={() => handleToggleActive(ch)}
-                      className={`relative w-10 h-5 rounded-full transition-colors ${ch.is_active ? "bg-emerald-500" : "bg-gray-300"}`}
+                      className={`relative w-10 h-5 rounded-full transition-colors ${ch.is_active ? "bg-[#0bdf50]" : "bg-[#dedbd6]"}`}
                     >
-                      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${ch.is_active ? "translate-x-5" : ""}`} />
+                      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${ch.is_active ? "translate-x-5" : ""}`} />
                     </button>
                   </td>
-                  <td className="px-5 py-3.5 text-right">
+                  <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {ch.provider === "evolution" && (
                         connStatus?.connected ? (
-                          <button onClick={() => handleDisconnect(ch.id)} className="px-3 py-1.5 text-[11px] font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
+                          <button onClick={() => handleDisconnect(ch.id)} className="bg-[#c41c1c]/10 text-[#c41c1c] border border-[#c41c1c]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
                             Desconectar
                           </button>
                         ) : (
-                          <button onClick={() => handleConnect(ch.id)} className="px-3 py-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors">
+                          <button onClick={() => handleConnect(ch.id)} className="bg-[#0bdf50]/10 text-[#0bdf50] border border-[#0bdf50]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
                             Conectar
                           </button>
                         )
                       )}
-                      <button onClick={() => handleEdit(ch)} className="px-3 py-1.5 text-[11px] font-medium text-[#5f6368] bg-[#f6f7ed] rounded-lg hover:bg-[#eef0dc] transition-colors">
+                      <button onClick={() => handleEdit(ch)} className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
                         Editar
                       </button>
-                      <button onClick={() => handleDelete(ch.id)} className="px-3 py-1.5 text-[11px] font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
+                      <button onClick={() => handleDelete(ch.id)} className="bg-[#c41c1c]/10 text-[#c41c1c] border border-[#c41c1c]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
                         Excluir
                       </button>
                     </div>
@@ -354,7 +346,7 @@ export default function CanaisPage() {
             })}
             {channels.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-5 py-12 text-center text-[13px] text-[#8a8a8a]">
+                <td colSpan={7} className="px-4 py-12 text-center text-[14px] text-[#7b7b78]">
                   Nenhum canal configurado. Clique em &quot;+ Novo Canal&quot; para comecar.
                 </td>
               </tr>
@@ -365,31 +357,34 @@ export default function CanaisPage() {
 
       {/* Create/Edit Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowForm(false); setEditingId(null); }}>
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-[#1f1f1f] mb-5">
-              {editingId ? "Editar Canal" : "Novo Canal"}
-            </h2>
+        <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-[14px] font-normal text-[#111111]">
+                {editingId ? "Editar Canal" : "Novo Canal"}
+              </h2>
+              <button onClick={() => { setShowForm(false); setEditingId(null); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+            </div>
 
             <div className="space-y-4">
               {/* Name */}
               <div>
-                <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Nome</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome</label>
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                   placeholder="Ex: Atendimento Principal"
                 />
               </div>
 
               {/* Provider */}
               <div>
-                <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Provider</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Provider</label>
                 <select
                   value={form.provider}
                   onChange={(e) => setForm({ ...form, provider: e.target.value as "meta_cloud" | "evolution" })}
-                  className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
                 >
                   <option value="evolution">Evolution API</option>
                   <option value="meta_cloud">Meta Cloud API (Oficial)</option>
@@ -400,29 +395,29 @@ export default function CanaisPage() {
               {form.provider === "evolution" && (
                 <>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">API URL</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">API URL</label>
                     <input
                       value={form.evo_api_url}
                       onChange={(e) => setForm({ ...form, evo_api_url: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                       placeholder="https://evolution.seudominio.com"
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">API Key</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">API Key</label>
                     <input
                       value={form.evo_api_key}
                       onChange={(e) => setForm({ ...form, evo_api_key: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                       type="password"
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Nome da Instancia</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome da Instancia</label>
                     <input
                       value={form.evo_instance}
                       onChange={(e) => setForm({ ...form, evo_instance: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                       placeholder="minha-instancia"
                     />
                   </div>
@@ -433,46 +428,46 @@ export default function CanaisPage() {
               {form.provider === "meta_cloud" && (
                 <>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Telefone</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Telefone</label>
                     <input
                       value={form.phone}
                       onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                       placeholder="5534999999999"
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Phone Number ID</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Phone Number ID</label>
                     <input
                       value={form.meta_phone_number_id}
                       onChange={(e) => setForm({ ...form, meta_phone_number_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Access Token</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Access Token</label>
                     <input
                       value={form.meta_access_token}
                       onChange={(e) => setForm({ ...form, meta_access_token: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                       type="password"
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">App Secret</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">App Secret</label>
                     <input
                       value={form.meta_app_secret}
                       onChange={(e) => setForm({ ...form, meta_app_secret: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                       type="password"
                     />
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Verify Token</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Verify Token</label>
                     <input
                       value={form.meta_verify_token}
                       onChange={(e) => setForm({ ...form, meta_verify_token: e.target.value })}
-                      className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                     />
                   </div>
                 </>
@@ -480,11 +475,11 @@ export default function CanaisPage() {
 
               {/* Agent Profile */}
               <div>
-                <label className="block text-[12px] font-semibold text-[#5f6368] mb-1.5">Agente IA</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Agente IA</label>
                 <select
                   value={form.agent_profile_id}
                   onChange={(e) => setForm({ ...form, agent_profile_id: e.target.value })}
-                  className="w-full px-4 py-2.5 text-[13px] border border-[#e5e7eb] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b8c97c]"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
                 >
                   <option value="">Nenhum (100% humano)</option>
                   {profiles.map((p) => (
@@ -495,31 +490,31 @@ export default function CanaisPage() {
 
               {/* Active toggle */}
               <div className="flex items-center justify-between">
-                <label className="text-[12px] font-semibold text-[#5f6368]">Ativo</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Ativo</label>
                 <button
                   type="button"
                   onClick={() => setForm({ ...form, is_active: !form.is_active })}
-                  className={`relative w-10 h-5 rounded-full transition-colors ${form.is_active ? "bg-emerald-500" : "bg-gray-300"}`}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${form.is_active ? "bg-[#0bdf50]" : "bg-[#dedbd6]"}`}
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.is_active ? "translate-x-5" : ""}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${form.is_active ? "translate-x-5" : ""}`} />
                 </button>
               </div>
             </div>
 
             {/* Webhook info for Meta (only when editing) */}
             {editingId && form.provider === "meta_cloud" && (
-              <div className="mt-5 p-4 bg-blue-50 rounded-xl">
-                <p className="text-[12px] font-semibold text-blue-700 mb-2">Configuracao do Webhook no Meta</p>
+              <div className="mt-5 p-4 bg-[#faf9f6] border border-[#dedbd6] rounded-[8px]">
+                <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">Configuracao do Webhook no Meta</p>
                 <div className="space-y-2">
                   <div>
-                    <span className="text-[11px] text-blue-600">URL do Webhook:</span>
-                    <code className="block text-[12px] bg-white px-3 py-1.5 rounded-lg mt-1 text-[#1f1f1f] select-all">
+                    <span className="text-[11px] text-[#7b7b78]">URL do Webhook:</span>
+                    <code className="block text-[12px] bg-white border border-[#dedbd6] px-3 py-1.5 rounded-[6px] mt-1 text-[#111111] select-all">
                       {backendUrl}/webhook/meta
                     </code>
                   </div>
                   <div>
-                    <span className="text-[11px] text-blue-600">Verify Token:</span>
-                    <code className="block text-[12px] bg-white px-3 py-1.5 rounded-lg mt-1 text-[#1f1f1f] select-all">
+                    <span className="text-[11px] text-[#7b7b78]">Verify Token:</span>
+                    <code className="block text-[12px] bg-white border border-[#dedbd6] px-3 py-1.5 rounded-[6px] mt-1 text-[#111111] select-all">
                       {form.meta_verify_token || "\u2014"}
                     </code>
                   </div>
@@ -530,15 +525,14 @@ export default function CanaisPage() {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => { setShowForm(false); setEditingId(null); }}
-                className="px-5 py-2.5 text-[13px] font-medium text-[#5f6368] bg-[#f6f7ed] rounded-xl hover:bg-[#eef0dc] transition-colors"
+                className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving || !form.name}
-                className="px-5 py-2.5 text-[13px] font-medium text-white rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
-                style={{ background: "var(--accent-olive)" }}
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
               >
                 {saving ? "Salvando..." : editingId ? "Salvar" : "Criar"}
               </button>
@@ -549,12 +543,12 @@ export default function CanaisPage() {
 
       {/* QR Code Modal */}
       {qrChannelId && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={closeQrModal}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-[#1f1f1f] mb-4">Conectar WhatsApp</h2>
+        <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={closeQrModal}>
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-[14px] font-normal text-[#111111] mb-4">Conectar WhatsApp</h2>
 
             {qrStatus === "loading" && (
-              <p className="text-[13px] text-[#8a8a8a] py-8">Gerando QR Code...</p>
+              <p className="text-[14px] text-[#7b7b78] py-8">Gerando QR Code...</p>
             )}
 
             {qrStatus === "scanning" && qrCode && (
@@ -562,26 +556,26 @@ export default function CanaisPage() {
                 <img
                   src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
                   alt="QR Code"
-                  className="mx-auto w-64 h-64 rounded-xl"
+                  className="mx-auto w-64 h-64 rounded-[8px]"
                 />
-                <p className="text-[12px] text-[#8a8a8a] mt-3">Escaneie o QR Code com o WhatsApp</p>
+                <p className="text-[12px] text-[#7b7b78] mt-3">Escaneie o QR Code com o WhatsApp</p>
               </div>
             )}
 
             {qrStatus === "connected" && (
               <div className="py-8">
-                <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-emerald-100 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-[#0bdf50]/10 border border-[#0bdf50]/20 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-[#0bdf50]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-[14px] font-medium text-emerald-700">Conectado com sucesso!</p>
+                <p className="text-[14px] text-[#0bdf50]">Conectado com sucesso!</p>
               </div>
             )}
 
             <button
               onClick={closeQrModal}
-              className="mt-4 px-5 py-2.5 text-[13px] font-medium text-[#5f6368] bg-[#f6f7ed] rounded-xl hover:bg-[#eef0dc] transition-colors"
+              className="mt-4 bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
             >
               Fechar
             </button>

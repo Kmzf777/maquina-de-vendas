@@ -16,24 +16,22 @@ export default function ConfigPage() {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="text-[28px] font-bold text-[#1f1f1f] mb-8">Configuracoes</h1>
+      <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111] mb-8">
+        Configuracoes
+      </h1>
 
-      <div className="mb-8">
-        <nav className="inline-flex gap-1 p-1 bg-[#f6f7ed] rounded-xl">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-5 py-2 text-[13px] font-medium rounded-lg transition-all ${
-                activeTab === tab.key
-                  ? "bg-[#1f1f1f] text-white shadow-sm"
-                  : "text-[#5f6368] hover:text-[#1f1f1f] hover:bg-white/60"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+      <div className="flex border-b border-[#dedbd6] mb-8">
+        {TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={activeTab === tab.key
+              ? "border-b-2 border-[#111111] text-[#111111] px-4 py-2 text-[14px] font-normal"
+              : "border-b-2 border-transparent text-[#7b7b78] px-4 py-2 text-[14px] font-normal hover:text-[#111111] transition-colors"}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {activeTab === "tags" && <TagsTab />}

@@ -70,16 +70,16 @@ export function CadenceList({ cadences }: CadenceListProps) {
           placeholder="Buscar cadencia..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border border-[#e5e5dc] text-[13px] bg-white w-64"
+          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-64"
         />
         <div className="flex gap-1">
           {filters.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-                filter === f.key ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] hover:bg-[#f6f7ed]"
-              }`}
+              className={filter === f.key
+                ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+                : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"}
             >
               {f.label}
             </button>
@@ -88,7 +88,7 @@ export function CadenceList({ cadences }: CadenceListProps) {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-[13px] text-[#9ca3af] text-center py-12">Nenhuma cadencia encontrada</p>
+        <p className="text-[14px] text-[#7b7b78] text-center py-12">Nenhuma cadencia encontrada</p>
       ) : (
         <div className="grid grid-cols-2 gap-4">
           {filtered.map((c) => (

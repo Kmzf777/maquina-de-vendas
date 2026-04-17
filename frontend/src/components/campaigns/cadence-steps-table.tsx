@@ -52,78 +52,91 @@ export function CadenceStepsTable({ cadenceId }: CadenceStepsTableProps) {
 
   return (
     <div>
-      <div className="bg-[#f4f4f0] rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[50px_1fr_100px_80px] gap-2 px-4 py-2 text-[11px] text-[#9ca3af] uppercase tracking-wider font-medium">
-          <span>#</span>
-          <span>Mensagem</span>
-          <span>Delay</span>
-          <span>Acoes</span>
-        </div>
+      <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-[#dedbd6]">
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-12">#</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Mensagem</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-28">Delay</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-24">Acoes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((step) => (
+              <tr key={step.id} className="border-b border-[#dedbd6] hover:bg-[#faf9f6]">
+                <td className="px-4 py-3 text-[14px] text-[#7b7b78]">{step.step_order}</td>
 
-        {steps.map((step) => (
-          <div key={step.id} className="grid grid-cols-[50px_1fr_100px_80px] gap-2 px-4 py-3 border-t border-[#e5e5dc] items-start">
-            <span className="text-[14px] font-bold text-[#c8cc8e]">{step.step_order}</span>
-
-            {editingId === step.id ? (
-              <>
-                <textarea
-                  value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
-                  className="w-full px-2 py-1 rounded border border-[#e5e5dc] text-[13px] min-h-[60px]"
-                />
-                <input
-                  type="number"
-                  value={editDelay}
-                  onChange={(e) => setEditDelay(Number(e.target.value))}
-                  className="w-full px-2 py-1 rounded border border-[#e5e5dc] text-[13px]"
-                />
-                <div className="flex gap-1">
-                  <button onClick={() => handleSave(step.id)} className="text-[11px] text-[#2d6a3f] font-medium">Salvar</button>
-                  <button onClick={() => setEditingId(null)} className="text-[11px] text-[#5f6368]">Cancelar</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-[13px] text-[#1f1f1f] whitespace-pre-wrap">{step.message_text}</p>
-                <span className="text-[13px] text-[#5f6368]">
-                  {step.delay_days === 0 ? "Imediato" : `${step.delay_days} dia${step.delay_days > 1 ? "s" : ""}`}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setEditingId(step.id); setEditText(step.message_text); setEditDelay(step.delay_days); }}
-                    className="text-[11px] text-[#5b8aad] font-medium"
-                  >
-                    Editar
-                  </button>
-                  <button onClick={() => handleDelete(step.id)} className="text-[11px] text-[#a33] font-medium">
-                    Remover
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+                {editingId === step.id ? (
+                  <>
+                    <td className="px-4 py-3">
+                      <textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full min-h-[60px]"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        value={editDelay}
+                        onChange={(e) => setEditDelay(Number(e.target.value))}
+                        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <button onClick={() => handleSave(step.id)} className="text-[11px] text-[#0bdf50] uppercase tracking-[0.6px]">Salvar</button>
+                        <button onClick={() => setEditingId(null)} className="text-[11px] text-[#7b7b78] uppercase tracking-[0.6px]">Cancelar</button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-4 py-3 text-[14px] text-[#111111] whitespace-pre-wrap">{step.message_text}</td>
+                    <td className="px-4 py-3 text-[14px] text-[#7b7b78]">
+                      {step.delay_days === 0 ? "Imediato" : `${step.delay_days} dia${step.delay_days > 1 ? "s" : ""}`}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setEditingId(step.id); setEditText(step.message_text); setEditDelay(step.delay_days); }}
+                          className="text-[11px] text-[#7b7b78] uppercase tracking-[0.6px] hover:text-[#111111] transition-colors"
+                        >
+                          Editar
+                        </button>
+                        <button onClick={() => handleDelete(step.id)} className="text-[11px] text-[#c41c1c] uppercase tracking-[0.6px]">
+                          Remover
+                        </button>
+                      </div>
+                    </td>
+                  </>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {showAdd ? (
-        <div className="mt-3 p-4 border border-dashed border-[#e5e5dc] rounded-xl space-y-3">
+        <div className="mt-3 p-4 border border-dashed border-[#dedbd6] rounded-[8px] space-y-3">
           <textarea
             value={newText}
             onChange={(e) => setNewText(e.target.value)}
             placeholder="Mensagem do step... (use {{nome}}, {{empresa}})"
-            className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px] min-h-[80px]"
+            className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full min-h-[80px]"
           />
           <div className="flex items-center gap-3">
-            <label className="text-[12px] text-[#5f6368]">Delay (dias):</label>
-            <input type="number" value={newDelay} onChange={(e) => setNewDelay(Number(e.target.value))} className="w-20 px-2 py-1 rounded border border-[#e5e5dc] text-[13px]" />
-            <button onClick={handleAdd} disabled={!newText} className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[#1f1f1f] text-white disabled:opacity-50">
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Delay (dias):</label>
+            <input type="number" value={newDelay} onChange={(e) => setNewDelay(Number(e.target.value))} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-20" />
+            <button onClick={handleAdd} disabled={!newText} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50">
               Adicionar
             </button>
-            <button onClick={() => setShowAdd(false)} className="text-[12px] text-[#5f6368]">Cancelar</button>
+            <button onClick={() => setShowAdd(false)} className="text-[14px] text-[#7b7b78] hover:text-[#111111] transition-colors">Cancelar</button>
           </div>
         </div>
       ) : (
-        <button onClick={() => setShowAdd(true)} className="mt-3 w-full py-2 border border-dashed border-[#e5e5dc] rounded-xl text-[12px] text-[#5f6368] hover:bg-[#f6f7ed] transition-colors">
+        <button onClick={() => setShowAdd(true)} className="mt-3 w-full py-2 border border-dashed border-[#dedbd6] rounded-[8px] text-[14px] text-[#7b7b78] hover:bg-[#faf9f6] hover:border-[#111111] transition-colors">
           + Adicionar step
         </button>
       )}

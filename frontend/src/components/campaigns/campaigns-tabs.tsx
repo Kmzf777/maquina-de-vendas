@@ -16,20 +16,20 @@ export function CampaignsTabs({ broadcasts, cadences, onRefreshBroadcasts }: Cam
 
   return (
     <div>
-      <div className="flex gap-1 mb-5">
+      <div className="flex border-b border-[#dedbd6] mb-5">
         <button
           onClick={() => setTab("broadcasts")}
-          className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-colors ${
-            tab === "broadcasts" ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] hover:bg-[#f6f7ed]"
-          }`}
+          className={tab === "broadcasts"
+            ? "border-b-2 border-[#111111] text-[#111111] px-4 py-2 text-[14px] font-normal"
+            : "border-b-2 border-transparent text-[#7b7b78] px-4 py-2 text-[14px] font-normal hover:text-[#111111] transition-colors"}
         >
           Disparos ({broadcasts.length})
         </button>
         <button
           onClick={() => setTab("cadences")}
-          className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-colors ${
-            tab === "cadences" ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] hover:bg-[#f6f7ed]"
-          }`}
+          className={tab === "cadences"
+            ? "border-b-2 border-[#111111] text-[#111111] px-4 py-2 text-[14px] font-normal"
+            : "border-b-2 border-transparent text-[#7b7b78] px-4 py-2 text-[14px] font-normal hover:text-[#111111] transition-colors"}
         >
           Cadencias ({cadences.length})
         </button>

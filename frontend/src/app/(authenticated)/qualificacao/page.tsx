@@ -46,8 +46,8 @@ export default function QualificacaoPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
-          <span className="text-[14px] text-[#5f6368]">Carregando...</span>
+          <div className="w-5 h-5 border-2 border-[#dedbd6] border-t-transparent rounded-full animate-spin" />
+          <span className="text-[14px] text-[#7b7b78]">Carregando...</span>
         </div>
       </div>
     );
@@ -69,8 +69,8 @@ export default function QualificacaoPage() {
   return (
     <div>
       <div className="mb-4">
-        <h1 className="text-[28px] font-bold text-[#1f1f1f]">Qualificacao</h1>
-        <p className="text-[14px] text-[#5f6368] mt-1">
+        <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Qualificacao</h1>
+        <p className="text-[14px] text-[#7b7b78] mt-1">
           Funil de qualificacao do agente IA
         </p>
       </div>

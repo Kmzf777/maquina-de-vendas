@@ -30,7 +30,7 @@ export function CampaignsDashboard({ period, onPeriodChange }: CampaignsDashboar
     return (
       <div className="grid grid-cols-5 gap-4 mb-6">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="card p-4 h-20 animate-pulse" style={{ backgroundColor: "rgba(229,229,220,0.3)" }} />
+          <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 h-20 animate-pulse" />
         ))}
       </div>
     );
@@ -54,16 +54,16 @@ export function CampaignsDashboard({ period, onPeriodChange }: CampaignsDashboar
     <div className="space-y-5 mb-6">
       <div className="grid grid-cols-5 gap-4">
         {kpis.map((kpi) => (
-          <div key={kpi.label} className="card p-4">
-            <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">{kpi.label}</p>
-            <span className="text-[22px] font-bold text-[#1f1f1f] leading-none mt-1 block">{kpi.value}</span>
+          <div key={kpi.label} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
+            <p className="text-[11px] text-[#7b7b78] uppercase tracking-[0.6px]">{kpi.label}</p>
+            <span className="text-[22px] font-normal text-[#111111] leading-none mt-1 block">{kpi.value}</span>
           </div>
         ))}
       </div>
 
-      <div className="card p-5">
+      <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[13px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>
+          <h3 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
             Tendencia de respostas
           </h3>
           <div className="flex gap-1">
@@ -71,9 +71,9 @@ export function CampaignsDashboard({ period, onPeriodChange }: CampaignsDashboar
               <button
                 key={p.key}
                 onClick={() => onPeriodChange(p.key)}
-                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-                  period === p.key ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] hover:bg-[#f6f7ed]"
-                }`}
+                className={period === p.key
+                  ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+                  : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"}
               >
                 {p.label}
               </button>
