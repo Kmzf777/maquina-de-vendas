@@ -87,7 +87,7 @@ TOOLS_SCHEMA = [
                     "vendedor": {"type": "string", "description": "Nome do vendedor"},
                     "motivo": {"type": "string", "description": "Motivo do encaminhamento"},
                 },
-                "required": ["vendedor", "motivo"],
+                "required": ["vendedor"],
             },
         },
     },
@@ -167,9 +167,10 @@ async def execute_tool(
 
     elif tool_name == "encaminhar_humano":
         update_lead(lead_id, status="converted", human_control=True)
-        create_deal(lead_id, title=f"{args.get('vendedor', 'Vendedor')} - {args['motivo']}")
-        save_message(lead_id, "system", f"Lead encaminhado para {args['vendedor']}: {args['motivo']}")
-        return f"Lead encaminhado para {args['vendedor']}"
+        motivo = args.get("motivo", "lead qualificado")
+        create_deal(lead_id, title=f"{args.get('vendedor', 'Vendedor')} - {motivo}")
+        save_message(lead_id, "system", f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}: {motivo}")
+        return f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}"
 
     elif tool_name == "enviar_fotos":
         categoria = args["categoria"]
