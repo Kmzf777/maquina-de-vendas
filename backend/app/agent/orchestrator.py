@@ -15,18 +15,14 @@ from app.agent_profiles.service import get_agent_profile
 logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 TZ_BR = timezone(timedelta(hours=-3))
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(
-            api_key=settings.gemini_api_key,
-            base_url=_GEMINI_BASE_URL,
-        )
+        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     return _openai_client
 
 
@@ -93,7 +89,7 @@ async def run_agent(
         messages=messages,
         tools=tools if tools else None,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=500,
     )
 
     if response.usage:
@@ -127,7 +123,7 @@ async def run_agent(
             messages=messages,
             tools=tools if tools else None,
             temperature=0.7,
-            max_tokens=4096,
+            max_tokens=500,
         )
         if response.usage:
             track_token_usage(

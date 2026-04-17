@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # LLM
     gemini_api_key: str
-    openai_api_key: str = ""
+    openai_api_key: str
 
     # Supabase
     supabase_url: str

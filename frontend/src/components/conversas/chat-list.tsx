@@ -133,6 +133,8 @@ export function ChatList({
           const stage = lead?.stage;
           const isActive = selectedConversationId === conv.id;
 
+          const hasAgent = conv.agent_profile_id !== null || conv.channels?.agent_profile_id !== null;
+
           return (
             <button
               key={conv.id}
@@ -171,6 +173,14 @@ export function ChatList({
                     {lead?.phone || ""}
                   </span>
                 </div>
+                {hasAgent && (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${conv.ai_enabled ? "bg-green-500" : "bg-[#9b9b98]"}`} />
+                    <span className={`text-[10px] ${isActive ? "text-white/60" : "text-[#9b9b98]"}`}>
+                      {conv.ai_enabled ? "IA ativa" : "IA pausada"}
+                    </span>
+                  </div>
+                )}
               </div>
             </button>
           );

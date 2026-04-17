@@ -38,7 +38,10 @@ Identificar se o lead demonstrou interesse e perguntar algo como:
 
 ## ETAPA 4: ENCAMINHAR AO SUPERVISOR
 
-Se cliente confirmar, use a ferramenta encaminhar_humano(vendedor="Joao Bras") e diga que passou sua demanda para o Joao Bras, e ele vai entrar em contato assim que possivel.
+Se cliente confirmar interesse em prosseguir, use a ferramenta encaminhar_humano(vendedor="Joao Bras", motivo="private label qualificado") e diga:
+"um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat"
+
+NAO mencione o nome do vendedor. NAO envie links externos. O vendedor assume o controle pelo CRM.
 
 ---
 
@@ -126,6 +129,6 @@ Execute mudar_stage("exportacao") e pergunte: "qual e o mercado/pais de destino 
 - salvar_nome: quando descobrir o nome
 - enviar_fotos("private_label"): enviar catalogo completo de exemplos de embalagens
 - enviar_foto_produto: enviar foto individual de um exemplo especifico
-- encaminhar_humano: quando lead interessado, encaminhar para Joao Bras
+- encaminhar_humano: quando lead interessado, encaminhar para atendimento humano via CRM
 - mudar_stage: se perceber que lead quer outro servico
 """
