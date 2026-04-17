@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.leads.service import update_lead, save_message, create_deal
+from app.conversations.service import update_conversation
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_active_channel
 
@@ -152,6 +153,7 @@ async def execute_tool(
     args: dict[str, Any],
     lead_id: str,
     phone: str,
+    conversation_id: str = "",
 ) -> str:
     """Execute a tool call and return a result string for the AI."""
     logger.info(f"Executing tool {tool_name} with args {args} for lead {lead_id}")
@@ -162,6 +164,8 @@ async def execute_tool(
 
     elif tool_name == "mudar_stage":
         new_stage = args["stage"]
+        if conversation_id:
+            update_conversation(conversation_id, stage=new_stage)
         update_lead(lead_id, stage=new_stage)
         return f"Stage alterado para: {new_stage}"
 

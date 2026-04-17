@@ -83,42 +83,38 @@ async def health():
 
 @app.get("/debug/agent")
 async def debug_agent():
-    """Diagnostic endpoint: tests Gemini connectivity and agent pipeline."""
+    """Diagnostic endpoint: tests OpenAI connectivity and agent pipeline."""
     import traceback
     from openai import AsyncOpenAI
 
-    key = settings.gemini_api_key or ""
+    oai_key = settings.openai_api_key or ""
     result = {
-        "gemini_key_set": bool(key),
-        "gemini_key_length": len(key),
-        "gemini_key_prefix": key[:8] + "..." if len(key) > 8 else "(empty)",
+        "openai_key_set": bool(oai_key),
+        "openai_key_length": len(oai_key),
+        "openai_key_prefix": oai_key[:8] + "..." if len(oai_key) > 8 else "(empty)",
+        "gemini_key_set": bool(settings.gemini_api_key),
     }
 
     try:
-        client = AsyncOpenAI(
-            api_key=key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        )
+        client = AsyncOpenAI(api_key=oai_key)
         resp = await client.chat.completions.create(
-            model="gemini-3-flash-preview",
+            model="gpt-4.1-mini",
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
         )
-        result["gemini_test"] = "ok"
-        result["gemini_response"] = resp.choices[0].message.content
+        result["openai_test"] = "ok"
+        result["openai_response"] = resp.choices[0].message.content
     except Exception as e:
-        result["gemini_test"] = "error"
-        result["gemini_error"] = str(e)
-        result["gemini_traceback"] = traceback.format_exc()
+        result["openai_test"] = "error"
+        result["openai_error"] = str(e)
+        result["openai_traceback"] = traceback.format_exc()
 
     try:
         from app.agent.orchestrator import run_agent
-        from app.channels.service import get_channel_by_id
-        channel = get_channel_by_id("a3a607b1-6bff-4370-8609-b275eef270dd")
         conv = {
-            "id": "328828de-408a-4899-aa99-26eea69b69a1",
+            "id": "00000000-0000-0000-0000-000000000000",
             "stage": "secretaria",
-            "leads": {"id": "d7a1f7bd-3f45-4579-b7bd-9173c5404149", "name": "Rafael", "phone": "553488861441"},
+            "leads": {"id": "00000000-0000-0000-0000-000000000001", "name": None, "phone": "5500000000000"},
         }
         resp = await run_agent(conv, "ping de diagnostico")
         result["agent_test"] = "ok"

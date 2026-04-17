@@ -78,6 +78,10 @@ async def run_agent(
     system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
 
     history = get_history(conversation_id, limit=30)
+    # processor.py saves user message before calling run_agent, so history already
+    # includes the current message — strip it to avoid sending it twice.
+    if history and history[-1]["role"] == "user" and history[-1]["content"] == user_text:
+        history = history[:-1]
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
         if msg["role"] in ("user", "assistant"):
@@ -110,7 +114,7 @@ async def run_agent(
             func_name = tool_call.function.name
             func_args = json.loads(tool_call.function.arguments)
             result = await execute_tool(
-                func_name, func_args, lead_id, lead.get("phone", "")
+                func_name, func_args, lead_id, lead.get("phone", ""), conversation_id
             )
             messages.append({
                 "role": "tool",
