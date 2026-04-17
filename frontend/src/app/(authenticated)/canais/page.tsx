@@ -255,9 +255,13 @@ export default function CanaisPage() {
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-8">
-        <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Canais</h1>
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0 flex items-end justify-between">
+        <div>
+          <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Instâncias</h1>
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">Canais de WhatsApp conectados</p>
+        </div>
         <button
           onClick={() => { setForm(EMPTY_FORM); setEditingId(null); setShowForm(true); }}
           className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
@@ -266,6 +270,7 @@ export default function CanaisPage() {
         </button>
       </div>
 
+      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
       {/* Table */}
       <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
         <table className="w-full">
@@ -353,6 +358,7 @@ export default function CanaisPage() {
             )}
           </tbody>
         </table>
+      </div>
       </div>
 
       {/* Create/Edit Modal */}
