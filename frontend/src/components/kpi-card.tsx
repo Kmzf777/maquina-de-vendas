@@ -11,9 +11,9 @@ interface KpiCardProps {
 
 export function KpiCard({ label, value, subtitle, icon, trend, trendPositive }: KpiCardProps) {
   return (
-    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
-      <div className="flex items-start justify-between">
-        <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+      <div className="flex items-start justify-between mb-3">
+        <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
           {label}
         </p>
         {icon && (
@@ -22,23 +22,21 @@ export function KpiCard({ label, value, subtitle, icon, trend, trendPositive }: 
           </span>
         )}
       </div>
-      <div className="flex items-end gap-2 mt-1">
+      <p
+        className="text-[48px] font-normal leading-none text-[#111111]"
+        style={{ letterSpacing: "-1.5px" }}
+      >
+        {value}
+      </p>
+      {trend && (
         <p
-          className="text-[32px] font-normal leading-none text-[#111111]"
-          style={{ letterSpacing: "-0.96px" }}
+          className={`text-[13px] mt-2 ${trendPositive === false ? "text-[#c41c1c]" : "text-[#0bdf50]"}`}
         >
-          {value}
+          {trend}
         </p>
-        {trend && (
-          <span
-            className={`text-[13px] font-medium mb-1 ${trendPositive === false ? "text-[#c41c1c]" : "text-[#0bdf50]"}`}
-          >
-            {trend}
-          </span>
-        )}
-      </div>
+      )}
       {subtitle && (
-        <p className="text-[13px] mt-1 text-[#7b7b78]">
+        <p className="text-[13px] mt-2 text-[#7b7b78]">
           {subtitle}
         </p>
       )}

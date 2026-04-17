@@ -11,8 +11,8 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
     <div className="flex h-screen bg-[#faf9f6]">
       <Sidebar />
       <main
-        className={`flex-1 relative ${
-          isConversas ? "overflow-hidden" : "p-8 overflow-auto"
+        className={`flex-1 relative flex flex-col ${
+          isConversas ? "overflow-hidden" : "overflow-auto"
         }`}
       >
         {children}

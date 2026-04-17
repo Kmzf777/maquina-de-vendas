@@ -55,10 +55,13 @@ export function FunnelMovement({ deals }: FunnelMovementProps) {
   ];
 
   return (
-    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
+    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78]">
-          Movimentacao do Pipeline
+        <h3
+          className="text-[18px] font-medium text-[#111111]"
+          style={{ letterSpacing: "-0.3px" }}
+        >
+          Movimentação do Pipeline
         </h3>
         <div className="flex gap-1">
           {periods.map((p) => (
