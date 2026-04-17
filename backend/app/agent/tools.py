@@ -173,7 +173,7 @@ async def execute_tool(
         update_lead(lead_id, status="converted", human_control=True)
         motivo = args.get("motivo", "lead qualificado")
         create_deal(lead_id, title=f"{args.get('vendedor', 'Vendedor')} - {motivo}")
-        save_message(lead_id, "system", f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}: {motivo}")
+        save_message(lead_id, "system", f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}: {motivo}", conversation_id=conversation_id)
         return f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}"
 
     elif tool_name == "enviar_fotos":
@@ -205,7 +205,7 @@ async def execute_tool(
             except Exception as e:
                 logger.warning(f"Failed to send photo {photo.name}: {e}")
 
-        save_message(lead_id, "system", f"Fotos de {categoria} enviadas ({sent}/{len(photos)})")
+        save_message(lead_id, "system", f"Fotos de {categoria} enviadas ({sent}/{len(photos)})", conversation_id=conversation_id)
         return f"{sent} fotos de {categoria} enviadas ao lead"
 
     elif tool_name == "enviar_foto_produto":
@@ -232,7 +232,7 @@ async def execute_tool(
         mimetype = "image/png" if photo_path.suffix == ".png" else "image/jpeg"
         try:
             await provider.send_image_base64(phone, b64, mimetype, caption=entry["caption"])
-            save_message(lead_id, "system", f"Foto de {produto} enviada")
+            save_message(lead_id, "system", f"Foto de {produto} enviada", conversation_id=conversation_id)
             return f"foto de {produto} enviada ao lead"
         except Exception as e:
             logger.warning(f"Failed to send product photo {produto}: {e}")
