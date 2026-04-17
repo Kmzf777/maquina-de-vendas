@@ -19,14 +19,16 @@ export function BroadcastCard({ broadcast, onStart, onPause, onClick }: Broadcas
     paused: "bg-[#fe4c02]/10 text-[#fe4c02] border-[#fe4c02]/20",
     completed: "bg-[#0bdf50]/10 text-[#0bdf50] border-[#0bdf50]/20",
     scheduled: "bg-[#65b5ff]/10 text-[#65b5ff] border-[#65b5ff]/20",
+    failed: "bg-[#c41c1c]/10 text-[#c41c1c] border-[#c41c1c]/20",
   };
   const statusLabels: Record<string, string> = {
     draft: "Rascunho", running: "Rodando", paused: "Pausado",
-    completed: "Completo", scheduled: "Agendado",
+    completed: "Completo", scheduled: "Agendado", failed: "Falhou",
   };
   const fillColor = broadcast.status === "completed" ? "#0bdf50"
     : broadcast.status === "running" ? "#ff5600"
-    : broadcast.status === "paused" ? "#fe4c02" : "#dedbd6";
+    : broadcast.status === "paused" ? "#fe4c02"
+    : broadcast.status === "failed" ? "#c41c1c" : "#dedbd6";
 
   return (
     <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5 flex flex-col gap-4 cursor-pointer" onClick={onClick}>
