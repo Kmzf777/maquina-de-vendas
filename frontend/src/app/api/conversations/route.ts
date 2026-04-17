@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
   let dbQuery = supabase
     .from("conversations")
     .select(
-      "*, leads(id, phone, name, company, stage, status), channels(id, name, phone, provider)"
+      "*, leads(id, phone, name, company, stage, status), channels(id, name, phone, provider), agent_profiles(id,name)"
     );
 
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
