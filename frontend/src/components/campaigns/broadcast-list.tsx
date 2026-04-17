@@ -35,7 +35,7 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
   };
 
   return (
-    <div>
+    <div className="bg-[#faf9f6]">
       <div className="flex items-center gap-3 mb-4">
         <input
           type="text"
@@ -50,8 +50,8 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
               key={f.key}
               onClick={() => setFilter(f.key)}
               className={filter === f.key
-                ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
-                : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"}
+                ? "bg-[#111111] text-white rounded-[4px] px-3 py-1.5 text-[13px]"
+                : "border border-[#dedbd6] text-[#313130] rounded-[4px] px-3 py-1.5 text-[13px] hover:border-[#111111]"}
             >
               {f.label}
             </button>
@@ -60,7 +60,7 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-[14px] text-[#7b7b78] text-center py-12">Nenhum disparo encontrado</p>
+        <p className="text-[#7b7b78] text-center py-8">Nenhum disparo encontrado</p>
       ) : (
         <div className="grid grid-cols-2 gap-4">
           {filtered.map((b) => (
