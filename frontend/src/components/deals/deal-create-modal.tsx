@@ -55,23 +55,22 @@ export function DealCreateModal({ leads, preselectedLead, onClose, onCreate }: D
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30" />
-      <div className="relative bg-white rounded-2xl p-6 w-full max-w-[480px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-[18px] font-semibold text-[#1f1f1f] mb-4">Nova Oportunidade</h3>
+    <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-[18px] font-normal text-[#111111] mb-4" style={{ letterSpacing: '-0.48px', lineHeight: '1.00' }}>Nova Oportunidade</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="relative">
-            <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Lead *</label>
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Lead *</label>
             <input
               value={leadSearch}
               onChange={(e) => { setLeadSearch(e.target.value); setSelectedLeadId(""); setShowDropdown(true); }}
               onFocus={() => setShowDropdown(true)}
               placeholder="Buscar lead por nome ou telefone..."
-              className="w-full text-[14px] px-3 py-2.5 rounded-xl border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]"
+              className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
               readOnly={!!preselectedLead}
             />
             {showDropdown && !selectedLeadId && !preselectedLead && filteredLeads.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-[#e5e5dc] rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto">
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-[#dedbd6] rounded-[6px] z-10 max-h-48 overflow-y-auto">
                 {filteredLeads.map((l) => (
                   <button
                     key={l.id}
@@ -82,39 +81,39 @@ export function DealCreateModal({ leads, preselectedLead, onClose, onCreate }: D
                       setShowDropdown(false);
                       if (!title) setTitle(`${l.name || l.phone} - Oportunidade`);
                     }}
-                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-[#f6f7ed] flex justify-between"
+                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-[#faf9f6] flex justify-between transition-colors"
                   >
-                    <span className="text-[#1f1f1f]">{l.name || l.phone}</span>
-                    <span className="text-[#9ca3af]">{l.phone}</span>
+                    <span className="text-[#111111]">{l.name || l.phone}</span>
+                    <span className="text-[#7b7b78]">{l.phone}</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
           <div>
-            <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Titulo *</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Atacado 50kg - Cafe Especial" className="w-full text-[14px] px-3 py-2.5 rounded-xl border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" required />
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Titulo *</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Atacado 50kg - Cafe Especial" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" required />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Valor (R$)</label>
-              <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0" className="w-full text-[14px] px-3 py-2.5 rounded-xl border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" />
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Valor (R$)</label>
+              <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" />
             </div>
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Categoria</label>
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full text-[14px] px-3 py-2.5 rounded-xl border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] bg-white">
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Categoria</label>
+              <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full">
                 <option value="">Selecionar...</option>
                 {DEAL_CATEGORIES.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
               </select>
             </div>
           </div>
           <div>
-            <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Previsao de fechamento</label>
-            <input type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} className="w-full text-[14px] px-3 py-2.5 rounded-xl border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" />
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Previsao de fechamento</label>
+            <input type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
           </div>
           <div className="flex gap-2 justify-end pt-2">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl border border-[#e5e5dc] bg-white text-[13px] text-[#5f6368] hover:bg-[#f6f7ed]">Cancelar</button>
-            <button type="submit" disabled={saving || !selectedLeadId || !title.trim()} className="px-5 py-2.5 rounded-xl bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333] disabled:opacity-50">
+            <button type="button" onClick={onClose} className="border border-[#dedbd6] text-[#313130] px-3 py-1.5 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors">Cancelar</button>
+            <button type="submit" disabled={saving || !selectedLeadId || !title.trim()} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50">
               {saving ? "Criando..." : "Criar Oportunidade"}
             </button>
           </div>

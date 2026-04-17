@@ -45,17 +45,17 @@ export function DealDetailSidebar({ deal, onClose, onUpdate }: DealDetailSidebar
   }
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[380px] bg-white shadow-xl border-l border-[#e5e5dc] z-50 flex flex-col">
-      <div className="flex items-center justify-between p-4 border-b border-[#e5e5dc]">
+    <div className="fixed inset-y-0 right-0 w-[380px] bg-[#faf9f6] border-l border-[#dedbd6] z-50 flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-[#dedbd6]">
         <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: stageInfo?.dotColor || "#9ca3af" }} />
-          <span className="text-[13px] font-semibold text-[#1f1f1f]">{stageInfo?.label || deal.stage}</span>
+          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: stageInfo?.dotColor || "#dedbd6" }} />
+          <span className="text-[13px] text-[#111111]">{stageInfo?.label || deal.stage}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setEditing(!editing)} className="text-[12px] text-[#5f6368] hover:text-[#1f1f1f] px-2 py-1 rounded-lg hover:bg-[#f6f7ed]">
+          <button onClick={() => setEditing(!editing)} className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-2 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors">
             {editing ? "Cancelar" : "Editar"}
           </button>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-[#f4f4f0] text-[#5f6368] hover:bg-[#e5e5dc] hover:text-[#1f1f1f]">
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -67,81 +67,81 @@ export function DealDetailSidebar({ deal, onClose, onUpdate }: DealDetailSidebar
         {editing ? (
           <div className="space-y-3">
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Titulo</label>
-              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="w-full text-[14px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" />
+              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Titulo</label>
+              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
             </div>
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Valor (R$)</label>
-              <input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: Number(e.target.value) })} className="w-full text-[14px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" />
+              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Valor (R$)</label>
+              <input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: Number(e.target.value) })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
             </div>
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Categoria</label>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="w-full text-[14px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] bg-white">
+              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Categoria</label>
+              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full">
                 <option value="">Nenhuma</option>
                 {DEAL_CATEGORIES.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Responsavel</label>
-              <input value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })} placeholder="Nome do vendedor" className="w-full text-[14px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" />
+              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Responsavel</label>
+              <input value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })} placeholder="Nome do vendedor" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" />
             </div>
             <div>
-              <label className="text-[11px] text-[#9ca3af] uppercase block mb-1">Previsao de fechamento</label>
-              <input type="date" value={form.expected_close_date} onChange={(e) => setForm({ ...form, expected_close_date: e.target.value })} className="w-full text-[14px] px-3 py-2 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e]" />
+              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Previsao de fechamento</label>
+              <input type="date" value={form.expected_close_date} onChange={(e) => setForm({ ...form, expected_close_date: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
             </div>
-            <button onClick={handleSave} className="w-full py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333]">Salvar</button>
+            <button onClick={handleSave} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full">Salvar</button>
           </div>
         ) : (
           <>
             <div>
-              <h3 className="text-[18px] font-semibold text-[#1f1f1f]">{deal.title}</h3>
-              <p className="text-[24px] font-bold text-[#2d6a3f] mt-1">{formatCurrency(deal.value)}</p>
+              <h3 className="text-[18px] font-normal text-[#111111]" style={{ letterSpacing: '-0.48px', lineHeight: '1.00' }}>{deal.title}</h3>
+              <p className="text-[20px] font-normal text-[#111111] mt-1" style={{ letterSpacing: '-0.2px' }}>{formatCurrency(deal.value)}</p>
             </div>
             {categoryInfo && (
-              <span className="inline-block text-[11px] font-medium px-2.5 py-0.5 rounded-md" style={{ backgroundColor: categoryInfo.color + "22", color: categoryInfo.color }}>
+              <span className="inline-block text-[11px] uppercase tracking-[0.4px] px-2.5 py-0.5 rounded-[4px]" style={{ backgroundColor: categoryInfo.color + "22", color: categoryInfo.color }}>
                 {categoryInfo.label}
               </span>
             )}
           </>
         )}
 
-        <div className="border-t border-[#e5e5dc] pt-4">
-          <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-2">Lead vinculado</span>
+        <div className="border-t border-[#dedbd6] pt-4">
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Lead vinculado</span>
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-full bg-[#1f1f1f] flex items-center justify-center text-[13px] font-bold text-[#c8cc8e]">
+            <div className="w-10 h-10 rounded-[6px] bg-[#dedbd6] flex items-center justify-center text-[13px] font-normal text-[#111111]">
               {displayName[0]?.toUpperCase() || "?"}
             </div>
             <div>
-              <p className="text-[14px] font-semibold text-[#1f1f1f]">{displayName}</p>
-              <p className="text-[12px] text-[#9ca3af]">{lead?.phone || "—"}</p>
+              <p className="text-[14px] text-[#111111]">{displayName}</p>
+              <p className="text-[12px] text-[#7b7b78]">{lead?.phone || "—"}</p>
             </div>
           </div>
         </div>
 
-        <div className="border-t border-[#e5e5dc] pt-4 space-y-2">
-          <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-2">Detalhes</span>
+        <div className="border-t border-[#dedbd6] pt-4 space-y-2">
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Detalhes</span>
           <div className="flex justify-between">
-            <span className="text-[12px] text-[#5f6368]">Responsavel</span>
-            <span className="text-[13px] font-medium text-[#1f1f1f]">{deal.assigned_to || "—"}</span>
+            <span className="text-[12px] text-[#7b7b78]">Responsavel</span>
+            <span className="text-[13px] text-[#111111]">{deal.assigned_to || "—"}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-[12px] text-[#5f6368]">Previsao</span>
-            <span className="text-[13px] font-medium text-[#1f1f1f]">
+            <span className="text-[12px] text-[#7b7b78]">Previsao</span>
+            <span className="text-[13px] text-[#111111]">
               {deal.expected_close_date ? new Date(deal.expected_close_date).toLocaleDateString("pt-BR") : "—"}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-[12px] text-[#5f6368]">Dias ativo</span>
-            <span className="text-[13px] font-medium text-[#1f1f1f]">{daysActive}d</span>
+            <span className="text-[12px] text-[#7b7b78]">Dias ativo</span>
+            <span className="text-[13px] text-[#111111]">{daysActive}d</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-[12px] text-[#5f6368]">Criado em</span>
-            <span className="text-[13px] font-medium text-[#1f1f1f]">{new Date(deal.created_at).toLocaleDateString("pt-BR")}</span>
+            <span className="text-[12px] text-[#7b7b78]">Criado em</span>
+            <span className="text-[13px] text-[#111111]">{new Date(deal.created_at).toLocaleDateString("pt-BR")}</span>
           </div>
           {deal.lost_reason && (
-            <div className="mt-2 p-3 bg-[#fee2e2] rounded-lg">
-              <span className="text-[11px] uppercase text-[#991b1b] block mb-1">Motivo da perda</span>
-              <p className="text-[13px] text-[#991b1b]">{deal.lost_reason}</p>
+            <div className="mt-2 p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[6px]">
+              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Motivo da perda</span>
+              <p className="text-[13px] text-[#111111]">{deal.lost_reason}</p>
             </div>
           )}
         </div>

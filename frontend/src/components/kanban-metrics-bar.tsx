@@ -29,50 +29,26 @@ export function KanbanMetricsBar({ leads }: KanbanMetricsBarProps) {
   const responseStr = avgResponseMin > 0 ? `${avgResponseMin}m` : "\u2014";
 
   return (
-    <div className="flex gap-3.5 mb-5">
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">
-          Total no funil
-        </p>
-        <div className="flex items-baseline gap-2 mt-1">
-          <span className="text-[24px] font-bold text-white leading-none">
-            {leads.length}
-          </span>
-          <span className="text-[12px] text-[#9ca3af]">leads</span>
-        </div>
+    <div className="bg-[#faf9f6] border-b border-[#dedbd6] px-6 py-3 flex gap-8 mb-5">
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">
+          {leads.length}
+        </span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total no funil</span>
       </div>
 
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">
-          Novos hoje / ontem
-        </p>
-        <div className="flex items-baseline gap-2 mt-1">
-          <span className="text-[24px] font-bold text-white leading-none">
-            {leadsToday}
-          </span>
-          <span className="text-[12px] text-[#9ca3af]">/ {leadsYesterday}</span>
-        </div>
-        {leadsToday > leadsYesterday && (
-          <p className="text-[11px] text-[#5aad65] mt-1.5">{"\u2191"} crescendo</p>
-        )}
-        {leadsToday <= leadsYesterday && leadsToday > 0 && (
-          <p className="text-[11px] text-[#9ca3af] mt-1.5">{"\u2192"} estavel</p>
-        )}
-        {leadsToday === 0 && (
-          <p className="text-[11px] text-[#9ca3af] mt-1.5">nenhum hoje</p>
-        )}
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">
+          {leadsToday} / {leadsYesterday}
+        </span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Novos hoje / ontem</span>
       </div>
 
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">
-          Tempo medio resp.
-        </p>
-        <div className="mt-1">
-          <span className="text-[24px] font-bold text-white leading-none">
-            {responseStr}
-          </span>
-        </div>
-        <p className="text-[11px] text-[#c8cc8e] mt-1.5">agente IA</p>
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">
+          {responseStr}
+        </span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Tempo medio resp.</span>
       </div>
     </div>
   );

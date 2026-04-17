@@ -26,39 +26,38 @@ export function DealCard({ deal, onClick }: DealCardProps) {
   return (
     <button
       onClick={() => onClick(deal)}
-      className="w-full text-left bg-white rounded-[10px] border border-[#e5e5dc] p-3 transition-all duration-150 hover:-translate-y-[1px] hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]"
-      style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}
+      className="bg-white border border-[#dedbd6] rounded-[8px] p-3 mx-2 mb-2 cursor-pointer hover:border-[#111111] transition-colors w-[calc(100%-16px)] text-left"
     >
       <div className="flex items-start justify-between mb-2">
-        <p className="text-[13px] font-semibold text-[#1f1f1f] truncate flex-1">{deal.title}</p>
+        <p className="text-[13px] font-normal text-[#111111] truncate flex-1">{deal.title}</p>
         {deal.value > 0 && (
-          <span className="text-[12px] font-bold text-[#2d6a3f] ml-2 flex-shrink-0">
+          <span className="text-[12px] text-[#7b7b78] ml-2 flex-shrink-0">
             {formatCurrency(deal.value)}
           </span>
         )}
       </div>
       <div className="flex items-center gap-2 mb-2">
-        <div className="w-6 h-6 rounded-full bg-[#1f1f1f] flex items-center justify-center text-[10px] font-bold text-[#c8cc8e] flex-shrink-0">
+        <div className="w-6 h-6 rounded-full bg-[#dedbd6] flex items-center justify-center text-[10px] font-normal text-[#111111] flex-shrink-0">
           {initial}
         </div>
-        <span className="text-[12px] text-[#5f6368] truncate">{displayName}</span>
+        <span className="text-[12px] text-[#7b7b78] truncate">{displayName}</span>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
         {categoryInfo && (
           <span
-            className="text-[9px] font-medium px-2 py-0.5 rounded-md"
+            className="text-[9px] px-2 py-0.5 rounded-[4px] uppercase tracking-[0.4px]"
             style={{ backgroundColor: categoryInfo.color + "22", color: categoryInfo.color }}
           >
             {categoryInfo.label}
           </span>
         )}
         {days > 0 && (
-          <span className={`text-[9px] px-2 py-0.5 rounded-md ${days > 7 ? "bg-[#fee2e2] text-[#991b1b]" : "bg-[#f4f4f0] text-[#5f6368]"}`}>
+          <span className={`text-[9px] px-2 py-0.5 rounded-[4px] ${days > 7 ? "bg-[#fee2e2] text-[#991b1b]" : "bg-[#faf9f6] text-[#7b7b78] border border-[#dedbd6]"}`}>
             {days}d
           </span>
         )}
         {assignedInitial && (
-          <span className="ml-auto w-5 h-5 rounded-full bg-[#c8cc8e] flex items-center justify-center text-[9px] font-bold text-[#1f1f1f]">
+          <span className="ml-auto w-5 h-5 rounded-[4px] bg-[#faf9f6] border border-[#dedbd6] flex items-center justify-center text-[9px] text-[#111111]">
             {assignedInitial}
           </span>
         )}

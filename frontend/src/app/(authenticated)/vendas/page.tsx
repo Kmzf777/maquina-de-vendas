@@ -18,34 +18,34 @@ import { LostReasonModal } from "@/components/deals/lost-reason-modal";
 import type { Deal } from "@/lib/types";
 
 function DroppableColumn({
-  id, title, dotColor, tintColor, deals, onDealClick,
+  id, title, dotColor, deals, onDealClick,
 }: {
-  id: string; title: string; dotColor: string; tintColor: string; deals: Deal[]; onDealClick: (deal: Deal) => void;
+  id: string; title: string; dotColor: string; tintColor?: string; deals: Deal[]; onDealClick: (deal: Deal) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   const columnValue = deals.reduce((sum, d) => sum + (d.value || 0), 0);
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="flex-shrink-0 w-[270px]">
-      <div className="bg-[#1f1f1f] rounded-t-xl px-3.5 py-2.5 flex items-center justify-between">
+    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
+      {/* Column header */}
+      <div className="px-4 py-3 border-b border-[#dedbd6] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
-          <h3 className="text-[12px] font-semibold text-white">{title}</h3>
+          <h3 className="text-[13px] uppercase tracking-[0.6px] text-[#7b7b78]">{title}</h3>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[#9ca3af]">{fmt(columnValue)}</span>
-          <span className="text-[10px] font-semibold text-white bg-white/15 rounded-full px-2 py-0.5">{deals.length}</span>
+          {columnValue > 0 && <span className="text-[11px] text-[#7b7b78]">{fmt(columnValue)}</span>}
+          <span className="bg-[#111111] text-white text-[11px] px-2 py-0.5 rounded-[4px]">{deals.length}</span>
         </div>
       </div>
       <div
         ref={setNodeRef}
-        className={`rounded-b-xl p-2.5 min-h-[calc(100vh-280px)] space-y-2.5 overflow-y-auto transition-all duration-200 ${isOver ? "ring-2 ring-[#c8cc8e] ring-inset" : ""}`}
-        style={{ backgroundColor: tintColor }}
+        className={`flex-1 py-2 overflow-y-auto transition-all duration-200 ${isOver ? "ring-2 ring-[#111111] ring-inset rounded-b-[8px]" : ""}`}
       >
         {deals.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16">
-            <p className="text-[12px] text-[#b0adb5]">Nenhum deal</p>
+            <p className="text-[12px] text-[#7b7b78]">Nenhum deal</p>
           </div>
         )}
         {deals.map((deal) => (
@@ -110,8 +110,8 @@ export default function VendasPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
-          <span className="text-[14px] text-[#5f6368]">Carregando...</span>
+          <div className="w-5 h-5 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin" />
+          <span className="text-[14px] text-[#7b7b78]">Carregando...</span>
         </div>
       </div>
     );
@@ -133,11 +133,13 @@ export default function VendasPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-[28px] font-bold text-[#1f1f1f]">Oportunidades</h1>
-          <p className="text-[14px] text-[#5f6368] mt-1">Pipeline de vendas</p>
+          <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[32px] font-normal text-[#111111]">
+            Funis de Venda
+          </h1>
+          <p className="text-[14px] text-[#7b7b78] mt-1">Pipeline de vendas</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-[13px] font-medium">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <button onClick={() => setShowCreate(true)} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <line x1="8" y1="3" x2="8" y2="13" />
             <line x1="3" y1="8" x2="13" y2="8" />
           </svg>
@@ -152,12 +154,12 @@ export default function VendasPage() {
         <div className="flex gap-3 overflow-x-auto pb-4">
           {DEAL_STAGES.map((stage) => {
             const stageDeals = filteredDeals.filter((d) => d.stage === stage.key);
-            return (<DroppableColumn key={stage.key} id={stage.key} title={stage.label} dotColor={stage.dotColor} tintColor={stage.tintColor} deals={stageDeals} onDealClick={setSelectedDeal} />);
+            return (<DroppableColumn key={stage.key} id={stage.key} title={stage.label} dotColor={stage.dotColor} deals={stageDeals} onDealClick={setSelectedDeal} />);
           })}
         </div>
         <DragOverlay>
           {activeDrag ? (
-            <div className="w-[270px] opacity-90 rotate-[2deg] shadow-xl">
+            <div className="w-[270px] opacity-90 rotate-[2deg]">
               <DealCard deal={activeDrag} onClick={() => {}} />
             </div>
           ) : null}
