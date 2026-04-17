@@ -58,6 +58,7 @@ from app.stats.pricing_router import router as pricing_router
 from app.outbound.router import router as outbound_router
 from app.channels.router import router as channels_router
 from app.agent_profiles.router import router as agent_profiles_router
+from app.dev_router.router import router as dev_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
@@ -69,6 +70,7 @@ app.include_router(pricing_router)
 app.include_router(outbound_router)
 app.include_router(channels_router)
 app.include_router(agent_profiles_router)
+app.include_router(dev_router)
 
 
 @app.get("/health")
