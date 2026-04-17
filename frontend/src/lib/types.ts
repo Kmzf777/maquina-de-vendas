@@ -107,7 +107,7 @@ export interface Broadcast {
   sent: number;
   failed: number;
   delivered: number;
-  status: "draft" | "scheduled" | "running" | "paused" | "completed";
+  status: "draft" | "scheduled" | "running" | "paused" | "completed" | "failed";
   scheduled_at: string | null;
   send_interval_min: number;
   send_interval_max: number;
