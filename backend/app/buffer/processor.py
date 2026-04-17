@@ -135,6 +135,12 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
+    # If AI is disabled for this conversation, skip agent silently
+    if not conversation.get("ai_enabled", True):
+        logger.info(f"[AI DISABLED] Conversation {conversation['id']} — ai paused per CRM setting")
+        _update_last_msg(conversation["id"])
+        return
+
     # Resolve agent profile: conversation takes priority over channel default
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
     if not agent_profile_id:
