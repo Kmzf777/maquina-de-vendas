@@ -15,7 +15,10 @@ def _get_meta_client(channel: dict) -> MetaTemplateClient:
     waba_id = config.get("waba_id")
     if not waba_id:
         raise HTTPException(400, "Channel provider_config is missing 'waba_id'")
-    return MetaTemplateClient(waba_id=waba_id, access_token=config["access_token"])
+    access_token = config.get("access_token")
+    if not access_token:
+        raise HTTPException(400, "Channel provider_config is missing 'access_token'")
+    return MetaTemplateClient(waba_id=waba_id, access_token=access_token)
 
 
 async def create_template(channel_id: str, data: dict) -> tuple[dict, str]:
@@ -33,6 +36,7 @@ async def create_template(channel_id: str, data: dict) -> tuple[dict, str]:
     try:
         meta_response = await meta_client.create_template(payload)
     except Exception:
+        logger.exception("Failed to call Meta Templates API for channel %s", channel_id)
         raise HTTPException(502, "Failed to create template on Meta")
 
     meta_category = meta_response.get("category", requested_category)
