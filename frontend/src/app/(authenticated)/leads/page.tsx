@@ -139,17 +139,17 @@ export default function LeadsPage() {
     return (
       <div className="space-y-6">
         <div>
-          <div className="h-8 w-32 rounded-lg animate-pulse" style={{ backgroundColor: "#e5e5dc" }} />
-          <div className="h-4 w-64 rounded-lg animate-pulse mt-2" style={{ backgroundColor: "#e5e5dc" }} />
+          <div className="h-8 w-32 rounded-[8px] animate-pulse bg-[#dedbd6]" />
+          <div className="h-4 w-64 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]" />
         </div>
-        <div className="grid grid-cols-5 gap-4">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="card p-5 h-24 animate-pulse" style={{ backgroundColor: "rgba(229,229,220,0.3)" }} />
+        <div className="grid grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5 h-24 animate-pulse" />
           ))}
         </div>
         <div className="grid grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="card p-5 h-40 animate-pulse" style={{ backgroundColor: "rgba(229,229,220,0.3)" }} />
+            <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5 h-40 animate-pulse" />
           ))}
         </div>
       </div>
@@ -161,17 +161,20 @@ export default function LeadsPage() {
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-[28px] font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+          <h1
+            style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
+            className="text-[32px] font-normal text-[#111111]"
+          >
             Leads
           </h1>
-          <p className="text-[14px] mt-1" style={{ color: "var(--text-muted)" }}>
+          <p className="text-[14px] mt-1 text-[#7b7b78]">
             Gestao completa dos seus contatos
           </p>
         </div>
         <div className="flex gap-2.5">
           <button
             onClick={() => setShowImport(true)}
-            className="px-4 py-2 rounded-lg border border-[#e5e5dc] bg-white text-[#1f1f1f] text-[13px] font-medium hover:bg-[#f6f7ed] transition-colors flex items-center gap-1.5"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-1.5"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
@@ -180,7 +183,7 @@ export default function LeadsPage() {
           </button>
           <button
             onClick={handleExport}
-            className="px-4 py-2 rounded-lg border border-[#e5e5dc] bg-white text-[#1f1f1f] text-[13px] font-medium hover:bg-[#f6f7ed] transition-colors flex items-center gap-1.5"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-1.5"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12M12 16.5V3" />
@@ -189,7 +192,7 @@ export default function LeadsPage() {
           </button>
           <button
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333] transition-colors flex items-center gap-1.5"
+            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] flex items-center gap-1.5"
           >
             <span className="text-[16px] leading-none">+</span>
             Novo Lead
@@ -199,33 +202,33 @@ export default function LeadsPage() {
 
       {/* KPI Bar */}
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="card p-4">
-          <p className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Total de Leads</p>
-          <p className="text-[28px] font-bold text-[#1f1f1f] mt-1">{kpis.total}</p>
+        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
+          <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total de Leads</p>
+          <p className="text-[28px] font-normal text-[#111111] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.total}</p>
         </div>
-        <div className="card p-4">
+        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
           <div className="flex justify-between items-start">
-            <p className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Quentes</p>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#f87171]" />
+            <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Quentes</p>
+            <span className="w-2.5 h-2.5 rounded-full bg-[#c41c1c]" />
           </div>
-          <p className="text-[28px] font-bold text-[#f87171] mt-1">{kpis.quentes}</p>
-          <p className="text-[11px] text-[#9ca3af]">Ultima msg &lt; 48h</p>
+          <p className="text-[28px] font-normal text-[#c41c1c] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.quentes}</p>
+          <p className="text-[11px] text-[#7b7b78]">Ultima msg &lt; 48h</p>
         </div>
-        <div className="card p-4">
+        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
           <div className="flex justify-between items-start">
-            <p className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Mornos</p>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#e8d44d]" />
+            <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Mornos</p>
+            <span className="w-2.5 h-2.5 rounded-full bg-[#ff5600]" />
           </div>
-          <p className="text-[28px] font-bold text-[#e8d44d] mt-1">{kpis.mornos}</p>
-          <p className="text-[11px] text-[#9ca3af]">Ultima msg 48h-7d</p>
+          <p className="text-[28px] font-normal text-[#ff5600] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.mornos}</p>
+          <p className="text-[11px] text-[#7b7b78]">Ultima msg 48h-7d</p>
         </div>
-        <div className="card p-4">
+        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
           <div className="flex justify-between items-start">
-            <p className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Frios</p>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#60a5fa]" />
+            <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Frios</p>
+            <span className="w-2.5 h-2.5 rounded-full bg-[#7b7b78]" />
           </div>
-          <p className="text-[28px] font-bold text-[#60a5fa] mt-1">{kpis.frios}</p>
-          <p className="text-[11px] text-[#9ca3af]">Ultima msg &gt; 7d</p>
+          <p className="text-[28px] font-normal text-[#7b7b78] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.frios}</p>
+          <p className="text-[11px] text-[#7b7b78]">Ultima msg &gt; 7d</p>
         </div>
       </div>
 
@@ -252,7 +255,7 @@ export default function LeadsPage() {
         </div>
       ) : (
         <div className="text-center py-12">
-          <p className="text-[14px] text-[#9ca3af]">Nenhum lead encontrado.</p>
+          <p className="text-[14px] text-[#7b7b78]">Nenhum lead encontrado.</p>
         </div>
       )}
 
@@ -262,7 +265,7 @@ export default function LeadsPage() {
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="px-3 py-1.5 rounded-md border border-[#e5e5dc] bg-white text-[13px] text-[#9ca3af] disabled:opacity-40"
+            className="px-3 py-1.5 rounded-[4px] border border-[#dedbd6] bg-white text-[13px] text-[#7b7b78] disabled:opacity-40 hover:border-[#111111] transition-colors"
           >
             &larr;
           </button>
@@ -281,10 +284,10 @@ export default function LeadsPage() {
               <button
                 key={pageNum}
                 onClick={() => setPage(pageNum)}
-                className={`px-3 py-1.5 rounded-md text-[13px] ${
+                className={`px-3 py-1.5 rounded-[4px] text-[13px] transition-colors ${
                   page === pageNum
-                    ? "bg-[#1f1f1f] text-white"
-                    : "border border-[#e5e5dc] bg-white text-[#5f6368] hover:bg-[#f6f7ed]"
+                    ? "bg-[#111111] text-white"
+                    : "border border-[#dedbd6] bg-white text-[#7b7b78] hover:border-[#111111]"
                 }`}
               >
                 {pageNum}
@@ -294,7 +297,7 @@ export default function LeadsPage() {
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="px-3 py-1.5 rounded-md border border-[#e5e5dc] bg-white text-[13px] text-[#9ca3af] disabled:opacity-40"
+            className="px-3 py-1.5 rounded-[4px] border border-[#dedbd6] bg-white text-[13px] text-[#7b7b78] disabled:opacity-40 hover:border-[#111111] transition-colors"
           >
             &rarr;
           </button>

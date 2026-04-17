@@ -29,36 +29,31 @@ export function LeadCard({
   unreadCount,
   tags,
   lastMessage,
-  avatarColor = "#c8cc8e",
 }: LeadCardProps) {
   const initial = (lead.name || lead.phone)?.[0]?.toUpperCase() || "?";
 
   return (
     <button
       onClick={() => onClick(lead)}
-      className="w-full text-left bg-white rounded-[10px] border border-[#e5e5dc] p-3 transition-all duration-150 hover:-translate-y-[1px] hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]"
-      style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}
+      className="w-full text-left bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 hover:border-[#111111] transition-colors cursor-pointer"
     >
       {/* Row 1: Avatar + Name + Time */}
       <div className="flex items-center gap-2.5 mb-2">
-        <div
-          className="w-[34px] h-[34px] rounded-full bg-[#1f1f1f] flex items-center justify-center text-[13px] font-bold flex-shrink-0"
-          style={{ color: avatarColor }}
-        >
+        <div className="w-[34px] h-[34px] rounded-full bg-[#111111] flex items-center justify-center text-[13px] font-semibold text-white flex-shrink-0">
           {initial}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-semibold text-[#1f1f1f] truncate">
+            <span className="text-[13px] font-medium text-[#111111] truncate">
               {lead.name || lead.phone}
             </span>
             <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
               {unreadCount && unreadCount > 0 ? (
-                <span className="bg-[#e8d44d] text-[#1f1f1f] text-[10px] font-semibold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                <span className="bg-[#111111] text-white text-[10px] font-semibold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
                   {unreadCount}
                 </span>
               ) : null}
-              <span className="text-[10px] text-[#9ca3af]">
+              <span className="text-[10px] text-[#7b7b78]">
                 {timeAgo(lead.last_msg_at)}
               </span>
             </div>
@@ -72,26 +67,26 @@ export function LeadCard({
           {tags.slice(0, 3).map((tag) => (
             <span
               key={tag.id}
-              className="text-[9px] font-medium px-2 py-0.5 rounded-md"
-              style={{ backgroundColor: tag.color + "22", color: tag.color }}
+              className="text-[9px] font-medium px-2 py-0.5 rounded-[4px] border"
+              style={{ borderColor: tag.color + "44", color: tag.color, backgroundColor: tag.color + "15" }}
             >
               {tag.name}
             </span>
           ))}
           {showAgentStage && (
-            <span className="text-[9px] font-medium text-[#5f6368] bg-[#f4f4f0] px-2 py-0.5 rounded-md">
+            <span className="text-[9px] font-medium text-[#7b7b78] bg-[#faf9f6] border border-[#dedbd6] px-2 py-0.5 rounded-[4px]">
               {lead.stage}
             </span>
           )}
           {tags.length > 3 && (
-            <span className="text-[9px] text-[#9ca3af]">+{tags.length - 3}</span>
+            <span className="text-[9px] text-[#7b7b78]">+{tags.length - 3}</span>
           )}
         </div>
       )}
       {/* Show agent stage even without tags */}
       {showAgentStage && (!tags || tags.length === 0) && (
         <div className="flex flex-wrap gap-1 mb-1.5">
-          <span className="text-[9px] font-medium text-[#5f6368] bg-[#f4f4f0] px-2 py-0.5 rounded-md">
+          <span className="text-[9px] font-medium text-[#7b7b78] bg-[#faf9f6] border border-[#dedbd6] px-2 py-0.5 rounded-[4px]">
             {lead.stage}
           </span>
         </div>
@@ -99,7 +94,7 @@ export function LeadCard({
 
       {/* Row 3: Last message preview */}
       {lastMessage && (
-        <p className="text-[11px] text-[#9ca3af] truncate italic">
+        <p className="text-[11px] text-[#7b7b78] truncate">
           &ldquo;{lastMessage}&rdquo;
         </p>
       )}

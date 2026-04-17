@@ -94,8 +94,8 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
   if (loading) {
     return (
       <div className="flex items-center gap-3 py-8 justify-center">
-        <div className="w-4 h-4 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
-        <span className="text-[13px] text-[#5f6368]">Carregando leads...</span>
+        <div className="w-4 h-4 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin" />
+        <span className="text-[13px] text-[#7b7b78]">Carregando leads...</span>
       </div>
     );
   }
@@ -120,27 +120,27 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar nome, telefone, empresa..."
-          className="input-field text-[13px] w-52 ml-auto"
+          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-52 ml-auto"
         />
       </div>
 
       {/* Table */}
-      <div className="border border-[#ededea] rounded-xl overflow-hidden max-h-[340px] overflow-y-auto">
+      <div className="border border-[#dedbd6] rounded-[8px] overflow-hidden max-h-[340px] overflow-y-auto">
         <table className="w-full text-[13px]">
           <thead className="sticky top-0 bg-white z-10">
-            <tr className="text-left border-b border-[#e5e5dc]">
+            <tr className="text-left border-b border-[#dedbd6]">
               <th className="px-4 py-3 w-10">
                 <input
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleAll}
-                  className="accent-[#1f1f1f]"
+                  className="accent-[#111111]"
                 />
               </th>
-              <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Nome</th>
-              <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Telefone</th>
-              <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Stage</th>
-              <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-[#9ca3af]">Tags</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Nome</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Telefone</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Stage</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Tags</th>
             </tr>
           </thead>
           <tbody>
@@ -151,7 +151,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
               return (
                 <tr
                   key={l.id}
-                  className="border-b border-[#ededea] last:border-0 hover:bg-[#f6f7ed]/50 transition-colors cursor-pointer"
+                  className="border-b border-[#dedbd6] last:border-0 hover:bg-[#faf9f6] transition-colors cursor-pointer"
                   onClick={() => toggleOne(l.id)}
                 >
                   <td className="px-4 py-2.5">
@@ -159,15 +159,15 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
                       type="checkbox"
                       checked={selectedIds.has(l.id)}
                       onChange={() => toggleOne(l.id)}
-                      className="accent-[#1f1f1f]"
+                      className="accent-[#111111]"
                       onClick={(e) => e.stopPropagation()}
                     />
                   </td>
-                  <td className="px-4 py-2.5 text-[#1f1f1f] font-medium">{l.name || l.phone}</td>
-                  <td className="px-4 py-2.5 text-[#5f6368]">{l.phone}</td>
+                  <td className="px-4 py-2.5 text-[#111111] font-medium">{l.name || l.phone}</td>
+                  <td className="px-4 py-2.5 text-[#7b7b78]">{l.phone}</td>
                   <td className="px-4 py-2.5">
                     {stageInfo && (
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${stageInfo.color}`}>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] text-[10px] font-medium bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78]">
                         <span className="w-1.5 h-1.5 rounded-full" style={{ background: stageInfo.dotColor }} />
                         {stageInfo.label}
                       </span>
@@ -178,14 +178,14 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
                       {lt.slice(0, 3).map((tag) => (
                         <span
                           key={tag.id}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                          className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium"
                           style={{ backgroundColor: tag.color + "20", color: tag.color }}
                         >
                           {tag.name}
                         </span>
                       ))}
                       {lt.length > 3 && (
-                        <span className="text-[10px] text-[#9ca3af]">+{lt.length - 3}</span>
+                        <span className="text-[10px] text-[#7b7b78]">+{lt.length - 3}</span>
                       )}
                     </div>
                   </td>
@@ -194,7 +194,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-[13px] text-[#9ca3af]">
+                <td colSpan={5} className="px-4 py-8 text-center text-[13px] text-[#7b7b78]">
                   Nenhum lead encontrado.
                 </td>
               </tr>
@@ -204,7 +204,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
       </div>
 
       {/* Counter */}
-      <div className="mt-3 text-[12px] text-[#5f6368]">
+      <div className="mt-3 text-[12px] text-[#7b7b78]">
         {selectedIds.size} lead{selectedIds.size !== 1 ? "s" : ""} selecionado{selectedIds.size !== 1 ? "s" : ""}
         {filtered.length > 0 && ` de ${filtered.length} filtrados`}
       </div>
@@ -239,10 +239,10 @@ function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors flex items-center gap-1.5 ${
+        className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors flex items-center gap-1.5 border ${
           selected.length > 0
-            ? "bg-[#1f1f1f] text-white"
-            : "bg-[#f4f4f0] text-[#5f6368] hover:bg-[#e5e5dc]"
+            ? "bg-[#111111] text-white border-[#111111]"
+            : "bg-white text-[#111111] border-[#dedbd6] hover:border-[#111111]"
         }`}
       >
         {label}
@@ -256,19 +256,19 @@ function MultiSelect({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-1 bg-white border border-[#ededea] rounded-xl shadow-lg z-50 min-w-[180px] py-1 max-h-[200px] overflow-y-auto">
+          <div className="absolute top-full left-0 mt-1 bg-white border border-[#dedbd6] rounded-[8px] z-50 min-w-[180px] py-1 max-h-[200px] overflow-y-auto">
             {options.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
                 onClick={() => toggle(opt.value)}
-                className="w-full text-left px-3 py-2 text-[12px] hover:bg-[#f6f7ed] flex items-center gap-2 transition-colors"
+                className="w-full text-left px-3 py-2 text-[12px] hover:bg-[#faf9f6] flex items-center gap-2 transition-colors text-[#111111]"
               >
                 <input
                   type="checkbox"
                   checked={selected.includes(opt.value)}
                   readOnly
-                  className="accent-[#1f1f1f]"
+                  className="accent-[#111111]"
                 />
                 {opt.label}
               </button>

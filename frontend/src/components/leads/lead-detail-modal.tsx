@@ -187,56 +187,55 @@ export function LeadDetailModal({
     : "\u2014";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-12" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30" />
+    <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="relative bg-white rounded-2xl w-full max-w-[720px] overflow-hidden shadow-[0_25px_50px_rgba(0,0,0,0.15)]"
+        className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-[720px] max-h-[90vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-5 border-b border-[#f3f3f0] flex justify-between items-center">
+        <div className="px-6 py-5 border-b border-[#dedbd6] flex justify-between items-center">
           <div className="flex items-center gap-3.5">
-            <div
-              className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-base"
-              style={{ background: "#c8cc8e", color: "#1f1f1f" }}
-            >
+            <div className="w-12 h-12 rounded-full bg-[#111111] flex items-center justify-center font-semibold text-base text-white">
               {initials}
             </div>
             <div>
-              <h3 className="text-[18px] font-semibold text-[#1f1f1f]">
+              <h3
+                className="text-[24px] font-normal text-[#111111]"
+                style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}
+              >
                 {lead.name || lead.phone}
               </h3>
-              <p className="text-[13px] text-[#9ca3af]">
+              <p className="text-[13px] text-[#7b7b78]">
                 {lead.phone}{lead.company ? ` \u00b7 ${lead.company}` : ""}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2.5">
             <span
-              className="text-[10px] font-semibold px-2.5 py-1 rounded-xl"
+              className="text-[10px] font-semibold px-2.5 py-1 rounded-[4px]"
               style={{ background: tempConfig.bg, color: tempConfig.color }}
             >
               {tempConfig.label.toUpperCase()}
             </span>
             <button
               onClick={onClose}
-              className="w-8 h-8 rounded-lg border border-[#e5e5dc] bg-white flex items-center justify-center text-[#9ca3af] hover:text-[#1f1f1f] transition-colors"
+              className="w-8 h-8 rounded-[4px] border border-[#dedbd6] bg-white flex items-center justify-center text-[#7b7b78] hover:text-[#111111] hover:border-[#111111] transition-colors"
             >
-              x
+              ×
             </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-[#f3f3f0] px-6">
+        <div className="flex border-b border-[#dedbd6] px-6">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`px-5 py-3 text-[13px] font-medium border-b-2 transition-colors ${
+              className={`px-5 py-3 text-[13px] border-b-2 transition-colors ${
                 activeTab === tab.key
-                  ? "text-[#1f1f1f] border-[#1f1f1f]"
-                  : "text-[#9ca3af] border-transparent hover:text-[#5f6368]"
+                  ? "text-[#111111] border-[#111111]"
+                  : "text-[#7b7b78] border-transparent hover:text-[#111111]"
               }`}
             >
               {tab.label}
@@ -253,7 +252,7 @@ export function LeadDetailModal({
               <div className="grid grid-cols-2 gap-5">
                 {/* Contato */}
                 <div>
-                  <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Contato</p>
+                  <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Contato</p>
                   <div className="space-y-3">
                     {([
                       { label: "Nome", field: "name" as const, isReadonly: false },
@@ -262,21 +261,21 @@ export function LeadDetailModal({
                       { label: "Instagram", field: "instagram" as const, isReadonly: false },
                     ]).map(({ label, field, isReadonly }) => (
                       <div key={field}>
-                        <label className="text-[11px] text-[#b0b0b0] block mb-0.5">{label}</label>
+                        <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">{label}</label>
                         <input
                           value={(form[field] as string) || ""}
                           onChange={(e) => updateField(field, e.target.value)}
                           readOnly={isReadonly}
-                          className={`w-full text-[14px] text-[#1f1f1f] px-2.5 py-1.5 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] transition-colors ${isReadonly ? "bg-[#f6f7ed] text-[#9ca3af]" : ""}`}
+                          className={`bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full ${isReadonly ? "opacity-60 cursor-not-allowed" : ""}`}
                         />
                       </div>
                     ))}
                     <div>
-                      <label className="text-[11px] text-[#b0b0b0] block mb-0.5">Canal</label>
+                      <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Canal</label>
                       <select
                         value={form.channel || ""}
                         onChange={(e) => updateField("channel", e.target.value)}
-                        className="w-full text-[14px] text-[#1f1f1f] px-2.5 py-1.5 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] bg-white"
+                        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
                       >
                         {LEAD_CHANNELS.map((c) => (
                           <option key={c.key} value={c.key}>{c.label}</option>
@@ -288,7 +287,7 @@ export function LeadDetailModal({
 
                 {/* Empresa B2B */}
                 <div>
-                  <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Empresa (B2B)</p>
+                  <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Empresa (B2B)</p>
                   <div className="space-y-3">
                     {([
                       { label: "Razao Social", field: "razao_social" },
@@ -298,11 +297,11 @@ export function LeadDetailModal({
                       { label: "Endereco", field: "endereco" },
                     ] as const).map(({ label, field }) => (
                       <div key={field}>
-                        <label className="text-[11px] text-[#b0b0b0] block mb-0.5">{label}</label>
+                        <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">{label}</label>
                         <input
                           value={(form[field] as string) || ""}
                           onChange={(e) => updateField(field, e.target.value)}
-                          className="w-full text-[14px] text-[#1f1f1f] px-2.5 py-1.5 rounded-lg border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] transition-colors"
+                          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                         />
                       </div>
                     ))}
@@ -311,55 +310,55 @@ export function LeadDetailModal({
               </div>
 
               {/* CRM Status row */}
-              <div className="mt-5 pt-4 border-t border-[#f3f3f0]">
-                <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Status no CRM</p>
+              <div className="mt-5 pt-4 border-t border-[#dedbd6]">
+                <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Status no CRM</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-[#f6f7ed] rounded-lg p-3">
-                    <label className="text-[11px] text-[#b0b0b0] block mb-1">Stage (IA)</label>
+                  <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] p-3">
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Stage (IA)</label>
                     <select
                       value={form.stage}
                       onChange={(e) => updateField("stage", e.target.value)}
-                      className="w-full text-[13px] font-semibold text-[#1f1f1f] bg-transparent outline-none cursor-pointer"
+                      className="w-full text-[13px] font-medium text-[#111111] bg-transparent outline-none cursor-pointer"
                     >
                       {AGENT_STAGES.map((s) => (
                         <option key={s.key} value={s.key}>{s.label}</option>
                       ))}
                     </select>
                   </div>
-                  <div className="bg-[#f6f7ed] rounded-lg p-3">
-                    <label className="text-[11px] text-[#b0b0b0] block mb-1">Atribuido a</label>
+                  <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] p-3">
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Atribuido a</label>
                     <input
                       value={(form.assigned_to as string) || ""}
                       onChange={(e) => updateField("assigned_to", e.target.value)}
                       placeholder="Ninguem"
-                      className="w-full text-[13px] font-semibold text-[#1f1f1f] bg-transparent outline-none"
+                      className="w-full text-[13px] font-medium text-[#111111] bg-transparent outline-none placeholder:text-[#7b7b78]"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="mt-5 pt-4 border-t border-[#f3f3f0]">
-                <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">
+              <div className="mt-5 pt-4 border-t border-[#dedbd6]">
+                <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">
                   Oportunidades ({leadDeals.length})
                 </p>
                 {leadDeals.length === 0 && (
-                  <p className="text-[13px] text-[#9ca3af]">Nenhuma oportunidade vinculada.</p>
+                  <p className="text-[13px] text-[#7b7b78]">Nenhuma oportunidade vinculada.</p>
                 )}
                 <div className="space-y-2">
                   {leadDeals.map((deal) => {
                     const stageInfo = DEAL_STAGES.find((s) => s.key === deal.stage);
                     return (
-                      <div key={deal.id} className="flex items-center justify-between bg-[#f6f7ed] rounded-lg p-3">
+                      <div key={deal.id} className="flex items-center justify-between bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] p-3">
                         <div>
-                          <p className="text-[13px] font-semibold text-[#1f1f1f]">{deal.title}</p>
+                          <p className="text-[13px] font-medium text-[#111111]">{deal.title}</p>
                           <span
-                            className="text-[10px] font-medium px-2 py-0.5 rounded-md"
-                            style={{ backgroundColor: (stageInfo?.dotColor || "#9ca3af") + "22", color: stageInfo?.dotColor || "#9ca3af" }}
+                            className="text-[10px] font-medium px-2 py-0.5 rounded-[4px]"
+                            style={{ backgroundColor: (stageInfo?.dotColor || "#7b7b78") + "22", color: stageInfo?.dotColor || "#7b7b78" }}
                           >
                             {stageInfo?.label || deal.stage}
                           </span>
                         </div>
-                        <span className="text-[14px] font-bold text-[#2d6a3f]">
+                        <span className="text-[14px] font-semibold text-[#0bdf50]">
                           {deal.value > 0 ? `R$ ${deal.value.toLocaleString("pt-BR")}` : "\u2014"}
                         </span>
                       </div>
@@ -373,7 +372,7 @@ export function LeadDetailModal({
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-5 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333] transition-colors disabled:opacity-50"
+                    className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
                   >
                     {saving ? "Salvando..." : "Salvar alteracoes"}
                   </button>
@@ -385,54 +384,54 @@ export function LeadDetailModal({
           {/* TAB: Campanhas */}
           {activeTab === "campanhas" && (
             <div>
-              <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-4">
+              <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-4">
                 Cadências participadas ({enrollments.length})
               </p>
               {enrollments.length === 0 && (
-                <p className="text-[13px] text-[#9ca3af] text-center py-8">Nenhuma cadência encontrada.</p>
+                <p className="text-[13px] text-[#7b7b78] text-center py-8">Nenhuma cadência encontrada.</p>
               )}
               <div className="space-y-3">
                 {enrollments.map((c, i) => {
                   const statusColors: Record<string, { bg: string; text: string }> = {
-                    active: { bg: "#fefce8", text: "#ca8a04" },
-                    responded: { bg: "#f0fdf4", text: "#22c55e" },
-                    exhausted: { bg: "#fee2e2", text: "#ef4444" },
-                    cooled: { bg: "#f4f4f0", text: "#9ca3af" },
+                    active: { bg: "#fef3c7", text: "#d97706" },
+                    responded: { bg: "#d1fae5", text: "#059669" },
+                    exhausted: { bg: "#fee2e2", text: "#c41c1c" },
+                    cooled: { bg: "#faf9f6", text: "#7b7b78" },
                   };
                   const statusLabels: Record<string, string> = {
                     active: "Ativa", responded: "Respondeu", exhausted: "Esgotado", cooled: "Esfriado",
                   };
                   const sc = statusColors[c.status] || statusColors.active;
                   return (
-                    <div key={i} className="border border-[#e5e5dc] rounded-[10px] p-4">
+                    <div key={i} className="border border-[#dedbd6] rounded-[8px] p-4">
                       <div className="flex justify-between items-center mb-2.5">
                         <div>
-                          <p className="text-[14px] font-semibold text-[#1f1f1f]">{c.cadence_name}</p>
-                          <p className="text-[12px] text-[#9ca3af]">
+                          <p className="text-[14px] font-medium text-[#111111]">{c.cadence_name}</p>
+                          <p className="text-[12px] text-[#7b7b78]">
                             Criada em {new Date(c.cadence_created_at).toLocaleDateString("pt-BR")}
                           </p>
                         </div>
                         <span
-                          className="text-[11px] font-semibold px-2.5 py-0.5 rounded-[10px]"
+                          className="text-[11px] font-semibold px-2.5 py-0.5 rounded-[4px]"
                           style={{ background: sc.bg, color: sc.text }}
                         >
                           {statusLabels[c.status] || c.status}
                         </span>
                       </div>
                       <div className="grid grid-cols-3 gap-2.5">
-                        <div className="bg-[#f6f7ed] rounded-md px-3 py-2">
-                          <p className="text-[10px] text-[#b0b0b0]">Cadencia</p>
-                          <p className="text-[13px] font-semibold text-[#1f1f1f]">Step {c.current_step} de {c.max_messages}</p>
+                        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] px-3 py-2">
+                          <p className="text-[10px] text-[#7b7b78] uppercase tracking-[0.6px]">Cadencia</p>
+                          <p className="text-[13px] font-medium text-[#111111]">Step {c.current_step} de {c.max_messages}</p>
                         </div>
-                        <div className="bg-[#f6f7ed] rounded-md px-3 py-2">
-                          <p className="text-[10px] text-[#b0b0b0]">Mensagens</p>
-                          <p className="text-[13px] font-semibold text-[#1f1f1f]">{c.total_messages_sent} enviadas</p>
+                        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] px-3 py-2">
+                          <p className="text-[10px] text-[#7b7b78] uppercase tracking-[0.6px]">Mensagens</p>
+                          <p className="text-[13px] font-medium text-[#111111]">{c.total_messages_sent} enviadas</p>
                         </div>
-                        <div className="bg-[#f6f7ed] rounded-md px-3 py-2">
-                          <p className="text-[10px] text-[#b0b0b0]">
+                        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] px-3 py-2">
+                          <p className="text-[10px] text-[#7b7b78] uppercase tracking-[0.6px]">
                             {c.responded_at ? "Respondeu em" : "Proximo envio"}
                           </p>
-                          <p className="text-[13px] font-semibold text-[#1f1f1f]">
+                          <p className="text-[13px] font-medium text-[#111111]">
                             {c.responded_at
                               ? new Date(c.responded_at).toLocaleDateString("pt-BR")
                               : c.next_send_at
@@ -451,32 +450,32 @@ export function LeadDetailModal({
           {/* TAB: Tags & Notas */}
           {activeTab === "tags_notas" && (
             <div>
-              <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Tags</p>
+              <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Tags</p>
               <div className="flex gap-2 flex-wrap mb-3">
                 {activeTags.map((tag) => (
                   <span
                     key={tag.id}
-                    className="px-3 py-1 rounded-full text-[12px] flex items-center gap-1.5"
-                    style={{ background: tag.color + "22", color: tag.color }}
+                    className="px-3 py-1 rounded-[4px] text-[12px] flex items-center gap-1.5 border"
+                    style={{ borderColor: tag.color + "44", background: tag.color + "15", color: tag.color }}
                   >
                     {tag.name}
-                    <button onClick={() => handleToggleTag(tag.id)} className="opacity-60 hover:opacity-100">x</button>
+                    <button onClick={() => handleToggleTag(tag.id)} className="opacity-60 hover:opacity-100">×</button>
                   </span>
                 ))}
                 <div className="relative">
                   <button
                     onClick={() => setShowTagDropdown(!showTagDropdown)}
-                    className="px-3 py-1 rounded-full text-[12px] border border-dashed border-[#d1d5db] text-[#9ca3af] hover:border-[#9ca3af] transition-colors"
+                    className="bg-transparent text-[#111111] border border-[#111111] px-3 py-1 rounded-[4px] text-[12px] transition-transform hover:scale-110 active:scale-[0.85]"
                   >
                     + Adicionar tag
                   </button>
                   {showTagDropdown && availableTags.length > 0 && (
-                    <div className="absolute top-full left-0 mt-1 bg-white border border-[#e5e5dc] rounded-lg shadow-lg z-10 py-1 min-w-[150px]">
+                    <div className="absolute top-full left-0 mt-1 bg-white border border-[#dedbd6] rounded-[8px] z-10 py-1 min-w-[150px]">
                       {availableTags.map((tag) => (
                         <button
                           key={tag.id}
                           onClick={() => { handleToggleTag(tag.id); setShowTagDropdown(false); }}
-                          className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[#f6f7ed] flex items-center gap-2"
+                          className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[#faf9f6] flex items-center gap-2 transition-colors"
                         >
                           <span className="w-2.5 h-2.5 rounded-full" style={{ background: tag.color }} />
                           {tag.name}
@@ -487,18 +486,18 @@ export function LeadDetailModal({
                 </div>
               </div>
 
-              <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mt-5 mb-3">Notas & Timeline</p>
+              <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mt-5 mb-3">Notas & Timeline</p>
               <div className="flex gap-2 mb-4">
                 <input
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
                   placeholder="Adicionar uma nota..."
-                  className="flex-1 px-3.5 py-2 rounded-lg border border-[#e5e5dc] text-[13px] outline-none focus:border-[#c8cc8e]"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none flex-1"
                 />
                 <button
                   onClick={handleAddNote}
-                  className="px-4 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333] transition-colors"
+                  className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
                 >
                   Salvar
                 </button>
@@ -508,24 +507,24 @@ export function LeadDetailModal({
                 {timeline.map((item) => (
                   <div
                     key={`${item.type}-${item.data.id}`}
-                    className={`rounded-[10px] p-3.5 border ${
+                    className={`rounded-[8px] p-3.5 border ${
                       item.type === "note"
-                        ? "border-[#e5e5dc] bg-white"
-                        : "border-[#f3f3f0] bg-[#f6f7ed]"
+                        ? "border-[#dedbd6] bg-white"
+                        : "border-[#dedbd6] bg-[#faf9f6]"
                     }`}
                   >
                     <div className="flex justify-between mb-1">
-                      <p className="text-[12px] font-semibold text-[#1f1f1f]">
+                      <p className="text-[12px] font-medium text-[#111111]">
                         {item.type === "note" ? (item.data as LeadNote).author : "Sistema"}
                       </p>
-                      <p className="text-[11px] text-[#b0b0b0]">
+                      <p className="text-[11px] text-[#7b7b78]">
                         {new Date(item.date).toLocaleString("pt-BR", {
                           day: "2-digit", month: "2-digit", year: "numeric",
                           hour: "2-digit", minute: "2-digit",
                         })}
                       </p>
                     </div>
-                    <p className="text-[13px] text-[#5f6368] leading-relaxed">
+                    <p className="text-[13px] text-[#7b7b78] leading-relaxed">
                       {item.type === "note"
                         ? (item.data as LeadNote).content
                         : formatEventText(item.data as LeadEvent)}
@@ -533,7 +532,7 @@ export function LeadDetailModal({
                   </div>
                 ))}
                 {timeline.length === 0 && (
-                  <p className="text-[13px] text-[#9ca3af] text-center py-4">Nenhuma nota ou evento ainda.</p>
+                  <p className="text-[13px] text-[#7b7b78] text-center py-4">Nenhuma nota ou evento ainda.</p>
                 )}
               </div>
             </div>
@@ -543,38 +542,38 @@ export function LeadDetailModal({
           {activeTab === "metricas" && (
             <div>
               <div className="grid grid-cols-2 gap-3 mb-5">
-                <div className="bg-[#f6f7ed] rounded-[10px] p-4 text-center">
-                  <p className="text-[11px] text-[#b0b0b0] uppercase">Temperatura</p>
-                  <p className="text-[14px] font-bold mt-2" style={{ color: tempConfig.color }}>
+                <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 text-center">
+                  <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Temperatura</p>
+                  <p className="text-[14px] font-semibold mt-2" style={{ color: tempConfig.color }}>
                     {tempConfig.label}
                   </p>
-                  <p className="text-[11px] text-[#9ca3af] mt-0.5">
+                  <p className="text-[11px] text-[#7b7b78] mt-0.5">
                     Ultima msg: {lead.last_msg_at ? new Date(lead.last_msg_at).toLocaleDateString("pt-BR") : "Nunca"}
                   </p>
                 </div>
-                <div className="bg-[#f6f7ed] rounded-[10px] p-4 text-center">
-                  <p className="text-[11px] text-[#b0b0b0] uppercase">1a Resposta</p>
-                  <p className="text-[24px] font-bold text-[#1f1f1f] mt-1">{firstResponseStr}</p>
+                <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 text-center">
+                  <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">1a Resposta</p>
+                  <p className="text-[24px] font-semibold text-[#111111] mt-1">{firstResponseStr}</p>
                 </div>
               </div>
 
-              <p className="text-[12px] font-semibold text-[#9ca3af] uppercase tracking-wider mb-3">Engajamento</p>
+              <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Engajamento</p>
               <div className="grid grid-cols-3 gap-2.5">
-                <div className="border border-[#e5e5dc] rounded-lg p-3 text-center">
-                  <p className="text-[20px] font-bold text-[#1f1f1f]">{enrollments.length}</p>
-                  <p className="text-[11px] text-[#9ca3af] mt-1">Cadências</p>
+                <div className="border border-[#dedbd6] rounded-[8px] p-3 text-center">
+                  <p className="text-[20px] font-semibold text-[#111111]">{enrollments.length}</p>
+                  <p className="text-[11px] text-[#7b7b78] mt-1">Cadências</p>
                 </div>
-                <div className="border border-[#e5e5dc] rounded-lg p-3 text-center">
-                  <p className="text-[20px] font-bold text-[#1f1f1f]">{daysInCrm}d</p>
-                  <p className="text-[11px] text-[#9ca3af] mt-1">No CRM</p>
+                <div className="border border-[#dedbd6] rounded-[8px] p-3 text-center">
+                  <p className="text-[20px] font-semibold text-[#111111]">{daysInCrm}d</p>
+                  <p className="text-[11px] text-[#7b7b78] mt-1">No CRM</p>
                 </div>
-                <div className="border border-[#e5e5dc] rounded-lg p-3 text-center">
-                  <p className="text-[20px] font-bold text-[#1f1f1f]">
+                <div className="border border-[#dedbd6] rounded-[8px] p-3 text-center">
+                  <p className="text-[20px] font-semibold text-[#111111]">
                     {lead.entered_stage_at
                       ? `${Math.floor((Date.now() - new Date(lead.entered_stage_at).getTime()) / (1000 * 60 * 60 * 24))}d`
                       : "\u2014"}
                   </p>
-                  <p className="text-[11px] text-[#9ca3af] mt-1">No stage atual</p>
+                  <p className="text-[11px] text-[#7b7b78] mt-1">No stage atual</p>
                 </div>
               </div>
             </div>
