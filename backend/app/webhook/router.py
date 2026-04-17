@@ -58,7 +58,7 @@ async def receive_evolution_webhook(request: Request, background_tasks: Backgrou
         logger.info(f"Message from {msg.from_number} ({msg.push_name}): type={msg.type}")
         msg.channel_id = channel["id"]
 
-        if await is_dev_number(redis, msg.from_number):
+        if await is_dev_number(redis, msg.from_number) and request.headers.get("x-dev-routed") != "1":
             logger.info(f"Dev routing: forwarding {msg.from_number} to {settings.dev_server_url}")
             background_tasks.add_task(
                 forward_to_dev,

@@ -1,3 +1,4 @@
+import os
 import re
 
 DEV_WHITELIST_KEY = "dev:phone_whitelist"
@@ -8,6 +9,9 @@ def _normalize(phone: str) -> str:
 
 
 async def is_dev_number(redis, phone: str) -> bool:
+    # Se ja estamos no servidor de dev, nao roteamos novamente.
+    if os.environ.get("IS_DEV_ENV") == "true":
+        return False
     return bool(await redis.sismember(DEV_WHITELIST_KEY, _normalize(phone)))
 
 
