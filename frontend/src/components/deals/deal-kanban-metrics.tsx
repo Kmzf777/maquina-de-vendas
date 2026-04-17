@@ -27,37 +27,26 @@ export function DealKanbanMetrics({ deals }: DealKanbanMetricsProps) {
     `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="flex gap-3.5 mb-5">
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">Pipeline ativo</p>
-        <div className="flex items-baseline gap-2 mt-1">
-          <span className="text-[24px] font-bold text-white leading-none">{activeDeals.length}</span>
-          <span className="text-[12px] text-[#9ca3af]">deals</span>
-        </div>
-        <p className="text-[11px] text-[#c8cc8e] mt-1.5">{fmt(pipelineValue)}</p>
+    <div className="bg-[#faf9f6] border-b border-[#dedbd6] px-6 py-3 flex gap-8 mb-5">
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{activeDeals.length}</span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Pipeline ativo</span>
+        <span className="text-[11px] text-[#7b7b78] mt-0.5">{fmt(pipelineValue)}</span>
       </div>
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">Ganho no mes</p>
-        <div className="flex items-baseline gap-2 mt-1">
-          <span className="text-[24px] font-bold text-[#5aad65] leading-none">{fmt(wonValue)}</span>
-        </div>
-        <p className="text-[11px] text-[#9ca3af] mt-1.5">{wonThisMonth.length} deals</p>
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{fmt(wonValue)}</span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Ganho no mes</span>
+        <span className="text-[11px] text-[#7b7b78] mt-0.5">{wonThisMonth.length} deals</span>
       </div>
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">Taxa de conversao</p>
-        <div className="mt-1">
-          <span className="text-[24px] font-bold text-white leading-none">{conversionRate}%</span>
-        </div>
-        <p className="text-[11px] text-[#9ca3af] mt-1.5">{totalWon} de {totalClosed} fechados</p>
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{conversionRate}%</span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Taxa de conversao</span>
+        <span className="text-[11px] text-[#7b7b78] mt-0.5">{totalWon} de {totalClosed} fechados</span>
       </div>
-      <div className="flex-1 min-w-0 bg-[#1f1f1f] rounded-xl px-4 py-3.5">
-        <p className="text-[10px] text-[#9ca3af] uppercase font-semibold tracking-wider">Total de deals</p>
-        <div className="mt-1">
-          <span className="text-[24px] font-bold text-white leading-none">{deals.length}</span>
-        </div>
-        <p className="text-[11px] text-[#c8cc8e] mt-1.5">
-          {fmt(deals.reduce((sum, d) => sum + (d.value || 0), 0))} total
-        </p>
+      <div className="flex flex-col">
+        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{deals.length}</span>
+        <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total de deals</span>
+        <span className="text-[11px] text-[#7b7b78] mt-0.5">{fmt(deals.reduce((sum, d) => sum + (d.value || 0), 0))}</span>
       </div>
     </div>
   );

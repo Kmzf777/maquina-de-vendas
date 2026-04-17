@@ -12,7 +12,7 @@ export function KanbanFilters({ search, onSearchChange, showActive, onToggleActi
     <div className="flex items-center gap-3 mb-5">
       <div className="relative w-80">
         <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9ca3af]"
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#7b7b78]"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -29,15 +29,15 @@ export function KanbanFilters({ search, onSearchChange, showActive, onToggleActi
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Buscar por nome, empresa ou telefone..."
-          className="w-full text-[13px] rounded-[10px] pl-9 pr-4 py-2.5 bg-white border border-[#e5e5dc] outline-none focus:border-[#c8cc8e] transition-colors text-[#1f1f1f] placeholder:text-[#9ca3af]"
+          className="bg-white border border-[#dedbd6] rounded-[6px] pl-9 pr-4 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full transition-colors"
         />
       </div>
       <button
         onClick={onToggleActive}
-        className={`px-4 py-2.5 rounded-[10px] text-[12px] font-medium transition-colors ${
+        className={`px-3 py-1.5 rounded-[4px] text-[13px] transition-colors ${
           showActive
-            ? "bg-[#1f1f1f] text-white"
-            : "bg-white text-[#5f6368] border border-[#e5e5dc] hover:bg-[#f6f7ed]"
+            ? "bg-[#111111] text-white"
+            : "border border-[#dedbd6] text-[#313130] hover:border-[#111111]"
         }`}
       >
         Leads ativos
