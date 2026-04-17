@@ -27,16 +27,16 @@ function DroppableColumn({
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
+    <div className="bg-[#f7f5f1] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
       {/* Column header */}
-      <div className="px-4 py-3 border-b border-[#dedbd6] flex items-center justify-between">
+      <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
-          <h3 className="text-[13px] uppercase tracking-[0.6px] text-[#7b7b78]">{title}</h3>
+          <h3 className="text-[13px] font-medium text-[#111111] uppercase tracking-[0.6px]">{title}</h3>
         </div>
         <div className="flex items-center gap-2">
           {columnValue > 0 && <span className="text-[11px] text-[#7b7b78]">{fmt(columnValue)}</span>}
-          <span className="bg-[#111111] text-white text-[11px] px-2 py-0.5 rounded-[4px]">{deals.length}</span>
+          <span className="text-[12px] text-[#7b7b78] bg-white border border-[#dedbd6] rounded-full px-2 py-0.5">{deals.length}</span>
         </div>
       </div>
       <div
@@ -130,13 +130,14 @@ export default function VendasPage() {
   });
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
         <div>
           <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[32px] font-normal text-[#111111]">
             Funis de Venda
           </h1>
-          <p className="text-[14px] text-[#7b7b78] mt-1">Pipeline de vendas</p>
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">Pipeline de negócios</p>
         </div>
         <button onClick={() => setShowCreate(true)} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -147,24 +148,27 @@ export default function VendasPage() {
         </button>
       </div>
 
-      <DealKanbanMetrics deals={deals} />
-      <DealKanbanFilters search={search} onSearchChange={setSearch} category={category} onCategoryChange={setCategory} showActive={showActive} onToggleActive={() => setShowActive(!showActive)} />
+      {/* Kanban content area */}
+      <div className="flex-1 overflow-auto bg-[#faf9f6]">
+        <DealKanbanMetrics deals={deals} />
+        <DealKanbanFilters search={search} onSearchChange={setSearch} category={category} onCategoryChange={setCategory} showActive={showActive} onToggleActive={() => setShowActive(!showActive)} />
 
-      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {DEAL_STAGES.map((stage) => {
-            const stageDeals = filteredDeals.filter((d) => d.stage === stage.key);
-            return (<DroppableColumn key={stage.key} id={stage.key} title={stage.label} dotColor={stage.dotColor} deals={stageDeals} onDealClick={setSelectedDeal} />);
-          })}
-        </div>
-        <DragOverlay>
-          {activeDrag ? (
-            <div className="w-[270px] opacity-90 rotate-[2deg]">
-              <DealCard deal={activeDrag} onClick={() => {}} />
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+          <div className="flex gap-3 overflow-x-auto p-6">
+            {DEAL_STAGES.map((stage) => {
+              const stageDeals = filteredDeals.filter((d) => d.stage === stage.key);
+              return (<DroppableColumn key={stage.key} id={stage.key} title={stage.label} dotColor={stage.dotColor} deals={stageDeals} onDealClick={setSelectedDeal} />);
+            })}
+          </div>
+          <DragOverlay>
+            {activeDrag ? (
+              <div className="w-[270px] opacity-90 rotate-[2deg]">
+                <DealCard deal={activeDrag} onClick={() => {}} />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      </div>
 
       {selectedDeal && <DealDetailSidebar deal={selectedDeal} onClose={() => setSelectedDeal(null)} onUpdate={handleUpdateDeal} />}
       {showCreate && <DealCreateModal leads={leads} onClose={() => setShowCreate(false)} onCreate={handleCreateDeal} />}

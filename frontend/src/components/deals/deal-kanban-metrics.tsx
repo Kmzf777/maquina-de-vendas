@@ -27,24 +27,24 @@ export function DealKanbanMetrics({ deals }: DealKanbanMetricsProps) {
     `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
 
   return (
-    <div className="bg-[#faf9f6] border-b border-[#dedbd6] px-6 py-3 flex gap-8 mb-5">
+    <div className="bg-[#f7f5f1] border-b border-[#dedbd6] px-6 py-3 flex gap-8 flex-shrink-0">
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{activeDeals.length}</span>
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#111111]">{activeDeals.length}</span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Pipeline ativo</span>
         <span className="text-[11px] text-[#7b7b78] mt-0.5">{fmt(pipelineValue)}</span>
       </div>
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{fmt(wonValue)}</span>
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#0bdf50]">{fmt(wonValue)}</span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Ganho no mes</span>
         <span className="text-[11px] text-[#7b7b78] mt-0.5">{wonThisMonth.length} deals</span>
       </div>
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{conversionRate}%</span>
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#111111]">{conversionRate}%</span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Taxa de conversao</span>
         <span className="text-[11px] text-[#7b7b78] mt-0.5">{totalWon} de {totalClosed} fechados</span>
       </div>
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">{deals.length}</span>
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#111111]">{deals.length}</span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total de deals</span>
         <span className="text-[11px] text-[#7b7b78] mt-0.5">{fmt(deals.reduce((sum, d) => sum + (d.value || 0), 0))}</span>
       </div>

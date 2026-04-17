@@ -32,10 +32,12 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
     .map((w) => w[0]?.toUpperCase() || "")
     .join("");
 
+  const tempDotColor = temp === "quente" ? "#0bdf50" : temp === "morno" ? "#ff5600" : "#65b5ff";
+
   return (
     <button
       onClick={() => onClick(lead)}
-      className="w-full text-left bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 hover:border-[#111111] transition-colors cursor-pointer"
+      className="w-full text-left bg-white border border-[#dedbd6] rounded-[8px] p-4 hover:border-[#111111] transition-colors cursor-pointer"
     >
       {/* Header: Avatar + Name + Temp Badge */}
       <div className="flex justify-between items-start mb-3">
@@ -44,10 +46,13 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
             {initials}
           </div>
           <div>
-            <p className="text-[14px] font-medium text-[#111111]">
-              {lead.name || lead.phone}
-            </p>
-            <p className="text-[12px] text-[#7b7b78]">{lead.phone}</p>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: tempDotColor }} />
+              <p className="text-[15px] font-medium text-[#111111]">
+                {lead.name || lead.phone}
+              </p>
+            </div>
+            <p className="text-[13px] text-[#7b7b78]">{lead.phone}</p>
           </div>
         </div>
         <span

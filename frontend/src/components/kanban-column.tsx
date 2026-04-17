@@ -29,17 +29,17 @@ export function KanbanColumn({
   footer,
 }: KanbanColumnProps) {
   return (
-    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
+    <div className="bg-[#f7f5f1] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
       {/* Column header */}
-      <div className="px-4 py-3 border-b border-[#dedbd6] flex items-center justify-between">
+      <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: dotColor }}
           />
-          <h3 className="text-[13px] uppercase tracking-[0.6px] text-[#7b7b78]">{title}</h3>
+          <h3 className="text-[13px] font-medium text-[#111111] uppercase tracking-[0.6px]">{title}</h3>
         </div>
-        <span className="bg-[#111111] text-white text-[11px] px-2 py-0.5 rounded-[4px]">
+        <span className="text-[12px] text-[#7b7b78] bg-white border border-[#dedbd6] rounded-full px-2 py-0.5">
           {leads.length}
         </span>
       </div>
