@@ -8,10 +8,10 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
   const isConversas = pathname === "/conversas";
 
   return (
-    <div className="flex h-screen canvas-texture">
+    <div className="flex h-screen bg-[#faf9f6]">
       <Sidebar />
       <main
-        className={`flex-1 relative z-10 ${
+        className={`flex-1 relative ${
           isConversas ? "overflow-hidden" : "p-8 overflow-auto"
         }`}
       >
