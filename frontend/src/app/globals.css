@@ -1,125 +1,134 @@
 @import "tailwindcss";
 
 :root {
-  --bg-canvas: #f6f7ed;
-  --bg-card: #ffffff;
-  --bg-muted: #f4f4f4;
-  --bg-dark: #1f1f1f;
-  --bg-dark-hover: #2a2a2a;
-  --bg-dark-active: #333333;
-  --text-primary: #1f1f1f;
-  --text-secondary: #5f6368;
-  --text-muted: #9ca3af;
-  --border-default: #e5e5dc;
-  --border-subtle: #ededea;
-  --accent-olive: #c8cc8e;
-  --accent-olive-bg: #f0f1d8;
-  --accent-yellow: #e8d44d;
-  --accent-yellow-bg: #faf5d0;
-  --accent-green: #4ade80;
-  --accent-red: #f87171;
+  /* Intercom Design System Tokens */
+  --color-off-black: #111111;
+  --color-fin: #ff5600;
+  --color-warm-cream: #faf9f6;
+  --color-oat-border: #dedbd6;
+  --color-muted: #7b7b78;
+  --color-black-80: #313130;
+  --color-black-60: #626260;
+  --color-white: #ffffff;
+  --color-warm-sand: #d3cec6;
+
+  /* Report palette */
+  --color-report-blue: #65b5ff;
+  --color-report-green: #0bdf50;
+  --color-report-red: #c41c1c;
+  --color-report-orange: #fe4c02;
+  --color-report-pink: #ff2067;
+  --color-report-lime: #b3e01c;
+
+  /* Semantic aliases */
+  --bg-canvas: var(--color-warm-cream);
+  --bg-card: var(--color-warm-cream);
+  --bg-surface: var(--color-white);
+  --text-primary: var(--color-off-black);
+  --text-secondary: var(--color-black-60);
+  --text-muted: var(--color-muted);
+  --border-default: var(--color-oat-border);
+  --accent-green: #0bdf50;
+  --accent-red: #c41c1c;
 }
 
 @theme inline {
-  --color-background: var(--bg-canvas);
-  --color-foreground: var(--text-primary);
+  --color-background: var(--color-warm-cream);
+  --color-foreground: var(--color-off-black);
 }
 
 body {
-  background: var(--bg-canvas);
-  color: var(--text-primary);
-  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  background: var(--color-warm-cream);
+  color: var(--color-off-black);
+  font-family: var(--font-geist), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #d1d1c7;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #b0b0a6;
-}
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-oat-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-warm-sand); }
 
 /* Selection */
-::selection {
-  background: var(--accent-olive);
-  color: var(--bg-dark);
-}
+::selection { background: var(--color-fin); color: var(--color-white); }
 
-/* Card base */
+/* Card base — Intercom style */
 .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 16px;
-  box-shadow: 0 1px 3px rgba(31, 31, 31, 0.04), 0 1px 2px rgba(31, 31, 31, 0.02);
+  background: var(--color-warm-cream);
+  border: 1px solid var(--color-oat-border);
+  border-radius: 8px;
 }
 
 .card-hover {
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.15s ease;
 }
 
 .card-hover:hover {
-  box-shadow: 0 4px 12px rgba(31, 31, 31, 0.08), 0 2px 4px rgba(31, 31, 31, 0.04);
-  transform: translateY(-1px);
+  border-color: var(--color-black-60);
 }
 
-/* Button base */
+/* Button base — Intercom style */
 .btn-primary {
-  background: var(--bg-dark);
-  color: white;
-  border-radius: 10px;
-  font-weight: 500;
-  transition: background 0.15s ease;
+  background: var(--color-off-black);
+  color: var(--color-white);
+  border-radius: 4px;
+  padding: 0 14px;
+  font-size: 16px;
+  line-height: 1.5;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+  border: 1px solid transparent;
 }
 
 .btn-primary:hover {
-  background: var(--bg-dark-hover);
+  transform: scale(1.1);
+  background: var(--color-white);
+  color: var(--color-off-black);
+  border-color: var(--color-off-black);
+}
+
+.btn-primary:active {
+  transform: scale(0.85);
+  background: #2c6415;
+  color: var(--color-white);
+  border-color: transparent;
 }
 
 .btn-secondary {
   background: transparent;
-  color: var(--text-primary);
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  font-weight: 500;
-  transition: all 0.15s ease;
+  color: var(--color-off-black);
+  border: 1px solid var(--color-off-black);
+  border-radius: 4px;
+  padding: 0 14px;
+  font-size: 16px;
+  line-height: 1.5;
+  transition: transform 0.15s ease;
+  cursor: pointer;
 }
 
-.btn-secondary:hover {
-  background: var(--bg-muted);
-}
+.btn-secondary:hover { transform: scale(1.1); }
+.btn-secondary:active { transform: scale(0.85); }
 
 /* Input base */
 .input-field {
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  color: var(--text-primary);
+  background: var(--color-white);
+  border: 1px solid var(--color-oat-border);
+  border-radius: 6px;
+  color: var(--color-off-black);
   font-size: 0.875rem;
   padding: 0.5rem 0.75rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
   outline: none;
 }
 
 .input-field:focus {
-  border-color: var(--bg-dark);
-  box-shadow: 0 0 0 3px rgba(31, 31, 31, 0.06);
+  border-color: var(--color-off-black);
 }
 
 .input-field::placeholder {
-  color: var(--text-muted);
+  color: var(--color-muted);
 }
 
 /* Badge */
@@ -127,25 +136,12 @@ body {
   display: inline-flex;
   align-items: center;
   padding: 0.125rem 0.625rem;
-  border-radius: 9999px;
+  border-radius: 4px;
   font-size: 0.75rem;
-  font-weight: 500;
   line-height: 1.25rem;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
-}
-
-/* Subtle noise texture for canvas */
-.canvas-texture {
-  position: relative;
-}
-
-.canvas-texture::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.015;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  z-index: 0;
+  border: 1px solid var(--color-oat-border);
+  background: var(--color-warm-cream);
+  color: var(--color-black-80);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
 }
