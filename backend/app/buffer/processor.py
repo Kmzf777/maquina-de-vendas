@@ -162,6 +162,7 @@ async def process_buffered_messages(
         save_message(
             conversation["id"], lead["id"], "user",
             resolved_text, conversation.get("stage"),
+            sent_by="user",
         )
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
