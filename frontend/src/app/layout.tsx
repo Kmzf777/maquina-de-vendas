@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
-import { DM_Sans } from "next/font/google";
+import { Geist } from "next/font/google";
 import "./globals.css";
 
-const dmSans = DM_Sans({
+const geist = Geist({
   subsets: ["latin"],
-  variable: "--font-dm-sans",
-  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-geist",
 });
 
 export const metadata: Metadata = {
@@ -24,7 +23,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body suppressHydrationWarning className={`${dmSans.variable} ${dmSans.className}`}>{children}</body>
+      <body suppressHydrationWarning className={`${geist.variable} ${geist.className}`}>
+        {children}
+      </body>
     </html>
   );
 }
