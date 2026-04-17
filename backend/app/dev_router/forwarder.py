@@ -9,6 +9,7 @@ _FORWARD_HEADERS = {"content-type", "x-hub-signature-256"}
 
 async def forward_to_dev(dev_url: str, path: str, headers: dict, body: bytes) -> None:
     filtered = {k: v for k, v in headers.items() if k.lower() in _FORWARD_HEADERS}
+    filtered["x-dev-routed"] = "1"
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)

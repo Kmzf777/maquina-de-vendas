@@ -19,7 +19,8 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(
-        settings.redis_url, decode_responses=True
+        settings.redis_url, decode_responses=True,
+        socket_connect_timeout=5, socket_timeout=5,
     )
     # Start with buffer OFF; toggle via POST /api/buffer
     await app.state.redis.set("config:buffer_enabled", "0")

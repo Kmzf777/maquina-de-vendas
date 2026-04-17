@@ -79,7 +79,7 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
         msg.channel_id = channel["id"]
 
-        if await is_dev_number(redis, msg.from_number):
+        if await is_dev_number(redis, msg.from_number) and request.headers.get("x-dev-routed") != "1":
             if not forwarded_to_dev:
                 logger.info(f"Dev routing: forwarding Meta {msg.from_number} to {settings.dev_server_url}")
                 background_tasks.add_task(

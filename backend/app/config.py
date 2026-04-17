@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     dev_server_url: str = "http://172.17.0.1:8001"
     dev_api_key: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"env_file": (".env", ".env.local"), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 _settings: Settings | None = None
