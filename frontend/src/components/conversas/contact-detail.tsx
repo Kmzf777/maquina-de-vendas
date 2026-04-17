@@ -56,7 +56,7 @@ export function ContactDetail({
     : 0;
 
   return (
-    <div className="w-[320px] bg-[#faf9f6] border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
+    <div className="w-[320px] bg-white border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
       {/* Avatar + Name */}
       <div className="flex flex-col items-center pt-8 pb-4 px-4 border-b border-[#dedbd6]">
         <div className="w-20 h-20 rounded-full bg-[#8a8a80] flex items-center justify-center text-white text-2xl font-medium mb-3">

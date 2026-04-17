@@ -74,7 +74,7 @@ export function ChatList({
     });
 
   return (
-    <div className="w-[320px] bg-[#faf9f6] border-r border-[#dedbd6] flex flex-col h-full">
+    <div className="w-[320px] bg-[#f0ede8] border-r border-[#dedbd6] flex flex-col h-full">
       {/* Channel filter */}
       <div className="px-3 pt-3 pb-2">
         <select
@@ -139,8 +139,8 @@ export function ChatList({
               onClick={() => onSelectConversation(conv)}
               className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors ${
                 isActive
-                  ? "bg-white border border-[#dedbd6] rounded-[6px] mx-2 px-3 py-3"
-                  : "hover:bg-[#dedbd6]/30 rounded-[6px] mx-2 px-3 py-3 cursor-pointer"
+                  ? "bg-[#111111] text-white rounded-[6px] mx-2 px-3 py-3"
+                  : "hover:bg-[#dedbd6]/60 rounded-[6px] mx-2 px-3 py-3 cursor-pointer"
               }`}
               style={isActive ? { width: "calc(100% - 16px)" } : { width: "calc(100% - 16px)" }}
             >
@@ -154,20 +154,20 @@ export function ChatList({
               {/* Info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-[13px] text-[#111111] truncate font-medium">
+                  <span className={`text-[13px] truncate font-medium ${isActive ? "text-white" : "text-[#313130]"}`}>
                     {displayName}
                   </span>
-                  <span className="text-[11px] text-[#7b7b78] flex-shrink-0">
+                  <span className={`text-[11px] flex-shrink-0 ${isActive ? "text-white/70" : "text-[#7b7b78]"}`}>
                     {formatTime(conv.last_msg_at)}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   {channel && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-[4px] flex-shrink-0 bg-[#dedbd6]/60 text-[#7b7b78]">
+                    <span className={`text-[11px] px-2 py-0.5 rounded-[4px] flex-shrink-0 ${isActive ? "bg-white/20 text-white/80" : "bg-[#dedbd6]/60 text-[#7b7b78]"}`}>
                       {channel.name}
                     </span>
                   )}
-                  <span className="text-[12px] text-[#7b7b78] truncate">
+                  <span className={`text-[12px] truncate ${isActive ? "text-white/70" : "text-[#7b7b78]"}`}>
                     {lead?.phone || ""}
                   </span>
                 </div>

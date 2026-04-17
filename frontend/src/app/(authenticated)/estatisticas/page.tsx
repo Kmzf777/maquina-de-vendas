@@ -161,30 +161,32 @@ export default function EstatisticasPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div>
+      <div className="flex flex-col h-full">
+        <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0">
           <div className="h-8 w-48 rounded-[4px] animate-pulse bg-[#dedbd6]" />
           <div className="h-4 w-72 rounded-[4px] animate-pulse mt-2 bg-[#dedbd6]" />
         </div>
-        <div className="grid grid-cols-4 gap-5">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5 h-28 animate-pulse" />
-          ))}
+        <div className="p-8 flex-1 bg-[#faf9f6]">
+          <div className="grid grid-cols-4 gap-5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-28 animate-pulse" />
+            ))}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
-      {/* Header */}
-      <div className="mb-8 flex items-end justify-between">
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0 flex items-end justify-between">
         <div>
           <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">
-            Estatisticas
+            Tokens AI
           </h1>
-          <p className="text-[14px] text-[#7b7b78] mt-1">
-            Custos e consumo do agente de IA
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">
+            Uso de tokens por modelo
           </p>
         </div>
 
@@ -221,125 +223,127 @@ export default function EstatisticasPage() {
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-4 gap-5 mb-8">
-        <KpiCard label="Custo Total" value={formatUSD(summary?.total_cost ?? 0)} icon={DollarIcon} />
-        <KpiCard label="Chamadas API" value={summary?.total_calls ?? 0} icon={CallsIcon} />
-        <KpiCard label="Tokens Consumidos" value={(summary?.total_tokens ?? 0).toLocaleString()} icon={TokensIcon} />
-        <KpiCard
-          label="Custo Medio/Lead"
-          value={formatUSD(summary?.avg_cost_per_lead ?? 0)}
-          subtitle={`${summary?.unique_leads ?? 0} leads`}
-          icon={AvgIcon}
-        />
-      </div>
+      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+        {/* KPI Cards */}
+        <div className="grid grid-cols-4 gap-5 mb-8">
+          <KpiCard label="Custo Total" value={formatUSD(summary?.total_cost ?? 0)} icon={DollarIcon} />
+          <KpiCard label="Chamadas API" value={summary?.total_calls ?? 0} icon={CallsIcon} />
+          <KpiCard label="Tokens Consumidos" value={(summary?.total_tokens ?? 0).toLocaleString()} icon={TokensIcon} />
+          <KpiCard
+            label="Custo Medio/Lead"
+            value={formatUSD(summary?.avg_cost_per_lead ?? 0)}
+            subtitle={`${summary?.unique_leads ?? 0} leads`}
+            icon={AvgIcon}
+          />
+        </div>
 
-      {/* Daily Cost Line Chart */}
-      <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6 mb-8">
-        <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-          Custo Diario (USD)
-        </h2>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={daily}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
-            <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fontSize: 12, fill: "#7b7b78" }} />
-            <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-            <Tooltip
-              formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]}
-              labelFormatter={(label) => formatDate(String(label))}
-            />
-            <Line type="monotone" dataKey="cost" stroke="#111111" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Breakdown Charts */}
-      <div className="grid grid-cols-2 gap-5 mb-8">
-        {/* By Stage */}
-        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
+        {/* Daily Cost Line Chart */}
+        <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5 mb-8">
           <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-            Custo por Stage
+            Custo Diario (USD)
           </h2>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={byStage}>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={daily}>
               <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
-              <XAxis dataKey="key" tick={{ fontSize: 12, fill: "#7b7b78" }} />
+              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fontSize: 12, fill: "#7b7b78" }} />
               <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-              <Tooltip formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]} />
-              <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
-                {byStage.map((entry) => (
-                  <Cell key={entry.key} fill={STAGE_COLORS[entry.key] || "#7b7b78"} />
-                ))}
-              </Bar>
-            </BarChart>
+              <Tooltip
+                formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]}
+                labelFormatter={(label) => formatDate(String(label))}
+              />
+              <Line type="monotone" dataKey="cost" stroke="#111111" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+            </LineChart>
           </ResponsiveContainer>
         </div>
 
-        {/* By Model */}
-        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
-          <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-            Custo por Modelo
-          </h2>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={byModel}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
-              <XAxis dataKey="key" tick={{ fontSize: 12, fill: "#7b7b78" }} />
-              <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-              <Tooltip formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]} />
-              <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
-                {byModel.map((entry) => (
-                  <Cell key={entry.key} fill={MODEL_COLORS[entry.key] || "#7b7b78"} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+        {/* Breakdown Charts */}
+        <div className="grid grid-cols-2 gap-5 mb-8">
+          {/* By Stage */}
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+            <h2 className="text-[14px] font-normal text-[#111111] mb-4">
+              Custo por Stage
+            </h2>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={byStage}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
+                <XAxis dataKey="key" tick={{ fontSize: 12, fill: "#7b7b78" }} />
+                <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
+                <Tooltip formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]} />
+                <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
+                  {byStage.map((entry) => (
+                    <Cell key={entry.key} fill={STAGE_COLORS[entry.key] || "#7b7b78"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
 
-      {/* Top Leads Table */}
-      <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
-        <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-          Top Leads por Custo
-        </h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[#dedbd6]">
-                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Lead</th>
-                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Stage</th>
-                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Chamadas</th>
-                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Tokens</th>
-                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Custo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topLeads.map((lead) => (
-                <tr key={lead.lead_id} className="border-b border-[#dedbd6] hover:bg-white transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="text-[14px] text-[#111111]">{lead.name}</div>
-                    {lead.phone && (
-                      <div className="text-[12px] text-[#7b7b78]">{lead.phone}</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
-                      {lead.stage}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right text-[14px] text-[#7b7b78]">{lead.calls}</td>
-                  <td className="px-4 py-3 text-right text-[14px] text-[#7b7b78]">{lead.tokens.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right text-[14px] font-normal text-[#111111]">{formatUSD(lead.cost)}</td>
+          {/* By Model */}
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+            <h2 className="text-[14px] font-normal text-[#111111] mb-4">
+              Custo por Modelo
+            </h2>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={byModel}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
+                <XAxis dataKey="key" tick={{ fontSize: 12, fill: "#7b7b78" }} />
+                <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
+                <Tooltip formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]} />
+                <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
+                  {byModel.map((entry) => (
+                    <Cell key={entry.key} fill={MODEL_COLORS[entry.key] || "#7b7b78"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Top Leads Table */}
+        <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+          <h2 className="text-[14px] font-normal text-[#111111] mb-4">
+            Top Leads por Custo
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[#dedbd6]">
+                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Lead</th>
+                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Stage</th>
+                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Chamadas</th>
+                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Tokens</th>
+                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Custo</th>
                 </tr>
-              ))}
-              {topLeads.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-[14px] text-[#7b7b78]">
-                    Nenhum dado de custo encontrado para o periodo selecionado
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {topLeads.map((lead) => (
+                  <tr key={lead.lead_id} className="border-b border-[#dedbd6] hover:bg-[#faf9f6] transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="text-[14px] text-[#111111]">{lead.name}</div>
+                      {lead.phone && (
+                        <div className="text-[12px] text-[#7b7b78]">{lead.phone}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
+                        {lead.stage}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-[14px] text-[#7b7b78]">{lead.calls}</td>
+                    <td className="px-4 py-3 text-right text-[14px] text-[#7b7b78]">{lead.tokens.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-[14px] font-normal text-[#111111]">{formatUSD(lead.cost)}</td>
+                  </tr>
+                ))}
+                {topLeads.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-[14px] text-[#7b7b78]">
+                      Nenhum dado de custo encontrado para o periodo selecionado
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
