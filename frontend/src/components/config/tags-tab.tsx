@@ -77,54 +77,50 @@ export function TagsTab() {
   if (loading) {
     return (
       <div className="flex items-center gap-3 py-6">
-        <div className="w-4 h-4 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
-        <p className="text-[#5f6368] text-[13px]">Carregando tags...</p>
+        <div className="w-4 h-4 border-2 border-[#dedbd6] border-t-transparent rounded-full animate-spin" />
+        <p className="text-[#7b7b78] text-[14px]">Carregando tags...</p>
       </div>
     );
   }
 
   return (
-    <div className="card p-6">
+    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
       <div className="flex items-center justify-between mb-5">
-        <h2 className="text-[16px] font-semibold text-[#1f1f1f]">Tags</h2>
+        <h2 className="text-[14px] font-normal text-[#111111]">Tags</h2>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium"
+          className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="7" y1="2" x2="7" y2="12" />
-            <line x1="2" y1="7" x2="12" y2="7" />
-          </svg>
-          Nova Tag
+          + Nova Tag
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleCreate} className="flex items-center gap-3 mb-5 p-4 bg-[#f6f7ed] rounded-xl">
+        <form onSubmit={handleCreate} className="flex items-center gap-3 mb-5 p-4 bg-white border border-[#dedbd6] rounded-[8px]">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Nome da tag"
-            className="input-field flex-1"
+            className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none flex-1"
             autoFocus
           />
           <input
             type="color"
             value={newColor}
             onChange={(e) => setNewColor(e.target.value)}
-            className="w-10 h-10 rounded-lg cursor-pointer border border-[#e5e5dc] p-0.5"
+            className="w-10 h-10 rounded-[4px] cursor-pointer border border-[#dedbd6] p-0.5"
           />
           <button
             type="submit"
-            className="btn-primary px-4 py-2 rounded-xl text-[13px] font-medium"
+            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
           >
             Salvar
           </button>
           <button
             type="button"
             onClick={() => setShowForm(false)}
-            className="btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
           >
             Cancelar
           </button>
@@ -133,34 +129,34 @@ export function TagsTab() {
 
       <div className="space-y-2">
         {tags.length === 0 && (
-          <p className="text-[#9ca3af] text-[13px] py-4">Nenhuma tag criada ainda.</p>
+          <p className="text-[#7b7b78] text-[14px] py-4">Nenhuma tag criada ainda.</p>
         )}
         {tags.map((tag) => (
           <div key={tag.id} className="flex items-center gap-2">
             {editingId === tag.id ? (
-              <div className="flex items-center gap-3 flex-1 p-3 bg-[#f6f7ed] rounded-xl">
+              <div className="flex items-center gap-3 flex-1 p-3 bg-white border border-[#dedbd6] rounded-[8px]">
                 <input
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="input-field flex-1"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none flex-1"
                   autoFocus
                 />
                 <input
                   type="color"
                   value={editColor}
                   onChange={(e) => setEditColor(e.target.value)}
-                  className="w-10 h-10 rounded-lg cursor-pointer border border-[#e5e5dc] p-0.5"
+                  className="w-10 h-10 rounded-[4px] cursor-pointer border border-[#dedbd6] p-0.5"
                 />
                 <button
                   onClick={() => handleEdit(tag.id)}
-                  className="btn-primary px-4 py-2 rounded-xl text-[13px] font-medium"
+                  className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
                 >
                   Salvar
                 </button>
                 <button
                   onClick={() => setEditingId(null)}
-                  className="btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium"
+                  className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
                 >
                   Cancelar
                 </button>
@@ -168,7 +164,7 @@ export function TagsTab() {
             ) : (
               <div className="flex items-center gap-3 flex-1 py-2">
                 <span
-                  className="inline-flex items-center px-3 py-1 rounded-full text-[13px] text-white font-medium"
+                  className="inline-flex items-center px-3 py-1 rounded-[4px] text-[14px] text-white font-normal"
                   style={{ backgroundColor: tag.color }}
                 >
                   {tag.name}
@@ -176,7 +172,7 @@ export function TagsTab() {
                 <div className="flex items-center gap-1 ml-auto">
                   <button
                     onClick={() => startEdit(tag)}
-                    className="p-2 rounded-lg text-[#9ca3af] hover:text-[#1f1f1f] hover:bg-[#f6f7ed] transition-colors"
+                    className="p-2 rounded-[4px] text-[#7b7b78] hover:text-[#111111] hover:bg-[#faf9f6] transition-colors"
                     title="Editar"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -186,7 +182,7 @@ export function TagsTab() {
                   </button>
                   <button
                     onClick={() => handleDelete(tag.id)}
-                    className="p-2 rounded-lg text-[#9ca3af] hover:text-red-500 hover:bg-red-50 transition-colors"
+                    className="p-2 rounded-[4px] text-[#7b7b78] hover:text-[#c41c1c] transition-colors"
                     title="Excluir"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -8,7 +8,7 @@ interface TrendData {
 
 export function CampaignTrendChart({ data }: { data: TrendData[] }) {
   if (!data.length) {
-    return <p className="text-[13px] text-[#9ca3af] text-center py-8">Sem dados no periodo</p>;
+    return <p className="text-[14px] text-[#7b7b78] text-center py-8">Sem dados no periodo</p>;
   }
 
   const maxVal = Math.max(...data.map((d) => Math.max(d.sent, d.responded)), 1);
@@ -32,7 +32,7 @@ export function CampaignTrendChart({ data }: { data: TrendData[] }) {
                     y1={height - (data[i - 1].sent / maxVal) * height}
                     x2={x}
                     y2={ySent}
-                    stroke="#c8cc8e"
+                    stroke="#dedbd6"
                     strokeWidth="2"
                   />
                   <line
@@ -40,23 +40,23 @@ export function CampaignTrendChart({ data }: { data: TrendData[] }) {
                     y1={height - (data[i - 1].responded / maxVal) * height}
                     x2={x}
                     y2={yResp}
-                    stroke="#5aad65"
+                    stroke="#0bdf50"
                     strokeWidth="2"
                   />
                 </>
               )}
-              <circle cx={x} cy={ySent} r="3" fill="#c8cc8e" />
-              <circle cx={x} cy={yResp} r="3" fill="#5aad65" />
+              <circle cx={x} cy={ySent} r="3" fill="#dedbd6" />
+              <circle cx={x} cy={yResp} r="3" fill="#0bdf50" />
               {i % Math.ceil(data.length / 8) === 0 && (
-                <text x={x} y={height + 18} textAnchor="middle" fontSize="10" fill="#9ca3af">
+                <text x={x} y={height + 18} textAnchor="middle" fontSize="10" fill="#7b7b78">
                   {d.date.slice(5)}
                 </text>
               )}
             </g>
           );
         })}
-        <text x="10" y="12" fontSize="10" fill="#c8cc8e">Enviadas</text>
-        <text x="80" y="12" fontSize="10" fill="#5aad65">Respostas</text>
+        <text x="10" y="12" fontSize="10" fill="#7b7b78">Enviadas</text>
+        <text x="80" y="12" fontSize="10" fill="#0bdf50">Respostas</text>
       </svg>
     </div>
   );

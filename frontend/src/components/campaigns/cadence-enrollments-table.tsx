@@ -3,11 +3,19 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { CadenceEnrollment } from "@/lib/types";
-import { ENROLLMENT_STATUS_COLORS, ENROLLMENT_STATUS_LABELS } from "@/lib/constants";
+import { ENROLLMENT_STATUS_LABELS } from "@/lib/constants";
 
 interface CadenceEnrollmentsTableProps {
   cadenceId: string;
 }
+
+const STATUS_BADGE: Record<string, string> = {
+  active: "bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20",
+  responded: "bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20",
+  exhausted: "bg-[#c41c1c]/10 text-[#c41c1c] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#c41c1c]/20",
+  completed: "bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]",
+  paused: "bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]",
+};
 
 export function CadenceEnrollmentsTable({ cadenceId }: CadenceEnrollmentsTableProps) {
   const [enrollments, setEnrollments] = useState<CadenceEnrollment[]>([]);
@@ -60,7 +68,7 @@ export function CadenceEnrollmentsTable({ cadenceId }: CadenceEnrollmentsTablePr
 
   const filters = ["all", "active", "responded", "exhausted", "completed"];
 
-  if (loading) return <div className="py-8 text-center text-[#9ca3af] text-[13px]">Carregando...</div>;
+  if (loading) return <div className="py-8 text-center text-[#7b7b78] text-[14px]">Carregando...</div>;
 
   return (
     <div>
@@ -70,16 +78,16 @@ export function CadenceEnrollmentsTable({ cadenceId }: CadenceEnrollmentsTablePr
           placeholder="Buscar lead..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border border-[#e5e5dc] text-[13px] bg-white w-64"
+          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-64"
         />
         <div className="flex gap-1">
           {filters.map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-                filter === f ? "bg-[#1f1f1f] text-white" : "text-[#5f6368] hover:bg-[#f6f7ed]"
-              }`}
+              className={filter === f
+                ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+                : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"}
             >
               {f === "all" ? "Todos" : ENROLLMENT_STATUS_LABELS[f] || f}
             </button>
@@ -88,46 +96,53 @@ export function CadenceEnrollmentsTable({ cadenceId }: CadenceEnrollmentsTablePr
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-[13px] text-[#9ca3af] text-center py-8">Nenhum lead nesta cadencia</p>
+        <p className="text-[14px] text-[#7b7b78] text-center py-8">Nenhum lead nesta cadencia</p>
       ) : (
-        <div className="bg-white rounded-xl border border-[#e5e5dc] overflow-hidden">
-          <div className="grid grid-cols-[1fr_100px_80px_120px_100px] gap-2 px-4 py-2 bg-[#f4f4f0] text-[11px] text-[#9ca3af] uppercase tracking-wider font-medium">
-            <span>Lead</span>
-            <span>Status</span>
-            <span>Step</span>
-            <span>Proximo envio</span>
-            <span>Acoes</span>
-          </div>
-
-          {filtered.map((e) => {
-            const lead = e.leads;
-            const colors = ENROLLMENT_STATUS_COLORS[e.status] || ENROLLMENT_STATUS_COLORS.active;
-            return (
-              <div key={e.id} className="grid grid-cols-[1fr_100px_80px_120px_100px] gap-2 px-4 py-3 border-t border-[#e5e5dc] items-center">
-                <div>
-                  <p className="text-[13px] font-medium text-[#1f1f1f]">{lead?.name || lead?.phone || "—"}</p>
-                  {lead?.name && <p className="text-[11px] text-[#5f6368]">{lead.phone}</p>}
-                </div>
-                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${colors.bg} ${colors.text}`}>
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: colors.dot }} />
-                  {ENROLLMENT_STATUS_LABELS[e.status] || e.status}
-                </span>
-                <span className="text-[13px] text-[#1f1f1f]">{e.current_step}/{e.total_messages_sent}</span>
-                <span className="text-[12px] text-[#5f6368]">
-                  {e.next_send_at ? new Date(e.next_send_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
-                </span>
-                <div className="flex gap-1">
-                  {e.status === "active" && (
-                    <button onClick={() => handleAction(e.id, "pause")} className="text-[11px] text-[#8a7a2a] font-medium">Pausar</button>
-                  )}
-                  {(e.status === "paused" || e.status === "responded") && (
-                    <button onClick={() => handleAction(e.id, "resume")} className="text-[11px] text-[#2d6a3f] font-medium">Retomar</button>
-                  )}
-                  <button onClick={() => handleAction(e.id, "remove")} className="text-[11px] text-[#a33] font-medium">Remover</button>
-                </div>
-              </div>
-            );
-          })}
+        <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[#dedbd6]">
+                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Lead</th>
+                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-28">Status</th>
+                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-20">Step</th>
+                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-36">Proximo envio</th>
+                <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal w-28">Acoes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((e) => {
+                const lead = e.leads;
+                return (
+                  <tr key={e.id} className="border-b border-[#dedbd6] hover:bg-[#faf9f6]">
+                    <td className="px-4 py-3">
+                      <p className="text-[14px] text-[#111111]">{lead?.name || lead?.phone || "—"}</p>
+                      {lead?.name && <p className="text-[11px] text-[#7b7b78]">{lead.phone}</p>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={STATUS_BADGE[e.status] || STATUS_BADGE.paused}>
+                        {ENROLLMENT_STATUS_LABELS[e.status] || e.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-[14px] text-[#111111]">{e.current_step}/{e.total_messages_sent}</td>
+                    <td className="px-4 py-3 text-[14px] text-[#7b7b78]">
+                      {e.next_send_at ? new Date(e.next_send_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        {e.status === "active" && (
+                          <button onClick={() => handleAction(e.id, "pause")} className="text-[11px] text-[#7b7b78] uppercase tracking-[0.6px] hover:text-[#111111] transition-colors">Pausar</button>
+                        )}
+                        {(e.status === "paused" || e.status === "responded") && (
+                          <button onClick={() => handleAction(e.id, "resume")} className="text-[11px] text-[#0bdf50] uppercase tracking-[0.6px]">Retomar</button>
+                        )}
+                        <button onClick={() => handleAction(e.id, "remove")} className="text-[11px] text-[#c41c1c] uppercase tracking-[0.6px]">Remover</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

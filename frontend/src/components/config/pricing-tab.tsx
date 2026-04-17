@@ -64,7 +64,7 @@ export function PricingTab() {
     return (
       <div className="space-y-4">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-20 rounded-xl animate-pulse" style={{ backgroundColor: "rgba(229,229,220,0.3)" }} />
+          <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] h-20 animate-pulse" />
         ))}
       </div>
     );
@@ -72,24 +72,24 @@ export function PricingTab() {
 
   return (
     <div className="space-y-4">
-      <p className="text-[13px] mb-4" style={{ color: "var(--text-muted)" }}>
+      <p className="text-[14px] text-[#7b7b78] mb-4">
         Precos por 1M tokens (USD). Estes valores sao usados para calcular o custo de cada chamada ao agente.
       </p>
 
       {models.map((m) => (
-        <div key={m.model} className="card p-5">
+        <div key={m.model} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>
+            <h3 className="text-[14px] font-normal text-[#111111]">
               {m.model}
             </h3>
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span className="text-[11px] text-[#7b7b78]">
               Atualizado: {new Date(m.updated_at).toLocaleDateString("pt-BR")}
             </span>
           </div>
 
           <div className="flex items-end gap-4">
             <div className="flex-1">
-              <label className="block text-[12px] font-medium mb-1" style={{ color: "var(--text-secondary)" }}>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
                 Input ($/1M tokens)
               </label>
               <input
@@ -102,11 +102,11 @@ export function PricingTab() {
                     [m.model]: { ...prev[m.model], input: e.target.value },
                   }))
                 }
-                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#e0e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#c8cc8e]"
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
               />
             </div>
             <div className="flex-1">
-              <label className="block text-[12px] font-medium mb-1" style={{ color: "var(--text-secondary)" }}>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
                 Output ($/1M tokens)
               </label>
               <input
@@ -119,14 +119,13 @@ export function PricingTab() {
                     [m.model]: { ...prev[m.model], output: e.target.value },
                   }))
                 }
-                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#e0e0d8] bg-white focus:outline-none focus:ring-2 focus:ring-[#c8cc8e]"
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
               />
             </div>
             <button
               onClick={() => handleSave(m.model)}
               disabled={saving === m.model}
-              className="px-5 py-2 text-[13px] font-medium rounded-lg text-white transition-all disabled:opacity-50"
-              style={{ backgroundColor: "var(--accent-olive)" }}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
             >
               {saving === m.model ? "Salvando..." : "Salvar"}
             </button>

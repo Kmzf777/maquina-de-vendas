@@ -19,7 +19,7 @@ export function CadenceTriggerConfig({ targetType, targetStage, stagnationDays, 
   return (
     <div className="space-y-3">
       <div>
-        <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Tipo de trigger</label>
+        <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Tipo de trigger</label>
         <select
           value={targetType}
           onChange={(e) => {
@@ -27,7 +27,7 @@ export function CadenceTriggerConfig({ targetType, targetStage, stagnationDays, 
             onChange("target_stage", null);
             onChange("stagnation_days", null);
           }}
-          className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
         >
           <option value="manual">Manual</option>
           <option value="lead_stage">Quando lead entra no stage</option>
@@ -38,11 +38,11 @@ export function CadenceTriggerConfig({ targetType, targetStage, stagnationDays, 
       {targetType !== "manual" && (
         <>
           <div>
-            <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Stage</label>
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Stage</label>
             <select
               value={targetStage || ""}
               onChange={(e) => onChange("target_stage", e.target.value || null)}
-              className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+              className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
             >
               <option value="">Selecionar stage...</option>
               {stages.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
@@ -50,7 +50,7 @@ export function CadenceTriggerConfig({ targetType, targetStage, stagnationDays, 
           </div>
 
           <div>
-            <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
               Dias parado no stage (opcional — vazio = imediato)
             </label>
             <input
@@ -58,7 +58,7 @@ export function CadenceTriggerConfig({ targetType, targetStage, stagnationDays, 
               value={stagnationDays ?? ""}
               onChange={(e) => onChange("stagnation_days", e.target.value ? Number(e.target.value) : null)}
               placeholder="Ex: 3"
-              className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+              className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
             />
           </div>
         </>

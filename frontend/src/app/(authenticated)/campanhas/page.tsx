@@ -42,10 +42,10 @@ export default function CampanhasPage() {
   if (bLoading || cLoading) {
     return (
       <div className="space-y-6">
-        <div className="h-8 w-48 rounded-lg animate-pulse" style={{ backgroundColor: "#e5e5dc" }} />
+        <div className="h-8 w-48 rounded-[4px] animate-pulse bg-[#dedbd6]" />
         <div className="grid grid-cols-5 gap-4">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="card p-4 h-20 animate-pulse" style={{ backgroundColor: "rgba(229,229,220,0.3)" }} />
+            <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 h-20 animate-pulse" />
           ))}
         </div>
       </div>
@@ -56,23 +56,23 @@ export default function CampanhasPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-[28px] font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+          <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">
             Campanhas
           </h1>
-          <p className="text-[14px] mt-1" style={{ color: "var(--text-muted)" }}>
+          <p className="text-[14px] text-[#7b7b78] mt-1">
             Disparos em massa e cadencias de follow-up
           </p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowBroadcastModal(true)}
-            className="px-4 py-2 rounded-xl text-[13px] font-medium bg-[#1f1f1f] text-white hover:bg-[#333] transition-colors"
+            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
           >
             + Disparo
           </button>
           <button
             onClick={() => setShowCadenceModal(true)}
-            className="px-4 py-2 rounded-xl text-[13px] font-medium bg-[#f6f7ed] text-[#1f1f1f] border border-[#e5e5dc] hover:bg-[#eef0e0] transition-colors"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
           >
             + Cadencia
           </button>
@@ -90,39 +90,39 @@ export default function CampanhasPage() {
 
       {/* Create Cadence Modal */}
       {showCadenceModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md">
-            <div className="bg-[#1f1f1f] text-white px-6 py-4 rounded-t-2xl flex items-center justify-between">
-              <h2 className="text-[16px] font-semibold">Nova Cadencia</h2>
-              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); }} className="text-[#9ca3af] hover:text-white text-xl">&times;</button>
+        <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[14px] font-normal text-[#111111]">Nova Cadencia</h2>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="space-y-4">
               <div>
-                <label className="text-[12px] text-[#5f6368] uppercase tracking-wider block mb-1">Nome da cadencia</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome da cadencia</label>
                 <input
                   value={cadenceName}
                   onChange={(e) => setCadenceName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleCreateCadence()}
-                  className="w-full px-3 py-2 rounded-lg border border-[#e5e5dc] text-[13px]"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                   placeholder="Ex: Follow-up Atacado"
                   autoFocus
                 />
               </div>
-              <p className="text-[12px] text-[#9ca3af]">
+              <p className="text-[12px] text-[#7b7b78]">
                 Apos criar, voce podera configurar steps, triggers e demais opcoes na pagina de detalhe.
               </p>
             </div>
-            <div className="px-6 py-4 border-t border-[#e5e5dc] flex justify-end gap-2">
+            <div className="pt-4 border-t border-[#dedbd6] mt-4 flex justify-end gap-2">
               <button
                 onClick={() => { setShowCadenceModal(false); setCadenceName(""); }}
-                className="px-4 py-2 rounded-lg text-[13px] font-medium text-[#5f6368] hover:bg-[#f6f7ed]"
+                className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleCreateCadence}
                 disabled={!cadenceName.trim() || creatingSaving}
-                className="px-4 py-2 rounded-lg text-[13px] font-medium bg-[#1f1f1f] text-white hover:bg-[#333] disabled:opacity-50"
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
               >
                 {creatingSaving ? "Criando..." : "Criar Cadencia"}
               </button>
