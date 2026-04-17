@@ -129,6 +129,6 @@ Execute mudar_stage("exportacao") e pergunte: "qual e o mercado/pais de destino 
 - salvar_nome: quando descobrir o nome
 - enviar_fotos("private_label"): enviar catalogo completo de exemplos de embalagens
 - enviar_foto_produto: enviar foto individual de um exemplo especifico
-- encaminhar_humano: quando lead interessado, encaminhar para Joao Bras
+- encaminhar_humano: quando lead interessado, encaminhar para atendimento humano via CRM
 - mudar_stage: se perceber que lead quer outro servico
 """
