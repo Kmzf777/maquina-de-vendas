@@ -20,6 +20,7 @@ class FakeRedis:
         self._lists: dict = {}
         self._sorted: dict = {}
         self._strings: dict = {}
+        self._sets: dict = {}
 
     async def rpush(self, key, *values):
         self._lists.setdefault(key, []).extend(values)
@@ -52,9 +53,30 @@ class FakeRedis:
             self._lists.pop(k, None)
             self._sorted.pop(k, None)
             self._strings.pop(k, None)
+            self._sets.pop(k, None)
 
     async def exists(self, *keys):
         return sum(1 for k in keys if k in self._strings or k in self._lists or k in self._sorted)
+
+    async def sadd(self, key, *values):
+        self._sets.setdefault(key, set()).update(values)
+        return len(values)
+
+    async def sismember(self, key, value):
+        return value in self._sets.get(key, set())
+
+    async def smembers(self, key):
+        return set(self._sets.get(key, set()))
+
+    async def srem(self, key, *values):
+        s = self._sets.get(key, set())
+        removed = sum(1 for v in values if v in s)
+        s -= set(values)
+        if s:
+            self._sets[key] = s
+        else:
+            self._sets.pop(key, None)
+        return removed
 
     async def expire(self, key, seconds):
         pass  # No-op in tests; TTL not tracked

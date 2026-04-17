@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     meta_access_token: str = ""
     meta_phone_number_id: str = ""
 
+    # Dev routing
+    dev_server_url: str = "http://172.17.0.1:8001"
+    dev_api_key: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
