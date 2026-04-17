@@ -149,6 +149,15 @@ async def process_buffered_messages(
     try:
         conversation["leads"] = lead
         response = await run_agent(conversation, resolved_text, agent_profile_id=agent_profile_id)
+
+        if not response or not response.strip():
+            logger.error(
+                f"[AGENT EMPTY RESPONSE] run_agent returned empty string for {phone} "
+                f"(conv={conversation['id']}, stage={conversation.get('stage')}). "
+                "Likely cause: tool loop exhausted without producing text content."
+            )
+            _update_last_msg(conversation["id"])
+            return
     except Exception as e:
         logger.error(f"Agent error for {phone}: {e}", exc_info=True)
         _update_last_msg(conversation["id"])
