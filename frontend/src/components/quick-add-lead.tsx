@@ -42,7 +42,7 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
     return (
       <button
         onClick={() => setOpen(true)}
-        className="w-full text-center py-2 text-[12px] text-[#9ca3af] hover:text-[#5f6368] border border-dashed border-[#d4d4c8] hover:border-[#c8cc8e] rounded-[10px] transition-colors mt-2"
+        className="w-full text-center py-2 text-[12px] text-[#7b7b78] hover:text-[#111111] border border-dashed border-[#dedbd6] hover:border-[#111111] rounded-[8px] transition-colors mt-2"
       >
         + Adicionar lead
       </button>
@@ -50,38 +50,38 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white border border-[#e5e5dc] rounded-xl p-3 space-y-2">
+    <form onSubmit={handleSubmit} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-3 space-y-2">
       <input
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
         placeholder="Telefone *"
-        className="input-field w-full text-[12px] rounded-lg px-3 py-1.5"
+        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-1.5 text-[12px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
         required
       />
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Nome"
-        className="input-field w-full text-[12px] rounded-lg px-3 py-1.5"
+        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-1.5 text-[12px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
       />
       <input
         value={company}
         onChange={(e) => setCompany(e.target.value)}
         placeholder="Empresa"
-        className="input-field w-full text-[12px] rounded-lg px-3 py-1.5"
+        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-1.5 text-[12px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={saving}
-          className="btn-primary flex-1 py-1.5 rounded-lg text-[12px] font-medium disabled:opacity-50"
+          className="flex-1 bg-[#111111] text-white py-1.5 rounded-[4px] text-[12px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
         >
           {saving ? "..." : "Criar"}
         </button>
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="btn-secondary flex-1 py-1.5 rounded-lg text-[12px] font-medium"
+          className="flex-1 bg-transparent text-[#111111] border border-[#111111] py-1.5 rounded-[4px] text-[12px] transition-transform hover:scale-110 active:scale-[0.85]"
         >
           Cancelar
         </button>

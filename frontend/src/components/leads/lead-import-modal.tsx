@@ -112,29 +112,36 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
   const phoneColumnMapped = Object.values(mapping).includes("phone");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-12" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30" />
+    <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="relative bg-white rounded-2xl w-full max-w-[640px] overflow-hidden shadow-[0_25px_50px_rgba(0,0,0,0.15)]"
+        className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-[640px] max-h-[90vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-5 border-b border-[#f3f3f0] flex justify-between items-center">
-          <h3 className="text-[18px] font-semibold text-[#1f1f1f]">Importar Leads (CSV)</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg border border-[#e5e5dc] flex items-center justify-center text-[#9ca3af] hover:text-[#1f1f1f]">
-            x
+        <div className="px-6 py-5 border-b border-[#dedbd6] flex justify-between items-center">
+          <h3
+            className="text-[24px] font-normal text-[#111111]"
+            style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}
+          >
+            Importar Leads (CSV)
+          </h3>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-[4px] border border-[#dedbd6] flex items-center justify-center text-[#7b7b78] hover:text-[#111111] hover:border-[#111111] transition-colors"
+          >
+            ×
           </button>
         </div>
 
         {/* Steps indicator */}
-        <div className="px-6 py-3 flex items-center gap-2 text-[12px] border-b border-[#f3f3f0]">
+        <div className="px-6 py-3 flex items-center gap-2 text-[12px] border-b border-[#dedbd6]">
           {(["Upload", "Mapeamento", "Confirmacao"] as const).map((label, i) => {
             const stepKeys: Step[] = ["upload", "mapping", "confirm"];
             const isActive = stepKeys.indexOf(step) >= i;
             return (
               <div key={label} className="flex items-center gap-2">
-                {i > 0 && <span className="text-[#e5e5dc]">&rarr;</span>}
-                <span className={`px-2.5 py-0.5 rounded-full ${isActive ? "bg-[#1f1f1f] text-white" : "bg-[#f4f4f0] text-[#9ca3af]"}`}>
+                {i > 0 && <span className="text-[#dedbd6]">&rarr;</span>}
+                <span className={`px-2.5 py-0.5 rounded-[4px] text-[12px] ${isActive ? "bg-[#111111] text-white" : "bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78]"}`}>
                   {i + 1}. {label}
                 </span>
               </div>
@@ -147,18 +154,18 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
           {/* Step 1: Upload */}
           {step === "upload" && (
             <div
-              className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors ${
-                dragActive ? "border-[#c8cc8e] bg-[#f6f7ed]" : "border-[#e5e5dc]"
+              className={`border-2 border-dashed rounded-[8px] p-10 text-center transition-colors ${
+                dragActive ? "border-[#111111] bg-[#faf9f6]" : "border-[#dedbd6]"
               }`}
               onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
               onDragLeave={() => setDragActive(false)}
               onDrop={handleDrop}
             >
-              <p className="text-[14px] text-[#5f6368] mb-2">Arraste um arquivo CSV aqui</p>
-              <p className="text-[12px] text-[#9ca3af] mb-4">ou</p>
+              <p className="text-[14px] text-[#7b7b78] mb-2">Arraste um arquivo CSV aqui</p>
+              <p className="text-[12px] text-[#7b7b78] mb-4">ou</p>
               <button
                 onClick={() => fileRef.current?.click()}
-                className="px-4 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333]"
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
               >
                 Selecionar arquivo
               </button>
@@ -175,18 +182,18 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
           {/* Step 2: Mapping */}
           {step === "mapping" && (
             <div>
-              <p className="text-[13px] text-[#5f6368] mb-4">
+              <p className="text-[13px] text-[#7b7b78] mb-4">
                 {csvRows.length} linhas encontradas. Mapeie as colunas do CSV para os campos do lead:
               </p>
               <div className="space-y-2 mb-4">
                 {csvHeaders.map((header, i) => (
                   <div key={i} className="flex items-center gap-3">
-                    <span className="text-[13px] text-[#1f1f1f] w-40 truncate font-medium">{header}</span>
-                    <span className="text-[#9ca3af]">&rarr;</span>
+                    <span className="text-[13px] text-[#111111] w-40 truncate font-medium">{header}</span>
+                    <span className="text-[#7b7b78]">&rarr;</span>
                     <select
                       value={mapping[i] || ""}
                       onChange={(e) => setMapping((prev) => ({ ...prev, [i]: e.target.value }))}
-                      className="flex-1 text-[13px] px-3 py-1.5 rounded-lg border border-[#e5e5dc] outline-none bg-white"
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-1.5 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none flex-1"
                     >
                       {LEAD_FIELDS.map((f) => (
                         <option key={f.key} value={f.key}>{f.label}</option>
@@ -196,21 +203,21 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                 ))}
               </div>
 
-              <p className="text-[12px] font-semibold text-[#9ca3af] uppercase mb-2">Preview (5 primeiras linhas)</p>
-              <div className="overflow-x-auto border border-[#e5e5dc] rounded-lg">
+              <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">Preview (5 primeiras linhas)</p>
+              <div className="overflow-x-auto border border-[#dedbd6] rounded-[8px]">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="bg-[#f6f7ed]">
+                    <tr className="bg-[#faf9f6]">
                       {csvHeaders.map((h, i) => (
-                        <th key={i} className="px-2 py-1.5 text-left text-[#9ca3af] font-medium">{h}</th>
+                        <th key={i} className="px-2 py-1.5 text-left text-[#7b7b78] font-medium">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {csvRows.slice(0, 5).map((row, i) => (
-                      <tr key={i} className="border-t border-[#f3f3f0]">
+                      <tr key={i} className="border-t border-[#dedbd6]">
                         {row.map((cell, j) => (
-                          <td key={j} className="px-2 py-1 text-[#5f6368] truncate max-w-[120px]">{cell}</td>
+                          <td key={j} className="px-2 py-1 text-[#7b7b78] truncate max-w-[120px]">{cell}</td>
                         ))}
                       </tr>
                     ))}
@@ -222,13 +229,13 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                 <button
                   onClick={() => setStep("confirm")}
                   disabled={!phoneColumnMapped}
-                  className="px-5 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333] disabled:opacity-50"
+                  className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
                 >
                   Proximo
                 </button>
               </div>
               {!phoneColumnMapped && (
-                <p className="text-[12px] text-[#ef4444] mt-2 text-right">Mapeie pelo menos a coluna de telefone.</p>
+                <p className="text-[12px] text-[#c41c1c] mt-2 text-right">Mapeie pelo menos a coluna de telefone.</p>
               )}
             </div>
           )}
@@ -236,10 +243,10 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
           {/* Step 3: Confirm */}
           {step === "confirm" && !result && (
             <div>
-              <div className="bg-[#f6f7ed] rounded-xl p-5 mb-4">
-                <p className="text-[14px] font-semibold text-[#1f1f1f] mb-2">Resumo da importacao</p>
-                <p className="text-[13px] text-[#5f6368]">{csvRows.length} leads serao processados</p>
-                <p className="text-[13px] text-[#5f6368]">
+              <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5 mb-4">
+                <p className="text-[14px] font-medium text-[#111111] mb-2">Resumo da importacao</p>
+                <p className="text-[13px] text-[#7b7b78]">{csvRows.length} leads serao processados</p>
+                <p className="text-[13px] text-[#7b7b78]">
                   Campos mapeados: {Object.values(mapping).filter(Boolean).join(", ")}
                 </p>
               </div>
@@ -249,9 +256,9 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                   type="checkbox"
                   checked={skipDuplicates}
                   onChange={(e) => setSkipDuplicates(e.target.checked)}
-                  className="rounded"
+                  className="rounded accent-[#111111]"
                 />
-                <span className="text-[13px] text-[#5f6368]">
+                <span className="text-[13px] text-[#7b7b78]">
                   Pular leads duplicados (mesmo telefone). Desmarque para atualizar dados existentes.
                 </span>
               </label>
@@ -259,14 +266,14 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
               <div className="flex justify-between">
                 <button
                   onClick={() => setStep("mapping")}
-                  className="px-4 py-2 rounded-lg border border-[#e5e5dc] text-[13px] text-[#5f6368] hover:bg-[#f6f7ed]"
+                  className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
                 >
                   Voltar
                 </button>
                 <button
                   onClick={handleImport}
                   disabled={importing}
-                  className="px-5 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333] disabled:opacity-50"
+                  className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
                 >
                   {importing ? "Importando..." : "Importar"}
                 </button>
@@ -277,24 +284,29 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
           {/* Result */}
           {result && (
             <div className="text-center py-6">
-              <p className="text-[18px] font-semibold text-[#1f1f1f] mb-3">Importacao concluida!</p>
+              <p
+                className="text-[24px] font-normal text-[#111111] mb-3"
+                style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}
+              >
+                Importacao concluida!
+              </p>
               <div className="flex justify-center gap-6 mb-5">
                 <div>
-                  <p className="text-[24px] font-bold text-[#4ade80]">{result.inserted}</p>
-                  <p className="text-[12px] text-[#9ca3af]">Inseridos</p>
+                  <p className="text-[24px] font-semibold text-[#0bdf50]">{result.inserted}</p>
+                  <p className="text-[12px] text-[#7b7b78]">Inseridos</p>
                 </div>
                 <div>
-                  <p className="text-[24px] font-bold text-[#e8d44d]">{result.updated}</p>
-                  <p className="text-[12px] text-[#9ca3af]">Atualizados</p>
+                  <p className="text-[24px] font-semibold text-[#111111]">{result.updated}</p>
+                  <p className="text-[12px] text-[#7b7b78]">Atualizados</p>
                 </div>
                 <div>
-                  <p className="text-[24px] font-bold text-[#9ca3af]">{result.skipped}</p>
-                  <p className="text-[12px] text-[#9ca3af]">Pulados</p>
+                  <p className="text-[24px] font-semibold text-[#7b7b78]">{result.skipped}</p>
+                  <p className="text-[12px] text-[#7b7b78]">Pulados</p>
                 </div>
               </div>
               <button
                 onClick={onClose}
-                className="px-5 py-2 rounded-lg bg-[#1f1f1f] text-white text-[13px] font-medium hover:bg-[#333]"
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
               >
                 Fechar
               </button>
