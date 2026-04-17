@@ -7,11 +7,14 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  Cell,
 } from "recharts";
 
 interface FunnelChartProps {
   data: { name: string; count: number; value?: number }[];
 }
+
+const REPORT_COLORS = ["#65b5ff", "#0bdf50", "#fe4c02", "#ff2067", "#b3e01c", "#c41c1c"];
 
 function CustomTooltip({
   active,
@@ -26,42 +29,46 @@ function CustomTooltip({
   const val = payload[0].payload?.value;
   const valStr = val ? `R$ ${val.toLocaleString("pt-BR")}` : null;
   return (
-    <div className="rounded-lg px-3 py-2 shadow-lg text-[13px]" style={{ backgroundColor: "#1f1f1f", color: "#fff" }}>
-      <p className="font-medium">{label}</p>
-      <p className="opacity-80">{payload[0].value} leads</p>
-      {valStr && <p className="opacity-60">{valStr}</p>}
+    <div
+      className="rounded-[8px] px-3 py-2 text-[13px] border border-[#dedbd6]"
+      style={{ backgroundColor: "#faf9f6", color: "#111111" }}
+    >
+      <p className="font-medium text-[#111111]">{label}</p>
+      <p className="text-[#7b7b78]">{payload[0].value} leads</p>
+      {valStr && <p className="text-[#7b7b78]">{valStr}</p>}
     </div>
   );
 }
 
 export function FunnelChart({ data }: FunnelChartProps) {
   return (
-    <div className="card p-5">
-      <h3
-        className="text-[13px] font-semibold uppercase tracking-wider mb-5 flex items-center gap-2"
-        style={{ color: "var(--text-secondary)" }}
-      >
+    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
+      <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78] mb-5 flex items-center gap-2">
         Funil de Qualificacao
-        <span className="text-[14px] opacity-50">&rarr;</span>
+        <span className="opacity-50">&rarr;</span>
       </h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data} layout="vertical" margin={{ left: 80 }}>
           <XAxis
             type="number"
-            tick={{ fontSize: 12, fill: "#9ca3af" }}
-            axisLine={{ stroke: "#e5e5dc" }}
+            tick={{ fontSize: 12, fill: "#7b7b78" }}
+            axisLine={{ stroke: "#dedbd6" }}
             tickLine={false}
           />
           <YAxis
             type="category"
             dataKey="name"
             width={80}
-            tick={{ fontSize: 12, fill: "#5f6368" }}
+            tick={{ fontSize: 12, fill: "#7b7b78" }}
             axisLine={false}
             tickLine={false}
           />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(200,204,142,0.1)" }} />
-          <Bar dataKey="count" fill="#1f1f1f" radius={[0, 6, 6, 0]} />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(222,219,214,0.3)" }} />
+          <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+            {data.map((_, index) => (
+              <Cell key={`cell-${index}`} fill={REPORT_COLORS[index % REPORT_COLORS.length]} />
+            ))}
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>

@@ -55,12 +55,9 @@ export function FunnelMovement({ deals }: FunnelMovementProps) {
   ];
 
   return (
-    <div className="card p-5">
+    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
       <div className="flex items-center justify-between mb-4">
-        <h3
-          className="text-[13px] font-semibold uppercase tracking-wider"
-          style={{ color: "var(--text-secondary)" }}
-        >
+        <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78]">
           Movimentacao do Pipeline
         </h3>
         <div className="flex gap-1">
@@ -68,10 +65,10 @@ export function FunnelMovement({ deals }: FunnelMovementProps) {
             <button
               key={p.key}
               onClick={() => setPeriod(p.key)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+              className={`px-2.5 py-1 rounded-[4px] text-[11px] font-normal transition-colors ${
                 period === p.key
-                  ? "bg-[#1f1f1f] text-white"
-                  : "text-[#5f6368] hover:bg-[#f6f7ed]"
+                  ? "bg-[#111111] text-white"
+                  : "text-[#7b7b78] hover:bg-[#dedbd6]/40"
               }`}
             >
               {p.label}
@@ -84,31 +81,34 @@ export function FunnelMovement({ deals }: FunnelMovementProps) {
         <table className="w-full text-[12px]">
           <thead>
             <tr>
-              <th className="text-left py-2 px-3 text-[#9ca3af] font-medium uppercase tracking-wider text-[11px]" />
+              <th className="text-left py-2 px-3 text-[#7b7b78] font-normal uppercase tracking-[0.6px] text-[11px]" />
               {data.map((d) => (
                 <th key={d.key} className="text-center py-2 px-3 min-w-[120px]">
-                  <div className={`h-1 rounded-full mb-2 ${d.color}`} />
-                  <span className="text-[12px] font-semibold text-[#1f1f1f]">{d.label}</span>
+                  <div
+                    className="h-1 rounded-full mb-2"
+                    style={{ backgroundColor: d.dotColor }}
+                  />
+                  <span className="text-[12px] font-normal text-[#111111]">{d.label}</span>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            <tr className="border-t border-[#e5e5dc]">
-              <td className="py-2 px-3 text-[#9ca3af] text-[11px] uppercase">Na etapa</td>
+            <tr className="border-t border-[#dedbd6]">
+              <td className="py-2 px-3 text-[#7b7b78] text-[11px] uppercase tracking-[0.6px]">Na etapa</td>
               {data.map((d) => (
                 <td key={d.key} className="text-center py-2 px-3">
-                  <span className="text-[14px] font-bold text-[#1f1f1f]">{d.count}</span>
+                  <span className="text-[14px] font-normal text-[#111111]">{d.count}</span>
                   <br />
-                  <span className="text-[11px] text-[#5f6368]">{fmt(d.value)}</span>
+                  <span className="text-[11px] text-[#7b7b78]">{fmt(d.value)}</span>
                 </td>
               ))}
             </tr>
-            <tr className="border-t border-[#e5e5dc]">
-              <td className="py-2 px-3 text-[#9ca3af] text-[11px] uppercase">Entrou na etapa</td>
+            <tr className="border-t border-[#dedbd6]">
+              <td className="py-2 px-3 text-[#7b7b78] text-[11px] uppercase tracking-[0.6px]">Entrou na etapa</td>
               {data.map((d) => (
                 <td key={d.key} className="text-center py-2 px-3">
-                  <span className={`text-[14px] font-bold ${d.entered > 0 ? "text-[#2d6a3f]" : "text-[#9ca3af]"}`}>
+                  <span className={`text-[14px] font-normal ${d.entered > 0 ? "text-[#0bdf50]" : "text-[#7b7b78]"}`}>
                     {d.entered > 0 ? `+${d.entered}` : "0"}
                   </span>
                 </td>
@@ -118,10 +118,10 @@ export function FunnelMovement({ deals }: FunnelMovementProps) {
         </table>
       </div>
 
-      <div className="mt-3 pt-3 border-t border-[#e5e5dc] flex items-center gap-4">
-        <span className="text-[12px] text-[#9ca3af] uppercase tracking-wider">Perdidos no periodo:</span>
-        <span className="text-[14px] font-bold text-[#a33]">{lost.length} deals</span>
-        <span className="text-[12px] text-[#5f6368]">{fmt(lostValue)}</span>
+      <div className="mt-3 pt-3 border-t border-[#dedbd6] flex items-center gap-4">
+        <span className="text-[11px] text-[#7b7b78] uppercase tracking-[0.6px]">Perdidos no periodo:</span>
+        <span className="text-[14px] font-normal text-[#c41c1c]">{lost.length} deals</span>
+        <span className="text-[12px] text-[#7b7b78]">{fmt(lostValue)}</span>
       </div>
     </div>
   );
