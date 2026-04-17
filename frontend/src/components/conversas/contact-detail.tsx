@@ -48,38 +48,29 @@ export function ContactDetail({
 
   async function updateLeadField(field: string, value: string) {
     if (!lead) return;
-    const updateValue = value;
-    await supabase.from("leads").update({ [field]: updateValue }).eq("id", lead.id);
+    await supabase.from("leads").update({ [field]: value }).eq("id", lead.id);
   }
 
   const daysActive = lead
     ? Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  const isMetaCloud = channel?.provider === "meta_cloud";
-
   return (
-    <div className="w-[320px] bg-white border-l border-[#e5e5dc] flex flex-col h-full overflow-y-auto">
+    <div className="w-[320px] bg-[#faf9f6] border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
       {/* Avatar + Name */}
-      <div className="flex flex-col items-center pt-8 pb-4 px-4 border-b border-[#e5e5dc]">
-        <div className="w-20 h-20 rounded-full bg-[#c8cc8e] flex items-center justify-center text-white text-2xl font-bold mb-3">
+      <div className="flex flex-col items-center pt-8 pb-4 px-4 border-b border-[#dedbd6]">
+        <div className="w-20 h-20 rounded-full bg-[#8a8a80] flex items-center justify-center text-white text-2xl font-medium mb-3">
           {displayName.charAt(0).toUpperCase()}
         </div>
-        <h3 className="text-[18px] font-semibold text-[#1f1f1f]">{displayName}</h3>
-        <p className="text-[13px] text-[#5f6368]">{lead?.phone || ""}</p>
+        <h3 className="text-[16px] font-medium text-[#111111]">{displayName}</h3>
+        <p className="text-[13px] text-[#7b7b78] mt-0.5">{lead?.phone || ""}</p>
         {channel && (
-          <span
-            className={`mt-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${
-              isMetaCloud
-                ? "bg-[#c8cc8e] text-[#1f1f1f]"
-                : "bg-[#93c5fd] text-[#1e3a5f]"
-            }`}
-          >
+          <span className="mt-2 text-[11px] px-2 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78]">
             {channel.name}
           </span>
         )}
         {lead?.on_hold && (
-          <span className="mt-2 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#f0ecd0] text-[#8a7a2a]">
+          <span className="mt-2 px-2.5 py-0.5 rounded-[4px] text-[11px] bg-[#dedbd6]/60 text-[#7b7b78]">
             Em espera
           </span>
         )}
@@ -88,26 +79,24 @@ export function ContactDetail({
       {lead ? (
         <div className="p-4 space-y-4 text-sm">
           {/* Stage info */}
-          <div className="space-y-3">
-            <div>
-              <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-0.5">Stage (Agente)</span>
-              <span className="text-[14px] text-[#1f1f1f]">{stageInfo?.label || lead.stage}</span>
-            </div>
-            </div>
+          <div>
+            <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Stage (Agente)</span>
+            <span className="text-[14px] text-[#111111]">{stageInfo?.label || lead.stage}</span>
+          </div>
 
           {activeDeal && (
-            <div className="bg-[#f6f7ed] border border-[#e5e5dc] rounded-xl p-3">
-              <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-1">Oportunidade ativa</span>
-              <p className="text-[13px] font-semibold text-[#1f1f1f]">{activeDeal.title}</p>
-              <p className="text-[14px] font-bold text-[#2d6a3f]">
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-3">
+              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Oportunidade ativa</span>
+              <p className="text-[13px] font-medium text-[#111111]">{activeDeal.title}</p>
+              <p className="text-[14px] font-medium text-[#111111] mt-0.5">
                 {activeDeal.value > 0 ? `R$ ${activeDeal.value.toLocaleString("pt-BR")}` : "\u2014"}
               </p>
             </div>
           )}
 
           {/* B2B Fields */}
-          <div className="border-t border-[#e5e5dc] pt-4 space-y-3">
-            <h4 className="text-[12px] font-semibold uppercase tracking-wider text-[#9ca3af]">Dados da Empresa</h4>
+          <div className="border-t border-[#dedbd6] pt-4 space-y-3">
+            <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Dados da Empresa</h4>
             <EditableField label="CNPJ" value={lead.cnpj} onSave={(v) => updateLeadField("cnpj", v)} placeholder="00.000.000/0000-00" />
             <EditableField label="Razao Social" value={lead.razao_social} onSave={(v) => updateLeadField("razao_social", v)} />
             <EditableField label="Nome Fantasia" value={lead.nome_fantasia} onSave={(v) => updateLeadField("nome_fantasia", v)} />
@@ -116,21 +105,21 @@ export function ContactDetail({
           </div>
 
           {/* Contact Info */}
-          <div className="border-t border-[#e5e5dc] pt-4 space-y-3">
-            <h4 className="text-[12px] font-semibold uppercase tracking-wider text-[#9ca3af]">Contato</h4>
+          <div className="border-t border-[#dedbd6] pt-4 space-y-3">
+            <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Contato</h4>
             <EditableField label="Telefone Comercial" value={lead.telefone_comercial} onSave={(v) => updateLeadField("telefone_comercial", v)} />
             <EditableField label="Email" value={lead.email} onSave={(v) => updateLeadField("email", v)} />
             <EditableField label="Instagram" value={lead.instagram} onSave={(v) => updateLeadField("instagram", v)} placeholder="@usuario" />
           </div>
 
           {/* Tags */}
-          <div className="border-t border-[#e5e5dc] pt-4">
-            <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-2">Tags</span>
+          <div className="border-t border-[#dedbd6] pt-4">
+            <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Tags</span>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {leadTags.map((tag) => (
                 <span
                   key={tag.id}
-                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs text-white"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-[4px] text-[12px] text-white"
                   style={{ backgroundColor: tag.color }}
                 >
                   {tag.name}
@@ -141,17 +130,17 @@ export function ContactDetail({
             <div className="relative">
               <button
                 onClick={() => setShowTagDropdown(!showTagDropdown)}
-                className="text-[12px] text-[#5f6368] hover:underline"
+                className="text-[12px] text-[#7b7b78] hover:text-[#111111] transition-colors"
               >
                 + Adicionar tag
               </button>
               {showTagDropdown && availableTags.length > 0 && (
-                <div className="absolute top-6 left-0 bg-white rounded-xl shadow-lg border border-[#e5e5dc] py-1 z-10 min-w-[160px]">
+                <div className="absolute top-6 left-0 bg-white border border-[#dedbd6] rounded-[8px] py-1 z-10 min-w-[160px]">
                   {availableTags.map((tag) => (
                     <button
                       key={tag.id}
                       onClick={() => { onTagToggle(tag.id, true); setShowTagDropdown(false); }}
-                      className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-[#1f1f1f] hover:bg-[#f6f7ed] transition-colors"
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-[13px] text-[#111111] hover:bg-[#dedbd6]/30 transition-colors"
                     >
                       <span className="w-3 h-3 rounded-full" style={{ backgroundColor: tag.color }} />
                       {tag.name}
@@ -160,41 +149,41 @@ export function ContactDetail({
                 </div>
               )}
               {showTagDropdown && availableTags.length === 0 && (
-                <div className="absolute top-6 left-0 bg-white rounded-xl shadow-lg border border-[#e5e5dc] p-3 z-10">
-                  <p className="text-[#9ca3af] text-xs">Nenhuma tag disponivel.</p>
+                <div className="absolute top-6 left-0 bg-white border border-[#dedbd6] rounded-[8px] p-3 z-10">
+                  <p className="text-[#7b7b78] text-[12px]">Nenhuma tag disponivel.</p>
                 </div>
               )}
             </div>
           </div>
 
           {/* Contact Stats */}
-          <div className="border-t border-[#e5e5dc] pt-4 space-y-2">
-            <h4 className="text-[12px] font-semibold uppercase tracking-wider text-[#9ca3af]">Estatisticas</h4>
+          <div className="border-t border-[#dedbd6] pt-4 space-y-2">
+            <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Estatisticas</h4>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] text-[#5f6368]">Dias ativos</span>
-              <span className="text-[13px] font-medium text-[#1f1f1f]">{daysActive}</span>
+              <span className="text-[12px] text-[#7b7b78]">Dias ativos</span>
+              <span className="text-[13px] text-[#111111]">{daysActive}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] text-[#5f6368]">Fonte</span>
-              <span className="text-[13px] font-medium text-[#1f1f1f]">{lead.channel}</span>
+              <span className="text-[12px] text-[#7b7b78]">Fonte</span>
+              <span className="text-[13px] text-[#111111]">{lead.channel}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] text-[#5f6368]">Canal</span>
-              <span className="text-[13px] font-medium text-[#1f1f1f]">{channel?.name || "—"}</span>
+              <span className="text-[12px] text-[#7b7b78]">Canal</span>
+              <span className="text-[13px] text-[#111111]">{channel?.name || "—"}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] text-[#5f6368]">Criado em</span>
-              <span className="text-[13px] font-medium text-[#1f1f1f]">
+              <span className="text-[12px] text-[#7b7b78]">Criado em</span>
+              <span className="text-[13px] text-[#111111]">
                 {new Date(lead.created_at).toLocaleDateString("pt-BR")}
               </span>
             </div>
           </div>
         </div>
       ) : (
-        <div className="p-4 space-y-4">
-          <div className="bg-[#f6f7ed] border border-[#e5e5dc] rounded-xl p-3">
-            <p className="text-[#5f6368] text-sm font-medium">Contato sem lead</p>
-            <p className="text-[#9ca3af] text-xs mt-1">Este contato nao esta cadastrado como lead no CRM.</p>
+        <div className="p-4">
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-3">
+            <p className="text-[#111111] text-[13px] font-medium">Contato sem lead</p>
+            <p className="text-[#7b7b78] text-[12px] mt-1">Este contato nao esta cadastrado como lead no CRM.</p>
           </div>
         </div>
       )}

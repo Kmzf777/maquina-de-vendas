@@ -111,31 +111,24 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
   }
 
   const displayName = lead?.name || lead?.phone || "Desconhecido";
-  const isMetaCloud = channel?.provider === "meta_cloud";
 
   const tagIdsRaw = (lead as unknown as Record<string, unknown>)?.tag_ids;
   const tagIds = Array.isArray(tagIdsRaw) ? (tagIdsRaw as string[]) : [];
   const leadTagIds = lead ? tags.filter((t) => tagIds.includes(t.id)) : [] as Tag[];
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-white">
+    <div className="flex-1 flex flex-col h-full bg-[#faf9f6]">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-[#e5e5dc]">
-        <div className="w-10 h-10 rounded-full bg-[#c8cc8e] flex items-center justify-center text-white font-medium">
+      <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-3 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-full bg-[#8a8a80] flex items-center justify-center text-white font-medium text-sm flex-shrink-0">
           {displayName.charAt(0).toUpperCase()}
         </div>
-        <div className="flex-1">
-          <h2 className="text-[#1f1f1f] font-medium text-sm">{displayName}</h2>
-          <p className="text-[#9ca3af] text-xs">{lead?.phone || ""}</p>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-[#111111] font-medium text-[14px] truncate">{displayName}</h2>
+          <p className="text-[#7b7b78] text-[12px]">{lead?.phone || ""}</p>
         </div>
         {channel && (
-          <span
-            className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-              isMetaCloud
-                ? "bg-[#c8cc8e] text-[#1f1f1f]"
-                : "bg-[#93c5fd] text-[#1e3a5f]"
-            }`}
-          >
+          <span className="text-[11px] px-2 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78]">
             {channel.name}
           </span>
         )}
@@ -144,7 +137,7 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
             {leadTagIds.map((tag) => (
               <span
                 key={tag.id}
-                className="px-2 py-0.5 rounded-full text-xs text-white"
+                className="px-2 py-0.5 rounded-[4px] text-[11px] text-white"
                 style={{ backgroundColor: tag.color }}
               >
                 {tag.name}
@@ -155,14 +148,14 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 bg-[#f6f7ed]">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 bg-[#faf9f6]">
         {loading && (
           <div className="flex justify-center py-8">
-            <div className="w-6 h-6 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin" />
           </div>
         )}
         {!loading && displayMessages.length === 0 && (
-          <p className="text-[#9ca3af] text-sm text-center py-8">Nenhuma mensagem.</p>
+          <p className="text-[#7b7b78] text-sm text-center py-8">Nenhuma mensagem.</p>
         )}
         {displayMessages.map((msg) => {
           const isFromMe =
@@ -176,16 +169,16 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
               className={`flex ${isFromMe ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[70%] px-3 py-2 ${
+                className={`px-3 py-2 text-[14px] ${
                   isFromMe
-                    ? "bg-[#1f1f1f] text-white rounded-2xl rounded-br-sm"
-                    : "bg-white border border-[#e5e5dc] text-[#1f1f1f] rounded-2xl rounded-bl-sm"
+                    ? "bg-[#111111] rounded-[8px] text-white max-w-[75%] ml-auto"
+                    : "bg-white border border-[#dedbd6] rounded-[8px] text-[#111111] max-w-[75%]"
                 } ${isTemp ? "opacity-70" : ""}`}
               >
-                <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                 <p
                   className={`text-[11px] mt-1 ${
-                    isFromMe ? "text-white/50" : "text-[#9ca3af]"
+                    isFromMe ? "text-white/50" : "text-[#7b7b78]"
                   }`}
                 >
                   {isTemp ? "Enviando..." : formatTime(msg.created_at)}
@@ -198,32 +191,30 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
       </div>
 
       {/* Input */}
-      <div className="px-4 py-3 bg-white border-t border-[#e5e5dc]">
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Digitar mensagem..."
-            rows={1}
-            className="flex-1 bg-[#f6f7ed] text-[#1f1f1f] text-sm rounded-2xl px-4 py-2.5 placeholder-[#9ca3af] outline-none focus:ring-1 focus:ring-[#c8cc8e] resize-none max-h-32 border border-[#e5e5dc]"
-          />
-          <button
-            onClick={handleSend}
-            disabled={sending || !text.trim()}
-            className="bg-[#1f1f1f] text-white p-2.5 rounded-full hover:bg-[#333] disabled:opacity-50 flex-shrink-0 transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-              />
-            </svg>
-          </button>
-        </div>
+      <div className="border-t border-[#dedbd6] bg-[#faf9f6] p-3 flex gap-2">
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Digitar mensagem..."
+          rows={1}
+          className="flex-1 bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none resize-none max-h-32"
+        />
+        <button
+          onClick={handleSend}
+          disabled={sending || !text.trim()}
+          className="bg-[#111111] text-white px-4 py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-40 flex-shrink-0 self-end"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+            />
+          </svg>
+        </button>
       </div>
     </div>
   );

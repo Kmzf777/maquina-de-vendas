@@ -41,7 +41,7 @@ export function EditableField({ label, value, onSave, placeholder, mask }: Edita
 
   return (
     <div>
-      <span className="text-[11px] uppercase tracking-wider text-[#9ca3af] block mb-0.5">
+      <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">
         {label}
       </span>
       {editing ? (
@@ -52,14 +52,14 @@ export function EditableField({ label, value, onSave, placeholder, mask }: Edita
           onBlur={handleSave}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="input-field text-[14px] rounded-lg px-2 py-1 w-full"
+          className="bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
         />
       ) : (
         <button
           onClick={() => { setDraft(value || ""); setEditing(true); }}
-          className="text-[14px] text-[#1f1f1f] hover:bg-[#f6f7ed] px-2 py-0.5 rounded -ml-2 transition-colors w-full text-left min-h-[28px]"
+          className="text-[14px] text-[#111111] hover:bg-[#dedbd6]/30 px-2 py-0.5 rounded-[4px] -ml-2 transition-colors w-full text-left min-h-[28px]"
         >
-          {displayValue || <span className="text-[#c8cc8e] italic">{placeholder || "Clique para editar"}</span>}
+          {displayValue || <span className="text-[#7b7b78] italic text-[13px]">{placeholder || "Clique para editar"}</span>}
         </button>
       )}
     </div>
