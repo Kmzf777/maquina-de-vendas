@@ -118,7 +118,7 @@ export function ContactDetail({
                   onChange={(e) => updateAgent({ agent_profile_id: e.target.value || null })}
                   className="w-full bg-white border border-[#dedbd6] rounded-[6px] text-[12px] px-2 py-1.5 text-[#111111] focus:border-[#111111] focus:outline-none"
                 >
-                  <option value="">Padrão do canal</option>
+                  <option value="">Valeria Inbound (padrão)</option>
                   {agentProfiles.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
