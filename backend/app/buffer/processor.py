@@ -57,20 +57,59 @@ def _resolve_agent_profile_id(conversation: dict, channel: dict) -> str | None:
 def _is_recent_duplicate(
     conversation_id: str, content: str, role: str, window_seconds: int = 30
 ) -> bool:
-    """Return True if an identical message was saved in this conversation within the last N seconds."""
+    """Return True only if an identical user message was recently saved AND received an assistant reply.
+
+    A user message without a following assistant reply means the agent crashed — allow retry.
+    """
+    if role != "user":
+        # For non-user roles, use simple time-based dedup
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat()
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("id")
+            .eq("conversation_id", conversation_id)
+            .eq("role", role)
+            .eq("content", content)
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        return len(result.data) > 0
+
+    # For user messages: only deduplicate if an assistant reply followed the last identical message
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat()
     sb = get_supabase()
-    result = (
+
+    # Find the most recent identical user message within window
+    dup = (
         sb.table("messages")
-        .select("id")
+        .select("id, created_at")
         .eq("conversation_id", conversation_id)
-        .eq("role", role)
+        .eq("role", "user")
         .eq("content", content)
         .gte("created_at", cutoff)
+        .order("created_at", desc=True)
         .limit(1)
         .execute()
     )
-    return len(result.data) > 0
+    if not dup.data:
+        return False  # No duplicate found
+
+    dup_created_at = dup.data[0]["created_at"]
+
+    # Check if an assistant reply was sent AFTER that duplicate user message
+    reply = (
+        sb.table("messages")
+        .select("id")
+        .eq("conversation_id", conversation_id)
+        .eq("role", "assistant")
+        .gt("created_at", dup_created_at)
+        .limit(1)
+        .execute()
+    )
+    # Only skip if a real reply was already sent — otherwise allow retry
+    return len(reply.data) > 0
 
 
 async def process_buffered_messages(
