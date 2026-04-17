@@ -46,6 +46,11 @@ export function ContactDetail({
   }, [lead?.id]);
 
   useEffect(() => {
+    setAiEnabled(conversation.ai_enabled);
+    setAgentProfileId(conversation.agent_profile_id);
+  }, [conversation.id]);
+
+  useEffect(() => {
     fetch("/api/agent-profiles")
       .then((r) => r.json())
       .then((data) => setAgentProfiles(Array.isArray(data) ? data : []));

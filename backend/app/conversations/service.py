@@ -71,6 +71,7 @@ def update_conversation(conversation_id: str, **fields) -> dict[str, Any]:
         sb.table("conversations")
         .update(fields)
         .eq("id", conversation_id)
+        .select("*")
         .execute()
     )
     return result.data[0]
