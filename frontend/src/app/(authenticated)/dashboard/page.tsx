@@ -52,12 +52,15 @@ export default function DashboardPage() {
     return (
       <div className="space-y-6">
         <div>
-          <div className="h-8 w-48 rounded-lg animate-pulse" style={{ backgroundColor: "#e5e5dc" }} />
-          <div className="h-4 w-72 rounded-lg animate-pulse mt-2" style={{ backgroundColor: "#e5e5dc" }} />
+          <div className="h-8 w-48 rounded-[8px] animate-pulse bg-[#dedbd6]/40" />
+          <div className="h-4 w-72 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]/40" />
         </div>
         <div className="grid grid-cols-3 gap-5">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="card p-5 h-28 animate-pulse" style={{ backgroundColor: "rgba(229,229,220,0.3)" }} />
+            <div
+              key={i}
+              className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 h-28 animate-pulse"
+            />
           ))}
         </div>
       </div>
@@ -108,10 +111,13 @@ export default function DashboardPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-[28px] font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+        <h1
+          className="text-[32px] font-normal text-[#111111] mb-1"
+          style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
+        >
           Dashboard
         </h1>
-        <p className="text-[14px] mt-1" style={{ color: "var(--text-muted)" }}>
+        <p className="text-[14px] text-[#7b7b78]">
           Visao geral do desempenho e metricas
         </p>
       </div>
@@ -133,7 +139,6 @@ export default function DashboardPage() {
       <div className="mb-8">
         <FunnelMovement deals={deals} />
       </div>
-
     </div>
   );
 }

@@ -7,9 +7,12 @@ interface LeadSourcesChartProps {
   leads: Lead[];
 }
 
+const REPORT_COLORS = ["#65b5ff", "#0bdf50", "#fe4c02", "#ff2067", "#b3e01c", "#c41c1c"];
+
 export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
-  const counts: { key: string; label: string; color: string; count: number }[] = LEAD_CHANNELS.map((ch) => ({
+  const counts: { key: string; label: string; color: string; count: number }[] = LEAD_CHANNELS.map((ch, i) => ({
     ...ch,
+    color: REPORT_COLORS[i % REPORT_COLORS.length],
     count: leads.filter((l) => l.channel === ch.key).length,
   }));
 
@@ -17,17 +20,17 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
   const knownKeys: Set<string> = new Set(LEAD_CHANNELS.map((c) => c.key));
   const othersCount = leads.filter((l) => !knownKeys.has(l.channel as string)).length;
   if (othersCount > 0) {
-    counts.push({ key: "outros", label: "Outros", color: "#8a8a80", count: othersCount });
+    counts.push({ key: "outros", label: "Outros", color: "#7b7b78", count: othersCount });
   }
 
   const total = counts.reduce((sum, c) => sum + c.count, 0);
   if (total === 0) {
     return (
-      <div className="card p-5">
-        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-4" style={{ color: "var(--text-secondary)" }}>
+      <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
+        <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78] mb-4">
           Fontes de Lead
         </h3>
-        <p className="text-[#9ca3af] text-sm text-center py-8">Sem dados</p>
+        <p className="text-[#7b7b78] text-sm text-center py-8">Sem dados</p>
       </div>
     );
   }
@@ -56,8 +59,8 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
     });
 
   return (
-    <div className="card p-5">
-      <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-4" style={{ color: "var(--text-secondary)" }}>
+    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
+      <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78] mb-4">
         Fontes de Lead
       </h3>
       <div className="flex items-center gap-6">
@@ -76,10 +79,18 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
               transform={`rotate(-90 ${cx} ${cy})`}
             />
           ))}
-          <text x={cx} y={cy - 6} textAnchor="middle" className="text-[24px] font-bold" fill="#1f1f1f">
+          <text
+            x={cx}
+            y={cy - 6}
+            textAnchor="middle"
+            fontSize="24"
+            fontWeight="400"
+            fill="#111111"
+            style={{ letterSpacing: "-0.96px" }}
+          >
             {total}
           </text>
-          <text x={cx} y={cy + 14} textAnchor="middle" className="text-[11px]" fill="#9ca3af">
+          <text x={cx} y={cy + 14} textAnchor="middle" fontSize="11" fill="#7b7b78">
             leads
           </text>
         </svg>
@@ -87,9 +98,9 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
           {segments.map((seg) => (
             <div key={seg.key} className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: seg.color }} />
-              <span className="text-[13px] text-[#1f1f1f]">{seg.label}</span>
-              <span className="text-[13px] font-bold text-[#1f1f1f]">{seg.count}</span>
-              <span className="text-[11px] text-[#9ca3af]">{Math.round(seg.pct * 100)}%</span>
+              <span className="text-[13px] text-[#111111]">{seg.label}</span>
+              <span className="text-[13px] font-normal text-[#111111]">{seg.count}</span>
+              <span className="text-[11px] text-[#7b7b78]">{Math.round(seg.pct * 100)}%</span>
             </div>
           ))}
         </div>
