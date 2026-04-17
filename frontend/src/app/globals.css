@@ -30,6 +30,12 @@
   --border-default: var(--color-oat-border);
   --accent-green: #0bdf50;
   --accent-red: #c41c1c;
+
+  /* Surface layers — UX redesign v2 */
+  --surface-nav: #f0ede8;
+  --surface-canvas: #faf9f6;
+  --surface-card: #ffffff;
+  --surface-raised: #f7f5f1;
 }
 
 @theme inline {
