@@ -37,7 +37,7 @@ def create_channel(data: dict) -> dict:
 def update_channel(channel_id: str, data: dict) -> dict:
     """Update an existing channel."""
     sb = get_supabase()
-    res = sb.table("channels").update(data).eq("id", channel_id).execute()
+    res = sb.table("channels").update(data).eq("id", channel_id).select("*").execute()
     if not res.data:
         raise HTTPException(404, f"Channel {channel_id} not found")
     return res.data[0]
