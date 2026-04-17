@@ -236,6 +236,6 @@ export interface Conversation {
   agent_profile_id: string | null;
   ai_enabled: boolean;
   leads?: Lead;
-  channels?: { id: string; name: string; phone: string; provider: string };
+  channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null } | null;
   agent_profiles?: { id: string; name: string } | null;
 }
