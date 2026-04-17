@@ -142,11 +142,8 @@ async def process_buffered_messages(
         return
 
     # Resolve agent profile: conversation takes priority over channel default
+    # None means no explicit profile — orchestrator defaults to valeria_inbound
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
-    if not agent_profile_id:
-        logger.info(f"No agent profile for channel {channel_id}, human-only mode")
-        _update_last_msg(conversation["id"])
-        return
 
     # Run AI agent
     try:
