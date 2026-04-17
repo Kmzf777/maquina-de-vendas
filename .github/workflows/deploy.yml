@@ -34,8 +34,8 @@ jobs:
           script: |
             set -e
             cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
-            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch origin && git reset --hard origin/master
-            
+            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
+
             if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
             sg docker -c "docker build \
               --build-arg NEXT_PUBLIC_FASTAPI_URL=$NEXT_PUBLIC_FASTAPI_URL \
@@ -78,7 +78,7 @@ jobs:
           script: |
             set -e
             cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
-            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch origin && git reset --hard origin/master
+            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
             sg docker -c "docker build -t canastra-api:latest ./backend"
             sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
             sg docker -c "docker service update --force canastra_api"
