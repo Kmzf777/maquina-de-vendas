@@ -29,23 +29,23 @@ export function KanbanMetricsBar({ leads }: KanbanMetricsBarProps) {
   const responseStr = avgResponseMin > 0 ? `${avgResponseMin}m` : "\u2014";
 
   return (
-    <div className="bg-[#faf9f6] border-b border-[#dedbd6] px-6 py-3 flex gap-8 mb-5">
+    <div className="bg-[#f7f5f1] border-b border-[#dedbd6] px-6 py-3 flex gap-8 flex-shrink-0">
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#111111]">
           {leads.length}
         </span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total no funil</span>
       </div>
 
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#111111]">
           {leadsToday} / {leadsYesterday}
         </span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Novos hoje / ontem</span>
       </div>
 
       <div className="flex flex-col">
-        <span style={{ letterSpacing: '-0.2px' }} className="text-[20px] font-normal text-[#111111]">
+        <span style={{ letterSpacing: '-0.3px' }} className="text-[20px] font-normal text-[#111111]">
           {responseStr}
         </span>
         <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Tempo medio resp.</span>

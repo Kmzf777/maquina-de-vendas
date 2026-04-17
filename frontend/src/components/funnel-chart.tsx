@@ -42,10 +42,12 @@ function CustomTooltip({
 
 export function FunnelChart({ data }: FunnelChartProps) {
   return (
-    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
-      <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78] mb-5 flex items-center gap-2">
-        Funil de Qualificacao
-        <span className="opacity-50">&rarr;</span>
+    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+      <h3
+        className="text-[18px] font-medium text-[#111111] mb-5"
+        style={{ letterSpacing: "-0.3px" }}
+      >
+        Funil de Qualificação
       </h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data} layout="vertical" margin={{ left: 80 }}>

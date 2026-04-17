@@ -26,8 +26,11 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
   const total = counts.reduce((sum, c) => sum + c.count, 0);
   if (total === 0) {
     return (
-      <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
-        <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78] mb-4">
+      <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+        <h3
+          className="text-[18px] font-medium text-[#111111] mb-4"
+          style={{ letterSpacing: "-0.3px" }}
+        >
           Fontes de Lead
         </h3>
         <p className="text-[#7b7b78] text-sm text-center py-8">Sem dados</p>
@@ -59,8 +62,11 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
     });
 
   return (
-    <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5">
-      <h3 className="text-[11px] font-normal uppercase tracking-[0.6px] text-[#7b7b78] mb-4">
+    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+      <h3
+        className="text-[18px] font-medium text-[#111111] mb-4"
+        style={{ letterSpacing: "-0.3px" }}
+      >
         Fontes de Lead
       </h3>
       <div className="flex items-center gap-6">

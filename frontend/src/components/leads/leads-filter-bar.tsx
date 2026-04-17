@@ -54,7 +54,7 @@ export function LeadsFilterBar({
   }
 
   return (
-    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 mb-5">
+    <div className="bg-[#f7f5f1] border-b border-[#dedbd6] px-8 py-3">
       <div className="flex gap-2.5 items-center flex-wrap">
         {/* Search */}
         <div className="flex-1 min-w-[220px] relative">
@@ -66,7 +66,7 @@ export function LeadsFilterBar({
             value={filters.search}
             onChange={(e) => update({ search: e.target.value })}
             placeholder="Buscar por nome, telefone, empresa..."
-            className="bg-white border border-[#dedbd6] rounded-[6px] py-2 pl-9 pr-3 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+            className="bg-white border border-[#dedbd6] rounded-[6px] py-2 pl-9 pr-3 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full transition-colors"
           />
         </div>
 
@@ -154,3 +154,4 @@ export function LeadsFilterBar({
     </div>
   );
 }
+

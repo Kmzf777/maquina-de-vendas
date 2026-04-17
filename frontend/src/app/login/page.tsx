@@ -32,12 +32,17 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#faf9f6] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f0ede8] flex items-center justify-center">
       <div className="bg-white border border-[#dedbd6] rounded-[8px] p-8 w-full max-w-sm">
-        <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111] mb-2">
-          ValerIA<span className="text-[#ff5600]">·</span>
-        </h1>
-        <p className="text-[14px] text-[#7b7b78] mb-6">Entre na sua conta</p>
+        {/* Logo */}
+        <div className="flex items-center gap-2 mb-8">
+          <div className="w-7 h-7 rounded-[4px] bg-[#111111] flex items-center justify-center">
+            <span className="text-xs font-medium text-white">V</span>
+          </div>
+          <span className="text-[15px] font-medium text-[#111111] tracking-tight">
+            ValerIA<span className="text-[#ff5600]">·</span>
+          </span>
+        </div>
 
         {error && (
           <p className="text-[14px] text-[#c41c1c] mb-4 text-center">{error}</p>
@@ -69,7 +74,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
+            className="bg-[#111111] text-white rounded-[4px] px-[14px] py-2.5 w-full text-[14px] hover:scale-[1.02] transition-transform disabled:opacity-50"
           >
             {loading ? "Entrando..." : "Entrar"}
           </button>

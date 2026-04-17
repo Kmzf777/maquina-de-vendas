@@ -67,39 +67,40 @@ export default function QualificacaoPage() {
   });
 
   return (
-    <div>
-      <div className="mb-4">
-        <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Qualificacao</h1>
-        <p className="text-[14px] text-[#7b7b78] mt-1">
-          Funil de qualificacao do agente IA
-        </p>
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0">
+        <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Visão Agent AI</h1>
+        <p className="text-[14px] text-[#7b7b78] mt-0.5">Leads qualificados pelo agente</p>
       </div>
 
-      <KanbanMetricsBar leads={filteredLeads} />
-      <KanbanFilters
-        search={search}
-        onSearchChange={setSearch}
-        showActive={showActive}
-        onToggleActive={() => setShowActive(!showActive)}
-      />
+      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+        <KanbanMetricsBar leads={filteredLeads} />
+        <KanbanFilters
+          search={search}
+          onSearchChange={setSearch}
+          showActive={showActive}
+          onToggleActive={() => setShowActive(!showActive)}
+        />
 
-      <div className="flex gap-3 overflow-x-auto pb-4">
-        {AGENT_STAGES.map((stage) => {
-          const stageLeads = filteredLeads.filter((l) => l.stage === stage.key);
-          return (
-            <KanbanColumn
-              key={stage.key}
-              title={stage.label}
-              leads={stageLeads}
-              dotColor={stage.dotColor}
-              tintColor={stage.tintColor}
-              avatarColor={stage.avatarColor}
-              onLeadClick={setSelectedLead}
-              leadTagsMap={leadTagsMap}
-              footer={<QuickAddLead stage={stage.key} />}
-            />
-          );
-        })}
+        <div className="flex gap-3 overflow-x-auto pb-4">
+          {AGENT_STAGES.map((stage) => {
+            const stageLeads = filteredLeads.filter((l) => l.stage === stage.key);
+            return (
+              <KanbanColumn
+                key={stage.key}
+                title={stage.label}
+                leads={stageLeads}
+                dotColor={stage.dotColor}
+                tintColor={stage.tintColor}
+                avatarColor={stage.avatarColor}
+                onLeadClick={setSelectedLead}
+                leadTagsMap={leadTagsMap}
+                footer={<QuickAddLead stage={stage.key} />}
+              />
+            );
+          })}
+        </div>
       </div>
 
       {selectedLead && (

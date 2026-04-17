@@ -1,4 +1,5 @@
 import type { Lead, Tag } from "@/lib/types";
+import { getTemperature } from "@/lib/temperature";
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -31,11 +32,13 @@ export function LeadCard({
   lastMessage,
 }: LeadCardProps) {
   const initial = (lead.name || lead.phone)?.[0]?.toUpperCase() || "?";
+  const temp = getTemperature(lead.last_msg_at);
+  const tempDotColor = temp === "quente" ? "#0bdf50" : temp === "morno" ? "#ff5600" : "#65b5ff";
 
   return (
     <button
       onClick={() => onClick(lead)}
-      className="w-full text-left bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 hover:border-[#111111] transition-colors cursor-pointer"
+      className="w-full text-left bg-white border border-[#dedbd6] rounded-[8px] p-4 hover:border-[#111111] transition-colors cursor-pointer"
     >
       {/* Row 1: Avatar + Name + Time */}
       <div className="flex items-center gap-2.5 mb-2">
@@ -44,9 +47,12 @@ export function LeadCard({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-[#111111] truncate">
-              {lead.name || lead.phone}
-            </span>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: tempDotColor }} />
+              <span className="text-[15px] font-medium text-[#111111] truncate">
+                {lead.name || lead.phone}
+              </span>
+            </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
               {unreadCount && unreadCount > 0 ? (
                 <span className="bg-[#111111] text-white text-[10px] font-semibold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">

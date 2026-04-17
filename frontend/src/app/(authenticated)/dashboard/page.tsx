@@ -50,18 +50,22 @@ export default function DashboardPage() {
 
   if (leadsLoading || dealsLoading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <div className="h-8 w-48 rounded-[8px] animate-pulse bg-[#dedbd6]/40" />
-          <div className="h-4 w-72 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]/40" />
+      <div className="flex flex-col h-full">
+        <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+          <div>
+            <div className="h-8 w-48 rounded-[8px] animate-pulse bg-[#dedbd6]/40" />
+            <div className="h-4 w-72 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]/40" />
+          </div>
         </div>
-        <div className="grid grid-cols-3 gap-5">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 h-28 animate-pulse"
-            />
-          ))}
+        <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+          <div className="grid grid-cols-3 gap-5">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                className="bg-white border border-[#dedbd6] rounded-[8px] p-4 h-28 animate-pulse"
+              />
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -109,35 +113,36 @@ export default function DashboardPage() {
     });
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1
-          className="text-[32px] font-normal text-[#111111] mb-1"
-          style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
-        >
-          Dashboard
-        </h1>
-        <p className="text-[14px] text-[#7b7b78]">
-          Visao geral do desempenho e metricas
-        </p>
+    <div className="flex flex-col h-full">
+      {/* Page header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+        <div>
+          <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[32px] font-normal text-[#111111]">
+            Dashboard
+          </h1>
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">Visão geral do pipeline</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-5 mb-8">
-        <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />
-        <KpiCard label="Deals ativos" value={activeDeals.length} subtitle={fmt(activeValue)} icon={UsersIcon} />
-        <KpiCard label="Deals ganhos" value={wonDeals.length} subtitle={fmt(wonValue)} icon={CheckIcon} />
-        <KpiCard label="Deals perdidos" value={lostDeals.length} subtitle={fmt(lostValue)} icon={XIcon} />
-        <KpiCard label="Chats sem resposta" value={unanswered} icon={ChatIcon} />
-        <KpiCard label="Tempo de resposta" value={responseStr} icon={ClockIcon} />
-      </div>
+      {/* Main content */}
+      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+        <div className="grid grid-cols-3 gap-5 mb-8">
+          <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />
+          <KpiCard label="Deals ativos" value={activeDeals.length} subtitle={fmt(activeValue)} icon={UsersIcon} />
+          <KpiCard label="Deals ganhos" value={wonDeals.length} subtitle={fmt(wonValue)} icon={CheckIcon} />
+          <KpiCard label="Deals perdidos" value={lostDeals.length} subtitle={fmt(lostValue)} icon={XIcon} />
+          <KpiCard label="Chats sem resposta" value={unanswered} icon={ChatIcon} />
+          <KpiCard label="Tempo de resposta" value={responseStr} icon={ClockIcon} />
+        </div>
 
-      <div className="grid grid-cols-2 gap-5 mb-8">
-        <FunnelChart data={funnelData} />
-        <LeadSourcesChart leads={leads} />
-      </div>
+        <div className="grid grid-cols-2 gap-5 mb-8">
+          <FunnelChart data={funnelData} />
+          <LeadSourcesChart leads={leads} />
+        </div>
 
-      <div className="mb-8">
-        <FunnelMovement deals={deals} />
+        <div className="mb-8">
+          <FunnelMovement deals={deals} />
+        </div>
       </div>
     </div>
   );
