@@ -122,6 +122,17 @@ async def run_agent(
                 "content": result,
             })
 
+        # If mudar_stage was called, update in-memory state so the next API call
+        # uses the correct stage prompt and tools — prevents infinite transition loop.
+        for tc in message.tool_calls:
+            if tc.function.name == "mudar_stage":
+                new_stage = json.loads(tc.function.arguments).get("stage", stage)
+                stage = new_stage
+                tools = get_tools_for_stage(stage)
+                system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
+                messages[0] = {"role": "system", "content": system_prompt}
+                break
+
         response = await _get_openai().chat.completions.create(
             model=model,
             messages=messages,
