@@ -139,17 +139,17 @@ export default function ConversasPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full bg-[#f6f7ed]">
+      <div className="flex items-center justify-center h-full bg-[#faf9f6]">
         <div className="text-center">
-          <div className="w-10 h-10 border-2 border-[#c8cc8e] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-[#5f6368] text-sm">Carregando conversas...</p>
+          <div className="w-10 h-10 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-[#7b7b78] text-sm">Carregando conversas...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full bg-[#f6f7ed]">
+    <div className="flex h-full overflow-hidden bg-[#faf9f6]">
       <ChatList
         conversations={conversations}
         channels={channels}
@@ -175,10 +175,10 @@ export default function ConversasPage() {
           />
         </>
       ) : (
-        <div className="flex-1 flex items-center justify-center bg-[#f6f7ed]">
+        <div className="flex-1 flex items-center justify-center bg-[#faf9f6]">
           <div className="text-center">
             <svg
-              className="w-16 h-16 mx-auto mb-4 text-[#c8cc8e]"
+              className="w-16 h-16 mx-auto mb-4 text-[#dedbd6]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -190,10 +190,10 @@ export default function ConversasPage() {
                 d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
               />
             </svg>
-            <p className="text-[#1f1f1f] text-lg font-medium">
+            <p className="text-[#111111] text-[16px] font-medium">
               Selecione uma conversa
             </p>
-            <p className="text-[#9ca3af] text-sm mt-1">
+            <p className="text-[#7b7b78] text-[14px] mt-1">
               Escolha um contato para ver as mensagens
             </p>
           </div>

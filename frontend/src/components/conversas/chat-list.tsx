@@ -74,13 +74,13 @@ export function ChatList({
     });
 
   return (
-    <div className="w-[320px] bg-white border-r border-[#e5e5dc] flex flex-col h-full">
+    <div className="w-[320px] bg-[#faf9f6] border-r border-[#dedbd6] flex flex-col h-full">
       {/* Channel filter */}
       <div className="px-3 pt-3 pb-2">
         <select
           value={selectedChannelId}
           onChange={(e) => onChannelChange(e.target.value)}
-          className="bg-[#f6f7ed] border-none rounded-lg text-[13px] px-3 py-2 w-full outline-none focus:ring-1 focus:ring-[#c8cc8e]"
+          className="bg-white border border-[#dedbd6] rounded-[6px] text-[13px] px-3 py-2 w-full text-[#111111] focus:border-[#111111] focus:outline-none"
         >
           <option value="">Todos os canais</option>
           {channels.map((ch) => (
@@ -98,7 +98,7 @@ export function ChatList({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar conversa..."
-          className="input-field w-full text-[13px] rounded-xl px-4 py-2"
+          className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none"
         />
       </div>
 
@@ -108,10 +108,10 @@ export function ChatList({
           <button
             key={tab.key}
             onClick={() => onTabChange(tab.key)}
-            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+            className={`px-2.5 py-1 rounded-[4px] text-[12px] transition-colors ${
               activeTab === tab.key
-                ? "bg-[#1f1f1f] text-white"
-                : "text-[#5f6368] hover:text-[#1f1f1f] hover:bg-[#f6f7ed]"
+                ? "bg-[#111111] text-white"
+                : "text-[#7b7b78] hover:text-[#111111] hover:bg-[#dedbd6]/30"
             }`}
           >
             {tab.label}
@@ -120,9 +120,9 @@ export function ChatList({
       </div>
 
       {/* Chat list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto py-1">
         {filteredConversations.length === 0 && (
-          <p className="text-[#9ca3af] text-sm text-center py-8">
+          <p className="text-[#7b7b78] text-sm text-center py-8">
             Nenhuma conversa encontrada.
           </p>
         )}
@@ -131,17 +131,18 @@ export function ChatList({
           const channel = conv.channels;
           const displayName = lead?.name || lead?.phone || "Desconhecido";
           const stage = lead?.stage;
-          const isMetaCloud = channel?.provider === "meta_cloud";
+          const isActive = selectedConversationId === conv.id;
 
           return (
             <button
               key={conv.id}
               onClick={() => onSelectConversation(conv)}
               className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors ${
-                selectedConversationId === conv.id
-                  ? "bg-[#f6f7ed]"
-                  : "hover:bg-[#f6f7ed]/60"
+                isActive
+                  ? "bg-white border border-[#dedbd6] rounded-[6px] mx-2 px-3 py-3"
+                  : "hover:bg-[#dedbd6]/30 rounded-[6px] mx-2 px-3 py-3 cursor-pointer"
               }`}
+              style={isActive ? { width: "calc(100% - 16px)" } : { width: "calc(100% - 16px)" }}
             >
               {/* Avatar */}
               <div
@@ -153,26 +154,20 @@ export function ChatList({
               {/* Info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-[13px] text-[#1f1f1f] truncate font-semibold">
+                  <span className="text-[13px] text-[#111111] truncate font-medium">
                     {displayName}
                   </span>
-                  <span className="text-[11px] text-[#9ca3af] flex-shrink-0">
+                  <span className="text-[11px] text-[#7b7b78] flex-shrink-0">
                     {formatTime(conv.last_msg_at)}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   {channel && (
-                    <span
-                      className={`text-[11px] px-2 py-0.5 rounded-full flex-shrink-0 font-medium ${
-                        isMetaCloud
-                          ? "bg-[#c8cc8e] text-[#1f1f1f]"
-                          : "bg-[#93c5fd] text-[#1e3a5f]"
-                      }`}
-                    >
+                    <span className="text-[11px] px-2 py-0.5 rounded-[4px] flex-shrink-0 bg-[#dedbd6]/60 text-[#7b7b78]">
                       {channel.name}
                     </span>
                   )}
-                  <span className="text-[12px] text-[#9ca3af] truncate">
+                  <span className="text-[12px] text-[#7b7b78] truncate">
                     {lead?.phone || ""}
                   </span>
                 </div>
