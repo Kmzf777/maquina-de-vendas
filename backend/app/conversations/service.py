@@ -94,6 +94,7 @@ def save_message(
     role: str,
     content: str,
     stage: str | None = None,
+    sent_by: str = "agent",
 ) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
@@ -102,6 +103,7 @@ def save_message(
         "role": role,
         "content": content,
         "stage": stage,
+        "sent_by": sent_by,
     }
     result = sb.table("messages").insert(msg).execute()
     return result.data[0]

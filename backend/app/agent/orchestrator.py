@@ -18,6 +18,12 @@ _openai_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gpt-4.1-mini"
 
+_OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
+
+
+def _is_valid_openai_model(model: str) -> bool:
+    return any(model.startswith(p) for p in _OPENAI_MODEL_PREFIXES)
+
 
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
@@ -73,6 +79,9 @@ async def run_agent(
 
     prompt_key = _resolve_prompt_key(profile)
     model = profile.get("model", DEFAULT_MODEL) if profile else DEFAULT_MODEL
+    if not _is_valid_openai_model(model):
+        logger.warning("Agent profile model '%s' is not a valid OpenAI model, falling back to %s", model, DEFAULT_MODEL)
+        model = DEFAULT_MODEL
 
     tools = get_tools_for_stage(stage)
     system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
