@@ -1,0 +1,44 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run All Dev (CRM & Backend)",
+            "dependsOn": [
+                "Start Backend",
+                "Start CRM"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Start CRM",
+            "type": "shell",
+            "command": "npm run dev",
+            "options": {
+                "cwd": "${workspaceFolder}/frontend"
+            },
+            "isBackground": true,
+            "presentation": {
+                "panel": "shared",
+                "group": "dev",
+                "clear": true
+            }
+        },
+        {
+            "label": "Start Backend",
+            "type": "shell",
+            "command": "source venv/bin/activate 2>/dev/null || true && uvicorn app.main:app --reload --port 8001",
+            "options": {
+                "cwd": "${workspaceFolder}/backend"
+            },
+            "isBackground": true,
+            "presentation": {
+                "panel": "shared",
+                "group": "dev",
+                "clear": true
+            }
+        }
+    ]
+}
