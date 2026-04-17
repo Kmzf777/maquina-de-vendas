@@ -137,41 +137,38 @@ export default function LeadsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div>
+      <div className="flex flex-col h-full">
+        <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0">
           <div className="h-8 w-32 rounded-[8px] animate-pulse bg-[#dedbd6]" />
           <div className="h-4 w-64 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]" />
         </div>
-        <div className="grid grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5 h-24 animate-pulse" />
-          ))}
-        </div>
-        <div className="grid grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-5 h-40 animate-pulse" />
-          ))}
+        <div className="flex-1 overflow-auto bg-[#faf9f6] px-8 py-6 space-y-6">
+          <div className="grid grid-cols-4 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-24 animate-pulse" />
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-40 animate-pulse" />
+            ))}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+    <div className="flex flex-col h-full">
+      {/* Page Header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
         <div>
-          <h1
-            style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
-            className="text-[32px] font-normal text-[#111111]"
-          >
+          <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">
             Leads
           </h1>
-          <p className="text-[14px] mt-1 text-[#7b7b78]">
-            Gestao completa dos seus contatos
-          </p>
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">{leads.length} contatos no CRM</p>
         </div>
-        <div className="flex gap-2.5">
+        <div className="flex gap-2">
           <button
             onClick={() => setShowImport(true)}
             className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-1.5"
@@ -200,109 +197,114 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* KPI Bar */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
-          <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total de Leads</p>
-          <p className="text-[28px] font-normal text-[#111111] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.total}</p>
-        </div>
-        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
-          <div className="flex justify-between items-start">
-            <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Quentes</p>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#c41c1c]" />
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-auto bg-[#faf9f6]">
+        {/* Filter bar */}
+        <LeadsFilterBar
+          filters={filters}
+          onChange={setFilters}
+          tags={tags}
+          totalCount={leads.length}
+          filteredCount={filtered.length}
+        />
+
+        <div className="px-8 py-6">
+          {/* KPI Bar */}
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4">
+              <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total de Leads</p>
+              <p className="text-[28px] font-normal text-[#111111] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.total}</p>
+            </div>
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4">
+              <div className="flex justify-between items-start">
+                <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Quentes</p>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#c41c1c]" />
+              </div>
+              <p className="text-[28px] font-normal text-[#c41c1c] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.quentes}</p>
+              <p className="text-[11px] text-[#7b7b78]">Ultima msg &lt; 48h</p>
+            </div>
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4">
+              <div className="flex justify-between items-start">
+                <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Mornos</p>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#ff5600]" />
+              </div>
+              <p className="text-[28px] font-normal text-[#ff5600] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.mornos}</p>
+              <p className="text-[11px] text-[#7b7b78]">Ultima msg 48h-7d</p>
+            </div>
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4">
+              <div className="flex justify-between items-start">
+                <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Frios</p>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#7b7b78]" />
+              </div>
+              <p className="text-[28px] font-normal text-[#7b7b78] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.frios}</p>
+              <p className="text-[11px] text-[#7b7b78]">Ultima msg &gt; 7d</p>
+            </div>
           </div>
-          <p className="text-[28px] font-normal text-[#c41c1c] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.quentes}</p>
-          <p className="text-[11px] text-[#7b7b78]">Ultima msg &lt; 48h</p>
-        </div>
-        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
-          <div className="flex justify-between items-start">
-            <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Mornos</p>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#ff5600]" />
-          </div>
-          <p className="text-[28px] font-normal text-[#ff5600] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.mornos}</p>
-          <p className="text-[11px] text-[#7b7b78]">Ultima msg 48h-7d</p>
-        </div>
-        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4">
-          <div className="flex justify-between items-start">
-            <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Frios</p>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#7b7b78]" />
-          </div>
-          <p className="text-[28px] font-normal text-[#7b7b78] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.frios}</p>
-          <p className="text-[11px] text-[#7b7b78]">Ultima msg &gt; 7d</p>
+
+          {/* Cards Grid */}
+          {paginated.length > 0 ? (
+            <div className="grid grid-cols-3 gap-4">
+              {paginated.map((lead) => (
+                <LeadGridCard
+                  key={lead.id}
+                  lead={lead}
+                  tags={getLeadTags(lead.id)}
+                  onClick={setSelectedLead}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <p className="text-[14px] text-[#7b7b78]">Nenhum lead encontrado.</p>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex justify-center items-center gap-2 mt-6">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="px-3 py-1.5 rounded-[4px] border border-[#dedbd6] bg-white text-[13px] text-[#7b7b78] disabled:opacity-40 hover:border-[#111111] transition-colors"
+              >
+                &larr;
+              </button>
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                let pageNum: number;
+                if (totalPages <= 7) {
+                  pageNum = i + 1;
+                } else if (page <= 4) {
+                  pageNum = i + 1;
+                } else if (page >= totalPages - 3) {
+                  pageNum = totalPages - 6 + i;
+                } else {
+                  pageNum = page - 3 + i;
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={`px-3 py-1.5 rounded-[4px] text-[13px] transition-colors ${
+                      page === pageNum
+                        ? "bg-[#111111] text-white"
+                        : "border border-[#dedbd6] bg-white text-[#7b7b78] hover:border-[#111111]"
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="px-3 py-1.5 rounded-[4px] border border-[#dedbd6] bg-white text-[13px] text-[#7b7b78] disabled:opacity-40 hover:border-[#111111] transition-colors"
+              >
+                &rarr;
+              </button>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Filters */}
-      <LeadsFilterBar
-        filters={filters}
-        onChange={setFilters}
-        tags={tags}
-        totalCount={leads.length}
-        filteredCount={filtered.length}
-      />
-
-      {/* Cards Grid */}
-      {paginated.length > 0 ? (
-        <div className="grid grid-cols-3 gap-4">
-          {paginated.map((lead) => (
-            <LeadGridCard
-              key={lead.id}
-              lead={lead}
-              tags={getLeadTags(lead.id)}
-              onClick={setSelectedLead}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-12">
-          <p className="text-[14px] text-[#7b7b78]">Nenhum lead encontrado.</p>
-        </div>
-      )}
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex justify-center items-center gap-2 mt-6">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="px-3 py-1.5 rounded-[4px] border border-[#dedbd6] bg-white text-[13px] text-[#7b7b78] disabled:opacity-40 hover:border-[#111111] transition-colors"
-          >
-            &larr;
-          </button>
-          {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-            let pageNum: number;
-            if (totalPages <= 7) {
-              pageNum = i + 1;
-            } else if (page <= 4) {
-              pageNum = i + 1;
-            } else if (page >= totalPages - 3) {
-              pageNum = totalPages - 6 + i;
-            } else {
-              pageNum = page - 3 + i;
-            }
-            return (
-              <button
-                key={pageNum}
-                onClick={() => setPage(pageNum)}
-                className={`px-3 py-1.5 rounded-[4px] text-[13px] transition-colors ${
-                  page === pageNum
-                    ? "bg-[#111111] text-white"
-                    : "border border-[#dedbd6] bg-white text-[#7b7b78] hover:border-[#111111]"
-                }`}
-              >
-                {pageNum}
-              </button>
-            );
-          })}
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-            className="px-3 py-1.5 rounded-[4px] border border-[#dedbd6] bg-white text-[13px] text-[#7b7b78] disabled:opacity-40 hover:border-[#111111] transition-colors"
-          >
-            &rarr;
-          </button>
-        </div>
-      )}
 
       {/* Modals */}
       {selectedLead && (
