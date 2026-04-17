@@ -21,6 +21,9 @@ export function ContactDetail({
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [activeDeal, setActiveDeal] = useState<{ title: string; value: number; stage: string } | null>(null);
+  const [agentProfiles, setAgentProfiles] = useState<{ id: string; name: string }[]>([]);
+  const [aiEnabled, setAiEnabled] = useState(conversation.ai_enabled);
+  const [agentProfileId, setAgentProfileId] = useState<string | null>(conversation.agent_profile_id);
   const lead = conversation.leads as Lead | undefined | null;
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
@@ -41,6 +44,30 @@ export function ContactDetail({
         });
     });
   }, [lead?.id]);
+
+  useEffect(() => {
+    fetch("/api/agent-profiles")
+      .then((r) => r.json())
+      .then((data) => setAgentProfiles(Array.isArray(data) ? data : []));
+  }, []);
+
+  async function updateAgent(patch: { ai_enabled?: boolean; agent_profile_id?: string | null }) {
+    // optimistic update
+    if (patch.ai_enabled !== undefined) setAiEnabled(patch.ai_enabled);
+    if ("agent_profile_id" in patch) setAgentProfileId(patch.agent_profile_id ?? null);
+
+    const res = await fetch(`/api/conversations/${conversation.id}/agent`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+
+    if (!res.ok) {
+      // revert
+      setAiEnabled(conversation.ai_enabled);
+      setAgentProfileId(conversation.agent_profile_id);
+    }
+  }
 
   const stageInfo = lead ? AGENT_STAGES.find((s) => s.key === lead.stage) : null;
   const leadTagIds = new Set(leadTags.map((t) => t.id));
@@ -78,6 +105,44 @@ export function ContactDetail({
 
       {lead ? (
         <div className="p-4 space-y-4 text-sm">
+          {/* Agente IA */}
+          <div>
+            <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2 block">Agente IA</span>
+            <div className="space-y-2">
+              {/* Profile dropdown */}
+              <div>
+                <label className="text-[11px] text-[#7b7b78] block mb-1">Perfil</label>
+                <select
+                  value={agentProfileId ?? ""}
+                  onChange={(e) => updateAgent({ agent_profile_id: e.target.value || null })}
+                  className="w-full bg-white border border-[#dedbd6] rounded-[6px] text-[12px] px-2 py-1.5 text-[#111111] focus:border-[#111111] focus:outline-none"
+                >
+                  <option value="">Padrão do canal</option>
+                  {agentProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              {/* Status toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-2 h-2 rounded-full ${aiEnabled ? "bg-green-500" : "bg-[#9b9b98]"}`} />
+                  <span className="text-[13px] text-[#111111]">{aiEnabled ? "Ativo" : "Pausado"}</span>
+                </div>
+                <button
+                  onClick={() => updateAgent({ ai_enabled: !aiEnabled })}
+                  className={`text-[12px] px-3 py-1 rounded-[4px] border transition-colors ${
+                    aiEnabled
+                      ? "border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111]"
+                      : "border-green-500 text-green-600 hover:bg-green-50"
+                  }`}
+                >
+                  {aiEnabled ? "Pausar" : "Ativar"}
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Stage info */}
           <div>
             <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Stage (Agente)</span>
