@@ -52,7 +52,9 @@ export function ContactDetail({
   }, []);
 
   async function updateAgent(patch: { ai_enabled?: boolean; agent_profile_id?: string | null }) {
-    // optimistic update
+    const prevAiEnabled = aiEnabled;
+    const prevAgentProfileId = agentProfileId;
+
     if (patch.ai_enabled !== undefined) setAiEnabled(patch.ai_enabled);
     if ("agent_profile_id" in patch) setAgentProfileId(patch.agent_profile_id ?? null);
 
@@ -63,9 +65,8 @@ export function ContactDetail({
     });
 
     if (!res.ok) {
-      // revert
-      setAiEnabled(conversation.ai_enabled);
-      setAgentProfileId(conversation.agent_profile_id);
+      setAiEnabled(prevAiEnabled);
+      setAgentProfileId(prevAgentProfileId);
     }
   }
 
