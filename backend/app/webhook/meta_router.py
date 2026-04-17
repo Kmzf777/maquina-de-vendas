@@ -73,20 +73,23 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
 
     messages = parse_meta_webhook_payload(payload)
     redis = request.app.state.redis
+    forwarded_to_dev = False
 
     for msg in messages:
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
         msg.channel_id = channel["id"]
 
         if await is_dev_number(redis, msg.from_number):
-            logger.info(f"Dev routing: forwarding Meta {msg.from_number} to {settings.dev_server_url}")
-            background_tasks.add_task(
-                forward_to_dev,
-                dev_url=settings.dev_server_url,
-                path="/webhook/meta",
-                headers=dict(request.headers),
-                body=payload_bytes,
-            )
+            if not forwarded_to_dev:
+                logger.info(f"Dev routing: forwarding Meta {msg.from_number} to {settings.dev_server_url}")
+                background_tasks.add_task(
+                    forward_to_dev,
+                    dev_url=settings.dev_server_url,
+                    path="/webhook/meta",
+                    headers=dict(request.headers),
+                    body=payload_bytes,
+                )
+                forwarded_to_dev = True
             continue
 
         try:
