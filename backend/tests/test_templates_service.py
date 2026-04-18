@@ -106,7 +106,7 @@ async def test_confirm_template_updates_status_to_pending():
     mock_sb = MagicMock()
     mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value \
         .limit.return_value.execute.return_value.data = [DB_RECORD_REVIEW_LOCAL]
-    mock_sb.table.return_value.update.return_value.eq.return_value \
+    mock_sb.table.return_value.update.return_value.eq.return_value.eq.return_value \
         .execute.return_value.data = [{**DB_RECORD_REVIEW_LOCAL, "status": "pending"}]
 
     with patch("app.templates.service.get_supabase", return_value=mock_sb):
@@ -180,7 +180,7 @@ async def test_delete_template_calls_meta_and_cancels():
         from app.templates.service import delete_template
         result = await delete_template("chan-1", "tpl-2")
 
-        MockClient.return_value.delete_template.assert_called_once_with("meta-tpl-2")
+        MockClient.return_value.delete_template.assert_called_once_with("order_update_v1", "meta-tpl-2")
 
     assert result["status"] == "cancelled"
 

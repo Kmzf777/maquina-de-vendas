@@ -35,14 +35,17 @@ class MetaTemplateClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def delete_template(self, meta_template_id: str) -> None:
-        url = f"{META_API_BASE}/{meta_template_id}"
+    async def delete_template(self, template_name: str, meta_template_id: str | None = None) -> None:
+        url = f"{META_API_BASE}/{self.waba_id}/message_templates"
+        params: dict = {"name": template_name}
+        if meta_template_id:
+            params["hsm_id"] = meta_template_id
         async with httpx.AsyncClient() as client:
-            resp = await client.delete(url, headers=self._headers())
+            resp = await client.delete(url, params=params, headers=self._headers())
             if not resp.is_success:
                 logger.error(
-                    "[Meta Templates] DELETE failed %s — template_id: %s",
+                    "[Meta Templates] DELETE failed %s — template: %s",
                     resp.status_code,
-                    meta_template_id,
+                    template_name,
                 )
             resp.raise_for_status()
