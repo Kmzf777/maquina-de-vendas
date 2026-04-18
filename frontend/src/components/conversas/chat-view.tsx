@@ -158,10 +158,7 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
           <p className="text-[#7b7b78] text-sm text-center py-8">Nenhuma mensagem.</p>
         )}
         {displayMessages.map((msg) => {
-          const isFromMe =
-            msg.role === "assistant" ||
-            msg.sent_by === "agent" ||
-            msg.sent_by === "seller";
+          const isFromMe = msg.role === "assistant";
           const isTemp = msg.id.startsWith("temp_");
           return (
             <div
