@@ -118,15 +118,34 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
       return;
     }
 
+    const varNumbers = detectedVars.map(Number);
+    if (varNumbers.length > 0 && !varNumbers.every((n, i) => n === i + 1)) {
+      setError("As variáveis devem ser sequenciais começando em {{1}} (ex: {{1}}, {{2}}, {{3}}).");
+      return;
+    }
+
+    if (detectedVars.some(v => !variableSamples[v]?.trim())) {
+      setError("Preencha os exemplos de todas as variáveis do corpo.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
+
+    const bodyComponent = detectedVars.length > 0
+      ? {
+          type: "BODY",
+          text: form.bodyText.trim(),
+          example: { body_text: [detectedVars.map(v => variableSamples[v].trim())] },
+        }
+      : { type: "BODY", text: form.bodyText.trim() };
 
     const body = {
       name: form.name.trim(),
       language: form.language,
       category: form.category,
       components: [
-        { type: "BODY", text: form.bodyText.trim() },
+        bodyComponent,
         ...(validTexts.length > 0
           ? [{ type: "BUTTONS", buttons: validTexts.map(text => ({ type: "QUICK_REPLY", text })) }]
           : []),
