@@ -7,6 +7,7 @@ import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
+import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { CreateTemplateModal } from "@/components/canais/create-template-modal";
 
 function StatusBadge({ status }: { status: string }) {
@@ -37,6 +38,8 @@ export default function CampanhasPage() {
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showQuickSendModal, setShowQuickSendModal] = useState(false);
+  const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"visao-geral" | "disparos" | "cadencias">("visao-geral");
@@ -64,6 +67,11 @@ export default function CampanhasPage() {
     }
   };
 
+  const handleQuickSendSuccess = (count: number) => {
+    setQuickSendToast(`Disparo Rápido enviado para ${count} número${count > 1 ? "s" : ""}!`);
+    setTimeout(() => setQuickSendToast(null), 3000);
+  };
+
   if (bLoading || cLoading) {
     return (
       <div className="space-y-6">
@@ -88,6 +96,12 @@ export default function CampanhasPage() {
           <p className="text-[14px] text-[#7b7b78] mt-0.5">Disparos e cadências de follow-up</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setShowQuickSendModal(true)}
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+          >
+            + Disparo Rápido
+          </button>
           <button
             onClick={() => setShowBroadcastModal(true)}
             className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
@@ -198,6 +212,18 @@ export default function CampanhasPage() {
         onClose={() => setShowBroadcastModal(false)}
         onCreated={() => {}}
       />
+
+      <QuickSendModal
+        open={showQuickSendModal}
+        onClose={() => setShowQuickSendModal(false)}
+        onSuccess={handleQuickSendSuccess}
+      />
+
+      {quickSendToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#111111] text-white text-[14px] px-4 py-3 rounded-[6px] shadow-lg">
+          {quickSendToast}
+        </div>
+      )}
 
       <CreateTemplateModal
         open={showTemplateModal}
