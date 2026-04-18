@@ -33,13 +33,14 @@ Chave = número da variável (`"1"`, `"2"`...), valor = texto de exemplo.
 ### Extração reativa (derivada, sem useState)
 
 ```ts
-const VARS_RE_GLOBAL = /\{\{(\d+)\}\}/g;
+const VARS_RE_GLOBAL = /\{\{([1-9]\d*)\}\}/g;
 const detectedVars: string[] = [
   ...new Set([...form.bodyText.matchAll(VARS_RE_GLOBAL)].map(m => m[1]))
 ].sort((a, b) => Number(a) - Number(b));
 ```
 
 - Roda em cada render — sem efeito colateral
+- Regex captura apenas inteiros positivos sem zero à esquerda (`[1-9]\d*`) — `{{0}}` e `{{01}}` são ignorados pois a Meta não os aceita
 - Variáveis duplicadas no texto resultam em um único campo de amostra
 - Quando o usuário apaga uma variável do textarea, ela desaparece da lista automaticamente
 - `variableSamples` pode acumular chaves órfãs; o payload usa apenas as chaves em `detectedVars`
@@ -75,9 +76,11 @@ A seção é renderizada condicionalmente no `{step === "form"}`, **entre o camp
 
 <label> Corpo </label>
 {detectedVars.map(v => (
-  <input placeholder="Insira um exemplo para {{v}}" />
+  <input key={v} placeholder="Insira um exemplo para {{v}}" />
 ))}
 ```
+
+`key={v}` é seguro pois `detectedVars` contém apenas valores únicos (deduplicados via `Set`).
 
 ### Comportamento
 
@@ -94,11 +97,22 @@ A seção é renderizada condicionalmente no `{step === "form"}`, **entre o camp
 Inserida após as validações existentes (nome, body, botões), antes de `setSaving(true)`:
 
 ```ts
+// 1. Sequência obrigatória: variáveis devem começar em 1 e ser contínuas
+const varNumbers = detectedVars.map(Number);
+const expectedSequence = varNumbers.map((_, i) => i + 1);
+if (!varNumbers.every((n, i) => n === expectedSequence[i])) {
+  setError("As variáveis devem ser sequenciais começando em {{1}} (ex: {{1}}, {{2}}, {{3}}).");
+  return;
+}
+
+// 2. Amostras obrigatórias para todas as variáveis
 if (detectedVars.some(v => !variableSamples[v]?.trim())) {
   setError("Preencha os exemplos de todas as variáveis do corpo.");
   return;
 }
 ```
+
+A validação de sequência garante que a Meta não rejeite o template por variáveis não contínuas ou que não comecem em `{{1}}`.
 
 ### Payload do componente BODY
 
@@ -126,10 +140,10 @@ O campo `example.body_text` é um array de arrays — o array externo representa
 
 ### `backend/app/templates/schemas.py`
 
-Adicionar campo `example` ao modelo `TemplateComponent`:
+Adicionar campo `example` ao modelo `TemplateComponent` seguindo o padrão de tipagem do arquivo (operador `|`, Python 3.10+):
 
 ```python
-example: Optional[dict] = None
+example: dict | None = None
 ```
 
 O serviço (`service.py`) já passa `components` direto para o payload da Meta — nenhuma outra alteração necessária no backend.
@@ -139,5 +153,4 @@ O serviço (`service.py`) já passa `components` direto para o payload da Meta �
 ## Fora de escopo
 
 - Preview live do body com amostras substituídas
-- Validação de sequência de variáveis (ex: avisar se o usuário pula `{{2}}` e usa `{{3}}`)
 - Limite de caracteres por amostra (a Meta não documenta um limite fixo; o backend rejeitará se inválido)
