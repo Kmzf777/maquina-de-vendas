@@ -2,6 +2,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
+from app.templates.schemas import TemplateButton, TemplateComponent, TemplateCreate
 
 # Fixtures de dados reutilizáveis
 CHANNEL_META = {
@@ -240,3 +242,57 @@ async def test_create_template_missing_waba_id_raises_400():
 
         assert exc.value.status_code == 400
         MockClient.assert_not_called()
+
+
+# --- schema: TemplateButton ---
+
+def test_quick_reply_button_valid():
+    btn = TemplateButton(type="QUICK_REPLY", text="Sim")
+    assert btn.type == "QUICK_REPLY"
+    assert btn.text == "Sim"
+
+
+def test_quick_reply_button_text_too_long_raises():
+    with pytest.raises(ValidationError):
+        TemplateButton(type="QUICK_REPLY", text="A" * 26)
+
+
+# --- schema: TemplateComponent ---
+
+def test_buttons_component_empty_raises():
+    with pytest.raises(ValidationError):
+        TemplateComponent(type="BUTTONS", buttons=[])
+
+
+def test_buttons_component_too_many_raises():
+    buttons = [TemplateButton(type="QUICK_REPLY", text=f"Op{i}") for i in range(4)]
+    with pytest.raises(ValidationError):
+        TemplateComponent(type="BUTTONS", buttons=buttons)
+
+
+# --- schema: TemplateCreate ---
+
+def test_two_buttons_components_raises():
+    buttons = [TemplateButton(type="QUICK_REPLY", text="Sim")]
+    btn_component = TemplateComponent(type="BUTTONS", buttons=buttons)
+    with pytest.raises(ValidationError):
+        TemplateCreate(
+            name="test",
+            language="pt_BR",
+            category="UTILITY",
+            components=[
+                TemplateComponent(type="BODY", text="Hello"),
+                btn_component,
+                btn_component,
+            ],
+        )
+
+
+def test_create_template_schema_no_buttons_valid():
+    tc = TemplateCreate(
+        name="test",
+        language="pt_BR",
+        category="UTILITY",
+        components=[TemplateComponent(type="BODY", text="Hello")],
+    )
+    assert len(tc.components) == 1
