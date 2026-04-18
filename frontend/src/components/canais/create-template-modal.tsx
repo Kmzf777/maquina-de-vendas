@@ -28,6 +28,7 @@ const EMPTY_FORM = {
 };
 
 const VARIABLE_RE = /\{\{\d+\}\}/;
+const VARS_RE_GLOBAL = /\{\{([1-9]\d*)\}\}/g;
 
 export function CreateTemplateModal({ channelId, open, onClose, onCreated }: CreateTemplateModalProps) {
   const [step, setStep] = useState<ModalStep>("form");
@@ -42,6 +43,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState("");
   const [buttons, setButtons] = useState<ButtonItem[]>([]);
+  const [variableSamples, setVariableSamples] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open || channelId) return;
@@ -60,6 +62,10 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   if (!open) return null;
 
   const activeChannelId = channelId ?? selectedChannelId;
+
+  const detectedVars: string[] = [
+    ...new Set([...form.bodyText.matchAll(VARS_RE_GLOBAL)].map(m => m[1]))
+  ].sort((a, b) => Number(a) - Number(b));
 
   const addButton = () => {
     setButtons(prev =>
@@ -82,6 +88,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
     setStep("form");
     setForm(EMPTY_FORM);
     setButtons([]);
+    setVariableSamples({});
     setError(null);
     setPendingTemplateId(null);
     setSuggestedCategory(null);
@@ -111,15 +118,34 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
       return;
     }
 
+    const varNumbers = detectedVars.map(Number);
+    if (varNumbers.length > 0 && !varNumbers.every((n, i) => n === i + 1)) {
+      setError("As variáveis devem ser sequenciais começando em {{1}} (ex: {{1}}, {{2}}, {{3}}).");
+      return;
+    }
+
+    if (detectedVars.some(v => !variableSamples[v]?.trim())) {
+      setError("Preencha os exemplos de todas as variáveis do corpo.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
+
+    const bodyComponent = detectedVars.length > 0
+      ? {
+          type: "BODY",
+          text: form.bodyText.trim(),
+          example: { body_text: [detectedVars.map(v => variableSamples[v].trim())] },
+        }
+      : { type: "BODY", text: form.bodyText.trim() };
 
     const body = {
       name: form.name.trim(),
       language: form.language,
       category: form.category,
       components: [
-        { type: "BODY", text: form.bodyText.trim() },
+        bodyComponent,
         ...(validTexts.length > 0
           ? [{ type: "BUTTONS", buttons: validTexts.map(text => ({ type: "QUICK_REPLY", text })) }]
           : []),
@@ -296,6 +322,35 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
               />
               <p className="text-[11px] text-[#7b7b78] mt-1">Use &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125;, etc. para variáveis.</p>
             </div>
+
+            {detectedVars.length > 0 && (
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Amostras de Variáveis
+                </label>
+                <div className="p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] mb-2">
+                  <p className="text-[12px] text-[#7b7b78]">
+                    Inclua exemplos para todas as variáveis da sua mensagem para ajudar a Meta a analisar o template.
+                  </p>
+                  <p className="text-[12px] text-[#7b7b78] mt-1">
+                    Por motivos de privacidade, não inclua dados reais de clientes.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {detectedVars.map(v => (
+                    <input
+                      key={v}
+                      id={`var-sample-${v}`}
+                      aria-label={`Exemplo para {{${v}}}`}
+                      value={variableSamples[v] ?? ""}
+                      onChange={e => setVariableSamples(prev => ({ ...prev, [v]: e.target.value }))}
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                      placeholder={`Insira um exemplo para {{${v}}}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
