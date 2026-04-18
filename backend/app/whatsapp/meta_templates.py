@@ -18,7 +18,7 @@ class MetaTemplateClient:
 
     async def create_template(self, payload: dict) -> dict:
         url = f"{META_API_BASE}/{self.waba_id}/message_templates"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json=payload, headers=self._headers())
             if not resp.is_success:
                 try:
