@@ -301,11 +301,11 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
 
             <div className="flex justify-end gap-3">
               <button
-                onClick={handleCancel}
+                onClick={() => setStep("form")}
                 disabled={saving}
-                className="bg-[#c41c1c]/10 text-[#c41c1c] border border-[#c41c1c]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+                className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
               >
-                {saving ? "..." : "Cancelar Template"}
+                Voltar
               </button>
               <button
                 onClick={handleConfirm}
