@@ -18,6 +18,8 @@ interface CreateTemplateModalProps {
 
 type ModalStep = "form" | "review";
 
+type ButtonItem = { id: string; text: string };
+
 const EMPTY_FORM = {
   name: "",
   language: "pt_BR",
@@ -37,6 +39,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   // Channel selection (used when no channelId prop is provided)
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState("");
+  const [buttons, setButtons] = useState<ButtonItem[]>([]);
 
   useEffect(() => {
     if (!open || channelId) return;
@@ -56,9 +59,27 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
 
   const activeChannelId = channelId ?? selectedChannelId;
 
+  const addButton = () => {
+    setButtons(prev =>
+      prev.length < 3 ? [...prev, { id: crypto.randomUUID(), text: "" }] : prev
+    );
+  };
+
+  const updateButton = (id: string, value: string) => {
+    const sanitized = value.replace(/[{}]/g, "");
+    setButtons(prev =>
+      prev.map(b => b.id === id ? { ...b, text: sanitized } : b)
+    );
+  };
+
+  const removeButton = (id: string) => {
+    setButtons(prev => prev.filter(b => b.id !== id));
+  };
+
   const resetAndClose = () => {
     setStep("form");
     setForm(EMPTY_FORM);
+    setButtons([]);
     setError(null);
     setPendingTemplateId(null);
     setSuggestedCategory(null);
