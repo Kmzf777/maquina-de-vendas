@@ -12,6 +12,7 @@ class TemplateComponent(BaseModel):
     format: str | None = None
     text: str | None = None
     buttons: list[TemplateButton] | None = None
+    example: dict | None = None
 
     @model_validator(mode="after")
     def validate_buttons(self) -> "TemplateComponent":
