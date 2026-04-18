@@ -16,7 +16,7 @@ class TemplateComponent(BaseModel):
     @model_validator(mode="after")
     def validate_buttons(self) -> "TemplateComponent":
         if self.type == "BUTTONS":
-            if not self.buttons or len(self.buttons) < 1:
+            if not self.buttons:
                 raise ValueError("BUTTONS component must have at least 1 button")
             if len(self.buttons) > 3:
                 raise ValueError("BUTTONS component cannot have more than 3 buttons")
