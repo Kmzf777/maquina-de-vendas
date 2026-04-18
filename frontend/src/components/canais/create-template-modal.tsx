@@ -341,6 +341,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
                     <input
                       key={v}
                       id={`var-sample-${v}`}
+                      aria-label={`Exemplo para {{${v}}}`}
                       value={variableSamples[v] ?? ""}
                       onChange={e => setVariableSamples(prev => ({ ...prev, [v]: e.target.value }))}
                       className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
