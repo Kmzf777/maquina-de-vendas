@@ -297,6 +297,44 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
               <p className="text-[11px] text-[#7b7b78] mt-1">Use &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125;, etc. para variáveis.</p>
             </div>
 
+            <div>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                Botões de Resposta Rápida (Opcional)
+              </label>
+              <div className="space-y-2">
+                {buttons.map(btn => (
+                  <div key={btn.id} className="flex items-center gap-2">
+                    <input
+                      value={btn.text}
+                      onChange={e => updateButton(btn.id, e.target.value)}
+                      maxLength={25}
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none flex-1"
+                      placeholder="ex: Sim"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeButton(btn.id)}
+                      className="text-[#7b7b78] hover:text-[#111111] text-lg transition-colors leading-none"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {buttons.length < 3 && (
+                <button
+                  type="button"
+                  onClick={addButton}
+                  className="text-[12px] text-[#7b7b78] hover:text-[#111111] transition-colors mt-2"
+                >
+                  + Adicionar botão
+                </button>
+              )}
+              <p className="text-[11px] text-[#7b7b78] mt-1">
+                Máx 3 botões, 25 caracteres. Não use variáveis como &#123;&#123;1&#125;&#125;.
+              </p>
+            </div>
+
             {error && (
               <p className="text-[12px] text-[#c41c1c]">{error}</p>
             )}
