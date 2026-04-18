@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { CreateTemplateModal } from "@/components/canais/create-template-modal";
 
 interface AgentProfile {
   id: string;
@@ -60,7 +59,6 @@ export default function CanaisPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [templateChannelId, setTemplateChannelId] = useState<string | null>(null);
 
   // QR Code modal state
   const [qrChannelId, setQrChannelId] = useState<string | null>(null);
@@ -340,14 +338,6 @@ export default function CanaisPage() {
                           </button>
                         )
                       )}
-                      {ch.provider === "meta_cloud" && (
-                        <button
-                          onClick={() => setTemplateChannelId(ch.id)}
-                          className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
-                        >
-                          Criar Template
-                        </button>
-                      )}
                       <button onClick={() => handleEdit(ch)} className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
                         Editar
                       </button>
@@ -599,15 +589,6 @@ export default function CanaisPage() {
         </div>
       )}
 
-      {/* Create Template Modal */}
-      {templateChannelId && (
-        <CreateTemplateModal
-          channelId={templateChannelId}
-          open={true}
-          onClose={() => setTemplateChannelId(null)}
-          onCreated={() => setTemplateChannelId(null)}
-        />
-      )}
     </div>
   );
 }
