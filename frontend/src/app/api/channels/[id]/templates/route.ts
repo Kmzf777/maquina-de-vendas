@@ -19,6 +19,7 @@ interface MetaTemplate {
   name: string;
   status: string;
   language: string;
+  category: string;
   components: MetaComponent[];
 }
 
@@ -53,7 +54,7 @@ export async function GET(
   }
 
   const version = api_version || "v20.0";
-  const url = `https://graph.facebook.com/${version}/${waba_id}/message_templates?fields=name,status,language,components&limit=200`;
+  const url = `https://graph.facebook.com/${version}/${waba_id}/message_templates?fields=name,status,language,category,components&limit=200`;
 
   const metaRes = await fetch(url, {
     headers: { Authorization: `Bearer ${access_token}` },
@@ -70,6 +71,7 @@ export async function GET(
     .map((t) => ({
       name: t.name,
       language: t.language,
+      category: (t.category || "").toLowerCase(),
       params: extractParams(t.components || []),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
