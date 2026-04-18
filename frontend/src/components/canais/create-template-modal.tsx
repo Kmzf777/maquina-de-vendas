@@ -85,6 +85,11 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   };
 
   const resetAndClose = () => {
+    if (pendingTemplateId) {
+      fetch(`/api/channels/${activeChannelId}/templates/${pendingTemplateId}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
     setStep("form");
     setForm(EMPTY_FORM);
     setButtons([]);
@@ -94,6 +99,21 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
     setSuggestedCategory(null);
     setSelectedChannelId("");
     onClose();
+  };
+
+  const handleBack = async () => {
+    if (!pendingTemplateId) { setStep("form"); return; }
+    setSaving(true);
+    try {
+      await fetch(`/api/channels/${activeChannelId}/templates/${pendingTemplateId}`, {
+        method: "DELETE",
+      });
+    } catch { /* ignore */ }
+    setSaving(false);
+    setPendingTemplateId(null);
+    setSuggestedCategory(null);
+    setError(null);
+    setStep("form");
   };
 
   const handleSubmit = async () => {
@@ -435,7 +455,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
 
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => setStep("form")}
+                onClick={handleBack}
                 disabled={saving}
                 className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
               >
