@@ -257,6 +257,17 @@ def test_quick_reply_button_text_too_long_raises():
         TemplateButton(type="QUICK_REPLY", text="A" * 26)
 
 
+def test_quick_reply_button_text_exactly_25_chars_valid():
+    btn = TemplateButton(type="QUICK_REPLY", text="A" * 25)
+    assert len(btn.text) == 25
+
+
+def test_non_buttons_component_with_buttons_raises():
+    btn = TemplateButton(type="QUICK_REPLY", text="Sim")
+    with pytest.raises(ValidationError):
+        TemplateComponent(type="BODY", text="Hello", buttons=[btn])
+
+
 # --- schema: TemplateComponent ---
 
 def test_buttons_component_empty_raises():
