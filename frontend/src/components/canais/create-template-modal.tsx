@@ -27,6 +27,8 @@ const EMPTY_FORM = {
   bodyText: "",
 };
 
+const VARIABLE_RE = /\{\{\d+\}\}/;
+
 export function CreateTemplateModal({ channelId, open, onClose, onCreated }: CreateTemplateModalProps) {
   const [step, setStep] = useState<ModalStep>("form");
   const [form, setForm] = useState(EMPTY_FORM);
@@ -104,7 +106,6 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
       return;
     }
 
-    const VARIABLE_RE = /\{\{\d+\}\}/;
     if (validTexts.some(t => VARIABLE_RE.test(t))) {
       setError("Botões não podem conter variáveis como {{1}}.");
       return;
