@@ -6,6 +6,7 @@ import type { Channel } from "@/lib/types";
 interface MetaTemplate {
   name: string;
   language: string;
+  category: string;
   params: string[];
 }
 
@@ -291,7 +292,7 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
                     key={`${t.name}|${t.language}`}
                     value={`${t.name}|${t.language}`}
                   >
-                    {t.name} ({t.language})
+                    {t.name} ({t.language}){t.category ? ` · ${t.category}` : ""}
                   </option>
                 ))}
               </select>
