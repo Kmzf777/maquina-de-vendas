@@ -323,6 +323,33 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
               <p className="text-[11px] text-[#7b7b78] mt-1">Use &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125;, etc. para variáveis.</p>
             </div>
 
+            {detectedVars.length > 0 && (
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Amostras de Variáveis
+                </label>
+                <div className="p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] mb-2">
+                  <p className="text-[12px] text-[#7b7b78]">
+                    Inclua exemplos para todas as variáveis da sua mensagem para ajudar a Meta a analisar o template.
+                  </p>
+                  <p className="text-[12px] text-[#7b7b78] mt-1">
+                    Por motivos de privacidade, não inclua dados reais de clientes.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {detectedVars.map(v => (
+                    <input
+                      key={v}
+                      value={variableSamples[v] ?? ""}
+                      onChange={e => setVariableSamples(prev => ({ ...prev, [v]: e.target.value }))}
+                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                      placeholder={`Insira um exemplo para {{${v}}}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
                 Botões de Resposta Rápida (Opcional)
