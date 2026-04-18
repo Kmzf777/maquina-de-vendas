@@ -68,7 +68,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   };
 
   const updateButton = (id: string, value: string) => {
-    const sanitized = value.replace(/[{}]/g, "");
+    const sanitized = value.replace(/\{\{\d+\}\}/g, "");
     setButtons(prev =>
       prev.map(b => b.id === id ? { ...b, text: sanitized } : b)
     );
