@@ -68,8 +68,57 @@ async def create_template(channel_id: str, data: dict) -> tuple[dict, str]:
 
 
 async def confirm_template(channel_id: str, template_id: str) -> dict:
-    pass
+    sb = get_supabase()
+    res = (
+        sb.table("message_templates")
+        .select("*")
+        .eq("id", template_id)
+        .eq("channel_id", channel_id)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(404, "Template not found")
+    template = res.data[0]
+    if template["status"] != "pending_category_review":
+        raise HTTPException(409, "Template is not in pending_category_review state")
+
+    updated = (
+        sb.table("message_templates")
+        .update({"status": "pending"})
+        .eq("id", template_id)
+        .execute()
+        .data[0]
+    )
+    return {"status": "pending", "template": updated}
 
 
 async def delete_template(channel_id: str, template_id: str) -> dict:
-    pass
+    channel = get_channel(channel_id)
+    meta_client = _get_meta_client(channel)
+
+    sb = get_supabase()
+    res = (
+        sb.table("message_templates")
+        .select("*")
+        .eq("id", template_id)
+        .eq("channel_id", channel_id)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(404, "Template not found")
+    template = res.data[0]
+
+    meta_template_id = template.get("meta_template_id")
+    if meta_template_id:
+        try:
+            await meta_client.delete_template(meta_template_id)
+        except Exception:
+            logger.warning(
+                "Failed to delete template %s from Meta, proceeding with local cancellation",
+                meta_template_id,
+            )
+
+    sb.table("message_templates").update({"status": "cancelled"}).eq("id", template_id).execute()
+    return {"status": "cancelled"}
