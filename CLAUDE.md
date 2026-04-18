@@ -7,7 +7,8 @@ Você está atuando em um repositório mantido por múltiplos desenvolvedores (h
 - O fluxo oficial é: **Criar branch local -> Codificar -> Testar no Servidor -> Push direto para a Master**.
 - Ao iniciar uma nova tarefa, crie uma branch local para organizar o trabalho (ex: `feature/novo-recurso`).
 - Como testar: Você deve sempre validar se o código funciona utilizando as tarefas configuradas do VS Code (ex: `run task "Run All Dev (CRM & Backend)"`).
-- Após garantir que os serviços sobem sem erros (build, lint, etc.), o push é feito *diretamente* para a branch `master` no repositório remoto (ex: `git push origin sua-branch-local:master` ou merge local e push).
+- **REGRA DE OURO (PARADA OBRIGATÓRIA):** Nunca, EM HIPÓTESE ALGUMA, faça o push para a master de forma automática após codificar. O deploy acarreta riscos à produção. Depois de comitar na branch local, você DEVE PARAR, avisar o usuário humano e aguardar que ele teste as alterações no ambiente de Dev.
+- O push é feito *diretamente* para a branch `master` no repositório remoto **SOMENTE após o usuário dar expressa autorização** (ex: `git push origin sua-branch-local:master` ou merge local e push).
 - **Atenção:** O push na `master` aciona o deploy de produção no GitHub Actions. Portanto, SÓ faça o push final após os testes na sua branch passarem.
 
 ## 📞 2. Roteamento de Webhook e Whitelist (Isolamento de Testes)
