@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     supabase_service_key: str
 
     # Redis
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = "redis://redis:6379"
 
     # App
     api_base_url: str = "http://localhost:8000"
