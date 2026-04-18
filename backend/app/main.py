@@ -61,6 +61,7 @@ from app.channels.router import router as channels_router
 from app.agent_profiles.router import router as agent_profiles_router
 from app.conversations.router import router as conversations_router
 from app.dev_router.router import router as dev_router
+from app.templates.router import router as templates_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
@@ -74,6 +75,7 @@ app.include_router(channels_router)
 app.include_router(agent_profiles_router)
 app.include_router(conversations_router)
 app.include_router(dev_router)
+app.include_router(templates_router)
 
 
 @app.get("/health")
