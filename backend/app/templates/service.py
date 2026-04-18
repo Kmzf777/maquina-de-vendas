@@ -1,5 +1,6 @@
 # backend/app/templates/service.py
 import logging
+import httpx
 from fastapi import HTTPException
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel
@@ -35,9 +36,12 @@ async def create_template(channel_id: str, data: dict) -> tuple[dict, str]:
 
     try:
         meta_response = await meta_client.create_template(payload)
-    except Exception:
-        logger.exception("Failed to call Meta Templates API for channel %s", channel_id)
-        raise HTTPException(502, "Failed to create template on Meta")
+    except httpx.HTTPStatusError as exc:
+        logger.exception("Meta Templates API error for channel %s", channel_id)
+        raise HTTPException(502, "Failed to create template on Meta") from exc
+    except httpx.RequestError as exc:
+        logger.exception("Meta Templates API unreachable for channel %s", channel_id)
+        raise HTTPException(502, "Failed to reach Meta API") from exc
 
     meta_category = meta_response.get("category", requested_category)
     meta_template_id = meta_response.get("id")
@@ -87,6 +91,7 @@ async def confirm_template(channel_id: str, template_id: str) -> dict:
         sb.table("message_templates")
         .update({"status": "pending"})
         .eq("id", template_id)
+        .eq("channel_id", channel_id)
         .execute()
         .data[0]
     )
@@ -111,9 +116,10 @@ async def delete_template(channel_id: str, template_id: str) -> dict:
     template = res.data[0]
 
     meta_template_id = template.get("meta_template_id")
-    if meta_template_id:
+    template_name = template.get("name")
+    if meta_template_id and template_name:
         try:
-            await meta_client.delete_template(meta_template_id)
+            await meta_client.delete_template(template_name, meta_template_id)
         except Exception:
             logger.warning(
                 "Failed to delete template %s from Meta, proceeding with local cancellation",
