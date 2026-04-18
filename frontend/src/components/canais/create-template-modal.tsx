@@ -28,6 +28,7 @@ const EMPTY_FORM = {
 };
 
 const VARIABLE_RE = /\{\{\d+\}\}/;
+const VARS_RE_GLOBAL = /\{\{([1-9]\d*)\}\}/g;
 
 export function CreateTemplateModal({ channelId, open, onClose, onCreated }: CreateTemplateModalProps) {
   const [step, setStep] = useState<ModalStep>("form");
@@ -42,6 +43,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState("");
   const [buttons, setButtons] = useState<ButtonItem[]>([]);
+  const [variableSamples, setVariableSamples] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open || channelId) return;
@@ -60,6 +62,10 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   if (!open) return null;
 
   const activeChannelId = channelId ?? selectedChannelId;
+
+  const detectedVars: string[] = [
+    ...new Set([...form.bodyText.matchAll(VARS_RE_GLOBAL)].map(m => m[1]))
+  ].sort((a, b) => Number(a) - Number(b));
 
   const addButton = () => {
     setButtons(prev =>
@@ -82,6 +88,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
     setStep("form");
     setForm(EMPTY_FORM);
     setButtons([]);
+    setVariableSamples({});
     setError(null);
     setPendingTemplateId(null);
     setSuggestedCategory(null);
