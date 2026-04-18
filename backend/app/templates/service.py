@@ -120,5 +120,5 @@ async def delete_template(channel_id: str, template_id: str) -> dict:
                 meta_template_id,
             )
 
-    sb.table("message_templates").update({"status": "cancelled"}).eq("id", template_id).execute()
+    sb.table("message_templates").update({"status": "cancelled"}).eq("id", template_id).eq("channel_id", channel_id).execute()
     return {"status": "cancelled"}
