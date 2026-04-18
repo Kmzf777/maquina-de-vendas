@@ -3,7 +3,7 @@
 Você está atuando em um repositório mantido por múltiplos desenvolvedores (humanos e IAs). A produção é crítica (Docker Swarm). Siga ESTritamente as regras abaixo:
 
 ## 🚀 1. Fluxo de Trabalho e Git (Prática de Master)
-O projeto é mantido pelo Rafael (Líder) e pelo Kelwin. **NÃO utilizamos Pull Requests (PRs)**.
+**NÃO utilizamos Pull Requests (PRs)**.
 - O fluxo oficial é: **Criar branch local -> Codificar -> Testar no Servidor -> Push direto para a Master**.
 - Ao iniciar uma nova tarefa, crie uma branch local para organizar o trabalho (ex: `feature/novo-recurso`).
 - Como testar: Você deve sempre validar se o código funciona utilizando as tarefas configuradas do VS Code (ex: `run task "Run All Dev (CRM & Backend)"`).
