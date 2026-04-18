@@ -2,12 +2,13 @@
 
 Você está atuando em um repositório mantido por múltiplos desenvolvedores (humanos e IAs). A produção é crítica (Docker Swarm). Siga ESTritamente as regras abaixo:
 
-## � 1. Fluxo de Trabalho e Git (Prática de Master)
-O projeto é mantido pelo Rafael (Líder) e pelo Kelwin. **NÃO utilizamos Pull Requests (PRs) ou branches isoladas para tarefas do dia a dia**.
-- O fluxo oficial é: **Codificar -> Testar no Servidor -> Push na Master**.
+## 🚀 1. Fluxo de Trabalho e Git (Prática de Master)
+O projeto é mantido pelo Rafael (Líder) e pelo Kelwin. **NÃO utilizamos Pull Requests (PRs)**.
+- O fluxo oficial é: **Criar branch local -> Codificar -> Testar no Servidor -> Push direto para a Master**.
+- Ao iniciar uma nova tarefa, crie uma branch local para organizar o trabalho (ex: `feature/novo-recurso`).
 - Como testar: Você deve sempre validar se o código funciona utilizando as tarefas configuradas do VS Code (ex: `run task "Run All Dev (CRM & Backend)"`).
-- Após garantir que os serviços sobem sem erros (build, lint, etc.), o commit e push são feitos *diretamente* na branch `master`.
-- **Atenção:** O push na `master` aciona o deploy de produção no GitHub Actions. Portanto, SÓ comite e faça push após os testes.
+- Após garantir que os serviços sobem sem erros (build, lint, etc.), o push é feito *diretamente* para a branch `master` no repositório remoto (ex: `git push origin sua-branch-local:master` ou merge local e push).
+- **Atenção:** O push na `master` aciona o deploy de produção no GitHub Actions. Portanto, SÓ faça o push final após os testes na sua branch passarem.
 
 ## 📞 2. Roteamento de Webhook e Whitelist (Isolamento de Testes)
 Sistema crucial do negócio: Existe um "Dev Router" (Whitelist). Quando números de telefone específicos (em teste) enviam mensagens, a requisição que chega no Webhook deve ser OBRIGATORIAMENTE redirecionada para a URL do ambiente de desenvolvimento (ex: `DEV_SERVER_URL`), e não pode ser processada pela base de Produção.
