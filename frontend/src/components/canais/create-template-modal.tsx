@@ -96,6 +96,20 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
       setError("Nome e texto do corpo são obrigatórios.");
       return;
     }
+
+    const validTexts = buttons.map(b => b.text.trim()).filter(Boolean);
+
+    if (new Set(validTexts).size !== validTexts.length) {
+      setError("Botões não podem ter textos duplicados.");
+      return;
+    }
+
+    const VARIABLE_RE = /\{\{\d+\}\}/;
+    if (validTexts.some(t => VARIABLE_RE.test(t))) {
+      setError("Botões não podem conter variáveis como {{1}}.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -103,7 +117,12 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
       name: form.name.trim(),
       language: form.language,
       category: form.category,
-      components: [{ type: "BODY", text: form.bodyText.trim() }],
+      components: [
+        { type: "BODY", text: form.bodyText.trim() },
+        ...(validTexts.length > 0
+          ? [{ type: "BUTTONS", buttons: validTexts.map(text => ({ type: "QUICK_REPLY", text })) }]
+          : []),
+      ],
     };
 
     try {
