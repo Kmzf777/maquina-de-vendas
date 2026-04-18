@@ -200,3 +200,43 @@ async def test_delete_template_cancels_even_if_meta_fails():
         result = await delete_template("chan-1", "tpl-2")
 
     assert result["status"] == "cancelled"
+
+
+# --- error cases ---
+
+async def test_create_template_evolution_channel_raises_400():
+    """Canal evolution não suporta templates → 400 sem chamar Meta."""
+    evolution_channel = {
+        "id": "chan-2",
+        "provider": "evolution",
+        "provider_config": {},
+    }
+
+    with patch("app.templates.service.get_channel", return_value=evolution_channel), \
+         patch("app.templates.service.MetaTemplateClient") as MockClient:
+
+        from app.templates.service import create_template
+        with pytest.raises(HTTPException) as exc:
+            await create_template("chan-2", TEMPLATE_DATA)
+
+        assert exc.value.status_code == 400
+        MockClient.assert_not_called()
+
+
+async def test_create_template_missing_waba_id_raises_400():
+    """provider_config sem waba_id → 400 sem chamar Meta."""
+    channel_no_waba = {
+        "id": "chan-1",
+        "provider": "meta_cloud",
+        "provider_config": {"phone_number_id": "111", "access_token": "tok"},
+    }
+
+    with patch("app.templates.service.get_channel", return_value=channel_no_waba), \
+         patch("app.templates.service.MetaTemplateClient") as MockClient:
+
+        from app.templates.service import create_template
+        with pytest.raises(HTTPException) as exc:
+            await create_template("chan-1", TEMPLATE_DATA)
+
+        assert exc.value.status_code == 400
+        MockClient.assert_not_called()
