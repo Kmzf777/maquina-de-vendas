@@ -7,6 +7,7 @@ import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
+import { CreateTemplateModal } from "@/components/canais/create-template-modal";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -35,6 +36,7 @@ export default function CampanhasPage() {
   const [period, setPeriod] = useState("30d");
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [cadenceName, setCadenceName] = useState("");
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"visao-geral" | "disparos" | "cadencias">("visao-geral");
@@ -97,6 +99,12 @@ export default function CampanhasPage() {
             className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
           >
             + Cadencia
+          </button>
+          <button
+            onClick={() => setShowTemplateModal(true)}
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+          >
+            + Template
           </button>
         </div>
       </div>
@@ -189,6 +197,12 @@ export default function CampanhasPage() {
         open={showBroadcastModal}
         onClose={() => setShowBroadcastModal(false)}
         onCreated={() => {}}
+      />
+
+      <CreateTemplateModal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onCreated={() => setShowTemplateModal(false)}
       />
 
       {/* Create Cadence Modal */}
