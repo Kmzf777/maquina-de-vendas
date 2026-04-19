@@ -14,7 +14,7 @@ from app.broadcast.service import (
     increment_broadcast_failed,
 )
 from app.cadence.service import create_enrollment
-from app.conversations.service import get_or_create_conversation, update_conversation
+from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.cadence.scheduler import (
     process_due_cadences,
     process_reengagements,
@@ -154,17 +154,22 @@ async def process_single_broadcast(broadcast: dict):
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
 
-            # Assign agent profile to conversation if broadcast has one configured
-            if broadcast.get("agent_profile_id"):
-                try:
-                    conversation = get_or_create_conversation(lead["id"], channel_id)
-                    update_conversation(
-                        conversation["id"],
-                        agent_profile_id=broadcast["agent_profile_id"],
-                        status="template_sent",
-                    )
-                except Exception as ce:
-                    logger.warning(f"Could not assign agent profile to conversation for {lead['phone']}: {ce}")
+            # Always record conversation and persist outbound message
+            try:
+                conversation = get_or_create_conversation(lead["id"], channel_id)
+                conv_updates = {"status": "template_sent"}
+                if broadcast.get("agent_profile_id"):
+                    conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
+                update_conversation(conversation["id"], **conv_updates)
+                save_message(
+                    conversation["id"],
+                    lead["id"],
+                    "assistant",
+                    f"[Template: {broadcast['template_name']}]",
+                    sent_by="broadcast",
+                )
+            except Exception as ce:
+                logger.warning(f"Could not save conversation/message for {lead['phone']}: {ce}")
 
             # Enroll in cadence if configured
             if broadcast.get("cadence_id"):
