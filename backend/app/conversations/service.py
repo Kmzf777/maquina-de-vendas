@@ -1,7 +1,10 @@
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from app.db.supabase import get_supabase
+
+logger = logging.getLogger(__name__)
 
 
 def get_or_create_conversation(lead_id: str, channel_id: str) -> dict[str, Any]:
@@ -67,14 +70,8 @@ def list_conversations(
 
 def update_conversation(conversation_id: str, **fields) -> dict[str, Any]:
     sb = get_supabase()
-    result = (
-        sb.table("conversations")
-        .update(fields)
-        .eq("id", conversation_id)
-        .select("*")
-        .execute()
-    )
-    return result.data[0]
+    sb.table("conversations").update(fields).eq("id", conversation_id).execute()
+    return {}
 
 
 def activate_conversation(conversation_id: str) -> dict[str, Any]:
@@ -105,7 +102,16 @@ def save_message(
         "stage": stage,
         "sent_by": sent_by,
     }
-    result = sb.table("messages").insert(msg).execute()
+    logger.info(f"[DEBUG-SAVE_MESSAGE] enter payload={msg}")
+    try:
+        result = sb.table("messages").insert(msg).execute()
+    except Exception as e:
+        logger.error(f"[DEBUG-SAVE_MESSAGE] insert raised {type(e).__name__}: {e}", exc_info=True)
+        raise
+    logger.info(f"[DEBUG-SAVE_MESSAGE] insert OK data_len={len(result.data) if result.data else 0} data={result.data}")
+    if not result.data:
+        logger.error(f"[DEBUG-SAVE_MESSAGE] insert returned empty data — NADA SALVO (payload={msg})")
+        return {}
     return result.data[0]
 
 

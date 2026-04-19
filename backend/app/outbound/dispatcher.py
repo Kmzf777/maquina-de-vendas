@@ -45,13 +45,24 @@ async def dispatch_to_lead(phone: str, lead_context: dict) -> dict:
     except Exception as e:
         logger.error(f"[DISPATCH] Failed to update lead status for {lead_id}: {e}", exc_info=True)
 
+    conversation = None
     try:
         conversation = get_or_create_conversation(lead_id, channel_id)
         update_conversation(conversation["id"], status="template_sent")
-        save_message(conversation["id"], lead_id, "assistant", TEMPLATE_TEXT, "secretaria")
     except Exception as e:
         logger.error(
             f"[DISPATCH] Failed to update conversation state for lead {lead_id}: {e}",
+            exc_info=True,
+        )
+
+    try:
+        if conversation:
+            save_message(conversation["id"], lead_id, "assistant", TEMPLATE_TEXT, "secretaria")
+        else:
+            logger.error(f"[DISPATCH] Skipping save_message for {lead_id}: no conversation")
+    except Exception as e:
+        logger.error(
+            f"[DISPATCH] Failed to save message for lead {lead_id}: {e}",
             exc_info=True,
         )
 

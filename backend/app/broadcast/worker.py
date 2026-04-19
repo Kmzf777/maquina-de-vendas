@@ -88,7 +88,9 @@ async def process_broadcasts():
         .data
     )
 
+    logger.info(f"[DEBUG-BROADCAST] tick — env_tag={_ENV_TAG} running_broadcasts={len(broadcasts)}")
     for broadcast in broadcasts:
+        logger.info(f"[DEBUG-BROADCAST] picked broadcast id={broadcast['id']} name={broadcast.get('name')} env_tag={broadcast.get('env_tag')}")
         await process_single_broadcast(broadcast)
 
 
@@ -97,6 +99,7 @@ async def process_single_broadcast(broadcast: dict):
     broadcast_id = broadcast["id"]
 
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
+    logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
 
     if not pending_leads:
         # Check if all leads are processed
@@ -159,21 +162,43 @@ async def process_single_broadcast(broadcast: dict):
             increment_broadcast_sent(broadcast_id)
 
             # Always record conversation and persist outbound message
+            conversation = None
             try:
+                logger.info(f"[DEBUG-BROADCAST] step=get_or_create_conversation lead_id={lead['id']} channel_id={channel_id}")
                 conversation = get_or_create_conversation(lead["id"], channel_id)
+                logger.info(f"[DEBUG-BROADCAST] got conversation id={conversation.get('id') if conversation else None}")
                 conv_updates = {"status": "template_sent"}
                 if broadcast.get("agent_profile_id"):
                     conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
+                logger.info(f"[DEBUG-BROADCAST] step=update_conversation id={conversation['id']} updates={conv_updates}")
                 update_conversation(conversation["id"], **conv_updates)
-                save_message(
-                    conversation["id"],
-                    lead["id"],
-                    "assistant",
-                    f"[Template: {broadcast['template_name']}]",
-                    sent_by="broadcast",
-                )
+                logger.info(f"[DEBUG-BROADCAST] update_conversation OK")
             except Exception as ce:
-                logger.warning(f"Could not save conversation/message for {lead['phone']}: {ce}")
+                logger.error(
+                    f"[BROADCAST] Could not update conversation for {lead['phone']}: {ce}",
+                    exc_info=True,
+                )
+
+            try:
+                if conversation:
+                    logger.info(f"[DEBUG-BROADCAST] step=save_message conv_id={conversation['id']} lead_id={lead['id']}")
+                    saved = save_message(
+                        conversation["id"],
+                        lead["id"],
+                        "assistant",
+                        f"[Template: {broadcast['template_name']}]",
+                        sent_by="broadcast",
+                    )
+                    logger.info(f"[DEBUG-BROADCAST] save_message OK returned={saved}")
+                else:
+                    logger.error(
+                        f"[BROADCAST] Skipping save_message for {lead['phone']}: no conversation"
+                    )
+            except Exception as ce:
+                logger.error(
+                    f"[BROADCAST] Could not save message for {lead['phone']}: {ce}",
+                    exc_info=True,
+                )
 
             # Enroll in cadence if configured
             if broadcast.get("cadence_id"):
