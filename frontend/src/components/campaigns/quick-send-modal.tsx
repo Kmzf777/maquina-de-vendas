@@ -7,6 +7,8 @@ interface MetaTemplate {
   name: string;
   language: string;
   category: string;
+  body: string;
+  buttons: Array<{ type: string; text: string }>;
   params: string[];
 }
 
@@ -39,6 +41,22 @@ function normalizePhone(raw: string): string {
 
 function isValidPhone(normalized: string): boolean {
   return normalized.length >= 12 && normalized.length <= 13;
+}
+
+function renderPreviewBody(body: string, values: Record<string, string>) {
+  return body.split(/(\{\{[^}]+\}\})/g).map((part, i) => {
+    const match = part.match(/^\{\{([^}]+)\}\}$/);
+    if (match) {
+      const varName = match[1];
+      const value = values[varName];
+      return value ? (
+        <span key={i} className="font-medium text-[#111111]">{value}</span>
+      ) : (
+        <span key={i} className="bg-amber-100 text-amber-700 rounded px-0.5">{`{{${varName}}}`}</span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
 }
 
 export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps) {
@@ -146,7 +164,12 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
     .filter(isValidPhone)
     .filter((p, i, arr) => arr.indexOf(p) === i);
 
-  const canSend = channelId !== "" && selectedTemplate !== null && validPhones.length > 0;
+  const allVarsFilled =
+    !selectedTemplate ||
+    selectedTemplate.params.length === 0 ||
+    selectedTemplate.params.every((p) => (templateVarValues[p] ?? "").trim() !== "");
+
+  const canSend = channelId !== "" && selectedTemplate !== null && validPhones.length > 0 && allVarsFilled;
 
   const handleSend = async () => {
     if (!selectedTemplate || !canSend) return;
@@ -299,29 +322,59 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
             )}
           </div>
 
-          {selectedTemplate && selectedTemplate.params.length > 0 && (
-            <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 space-y-3">
-              <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
-                Variáveis do template
-              </p>
-              {selectedTemplate.params.map((param) => (
-                <div key={param}>
-                  <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
-                    {param}
-                  </label>
-                  <input
-                    value={templateVarValues[param] ?? ""}
-                    onChange={(e) =>
-                      setTemplateVarValues((prev) => ({
-                        ...prev,
-                        [param]: e.target.value,
-                      }))
-                    }
-                    className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                    placeholder={`Valor para ${param}`}
-                  />
+          {selectedTemplate && (
+            <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 space-y-4">
+              {selectedTemplate.params.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
+                    Variáveis do template
+                    <span className="ml-1 normal-case font-normal text-[#c41c1c]">*obrigatórias</span>
+                  </p>
+                  {selectedTemplate.params.map((param) => (
+                    <div key={param}>
+                      <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                        {param}
+                      </label>
+                      <input
+                        value={templateVarValues[param] ?? ""}
+                        onChange={(e) =>
+                          setTemplateVarValues((prev) => ({
+                            ...prev,
+                            [param]: e.target.value,
+                          }))
+                        }
+                        className={`bg-white border rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:outline-none w-full ${
+                          (templateVarValues[param] ?? "").trim() === ""
+                            ? "border-[#c41c1c]/40 focus:border-[#c41c1c]"
+                            : "border-[#dedbd6] focus:border-[#111111]"
+                        }`}
+                        placeholder={`Valor para ${param}`}
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+
+              {selectedTemplate.body && (
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Preview</p>
+                  <div className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-3 text-[13px] text-[#111111] leading-relaxed whitespace-pre-wrap">
+                    {renderPreviewBody(selectedTemplate.body, templateVarValues)}
+                  </div>
+                  {selectedTemplate.buttons.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTemplate.buttons.map((btn, i) => (
+                        <span
+                          key={i}
+                          className="text-[12px] border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[#7b7b78] bg-white"
+                        >
+                          {btn.text}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -338,7 +391,7 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
                     <input
                       value={phone}
                       onChange={(e) => updatePhone(i, e.target.value)}
-                      placeholder="+5511999999999"
+                      placeholder="5534996652412"
                       className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none flex-1"
                     />
                     <button
