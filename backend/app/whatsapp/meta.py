@@ -3,7 +3,7 @@ import logging
 import httpx
 from app.whatsapp.base import WhatsAppProvider
 
-META_API_BASE = "https://graph.facebook.com/v21.0"
+META_API_BASE = "https://graph.facebook.com"
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,11 @@ class MetaCloudClient(WhatsAppProvider):
     def __init__(self, config: dict):
         self.phone_number_id = config["phone_number_id"]
         self.access_token = config["access_token"]
+        api_version = config.get("api_version", "v21.0")
+        self._messages_url = f"{META_API_BASE}/{api_version}/{self.phone_number_id}/messages"
 
     def _url(self) -> str:
-        return f"{META_API_BASE}/{self.phone_number_id}/messages"
+        return self._messages_url
 
     def _headers(self) -> dict:
         return {
