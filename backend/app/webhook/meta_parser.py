@@ -65,6 +65,19 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     media_mime = doc.get("mime_type")
                     text = doc.get("caption")
 
+                elif msg_type == "interactive":
+                    interactive = msg.get("interactive", {})
+                    interactive_type = interactive.get("type", "")
+                    if interactive_type == "button_reply":
+                        text = interactive.get("button_reply", {}).get("title", "")
+                        parsed_type = "text"
+                    elif interactive_type == "list_reply":
+                        text = interactive.get("list_reply", {}).get("title", "")
+                        parsed_type = "text"
+                    else:
+                        logger.info(f"Skipping unsupported interactive sub-type: {interactive_type}")
+                        continue
+
                 else:
                     logger.info(f"Skipping unsupported Meta message type: {msg_type}")
                     continue

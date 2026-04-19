@@ -1,0 +1,21 @@
+# Environment files — never bake local secrets into the image
+.env
+.env.local
+.env.*.local
+*.env
+
+# Dev/test artifacts
+.pytest_cache/
+tests/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Docs/scripts not needed at runtime
+scripts/
