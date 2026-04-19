@@ -69,7 +69,7 @@ export default function CampanhasPage() {
 
   const handleQuickSendSuccess = (count: number) => {
     setQuickSendToast(`Disparo Rápido enviado para ${count} número${count > 1 ? "s" : ""}!`);
-    setTimeout(() => setQuickSendToast(null), 3000);
+    setTimeout(() => setQuickSendToast(null), 10000);
   };
 
   if (bLoading || cLoading) {
@@ -220,8 +220,14 @@ export default function CampanhasPage() {
       />
 
       {quickSendToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#111111] text-white text-[14px] px-4 py-3 rounded-[6px] shadow-lg">
-          {quickSendToast}
+        <div className="fixed bottom-6 right-6 z-50 bg-[#111111] text-white text-[14px] px-4 py-3 rounded-[6px] shadow-lg flex items-center gap-3">
+          <span>{quickSendToast}</span>
+          <button
+            onClick={() => setQuickSendToast(null)}
+            className="text-white/60 hover:text-white transition-colors leading-none text-lg"
+          >
+            &times;
+          </button>
         </div>
       )}
 

@@ -29,6 +29,15 @@ function extractParams(components: MetaComponent[]): string[] {
   return body.example.body_text_named_params.map((p) => p.param_name);
 }
 
+function extractBody(components: MetaComponent[]): string {
+  return components.find((c) => c.type === "BODY")?.text ?? "";
+}
+
+function extractButtons(components: MetaComponent[]): Array<{ type: string; text: string }> {
+  const btns = components.find((c) => c.type === "BUTTONS");
+  return btns?.buttons ?? [];
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -72,6 +81,8 @@ export async function GET(
       name: t.name,
       language: t.language,
       category: (t.category || "").toLowerCase(),
+      body: extractBody(t.components || []),
+      buttons: extractButtons(t.components || []),
       params: extractParams(t.components || []),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
