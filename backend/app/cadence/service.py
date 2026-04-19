@@ -3,6 +3,9 @@ from typing import Any
 
 from app.db.supabase import get_supabase
 
+import os
+_ENV_TAG = "dev" if os.environ.get("IS_DEV_ENV") == "true" else "production"
+
 
 def create_enrollment(
     cadence_id: str,
@@ -12,6 +15,11 @@ def create_enrollment(
     next_send_at: datetime | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
+    cadence = sb.table("cadences").select("env_tag").eq("id", cadence_id).single().execute().data
+    if cadence and cadence.get("env_tag") != _ENV_TAG:
+        raise ValueError(
+            f"env_tag mismatch: cadence='{cadence.get('env_tag')}', current env='{_ENV_TAG}'"
+        )
     data = {
         "cadence_id": cadence_id,
         "lead_id": lead_id,
@@ -19,6 +27,7 @@ def create_enrollment(
         "current_step": 0,
         "total_messages_sent": 0,
         "next_send_at": next_send_at.isoformat() if next_send_at else None,
+        "env_tag": _ENV_TAG,
     }
     if deal_id:
         data["deal_id"] = deal_id
@@ -137,6 +146,7 @@ def get_due_enrollments(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
         sb.table("cadence_enrollments")
         .select("*, leads!inner(phone, stage, human_control, name, company), cadences!inner(id, name, send_start_hour, send_end_hour, max_messages, status)")
         .eq("status", "active")
+        .eq("env_tag", _ENV_TAG)
         .lte("next_send_at", now.isoformat())
         .limit(limit)
         .execute()
@@ -150,6 +160,7 @@ def get_reengagement_enrollments(now: datetime, limit: int = 10) -> list[dict[st
         sb.table("cadence_enrollments")
         .select("*, leads!inner(phone, last_msg_at, human_control), cadences!inner(id, cooldown_hours, status)")
         .eq("status", "responded")
+        .eq("env_tag", _ENV_TAG)
         .lte("responded_at", now.isoformat())
         .limit(limit)
         .execute()
@@ -164,6 +175,7 @@ def get_stagnation_cadences() -> list[dict[str, Any]]:
         sb.table("cadences")
         .select("*")
         .eq("status", "active")
+        .eq("env_tag", _ENV_TAG)
         .not_.is_("stagnation_days", "null")
         .execute()
     )
