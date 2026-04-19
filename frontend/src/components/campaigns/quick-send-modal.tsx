@@ -43,16 +43,31 @@ function isValidPhone(normalized: string): boolean {
   return normalized.length >= 12 && normalized.length <= 13;
 }
 
-function renderPreviewBody(body: string, values: Record<string, string>) {
+function renderInteractiveBody(
+  body: string,
+  values: Record<string, string>,
+  onChange: (varName: string, value: string) => void
+) {
   return body.split(/(\{\{[^}]+\}\})/g).map((part, i) => {
     const match = part.match(/^\{\{([^}]+)\}\}$/);
     if (match) {
       const varName = match[1];
-      const value = values[varName];
-      return value ? (
-        <span key={i} className="font-medium text-[#111111]">{value}</span>
-      ) : (
-        <span key={i} className="bg-amber-100 text-amber-700 rounded px-0.5">{`{{${varName}}}`}</span>
+      const value = values[varName] ?? "";
+      const isEmpty = value.trim() === "";
+      return (
+        <input
+          key={i}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(varName, e.target.value)}
+          placeholder={varName}
+          size={Math.max((value || varName).length + 1, 5)}
+          className={`inline border-0 border-b-2 bg-transparent focus:outline-none text-[13px] px-0.5 mx-0.5 align-baseline transition-colors ${
+            isEmpty
+              ? "border-[#c41c1c]/60 placeholder:text-[#c41c1c]/50 text-[#c41c1c]"
+              : "border-[#111111] text-[#111111] font-medium"
+          }`}
+        />
       );
     }
     return <span key={i}>{part}</span>;
@@ -116,8 +131,12 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
     const tpl = templates.find((t) => t.name === tname && t.language === lang) ?? null;
     setSelectedTemplate(tpl);
     if (tpl) {
+      const bodyVars = (tpl.body.match(/\{\{([^}]+)\}\}/g) || []).map((m) =>
+        m.replace(/^\{\{|\}\}$/g, "")
+      );
+      const allVars = [...new Set([...tpl.params, ...bodyVars])];
       const defaults: Record<string, string> = {};
-      tpl.params.forEach((p) => {
+      allVars.forEach((p) => {
         defaults[p] = defaultValue(p);
       });
       setTemplateVarValues(defaults);
@@ -164,10 +183,18 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
     .filter(isValidPhone)
     .filter((p, i, arr) => arr.indexOf(p) === i);
 
+  const bodyVars = selectedTemplate
+    ? [...new Set(
+        (selectedTemplate.body.match(/\{\{([^}]+)\}\}/g) || []).map((m) =>
+          m.replace(/^\{\{|\}\}$/g, "")
+        )
+      )]
+    : [];
+  const allTemplateVars = [...new Set([...(selectedTemplate?.params ?? []), ...bodyVars])];
   const allVarsFilled =
     !selectedTemplate ||
-    selectedTemplate.params.length === 0 ||
-    selectedTemplate.params.every((p) => (templateVarValues[p] ?? "").trim() !== "");
+    allTemplateVars.length === 0 ||
+    allTemplateVars.every((p) => (templateVarValues[p] ?? "").trim() !== "");
 
   const canSend = channelId !== "" && selectedTemplate !== null && validPhones.length > 0 && allVarsFilled;
 
@@ -322,57 +349,35 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
             )}
           </div>
 
-          {selectedTemplate && (
-            <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 space-y-4">
-              {selectedTemplate.params.length > 0 && (
-                <div className="space-y-3">
-                  <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
-                    Variáveis do template
-                    <span className="ml-1 normal-case font-normal text-[#c41c1c]">*obrigatórias</span>
-                  </p>
-                  {selectedTemplate.params.map((param) => (
-                    <div key={param}>
-                      <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
-                        {param}
-                      </label>
-                      <input
-                        value={templateVarValues[param] ?? ""}
-                        onChange={(e) =>
-                          setTemplateVarValues((prev) => ({
-                            ...prev,
-                            [param]: e.target.value,
-                          }))
-                        }
-                        className={`bg-white border rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:outline-none w-full ${
-                          (templateVarValues[param] ?? "").trim() === ""
-                            ? "border-[#c41c1c]/40 focus:border-[#c41c1c]"
-                            : "border-[#dedbd6] focus:border-[#111111]"
-                        }`}
-                        placeholder={`Valor para ${param}`}
-                      />
-                    </div>
+          {selectedTemplate && selectedTemplate.body && (
+            <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 space-y-2">
+              <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
+                Preview — preencha as variáveis diretamente no texto
+                {allTemplateVars.length > 0 && (
+                  <span className="ml-1 normal-case font-normal text-[#c41c1c]">
+                    ({allTemplateVars.filter((p) => (templateVarValues[p] ?? "").trim() === "").length} pendente
+                    {allTemplateVars.filter((p) => (templateVarValues[p] ?? "").trim() === "").length !== 1 ? "s" : ""})
+                  </span>
+                )}
+              </p>
+              <div className="bg-white border border-[#dedbd6] rounded-[6px] px-4 py-3 text-[13px] text-[#111111] leading-relaxed whitespace-pre-wrap">
+                {renderInteractiveBody(
+                  selectedTemplate.body,
+                  templateVarValues,
+                  (varName, value) =>
+                    setTemplateVarValues((prev) => ({ ...prev, [varName]: value }))
+                )}
+              </div>
+              {selectedTemplate.buttons.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {selectedTemplate.buttons.map((btn, i) => (
+                    <span
+                      key={i}
+                      className="text-[12px] border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[#7b7b78] bg-white"
+                    >
+                      {btn.text}
+                    </span>
                   ))}
-                </div>
-              )}
-
-              {selectedTemplate.body && (
-                <div className="space-y-2">
-                  <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Preview</p>
-                  <div className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-3 text-[13px] text-[#111111] leading-relaxed whitespace-pre-wrap">
-                    {renderPreviewBody(selectedTemplate.body, templateVarValues)}
-                  </div>
-                  {selectedTemplate.buttons.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedTemplate.buttons.map((btn, i) => (
-                        <span
-                          key={i}
-                          className="text-[12px] border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[#7b7b78] bg-white"
-                        >
-                          {btn.text}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
