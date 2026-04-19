@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { APP_ENV } from "@/lib/env";
 
 export async function GET() {
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("cadences")
     .select("*")
+    .eq("env_tag", APP_ENV)
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -28,6 +30,7 @@ export async function POST(request: NextRequest) {
       send_end_hour: body.send_end_hour ?? 18,
       cooldown_hours: body.cooldown_hours ?? 48,
       max_messages: body.max_messages ?? 5,
+      env_tag: APP_ENV,
     })
     .select()
     .single();
