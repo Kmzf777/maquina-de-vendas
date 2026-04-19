@@ -22,6 +22,9 @@ from app.cadence.scheduler import (
     calculate_next_send_at,
 )
 
+import os
+_ENV_TAG = "dev" if os.environ.get("IS_DEV_ENV") == "true" else "production"
+
 logger = logging.getLogger(__name__)
 
 # Dynamic variable tokens that get resolved from the lead record at send time.
@@ -80,6 +83,7 @@ async def process_broadcasts():
         sb.table("broadcasts")
         .select("*")
         .eq("status", "running")
+        .eq("env_tag", _ENV_TAG)
         .execute()
         .data
     )
