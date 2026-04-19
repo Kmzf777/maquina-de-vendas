@@ -14,6 +14,7 @@ export async function GET(
     .from("cadence_enrollments")
     .select("*, leads!inner(id, name, phone, company, stage)")
     .eq("cadence_id", id)
+    .eq("env_tag", APP_ENV)
     .order("enrolled_at", { ascending: false });
 
   if (status) query = query.eq("status", status);
@@ -31,13 +32,17 @@ export async function POST(
   const body = await request.json();
   const supabase = await getServiceSupabase();
 
-  const { data: cadence } = await supabase
+  const { data: cadence, error: cadenceError } = await supabase
     .from("cadences")
     .select("env_tag")
     .eq("id", id)
     .single();
 
-  if (cadence?.env_tag !== APP_ENV) {
+  if (cadenceError || !cadence) {
+    return NextResponse.json({ error: "Cadência não encontrada" }, { status: 404 });
+  }
+
+  if (cadence.env_tag !== APP_ENV) {
     return NextResponse.json(
       { error: "Cadência pertence a outro ambiente" },
       { status: 403 }
