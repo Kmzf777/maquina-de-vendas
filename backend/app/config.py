@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Dev routing
     dev_server_url: str = "http://172.17.0.1:8001"
     dev_api_key: str = ""
+    is_dev_env: bool = False
 
     model_config = {"env_file": (".env", ".env.local"), "env_file_encoding": "utf-8", "extra": "ignore"}
 
