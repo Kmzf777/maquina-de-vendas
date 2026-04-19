@@ -55,8 +55,8 @@ async def update_cadence(cadence_id: str, body: dict):
     sb = get_supabase()
     from datetime import datetime, timezone
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = sb.table("cadences").update(body).eq("id", cadence_id).select().single().execute()
-    return result.data
+    result = sb.table("cadences").update(body).eq("id", cadence_id).execute()
+    return result.data[0]
 
 
 @router.delete("/{cadence_id}")
@@ -104,8 +104,8 @@ async def create_step(cadence_id: str, step: StepCreate):
 @router.put("/{cadence_id}/steps/{step_id}")
 async def update_step(cadence_id: str, step_id: str, body: dict):
     sb = get_supabase()
-    result = sb.table("cadence_steps").update(body).eq("id", step_id).select().single().execute()
-    return result.data
+    result = sb.table("cadence_steps").update(body).eq("id", step_id).execute()
+    return result.data[0]
 
 
 @router.delete("/{cadence_id}/steps/{step_id}")
@@ -181,8 +181,8 @@ async def update_enrollment(cadence_id: str, enroll_id: str, body: dict):
         return resume_enrollment(enroll_id, next_send_at=next_send)
 
     sb = get_supabase()
-    result = sb.table("cadence_enrollments").update(body).eq("id", enroll_id).select().single().execute()
-    return result.data
+    result = sb.table("cadence_enrollments").update(body).eq("id", enroll_id).execute()
+    return result.data[0]
 
 
 @router.delete("/{cadence_id}/enrollments/{enroll_id}")
