@@ -16,7 +16,9 @@ def create_enrollment(
 ) -> dict[str, Any]:
     sb = get_supabase()
     cadence = sb.table("cadences").select("env_tag").eq("id", cadence_id).single().execute().data
-    if cadence and cadence.get("env_tag") != _ENV_TAG:
+    if not cadence:
+        raise ValueError(f"cadence '{cadence_id}' not found")
+    if cadence.get("env_tag") != _ENV_TAG:
         raise ValueError(
             f"env_tag mismatch: cadence='{cadence.get('env_tag')}', current env='{_ENV_TAG}'"
         )
