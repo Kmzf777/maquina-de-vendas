@@ -42,6 +42,31 @@ def _resolve_value(value: str, lead: dict) -> str:
     return value
 
 
+def _render_template_body(template_name: str, template_variables: dict, lead: dict) -> str:
+    """Fetch BODY text from message_templates and resolve positional placeholders."""
+    try:
+        sb = get_supabase()
+        result = sb.table("message_templates").select("components").eq("name", template_name).limit(1).execute()
+        if not result.data:
+            return f"[Template: {template_name}]"
+        components = result.data[0].get("components", [])
+        body = next((c for c in components if c.get("type") == "BODY"), None)
+        if not body:
+            return f"[Template: {template_name}]"
+        text = body.get("text", "")
+        resolved = [
+            _resolve_value(str(v), lead)
+            for k, v in template_variables.items()
+            if k != "components"
+        ]
+        for i, value in enumerate(resolved, start=1):
+            text = text.replace(f"{{{{{i}}}}}", value)
+        return text
+    except Exception as e:
+        logger.warning(f"[BROADCAST] Could not render template body for {template_name}: {e}")
+        return f"[Template: {template_name}]"
+
+
 def _build_template_components(template_variables: dict, lead: dict) -> list | None:
     """Convert {param_name: value} dict into Meta named-parameter components array."""
     if not template_variables:
@@ -182,11 +207,16 @@ async def process_single_broadcast(broadcast: dict):
             try:
                 if conversation:
                     logger.info(f"[DEBUG-BROADCAST] step=save_message conv_id={conversation['id']} lead_id={lead['id']}")
+                    rendered_content = _render_template_body(
+                        broadcast["template_name"],
+                        broadcast.get("template_variables") or {},
+                        lead,
+                    )
                     saved = save_message(
                         conversation["id"],
                         lead["id"],
                         "assistant",
-                        f"[Template: {broadcast['template_name']}]",
+                        rendered_content,
                         sent_by="broadcast",
                     )
                     logger.info(f"[DEBUG-BROADCAST] save_message OK returned={saved}")

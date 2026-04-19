@@ -1,0 +1,7 @@
+INFO:     Will watch for changes in these directories: ['/home/Kelwin/Kelwin - Maquinadevendascanastra/backend']
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+INFO:     Started reloader process [2201026] using WatchFiles
+INFO:     Started server process [2201053]
+INFO:     Waiting for application startup.
+2026-04-19 18:55:30,830 app.buffer.flusher INFO Buffer flusher started
+INFO:     Application startup complete.
