@@ -85,6 +85,7 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
   const [savedPhones, setSavedPhones] = useState<SavedPhone[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDeletePhone, setPendingDeletePhone] = useState<string | null>(null);
   const phoneKeysRef = useRef<number[]>([0]);
   const nextKeyRef = useRef(1);
 
@@ -178,6 +179,20 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
     }
   };
 
+  const deleteSavedPhone = async (phone: string) => {
+    if (pendingDeletePhone !== phone) {
+      setPendingDeletePhone(phone);
+      return;
+    }
+    setPendingDeletePhone(null);
+    const res = await fetch(`/api/quick-send-phones/${encodeURIComponent(phone)}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      setSavedPhones((prev) => prev.filter((s) => s.phone !== phone));
+    }
+  };
+
   const validPhones = phones
     .map(normalizePhone)
     .filter(isValidPhone)
@@ -268,6 +283,7 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
     phoneKeysRef.current = [nextKeyRef.current++];
     setPhones([""]);
     setError(null);
+    setPendingDeletePhone(null);
     onClose();
   };
 
@@ -435,15 +451,38 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
                 Números salvos
               </p>
               <div className="flex flex-wrap gap-2">
-                {savedPhones.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => addSavedPhone(s.phone)}
-                    className="text-[12px] bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-2 py-1 hover:border-[#111111] transition-colors"
-                  >
-                    {s.phone}
-                  </button>
-                ))}
+                {savedPhones.map((s) => {
+                  const isPending = pendingDeletePhone === s.phone;
+                  return (
+                    <div
+                      key={s.id}
+                      className={`flex items-center border rounded-[4px] overflow-hidden transition-colors ${
+                        isPending ? "border-[#c41c1c]/50" : "border-[#dedbd6]"
+                      }`}
+                    >
+                      <button
+                        onClick={() => {
+                          setPendingDeletePhone(null);
+                          addSavedPhone(s.phone);
+                        }}
+                        className="text-[12px] bg-[#faf9f6] px-2 py-1 hover:bg-[#f0ede8] transition-colors"
+                      >
+                        {s.phone}
+                      </button>
+                      <button
+                        onClick={() => deleteSavedPhone(s.phone)}
+                        className={`text-[11px] px-2 py-1 border-l transition-colors ${
+                          isPending
+                            ? "border-[#c41c1c]/30 bg-[#c41c1c]/5 text-[#c41c1c] hover:bg-[#c41c1c]/10"
+                            : "border-[#dedbd6] bg-[#faf9f6] text-[#7b7b78] hover:text-[#c41c1c] hover:bg-[#faf0f0]"
+                        }`}
+                        title={isPending ? "Clique para confirmar a remoção" : "Remover número salvo"}
+                      >
+                        {isPending ? "confirmar?" : "×"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
