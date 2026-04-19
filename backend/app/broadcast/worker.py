@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import random
 from datetime import datetime, timezone
 
@@ -22,7 +23,6 @@ from app.cadence.scheduler import (
     calculate_next_send_at,
 )
 
-import os
 _ENV_TAG = "dev" if os.environ.get("IS_DEV_ENV") == "true" else "production"
 
 logger = logging.getLogger(__name__)

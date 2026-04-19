@@ -1,9 +1,9 @@
+import os
 from datetime import datetime, timezone
 from typing import Any
 
 from app.db.supabase import get_supabase
 
-import os
 _ENV_TAG = "dev" if os.environ.get("IS_DEV_ENV") == "true" else "production"
 
 
