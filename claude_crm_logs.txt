@@ -1,0 +1,25 @@
+
+> crm@0.1.0 dev
+> next dev
+
+⚠ Port 3000 is in use by an unknown process, using available port 3001 instead.
+▲ Next.js 16.2.1 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://31.97.20.32:3001
+- Environments: .env.local
+✓ Ready in 1278ms
+
+ GET / 307 in 2.4s (next.js: 2.1s, application-code: 362ms)
+ GET /dashboard 200 in 1246ms (next.js: 713ms, application-code: 533ms)
+ GET / 307 in 114ms (next.js: 17ms, application-code: 96ms)
+ GET /dashboard 200 in 84ms (next.js: 5ms, application-code: 79ms)
+ GET /campanhas 200 in 542ms (next.js: 464ms, application-code: 78ms)
+ GET /api/campaigns/stats?period=30d 200 in 454ms (next.js: 319ms, application-code: 135ms)
+ GET /api/campaigns/stats?period=30d 200 in 85ms (next.js: 15ms, application-code: 70ms)
+ GET /api/channels 200 in 317ms (next.js: 150ms, application-code: 167ms)
+ GET /api/quick-send-phones 200 in 345ms (next.js: 278ms, application-code: 66ms)
+ GET /api/channels/a3a607b1-6bff-4370-8609-b275eef270dd/templates 200 in 1894ms (next.js: 1460ms, application-code: 434ms)
+ POST /api/broadcasts 201 in 165ms (next.js: 56ms, application-code: 109ms)
+ POST /api/leads/resolve 200 in 92ms (next.js: 46ms, application-code: 46ms)
+ POST /api/broadcasts/57ee1c96-15c0-41c5-b042-36d935b66af0/leads 200 in 1177ms (next.js: 1020ms, application-code: 156ms)
+ POST /api/broadcasts/57ee1c96-15c0-41c5-b042-36d935b66af0/start 200 in 1112ms (next.js: 962ms, application-code: 150ms)
