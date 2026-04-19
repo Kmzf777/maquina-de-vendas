@@ -18,7 +18,7 @@ def get_or_create_lead(phone: str) -> dict[str, Any]:
 
 def update_lead(lead_id: str, **fields) -> dict[str, Any]:
     sb = get_supabase()
-    result = sb.table("leads").update(fields).eq("id", lead_id).select("*").execute()
+    result = sb.table("leads").update(fields).eq("id", lead_id).execute()
     return result.data[0]
 
 

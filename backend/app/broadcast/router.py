@@ -67,8 +67,8 @@ async def update_broadcast(broadcast_id: str, body: dict):
     sb = get_supabase()
     from datetime import datetime, timezone
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = sb.table("broadcasts").update(body).eq("id", broadcast_id).select().single().execute()
-    return result.data
+    result = sb.table("broadcasts").update(body).eq("id", broadcast_id).execute()
+    return result.data[0]
 
 
 @router.delete("/{broadcast_id}")
