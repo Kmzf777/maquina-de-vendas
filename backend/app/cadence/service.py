@@ -1,10 +1,10 @@
-import os
 from datetime import datetime, timezone
 from typing import Any
 
+from app.config import get_settings
 from app.db.supabase import get_supabase
 
-_ENV_TAG = "dev" if os.environ.get("IS_DEV_ENV") == "true" else "production"
+_ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
 
 def create_enrollment(

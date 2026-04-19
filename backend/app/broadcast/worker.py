@@ -1,9 +1,9 @@
 import asyncio
 import logging
-import os
 import random
 from datetime import datetime, timezone
 
+from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
@@ -23,7 +23,7 @@ from app.cadence.scheduler import (
     calculate_next_send_at,
 )
 
-_ENV_TAG = "dev" if os.environ.get("IS_DEV_ENV") == "true" else "production"
+_ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
 logger = logging.getLogger(__name__)
 
