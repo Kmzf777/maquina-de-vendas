@@ -136,7 +136,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "registrar_pedido_simples",
-            "description": "Registra a intencao de pedido do lead para acompanhamento. Use depois de gerar link de pagamento ou quando o lead confirmou verbalmente que vai comprar.",
+            "description": "Registra o briefing do pedido para o comercial humano fechar. Chame quando o lead confirmar intencao de compra E volume em kg definido, antes de encaminhar_humano.",
             "parameters": {
                 "type": "object",
                 "properties": {
