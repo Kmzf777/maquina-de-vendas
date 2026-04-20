@@ -300,7 +300,8 @@ async def execute_tool(
         produto = args.get("produto", "")
         volume = args.get("volume_kg", 0)
         obs = args.get("observacoes", "")
-        title = f"Pedido {categoria} {produto} {volume}kg".strip()
+        parts = ["Pedido", categoria, produto, f"{volume}kg"]
+        title = " ".join(p for p in parts if p)
         create_deal(lead_id, title=title, category=categoria)
         save_message(
             lead_id,
