@@ -65,6 +65,11 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     media_mime = doc.get("mime_type")
                     text = doc.get("caption")
 
+                elif msg_type == "button":
+                    # Quick reply clicked on a template message
+                    text = msg.get("button", {}).get("text", "")
+                    parsed_type = "text"
+
                 elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     interactive_type = interactive.get("type", "")

@@ -12,11 +12,20 @@ from app.leads.service import get_or_create_lead, reset_lead
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route
 from app.dev_router.forwarder import forward_to_dev
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _extract_from_number(payload: dict) -> str | None:
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            for msg in change.get("value", {}).get("messages", []):
+                from_number = msg.get("from")
+                if from_number:
+                    return from_number
+    return None
 
 
 def _verify_signature(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:
@@ -71,18 +80,16 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         logger.warning(f"Meta webhook: invalid signature for channel {channel['id']}")
         return Response(status_code=403)
 
-    messages = parse_meta_webhook_payload(payload)
     redis = request.app.state.redis
-    forwarded_to_dev = False
 
-    for msg in messages:
-        logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
-        msg.channel_id = channel["id"]
-
-        dev_url = await get_dev_route(redis, msg.from_number)
-        if dev_url and request.headers.get("x-dev-routed") != "1":
-            if not forwarded_to_dev:
-                logger.info(f"Dev routing: forwarding Meta {msg.from_number} to {dev_url}")
+    # Dev routing happens on the raw payload before parsing so that ALL message
+    # types (including 'button', future types) are forwarded to dev correctly.
+    if request.headers.get("x-dev-routed") != "1":
+        from_number = _extract_from_number(payload)
+        if from_number:
+            dev_url = await get_dev_route(redis, from_number)
+            if dev_url:
+                logger.info(f"Dev routing: forwarding Meta {from_number} to {dev_url}")
                 background_tasks.add_task(
                     forward_to_dev,
                     dev_url=dev_url,
@@ -90,8 +97,13 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
                     headers=dict(request.headers),
                     body=payload_bytes,
                 )
-                forwarded_to_dev = True
-            continue
+                return {"status": "ok"}
+
+    messages = parse_meta_webhook_payload(payload)
+
+    for msg in messages:
+        logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
+        msg.channel_id = channel["id"]
 
         try:
             provider = get_provider(channel)
