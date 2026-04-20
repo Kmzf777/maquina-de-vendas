@@ -1,28 +1,66 @@
-# DIRETRIZES DE ENGENHARIA PARA AGENTES DE IA (CLAUDE CODE, COPILOT, ETC)
+# DIRETRIZES PARA AGENTES DE IA — Maquina de Vendas Canastra
 
-Você está atuando em um repositório mantido por múltiplos desenvolvedores (humanos e IAs). A produção é crítica (Docker Swarm). Siga ESTritamente as regras abaixo:
+Repositório com deploy crítico em Docker Swarm. Siga as regras abaixo sem exceção.
 
-## 🚀 1. Fluxo de Trabalho e Git (Prática de Master)
-**NÃO utilizamos Pull Requests (PRs)**.
-- O fluxo oficial é: **Criar branch local -> Codificar -> Testar no Servidor -> Push direto para a Master**.
-- Ao iniciar uma nova tarefa, crie uma branch local para organizar o trabalho (ex: `feature/novo-recurso`).
-- Como testar: Você deve sempre validar se o código funciona utilizando as tarefas configuradas do VS Code (ex: `run task "Run All Dev (CRM & Backend)"`).
-- **REGRA DE OURO (PARADA OBRIGATÓRIA):** Nunca, EM HIPÓTESE ALGUMA, faça o push para a master de forma automática após codificar. O deploy acarreta riscos à produção. Depois de comitar na branch local, você DEVE PARAR, avisar o usuário humano e aguardar que ele teste as alterações no ambiente de Dev.
-- O push é feito *diretamente* para a branch `master` no repositório remoto **SOMENTE após o usuário dar expressa autorização** (ex: `git push origin sua-branch-local:master` ou merge local e push).
-- **Atenção:** O push na `master` aciona o deploy de produção no GitHub Actions. Portanto, SÓ faça o push final após os testes na sua branch passarem.
+---
 
-## 📞 2. Roteamento de Webhook e Whitelist (Isolamento de Testes)
-Sistema crucial do negócio: Existe um "Dev Router" (Whitelist). Quando números de telefone específicos (em teste) enviam mensagens, a requisição que chega no Webhook deve ser OBRIGATORIAMENTE redirecionada para a URL do ambiente de desenvolvimento (ex: `DEV_SERVER_URL`), e não pode ser processada pela base de Produção.
-- Sempre que alterar o Webhook (`backend/app/webhook/`), verifique se o roteador de dev não foi "bypassado".
+## 🚀 1. Fluxo Git — Sem Pull Requests
 
-## 🚦 3. Regras de Infraestrutura, Redes e Docker (Prevenção de Quedas de Produção)
-Tivemos incidentes críticos causados por IP hardcodado.
-- **PROIBIDO O USO DE LOCALHOST:** NUNCA use `localhost` ou `127.0.0.1` para conexões de rede em variáveis de ambiente, `.env`, `config.py`, ou qualquer arquivo de configuração (seja para Redis, Banco de Dados Postgres, RabbitMQ, etc.).
-- **USE SEMPRE O DNS DO DOCKER:** Sempre utilize os nomes dos serviços definidos no arquivo `docker-compose.yml` (Exemplos obrigatórios: `redis://redis:6379`, `postgresql://user:pass@db:5432`, `http://api:8000`).
-- Paridade Dev/Prod: O código deve rodar perfeitamente sem modificações tanto no `docker-compose` local quanto no `docker stack deploy` no Swarm de Produção.
-- Não altere configurações de deployment no GitHub Actions sem alertar agressivamente o usuário.
+**NÃO usamos PRs.** Fluxo obrigatório:
 
-## ⚛️ 4. Regras Específicas do Frontend (Next.js)
-- **This is NOT the Next.js you know**: Esta versão possui quebras de paradigma (App Router vs Pages, Server Components, etc).
-- As APIs, convenções e estrutura de pastas podem diferir dos seus dados de treinamento.
-- Sempre verifique a documentação local ou prefira usar os padrões já desenhados em `frontend/src/app` antes de criar lógicas com bibliotecas legadas.
+```
+Codificar → Commitar (branch local opcional) → PARAR → Usuário testa no Dev → Push master (só com autorização)
+```
+
+- **Branch local** para organizar o trabalho é recomendada, mas não obrigatória. O destino final é sempre `master` no remoto.
+- **Testar:** use as VS Code tasks (ex: `Run All Dev (CRM & Backend)`). Valide o comportamento manualmente antes de commitar.
+- **⛔ REGRA DE OURO:** Após commitar, **pare e avise o usuário.** Aguarde ele testar no dev. Só faça push após **autorização expressa** ("pode fazer o push", "faça isso", etc.).
+- **Push para master:** `git push origin master` ou `git push origin minha-branch:master`. O push aciona deploy de produção via GitHub Actions.
+
+---
+
+## 📞 2. Dev Router — Isolamento de Testes
+
+Números na whitelist Redis (`dev:phone_routes`) devem ser redirecionados para o backend dev (`DEV_SERVER_URL`). **Nunca processados pela produção.**
+
+- **O Dev Router DEVE operar no payload bruto, antes de qualquer parsing.**
+
+  | ✅ Correto | ❌ Errado |
+  |---|---|
+  | Extrair `from_number` do JSON bruto → checar whitelist → encaminhar → `return` | Parsear mensagens primeiro → checar whitelist no loop (tipos não suportados nunca chegam ao router) |
+
+- Ao alterar qualquer arquivo em `backend/app/webhook/`, confirme que o Dev Router ainda opera antes do parsing.
+- O header `x-dev-routed: 1` no payload encaminhado previne loop infinito.
+
+---
+
+## 🚦 3. Redes e Docker — Regra do Endereço
+
+A regra depende de **onde o processo está rodando:**
+
+### Se o processo roda DENTRO de um container Docker (produção, docker-compose, Swarm):
+**NUNCA use `localhost` ou `127.0.0.1`.** Use o nome do serviço do `docker-compose.yml`:
+
+| Serviço  | URL correta                      |
+|----------|----------------------------------|
+| Redis    | `redis://redis:6379`             |
+| Postgres | `postgresql://user:pass@db:5432` |
+| API      | `http://api:8000`                |
+
+### Se o processo roda NO HOST (backend dev fora do Docker — `.env.local`):
+**Use `127.0.0.1` + a porta publicada pelo Docker.** O DNS de serviço (`redis`, `db`) não resolve fora da rede Docker.
+
+> **`.env.local` é o único arquivo onde `127.0.0.1` é permitido.** Ele está no `.dockerignore` e nunca chega à produção.
+
+### Paridade de código:
+O **código** deve funcionar em ambos os ambientes sem modificação. Os arquivos de ambiente (`.env`, `.env.local`) existem para separar as configurações — isso não viola a paridade.
+
+### Outras restrições:
+- Não altere configurações do GitHub Actions sem alertar explicitamente o usuário.
+
+---
+
+## ⚛️ 4. Frontend — Next.js
+
+- Esta versão usa **App Router e Server Components**. Convenções, APIs e estrutura de pastas podem diferir dos seus dados de treinamento.
+- **Consulte os padrões existentes em `frontend/src/app` antes de criar lógica nova.** Não confie em memória para APIs e estrutura de rotas.
