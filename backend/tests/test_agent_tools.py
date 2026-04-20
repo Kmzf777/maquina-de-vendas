@@ -92,3 +92,29 @@ async def test_gerar_link_pagamento_categoria_invalida_retorna_erro():
             conversation_id="conv-test-id",
         )
     assert "nao" in result.lower() or "erro" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_registrar_pedido_simples_cria_deal(monkeypatch):
+    calls = []
+    def fake_create_deal(lead_id, title, **kwargs):
+        calls.append({"lead_id": lead_id, "title": title, **kwargs})
+        return {"id": "deal-fake"}
+    monkeypatch.setattr("app.agent.tools.create_deal", fake_create_deal)
+
+    with patch("app.agent.tools.save_message"):
+        result = await execute_tool(
+            "registrar_pedido_simples",
+            {
+                "categoria": "atacado",
+                "produto": "classico",
+                "volume_kg": 10,
+                "observacoes": "lead pediu entrega urgente",
+            },
+            lead_id="lead-test-id",
+            phone="+5500000000",
+            conversation_id="conv-test-id",
+        )
+    assert len(calls) == 1
+    assert "atacado" in calls[0]["title"].lower() or "pedido" in calls[0]["title"].lower()
+    assert "registrado" in result.lower() or "ok" in result.lower()
