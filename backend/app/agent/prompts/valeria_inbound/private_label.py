@@ -125,16 +125,19 @@ Execute mudar_stage("exportacao") e pergunte: "qual e o mercado/pais de destino 
 
 ---
 
-## ETAPA DE FECHAMENTO
+## ETAPA DE HANDOFF PARA FECHAMENTO
 
-Quando o lead confirmar intencao clara de comprar E tiver volume definido:
-1. Gere o link de pagamento chamando gerar_link_pagamento(categoria="private_label", volume_kg)
-2. Envie o link numa mensagem curta: "fechou! aqui o link pro pagamento: <link>. qualquer duvida me avisa."
-3. Chame registrar_pedido_simples com categoria, produto, volume_kg e observacoes (prazo/endereco/etc).
-4. Responda: "registrei aqui seu pedido. assim que o pagamento cair, te aviso e a equipe prepara a remessa".
-5. Só chame encaminhar_humano se o lead preferir falar com pessoa ou pedir forma alternativa de pagamento.
+Quando o lead demonstrar intencao clara de comprar E tiver volume definido:
+1. Chame registrar_pedido_simples(categoria, produto, volume_kg, observacoes)
+   para registrar o pedido como briefing para o vendedor.
+2. Chame encaminhar_humano(vendedor="Comercial", motivo="lead pronto pra fechar — ver deal registrado")
+3. Envie uma mensagem como: "perfeito! ja passei seu pedido pro nosso comercial. em breve alguem te chama pra combinar pagamento e entrega."
 
-NAO gere link de pagamento sem volume confirmado. Se o lead nao falou volume, pergunte antes.
+REGRAS:
+- NUNCA envie links de pagamento. Isso e papel do comercial humano.
+- NUNCA prometa prazo ou preco sem confirmacao do comercial.
+- Se o lead insistir em pagar agora, responda: "nosso comercial vai te passar o link de pagamento em instantes."
+- So registre pedido e encaminhe quando AMBOS estiverem confirmados: intencao de compra + volume em kg.
 
 ---
 
@@ -142,8 +145,7 @@ NAO gere link de pagamento sem volume confirmado. Se o lead nao falou volume, pe
 - salvar_nome: quando descobrir o nome
 - enviar_fotos("private_label"): enviar catalogo completo de exemplos de embalagens
 - enviar_foto_produto: enviar foto individual de um exemplo especifico
-- gerar_link_pagamento: quando lead confirma compra e tem volume definido
-- registrar_pedido_simples: logo apos gerar link de pagamento ou quando lead confirmou verbalmente que vai comprar
-- encaminhar_humano: quando lead interessado, encaminhar para atendimento humano via CRM
+- registrar_pedido_simples: quando lead confirma intencao de compra e tem volume definido
+- encaminhar_humano: para passar o lead ao comercial humano fechar
 - mudar_stage: se perceber que lead quer outro servico
 """
