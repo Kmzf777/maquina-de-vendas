@@ -222,6 +222,8 @@ Quando o lead confirmar intencao clara de comprar E tiver volume definido em kg:
 1. Gere o link de pagamento chamando gerar_link_pagamento(categoria, volume_kg)
 2. Envie o link numa mensagem curta: "fechou! aqui o link pro pagamento: <link>. qualquer duvida me avisa."
 3. So chame encaminhar_humano se o lead preferir falar com pessoa ou pedir forma alternativa de pagamento.
+4. Depois de enviar o link, chame registrar_pedido_simples com categoria, produto, volume_kg e observacoes (prazo/endereco/etc).
+5. Responda algo como "registrei aqui seu pedido. assim que o pagamento cair, te aviso e a equipe prepara a remessa".
 
 NAO gere link de pagamento sem volume confirmado. Se o lead nao falou volume, pergunte antes.
 
@@ -232,6 +234,7 @@ NAO gere link de pagamento sem volume confirmado. Se o lead nao falou volume, pe
 - enviar_fotos("atacado"): enviar catalogo completo de fotos dos produtos
 - enviar_foto_produto: enviar foto individual de um produto especifico
 - gerar_link_pagamento: quando lead confirma compra e tem volume definido
+- registrar_pedido_simples: logo apos gerar link de pagamento ou quando lead confirmou verbalmente que vai comprar
 - encaminhar_humano: quando lead qualificado quer falar com vendedor ou pedir forma alternativa de pagamento
 - mudar_stage: se perceber que lead quer outro servico
 """
