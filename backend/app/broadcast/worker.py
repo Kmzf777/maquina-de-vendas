@@ -3,6 +3,8 @@ import logging
 import random
 from datetime import datetime, timezone
 
+import httpx
+
 from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.whatsapp.registry import get_provider
@@ -42,29 +44,70 @@ def _resolve_value(value: str, lead: dict) -> str:
     return value
 
 
-def _render_template_body(template_name: str, template_variables: dict, lead: dict) -> str:
-    """Fetch BODY text from message_templates and resolve positional placeholders."""
+def _apply_variables(text: str, template_variables: dict, lead: dict) -> str:
+    resolved = [
+        _resolve_value(str(v), lead)
+        for k, v in template_variables.items()
+        if k != "components"
+    ]
+    for i, value in enumerate(resolved, start=1):
+        text = text.replace(f"{{{{{i}}}}}", value)
+    return text
+
+
+async def _render_template_body(template_name: str, template_variables: dict, lead: dict, channel: dict | None = None) -> str:
+    """Render template BODY text. Tries local DB first, falls back to Meta API and auto-syncs."""
+    # 1. Try local message_templates table
     try:
         sb = get_supabase()
         result = sb.table("message_templates").select("components").eq("name", template_name).limit(1).execute()
-        if not result.data:
-            return f"[Template: {template_name}]"
-        components = result.data[0].get("components", [])
-        body = next((c for c in components if c.get("type") == "BODY"), None)
-        if not body:
-            return f"[Template: {template_name}]"
-        text = body.get("text", "")
-        resolved = [
-            _resolve_value(str(v), lead)
-            for k, v in template_variables.items()
-            if k != "components"
-        ]
-        for i, value in enumerate(resolved, start=1):
-            text = text.replace(f"{{{{{i}}}}}", value)
-        return text
+        if result.data:
+            components = result.data[0].get("components", [])
+            body = next((c for c in components if c.get("type") == "BODY"), None)
+            if body:
+                return _apply_variables(body.get("text", ""), template_variables, lead)
     except Exception as e:
-        logger.warning(f"[BROADCAST] Could not render template body for {template_name}: {e}")
-        return f"[Template: {template_name}]"
+        logger.warning(f"[BROADCAST] Local template lookup failed for {template_name}: {e}")
+
+    # 2. Fallback: fetch from Meta API and auto-sync into local DB
+    if channel:
+        try:
+            config = channel.get("provider_config", {})
+            waba_id = config.get("waba_id")
+            access_token = config.get("access_token")
+            if waba_id and access_token:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        f"https://graph.facebook.com/v21.0/{waba_id}/message_templates",
+                        params={"name": template_name},
+                        headers={"Authorization": f"Bearer {access_token}"},
+                    )
+                    data = resp.json().get("data", [])
+                    if data:
+                        components = data[0].get("components", [])
+                        body = next((c for c in components if c.get("type") == "BODY"), None)
+                        if body:
+                            rendered = _apply_variables(body.get("text", ""), template_variables, lead)
+                            try:
+                                sb = get_supabase()
+                                sb.table("message_templates").insert({
+                                    "channel_id": channel["id"],
+                                    "name": template_name,
+                                    "language": data[0].get("language", "pt_BR"),
+                                    "requested_category": data[0].get("category", "UTILITY"),
+                                    "category": data[0].get("category", "UTILITY"),
+                                    "components": components,
+                                    "meta_template_id": data[0].get("id"),
+                                    "status": "approved",
+                                }).execute()
+                                logger.info(f"[BROADCAST] Auto-synced template {template_name} to local DB")
+                            except Exception as sync_err:
+                                logger.warning(f"[BROADCAST] Auto-sync failed for {template_name}: {sync_err}")
+                            return rendered
+        except Exception as e:
+            logger.warning(f"[BROADCAST] Meta API template lookup failed for {template_name}: {e}")
+
+    return f"[Template: {template_name}]"
 
 
 def _build_template_components(template_variables: dict, lead: dict) -> list | None:
@@ -207,10 +250,11 @@ async def process_single_broadcast(broadcast: dict):
             try:
                 if conversation:
                     logger.info(f"[DEBUG-BROADCAST] step=save_message conv_id={conversation['id']} lead_id={lead['id']}")
-                    rendered_content = _render_template_body(
+                    rendered_content = await _render_template_body(
                         broadcast["template_name"],
                         broadcast.get("template_variables") or {},
                         lead,
+                        channel,
                     )
                     saved = save_message(
                         conversation["id"],
