@@ -1,0 +1,35 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 7,
+    "linhas_robotizadas": [
+      "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+      "ja parou pra pensar que o cafe que voce vende pode nao ser o maximo que seu cliente merece?",
+      "sei que fidelizar cliente com cafe especial faz toda a diferenca"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "O agente insistiu em qualificar o lead antes de dar o preço, o que soou repetitivo, mas conseguiu contornar a impaciência e fechar um pedido de teste."
+  },
+  "turns_count": 8,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": []
+}
