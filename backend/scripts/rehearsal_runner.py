@@ -41,6 +41,7 @@ log = logging.getLogger("rehearsal")
 
 DEV_BACKEND_URL = os.environ.get("DEV_BACKEND_URL", "http://127.0.0.1:8001")
 REHEARSAL_PHONE = os.environ.get("REHEARSAL_PHONE", "").strip()
+META_PHONE_NUMBER_ID = os.environ.get("META_PHONE_NUMBER_ID", "rehearsal")
 MAX_TURNS = int(os.environ.get("REHEARSAL_MAX_TURNS", "20"))
 TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "15"))
 POLL_INTERVAL = 0.5
@@ -82,7 +83,7 @@ def _build_meta_payload(phone: str, text: str) -> dict:
             "changes": [{
                 "value": {
                     "messaging_product": "whatsapp",
-                    "metadata": {"phone_number_id": "rehearsal", "display_phone_number": phone},
+                    "metadata": {"phone_number_id": META_PHONE_NUMBER_ID, "display_phone_number": phone},
                     "contacts": [{"profile": {"name": "Rehearsal Lead"}, "wa_id": phone}],
                     "messages": [{
                         "from": phone,
@@ -100,7 +101,7 @@ def _build_meta_payload(phone: str, text: str) -> dict:
 
 async def _send_user_message(client: httpx.AsyncClient, phone: str, text: str) -> None:
     payload = _build_meta_payload(phone, text)
-    r = await client.post(f"{DEV_BACKEND_URL}/webhook/meta", json=payload, timeout=10)
+    r = await client.post(f"{DEV_BACKEND_URL}/webhook/meta", json=payload, timeout=60)
     if r.status_code >= 400:
         log.warning(f"Webhook POST retornou {r.status_code}: {r.text[:200]}")
 
