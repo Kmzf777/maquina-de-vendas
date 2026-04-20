@@ -112,6 +112,15 @@ def save_message(
     if not result.data:
         logger.error(f"[DEBUG-SAVE_MESSAGE] insert returned empty data — NADA SALVO (payload={msg})")
         return {}
+
+    # Keep conversations.last_msg_at current so the UI sorts correctly
+    try:
+        sb.table("conversations").update(
+            {"last_msg_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", conversation_id).execute()
+    except Exception as e:
+        logger.warning(f"[DEBUG-SAVE_MESSAGE] failed to update last_msg_at: {e}")
+
     return result.data[0]
 
 
