@@ -1,4 +1,7 @@
-from app.agent.tools import get_tools_for_stage, PHOTO_CAPTIONS, PRODUTO_PHOTO_MAP
+import pytest
+from unittest.mock import patch
+
+from app.agent.tools import get_tools_for_stage, PHOTO_CAPTIONS, PRODUTO_PHOTO_MAP, execute_tool
 
 
 def test_secretaria_tools():
@@ -62,11 +65,6 @@ def test_secretaria_tools_exclude_enviar_foto_produto():
     tools = get_tools_for_stage("secretaria")
     names = [t["function"]["name"] for t in tools]
     assert "enviar_foto_produto" not in names
-
-
-import pytest
-from unittest.mock import patch
-from app.agent.tools import execute_tool
 
 
 @pytest.mark.asyncio
