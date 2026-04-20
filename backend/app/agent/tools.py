@@ -135,28 +135,6 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "gerar_link_pagamento",
-            "description": "Gera um link de pagamento para o lead fechar a compra. Use SOMENTE quando o lead confirmou intencao de comprar e ja tem volume definido.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "categoria": {
-                        "type": "string",
-                        "enum": ["atacado", "private_label"],
-                        "description": "Categoria do produto",
-                    },
-                    "volume_kg": {
-                        "type": "number",
-                        "description": "Volume em kg que o lead quer comprar",
-                    },
-                },
-                "required": ["categoria", "volume_kg"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "registrar_pedido_simples",
             "description": "Registra a intencao de pedido do lead para acompanhamento. Use depois de gerar link de pagamento ou quando o lead confirmou verbalmente que vai comprar.",
             "parameters": {
@@ -178,8 +156,8 @@ def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
         "secretaria": ["salvar_nome", "mudar_stage"],
-        "atacado": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "gerar_link_pagamento", "registrar_pedido_simples"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "gerar_link_pagamento", "registrar_pedido_simples"],
+        "atacado": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "registrar_pedido_simples"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "registrar_pedido_simples"],
         "exportacao": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
         "consumo": ["salvar_nome"],
     }
@@ -276,24 +254,6 @@ async def execute_tool(
         except Exception as e:
             logger.warning(f"Failed to send product photo {produto}: {e}")
             return f"erro ao enviar foto de {produto}"
-
-    elif tool_name == "gerar_link_pagamento":
-        categoria = args.get("categoria")
-        volume = args.get("volume_kg", 0)
-        LINKS = {
-            "atacado": "https://pagamento.cafecanastra.com/atacado",
-            "private_label": "https://pagamento.cafecanastra.com/private-label",
-        }
-        link = LINKS.get(categoria)
-        if not link:
-            return f"categoria {categoria} nao tem link de pagamento configurado"
-        save_message(
-            lead_id,
-            "system",
-            f"Link de pagamento gerado ({categoria}, {volume}kg): {link}",
-            conversation_id=conversation_id,
-        )
-        return f"Link de pagamento ({categoria}, {volume}kg): {link}"
 
     elif tool_name == "registrar_pedido_simples":
         categoria = args.get("categoria", "")
