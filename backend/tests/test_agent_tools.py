@@ -62,3 +62,35 @@ def test_secretaria_tools_exclude_enviar_foto_produto():
     tools = get_tools_for_stage("secretaria")
     names = [t["function"]["name"] for t in tools]
     assert "enviar_foto_produto" not in names
+
+
+import pytest
+from unittest.mock import patch
+from app.agent.tools import execute_tool
+
+
+@pytest.mark.asyncio
+async def test_gerar_link_pagamento_atacado_retorna_link():
+    with patch("app.agent.tools.save_message"):
+        result = await execute_tool(
+            "gerar_link_pagamento",
+            {"categoria": "atacado", "volume_kg": 10},
+            lead_id="lead-test-id",
+            phone="+5500000000",
+            conversation_id="conv-test-id",
+        )
+    assert "http" in result.lower(), "tool deve retornar um link de pagamento"
+    assert "10" in result or "atacado" in result.lower(), "contexto minimo deve aparecer no retorno"
+
+
+@pytest.mark.asyncio
+async def test_gerar_link_pagamento_categoria_invalida_retorna_erro():
+    with patch("app.agent.tools.save_message"):
+        result = await execute_tool(
+            "gerar_link_pagamento",
+            {"categoria": "invalida", "volume_kg": 10},
+            lead_id="lead-test-id",
+            phone="+5500000000",
+            conversation_id="conv-test-id",
+        )
+    assert "nao" in result.lower() or "erro" in result.lower()
