@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { Deal } from "@/lib/types";
-import { DEAL_STAGES, DEAL_CATEGORIES } from "@/lib/constants";
+import type { Deal, PipelineStage } from "@/lib/types";
+import { DEAL_CATEGORIES } from "@/lib/constants";
 
 function formatCurrency(value: number): string {
   if (value === 0) return "R$ 0";
@@ -11,12 +11,15 @@ function formatCurrency(value: number): string {
 
 interface DealDetailSidebarProps {
   deal: Deal;
+  stages: PipelineStage[];
   onClose: () => void;
   onUpdate: (dealId: string, data: Record<string, unknown>) => Promise<void>;
 }
 
-export function DealDetailSidebar({ deal, onClose, onUpdate }: DealDetailSidebarProps) {
+export function DealDetailSidebar({ deal, stages, onClose, onUpdate }: DealDetailSidebarProps) {
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [form, setForm] = useState({
     title: deal.title,
     value: deal.value,
@@ -27,29 +30,37 @@ export function DealDetailSidebar({ deal, onClose, onUpdate }: DealDetailSidebar
 
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
-  const stageInfo = DEAL_STAGES.find((s) => s.key === deal.stage);
+  const stageInfo = deal.pipeline_stages ?? stages.find((s) => s.id === deal.stage_id) ?? null;
   const categoryInfo = DEAL_CATEGORIES.find((c) => c.key === deal.category);
   const daysActive = Math.floor(
     (Date.now() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24)
   );
 
   async function handleSave() {
-    await onUpdate(deal.id, {
-      title: form.title,
-      value: Number(form.value) || 0,
-      category: form.category || null,
-      assigned_to: form.assigned_to || null,
-      expected_close_date: form.expected_close_date || null,
-    });
-    setEditing(false);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onUpdate(deal.id, {
+        title: form.title,
+        value: Number(form.value) || 0,
+        category: form.category || null,
+        assigned_to: form.assigned_to || null,
+        expected_close_date: form.expected_close_date || null,
+      });
+      setEditing(false);
+    } catch {
+      setSaveError("Erro ao salvar. Tente novamente.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <div className="fixed inset-y-0 right-0 w-[380px] bg-[#faf9f6] border-l border-[#dedbd6] z-50 flex flex-col">
       <div className="flex items-center justify-between p-4 border-b border-[#dedbd6]">
         <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: stageInfo?.dotColor || "#dedbd6" }} />
-          <span className="text-[13px] text-[#111111]">{stageInfo?.label || deal.stage}</span>
+          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: stageInfo?.dot_color || "#dedbd6" }} />
+          <span className="text-[13px] text-[#111111]">{stageInfo?.label || "—"}</span>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setEditing(!editing)} className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-2 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors">
@@ -89,7 +100,10 @@ export function DealDetailSidebar({ deal, onClose, onUpdate }: DealDetailSidebar
               <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Previsao de fechamento</label>
               <input type="date" value={form.expected_close_date} onChange={(e) => setForm({ ...form, expected_close_date: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
             </div>
-            <button onClick={handleSave} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full">Salvar</button>
+            {saveError && <p className="text-[12px] text-red-600">{saveError}</p>}
+            <button onClick={handleSave} disabled={saving} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full disabled:opacity-50">
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
           </div>
         ) : (
           <>
