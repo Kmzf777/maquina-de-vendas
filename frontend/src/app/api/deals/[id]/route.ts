@@ -11,15 +11,23 @@ export async function PATCH(
 
   const updates: Record<string, unknown> = { ...body, updated_at: new Date().toISOString() };
 
-  if (body.stage === "fechado_ganho" || body.stage === "fechado_perdido") {
-    updates.closed_at = new Date().toISOString();
+  // Se stage_id foi fornecido, detectar se é stage protegido para setar closed_at
+  if (body.stage_id) {
+    const { data: stage } = await supabase
+      .from("pipeline_stages")
+      .select("key")
+      .eq("id", body.stage_id)
+      .single();
+    if (stage?.key === "fechado_ganho" || stage?.key === "fechado_perdido") {
+      updates.closed_at = new Date().toISOString();
+    }
   }
 
   const { data, error } = await supabase
     .from("deals")
     .update(updates)
     .eq("id", id)
-    .select("*, leads(id, name, company, phone, nome_fantasia)")
+    .select("*, leads(id, name, company, phone, nome_fantasia), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
