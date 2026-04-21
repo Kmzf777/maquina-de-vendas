@@ -25,9 +25,30 @@ export interface Lead {
   on_hold: boolean;
 }
 
+export interface Pipeline {
+  id: string;
+  name: string;
+  order_index: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PipelineStage {
+  id: string;
+  pipeline_id: string;
+  label: string;
+  key: string | null; // 'fechado_ganho' | 'fechado_perdido' | null
+  dot_color: string;
+  order_index: number;
+  is_protected: boolean;
+  created_at: string;
+}
+
 export interface Deal {
   id: string;
   lead_id: string;
+  pipeline_id: string | null;
+  stage_id: string | null;
   title: string;
   value: number;
   stage: string;
@@ -46,6 +67,7 @@ export interface Deal {
     phone: string;
     nome_fantasia: string | null;
   };
+  pipeline_stages?: PipelineStage | null;
 }
 
 export interface Message {

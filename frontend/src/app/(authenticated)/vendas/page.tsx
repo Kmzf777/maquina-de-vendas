@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent,
@@ -8,19 +8,22 @@ import {
 import { useDroppable, useDraggable } from "@dnd-kit/core";
 import { useRealtimeDeals } from "@/hooks/use-realtime-deals";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
-import { DEAL_STAGES } from "@/lib/constants";
+import { usePipelines, usePipelineStages } from "@/hooks/use-pipelines";
 import { DealCard } from "@/components/deals/deal-card";
 import { DealKanbanMetrics } from "@/components/deals/deal-kanban-metrics";
 import { DealKanbanFilters } from "@/components/deals/deal-kanban-filters";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { DealDetailSidebar } from "@/components/deals/deal-detail-sidebar";
 import { LostReasonModal } from "@/components/deals/lost-reason-modal";
-import type { Deal } from "@/lib/types";
+import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
+import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
+import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
+import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 
 function DroppableColumn({
   id, title, dotColor, deals, onDealClick,
 }: {
-  id: string; title: string; dotColor: string; tintColor?: string; deals: Deal[]; onDealClick: (deal: Deal) => void;
+  id: string; title: string; dotColor: string; deals: Deal[]; onDealClick: (deal: Deal) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   const columnValue = deals.reduce((sum, d) => sum + (d.value || 0), 0);
@@ -28,7 +31,6 @@ function DroppableColumn({
 
   return (
     <div className="bg-[#f7f5f1] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
-      {/* Column header */}
       <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
@@ -66,15 +68,29 @@ function DraggableDealCard({ deal, onClick }: { deal: Deal; onClick: (deal: Deal
 }
 
 export default function VendasPage() {
-  const { deals, loading } = useRealtimeDeals();
+  const { pipelines, loading: pipelinesLoading } = usePipelines();
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
+  const { stages, refetch: refetchStages } = usePipelineStages(selectedPipelineId);
+  const { deals, loading: dealsLoading } = useRealtimeDeals(selectedPipelineId);
   const { leads } = useRealtimeLeads();
-  const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
+
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const selectedDeal = deals.find((d) => d.id === selectedDealId) ?? null;
   const [activeDrag, setActiveDrag] = useState<Deal | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showPipelineCreate, setShowPipelineCreate] = useState(false);
+  const [showPipelineEdit, setShowPipelineEdit] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [showActive, setShowActive] = useState(true);
-  const [lostDeal, setLostDeal] = useState<Deal | null>(null);
+  const [lostDeal, setLostDeal] = useState<{ deal: Deal; stageId: string } | null>(null);
+
+  // Auto-selecionar primeiro pipeline
+  useEffect(() => {
+    if (pipelines.length > 0 && !selectedPipelineId) {
+      setSelectedPipelineId(pipelines[0].id);
+    }
+  }, [pipelines, selectedPipelineId]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -85,28 +101,77 @@ export default function VendasPage() {
     const { active, over } = event;
     if (!over) return;
     const deal = active.data.current as Deal;
-    const newStage = over.id as string;
-    if (deal.stage === newStage) return;
-    if (newStage === "fechado_perdido") { setLostDeal({ ...deal, stage: newStage }); return; }
-    await fetch(`/api/deals/${deal.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage: newStage }) });
+    const newStageId = over.id as string;
+    if (deal.stage_id === newStageId) return;
+    const newStage = stages.find((s) => s.id === newStageId);
+    if (newStage?.key === "fechado_perdido") {
+      setLostDeal({ deal, stageId: newStageId });
+      return;
+    }
+    const res = await fetch(`/api/deals/${deal.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage_id: newStageId }),
+    });
+    if (!res.ok) alert("Erro ao mover deal. Tente novamente.");
   }
 
   async function handleLostConfirm(reason: string) {
     if (!lostDeal) return;
-    await fetch(`/api/deals/${lostDeal.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage: "fechado_perdido", lost_reason: reason }) });
+    const res = await fetch(`/api/deals/${lostDeal.deal.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage_id: lostDeal.stageId, lost_reason: reason }),
+    });
+    if (!res.ok) { alert("Erro ao registrar perda. Tente novamente."); return; }
     setLostDeal(null);
   }
 
-  async function handleCreateDeal(data: { lead_id: string; title: string; value: number; category: string; expected_close_date: string }) {
-    await fetch("/api/deals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  async function handleCreateDeal(data: {
+    lead_id: string; title: string; value: number; category: string; expected_close_date: string;
+  }) {
+    if (!selectedPipelineId) return;
+    const res = await fetch("/api/deals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...data, pipeline_id: selectedPipelineId }),
+    });
+    if (!res.ok) alert("Erro ao criar deal. Tente novamente.");
   }
 
   async function handleUpdateDeal(dealId: string, data: Record<string, unknown>) {
-    await fetch(`/api/deals/${dealId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
-    setSelectedDeal(null);
+    const res = await fetch(`/api/deals/${dealId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Erro ao atualizar deal");
+    setSelectedDealId(null);
   }
 
-  if (loading) {
+  async function handleCreatePipeline(name: string) {
+    const res = await fetch("/api/pipelines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const pipeline = await res.json();
+    if (pipeline?.id) setSelectedPipelineId(pipeline.id);
+  }
+
+  async function handleDeletePipeline(pipeline: Pipeline) {
+    const res = await fetch(`/api/pipelines/${pipeline.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const { error } = await res.json();
+      alert(error);
+      return;
+    }
+    setSelectedPipelineId(pipelines.find((p) => p.id !== pipeline.id)?.id ?? null);
+  }
+
+  const loading = pipelinesLoading || dealsLoading;
+
+  if (loading && pipelines.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex items-center gap-3">
@@ -118,31 +183,42 @@ export default function VendasPage() {
   }
 
   const filteredDeals = deals.filter((d) => {
-    if (showActive && (d.stage === "fechado_ganho" || d.stage === "fechado_perdido")) return false;
+    const stage = stages.find((s) => s.id === d.stage_id);
+    if (showActive && stage?.is_protected) return false;
     if (category && d.category !== category) return false;
     if (search) {
       const q = search.toLowerCase();
       const lead = d.leads;
-      const match = d.title.toLowerCase().includes(q) || (lead?.name || "").toLowerCase().includes(q) || (lead?.company || "").toLowerCase().includes(q) || (lead?.phone || "").includes(q);
+      const match =
+        d.title.toLowerCase().includes(q) ||
+        (lead?.name || "").toLowerCase().includes(q) ||
+        (lead?.company || "").toLowerCase().includes(q) ||
+        (lead?.phone || "").includes(q);
       if (!match) return false;
     }
     return true;
   });
 
+  const activePipeline = pipelines.find((p) => p.id === selectedPipelineId) ?? null;
+
   return (
     <div className="flex flex-col h-full">
       {/* Page Header */}
       <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
-        <div>
-          <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[32px] font-normal text-[#111111]">
-            Funis de Venda
-          </h1>
-          <p className="text-[14px] text-[#7b7b78] mt-0.5">Pipeline de negócios</p>
-        </div>
-        <button onClick={() => setShowCreate(true)} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2">
+        <PipelineSwitcher
+          pipelines={pipelines}
+          activePipelineId={selectedPipelineId}
+          onSelect={setSelectedPipelineId}
+          onCreateNew={() => setShowPipelineCreate(true)}
+          onEdit={() => setShowPipelineEdit(true)}
+          onDelete={handleDeletePipeline}
+        />
+        <button
+          onClick={() => setShowCreate(true)}
+          className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2"
+        >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="8" y1="3" x2="8" y2="13" />
-            <line x1="3" y1="8" x2="13" y2="8" />
+            <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
           </svg>
           Nova Oportunidade
         </button>
@@ -151,13 +227,28 @@ export default function VendasPage() {
       {/* Kanban content area */}
       <div className="flex-1 overflow-auto bg-[#faf9f6]">
         <DealKanbanMetrics deals={deals} />
-        <DealKanbanFilters search={search} onSearchChange={setSearch} category={category} onCategoryChange={setCategory} showActive={showActive} onToggleActive={() => setShowActive(!showActive)} />
+        <div className="px-6 pt-4">
+          <DealKanbanFilters
+            search={search} onSearchChange={setSearch}
+            category={category} onCategoryChange={setCategory}
+            showActive={showActive} onToggleActive={() => setShowActive(!showActive)}
+          />
+        </div>
 
         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className="flex gap-3 overflow-x-auto p-6">
-            {DEAL_STAGES.map((stage) => {
-              const stageDeals = filteredDeals.filter((d) => d.stage === stage.key);
-              return (<DroppableColumn key={stage.key} id={stage.key} title={stage.label} dotColor={stage.dotColor} deals={stageDeals} onDealClick={setSelectedDeal} />);
+          <div className="flex gap-3 overflow-x-auto p-6 pt-2">
+            {stages.map((stage) => {
+              const stageDeals = filteredDeals.filter((d) => d.stage_id === stage.id);
+              return (
+                <DroppableColumn
+                  key={stage.id}
+                  id={stage.id}
+                  title={stage.label}
+                  dotColor={stage.dot_color}
+                  deals={stageDeals}
+                  onDealClick={(deal) => setSelectedDealId(deal.id)}
+                />
+              );
             })}
           </div>
           <DragOverlay>
@@ -170,9 +261,27 @@ export default function VendasPage() {
         </DndContext>
       </div>
 
-      {selectedDeal && <DealDetailSidebar deal={selectedDeal} onClose={() => setSelectedDeal(null)} onUpdate={handleUpdateDeal} />}
-      {showCreate && <DealCreateModal leads={leads} onClose={() => setShowCreate(false)} onCreate={handleCreateDeal} />}
-      {lostDeal && <LostReasonModal onConfirm={handleLostConfirm} onCancel={() => setLostDeal(null)} />}
+      {selectedDeal && (
+        <DealDetailSidebar deal={selectedDeal} stages={stages} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} />
+      )}
+      {showCreate && selectedPipelineId && (
+        <DealCreateModal leads={leads} onClose={() => setShowCreate(false)} onCreate={handleCreateDeal} />
+      )}
+      {lostDeal && (
+        <LostReasonModal onConfirm={handleLostConfirm} onCancel={() => setLostDeal(null)} />
+      )}
+      {showPipelineCreate && (
+        <PipelineCreateModal onClose={() => setShowPipelineCreate(false)} onCreate={handleCreatePipeline} />
+      )}
+      {showPipelineEdit && activePipeline && (
+        <PipelineEditModal
+          pipelineId={activePipeline.id}
+          pipelineName={activePipeline.name}
+          stages={stages}
+          onClose={() => setShowPipelineEdit(false)}
+          onSaved={refetchStages}
+        />
+      )}
     </div>
   );
 }
