@@ -1,0 +1,28 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 1,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+    "veredito_curto": "Não é possível realizar a avaliação pois a transcrição da conversa está ausente."
+  },
+  "turns_count": 5,
+  "terminated_by": "timeout",
+  "stages_visited": [
+    "private_label"
+  ]
+}

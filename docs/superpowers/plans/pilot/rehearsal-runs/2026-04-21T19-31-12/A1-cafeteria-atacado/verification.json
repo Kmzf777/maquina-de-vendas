@@ -1,0 +1,31 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": false,
+      "reason": "mencao de volume em kg (sem match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 0,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+    "veredito_curto": "Não foi possível realizar a avaliação pois a transcrição da conversa está ausente."
+  },
+  "turns_count": 4,
+  "terminated_by": "timeout",
+  "stages_visited": []
+}

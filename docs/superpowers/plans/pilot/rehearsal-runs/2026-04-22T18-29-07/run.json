@@ -1,0 +1,72 @@
+{
+  "started_at": "2026-04-22T18:29:07.491165+00:00",
+  "git_sha": "4c8911423374a11ea7ee922426f88e264a1017fb",
+  "archetypes": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T18:29:08.379251+00:00",
+  "verifications": [
+    {
+      "archetype_id": "R1",
+      "archetype_slug": "representante-portfolio",
+      "status": "error",
+      "error": "Error 111 connecting to 127.0.0.1:6380. Connect call failed ('127.0.0.1', 6380).",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "R2",
+      "archetype_slug": "marca-zero-cautelosa",
+      "status": "error",
+      "error": "Error 111 connecting to 127.0.0.1:6380. Connect call failed ('127.0.0.1', 6380).",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "R3",
+      "archetype_slug": "graos-proprios-pragmatico",
+      "status": "error",
+      "error": "Error 111 connecting to 127.0.0.1:6380. Connect call failed ('127.0.0.1', 6380).",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "R4",
+      "archetype_slug": "exploradora-contemplativa",
+      "status": "error",
+      "error": "Error 111 connecting to 127.0.0.1:6380. Connect call failed ('127.0.0.1', 6380).",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "R5",
+      "archetype_slug": "lojista-objecao-amostra",
+      "status": "error",
+      "error": "Error 111 connecting to 127.0.0.1:6380. Connect call failed ('127.0.0.1', 6380).",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    }
+  ]
+}

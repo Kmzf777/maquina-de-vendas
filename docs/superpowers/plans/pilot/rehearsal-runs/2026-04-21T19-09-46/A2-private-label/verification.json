@@ -1,0 +1,30 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 4,
+    "linhas_robotizadas": [
+      "legal! voce ja tem uma marca ou ta pensando em criar uma do zero?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente perguntou duas vezes no final da conversa se o lead já tinha uma marca ou estava criando do zero, ignorando que o lead já havia respondido exatamente isso na sua segunda mensagem, no início do diálogo.",
+    "veredito_curto": "O agente conduziu bem o fluxo de private label, mas falhou gravemente ao repetir uma pergunta já respondida, demonstrando perda de contexto e quebrando a naturalidade da conversa."
+  },
+  "turns_count": 10,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}

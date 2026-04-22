@@ -1,0 +1,5 @@
+{"id": "1238ee7c-3378-4ad8-ab0c-15ff6c1b7e15", "content": "stage alterado para: secretaria", "stage": null, "created_at": "2026-04-22T01:14:31.974231+00:00"}
+{"id": "6a47b3ad-7bb3-45f1-9ecc-bf1be4a00e04", "content": "stage alterado para: consumo", "stage": null, "created_at": "2026-04-22T01:15:01.40197+00:00"}
+{"id": "6d241fff-85d3-471f-8fe8-0fd954629fb9", "content": "stage alterado para: atacado", "stage": null, "created_at": "2026-04-22T01:15:39.660363+00:00"}
+{"id": "c32475b2-a3a0-44d7-97f0-baf820ea99b4", "content": "Pedido registrado: Pedido atacado classico e suave 0.5kg. Obs: amostra para Joao, endereco Rua Goitacazes 71, Centro, BH", "stage": null, "created_at": "2026-04-22T01:19:00.065936+00:00"}
+{"id": "67c45dfd-b5c6-4eb6-a870-807af780e5c9", "content": "[encaminhar_humano] Lead encaminhado para Comercial: lead pronto para acompanhar amostra e prosseguir pedido", "stage": null, "created_at": "2026-04-22T01:19:00.177624+00:00"}

@@ -1,0 +1,296 @@
+[
+  {
+    "id": "2519403c-f7bf-48d7-808a-92fa51b8fa97",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:21:59.479881+00:00"
+  },
+  {
+    "id": "19b436a2-7eec-453d-b909-e33f575a5c09",
+    "role": "assistant",
+    "content": "boa noite\\n\\naqui e a valeria, do comercial da cafe canastra\\n\\nvi que voce demonstrou interesse nos nossos cafes, queria entender melhor sua demanda\\n\\ncom quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:22:01.048671+00:00"
+  },
+  {
+    "id": "efde62f0-0d1b-4d36-bb8b-869ffbc5712d",
+    "role": "user",
+    "content": "Opa, aqui e o Marcos. Qual o preco do kg do cafe pra cafeteria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:22:24.866329+00:00"
+  },
+  {
+    "id": "84eeaea5-7edd-4323-b6ae-272428e20238",
+    "role": "assistant",
+    "content": "prazer, marcos\\n\\nvou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro\\n\\npra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:22:26.722144+00:00"
+  },
+  {
+    "id": "7ba5ade7-7a76-4b59-82ff-b2139e793dca",
+    "role": "user",
+    "content": "Mercado brasileiro. Minha cafeteria e em BH.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:22:55.94698+00:00"
+  },
+  {
+    "id": "7e07a9ef-0bf6-4d5c-a904-82ccc29b22bf",
+    "role": "assistant",
+    "content": "bh, capital forte pra cafe especial\\n\\nentendi! e qual seria sua necessidade especifica?\\n\\ncomprar cafe para consumo proprio, para o negocio, ou criar sua propria marca de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:22:57.819835+00:00"
+  },
+  {
+    "id": "a7d2db4b-111d-47e0-b4c3-1479beecfa8b",
+    "role": "user",
+    "content": "É pra cafeteria, pro meu negocio.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:23:28.124411+00:00"
+  },
+  {
+    "id": "b11eef29-b23c-4032-a7ef-049b0e31b767",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T01:23:29.013869+00:00"
+  },
+  {
+    "id": "f6a7a44f-d619-497d-822c-f9c625503117",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo\\n\\nme diz uma coisa, o cafe que voce vende atualmente atende as expectativas dos seus clientes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:23:29.872434+00:00"
+  },
+  {
+    "id": "22a5dd37-9fdb-4ef5-a5a3-d45d4333d53f",
+    "role": "user",
+    "content": "Atende, mas to vendo outras opcoes. Qual o preco de voces?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:23:52.33567+00:00"
+  },
+  {
+    "id": "6b60f594-37b2-4d29-919b-41df3728ce90",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T01:23:58.171516+00:00"
+  },
+  {
+    "id": "340a6b8b-ad59-4d16-955c-ff39287c1f50",
+    "role": "assistant",
+    "content": "o classico tem torra media-escura, e um cafe intenso com notas achocolatadas, pontuacao 84 SCA\\n\\no suave tem torra media e intensidade intermediaria, com notas de melaço e frutas amarelas, tambem pontuacao 84 SCA\\n\\no canela tem torra media, intensidade intermediaria, com um toque caramelizado e um leve aroma de canela, pontuacao 84 SCA\\n\\no microlote e especial, com media intensidade e notas de mel, caramelo e cacau, pontuacao 86 SCA\\n\\ntodos sao de graos arabica cultivados em pratinha, na serra da canastra, e torrados sob demanda em uberlandia\\n\\nqual deles te parece mais interessante?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:24:00.561064+00:00"
+  },
+  {
+    "id": "49f76184-081a-43bb-a55d-1266377ec7e9",
+    "role": "user",
+    "content": "Ok. Qual o preco do kg de cada um? E o pedido minimo?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:24:43.829839+00:00"
+  },
+  {
+    "id": "b27436be-c38c-4084-82a0-0594430294bd",
+    "role": "assistant",
+    "content": "o classico em graos 1kg sai por R$88,70\\n\\no suave em graos 1kg tambem R$88,70\\n\\no microlote 250g sai R$31,70, nao temos 1kg dele, so unidade de 250g\\n\\no pedido minimo e R$300, marcos\\n\\nvc fica em bh, certo?\no pedido minimo e R$300, marcos\\n\\nvc fica em bh, certo?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:24:46.525603+00:00"
+  },
+  {
+    "id": "63528ba3-8434-4974-bb1c-8030ed7cdb90",
+    "role": "user",
+    "content": "Sim, sou de BH. E a entrega pra cá, como funciona?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:25:18.88432+00:00"
+  },
+  {
+    "id": "69b19d86-dab7-4c64-bf03-4420b110813e",
+    "role": "assistant",
+    "content": "pra bh, o pedido minimo e R$300\\n\\nfrete e R$55, e gratis acima de R$900\\n\\nprazo de entrega e de 7 dias uteis\\n\\nfaz sentido pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:25:20.452154+00:00"
+  },
+  {
+    "id": "a977a75d-9284-4553-95d1-f9a0e6f2eab3",
+    "role": "user",
+    "content": "Entendi. Voces mandam amostra? Preciso provar antes de comprar.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:25:41.478782+00:00"
+  },
+  {
+    "id": "568065f1-5471-40ee-a0ec-fa4b8571d2c2",
+    "role": "assistant",
+    "content": "entendo perfeitamente, marcos\\n\\nnao mandamos amostra porque o nosso cafe e especial e torrado sob demanda, entao o melhor e garantir que voce compre direto a quantidade que vai vender\\n\\nmas posso te garantir que o frescor e a qualidade do nosso cafe sao diferencais que seu cliente vai perceber\\n\\nquer que eu te passe os valores para fechar o pedido?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:25:43.185647+00:00"
+  },
+  {
+    "id": "aac2f389-f6be-48da-804e-054f27168f74",
+    "role": "user",
+    "content": "Sem amostra fica dificil. Nao consigo comprar no escuro.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:26:11.665554+00:00"
+  },
+  {
+    "id": "bf07ea4c-8756-4c4c-a43f-38a6238d151a",
+    "role": "assistant",
+    "content": "sei que e um desafio, marcos\\n\\nmuitos clientes tambem tinham essa duvida no inicio\\n\\nse quiser, posso te indicar para o nosso comercial que pode ajudar a esclarecer tudo direitinho\\n\\nquer que eu faça isso?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:26:13.161295+00:00"
+  },
+  {
+    "id": "f09c3609-7b2c-4f62-9a8e-2161331d2e0c",
+    "role": "user",
+    "content": "Uai, mas voce nao ja e do comercial? So preciso saber se da pra mandar amostra ou nao.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:26:36.129526+00:00"
+  },
+  {
+    "id": "6b78254f-e206-4e68-85df-4f1a29cd5101",
+    "role": "assistant",
+    "content": "imagina, sou eu mesma aqui do escritorio\\n\\nsobre a amostra, infelizmente nao temos esse procedimento por causa de como trabalhamos a torra sob demanda\\n\\nse quiser, posso passar seu contato para o comercial para discutir outras possibilidades\\n\\nquer que eu faça isso?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:26:37.702953+00:00"
+  },
+  {
+    "id": "50d4e275-7df1-467b-b79e-dfc077c38f98",
+    "role": "user",
+    "content": "Nao to entendendo. Se não tem como mandar uma amostra, pra mim não serve.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:27:03.238113+00:00"
+  },
+  {
+    "id": "96625828-fcc0-48e8-af7c-a5d1dc8ddd2e",
+    "role": "assistant",
+    "content": "entendo seu ponto, marcos\\n\\nnosso foco e garantir qualidade e frescor que so conseguimos com torra sob demanda e volume minimo\\n\\nquem prova nosso cafe nao quer voltar pro comercial\\n\\nmas se preferir, posso passar seu contato para o comercial para conversar melhor\\n\\nquer que eu faca isso?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:27:05.194264+00:00"
+  },
+  {
+    "id": "8302f41f-e2fc-4bca-b999-0dec25a379d5",
+    "role": "user",
+    "content": "Ja entendi, nao precisa passar pra ninguem. Se nao tem como mandar amostra, pra mim nao da.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:27:37.130354+00:00"
+  },
+  {
+    "id": "634dc43a-164f-4b15-a059-69f0a283f5c7",
+    "role": "assistant",
+    "content": "entendi, marcos\\n\\nse mudar de ideia ou quiser conversar sobre outras formas de parceria, estou por aqui\\n\\nobrigada pelo seu tempo e sucesso na sua cafeteria",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:27:38.22894+00:00"
+  },
+  {
+    "id": "edd7a61c-48b9-4ce4-a4bf-c004ea9f93b7",
+    "role": "user",
+    "content": "Ok entao. Obrigado.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:28:01.584913+00:00"
+  },
+  {
+    "id": "e25bc35b-e8fc-4137-95a6-827b4999dee2",
+    "role": "assistant",
+    "content": "obrigada, marcos\\n\\nqualquer coisa que precisar, e so chamar\\n\\nboa noite",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:28:02.521882+00:00"
+  },
+  {
+    "id": "353a731a-aebe-47b4-92bd-67f4b14c9d73",
+    "role": "user",
+    "content": "Boa noite.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:28:17.473211+00:00"
+  },
+  {
+    "id": "b137fefb-99e1-4c7e-8df1-49337f4b2e4d",
+    "role": "assistant",
+    "content": "boa noite, marcos",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:28:18.466208+00:00"
+  },
+  {
+    "id": "4468584e-de05-4611-b40e-35e270116ad8",
+    "role": "user",
+    "content": "Pera ai. Nao da pra eu comprar um pacote pequeno pra provar? Se for bom, eu peço os 10kg.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:28:38.99432+00:00"
+  },
+  {
+    "id": "6a6ce35f-ef09-4000-aba4-d9387ca69301",
+    "role": "assistant",
+    "content": "claro que da, marcos\\n\\ntemos o pacote de 250g que pode ser moido ou em graos pra voce provar\\n\\no classico 250g moido sai R$27,70 e em graos R$29,70\\n\\nquer que eu te passe os valores dos outros tipos tambem?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:28:41.306256+00:00"
+  },
+  {
+    "id": "1a614073-3e39-4016-9759-036ad435c015",
+    "role": "user",
+    "content": "Nao precisa dos outros. Manda o link pra comprar esse classico em graos pra eu provar.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:29:02.290963+00:00"
+  },
+  {
+    "id": "4cb85d9b-b103-4dba-96f9-6dd106ce414f",
+    "role": "assistant",
+    "content": "o link pra comprar o classico em graos direto no nosso site e https://www.loja.cafecanastra.com\\n\\nassim voce garante a qualidade e frescor que so o nosso cafe especial oferece\\n\\nquer que eu te ajude a finalizar o pedido por la?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:29:03.751842+00:00"
+  },
+  {
+    "id": "31bd95e7-3679-4f5d-b116-b233c1a456b1",
+    "role": "user",
+    "content": "Nao precisa, eu compro aqui. Se o cafe for bom a gente fecha os 10kg.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:29:29.98767+00:00"
+  },
+  {
+    "id": "ac5bb234-6317-4442-9b89-20bf724a2d7b",
+    "role": "assistant",
+    "content": "que bom que decidiu experimentar, marcos\\n\\n10kg ja e um volume bacana pra começar\\n\\nquer que eu te envie as opções de cafe e os precos para esse volume?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:29:31.210702+00:00"
+  },
+  {
+    "id": "274c6b1f-0e46-41b3-b051-c8fd25fde948",
+    "role": "user",
+    "content": "Uai, calma. Vou provar primeiro. Se for bom a gente negocia os 10kg.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:30:00.118989+00:00"
+  },
+  {
+    "id": "1ba848f3-5588-47ba-b4a8-3d29fce20540",
+    "role": "assistant",
+    "content": "perfeito, marcos\\n\\nquando estiver pronto pra fechar os 10kg, me avisa\\n\\nse quiser, posso te passar todos os detalhes de como funciona o pedido e entrega\\n\\nquer que eu faça isso agora?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:30:01.825139+00:00"
+  },
+  {
+    "id": "fca569d0-0653-47d6-ace8-c30cc71dfa2b",
+    "role": "user",
+    "content": "Nao, agora nao. Vou comprar o pacote pra provar, depois a gente volta a conversar.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:30:25.253072+00:00"
+  },
+  {
+    "id": "a4133722-abda-41cb-9c8f-abc9f8c66d28",
+    "role": "assistant",
+    "content": "perfeito, marcos\\n\\ntemos o pacote de 250g que serve bem pra teste e consumo\\n\\nposso te passar os valores para voce comprar direto e provar nosso cafe?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:30:26.291283+00:00"
+  },
+  {
+    "id": "a013a3b3-ace7-4dce-86cf-d346f69e6964",
+    "role": "user",
+    "content": "Uai, voce ja me passou o valor. Vou comprar la no site pra provar.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:30:48.611959+00:00"
+  },
+  {
+    "id": "b418963b-b30f-4ce8-8e6c-62af19a56cd8",
+    "role": "assistant",
+    "content": "entendi, marcos\\n\\nso pra lembrar, os precos que passei sao para atacado, nao para consumidor final\\n\\no site da loja online e www.loja.cafecanastra.com, la sim voce pode comprar em pequenas quantidades\\n\\nse quiser, posso ajudar com algum produto especifico do site?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:30:50.508626+00:00"
+  }
+]

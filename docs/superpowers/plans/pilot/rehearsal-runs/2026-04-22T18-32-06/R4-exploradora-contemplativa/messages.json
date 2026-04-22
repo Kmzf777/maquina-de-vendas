@@ -1,0 +1,177 @@
+[
+  {
+    "id": "9592d20a-25a2-48fe-be91-14b1cf2e8a26",
+    "role": "user",
+    "content": "oi, estou querendo conhecer como funciona a criacao da propria marca",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:54:07.113792+00:00"
+  },
+  {
+    "id": "f8865795-15e8-4a27-8f68-9c763341b864",
+    "role": "assistant",
+    "content": "prazer em te conhecer\n\npra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:54:10.243953+00:00"
+  },
+  {
+    "id": "d541a6da-a38f-46a8-8b68-966c3361df59",
+    "role": "user",
+    "content": "Prazer! A princípio, o foco é o mercado brasileiro.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:54:30.337111+00:00"
+  },
+  {
+    "id": "16774c3e-1ffa-4860-90c3-a586dffe3b6a",
+    "role": "assistant",
+    "content": "entendi! e qual seria sua necessidade especifica?\n\ncomprar cafe para consumo proprio, para o negocio ou criar sua propria marca de cafe mesmo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:54:32.200001+00:00"
+  },
+  {
+    "id": "41351c5c-8ad2-4310-b426-4a2503dc4cd5",
+    "role": "user",
+    "content": "A ideia é criar minha própria marca de café, do zero. Estou na fase de pesquisa ainda.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:55:00.215138+00:00"
+  },
+  {
+    "id": "3c860ec1-1688-4a4a-a448-1c634219534b",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T18:55:01.924469+00:00"
+  },
+  {
+    "id": "5964b6a6-7b93-427f-9a54-1cd048009784",
+    "role": "assistant",
+    "content": "que projeto bacana, criar sua marca e o melhor investimento que voce pode fazer nesse ramo\n\nvou te explicar como funciona o private label com a gente\n\na parte da marca em si fica por sua conta, ou seja, o design e a identidade sao feitos por voce ou seu designer\n\nquando voce nos enviar a logo, a gente cuida de todo o resto: a embalagem, a torra, moagem e empacotamento\n\ntemos alguns modelos de embalagem padrao que nao geram custo extra, e a fabricacao e feita aqui mesmo, garantindo qualidade e agilidade\n\nfaz sentido pra voce?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:55:04.002765+00:00"
+  },
+  {
+    "id": "8dd819c9-24ad-48cc-90ef-138c55c59b7b",
+    "role": "user",
+    "content": "Sim, faz sentido. Sobre a personalização da embalagem, o que exatamente é essa técnica de silk?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:55:40.000837+00:00"
+  },
+  {
+    "id": "9428c138-1f95-43d8-9d63-bd2c7349c297",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo e queira entender detalhes da embalagem\n\no silk e a tecnica que usamos para estampar a sua logo diretamente na embalagem\n\nassim o produto fica com cara de marca propria mesmo, visual profissional e acabamento de alta qualidade\n\nisso ja esta incluso no preco quando voce opta pela embalagem feita por nos\n\nquer que eu te fale os valores das opcoes que temos?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:55:45.811288+00:00"
+  },
+  {
+    "id": "5485889d-eae7-41e8-8e8f-a154b8baeafc",
+    "role": "user",
+    "content": "Sim, por favor. E esses valores mudam de acordo com a quantidade? Se a demanda for maior, o preço por unidade diminui?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:56:15.58434+00:00"
+  },
+  {
+    "id": "98c136b5-20ff-45c0-9eca-b51839ffc3cb",
+    "role": "assistant",
+    "content": "os valores giram em torno de faixas fixas por unidade, com pedido minimo estabelecido\n\npor exemplo, o pacote de 250g com embalagem personalizada e silk da sua logo fica na faixa de R$23,90 a unidade\n\nse voce ja tiver embalagem propria, cai pra R$22,90\n\no pedido minimo e de 100 unidades para essa opcao\n\nquer que eu te mostre as fotos das embalagens e produtos pra voce visualizar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:56:17.570974+00:00"
+  },
+  {
+    "id": "920bea96-bc0f-4523-a904-f429cf2a8ddc",
+    "role": "user",
+    "content": "Gostaria de ver as fotos, sim. Aproveitando, como funciona a questão do frete para o Espírito Santo?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:56:56.404967+00:00"
+  },
+  {
+    "id": "c6f9c0b9-3383-45e2-bf25-cb883ed2c8b6",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T18:57:02.671431+00:00"
+  },
+  {
+    "id": "b1b4c9a0-df96-4be0-8a91-4449533bc8ca",
+    "role": "assistant",
+    "content": "sobre o frete pro espirito santo, o valor depende do volume e da transportadora\n\na gente faz o cafe e a embalagem, mas o frete e calculado na hora do pedido\n\nquer que eu te fale sobre outras opcoes de embalagem e produtos?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:57:04.31639+00:00"
+  },
+  {
+    "id": "89cb77c2-2a3f-4c8c-8e99-c021e1be6ab6",
+    "role": "user",
+    "content": "Ok, as embalagens são bonitas. Pra mim, o principal é a qualidade do grão, sabe? Teria como me enviar uma amostra pra eu poder provar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:57:33.083886+00:00"
+  },
+  {
+    "id": "c1db6211-faee-4d69-9679-59097c74855c",
+    "role": "assistant",
+    "content": "entendo, a qualidade do grão e realmente fundamental\n\nnosso cafe e 100% arábica, cultivado em altitude na serra da canastra, com blend de variedades como bourbon e catuai\n\nsobre amostras, a gente nao costuma enviar, pois o processo e pensado para pedidos a partir de 50 ou 100 unidades\n\nmas posso te ajudar a escolher o blend que mais combina com seu projeto para garantir um produto final que agrade\n\nme diz uma coisa, voce ja tem um perfil de sabor que gostaria de oferecer? mais suave, intenso, com notas especiais?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:57:39.223819+00:00"
+  },
+  {
+    "id": "f159093c-8b02-4271-a9e3-6a3c6b1b29fb",
+    "role": "user",
+    "content": "Hmm, entendi. Mas sem provar fica bem difícil definir o perfil de sabor e garantir a qualidade que eu busco, sabe?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:58:24.678326+00:00"
+  },
+  {
+    "id": "197a15f8-6f41-411a-9017-f12f4b50e034",
+    "role": "assistant",
+    "content": "faz sentido essa busca por garantia, qualidade e sabor sao o que fazem a diferenca no cafe especial\n\nme conta, voce ja trabalha com cafe ou e a primeira vez nesse ramo?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:58:26.062005+00:00"
+  },
+  {
+    "id": "8f26ff17-2f1c-4184-9cee-10829b9bf390",
+    "role": "user",
+    "content": "É minha primeira vez nesse ramo, sim. Justamente por isso preciso ter certeza da qualidade do produto que vou colocar no mercado.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:58:43.45926+00:00"
+  },
+  {
+    "id": "4aa2b62d-1d3a-444a-9049-8fb6270fd248",
+    "role": "assistant",
+    "content": "bacana, o mercado de marca propria ta crescendo muito, voce ta no caminho certo\n\npra quem esta começando, o nosso Classico e um excelente ponto de partida\n\ne um blend com torra escura, notas amadeiradas e caramelizadas, com amargor mais presente\n\ncombina demais com uma marca que quer conquistar paladares que apreciam cafe intenso\n\nquer que eu te envie as fotos do Classico pra voce ver?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:58:45.187183+00:00"
+  },
+  {
+    "id": "e25b519c-186c-46a3-ad51-b03437831bc3",
+    "role": "user",
+    "content": "Certo, vou dar uma pensada. Mas sem provar, apenas com a descrição, fica difícil ter certeza se é o caminho que eu quero seguir.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:59:20.962402+00:00"
+  },
+  {
+    "id": "29fc128f-ecb4-47b7-9ecd-442131db28ce",
+    "role": "assistant",
+    "content": "compreendo que provar e essencial pra sentir se o produto e o ideal\n\nse quiser, posso encaminhar seu contato pra um dos nossos vendedores\n\neles podem orientar melhor sobre amostras e outras opcoes que temos\n\nquer que eu faça isso pra voce?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:59:22.304693+00:00"
+  },
+  {
+    "id": "c24019db-afb4-4961-ba8f-c091c54992a4",
+    "role": "user",
+    "content": "Acho uma boa ideia. Pode passar meu contato para ele, por favor.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:59:44.790277+00:00"
+  },
+  {
+    "id": "294c298e-a1f5-43ad-8dc0-0a35dac2ad54",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T18:59:47.003777+00:00"
+  },
+  {
+    "id": "3a5fdb2b-7bfe-4ebd-a301-0f1ca8c02eb2",
+    "role": "assistant",
+    "content": "perfeito! um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:59:47.773989+00:00"
+  }
+]

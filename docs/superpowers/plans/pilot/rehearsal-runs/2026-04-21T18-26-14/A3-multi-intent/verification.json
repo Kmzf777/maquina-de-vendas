@@ -1,0 +1,29 @@
+{
+  "archetype_id": "A3",
+  "archetype_slug": "multi-intent",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "visited_gte_2_stages",
+      "passed": true,
+      "reason": "2 stages visitados"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 2,
+    "linhas_robotizadas": [
+      "legal! voce ja tem uma marca ou ta pensando em criar uma do zero?",
+      "quer que eu te passe os valores e condicoes para private label agora?",
+      "vou te explicar primeiro o private label, que e o mais complexo",
+      "qual desses produtos chamou mais sua atencao pra eu te passar mais detalhes?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente falha sistematicamente em fornecer a informação central solicitada pelo lead: uma tabela de preços consolidada de atacado. Apesar dos múltiplos pedidos diretos, o agente desvia o assunto para marca própria, repete informações já dadas ou envia fotos de catálogos sem fornecer a lista de preços de forma clara e direta como solicitado.",
+    "veredito_curto": "O agente ignorou os pedidos repetidos do lead por uma tabela de preços consolidada, entrando em um loop frustrante e não respondendo à necessidade principal do cliente."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

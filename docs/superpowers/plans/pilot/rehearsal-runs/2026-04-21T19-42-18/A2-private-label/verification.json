@@ -1,0 +1,33 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "posso saber seu nome antes de encaminhar?",
+      "quer que eu te explique o que esta incluso no private label?",
+      "exportacao pra qual pais?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente perguntou o nome do lead ('posso saber seu nome antes de encaminhar?') logo após ele ter se apresentado ('sou o Léo'), e também perguntou para qual país seria a exportação ('exportacao pra qual pais?') sendo que o lead já havia dito 'Lisboa' e 'Portugal'.",
+    "veredito_curto": "O agente demonstrou grave falta de memória e contexto, ignorando as solicitações do lead e pedindo repetidamente informações que já haviam sido fornecidas."
+  },
+  "turns_count": 3,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "exportacao",
+    "private_label"
+  ]
+}

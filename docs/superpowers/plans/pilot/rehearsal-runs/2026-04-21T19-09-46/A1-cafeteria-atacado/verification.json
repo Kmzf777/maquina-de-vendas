@@ -1,0 +1,36 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": true,
+      "reason": "enviar_foto presente nos eventos"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 9,
+    "linhas_robotizadas": [
+      "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+      "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "A agente conduziu a qualificação de forma muito humana e eficiente, contornou a objeção sobre amostras e apresentou os produtos de atacado com clareza."
+  },
+  "turns_count": 5,
+  "terminated_by": "stage_reached",
+  "stages_visited": [
+    "atacado"
+  ]
+}

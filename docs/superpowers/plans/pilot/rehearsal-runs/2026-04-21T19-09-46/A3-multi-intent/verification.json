@@ -1,0 +1,24 @@
+{
+  "archetype_id": "A3",
+  "archetype_slug": "multi-intent",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "visited_gte_2_stages",
+      "passed": true,
+      "reason": "2 stages visitados"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": null,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+    "veredito_curto": "Avaliação impossível de ser realizada pois a transcrição da conversa não foi incluída."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

@@ -1,0 +1,178 @@
+{
+  "started_at": "2026-04-21T19:42:18.627066+00:00",
+  "git_sha": "56b57a0b2cc753e63183081b4758f9f35d7814f1",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T20:10:11.831331+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 4,
+        "linhas_robotizadas": [
+          "qual seria sua necessidade especifica?",
+          "comprar cafe pra consumo proprio, pra seu negocio ou criar sua propria marca?",
+          "entendo, voce ja tem fornecedor com um preco definido"
+        ],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "O agente foi repetitivo, demorou a responder perguntas diretas sobre preço e soou robótico ao enviar múltiplas mensagens curtas e duplicadas."
+      },
+      "turns_count": 3,
+      "terminated_by": "stage_reached",
+      "stages_visited": [
+        "atacado",
+        "secretaria"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "posso saber seu nome antes de encaminhar?",
+          "quer que eu te explique o que esta incluso no private label?",
+          "exportacao pra qual pais?"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente perguntou o nome do lead ('posso saber seu nome antes de encaminhar?') logo após ele ter se apresentado ('sou o Léo'), e também perguntou para qual país seria a exportação ('exportacao pra qual pais?') sendo que o lead já havia dito 'Lisboa' e 'Portugal'.",
+        "veredito_curto": "O agente demonstrou grave falta de memória e contexto, ignorando as solicitações do lead e pedindo repetidamente informações que já haviam sido fornecidas."
+      },
+      "turns_count": 3,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "exportacao",
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "visited_gte_2_stages",
+          "passed": false,
+          "reason": "apenas 1 stage(s) visitado(s)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "acho que voce misturou os produtos, deixa eu explicar direitinho pra voce nao ficar com duvida",
+          "vamos começar pelo 250g, que e o mais comum",
+          "quer que eu te detalhe os valores de cada um?",
+          "faz sentido ate aqui?",
+          "quer que eu passe os valores do 500g?"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente apresentou informações contraditórias e confusas sobre preços e pedidos mínimos. Por exemplo, o preço do café de 250g no atacado foi informado como 'R$22,90 a R$23,90', 'a partir de R$21,90' e 'R$23,90' em momentos diferentes. Além disso, a agente se perdeu completamente ao tentar comparar as condições das cápsulas, culpando o lead pela confusão ('acho que voce misturou os produtos') e reiniciando a conversa sobre os pacotes de 250g que já haviam sido discutidos.",
+        "veredito_curto": "O agente falhou em atender à solicitação principal do lead por uma comparação direta de preços, gerando confusão com informações contraditórias e entrando em loops repetitivos."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 5)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 2,
+        "linhas_robotizadas": [
+          "faz sentido pra voce?",
+          "isso mesmo, nao trabalhamos com amostras gratuitas infelizmente, o pedido minimo no atacado e de R$ 300",
+          "compreendo sua postura, faz sentido querer validar antes de avançar",
+          "vou te explicar o processo da gente entao, pra voce entender como garantimos essa qualidade que eu falei"
+        ],
+        "resposta_incorreta_ou_inventada": "No final da conversa, após o lead encerrar a negociação por falta de dados ou amostras, o bot ignorou completamente o contexto e disparou a lista de produtos de atacado como se o lead tivesse demonstrado interesse em comprar.",
+        "veredito_curto": "O agente não soube lidar com as objeções do lead, ficou preso em um loop repetitivo sobre o pedido mínimo e, no final, ignorou o encerramento da conversa pelo cliente para enviar uma lista de produtos irrelevante."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_exportacao",
+          "passed": true,
+          "reason": "stage exportacao alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "exportacao pra qual pais exatamente?"
+        ],
+        "resposta_incorreta_ou_inventada": "A pergunta final 'exportacao pra qual pais exatamente?' ignora completamente a informação de que o lead abrirá um café em 'Lisboa', fornecida na primeira mensagem.",
+        "veredito_curto": "O agente identificou o tema e encaminhou para um humano, mas falhou gravemente ao perguntar o país que já havia sido claramente informado no início da conversa."
+      },
+      "turns_count": 2,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "exportacao"
+      ]
+    }
+  ]
+}

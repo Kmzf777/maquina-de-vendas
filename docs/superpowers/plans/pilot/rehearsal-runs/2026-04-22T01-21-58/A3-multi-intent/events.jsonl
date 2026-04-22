@@ -1,0 +1,7 @@
+{"id": "bc58cf78-fab7-43a2-9f01-03b27e793465", "content": "stage alterado para: atacado", "stage": null, "created_at": "2026-04-22T01:36:11.822834+00:00"}
+{"id": "9cf52f2e-0977-42ac-ad2d-b1edde4c6259", "content": "stage alterado para: atacado", "stage": null, "created_at": "2026-04-22T01:36:41.157872+00:00"}
+{"id": "6a42288d-1879-4e3b-9c5d-f1f7db9c3ef5", "content": "stage alterado para: private_label", "stage": null, "created_at": "2026-04-22T01:36:41.247958+00:00"}
+{"id": "948370d2-4daa-4fa5-861b-56e9c4efb47c", "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)", "stage": null, "created_at": "2026-04-22T01:39:27.02541+00:00"}
+{"id": "788fa8fb-066b-44b5-9710-71466b0cc2af", "content": "Pedido registrado: Pedido atacado 20kg. Obs: simulacao para cliente com consumo atual", "stage": null, "created_at": "2026-04-22T01:42:13.042851+00:00"}
+{"id": "ec6c93c8-2f1d-4f98-8a90-ef959d18f27f", "content": "Pedido registrado: Pedido private_label Cafe Canastra 250g 25kg. Obs: simulacao para cliente com lote inicial de 100 unidades", "stage": null, "created_at": "2026-04-22T01:42:13.119809+00:00"}
+{"id": "9dbee2ee-ac3b-409c-be26-3de62e7cdeb9", "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado", "stage": null, "created_at": "2026-04-22T01:44:22.726705+00:00"}

@@ -1,0 +1,28 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": false,
+      "reason": "stage exportacao NAO alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "me diz uma coisa\n\nqual o seu objetivo com essa exportacao\n\nquer ser uma especie de agente comercial nosso ou vai comprar nossos produtos pra vender na sua cafeteria?"
+    ],
+    "resposta_incorreta_ou_inventada": "A bot perguntou qual era o objetivo do lead (comprar para a própria cafeteria ou ser agente comercial), ignorando que o lead já havia respondido essa questão duas vezes anteriormente.",
+    "veredito_curto": "A agente foi repetitiva e demonstrou não reter informações, mas cumpriu o objetivo de qualificar e encaminhar o lead para exportação."
+  },
+  "turns_count": 4,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": []
+}

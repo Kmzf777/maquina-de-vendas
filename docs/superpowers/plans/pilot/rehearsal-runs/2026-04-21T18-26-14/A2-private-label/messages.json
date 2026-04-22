@@ -1,0 +1,79 @@
+[
+  {
+    "id": "731a8024-ed78-482a-a06d-89bc8d08f712",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:00.956054+00:00"
+  },
+  {
+    "id": "3cd74b3c-8a81-420c-b4cd-c14ae7b66f6d",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:03.330491+00:00"
+  },
+  {
+    "id": "9ed762e9-03a9-4bdd-a32d-b5076009eafd",
+    "role": "assistant",
+    "content": "sou a valeria, do comercial da cafe canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:05.107414+00:00"
+  },
+  {
+    "id": "8a81e489-f9a9-427e-bfe2-81f8ee17d864",
+    "role": "assistant",
+    "content": "queria saber seu nome pra gente se falar melhor?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:06.763385+00:00"
+  },
+  {
+    "id": "988c1fa2-6b3d-4dd2-86fd-5ff800e6b3fb",
+    "role": "user",
+    "content": "Opa Valéria, prazer, sou o Léo! Me diz, rola marca própria? Já queria saber a quantidade mínima e como funciona pra usar meu design na embalagem.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:25.452223+00:00"
+  },
+  {
+    "id": "fc51887e-61f5-4a74-8ade-16129d79598e",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-21T18:37:27.285869+00:00"
+  },
+  {
+    "id": "cd6b54de-f31f-40e4-8013-4bb66fc7bbc8",
+    "role": "assistant",
+    "content": "prazer, Léo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:30.500568+00:00"
+  },
+  {
+    "id": "ff589b20-8a78-44b0-be47-d9bae5d0e11a",
+    "role": "assistant",
+    "content": "o private label funciona assim: a parte da marca e responsabilidade sua",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:36.116063+00:00"
+  },
+  {
+    "id": "f888f9e9-bb16-4cbc-a88d-c3e321900058",
+    "role": "assistant",
+    "content": "quando tivermos o seu logo, fazemos toda a embalagem com ele",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:40.093205+00:00"
+  },
+  {
+    "id": "9eb6041c-c9f8-4a8e-862d-7b993033c5f2",
+    "role": "assistant",
+    "content": "temos alguns modelos de embalagem que nao geram custo extra, ja com silk da sua marca na embalagem",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:48.190476+00:00"
+  },
+  {
+    "id": "e90f26d0-d6d2-4cd4-a33f-d8d508d9a4dc",
+    "role": "assistant",
+    "content": "quer que eu te explique o que esta incluso no servico?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:37:50.982243+00:00"
+  }
+]

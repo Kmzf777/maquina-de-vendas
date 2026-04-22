@@ -1,0 +1,31 @@
+{
+  "archetype_id": "A4",
+  "archetype_slug": "objetor-preco",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "12 turnos (>= 5)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "enquanto eu separo os contatos, olha a variedade que temos de cafes especiais para revenda",
+      "se quiser, posso encaminhar seu contato para o nosso comercial que vai te passar esses casos e tirar dúvidas mais especificas, o que acha?",
+      "me conta, sua cafeteria tem algum perfil especifico de cliente que voce quer atrair mais? isso ajuda a indicar cases mais parecidos com seu negocio",
+      "ja encaminhei sua demanda para o Joao Bras, nosso comercial especialista que vai te passar os casos e referencias para ajudar na decisao"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente prometeu enviar contatos de referência, mas em vez disso, desviou do assunto múltiplas vezes e, por fim, encaminhou o lead para outro vendedor, contrariando o pedido explícito do cliente para não o fazer.",
+    "veredito_curto": "O agente qualificou o lead, mas demonstrou comportamento robótico ao desviar de perguntas diretas e ignorar instruções, quebrando a confiança ao encaminhar o contato sem permissão."
+  },
+  "turns_count": 12,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": []
+}

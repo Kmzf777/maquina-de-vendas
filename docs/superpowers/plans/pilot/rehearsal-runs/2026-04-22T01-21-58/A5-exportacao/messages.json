@@ -1,0 +1,72 @@
+[
+  {
+    "id": "608bf86d-ad88-47b0-aba3-e8bb3951c45f",
+    "role": "user",
+    "content": "vou abrir um cafe em Lisboa no segundo semestre. voces exportam?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:57:58.628845+00:00"
+  },
+  {
+    "id": "3e6d8b74-d360-487b-ae0c-fe61732e70ae",
+    "role": "system",
+    "content": "stage alterado para: exportacao",
+    "stage": null,
+    "created_at": "2026-04-22T01:58:00.37396+00:00"
+  },
+  {
+    "id": "03cdf07a-77c7-4d21-a841-21db465ae390",
+    "role": "assistant",
+    "content": "me diz uma coisa\n\nvc ja tem compradores em lisboa ou em portugal pra esse cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:58:01.072116+00:00"
+  },
+  {
+    "id": "cf55b8ab-0a71-4dc0-b8b6-5ca5c1d80fe8",
+    "role": "user",
+    "content": "O comprador serei eu, para a cafeteria que vou abrir. Podemos conversar com alguém da sua equipe de exportação sobre os prazos e a documentação necessária?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T01:58:24.248704+00:00"
+  },
+  {
+    "id": "c555905b-5e7f-4abe-9f4b-208406728457",
+    "role": "assistant",
+    "content": "bacana que voce vai abrir em lisboa, o mercado externo valoriza muito a rastreabilidade que a gente oferece\n\nvc ja trabalha com exportacao no brasil ou vai precisar que a gente cuide disso pra voce?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T01:58:25.492978+00:00"
+  },
+  {
+    "id": "e5ea0df7-cebc-4680-a152-bf5f49f39d93",
+    "role": "user",
+    "content": "Ainda não trabalho com exportação, por isso gostaria de conversar com o responsável para entender como funciona o processo com vocês.",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T01:58:51.823334+00:00"
+  },
+  {
+    "id": "88a03715-927f-448a-8628-f7809b5fce7b",
+    "role": "assistant",
+    "content": "entendi\n\nme conta qual o seu objetivo com o cafe: voce quer comprar nossos produtos pra vender la fora\n\nou pensa em ser uma especie de agente comercial nosso?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T01:58:53.464499+00:00"
+  },
+  {
+    "id": "7740bb64-a687-491e-9c92-b460c6081445",
+    "role": "user",
+    "content": "Meu objetivo é comprar o café de vocês para servir na minha cafeteria. Com quem da equipe de exportação eu posso conversar para alinhar os detalhes?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T01:59:14.655037+00:00"
+  },
+  {
+    "id": "b8f5fb2c-b675-4712-a7be-64538386fa65",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Arthur: lead qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T01:59:15.628867+00:00"
+  },
+  {
+    "id": "3421c095-ef6e-4404-89e2-0e46133ac3be",
+    "role": "assistant",
+    "content": "perfeito, vou passar seu contato para o Arthur, que cuida diretamente do setor de exportação\n\nele vai entrar em contato assim que estiver disponivel pra alinhar tudo com voce",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T01:59:16.49228+00:00"
+  }
+]

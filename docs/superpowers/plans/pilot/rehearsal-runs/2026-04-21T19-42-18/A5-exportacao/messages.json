@@ -1,0 +1,58 @@
+[
+  {
+    "id": "09ff9285-e7c0-4bf1-acd0-fe0fe0d25e60",
+    "role": "user",
+    "content": "vou abrir um cafe em Lisboa no segundo semestre. voces exportam?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:09:32.797755+00:00"
+  },
+  {
+    "id": "15b8fc6a-9ee2-421d-9147-2133b6493dd8",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: exportacao",
+    "stage": null,
+    "created_at": "2026-04-21T20:09:34.823748+00:00"
+  },
+  {
+    "id": "387c62f0-275b-4fba-aef4-c7494c69d09f",
+    "role": "assistant",
+    "content": "me conta uma coisa",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:09:37.785765+00:00"
+  },
+  {
+    "id": "47e7dd77-3b42-445d-b937-b53a37079f77",
+    "role": "assistant",
+    "content": "vc já tem compradores lá em Lisboa ou vai começar a buscar ainda?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:09:41.449507+00:00"
+  },
+  {
+    "id": "97b0a1d9-c826-471d-8bff-dc1a6e20a410",
+    "role": "user",
+    "content": "O comprador serei eu mesmo, para a minha cafeteria. Você poderia me direcionar para a área de exportação para eu entender melhor a logística e os documentos necessários?",
+    "stage": "exportacao",
+    "created_at": "2026-04-21T20:09:57.092811+00:00"
+  },
+  {
+    "id": "68c868c1-d619-474c-b39c-03ee6022ac4b",
+    "role": "system",
+    "content": "[tool:encaminhar_humano] Lead encaminhado para Joao Bras: exportacao — portugal, cafeteria",
+    "stage": null,
+    "created_at": "2026-04-21T20:09:58.512186+00:00"
+  },
+  {
+    "id": "f06b7aaf-1c7b-4273-ab6e-befb6b1e36b9",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: exportacao",
+    "stage": null,
+    "created_at": "2026-04-21T20:09:58.610007+00:00"
+  },
+  {
+    "id": "5a4c46d4-148f-4917-8b34-81d0e92d9574",
+    "role": "assistant",
+    "content": "exportacao pra qual pais exatamente?",
+    "stage": "exportacao",
+    "created_at": "2026-04-21T20:10:01.919668+00:00"
+  }
+]

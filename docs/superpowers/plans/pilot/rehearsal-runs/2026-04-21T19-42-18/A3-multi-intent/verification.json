@@ -1,0 +1,29 @@
+{
+  "archetype_id": "A3",
+  "archetype_slug": "multi-intent",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "visited_gte_2_stages",
+      "passed": false,
+      "reason": "apenas 1 stage(s) visitado(s)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "acho que voce misturou os produtos, deixa eu explicar direitinho pra voce nao ficar com duvida",
+      "vamos começar pelo 250g, que e o mais comum",
+      "quer que eu te detalhe os valores de cada um?",
+      "faz sentido ate aqui?",
+      "quer que eu passe os valores do 500g?"
+    ],
+    "resposta_incorreta_ou_inventada": "A agente apresentou informações contraditórias e confusas sobre preços e pedidos mínimos. Por exemplo, o preço do café de 250g no atacado foi informado como 'R$22,90 a R$23,90', 'a partir de R$21,90' e 'R$23,90' em momentos diferentes. Além disso, a agente se perdeu completamente ao tentar comparar as condições das cápsulas, culpando o lead pela confusão ('acho que voce misturou os produtos') e reiniciando a conversa sobre os pacotes de 250g que já haviam sido discutidos.",
+    "veredito_curto": "O agente falhou em atender à solicitação principal do lead por uma comparação direta de preços, gerando confusão com informações contraditórias e entrando em loops repetitivos."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "private_label"
+  ]
+}

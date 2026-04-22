@@ -1,0 +1,506 @@
+[
+  {
+    "id": "13e51d4c-488a-42ec-88cc-2d2139b82c3f",
+    "role": "user",
+    "content": "ja tenho fornecedor, mas me conta o que voces tem de diferente",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:02.964685+00:00"
+  },
+  {
+    "id": "83e7152a-5c88-47db-895c-03a55cb86a53",
+    "role": "assistant",
+    "content": "boa tarde, tudo bem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:06.034172+00:00"
+  },
+  {
+    "id": "2aca2b6e-387a-4d7a-8972-17f8111919a0",
+    "role": "assistant",
+    "content": "legal que voce ja tem fornecedor, me diz uma coisa",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:09.419898+00:00"
+  },
+  {
+    "id": "03cc84d0-4935-469d-877c-3af3b660e54f",
+    "role": "assistant",
+    "content": "o que voce mais valoriza no cafe que compra hoje?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:11.515803+00:00"
+  },
+  {
+    "id": "0a11cffc-4ce4-4fbb-9a6c-3de3304894b2",
+    "role": "user",
+    "content": "Valorizo um bom custo-benefício. Atualmente pago R$ 35/kg em um café de qualidade e com entrega pontual, o que o seu tem que justifica um preço diferente disso?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:23.454415+00:00"
+  },
+  {
+    "id": "88d6f89a-e241-44ae-bd0f-4671f05d4d0a",
+    "role": "assistant",
+    "content": "entendo, custo-benefício é fundamental mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:27.672366+00:00"
+  },
+  {
+    "id": "f093f17b-0966-4a5c-96ee-dac2866c60d1",
+    "role": "assistant",
+    "content": "nosso diferencial esta na qualidade do cafe especial 100% arábica, cultivado em altitude alta na serra da canastra, com rastreabilidade e torra sob demanda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:36.995032+00:00"
+  },
+  {
+    "id": "4add0205-f0bd-4beb-8171-723c37b24c69",
+    "role": "assistant",
+    "content": "isso garante sabor fresco e controlado, com notas que realmente destacam o produto",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:39.788726+00:00"
+  },
+  {
+    "id": "8bd7601d-26c2-47fa-86c6-5ec7e5e4aa93",
+    "role": "assistant",
+    "content": "me diz uma coisa, voce compra para consumo próprio ou para seu negocio?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:59:44.405181+00:00"
+  },
+  {
+    "id": "b269e15e-3492-48aa-859e-5cd742a4e158",
+    "role": "user",
+    "content": "É para o meu negócio. Mas a finalidade não muda minha pergunta: como esses detalhes que você citou justificam um valor acima dos R$ 35/kg que já pago?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:00.850422+00:00"
+  },
+  {
+    "id": "f0751d97-fc5e-453e-b585-445c96f746f1",
+    "role": "assistant",
+    "content": "bacana que voce compra pra negocio, isso ja ajuda a gente a entender melhor o seu perfil",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:07.04164+00:00"
+  },
+  {
+    "id": "3613f913-1505-4f97-bdf6-8252cefcd001",
+    "role": "assistant",
+    "content": "o que acontece e que o cafe especial tem um processo mais cuidadoso, do cultivo até a torra, que gera uma qualidade superior e diferencial no sabor e aroma",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:14.690368+00:00"
+  },
+  {
+    "id": "fb7bc6d2-1614-489c-9f7a-57255874e7d7",
+    "role": "assistant",
+    "content": "isso permite que seu cliente perceba o valor e volte a comprar, aumentando sua margem e fidelidade",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:22.271649+00:00"
+  },
+  {
+    "id": "893a58ec-7fce-431b-8e74-b01c7dfcd470",
+    "role": "assistant",
+    "content": "me diz uma coisa, voce tem um modelo de negocio especifico? por exemplo, cafeteria, restaurante, hotel, loja...",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:26.019277+00:00"
+  },
+  {
+    "id": "64a3ce4d-bd23-4723-bf69-ad03ada75efb",
+    "role": "user",
+    "content": "Meu negócio é uma cafeteria. Mas isso não responde como essa \"qualidade superior\" se traduz em números que justifiquem pagar mais do que os R$ 35/kg que já tenho.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:42.634466+00:00"
+  },
+  {
+    "id": "0013f121-e68a-4325-8d96-285a67606ef2",
+    "role": "assistant",
+    "content": "cafeteria, que projeto bacana!",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:46.851877+00:00"
+  },
+  {
+    "id": "a9ab015a-0aa6-4f20-9e15-3c9533e15eb7",
+    "role": "assistant",
+    "content": "entendo seu ponto, a qualidade especial se traduz em uma experiencia de sabor que seu cliente percebe logo na primeira xicara",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:00:55.78674+00:00"
+  },
+  {
+    "id": "309616da-474f-4d11-ba09-cbe72fbb949b",
+    "role": "assistant",
+    "content": "isso normalmente reflete em ticket medio maior e cliente que volta sempre, o que impacta diretamente no resultado do seu negocio",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:01.252318+00:00"
+  },
+  {
+    "id": "20014aff-7dda-4bec-a5e8-55e5d6af50f6",
+    "role": "assistant",
+    "content": "quer que eu te passe os valores para voce comparar com o que ja paga?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:05.710217+00:00"
+  },
+  {
+    "id": "173303ff-5bba-492a-b94e-a8ec301c4941",
+    "role": "user",
+    "content": "Antes de me passar o preço, me mostre com dados ou um exemplo prático como esse café mais caro aumenta o faturamento de uma cafeteria para justificar o investimento.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:21.808783+00:00"
+  },
+  {
+    "id": "d0b3a100-c8c1-4555-94a4-503e01e0ab55",
+    "role": "assistant",
+    "content": "entendo, voce quer ver o retorno na pratica antes de decidir, faz sentido demais",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:30.871546+00:00"
+  },
+  {
+    "id": "ff92d321-b784-4c97-a3d2-8864d19a518c",
+    "role": "assistant",
+    "content": "um exemplo comum e que o cafe especial permite cobrar um preco mais alto no cafe espresso ou coado, porque o cliente sente a diferenca no aroma e sabor, entao aceita pagar mais sem reclamar",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:36.595584+00:00"
+  },
+  {
+    "id": "478f28de-b08b-4af4-b50c-120e23c4a472",
+    "role": "user",
+    "content": "Essa percepção do cliente é uma suposição, não um dado. Você tem algum caso real ou número que mostre o aumento médio no preço final que uma cafeteria consegue aplicar com o seu café?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:50.9011+00:00"
+  },
+  {
+    "id": "6456115d-c120-411f-8701-c94eff4832dd",
+    "role": "assistant",
+    "content": "entendo, voce busca dados concretos pra tomar decisão segura",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:01:55.371462+00:00"
+  },
+  {
+    "id": "742d5439-1c95-46a6-bd2f-964c3e250562",
+    "role": "assistant",
+    "content": "posso te encaminhar alguns cases de clientes que abriram cafeterias e viram aumentos de ticket médio ao usar nosso cafe especial, qual o seu nome para eu salvar aqui?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:02:07.469606+00:00"
+  },
+  {
+    "id": "ce86c773-e73c-42a7-b9a6-92337817a2c5",
+    "role": "user",
+    "content": "Não precisa salvar meu nome ainda. Pode me enviar um link ou um resumo desses cases por aqui mesmo para eu avaliar.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:02:25.13306+00:00"
+  },
+  {
+    "id": "54de7d51-7044-466a-b7ea-289ef44fcbe0",
+    "role": "assistant",
+    "content": "imagina, aqui pelo whatsapp nao temos um link especifico desses cases pra te enviar direto ainda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:02:35.629751+00:00"
+  },
+  {
+    "id": "32258524-afe7-436a-9fe2-d8b6a5206032",
+    "role": "assistant",
+    "content": "mas se quiser posso te encaminhar para o time que cuida do atendimento institucional que tem esses dados organizados pra passar pra voce, qual e o seu nome?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:02:42.329042+00:00"
+  },
+  {
+    "id": "992d5fb4-781b-4678-abf0-c89cf848b18e",
+    "role": "user",
+    "content": "Não preciso falar com outra equipe. Se esses dados existem, você pode me enviar um resumo ou o arquivo por aqui mesmo.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:02:54.106316+00:00"
+  },
+  {
+    "id": "b0f23233-693e-447f-86fb-6fc0cd9c935a",
+    "role": "assistant",
+    "content": "entendo, voce quer o resumo direto aqui comigo mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:00.158487+00:00"
+  },
+  {
+    "id": "6a450ccc-790b-4a00-92f5-37ab194d2b69",
+    "role": "assistant",
+    "content": "vou te explicar como funciona: nao temos um documento padrao que eu possa enviar pelo whatsapp, mas posso te passar um panorama baseado nos relatos dos nossos clientes",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:06.581827+00:00"
+  },
+  {
+    "id": "db93d190-cb56-4dbd-b0d7-e536dfcc766e",
+    "role": "assistant",
+    "content": "a maioria deles aponta que o uso do cafe especial aumenta o ticket medio em torno de 15% a 25%, alem de melhorar a fidelizacao, que e essencial pra cafeteria",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:12.34606+00:00"
+  },
+  {
+    "id": "625c760f-9884-40eb-97c9-9cc580ad343b",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:14.635674+00:00"
+  },
+  {
+    "id": "bc36f630-6f08-495f-a7e7-8f715abe0cd2",
+    "role": "user",
+    "content": "Esses 15% a 25% são baseados em que exatamente? Sem acesso ao faturamento dos seus clientes, esse número continua sendo uma suposição.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:30.463413+00:00"
+  },
+  {
+    "id": "2facb446-e254-4ec2-84f7-f4fb868515f5",
+    "role": "assistant",
+    "content": "voce tem toda razao, sem dados financeiros dos clientes e dificil precisar um numero exato mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:37.167796+00:00"
+  },
+  {
+    "id": "dfdda284-e4c2-4eb2-9da0-ede5522acecb",
+    "role": "assistant",
+    "content": "mas esses valores sao uma media baseada no feedback que nossos clientes compartilham sobre aumento de ticket medio apos migrar pro cafe especial",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:03:43.452991+00:00"
+  },
+  {
+    "id": "887e04ca-95ba-45cb-9669-07040476fd37",
+    "role": "user",
+    "content": "Certo, então estamos falando de um número baseado em relatos informais, não em dados concretos. Sem uma prova tangível do retorno, não vejo como justificar a troca.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:04:00.526284+00:00"
+  },
+  {
+    "id": "f344f5aa-f501-4dd1-94a9-c1dc599132a8",
+    "role": "assistant",
+    "content": "entendo seu ponto, e é importante ter dados sólidos pra basear a decisao mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:04:08.206057+00:00"
+  },
+  {
+    "id": "40de9572-e1c5-44d4-ae7d-fde0529b69cf",
+    "role": "user",
+    "content": "Certo. Se não existem dados para comprovar o retorno, então o único argumento que resta é o próprio produto. Vocês enviam amostra para degustação?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:04:26.057122+00:00"
+  },
+  {
+    "id": "f8840ac1-6156-4d26-81ae-7e987e9f2359",
+    "role": "assistant",
+    "content": "a gente nao trabalha com amostra gratuita, mas o pedido minimo do atacado e de R$ 300, dai voce pode escolher o sabor que quiser testar e ja garantir o preco de revenda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:04:36.779611+00:00"
+  },
+  {
+    "id": "a5b8f10e-02bb-4849-8af7-5af8143b29d1",
+    "role": "user",
+    "content": "Entendi. Então, para eu testar a qualidade que você não consegue comprovar com dados, eu preciso fazer uma compra de R$ 300?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:04:52.802717+00:00"
+  },
+  {
+    "id": "487f2bed-1523-4a8f-9b88-7084ce277b67",
+    "role": "assistant",
+    "content": "isso mesmo, nao trabalhamos com amostras gratuitas infelizmente, o pedido minimo no atacado e de R$ 300",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:01.587514+00:00"
+  },
+  {
+    "id": "5c79e36c-0e2c-4da8-aede-943db355badd",
+    "role": "assistant",
+    "content": "dai voce ja pode escolher o sabor que quiser testar e garantir o preco de revenda tambem",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:05.014721+00:00"
+  },
+  {
+    "id": "8319a1c2-ada7-4ab8-b785-b9075730a619",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:06.315437+00:00"
+  },
+  {
+    "id": "fd100cdf-8684-451a-b920-8fc616301cb2",
+    "role": "user",
+    "content": "Não, não faz sentido. A responsabilidade de provar a qualidade do seu produto é sua, não minha, e você está me pedindo para pagar R$ 300 para fazer o seu trabalho.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:20.480239+00:00"
+  },
+  {
+    "id": "a86c2b29-b895-45b4-9d33-e96382500a1d",
+    "role": "assistant",
+    "content": "entendo seu ponto, a gente não trabalha com amostras gratuitas porque o processo de torra sob demanda e a qualidade envolvida tem custo mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:34.032655+00:00"
+  },
+  {
+    "id": "573e63ae-3a4a-44a2-94a6-16c225ac5de9",
+    "role": "assistant",
+    "content": "o caminho pra provar o sabor e o frescor e fazer um pedido minimo de atacado, que hoje e R$ 300, assim voce testa e garante o preco de revenda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:45.141427+00:00"
+  },
+  {
+    "id": "551006a6-dac0-42d6-a0cb-4572ad6c2560",
+    "role": "assistant",
+    "content": "me diz uma coisa, voce quer que eu te passe os sabores que temos e os valores do pedido minimo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:05:48.681277+00:00"
+  },
+  {
+    "id": "2c2dc313-9cd2-4512-90b4-2dbfdd26db3e",
+    "role": "user",
+    "content": "Saber os sabores e valores é irrelevante neste momento. Sem dados que comprovem o retorno ou uma amostra para eu validar a qualidade, não temos como avançar.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:00.337135+00:00"
+  },
+  {
+    "id": "7c874835-8d0c-4e85-94c4-df906b20f00a",
+    "role": "assistant",
+    "content": "compreendo sua postura, faz sentido querer validar antes de avançar",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:05.972984+00:00"
+  },
+  {
+    "id": "fbacd783-f647-46a5-b299-812332043620",
+    "role": "assistant",
+    "content": "só reforçando que nao trabalhamos com amostras gratuitas, mas o pedido minimo no atacado e R$ 300, dai voce ja prova e ja garante um preco de revenda competitivo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:18.137782+00:00"
+  },
+  {
+    "id": "3e3e7e09-191c-44de-a5bd-8ef9b625fb8b",
+    "role": "user",
+    "content": "Você está apenas repetindo a mesma proposta que já recusei. Sem uma forma de eu validar a qualidade do produto por sua conta, seja com dados ou amostra, não temos como prosseguir.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:41.506099+00:00"
+  },
+  {
+    "id": "76a29be8-af92-4238-b671-cd8641edaffa",
+    "role": "assistant",
+    "content": "entendo sua posicao e respeito muito isso, faz parte do processo mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:46.808306+00:00"
+  },
+  {
+    "id": "51d02a48-85fb-464d-b8ba-28c1f5a6b2dc",
+    "role": "assistant",
+    "content": "vou te explicar o processo da gente entao, pra voce entender como garantimos essa qualidade que eu falei",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:51.686004+00:00"
+  },
+  {
+    "id": "5952cbf8-f302-470d-b336-c57b996d78eb",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:06:53.169867+00:00"
+  },
+  {
+    "id": "e0e43d53-134f-4318-b479-14a6bf32720a",
+    "role": "user",
+    "content": "Não. Explicar o processo não substitui os dados que você não tem ou a amostra que você não envia.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:07:06.389222+00:00"
+  },
+  {
+    "id": "b2fb3e6a-b313-44e8-907d-8348778fbd52",
+    "role": "assistant",
+    "content": "realmente, dados concretos fazem toda a diferenca na decisao mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:07:11.925432+00:00"
+  },
+  {
+    "id": "9bf33d49-a91d-4efb-89a2-4a1ae2529ca8",
+    "role": "user",
+    "content": "Exato. Então, se não há dados nem amostra para me apresentar, não temos como continuar essa conversa.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:07:24.600789+00:00"
+  },
+  {
+    "id": "f81326e2-cfc2-4cc0-82d5-2c15a42425c4",
+    "role": "assistant",
+    "content": "compreendo seu ponto, e respeito sua decisao mesmo assim",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:07:30.07772+00:00"
+  },
+  {
+    "id": "2a869cc9-e7b0-4356-8881-002324e6b54d",
+    "role": "user",
+    "content": "Ok. Se um dia tiverem como provar o valor do produto com dados ou amostras, podem me contatar.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:07:44.609416+00:00"
+  },
+  {
+    "id": "109fcc1f-1df3-4d90-b227-9427c8e90274",
+    "role": "assistant",
+    "content": "com certeza, vou registrar seu interesse aqui pra quando tivermos novidades com dados mais concretos te avisar direto",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:07:49.526262+00:00"
+  },
+  {
+    "id": "2ef04aba-804c-44a5-96bc-17703e9ea7b6",
+    "role": "user",
+    "content": "Combinado. Quando tiverem algo concreto, o contato pode ser feito por aqui.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:08:04.225912+00:00"
+  },
+  {
+    "id": "1c4bd510-e023-4337-9619-569fe7a9238f",
+    "role": "assistant",
+    "content": "perfeito, vou anotar aqui e se tiver algum material concreto a gente te envia por esse contato mesmo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:08:12.374682+00:00"
+  },
+  {
+    "id": "60ba811b-46a3-4e28-960e-138bbeec7af2",
+    "role": "user",
+    "content": "Certo, fico no aguardo.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:08:23.422366+00:00"
+  },
+  {
+    "id": "dae179a0-40e3-4667-af53-bad0b74e1187",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-21T20:08:26.711682+00:00"
+  },
+  {
+    "id": "e86f6e44-a9a0-44fb-9ae7-fa01ac74c82c",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-21T20:08:34.510189+00:00"
+  },
+  {
+    "id": "f44d4990-d254-40bf-8c31-cdb56f0ac783",
+    "role": "assistant",
+    "content": "temos o classico, que é uma torra media-escura, bem intenso, com notas achocolatadas, pontuacao 84 SCA",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:08:47.346927+00:00"
+  },
+  {
+    "id": "5e6dc91f-209f-412b-9207-c1a2e450474e",
+    "role": "assistant",
+    "content": "além disso temos o suave, torra media, intensidade intermediaria, com notas de melaço e frutas amarelas, tambem 84 SCA",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:08:52.714756+00:00"
+  },
+  {
+    "id": "690df600-f5e3-4616-bf5c-f6d8fa13c6a3",
+    "role": "assistant",
+    "content": "temos o canela, que é um torra media com um toque caramelizado e canela, pontuacao 84 SCA",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:08:58.812061+00:00"
+  },
+  {
+    "id": "8b8445a8-743e-4212-89ce-0739d08ea100",
+    "role": "assistant",
+    "content": "o microlote, que é um cafe com notas de mel, caramelo e cacau, pontuacao 86 SCA",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:09:04.160838+00:00"
+  },
+  {
+    "id": "2e498480-da1b-4506-b4dd-fdc9a90e9350",
+    "role": "assistant",
+    "content": "além dos cafes em graos e moido, temos drip coffee suave em sachets individuais e capsulas para sistema nespresso",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:09:13.455412+00:00"
+  },
+  {
+    "id": "c81d7109-aeeb-4787-99ac-45c03e94f8e9",
+    "role": "assistant",
+    "content": "qual deles voce acha que pode agradar mais seu publico?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T20:09:17.676112+00:00"
+  }
+]

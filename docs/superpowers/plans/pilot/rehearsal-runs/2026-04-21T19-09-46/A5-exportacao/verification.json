@@ -1,0 +1,30 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": true,
+      "reason": "stage exportacao alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 7,
+    "linhas_robotizadas": [
+      "exportacao pra portugal?"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot parece ter se confundido com as duas últimas mensagens do lead, misturando o pedido de encaminhamento para exportação com a pergunta sobre 'private label', resultando em uma resposta que tenta abordar os dois assuntos de forma um pouco desconexa.",
+    "veredito_curto": "O agente cumpriu os objetivos de identificar a necessidade de exportação e encaminhar para um humano, mas demonstrou confusão ao mesclar duas intenções distintas do lead na sua resposta final."
+  },
+  "turns_count": 2,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "exportacao"
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "started_at": "2026-04-21T23:41:56.836942+00:00",
+  "git_sha": "ada5b78648419be919ae74bce8622e84bbf2194a",
+  "archetypes": [
+    "A4"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T23:45:41.427023+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": false,
+          "reason": "apenas 4 turno(s)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": null,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida.",
+        "veredito_curto": "Avaliação não pôde ser realizada pois a transcrição da conversa está ausente."
+      },
+      "turns_count": 4,
+      "terminated_by": "timeout",
+      "stages_visited": []
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": true,
+      "reason": "enviar_foto presente nos eventos"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 2,
+    "linhas_robotizadas": [
+      "se quiser, posso te indicar para o nosso comercial que pode ajudar a esclarecer tudo direitinho",
+      "se quiser, posso passar seu contato para o comercial para discutir outras possibilidades",
+      "mas se preferir, posso passar seu contato para o comercial para conversar melhor",
+      "posso te passar os valores para voce comprar direto e provar nosso cafe?"
+    ],
+    "resposta_incorreta_ou_inventada": "A agente se apresentou como 'valeria, do comercial' e, ao encontrar uma objeção que não soube responder (pedido de amostra), entrou em um loop oferecendo transferir o lead para 'o comercial', o que causou grande confusão e demonstrou uma falha grave de lógica e contexto.",
+    "veredito_curto": "A agente falhou gravemente ao entrar em loops repetitivos, se contradizer sobre ser do setor comercial e gerenciar de forma confusa e ineficaz a objeção sobre o envio de amostras."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "atacado"
+  ]
+}

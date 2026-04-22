@@ -1,0 +1,37 @@
+[
+  {
+    "id": "afb54156-c3cf-4aa5-bfa0-7759753215d9",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:20:40.038913+00:00"
+  },
+  {
+    "id": "e77b7592-6cc2-415b-9fb5-c6be85279c4a",
+    "role": "assistant",
+    "content": "oi, tudo bem? aqui e a Valeria, do comercial da Cafe Canastra\n\nque bacana que voce se interessa por marca propria\n\nme fala seu nome pra gente se conhecer melhor?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:20:41.116054+00:00"
+  },
+  {
+    "id": "54c287a0-e143-4df5-95a5-ed02f2c25e17",
+    "role": "user",
+    "content": "Opa Valeria, prazer, sou o Marco! Já tô super empolgado, me conta como funciona o processo de vocês: qual a quantidade mínima e como faço pra usar meu próprio design na embalagem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:21:08.556056+00:00"
+  },
+  {
+    "id": "232b069b-5334-4bc0-93ae-39bfd1f70398",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T00:21:10.387231+00:00"
+  },
+  {
+    "id": "f9b8115a-c502-4c4c-83f7-1e77858e0c4b",
+    "role": "assistant",
+    "content": "prazer, Marco\n\no processo e assim: toda a parte da marca e design e responsabilidade sua\n\nquando voce nos envia a logo, a gente faz toda a embalagem com a marca do cliente\n\ntemos alguns modelos sugeridos que nao tem custo adicional\n\no pedido minimo e 100 unidades pra embalagem feita por nos, e voce pode enviar sua propria embalagem tambem\n\nfaz sentido ate aqui?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:21:12.660313+00:00"
+  }
+]

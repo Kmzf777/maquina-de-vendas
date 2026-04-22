@@ -1,0 +1,26 @@
+{
+  "archetype_id": "A4",
+  "archetype_slug": "objetor-preco",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": false,
+      "reason": "apenas 4 turno(s)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 1,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida no prompt, o que impossibilita a avaliação.",
+    "veredito_curto": "Avaliação não pôde ser realizada devido à ausência da transcrição da conversa."
+  },
+  "turns_count": 4,
+  "terminated_by": "timeout",
+  "stages_visited": []
+}

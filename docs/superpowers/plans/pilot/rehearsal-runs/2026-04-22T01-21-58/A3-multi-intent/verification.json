@@ -1,0 +1,27 @@
+{
+  "archetype_id": "A3",
+  "archetype_slug": "multi-intent",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "visited_gte_2_stages",
+      "passed": true,
+      "reason": "2 stages visitados"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 8,
+    "linhas_robotizadas": [
+      "posso encaminhar pra um vendedor que vai montar a proposta detalhada e negociar melhor esses valores com voce",
+      "quer que eu encaminhe pra um vendedor que vai ajudar voce a planejar isso da melhor forma?"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "Valeria conduziu bem uma conversa complexa sobre dois modelos de negócio, mas demonstrou dificuldade em fornecer a simulação de sinergia solicitada, recorrendo repetidamente à transferência para um vendedor."
+  },
+  "turns_count": 13,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

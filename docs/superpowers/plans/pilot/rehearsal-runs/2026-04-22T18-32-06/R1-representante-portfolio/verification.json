@@ -1,0 +1,65 @@
+{
+  "archetype_id": "R1",
+  "archetype_slug": "representante-portfolio",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_any_atacado_private_label",
+      "passed": true,
+      "reason": "stage atacado alcancado (entre ['atacado', 'private_label'])"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "14 turnos (>= 5)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": false,
+      "reason": "[VIOLATION:PRECO_FRETE] bot prometeu preço final/total — só supervisor faz orçamento fechado — trecho: 'um pouco diferente, fica em torno de R$32,70 por 250g, moido'"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 6,
+    "linhas_robotizadas": [
+      "os precos detalhados do private label sao assim",
+      "quer que eu te passe os precos detalhados do classico e suave no atacado agora?",
+      "sobre os precos de atacado do Classico e Suave, vou mudar para o setor certo"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot se confundiu e repetiu informações. Na penúltima resposta, ofereceu enviar os preços de atacado que já tinha acabado de enviar na mensagem anterior. Em uma resposta anterior, quando o lead pediu preços de atacado e prazo de private label, o bot ignorou o pedido de atacado e repetiu os preços de private label que já havia informado.",
+    "veredito_curto": "O bot conseguiu qualificar um lead complexo com interesse em dois modelos de negócio, mas demonstrou falhas de memória ao repetir informações e se confundir com os pedidos do cliente, quebrando o fluxo da conversa."
+  },
+  "turns_count": 14,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

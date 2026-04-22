@@ -1,0 +1,45 @@
+{
+  "started_at": "2026-04-21T23:48:28.985668+00:00",
+  "git_sha": "ada5b78648419be919ae74bce8622e84bbf2194a",
+  "archetypes": [
+    "A4"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T00:01:00.964878+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 5)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "perfeito, obrigado por compartilhar seu nome",
+          "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+          "nosso comercial vai te passar o link de pagamento em instantes",
+          "vou ser direta com voce",
+          "quer que eu te passe novamente os precos pra facilitar a analise?"
+        ],
+        "resposta_incorreta_ou_inventada": "A frase 'nosso comercial vai te passar o link de pagamento em instantes' é uma resposta completamente incorreta e fora de contexto, pois o lead não havia demonstrado nenhuma intenção de compra, pelo contrário, estava no auge da objeção.",
+        "veredito_curto": "O agente falhou em superar as objeções de preço e entrou em um loop repetitivo, ignorando as perguntas diretas do lead e oferecendo informações já fornecidas várias vezes."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": []
+    }
+  ]
+}

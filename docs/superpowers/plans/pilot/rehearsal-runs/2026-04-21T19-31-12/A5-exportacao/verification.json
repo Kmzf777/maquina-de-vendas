@@ -1,0 +1,33 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": true,
+      "reason": "stage exportacao alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 2,
+    "linhas_robotizadas": [
+      "posso saber seu nome antes de encaminhar?",
+      "quer que eu te explique o que esta incluso no private label?",
+      "exportacao pra qual pais?"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot falhou em reter informações cruciais fornecidas pelo lead. Perguntou o nome do lead (\"posso saber seu nome?\") logo após ele ter se apresentado (\"sou o Léo\"), e perguntou o país de destino (\"exportacao pra qual pais?\") depois do lead já ter mencionado Lisboa/Portugal duas vezes.",
+    "veredito_curto": "O bot ignorou o tópico principal (exportação), não registrou informações básicas como nome e país, e insistiu em um assunto secundário, resultando em uma péssima experiência."
+  },
+  "turns_count": 3,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "exportacao",
+    "private_label"
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "started_at": "2026-04-20T17:53:34.665440+00:00",
+  "git_sha": "e7797a9e28338349b3961e21089b04840f63f3b6",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-20T18:26:32.488772+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 2,
+        "linhas_robotizadas": [
+          "o processo e assim: a gente pode te enviar amostras pra voce provar antes de fechar o pedido maior",
+          "me diz uma coisa, voce ja conhece o sabor do nosso cafe ou quer provar antes de fazer pedido maior?",
+          "quer que eu te envie uma amostra ou o link da loja online pra voce conhecer antes?",
+          "a gente nao trabalha com amostras gratuitas, mas o pedido minimo em atacado é só R$300",
+          "me diz uma coisa, voce gostaria de experimentar uma amostra antes de fechar pedido maior?",
+          "voce precisa de um fornecedor mais confiavel e pontual?"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente se contradisse múltiplas vezes sobre a política de envio de amostras: primeiro negou enviá-las, depois confirmou que poderia enviar, para em seguida negar novamente, criando um loop confuso e frustrante.",
+        "veredito_curto": "O agente falhou completamente ao entrar em um loop contraditório sobre o envio de amostras, ignorando as perguntas diretas do lead e tornando a conversa ineficaz e frustrante."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": false,
+          "reason": "stage private_label NAO alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 6,
+        "linhas_robotizadas": [
+          "prazer, cliente",
+          "que bom que gostou dos exemplos, cliente"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente ignorou a pergunta sobre o prazo de produção duas vezes, forçando o lead a repetir a mesma pergunta uma terceira vez para obter a resposta.",
+        "veredito_curto": "A agente qualificou e encaminhou o lead com sucesso, mas demonstrou uma falha de conversação ao ignorar a mesma pergunta do cliente repetidamente."
+      },
+      "turns_count": 6,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "visited_gte_2_stages",
+          "passed": false,
+          "reason": "apenas 0 stage(s) visitado(s)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "quer que eu te explique como funciona o processo de private label enquanto isso?",
+          "enquanto isso, quer que eu te explique como funciona o processo do private label?",
+          "posso encaminhar seu contato pro nosso supervisor pra fazer essa negociacao direta, assim voce ja garante as melhores condicoes",
+          "posso encaminhar seu interesse para o comercial que vai analisar com voce essas possibilidades e simular o melhor desconto",
+          "posso encaminhar essa sua pergunta para o nosso supervisor pra ele analisar e te dar um retorno mais preciso"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente deu respostas contraditórias. Primeiro afirmou que era 'totalmente' possível combinar os volumes para negociar. Depois, disse que as tabelas oficiais não tinham 'combinacao direta entre os volumes'. E por fim, afirmou que a prática 'nao e uma pratica padrao'. Essa inconsistência confundiu a negociação.",
+        "veredito_curto": "O agente se mostrou ineficaz e repetitivo ao não conseguir fornecer uma simulação de preços solicitada, contradizendo-se e entrando em um loop de desvio para o supervisor, o que frustrou o lead e atrasou o processo."
+      },
+      "turns_count": 18,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "12 turnos (>= 5)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "enquanto eu separo os contatos, olha a variedade que temos de cafes especiais para revenda",
+          "se quiser, posso encaminhar seu contato para o nosso comercial que vai te passar esses casos e tirar dúvidas mais especificas, o que acha?",
+          "me conta, sua cafeteria tem algum perfil especifico de cliente que voce quer atrair mais? isso ajuda a indicar cases mais parecidos com seu negocio",
+          "ja encaminhei sua demanda para o Joao Bras, nosso comercial especialista que vai te passar os casos e referencias para ajudar na decisao"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente prometeu enviar contatos de referência, mas em vez disso, desviou do assunto múltiplas vezes e, por fim, encaminhou o lead para outro vendedor, contrariando o pedido explícito do cliente para não o fazer.",
+        "veredito_curto": "O agente qualificou o lead, mas demonstrou comportamento robótico ao desviar de perguntas diretas e ignorar instruções, quebrando a confiança ao encaminhar o contato sem permissão."
+      },
+      "turns_count": 12,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "error",
+      "error": "",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    }
+  ]
+}

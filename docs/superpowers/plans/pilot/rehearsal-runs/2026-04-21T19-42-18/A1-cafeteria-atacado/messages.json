@@ -1,0 +1,177 @@
+[
+  {
+    "id": "d3927051-95d2-4f1f-b586-7991fde2c2bb",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:19.767938+00:00"
+  },
+  {
+    "id": "0115d44c-d161-438f-b98d-e0e8d7826a1f",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: secretaria",
+    "stage": null,
+    "created_at": "2026-04-21T19:42:24.537922+00:00"
+  },
+  {
+    "id": "dffaa0cd-08da-4d1e-9913-4c999e5ef224",
+    "role": "assistant",
+    "content": "me conta, cliente, qual seria sua necessidade especifica?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:30.869054+00:00"
+  },
+  {
+    "id": "1edd2da3-70bf-477b-beb6-31f674b03c38",
+    "role": "user",
+    "content": "É uma cafeteria. O tipo de negócio altera o preço e o prazo que você ainda não me informou?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:33.353291+00:00"
+  },
+  {
+    "id": "ff10bbcf-9bfc-49d8-8c8e-c81b57edba40",
+    "role": "assistant",
+    "content": "vc quer comprar cafe pra consumo proprio, pra seu negocio ou criar sua propria marca?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:37.177508+00:00"
+  },
+  {
+    "id": "36abe625-e748-42e1-989e-77f8cad0affc",
+    "role": "assistant",
+    "content": "bacana que voce tem uma cafeteria",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:39.26215+00:00"
+  },
+  {
+    "id": "05308993-5a94-4389-8905-230e043d3fed",
+    "role": "assistant",
+    "content": "qual seria sua necessidade especifica?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:39.605261+00:00"
+  },
+  {
+    "id": "6e8d72a4-8c63-4245-9fa0-5799e4214e10",
+    "role": "assistant",
+    "content": "comprar cafe pra consumo proprio, pra seu negocio ou criar sua propria marca?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:44.03894+00:00"
+  },
+  {
+    "id": "bb00c027-6bc4-4682-bbb5-8341b1dcedaf",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:44.422945+00:00"
+  },
+  {
+    "id": "6bad92c9-1062-47cd-8c27-2e34c4ffb6a9",
+    "role": "user",
+    "content": "Brasil, pra BH. Me fala o preco do kg e como faco pra pegar uma amostra.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:42:56.859777+00:00"
+  },
+  {
+    "id": "189666ff-472f-485e-8de7-ff3a228ad329",
+    "role": "assistant",
+    "content": "valeu por avisar que e pra o mercado brasileiro, vou te direcionar pra equipe certa",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:02.893925+00:00"
+  },
+  {
+    "id": "7beb110b-1362-4f10-8409-006f12cdcba2",
+    "role": "assistant",
+    "content": "posso saber seu nome pra te salvar aqui?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:06.755729+00:00"
+  },
+  {
+    "id": "d68fd17d-ebb4-41b3-b876-b016568746dc",
+    "role": "user",
+    "content": "Já tenho fornecedor e pago R$ 35 no quilo do café. O que o de vocês tem de tão diferente para justificar uma troca?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:11.325204+00:00"
+  },
+  {
+    "id": "0f229f1a-0d0c-43fe-90c4-aea93d8f37dd",
+    "role": "assistant",
+    "content": "entendo, voce ja tem fornecedor com um preco definido",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:15.76607+00:00"
+  },
+  {
+    "id": "40013f15-d6a0-4c9a-8867-342fbf981700",
+    "role": "user",
+    "content": "João. Qual o preço? E a amostra, como recebo aqui em BH?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:21.438869+00:00"
+  },
+  {
+    "id": "f4ba4347-1b5d-4d2b-a36a-ea3f09d5c01b",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-21T19:43:24.079568+00:00"
+  },
+  {
+    "id": "07429090-9f6b-48aa-a48e-d69f4a954e25",
+    "role": "assistant",
+    "content": "nosso diferencial esta na qualidade do cafe, que e especial, colhido em altitudes elevadas na serra da canastra e torrado sob demanda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:26.257937+00:00"
+  },
+  {
+    "id": "c1fcf11f-7d69-49ca-b6e7-cecd001e9ad1",
+    "role": "assistant",
+    "content": "isso garante um frescor e sabor que dificilmente voce encontra em cafe comercial",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:31.16106+00:00"
+  },
+  {
+    "id": "781848f9-b780-4fe2-8126-0bcc0e9ad0f4",
+    "role": "assistant",
+    "content": "o classico em graos 1kg sai R$88,70 no atacado",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:31.708307+00:00"
+  },
+  {
+    "id": "7ef3e59c-dc4b-49fd-8a0a-9ec8d8b4d1b8",
+    "role": "assistant",
+    "content": "alem disso, nosso cafe tem rastreabilidade e compromisso com sustentabilidade",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:36.665246+00:00"
+  },
+  {
+    "id": "f54392a0-0492-4c6b-8a35-b29bbf827d46",
+    "role": "assistant",
+    "content": "me conta mais sobre sua cafeteria, qual publico voce atende?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:41.654823+00:00"
+  },
+  {
+    "id": "d66e96c7-cd1c-471b-96e6-3012c9a58f66",
+    "role": "assistant",
+    "content": "o custo e mais alto porque nosso cafe e 100% arabica, colhido na serra da canastra, com torra sob demanda garantindo frescor e qualidade superior",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:43.673631+00:00"
+  },
+  {
+    "id": "3ec06724-d8ac-4ba4-a758-a1ba85f3266f",
+    "role": "assistant",
+    "content": "sobre amostra, nao trabalhamos com amostras gratis",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:46.411116+00:00"
+  },
+  {
+    "id": "d0a23d23-4ee1-4b3a-9af6-078cbcf20b4e",
+    "role": "assistant",
+    "content": "pra testar o cafe, o ideal e um pedido minimo de R$300 pra atacado ou comprar pela loja online",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:50.12271+00:00"
+  },
+  {
+    "id": "19a13d1d-a639-42ba-b517-6bf342c73cfa",
+    "role": "assistant",
+    "content": "me diz o volume que vc costuma comprar por mes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:43:54.629877+00:00"
+  }
+]

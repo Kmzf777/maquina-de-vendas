@@ -1,0 +1,163 @@
+{
+  "started_at": "2026-04-21T19:09:46.005522+00:00",
+  "git_sha": "56b57a0b2cc753e63183081b4758f9f35d7814f1",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T19:36:12.354891+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": true,
+          "reason": "enviar_foto presente nos eventos"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 9,
+        "linhas_robotizadas": [
+          "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+          "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?"
+        ],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "A agente conduziu a qualificação de forma muito humana e eficiente, contornou a objeção sobre amostras e apresentou os produtos de atacado com clareza."
+      },
+      "turns_count": 5,
+      "terminated_by": "stage_reached",
+      "stages_visited": [
+        "atacado"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 4,
+        "linhas_robotizadas": [
+          "legal! voce ja tem uma marca ou ta pensando em criar uma do zero?"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente perguntou duas vezes no final da conversa se o lead já tinha uma marca ou estava criando do zero, ignorando que o lead já havia respondido exatamente isso na sua segunda mensagem, no início do diálogo.",
+        "veredito_curto": "O agente conduziu bem o fluxo de private label, mas falhou gravemente ao repetir uma pergunta já respondida, demonstrando perda de contexto e quebrando a naturalidade da conversa."
+      },
+      "turns_count": 10,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "visited_gte_2_stages",
+          "passed": true,
+          "reason": "2 stages visitados"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": null,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+        "veredito_curto": "Avaliação impossível de ser realizada pois a transcrição da conversa não foi incluída."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "atacado",
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": false,
+          "reason": "apenas 4 turno(s)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 1,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida no prompt, o que impossibilita a avaliação.",
+        "veredito_curto": "Avaliação não pôde ser realizada devido à ausência da transcrição da conversa."
+      },
+      "turns_count": 4,
+      "terminated_by": "timeout",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_exportacao",
+          "passed": true,
+          "reason": "stage exportacao alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 7,
+        "linhas_robotizadas": [
+          "exportacao pra portugal?"
+        ],
+        "resposta_incorreta_ou_inventada": "O bot parece ter se confundido com as duas últimas mensagens do lead, misturando o pedido de encaminhamento para exportação com a pergunta sobre 'private label', resultando em uma resposta que tenta abordar os dois assuntos de forma um pouco desconexa.",
+        "veredito_curto": "O agente cumpriu os objetivos de identificar a necessidade de exportação e encaminhar para um humano, mas demonstrou confusão ao mesclar duas intenções distintas do lead na sua resposta final."
+      },
+      "turns_count": 2,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "exportacao"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 6,
+    "linhas_robotizadas": [
+      "enviei algumas fotos das embalagens que a gente ja produz para clientes\n\nassim voce pode visualizar melhor como fica o resultado final\n\nquer que eu te explique os sabores que temos disponiveis pra fazer seu cafe?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente ignorou completamente a pergunta do lead sobre valores e prazo de produção, enviando fotos e fazendo uma nova pergunta sobre sabores, o que forçou o lead a repetir sua dúvida anterior.",
+    "veredito_curto": "O agente atingiu os objetivos de qualificar e encaminhar o lead, mas falhou em manter a fluidez da conversa ao ignorar uma pergunta direta, o que tornou a interação frustrante e robótica."
+  },
+  "turns_count": 8,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}

@@ -1,0 +1,296 @@
+[
+  {
+    "id": "fd6c6a4e-4b9b-4d7f-8e96-0cccdd0f8260",
+    "role": "user",
+    "content": "oi, sou representante comercial, atendo lojas especializadas e naturais, queria incluir um cafe premium no portfolio. voces trabalham com distribuicao?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:32:07.899129+00:00"
+  },
+  {
+    "id": "b9269152-6a8a-4fe4-8d5e-8f10a3d94995",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:32:14.117822+00:00"
+  },
+  {
+    "id": "14572f85-2945-4dc0-aa13-1543e96d8b20",
+    "role": "user",
+    "content": "É para o mercado brasileiro. E como funciona a distribuição de vocês, é com representantes ou venda direta?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:32:33.541486+00:00"
+  },
+  {
+    "id": "913d6c74-6b7a-4f8c-9cb6-e66bc89f5f58",
+    "role": "assistant",
+    "content": "entendi! e qual seria sua necessidade especifica?\n\npor exemplo, vc quer comprar cafe para revender nas lojas que atende, ou pra consumo proprio, ou criar sua propria marca de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:32:36.110395+00:00"
+  },
+  {
+    "id": "08237d35-7ef9-4b1b-be6e-093aa5a9c604",
+    "role": "user",
+    "content": "Estou avaliando as duas frentes, revenda e private label. Qual o markup médio sugerido para o varejo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:32:57.937477+00:00"
+  },
+  {
+    "id": "ae4405ef-a79f-4be4-a01e-6063b99540d9",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T18:32:59.386232+00:00"
+  },
+  {
+    "id": "a7d88a66-8494-41d9-8f29-294338240d9b",
+    "role": "assistant",
+    "content": "prazer em saber que voce ta considerando essas duas frentes\n\nsobre markup, ele varia muito dependendo do canal, da regiao e da estrategia de venda\n\nmas o cafe especial da nossa fazenda tem um diferencial que ajuda a melhorar a margem — a qualidade e frescor que fideliza o cliente final\n\nme conta, hoje o cafe que voce vende atende mesmo as expectativas dos seus clientes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T18:33:01.293843+00:00"
+  },
+  {
+    "id": "109b31ec-12f3-4ce0-8d25-94f4c10c1b07",
+    "role": "user",
+    "content": "Eu ainda não vendo café, justamente por isso estou pesquisando as melhores opções. E falando em private label, como funciona o processo com vocês?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:33:30.029838+00:00"
+  },
+  {
+    "id": "de359bf6-db1a-4f10-adb7-c7c91d4d7c6b",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T18:33:32.127262+00:00"
+  },
+  {
+    "id": "b2e1fb01-af0f-42e7-9b9a-e6ea60b1ad39",
+    "role": "assistant",
+    "content": "legal, o mercado de marca propria ta crescendo muito, voce ta no caminho certo\n\nvou te explicar como funciona o private label aqui na Cafe Canastra\n\ntoda a parte de marca e responsabilidade sua\n\nquando a gente tiver a logo pronta, produzimos a embalagem pra voce\n\ntemos alguns modelos sugeridos que nao tem custo extra\n\nfaz sentido pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:33:33.959294+00:00"
+  },
+  {
+    "id": "72f117d5-e0ef-4c08-908e-c1087f906300",
+    "role": "user",
+    "content": "Entendi o processo da marca própria. E no caso da revenda da marca Canastra, vocês já têm uma tabela de preços para atacado?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:34:07.060326+00:00"
+  },
+  {
+    "id": "fd4b9d57-f819-4473-a81d-5a861f65dc5a",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T18:34:08.411489+00:00"
+  },
+  {
+    "id": "d8d7ab0c-4394-4a14-a4d8-f5371f2ae18c",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T18:34:16.102958+00:00"
+  },
+  {
+    "id": "ee51d1d4-5a2b-4166-93ea-639f708f8482",
+    "role": "assistant",
+    "content": "a gente tem o Classico, que e um cafe de torra media-escura, intenso, com notas achocolatadas, pontuacao 84 SCA\n\ntem o Suave, torra media, intensidade intermediaria, notas de melaço e frutas amarelas, tambem 84 SCA\n\no Canela, torra media, intensidade intermediaria, caramelizado com um toque de canela, pontuacao 84 SCA\n\ne o Microlote, com media intensidade, notas de mel, caramelo e cacau, pontuacao 86 SCA\n\ntodos sao 100% arábica cultivados na Serra da Canastra, MG, e torrados sob demanda para garantir frescor\n\nqual desses chamou mais sua atencao?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:34:18.982317+00:00"
+  },
+  {
+    "id": "4d1d0cf7-0eab-4913-a3a6-23130d2a650f",
+    "role": "user",
+    "content": "Interessante. Esses mesmos grãos estão disponíveis para o private label? E sobre a revenda da marca Canastra, qual o valor de atacado de cada um desses?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:35:00.328407+00:00"
+  },
+  {
+    "id": "f3ee2a1d-91b6-4214-94c2-9d07a3fffef0",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T18:35:07.45888+00:00"
+  },
+  {
+    "id": "0bc09d21-4595-43c3-8165-da3db8b4142e",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T18:35:07.554689+00:00"
+  },
+  {
+    "id": "d8d13681-0793-4609-a10a-6b17f08d5f39",
+    "role": "assistant",
+    "content": "sim, esses graos estao disponiveis para private label\n\nno private label, voce pode escolher qualquer um desses blends para sua marca propria\n\nsobre os precos de atacado da nossa marca Cafe Canastra, vou te passar os valores em seguida pra facilitar\n\nquer que eu envie os valores primeiro do Classico e Suave?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:35:09.447252+00:00"
+  },
+  {
+    "id": "50a5d3d8-eb1f-4faa-9993-0eb34f1a43a9",
+    "role": "user",
+    "content": "Sim, pode me mandar os valores desses dois. E sobre a marca própria, qual o pedido mínimo para começar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:35:32.204984+00:00"
+  },
+  {
+    "id": "dfc72090-e221-4d68-9676-a75ac17b8784",
+    "role": "assistant",
+    "content": "perfeito, vou te passar os valores do Classico e Suave no atacado\n\nmas antes, so pra alinhar, voce quer os cafes em graos ou moidos?\n\ne pra private label, o pedido minimo e de 100 unidades por produto geralmente\n\nme diz se prefere 250g ou 500g para o private label, assim te passo todos os detalhes certinho\nno atacado, o Classico e o Suave ficam na faixa de R$90 a R$100 o kilo, dependendo do volume e embalagem\n\npara private label, o 250g sai por volta de R$23,90 a unidade ja com embalagem e silk da sua logo\n\nse voce ja tiver embalagem propria, cai para uns R$22,90\n\no pedido minimo e de 100 unidades\n\npara o 500g, o valor gira em torno de R$44,90 com embalagem inclusa, e R$43,40 se voce fornecer a embalagem\n\ntambem com pedido minimo de 100 unidades\n\nquer que eu te envie fotos de exemplos dessas embalagens private label pra voce ter uma ideia?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:35:36.48254+00:00"
+  },
+  {
+    "id": "7bb58f47-6181-41c9-b4bc-3813769af93f",
+    "role": "user",
+    "content": "Sim, pode me enviar as fotos das embalagens de private label. E sobre o atacado, esse valor de R$90-100/kg já é para o produto final na embalagem de 250g ou 500g?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:36:35.48152+00:00"
+  },
+  {
+    "id": "98b9220c-2968-4986-83f5-57efde4c3f6d",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T18:36:41.378449+00:00"
+  },
+  {
+    "id": "43f2a923-f5a4-4316-b9e9-b8a60d0d8d9d",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T18:36:41.472533+00:00"
+  },
+  {
+    "id": "c5cae187-44fc-4b57-ab37-408c911bec26",
+    "role": "assistant",
+    "content": "te acabei de enviar as fotos das embalagens private label pra voce dar uma olhada\n\nsobre o valor do atacado que mencionei, ele e uma referencia geral por kilo, e inclui a embalagem\n\nno 250g e 500g, o valor por kilo pode variar um pouco, mas fica na faixa que eu te falei\n\nquer que eu te passe os precos detalhados do Classico e Suave em 250g e 500g?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:36:43.63461+00:00"
+  },
+  {
+    "id": "0d36c9d9-c8ed-43e3-943f-d6969f70c700",
+    "role": "user",
+    "content": "Sim, pode me passar esses preços detalhados, por favor. E sobre o private label, qual o prazo de produção depois que a arte é aprovada?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:37:16.340484+00:00"
+  },
+  {
+    "id": "11a6d241-a489-43bf-8aa5-246b2fe751e5",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T18:37:21.834137+00:00"
+  },
+  {
+    "id": "542bbe2f-2456-4180-8f5b-4cced83cf172",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T18:37:21.926369+00:00"
+  },
+  {
+    "id": "38a4fe56-fc9c-4303-b7f4-5c07e601f218",
+    "role": "assistant",
+    "content": "os precos detalhados do private label sao assim\n\npara o cafe Canastra 250g, sai por volta de R$23,90 a unidade, ja com embalagem e silk da sua logo\n\nse voce ja tiver a embalagem propria, cai para uns R$22,90\n\no pedido minimo e 100 unidades\n\npara o 500g, fica na faixa de R$44,90 com embalagem inclusa, e R$43,40 se voce fornecer a embalagem\n\no prazo de producao apos a aprovacao da arte geralmente fica entre 15 a 20 dias uteis\n\nfaz sentido esse prazo pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:37:25.675177+00:00"
+  },
+  {
+    "id": "a59c624d-1a36-491d-9bd2-dfd817fa87cc",
+    "role": "user",
+    "content": "O prazo de 15 a 20 dias úteis está ok. Você me envia agora os preços detalhados de atacado do Clássico e Suave para revenda? E qual o frete médio para São Paulo, capital?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:38:10.440047+00:00"
+  },
+  {
+    "id": "b518e4aa-a962-4bfc-8d4f-deeb27e7442f",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T18:38:11.635842+00:00"
+  },
+  {
+    "id": "a277bd7c-c787-40d7-9a7b-6147fe6baffa",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T18:38:17.486845+00:00"
+  },
+  {
+    "id": "a30c1580-e8ed-41af-923e-1e5f573b6489",
+    "role": "assistant",
+    "content": "o classico moido 250g gira em torno de R$28,70\n\nse preferir em graos, R$31,70 no mesmo tamanho\n\ntemos tambem o classico moido 500g por volta de R$52,70\n\ne graos 500g por R$54,70\n\no suave acompanha os mesmos valores: 250g moido por R$28,70, 250g em graos por R$31,70\n\no suave moido 500g fica na faixa de R$52,70 e em graos por R$54,70\n\ntemos ainda graos 1kg por R$97,70 e granel 2kg por R$169,70 no classico e suave\n\nme diz o que achou desses precos?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:38:20.830167+00:00"
+  },
+  {
+    "id": "d7b718a7-1240-4cad-b5b8-cb3446c4dfe0",
+    "role": "user",
+    "content": "Ok, recebi os preços. E qual seria a estimativa de frete para São Paulo? No private label, o Microlote entra naqueles mesmos valores que você passou?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:38:54.947532+00:00"
+  },
+  {
+    "id": "3e199f5f-23b6-4247-87ad-ab3cd226e12e",
+    "role": "assistant",
+    "content": "microlote tem um valor um pouco diferente, fica em torno de R$32,70 por 250g, moido ou em graos\n\nsobre o frete para sao paulo, o pedido minimo e R$300, o frete custa cerca de R$55, com prazo em torno de 7 dias uteis\n\nfrete gratis para pedidos acima de R$900\n\nquer que eu te passe os precos detalhados do classico e suave no atacado agora?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:38:57.178313+00:00"
+  },
+  {
+    "id": "bd72c2b2-b1b3-4918-a279-c49ab815ed27",
+    "role": "user",
+    "content": "Você já me passou esses preços de atacado na mensagem anterior. Pra eu calcular a margem, qual o preço de venda sugerido para o consumidor final?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:39:36.976607+00:00"
+  },
+  {
+    "id": "c4421fc7-7cac-4e37-a6c2-032c2212521f",
+    "role": "assistant",
+    "content": "na verdade, esses valores que eu te passei sao para atacado mesmo\n\no preco de venda no varejo costuma ser cerca de duas vezes esse valor, dependendo da estrategia e do canal\n\nse quiser conferir os precos para consumidor final, pode olhar no nosso site www.loja.cafecanastra.com\n\nposso te ajudar com mais alguma informacao?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:39:39.59403+00:00"
+  },
+  {
+    "id": "ee845060-48d2-45d2-8cb3-49aa74accfca",
+    "role": "user",
+    "content": "Ok, o dobro do valor é uma boa referência de margem. No private label, a nota fiscal para o lojista sai em meu nome ou no de vocês?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:40:11.189232+00:00"
+  },
+  {
+    "id": "d1547e7c-360b-4c15-ba67-6bb7033ae1a7",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T18:40:12.759376+00:00"
+  },
+  {
+    "id": "f4351f64-6143-421f-9222-552fd9066218",
+    "role": "assistant",
+    "content": "no private label, a nota fiscal sai no nome da sua empresa\n\nisso e importante para que voce possa controlar seu estoque e vendas diretamente\n\nsobre os precos de atacado do Classico e Suave, vou mudar para o setor certo\n\nposso encaminhar seu contato para um dos nossos vendedores para passar esses detalhes e falar sobre frete pra sao paulo\n\nquer que eu faca isso agora?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T18:40:15.973144+00:00"
+  },
+  {
+    "id": "16aba882-bf6c-46a6-8e47-712a70830f41",
+    "role": "user",
+    "content": "Pode encaminhar meu contato, por favor. Esse vendedor consegue me apresentar as condições comerciais para os dois modelos, revenda e private label?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:40:51.514551+00:00"
+  },
+  {
+    "id": "e92d24a9-e3df-43bc-b7f6-9a904db6fe49",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T18:40:54.323493+00:00"
+  },
+  {
+    "id": "24b3e08f-4c1f-46ce-a053-b04d82c17934",
+    "role": "assistant",
+    "content": "perfeito! um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat e vai te apresentar as condicoes comerciais tanto para revenda quanto para private label",
+    "stage": "private_label",
+    "created_at": "2026-04-22T18:40:55.528645+00:00"
+  }
+]

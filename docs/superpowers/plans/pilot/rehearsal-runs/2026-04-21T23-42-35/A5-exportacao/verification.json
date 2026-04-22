@@ -1,0 +1,28 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": false,
+      "reason": "stage exportacao NAO alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 5,
+    "linhas_robotizadas": [
+      "por fim, qual o seu objetivo com esse projeto?\n\nvoce quer ser agente comercial nosso em lisboa, ou vai comprar os produtos para vender ai?"
+    ],
+    "resposta_incorreta_ou_inventada": "A pergunta sobre o objetivo do projeto (ser agente comercial ou comprar para vender) ignora a informação que o lead já havia fornecido duas vezes: que o café seria para sua própria cafeteria.",
+    "veredito_curto": "O agente cumpriu os objetivos de qualificação e encaminhamento, mas demonstrou falha de compreensão e insistiu em perguntas desnecessárias, gerando atrito na conversa."
+  },
+  "turns_count": 5,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": []
+}

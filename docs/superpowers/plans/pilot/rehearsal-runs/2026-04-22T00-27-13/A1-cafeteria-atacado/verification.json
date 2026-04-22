@@ -1,0 +1,39 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "faz sentido pra voce essa condicao?",
+      "se mudar de ideia, estamos aqui",
+      "se mudar de ideia ou quiser conversar de novo, estou por aqui",
+      "fico a disposicao caso mude de ideia",
+      "se mudar de ideia, pode me chamar a qualquer momento"
+    ],
+    "resposta_incorreta_ou_inventada": "Ao ser questionada sobre o preço do quilo para revenda (atacado), a agente respondeu com os preços de varejo para pacotes de 250g, ignorando completamente o contexto da pergunta.",
+    "veredito_curto": "O agente foi excessivamente evasivo em relação ao preço, demonstrou rigidez e pouca habilidade na objeção sobre amostras, e encerrou a conversa de forma muito repetitiva e robótica, resultando na perda do lead."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "atacado"
+  ]
+}
