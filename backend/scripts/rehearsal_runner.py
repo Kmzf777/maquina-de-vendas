@@ -1,8 +1,12 @@
-"""Rehearsal runner — executa os 5 arquetipos A1-A5 sequencialmente.
+"""Rehearsal runner — executa as 5 personas R1-R5 sequencialmente.
+
+Personas derivadas de conversas reais em .conversasreais/. Ver spec em
+docs/superpowers/specs/2026-04-21-rehearsal-v2-real-leads-design.md.
 
 Uso:
     REHEARSAL_MODE=true uvicorn app.main:app --env-file .env.local --port 8001 &
-    python -m scripts.rehearsal_runner
+    python -m scripts.rehearsal_runner                 # roda R1-R5
+    REHEARSAL_ONLY=R5 python -m scripts.rehearsal_runner  # roda so uma
 
 Envs necessarias (em .env.local):
     GEMINI_API_KEY, DEV_BACKEND_URL, REHEARSAL_PHONE, SUPABASE_URL,
@@ -47,7 +51,7 @@ TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "15"))
 POLL_INTERVAL = 0.5
 OUTPUT_ROOT = Path(__file__).resolve().parent.parent.parent / "docs" / "superpowers" / "plans" / "pilot" / "rehearsal-runs"
 
-FINAL_STAGES: dict[str, str | None] = {"A1": None, "A2": None, "A3": None, "A4": None, "A5": None}
+FINAL_STAGES: dict[str, str | None] = {"R1": None, "R2": None, "R3": None, "R4": None, "R5": None}
 
 
 def _now_iso() -> str:
