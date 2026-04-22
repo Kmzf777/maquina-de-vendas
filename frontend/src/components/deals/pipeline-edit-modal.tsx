@@ -101,6 +101,7 @@ export function PipelineEditModal({
   pipelineId, pipelineName, stages: initialStages, onClose, onSaved,
 }: PipelineEditModalProps) {
   const [stages, setStages] = useState<EditableStage[]>(initialStages);
+  const [name, setName] = useState(pipelineName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,7 +135,16 @@ export function PipelineEditModal({
       return;
     }
     const data = await res.json();
-    if (data?.id) setStages((prev) => [...prev, data]);
+    if (data?.id) {
+      setStages((prev) => {
+        // Inserir antes dos stages protegidos (que ficam sempre no final)
+        const firstProtected = prev.findIndex((s) => s.is_protected);
+        const insertAt = firstProtected === -1 ? prev.length : firstProtected;
+        const next = [...prev];
+        next.splice(insertAt, 0, { ...data, _dirty: false });
+        return next.map((s, i) => ({ ...s, order_index: i }));
+      });
+    }
   }
 
   async function handleDelete(stageId: string) {
@@ -151,9 +161,27 @@ export function PipelineEditModal({
     setSaving(true);
     setError(null);
     try {
-      const dirty = stages.filter((s) => s._dirty);
-      await Promise.all(
-        dirty.map((s) =>
+      const ops: Promise<void>[] = [];
+
+      if (name.trim() && name.trim() !== pipelineName) {
+        ops.push(
+          fetch(`/api/pipelines/${pipelineId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name.trim() }),
+          }).then(async (r) => {
+            if (!r.ok) {
+              const d = await r.json().catch(() => ({}));
+              throw new Error(d.error ?? "Erro ao renomear funil.");
+            }
+          })
+        );
+      }
+
+      // Salvar apenas stages não-protegidos marcados como dirty
+      const dirty = stages.filter((s) => s._dirty && !s.is_protected);
+      ops.push(
+        ...dirty.map((s) =>
           fetch(`/api/pipelines/${pipelineId}/stages/${s.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -166,10 +194,12 @@ export function PipelineEditModal({
           })
         )
       );
+
+      await Promise.all(ops);
       onSaved();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao salvar stages.");
+      setError(err instanceof Error ? err.message : "Erro ao salvar.");
     } finally {
       setSaving(false);
     }
@@ -178,10 +208,17 @@ export function PipelineEditModal({
   return (
     <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-md p-6 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-[18px] font-normal text-[#111111] mb-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>
+        <h3 className="text-[18px] font-normal text-[#111111] mb-3" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>
           Editar Funil
         </h3>
-        <p className="text-[13px] text-[#7b7b78] mb-4">{pipelineName}</p>
+        <div className="mb-4">
+          <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome do Funil</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+          />
+        </div>
 
         {error && (
           <div className="bg-[#fee2e2] border border-[#fca5a5] rounded-[6px] px-3 py-2 text-[13px] text-[#991b1b] mb-3">
