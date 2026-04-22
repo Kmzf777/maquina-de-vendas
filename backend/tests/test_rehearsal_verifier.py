@@ -48,3 +48,60 @@ def test_verify_combines_hard_and_soft(mock_judge):
     assert result["soft_check"]["bot_score_1_10"] == 7
     assert result["archetype_id"] == "A1"
     assert result["turns_count"] == 10
+
+
+def test_forbids_regex_returns_true_when_pattern_not_in_bot_messages():
+    check = verifier.forbids_regex(r"\bpix\b", label="PIX", description="menção PIX")
+    run_data = {
+        "messages": [
+            {"role": "assistant", "content": "Ola, tudo bem?"},
+            {"role": "user", "content": "quero pagar por pix"},  # user message ignorada
+        ]
+    }
+
+    passed, reason = check(run_data)
+
+    assert passed is True
+    assert "PIX" in reason
+
+
+def test_forbids_regex_returns_false_when_pattern_matches_bot_message():
+    check = verifier.forbids_regex(r"\bpix\b", label="PIX", description="menção PIX")
+    run_data = {
+        "messages": [
+            {"role": "assistant", "content": "Pode pagar via pix tambem"},
+        ]
+    }
+
+    passed, reason = check(run_data)
+
+    assert passed is False
+    assert "[VIOLATION:PIX]" in reason
+    assert "menção PIX" in reason
+
+
+def test_forbids_regex_ignores_user_messages_even_if_pattern_matches():
+    check = verifier.forbids_regex(r"\bpix\b", label="PIX", description="menção PIX")
+    run_data = {
+        "messages": [
+            {"role": "user", "content": "voces aceitam pix?"},
+            {"role": "assistant", "content": "Vou verificar com o supervisor"},
+        ]
+    }
+
+    passed, reason = check(run_data)
+
+    assert passed is True
+
+
+def test_forbids_regex_is_case_insensitive():
+    check = verifier.forbids_regex(r"\bpix\b", label="PIX", description="menção PIX")
+    run_data = {
+        "messages": [
+            {"role": "assistant", "content": "Aceitamos PIX e cartao"},
+        ]
+    }
+
+    passed, reason = check(run_data)
+
+    assert passed is False

@@ -1,7 +1,35 @@
 """Verification for a single archetype run. Hard checks (deterministic) +
 soft check (LLM-as-judge)."""
+import re
+
 from scripts.rehearsal.archetypes import Archetype
 from scripts.rehearsal.gemini_actor import judge_conversation
+
+
+def forbids_regex(pattern: str, label: str, description: str):
+    """Factory de verificador anti-alucinação.
+
+    Retorna (True, reason) se o padrão NAO aparecer em nenhuma mensagem com
+    role='assistant'. Retorna (False, "[VIOLATION:LABEL] ...") ao primeiro match.
+    """
+    compiled = re.compile(pattern, re.IGNORECASE)
+
+    def check(run_data: dict) -> tuple[bool, str]:
+        messages = run_data.get("messages", [])
+        for m in messages:
+            if m.get("role") != "assistant":
+                continue
+            content = m.get("content", "")
+            match = compiled.search(content)
+            if match:
+                start = max(0, match.start() - 20)
+                end = min(len(content), match.end() + 20)
+                snippet = content[start:end].replace("\n", " ")
+                return False, f"[VIOLATION:{label}] {description} — trecho: '{snippet}'"
+        return True, f"{label}: sem violação"
+
+    check.__name__ = f"forbid_{label.lower()}"
+    return check
 
 
 def run_hard_checks(archetype: Archetype, run_data: dict) -> dict:
