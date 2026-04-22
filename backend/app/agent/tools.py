@@ -159,7 +159,7 @@ def get_tools_for_stage(stage: str) -> list[dict]:
         "atacado": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "registrar_pedido_simples"],
         "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "registrar_pedido_simples"],
         "exportacao": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
-        "consumo": ["salvar_nome"],
+        "consumo": ["salvar_nome", "mudar_stage"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
