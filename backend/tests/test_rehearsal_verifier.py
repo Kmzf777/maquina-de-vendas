@@ -1,18 +1,21 @@
 from unittest.mock import patch
 
 from scripts.rehearsal import verifier
-from scripts.rehearsal.archetypes import A1
+from scripts.rehearsal.archetypes import R1
 
 
 def test_hard_checks_all_pass_returns_passed():
     run_data = {
-        "events": [{"content": "stage alterado para atacado"}, {"content": "enviar_foto classico executada"}],
-        "messages": [{"content": "quero 10kg"}],
-        "turns_count": 12,
+        "events": [
+            {"content": "stage alterado para atacado"},
+            {"content": "[encaminhar_humano] Lead encaminhado para Joao Bras"},
+        ],
+        "messages": [{"content": "10kg por mes"}],
+        "turns_count": 6,
         "stages_visited": {"atacado"},
     }
 
-    result = verifier.run_hard_checks(A1, run_data)
+    result = verifier.run_hard_checks(R1, run_data)
 
     assert result["status"] == "passed"
     assert all(c["passed"] for c in result["checks"])
@@ -26,7 +29,7 @@ def test_hard_checks_fail_if_any_missing():
         "stages_visited": set(),
     }
 
-    result = verifier.run_hard_checks(A1, run_data)
+    result = verifier.run_hard_checks(R1, run_data)
 
     assert result["status"] == "failed"
     assert any(not c["passed"] for c in result["checks"])
@@ -36,18 +39,21 @@ def test_hard_checks_fail_if_any_missing():
 def test_verify_combines_hard_and_soft(mock_judge):
     mock_judge.return_value = {"bot_score_1_10": 7, "veredito_curto": "bom"}
     run_data = {
-        "events": [{"content": "stage alterado para atacado"}, {"content": "enviar_foto classico executada"}],
-        "messages": [{"content": "quero 10kg por favor"}],
-        "turns_count": 10,
+        "events": [
+            {"content": "stage alterado para atacado"},
+            {"content": "[encaminhar_humano] Lead encaminhado para Joao Bras"},
+        ],
+        "messages": [{"role": "user", "content": "10kg por mes"}, {"role": "assistant", "content": "certo, aguarde o supervisor"}],
+        "turns_count": 6,
         "stages_visited": {"atacado"},
     }
 
-    result = verifier.verify(A1, run_data, transcript="conversa aqui")
+    result = verifier.verify(R1, run_data, transcript="conversa aqui")
 
     assert result["status"] == "passed"
     assert result["soft_check"]["bot_score_1_10"] == 7
-    assert result["archetype_id"] == "A1"
-    assert result["turns_count"] == 10
+    assert result["archetype_id"] == "R1"
+    assert result["turns_count"] == 6
 
 
 def test_forbids_regex_returns_true_when_pattern_not_in_bot_messages():
