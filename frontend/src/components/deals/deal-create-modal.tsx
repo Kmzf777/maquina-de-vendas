@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { DEAL_CATEGORIES } from "@/lib/constants";
-import type { Lead } from "@/lib/types";
+import type { Lead, Pipeline } from "@/lib/types";
 
 interface DealCreateModalProps {
   leads: Lead[];
+  pipelines?: Pipeline[];
   preselectedLead?: Lead;
   onClose: () => void;
   onCreate: (data: {
@@ -14,15 +15,17 @@ interface DealCreateModalProps {
     value: number;
     category: string;
     expected_close_date: string;
+    pipeline_id?: string;
   }) => Promise<void>;
 }
 
-export function DealCreateModal({ leads, preselectedLead, onClose, onCreate }: DealCreateModalProps) {
+export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, onCreate }: DealCreateModalProps) {
   const [title, setTitle] = useState("");
   const [leadSearch, setLeadSearch] = useState(
     preselectedLead ? (preselectedLead.name || preselectedLead.phone) : ""
   );
   const [selectedLeadId, setSelectedLeadId] = useState(preselectedLead?.id || "");
+  const [selectedPipelineId, setSelectedPipelineId] = useState(pipelines?.[0]?.id || "");
   const [value, setValue] = useState("");
   const [category, setCategory] = useState("");
   const [expectedClose, setExpectedClose] = useState("");
@@ -49,6 +52,7 @@ export function DealCreateModal({ leads, preselectedLead, onClose, onCreate }: D
       value: Number(value) || 0,
       category,
       expected_close_date: expectedClose,
+      pipeline_id: selectedPipelineId || undefined,
     });
     setSaving(false);
     onClose();
@@ -90,6 +94,22 @@ export function DealCreateModal({ leads, preselectedLead, onClose, onCreate }: D
               </div>
             )}
           </div>
+          {pipelines && pipelines.length > 0 && (
+            <div>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Funil *</label>
+              <select
+                value={selectedPipelineId}
+                onChange={(e) => setSelectedPipelineId(e.target.value)}
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                required
+              >
+                <option value="">Selecionar funil...</option>
+                {pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Titulo *</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Atacado 50kg - Cafe Especial" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" required />
@@ -113,7 +133,7 @@ export function DealCreateModal({ leads, preselectedLead, onClose, onCreate }: D
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" onClick={onClose} className="border border-[#dedbd6] text-[#313130] px-3 py-1.5 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors">Cancelar</button>
-            <button type="submit" disabled={saving || !selectedLeadId || !title.trim()} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50">
+            <button type="submit" disabled={saving || !selectedLeadId || !title.trim() || (!!pipelines?.length && !selectedPipelineId)} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50">
               {saving ? "Criando..." : "Criar Oportunidade"}
             </button>
           </div>

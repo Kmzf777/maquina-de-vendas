@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView } from "@/components/conversas/chat-view";
@@ -9,6 +10,9 @@ import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
 
 export default function ConversasPage() {
   const supabase = createClient();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const deepLinkApplied = useRef(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -40,6 +44,22 @@ export default function ConversasPage() {
   useEffect(() => {
     fetchConversations();
   }, [fetchConversations]);
+
+  // Deep-link: pre-select conversation by lead_id from URL param
+  useEffect(() => {
+    if (deepLinkApplied.current || loading || conversations.length === 0) return;
+    const leadId = searchParams.get("lead_id");
+    if (!leadId) return;
+    const match = conversations.find((c) => {
+      const lead = c.leads as Lead | undefined | null;
+      return lead?.id === leadId;
+    });
+    if (match) {
+      setSelectedConversation(match);
+      deepLinkApplied.current = true;
+      router.replace("/conversas");
+    }
+  }, [conversations, loading, searchParams, router]);
 
   // Realtime: re-sort list when any conversation's last_msg_at changes
   useEffect(() => {

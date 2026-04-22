@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import type { Deal, PipelineStage } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
 
@@ -18,6 +19,7 @@ interface DealDetailSidebarProps {
 }
 
 export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }: DealDetailSidebarProps) {
+  const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -77,6 +79,18 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
           <span className="text-[13px] text-[#111111]">{stageInfo?.label || "—"}</span>
         </div>
         <div className="flex items-center gap-2">
+          {deal.lead_id && (
+            <button
+              onClick={() => router.push(`/conversas?lead_id=${deal.lead_id}`)}
+              className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-2 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors flex items-center gap-1"
+              title="Abrir conversa do lead"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              Conversa
+            </button>
+          )}
           <button onClick={() => setEditing(!editing)} className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-2 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors">
             {editing ? "Cancelar" : "Editar"}
           </button>
