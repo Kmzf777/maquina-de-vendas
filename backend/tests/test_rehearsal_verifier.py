@@ -197,3 +197,68 @@ def test_forbid_ponto_venda_fisico_allows_generic_mentions():
     }]}
     passed, _ = check(run_data)
     assert passed is True
+
+
+def test_run_forbids_passes_when_no_violations():
+    from scripts.rehearsal.archetypes import Archetype
+    arch = Archetype(
+        id="TEST",
+        slug="test",
+        persona_prompt="test",
+        first_message="oi",
+        hard_checks=[],
+        forbids=[verifier.FORBID_PIX],
+    )
+    run_data = {"messages": [{"role": "assistant", "content": "ok"}]}
+
+    result = verifier.run_forbids(arch, run_data)
+
+    assert result["status"] == "passed"
+    assert len(result["checks"]) == 1
+    assert result["checks"][0]["passed"] is True
+
+
+def test_run_forbids_fails_when_any_violation():
+    from scripts.rehearsal.archetypes import Archetype
+    arch = Archetype(
+        id="TEST",
+        slug="test",
+        persona_prompt="test",
+        first_message="oi",
+        hard_checks=[],
+        forbids=[verifier.FORBID_PIX, verifier.FORBID_PRAZO],
+    )
+    run_data = {"messages": [{"role": "assistant", "content": "te mando chave pix"}]}
+
+    result = verifier.run_forbids(arch, run_data)
+
+    assert result["status"] == "failed"
+    assert any("[VIOLATION:PIX]" in c["reason"] for c in result["checks"])
+
+
+def test_verify_overall_status_considers_forbids():
+    from scripts.rehearsal.archetypes import Archetype
+    from unittest.mock import patch
+
+    arch = Archetype(
+        id="TEST",
+        slug="test",
+        persona_prompt="test",
+        first_message="oi",
+        hard_checks=[],  # nenhum hard check
+        forbids=[verifier.FORBID_PIX],
+    )
+    run_data = {
+        "messages": [{"role": "assistant", "content": "chave pix aqui"}],
+        "turns_count": 1,
+        "stages_visited": set(),
+    }
+
+    with patch("scripts.rehearsal.verifier.judge_conversation") as mock_judge:
+        mock_judge.return_value = {"bot_score_1_10": 5}
+        result = verifier.verify(arch, run_data, transcript="x")
+
+    assert result["status"] == "failed"  # falhou por forbid, não por hard_check
+    assert "forbids" in result
+    assert len(result["forbids"]) == 1
+    assert result["forbids"][0]["passed"] is False
