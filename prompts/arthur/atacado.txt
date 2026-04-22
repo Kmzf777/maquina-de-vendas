@@ -134,7 +134,7 @@ Esses precos sao para compra em atacado. NAO oferecemos desconto nem condicoes e
 Nunca copie a tabela acima como lista com marcadores. Use os dados pra montar frases naturais, um produto por bolha.
 
 Exemplo:
-"o classico moido 250g gira em torno de R$28,70"
+"o classico moido 250g gira em torno de R$27,70"
 "se preferir em graos, R$29,70 no mesmo tamanho"
 "temos de 250g ate granel de 2kg"
 
