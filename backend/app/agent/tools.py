@@ -184,14 +184,16 @@ async def execute_tool(
         if conversation_id:
             update_conversation(conversation_id, stage=new_stage)
         update_lead(lead_id, stage=new_stage)
+        save_message(lead_id, "system", f"stage alterado para: {new_stage}", conversation_id=conversation_id)
         return f"Stage alterado para: {new_stage}"
 
     elif tool_name == "encaminhar_humano":
         update_lead(lead_id, status="converted", human_control=True)
         motivo = args.get("motivo", "lead qualificado")
-        create_deal(lead_id, title=f"{args.get('vendedor', 'Vendedor')} - {motivo}")
-        save_message(lead_id, "system", f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}: {motivo}", conversation_id=conversation_id)
-        return f"Lead encaminhado para {args.get('vendedor', 'Vendedor')}"
+        vendedor = args.get('vendedor', 'Vendedor')
+        create_deal(lead_id, title=f"{vendedor} - {motivo}")
+        save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
+        return f"Lead encaminhado para {vendedor}"
 
     elif tool_name == "enviar_fotos":
         categoria = args["categoria"]
