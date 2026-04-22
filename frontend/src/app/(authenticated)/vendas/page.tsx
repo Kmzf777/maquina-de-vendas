@@ -68,7 +68,7 @@ function DraggableDealCard({ deal, onClick }: { deal: Deal; onClick: (deal: Deal
 }
 
 export default function VendasPage() {
-  const { pipelines, loading: pipelinesLoading } = usePipelines();
+  const { pipelines, loading: pipelinesLoading, refetch: refetchPipelines } = usePipelines();
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const { stages, refetch: refetchStages } = usePipelineStages(selectedPipelineId);
   const { deals, loading: dealsLoading } = useRealtimeDeals(selectedPipelineId);
@@ -155,11 +155,17 @@ export default function VendasPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({}));
+      throw new Error(error || "Erro ao criar funil.");
+    }
     const pipeline = await res.json();
+    await refetchPipelines();
     if (pipeline?.id) setSelectedPipelineId(pipeline.id);
   }
 
   async function handleDeletePipeline(pipeline: Pipeline) {
+    if (!window.confirm(`Excluir o funil "${pipeline.name}"? Esta ação não pode ser desfeita.`)) return;
     const res = await fetch(`/api/pipelines/${pipeline.id}`, { method: "DELETE" });
     if (!res.ok) {
       const { error } = await res.json();
@@ -167,6 +173,13 @@ export default function VendasPage() {
       return;
     }
     setSelectedPipelineId(pipelines.find((p) => p.id !== pipeline.id)?.id ?? null);
+  }
+
+  async function handleDeleteDeal(dealId: string) {
+    if (!window.confirm("Excluir esta oportunidade? Esta ação não pode ser desfeita.")) return;
+    const res = await fetch(`/api/deals/${dealId}`, { method: "DELETE" });
+    if (!res.ok) { alert("Erro ao excluir deal. Tente novamente."); return; }
+    setSelectedDealId(null);
   }
 
   const loading = pipelinesLoading || dealsLoading;
@@ -262,7 +275,7 @@ export default function VendasPage() {
       </div>
 
       {selectedDeal && (
-        <DealDetailSidebar deal={selectedDeal} stages={stages} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} />
+        <DealDetailSidebar deal={selectedDeal} stages={stages} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} onDelete={handleDeleteDeal} />
       )}
       {showCreate && selectedPipelineId && (
         <DealCreateModal leads={leads} onClose={() => setShowCreate(false)} onCreate={handleCreateDeal} />
