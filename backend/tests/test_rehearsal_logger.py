@@ -1,7 +1,7 @@
 import json
 
 from scripts.rehearsal import logger as rehearsal_logger
-from scripts.rehearsal.archetypes import A1
+from scripts.rehearsal.archetypes import R1
 
 
 def test_write_artifacts_creates_expected_files(tmp_path):
@@ -15,17 +15,17 @@ def test_write_artifacts_creates_expected_files(tmp_path):
     events = [
         {"content": "stage alterado para atacado", "created_at": "2026-04-20T10:00:03Z"},
     ]
-    verification = {"status": "passed", "archetype_id": "A1"}
+    verification = {"status": "passed", "archetype_id": "R1"}
 
     archetype_dir = rehearsal_logger.write_archetype_artifacts(
         run_dir=run_dir,
-        archetype=A1,
+        archetype=R1,
         messages=messages,
         events=events,
         verification=verification,
     )
 
-    assert archetype_dir.name == "A1-cafeteria-atacado"
+    assert archetype_dir.name == "R1-representante-portfolio"
     assert (archetype_dir / "transcript.md").exists()
     assert (archetype_dir / "events.jsonl").exists()
     assert (archetype_dir / "messages.json").exists()
