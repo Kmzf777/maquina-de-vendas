@@ -1,0 +1,64 @@
+{
+  "archetype_id": "R3",
+  "archetype_slug": "graos-proprios-pragmatico",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    },
+    {
+      "name": "min_4_turns",
+      "passed": true,
+      "reason": "20 turnos (>= 4)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 4,
+    "linhas_robotizadas": [
+      "abraço, sucesso no seu projeto",
+      "por nada, qualquer coisa é só chamar",
+      "bom dia\n\nse quiser conhecer nosso private label, posso te explicar como funciona e os valores que temos disponíveis\n\nme diz uma coisa, voce ja tem a logo pronta?"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot inventou nomes, endereços e telefones de duas torrefações no Rio de Janeiro ('Torrefacao do Centro' e 'Cafe Rio Specialty'), o que é uma prática perigosa e enganosa. Além disso, no final da conversa, o bot perdeu completamente o contexto e tentou reiniciar o processo de qualificação, perguntando sobre a logo e oferecendo o serviço que o lead já havia recusado múltiplas vezes.",
+    "veredito_curto": "O agente foi útil ao oferecer indicações, mas falhou gravemente ao inventar contatos, tornar-se repetitivo e perder completamente o contexto da conversa no final."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "private_label"
+  ]
+}

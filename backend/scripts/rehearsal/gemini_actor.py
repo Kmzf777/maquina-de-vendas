@@ -72,7 +72,7 @@ def generate_next_lead_message(
 
     def _call():
         model = _get_model()
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 120})
         return response.text.strip() if response.text else ""
 
     text = _with_retry(_call)
@@ -100,7 +100,7 @@ Responda APENAS com um JSON valido (sem explicacao adicional) neste formato:
 
     def _call():
         model = _get_model()
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 120})
         return response.text or ""
 
     try:

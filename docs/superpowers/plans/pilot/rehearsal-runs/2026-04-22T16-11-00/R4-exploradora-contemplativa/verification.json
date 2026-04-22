@@ -1,0 +1,69 @@
+{
+  "archetype_id": "R4",
+  "archetype_slug": "exploradora-contemplativa",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": true,
+      "reason": "enviar_foto presente nos eventos"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    },
+    {
+      "name": "min_8_turns",
+      "passed": true,
+      "reason": "10 turnos (>= 8)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 7,
+    "linhas_robotizadas": [
+      "sobre desconto pra volume maior, nosso comercial humano cuida disso",
+      "a gente nao costuma enviar amostras porque o cafe especial e colhido e torrado sob demanda",
+      "me diz uma coisa\n\nvoce ja tem ideia do volume de cafe que pretende produzir inicialmente?"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "O agente cumpriu todos os critérios esperados, mas soou repetitivo e inflexível ao lidar com a principal objeção do lead sobre o envio de amostras."
+  },
+  "turns_count": 10,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}

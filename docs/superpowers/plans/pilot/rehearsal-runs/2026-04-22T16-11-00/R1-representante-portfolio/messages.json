@@ -1,0 +1,205 @@
+[
+  {
+    "id": "44c174ca-6501-491d-b9a3-fea1968d8c5b",
+    "role": "user",
+    "content": "oi, sou representante comercial, atendo lojas especializadas e naturais, queria incluir um cafe premium no portfolio. voces trabalham com distribuicao?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:11:01.398659+00:00"
+  },
+  {
+    "id": "2864ae61-c596-4a35-ba41-085b925f7323",
+    "role": "assistant",
+    "content": "boa tarde\n\nvaleu por compartilhar seu trabalho com lojas especializadas e naturais, esse nicho valoriza muito o cafe premium\n\nme diz uma coisa\n\ncom quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:11:04.308428+00:00"
+  },
+  {
+    "id": "72dbdfd6-83bf-4e8d-925a-7426c47c3f34",
+    "role": "user",
+    "content": "Opa, Ricardo. E me diz uma coisa, como funciona a distribuição de vocês? É venda direta pra loja ou vocês têm representantes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:11:27.040286+00:00"
+  },
+  {
+    "id": "6da7fd8e-0d5b-4476-b4b8-6ae2258fc993",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T16:11:28.455873+00:00"
+  },
+  {
+    "id": "d78f3ab4-f6ff-4fac-8439-7cf4df94b9d4",
+    "role": "assistant",
+    "content": "prazer, Ricardo\n\na gente trabalha com venda direta, sem representantes intermediarios\n\nisso garante preco justo e controle total da qualidade e entrega\n\nme conta, o cafe que voce vende hoje atende bem os clientes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:11:30.241421+00:00"
+  },
+  {
+    "id": "83a53c62-7526-401f-b892-64e321c69084",
+    "role": "user",
+    "content": "Entendi o modelo direto. E qual a margem que vocês sugerem pro lojista? Eu ainda não vendo café, estou justamente buscando uma opção.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:11:58.854744+00:00"
+  },
+  {
+    "id": "4bb10363-0b6a-4344-bed8-ea26510f7280",
+    "role": "assistant",
+    "content": "entendi, voce ta começando a trabalhar com cafe agora\n\nque projeto bacana, tem bastante potencial nesse mercado\n\nme conta mais, voce pensa em vender cafe moido, em graos ou capsulado?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:12:01.201307+00:00"
+  },
+  {
+    "id": "ae014e22-c10f-4fa2-a0c6-cd04c4d6da79",
+    "role": "user",
+    "content": "Principalmente grãos e moído. E sobre a margem que eu perguntei, qual o markup médio? Outra coisa, vocês fazem private label?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:12:22.297716+00:00"
+  },
+  {
+    "id": "05cd4cac-13d9-4e2a-9d24-4bbccfc44688",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo com graos e moido, combina demais com o nosso portfolio\n\nsobre margem, a gente costuma orientar que o lojista trabalhe com precos que deem margem de 30% a 50%, dependendo da estrategia e do publico\n\nsobre private label, a gente oferece esse servico sim\n\nvoce ja possui uma marca de cafe ou ta pensando em criar uma do zero?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:12:24.047731+00:00"
+  },
+  {
+    "id": "476aed99-7192-4bed-b440-1a54da426b65",
+    "role": "user",
+    "content": "Certo, 30 a 50%... E pra fazer uma marca própria, seria do zero. Qual o pedido mínimo, tanto pra revender a marca de vocês quanto pro private label?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:12:52.934706+00:00"
+  },
+  {
+    "id": "3ffe59d7-3660-4835-9c6c-71bd5ac92a20",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T16:12:54.437546+00:00"
+  },
+  {
+    "id": "ed568160-a5c1-4032-a3d4-0a8e514272b1",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T16:12:54.524792+00:00"
+  },
+  {
+    "id": "1e07865c-6781-4674-a59e-2a1367b2bf48",
+    "role": "assistant",
+    "content": "pra revender a marca Cafe Canastra, a gente trabalha com atacado, o pedido minimo varia conforme o produto, mas em geral giram em torno de sacas ou volumes maiores\n\nno private label, o pedido minimo depende do formato\n\npor exemplo, o 250g tem pedido minimo de 100 unidades\n\nquer que eu te explique como funciona o private label pra voce ter uma ideia mais clara?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:12:56.078586+00:00"
+  },
+  {
+    "id": "2de5bdf6-99b1-40c1-87aa-2a0c42668f6f",
+    "role": "user",
+    "content": "Ok, pode explicar o private label. Mas sobre o atacado da marca Canastra, pra eu ter uma noção, o que seriam esses 'volumes maiores' de pedido mínimo? Queria comparar o investimento inicial.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:13:34.246522+00:00"
+  },
+  {
+    "id": "9ef321ef-3bc2-43e1-8e7e-7253f7708d60",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T16:13:35.6837+00:00"
+  },
+  {
+    "id": "c4683ffa-5666-4956-82ce-f10310b74b96",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T16:13:40.76967+00:00"
+  },
+  {
+    "id": "52766211-6b3b-4e8d-a66f-4e8bbc6d2fad",
+    "role": "assistant",
+    "content": "vou te explicar como funciona o private label\n\ntoda a parte de marca e de responsabilidade sua, a gente precisa da logo para fazer a embalagem\n\ntemos alguns modelos de embalagem sugeridos que nao tem custo adicional\n\na gente torra o cafe aqui na fazenda, faz a moagem, empacotamento, selagem, datacao e separacao\n\nos produtos chegam prontos pra voce comercializar com sua propria marca\n\nsobre o atacado, o pedido minimo varia, mas pra ter uma ideia mais concreta, posso te enviar os detalhes dos volumes e valores pra voce comparar o investimento inicial\n\nquer que eu te passe esses valores?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:13:44.722276+00:00"
+  },
+  {
+    "id": "601ae9a8-bce3-459c-92af-6f626fd728ef",
+    "role": "user",
+    "content": "Sim, pode me passar os valores do atacado, por favor. E no private label, o custo unitário varia com a quantidade?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:14:31.239784+00:00"
+  },
+  {
+    "id": "b3fc4532-5035-42a5-bd6a-9948ed95a3bd",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T16:14:33.701433+00:00"
+  },
+  {
+    "id": "cd2814c8-185f-44c6-a14b-25fe26d321ad",
+    "role": "assistant",
+    "content": "me diz uma coisa\n\npra qual modelo de negocio voce pretende atender? tipo cafeteria, emporio, loja de produtos naturais, restaurante, hotel...\nsobre private label, o custo unitario realmente varia conforme a quantidade, pq tem custo fixo de producao e embalagem que dilui melhor em volumes maiores\n\nquanto mais unidades voce produzir, menor o custo por pacote fica, isso e normal nesse mercado\n\nposso te enviar o catalogo com fotos e descrever os produtos Cafe Canastra que temos pra atacado\n\nassim voce conhece melhor antes de decidir o volume inicial\n\nquer que eu envie?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:14:37.018358+00:00"
+  },
+  {
+    "id": "8635c6f2-ffee-4db9-b52d-5afde5e914c3",
+    "role": "user",
+    "content": "Meu foco são lojas de produtos naturais, empórios e algumas farmácias. Pode enviar o catálogo do atacado, por favor. Vocês têm alguma tabela de preço por volume pro private label?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:15:21.94178+00:00"
+  },
+  {
+    "id": "7246603b-610c-460a-9114-d2ec7e18593e",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T16:15:23.547677+00:00"
+  },
+  {
+    "id": "a97c6568-1cb8-4aea-926e-0ec624df6be7",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T16:15:29.914317+00:00"
+  },
+  {
+    "id": "123c2995-7891-4b56-aa4e-5ea3e728e4cd",
+    "role": "assistant",
+    "content": "ja te enviei o catalogo com as fotos do nosso cafe especial\n\ntemos o Classico, que e um cafe de torra media-escura, intenso, com notas achocolatadas, pontuacao 84 SCA\n\no Suave tem torra media, intensidade intermediaria, notas de melaço e frutas amarelas, pontuacao 84 SCA\n\no Canela e torra media, intensidade intermediaria, com um toque caramelizado e canela, pontuacao 84 SCA\n\ntemos ainda o Microlote, que e especial, com media intensidade e notas de mel, caramelo e cacau, pontuacao 86 SCA\n\ntem Drip Coffee Suave, que sao sachets individuais para preparo direto na xicara, e capsulas Nespresso compativeis, nos sabores Classico e Canela\n\nqual deles voce acha que agradaria mais o publico das suas lojas?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:15:33.445315+00:00"
+  },
+  {
+    "id": "b33171cc-ed98-4c21-85f5-cc3bf0b46b85",
+    "role": "user",
+    "content": "Acredito que o Clássico e o Microlote tenham mais apelo. E sobre o private label, pra eu ter uma ideia da escala, qual seria o custo unitário pra 100, 200 e 500 unidades?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:16:31.097026+00:00"
+  },
+  {
+    "id": "55af0493-88d3-477e-bc4a-e8cd103319c1",
+    "role": "assistant",
+    "content": "sobre o private label, a gente nao trabalha com tabela publica de preco unitario por volume\n\ncada projeto e orcado de forma personalizada, considerando embalagem, design, volume e especificacoes\n\no ideal e voce passar o volume que pretende e a ideia do projeto para a gente montar uma proposta\n\nquer que eu te encaminhe para o Joao Bras, nosso supervisor comercial, que vai te ajudar com isso?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:16:32.524136+00:00"
+  },
+  {
+    "id": "7c936a76-3906-4447-a25e-f72ea03e0c19",
+    "role": "user",
+    "content": "Pode me encaminhar pro João, por favor. A ideia é ele me ajudar com essa cotação do private label e também com os detalhes do atacado, certo?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:17:11.641919+00:00"
+  },
+  {
+    "id": "5ac961dc-bb7d-40cf-a8fa-c5b4e36179ac",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: cotacao private label e detalhes atacado",
+    "stage": null,
+    "created_at": "2026-04-22T16:17:13.775642+00:00"
+  },
+  {
+    "id": "fbf4d55f-83d2-4793-8d48-3f9fe27766e3",
+    "role": "assistant",
+    "content": "perfeito, Ricardo\n\nja passei seu contato pro Joao Bras, ele vai te ajudar com a cotacao do private label e os detalhes do atacado\n\nqualquer coisa que precisar, so avisar aqui",
+    "stage": "atacado",
+    "created_at": "2026-04-22T16:17:15.03032+00:00"
+  }
+]

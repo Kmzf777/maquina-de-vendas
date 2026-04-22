@@ -1,0 +1,72 @@
+{
+  "archetype_id": "R5",
+  "archetype_slug": "lojista-objecao-amostra",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": false,
+      "reason": "stage private_label NAO alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    },
+    {
+      "name": "regex_endereçou objeção de amostra",
+      "passed": true,
+      "reason": "endereçou objeção de amostra (match)"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "7 turnos (>= 5)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    },
+    {
+      "name": "forbid_ponto_venda_rs",
+      "passed": true,
+      "reason": "PONTO_VENDA_RS: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 9,
+    "linhas_robotizadas": [
+      "imagina, sou eu mesma aqui do escritorio"
+    ],
+    "resposta_incorreta_ou_inventada": "A resposta 'imagina, sou eu mesma aqui do escritorio' é um non-sequitur, pois não responde à pergunta do lead sobre onde comprar o café e parece ser uma resposta pré-programada para outra pergunta, como 'estou falando com um robô?'.",
+    "veredito_curto": "O agente lidou muito bem com uma objeção persistente sobre a amostra paga, mas apresentou uma resposta robótica e fora de contexto antes de escalar corretamente para um humano."
+  },
+  "turns_count": 7,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado"
+  ]
+}
