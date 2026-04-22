@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Deal, PipelineStage } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
 
@@ -14,9 +14,10 @@ interface DealDetailSidebarProps {
   stages: PipelineStage[];
   onClose: () => void;
   onUpdate: (dealId: string, data: Record<string, unknown>) => Promise<void>;
+  onDelete: (dealId: string) => void;
 }
 
-export function DealDetailSidebar({ deal, stages, onClose, onUpdate }: DealDetailSidebarProps) {
+export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }: DealDetailSidebarProps) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -27,6 +28,19 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate }: DealDetai
     assigned_to: deal.assigned_to || "",
     expected_close_date: deal.expected_close_date || "",
   });
+
+  // Sincronizar form quando o deal atualizar via realtime (sem modo edição ativo)
+  useEffect(() => {
+    if (!editing) {
+      setForm({
+        title: deal.title,
+        value: deal.value,
+        category: deal.category || "",
+        assigned_to: deal.assigned_to || "",
+        expected_close_date: deal.expected_close_date || "",
+      });
+    }
+  }, [deal, editing]);
 
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
@@ -65,6 +79,15 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate }: DealDetai
         <div className="flex items-center gap-2">
           <button onClick={() => setEditing(!editing)} className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-2 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors">
             {editing ? "Cancelar" : "Editar"}
+          </button>
+          <button
+            onClick={() => onDelete(deal.id)}
+            className="w-8 h-8 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#e07a7a] hover:text-[#e07a7a] transition-colors"
+            title="Excluir deal"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
           </button>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
