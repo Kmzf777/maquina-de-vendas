@@ -10,14 +10,18 @@ interface PipelineCreateModalProps {
 export function PipelineCreateModal({ onClose, onCreate }: PipelineCreateModalProps) {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setSaving(true);
+    setError(null);
     try {
       await onCreate(name.trim());
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao criar funil.");
     } finally {
       setSaving(false);
     }
@@ -41,6 +45,11 @@ export function PipelineCreateModal({ onClose, onCreate }: PipelineCreateModalPr
             />
             <p className="text-[11px] text-[#7b7b78] mt-1.5">O funil será criado com os stages padrão (Novo, Contato, Proposta, Negociação, Fechado Ganho, Perdido).</p>
           </div>
+          {error && (
+            <div className="bg-[#fee2e2] border border-[#fca5a5] rounded-[6px] px-3 py-2 text-[13px] text-[#991b1b]">
+              {error}
+            </div>
+          )}
           <div className="flex gap-2 justify-end pt-1">
             <button type="button" onClick={onClose} className="border border-[#dedbd6] text-[#313130] px-3 py-1.5 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors">
               Cancelar
