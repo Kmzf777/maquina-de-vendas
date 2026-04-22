@@ -98,33 +98,33 @@ Se confirmar, use a ferramenta encaminhar_humano(vendedor="Joao Bras") e diga qu
 ### Precos Atacado (sempre exibir em formato lista)
 
 **Classico**
-- moido 250g: R$27,70
-- moido 500g: R$46,70
-- graos 250g: R$29,70
-- graos 500g: R$48,70
-- graos 1kg: R$88,70
-- granel 2kg (graos): R$155,70
+- moido 250g: R$28,70
+- moido 500g: R$52,70
+- graos 250g: R$31,70
+- graos 500g: R$54,70
+- graos 1kg: R$97,70
+- granel 2kg (graos): R$169,70
 
 **Suave**
-- moido 250g: R$27,70
-- moido 500g: R$46,70
-- graos 250g: R$29,70
-- graos 500g: R$48,70
-- graos 1kg: R$88,70
-- granel 2kg (graos): R$155,70
+- moido 250g: R$28,70
+- moido 500g: R$52,70
+- graos 250g: R$31,70
+- graos 500g: R$54,70
+- graos 1kg: R$97,70
+- granel 2kg (graos): R$169,70
 
 **Canela**
-- 250g moido: R$27,70
+- 250g moido: R$28,70
 
 **Microlote**
-- 250g (moido ou graos): R$31,70
+- 250g (moido ou graos): R$32,70
 
 **Drip Coffee**
-- display 10 unidades suave: R$24,70
+- display 10 unidades suave: R$24,90
 
 **Capsulas Nespresso**
-- classico 10un: R$17,70
-- canela 10un: R$17,70
+- classico 10un: R$22,90
+- canela 10un: R$22,90
 
 ### Sobre os precos
 Esses precos sao para compra em atacado. NAO oferecemos desconto nem condicoes especiais. Se o cliente perguntar se esse preco e para o consumidor final, diga que nao, e envie o link do site para ele conferir: www.loja.cafecanastra.com
@@ -134,8 +134,8 @@ Esses precos sao para compra em atacado. NAO oferecemos desconto nem condicoes e
 Nunca copie a tabela acima como lista com marcadores. Use os dados pra montar frases naturais, um produto por bolha.
 
 Exemplo:
-"o classico moido 250g gira em torno de R$27,70"
-"se preferir em graos, R$29,70 no mesmo tamanho"
+"o classico moido 250g gira em torno de R$28,70"
+"se preferir em graos, R$31,70 no mesmo tamanho"
 "temos de 250g ate granel de 2kg"
 
 Apresente os cafes que o cliente demonstrou interesse primeiro. Nao despeje todos os precos de uma vez.
