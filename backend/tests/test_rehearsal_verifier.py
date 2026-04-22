@@ -177,3 +177,23 @@ def test_forbid_papel_allows_supervisor_handoff():
     run_data = {"messages": [{"role": "assistant", "content": "vou passar voce pro supervisor Joao Bras"}]}
     passed, _ = check(run_data)
     assert passed is True
+
+
+def test_forbid_ponto_venda_fisico_catches_rs_location():
+    check = verifier.FORBID_PONTO_VENDA_FISICO
+    run_data = {"messages": [{
+        "role": "assistant",
+        "content": "voce encontra em porto alegre, na loja parceira"
+    }]}
+    passed, _ = check(run_data)
+    assert passed is False
+
+
+def test_forbid_ponto_venda_fisico_allows_generic_mentions():
+    check = verifier.FORBID_PONTO_VENDA_FISICO
+    run_data = {"messages": [{
+        "role": "assistant",
+        "content": "nossa venda é direta, sem pontos de venda físicos no momento"
+    }]}
+    passed, _ = check(run_data)
+    assert passed is True
