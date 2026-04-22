@@ -42,55 +42,7 @@ RETURNS void LANGUAGE sql AS $$
   WHERE pipeline_id = p_pipeline_id AND order_index >= p_from_order;
 $$;
 
--- 5. Seed: Funil Principal com 6 stages default + migrar deals existentes
-DO $$
-DECLARE
-  v_pid  uuid;
-  v_s0   uuid;
-  v_s1   uuid;
-  v_s2   uuid;
-  v_s3   uuid;
-  v_s4   uuid;
-  v_s5   uuid;
-BEGIN
-  -- Guard: skip if already seeded
-  IF EXISTS (SELECT 1 FROM pipelines WHERE name = 'Funil Principal') THEN
-    RETURN;
-  END IF;
-
-  INSERT INTO pipelines (name, order_index) VALUES ('Funil Principal', 0)
-    RETURNING id INTO v_pid;
-
-  INSERT INTO pipeline_stages (pipeline_id, label, key, dot_color, order_index, is_protected)
-    VALUES (v_pid, 'Novo', null, '#e07a7a', 0, false) RETURNING id INTO v_s0;
-
-  INSERT INTO pipeline_stages (pipeline_id, label, key, dot_color, order_index, is_protected)
-    VALUES (v_pid, 'Contato', null, '#d4a04a', 1, false) RETURNING id INTO v_s1;
-
-  INSERT INTO pipeline_stages (pipeline_id, label, key, dot_color, order_index, is_protected)
-    VALUES (v_pid, 'Proposta', null, '#9b7abf', 2, false) RETURNING id INTO v_s2;
-
-  INSERT INTO pipeline_stages (pipeline_id, label, key, dot_color, order_index, is_protected)
-    VALUES (v_pid, 'Negociação', null, '#5b8aad', 3, false) RETURNING id INTO v_s3;
-
-  INSERT INTO pipeline_stages (pipeline_id, label, key, dot_color, order_index, is_protected)
-    VALUES (v_pid, 'Fechado Ganho', 'fechado_ganho', '#5aad65', 4, true) RETURNING id INTO v_s4;
-
-  INSERT INTO pipeline_stages (pipeline_id, label, key, dot_color, order_index, is_protected)
-    VALUES (v_pid, 'Perdido', 'fechado_perdido', '#9ca3af', 5, true) RETURNING id INTO v_s5;
-
-  -- Migrar deals existentes para o Funil Principal
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s0 WHERE stage = 'novo';
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s1 WHERE stage = 'contato';
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s2 WHERE stage = 'proposta';
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s3 WHERE stage = 'negociacao';
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s4 WHERE stage = 'fechado_ganho';
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s5 WHERE stage = 'fechado_perdido';
-  -- Fallback: deals com stage desconhecido vão para 'Novo'
-  UPDATE deals SET pipeline_id = v_pid, stage_id = v_s0 WHERE pipeline_id IS NULL;
-END $$;
-
--- 6. Habilitar realtime
+-- 5. Habilitar realtime
 DO $$
 BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE pipelines;
