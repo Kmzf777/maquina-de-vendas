@@ -1,0 +1,66 @@
+{
+  "archetype_id": "R2",
+  "archetype_slug": "marca-zero-cautelosa",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": true,
+      "reason": "enviar_foto presente nos eventos"
+    },
+    {
+      "name": "min_6_turns",
+      "passed": true,
+      "reason": "18 turnos (>= 6)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "tem interesse em seguir e falar com o meu supervisor pra tirar dúvidas ou já fechar seu pedido?",
+      "qualquer coisa me fala o que voce quer que eu te explique melhor",
+      "quem vende cafe especial percebe rapido a diferenca no ticket medio",
+      "me conta mais, voce pensa em revender ou montar marca propria?",
+      "quer que eu te explique os detalhes do private label pra voce ver como funciona na pratica?"
+    ],
+    "resposta_incorreta_ou_inventada": "Valeria ignorou a pergunta direta sobre a diferença de preço entre o café clássico e o gourmet por quatro vezes, mesmo com a insistência da lead. Além disso, no final da conversa, perguntou se a lead queria revender ou montar marca própria, ignorando que essa foi a primeira informação que a lead forneceu no início do chat.",
+    "veredito_curto": "O agente falhou em responder perguntas diretas e repetidas sobre preço e demonstrou falta de memória contextual, tornando a interação frustrante e pouco inteligente."
+  },
+  "turns_count": 18,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}
