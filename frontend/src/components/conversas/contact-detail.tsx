@@ -1,10 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AGENT_STAGES } from "@/lib/constants";
 import { EditableField } from "./editable-field";
+import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { createClient } from "@/lib/supabase/client";
-import type { Lead, Tag, Conversation } from "@/lib/types";
+import type { Lead, Tag, Conversation, Pipeline, PipelineStage } from "@/lib/types";
+
+interface LeadDeal {
+  id: string;
+  title: string;
+  value: number;
+  category: string | null;
+  stage_id: string | null;
+  pipeline_id: string | null;
+  updated_at: string;
+  pipeline_stages: Pick<PipelineStage, "id" | "label" | "dot_color" | "key" | "is_protected"> | null;
+  pipelines: Pick<Pipeline, "id" | "name"> | null;
+}
 
 interface ContactDetailProps {
   conversation: Conversation;
@@ -20,7 +33,9 @@ export function ContactDetail({
   onTagToggle,
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
-  const [activeDeal, setActiveDeal] = useState<{ title: string; value: number; stage: string } | null>(null);
+  const [deals, setDeals] = useState<LeadDeal[]>([]);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [showCreateDeal, setShowCreateDeal] = useState(false);
   const [agentProfiles, setAgentProfiles] = useState<{ id: string; name: string }[]>([]);
   const [aiEnabled, setAiEnabled] = useState(conversation.ai_enabled);
   const [agentProfileId, setAgentProfileId] = useState<string | null>(conversation.agent_profile_id);
@@ -29,21 +44,24 @@ export function ContactDetail({
   const displayName = lead?.name || lead?.phone || "Desconhecido";
   const supabase = createClient();
 
-  useEffect(() => {
+  const fetchDeals = useCallback(async () => {
     if (!lead) return;
-    import("@/lib/supabase/client").then(({ createClient: createSbClient }) => {
-      const sb = createSbClient();
-      sb.from("deals")
-        .select("title, value, stage")
-        .eq("lead_id", lead.id)
-        .not("stage", "in", "(fechado_ganho,fechado_perdido)")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .then(({ data }) => {
-          if (data && data.length > 0) setActiveDeal(data[0]);
-        });
-    });
+    const res = await fetch(`/api/leads/${lead.id}/deals`);
+    if (res.ok) {
+      const data = await res.json();
+      setDeals(Array.isArray(data) ? data : []);
+    }
   }, [lead?.id]);
+
+  useEffect(() => {
+    fetchDeals();
+  }, [fetchDeals]);
+
+  useEffect(() => {
+    fetch("/api/pipelines")
+      .then((r) => r.json())
+      .then((data) => setPipelines(Array.isArray(data) ? data : []));
+  }, []);
 
   useEffect(() => {
     setAiEnabled(conversation.ai_enabled);
@@ -82,6 +100,25 @@ export function ContactDetail({
   async function updateLeadField(field: string, value: string) {
     if (!lead) return;
     await supabase.from("leads").update({ [field]: value }).eq("id", lead.id);
+  }
+
+  async function handleCreateDeal(data: {
+    lead_id: string;
+    title: string;
+    value: number;
+    category: string;
+    expected_close_date: string;
+    pipeline_id?: string;
+  }) {
+    if (!data.pipeline_id) return;
+    const res = await fetch("/api/deals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      await fetchDeals();
+    }
   }
 
   const daysActive = lead
@@ -155,15 +192,53 @@ export function ContactDetail({
             <span className="text-[14px] text-[#111111]">{stageInfo?.label || lead.stage}</span>
           </div>
 
-          {activeDeal && (
-            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-3">
-              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Oportunidade ativa</span>
-              <p className="text-[13px] font-medium text-[#111111]">{activeDeal.title}</p>
-              <p className="text-[14px] font-medium text-[#111111] mt-0.5">
-                {activeDeal.value > 0 ? `R$ ${activeDeal.value.toLocaleString("pt-BR")}` : "\u2014"}
-              </p>
+          {/* Oportunidades */}
+          <div className="border-t border-[#dedbd6] pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Oportunidades</span>
+              <button
+                onClick={() => setShowCreateDeal(true)}
+                className="w-6 h-6 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors"
+                title="Nova oportunidade"
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
+                </svg>
+              </button>
             </div>
-          )}
+            {deals.length === 0 ? (
+              <p className="text-[12px] text-[#7b7b78]">Nenhuma oportunidade</p>
+            ) : (
+              <div className="space-y-2">
+                {deals.map((deal) => {
+                  const stage = deal.pipeline_stages;
+                  const isProtected = stage?.is_protected ?? false;
+                  return (
+                    <div
+                      key={deal.id}
+                      className={`flex items-start gap-2 p-2 rounded-[6px] border border-[#dedbd6] bg-white ${isProtected ? "opacity-50" : ""}`}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full flex-shrink-0 mt-1"
+                        style={{ backgroundColor: stage?.dot_color || "#dedbd6" }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] text-[#111111] truncate">{deal.title}</p>
+                        <p className="text-[11px] text-[#7b7b78]">
+                          {deal.pipelines?.name || "—"} · {stage?.label || "—"}
+                        </p>
+                        {deal.value > 0 && (
+                          <p className="text-[12px] text-[#111111]">
+                            R$ {deal.value.toLocaleString("pt-BR")}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* B2B Fields */}
           <div className="border-t border-[#dedbd6] pt-4 space-y-3">
@@ -257,6 +332,16 @@ export function ContactDetail({
             <p className="text-[#7b7b78] text-[12px] mt-1">Este contato nao esta cadastrado como lead no CRM.</p>
           </div>
         </div>
+      )}
+
+      {showCreateDeal && lead && (
+        <DealCreateModal
+          leads={[lead]}
+          pipelines={pipelines}
+          preselectedLead={lead}
+          onClose={() => setShowCreateDeal(false)}
+          onCreate={handleCreateDeal}
+        />
       )}
     </div>
   );

@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.leads.service import update_lead, save_message, create_deal
+from app.leads.service import update_lead, save_message, create_deal, get_lead
 from app.conversations.service import update_conversation
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_active_channel
@@ -190,8 +190,10 @@ async def execute_tool(
     elif tool_name == "encaminhar_humano":
         update_lead(lead_id, status="converted", human_control=True)
         motivo = args.get("motivo", "lead qualificado")
-        vendedor = args.get('vendedor', 'Vendedor')
-        create_deal(lead_id, title=f"{vendedor} - {motivo}")
+        vendedor = args.get("vendedor", "Vendedor")
+        lead = get_lead(lead_id)
+        lead_stage = lead.get("stage") if lead else None
+        create_deal(lead_id, title=f"{vendedor} - {motivo}", category=lead_stage)
         save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
         return f"Lead encaminhado para {vendedor}"
 

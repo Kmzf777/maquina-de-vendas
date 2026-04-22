@@ -51,13 +51,56 @@ def save_message(lead_id: str, role: str, content: str, stage: str | None = None
     return result.data[0]
 
 
+CATEGORY_PIPELINE_NAMES: dict[str, str] = {
+    "atacado": "Atacado",
+    "private_label": "Private Label",
+    "exportacao": "Exportação",
+    "consumo": "Consumo",
+}
+
+
+def get_lead(lead_id: str) -> dict[str, Any] | None:
+    sb = get_supabase()
+    result = sb.table("leads").select("*").eq("id", lead_id).limit(1).execute()
+    return result.data[0] if result.data else None
+
+
 def create_deal(lead_id: str, title: str, category: str | None = None) -> dict[str, Any]:
     sb = get_supabase()
+    pipeline_id: str | None = None
+    stage_id: str | None = None
+
+    pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
+    if pipeline_name:
+        p = sb.table("pipelines").select("id").eq("name", pipeline_name).limit(1).execute()
+        if p.data:
+            pipeline_id = p.data[0]["id"]
+
+    if not pipeline_id:
+        p = sb.table("pipelines").select("id").order("order_index", desc=False).limit(1).execute()
+        if p.data:
+            pipeline_id = p.data[0]["id"]
+
+    if pipeline_id:
+        s = (
+            sb.table("pipeline_stages")
+            .select("id")
+            .eq("pipeline_id", pipeline_id)
+            .eq("is_protected", False)
+            .order("order_index", desc=False)
+            .limit(1)
+            .execute()
+        )
+        if s.data:
+            stage_id = s.data[0]["id"]
+
     deal = {
         "lead_id": lead_id,
         "title": title,
         "stage": "novo",
         "category": category,
+        "pipeline_id": pipeline_id,
+        "stage_id": stage_id,
     }
     result = sb.table("deals").insert(deal).execute()
     return result.data[0]

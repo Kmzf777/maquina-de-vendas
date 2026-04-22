@@ -128,7 +128,7 @@ export default function VendasPage() {
   }
 
   async function handleCreateDeal(data: {
-    lead_id: string; title: string; value: number; category: string; expected_close_date: string;
+    lead_id: string; title: string; value: number; category: string; expected_close_date: string; pipeline_id?: string;
   }) {
     if (!selectedPipelineId) return;
     const res = await fetch("/api/deals", {
