@@ -34,6 +34,17 @@ def reached_stage(stage: str):
     return check
 
 
+def reached_any_stage(stages: list[str]):
+    def check(run_data: dict) -> tuple[bool, str]:
+        visited = run_data.get("stages_visited", set())
+        hit = [s for s in stages if s in visited]
+        if hit:
+            return True, f"stage {hit[0]} alcancado (entre {stages})"
+        return False, f"nenhum dos stages {stages} alcancado (visitados: {sorted(visited)})"
+    check.__name__ = f"reached_any_{'_'.join(stages)}"
+    return check
+
+
 def visited_multiple_stages(min_count: int = 2):
     def check(run_data: dict) -> tuple[bool, str]:
         count = len(run_data.get("stages_visited", set()))

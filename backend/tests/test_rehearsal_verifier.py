@@ -262,3 +262,32 @@ def test_verify_overall_status_considers_forbids():
     assert "forbids" in result
     assert len(result["forbids"]) == 1
     assert result["forbids"][0]["passed"] is False
+
+
+def test_reached_any_stage_returns_true_if_any_stage_visited():
+    from scripts.rehearsal.archetypes import reached_any_stage
+    check = reached_any_stage(["atacado", "private_label"])
+    run_data = {"stages_visited": {"private_label"}}
+
+    passed, reason = check(run_data)
+
+    assert passed is True
+    assert "private_label" in reason
+
+
+def test_reached_any_stage_returns_false_if_none_visited():
+    from scripts.rehearsal.archetypes import reached_any_stage
+    check = reached_any_stage(["atacado", "private_label"])
+    run_data = {"stages_visited": {"consumo"}}
+
+    passed, reason = check(run_data)
+
+    assert passed is False
+    assert "nenhum" in reason.lower()
+
+
+def test_reached_any_stage_check_name_lists_stages():
+    from scripts.rehearsal.archetypes import reached_any_stage
+    check = reached_any_stage(["atacado", "private_label"])
+
+    assert check.__name__ == "reached_any_atacado_private_label"
