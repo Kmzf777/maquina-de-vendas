@@ -105,3 +105,75 @@ def test_forbids_regex_is_case_insensitive():
     passed, reason = check(run_data)
 
     assert passed is False
+
+
+def test_universal_forbids_contains_five_forbids():
+    assert len(verifier.UNIVERSAL_FORBIDS) == 5
+    labels = [f.__name__ for f in verifier.UNIVERSAL_FORBIDS]
+    assert "forbid_pix" in labels
+    assert "forbid_preco_frete" in labels
+    assert "forbid_prazo" in labels
+    assert "forbid_desconto" in labels
+    assert "forbid_papel" in labels
+
+
+def test_forbid_pix_catches_pix_mention():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_pix")
+    run_data = {"messages": [{"role": "assistant", "content": "te mando a chave pix"}]}
+    passed, _ = check(run_data)
+    assert passed is False
+
+
+def test_forbid_pix_allows_non_pix_text():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_pix")
+    run_data = {"messages": [{"role": "assistant", "content": "aceitamos cartao e boleto"}]}
+    passed, _ = check(run_data)
+    assert passed is True
+
+
+def test_forbid_preco_frete_catches_total_with_freight():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_preco_frete")
+    run_data = {"messages": [{
+        "role": "assistant",
+        "content": "O investimento inicial fica em torno de R$ 2.540"
+    }]}
+    passed, _ = check(run_data)
+    assert passed is False
+
+
+def test_forbid_preco_frete_allows_individual_product_prices():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_preco_frete")
+    run_data = {"messages": [{
+        "role": "assistant",
+        "content": "o classico 250g sai R$ 27,70"
+    }]}
+    passed, _ = check(run_data)
+    assert passed is True
+
+
+def test_forbid_prazo_catches_delivery_promise():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_prazo")
+    run_data = {"messages": [{"role": "assistant", "content": "entrego em 7 dias uteis"}]}
+    passed, _ = check(run_data)
+    assert passed is False
+
+
+def test_forbid_desconto_catches_improvised_discount():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_desconto")
+    run_data = {"messages": [{"role": "assistant", "content": "posso fazer por R$20 pra voce"}]}
+    passed, _ = check(run_data)
+    assert passed is False
+
+
+def test_forbid_papel_catches_commercial_contradiction():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_papel")
+    run_data = {"messages": [{"role": "assistant", "content": "vou passar voce pro comercial"}]}
+    passed, _ = check(run_data)
+    assert passed is False
+
+
+def test_forbid_papel_allows_supervisor_handoff():
+    check = next(f for f in verifier.UNIVERSAL_FORBIDS if f.__name__ == "forbid_papel")
+    run_data = {"messages": [{"role": "assistant", "content": "vou passar voce pro supervisor Joao Bras"}]}
+    passed, _ = check(run_data)
+    assert passed is True

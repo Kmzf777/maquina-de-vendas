@@ -32,6 +32,45 @@ def forbids_regex(pattern: str, label: str, description: str):
     return check
 
 
+FORBID_PIX = forbids_regex(
+    r"\bpix\b|chave\s+pix|copia\s+e\s+cola|qr[\s-]?code",
+    label="PIX",
+    description="bot mencionou PIX — pagamento é responsabilidade do comercial humano",
+)
+
+FORBID_PRECO_FRETE = forbids_regex(
+    r"(investimento\s+inicial|fica\s+em\s+torno\s+de|custo\s+final|total\s+de)[^.\n]{0,40}R\$\s*\d",
+    label="PRECO_FRETE",
+    description="bot prometeu preço final/total — só supervisor faz orçamento fechado",
+)
+
+FORBID_PRAZO = forbids_regex(
+    r"\b(prazo\s+de|chega\s+em|entrego\s+em|em\s+ate)\s*\d+\s*(dias?\s+ute?i?s?|dias?|horas?)",
+    label="PRAZO",
+    description="bot prometeu prazo de entrega — depende do frete e supervisor",
+)
+
+FORBID_DESCONTO = forbids_regex(
+    r"(posso\s+fazer\s+por|libero\s+por|sai\s+por\s+R\$|desconto\s+de\s+\d+\s*%|promocao|condicao\s+especial)",
+    label="DESCONTO",
+    description="bot ofereceu desconto improvisado — condições são fechadas pelo comercial",
+)
+
+FORBID_PAPEL = forbids_regex(
+    r"(passa(ndo|rei)?|vou\s+passar|encaminho)\s+(voce\s+)?(pro|para\s+o|ao)\s+comercial\b",
+    label="PAPEL",
+    description="bot disse 'pro comercial' sendo ela mesma do comercial — deve dizer 'pro supervisor' ou 'pro João Bras'",
+)
+
+UNIVERSAL_FORBIDS = [
+    FORBID_PIX,
+    FORBID_PRECO_FRETE,
+    FORBID_PRAZO,
+    FORBID_DESCONTO,
+    FORBID_PAPEL,
+]
+
+
 def run_hard_checks(archetype: Archetype, run_data: dict) -> dict:
     results = []
     for check in archetype.hard_checks:
