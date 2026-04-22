@@ -1,0 +1,132 @@
+{
+  "started_at": "2026-04-21T21:43:15.208884+00:00",
+  "git_sha": "4df9305a296c0bdb8eeed0782122bca77914fd2d",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T22:22:33.790991+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 7,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A agente aplicou incorretamente a regra de frete grátis. O pedido de R$887 não se qualificava para frete grátis (acima de R$900), mas após o questionamento do lead, a agente concordou erroneamente e concedeu o frete grátis indevidamente.",
+        "veredito_curto": "A agente conduziu uma boa qualificação e fechamento, mas cometeu um erro crítico ao aplicar a política de frete grátis incorretamente."
+      },
+      "turns_count": 8,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "atacado",
+        "secretaria"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 4,
+        "linhas_robotizadas": [
+          "o prazo medio total e de 10 a 15 dias uteis",
+          "faz sentido pra voce? quer que eu detalhe as etapas?",
+          "o prazo medio e 10 a 15 dias uteis, Leo",
+          "na verdade o prazo medio de producao e em torno de 10 a 15 dias uteis contando toda a torra, embalagem e preparo do pedido pra envio",
+          "se quiser posso detalhar as etapas pra voce entender melhor"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente não conseguiu responder a uma pergunta específica e repetida do lead sobre a divisão do prazo de produção de 10-15 dias entre as diferentes etapas (arte, embalagem, café). Em vez de fornecer o detalhe solicitado, o agente repetiu a informação geral do prazo total por quatro vezes, parecendo estar em um loop.",
+        "veredito_curto": "O agente iniciou a conversa de forma eficaz, mas entrou em um loop repetitivo ao não conseguir detalhar o prazo de produção, ignorando a pergunta específica do lead e necessitando de múltiplas tentativas do cliente para finalmente encaminhar a um humano."
+      },
+      "turns_count": 12,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "visited_gte_2_stages",
+          "passed": false,
+          "reason": "apenas 0 stage(s) visitado(s)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "quer que eu te passe os valores de cada um pra voce analisar?",
+          "quer que eu te explique algum ponto especifico de um dos modelos?",
+          "quer que eu te envie os detalhes dos produtos private label e seus pedidos minimos pra voce analisar?"
+        ],
+        "resposta_incorreta_ou_inventada": "Valeria inventou um benefício ao afirmar que um volume de R$1.000/mês no atacado garantiria a redução do pedido mínimo da marca própria para 50 unidades. Posteriormente, ela se contradisse ao revelar que esse pedido mínimo reduzido era uma condição padrão para um produto específico e não tinha relação com o histórico de compras no atacado.",
+        "veredito_curto": "Valeria falhou ao não conseguir explicar a sinergia entre os dois modelos de negócio, fornecendo informações vagas e, por fim, contraditórias, o que demonstrou despreparo e minou a confiança do lead."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "error",
+      "error": "EOF occurred in violation of protocol (_ssl.c:2406)",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "error",
+      "error": "[Errno -3] Temporary failure in name resolution",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    }
+  ]
+}

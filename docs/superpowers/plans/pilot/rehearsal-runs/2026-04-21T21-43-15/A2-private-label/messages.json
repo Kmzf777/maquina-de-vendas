@@ -1,0 +1,443 @@
+[
+  {
+    "id": "5c5594d9-38ba-4e83-ac51-869e70eb9420",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:13.366695+00:00"
+  },
+  {
+    "id": "d996b22e-958a-4ad5-a59c-55f38ab8aa1d",
+    "role": "assistant",
+    "content": "boa noite",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:15.52387+00:00"
+  },
+  {
+    "id": "dadc580a-d2f3-4983-9305-521fe3f56cf0",
+    "role": "assistant",
+    "content": "sou a valeria, do comercial da Cafe Canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:18.261822+00:00"
+  },
+  {
+    "id": "cfc65ce6-26aa-4a23-96e4-1dd0cb322eb6",
+    "role": "assistant",
+    "content": "me diz uma coisa, com quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:20.643757+00:00"
+  },
+  {
+    "id": "d319d588-fa9c-4252-ae66-869b2f068908",
+    "role": "user",
+    "content": "Opa, Valeria, prazer! Sou o Leo. Tô super animado com a possibilidade de lançar minha própria marca e queria entender como funciona o processo com vocês.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:35.600904+00:00"
+  },
+  {
+    "id": "7229ee33-4ed6-4ca4-ac1e-84aad7e4d4ac",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-21T21:47:37.117064+00:00"
+  },
+  {
+    "id": "28d2335f-342f-4a16-abaa-bbac2a455a72",
+    "role": "assistant",
+    "content": "prazer, Leo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:40.980662+00:00"
+  },
+  {
+    "id": "795a8557-321c-4705-90b9-441a3fba1a62",
+    "role": "assistant",
+    "content": "que projeto bacana, criar sua propria marca e o melhor investimento que voce pode fazer nesse ramo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:45.102997+00:00"
+  },
+  {
+    "id": "b886a266-ac4c-4a44-911f-5da65a8a66d0",
+    "role": "assistant",
+    "content": "vou te explicar como funciona o private label com a gente",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:49.04323+00:00"
+  },
+  {
+    "id": "b2929bd1-b1ea-47e4-8abd-e09ab6c2e6c7",
+    "role": "assistant",
+    "content": "toda a parte de marca e responsabilidade sua",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:51.130252+00:00"
+  },
+  {
+    "id": "3d29ba72-dc3a-4272-9622-0b208d8a431e",
+    "role": "assistant",
+    "content": "quando a gente recebe a logo, fazemos toda a embalagem pra voce",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:47:55.778048+00:00"
+  },
+  {
+    "id": "1dbe27bb-7087-4328-803e-dd8fab43843c",
+    "role": "assistant",
+    "content": "temos alguns modelos sugeridos que nao geram custo extra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:48:00.25967+00:00"
+  },
+  {
+    "id": "8f8168d6-4c2a-4002-8abd-aaa904e73443",
+    "role": "assistant",
+    "content": "fazemos a torra, moagem, empacotamento, selagem, datacao e envio",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:48:03.193721+00:00"
+  },
+  {
+    "id": "5a862b4c-1c3f-463c-9fd8-bd72ce473d92",
+    "role": "assistant",
+    "content": "o cafe chega pronto pra venda com a sua marca no pacote",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:48:05.136715+00:00"
+  },
+  {
+    "id": "efecbfa3-bcb7-44dc-9315-13d939eace04",
+    "role": "assistant",
+    "content": "faz sentido pra voce? quer que eu detalhe os precos e os modelos de embalagem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:48:08.836338+00:00"
+  },
+  {
+    "id": "cd5c29e8-a9a3-4b3b-a270-7c84e304b23f",
+    "role": "user",
+    "content": "Faz todo o sentido, pode detalhar sim! E aproveitando, qual é a quantidade mínima pra começar e como funciona o custo se eu quiser usar um design 100% meu na embalagem?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:48:19.643737+00:00"
+  },
+  {
+    "id": "f56d0ae5-7e4c-4d66-ab45-d8f26afc9580",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-21T21:48:26.35691+00:00"
+  },
+  {
+    "id": "7d91cd01-5bdf-4480-9e66-05d8494ebe93",
+    "role": "assistant",
+    "content": "alem do 250g e 500g com a embalagem nossa, temos o microlote 250g, que tem um preco especial e a opcao de embalagem do cliente a partir de 50 unidades",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:48:34.420838+00:00"
+  },
+  {
+    "id": "6787cb74-9439-4ec0-bfdb-10390a7c6de1",
+    "role": "assistant",
+    "content": "tambem temos drip coffee em sachês e capsulas nespresso, se for do seu interesse depois te conto os detalhes",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:48:40.674865+00:00"
+  },
+  {
+    "id": "c1168040-b2b2-4572-b090-7a9c7824cd1a",
+    "role": "assistant",
+    "content": "quer que eu te passe os valores do 250g com embalagem inclusa pra voce ter uma ideia?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:48:44.026639+00:00"
+  },
+  {
+    "id": "e6398d5c-6299-4ae9-92c8-2abf2fcbdca9",
+    "role": "user",
+    "content": "Claro, pode mandar sim! E me explica melhor essa opção do microlote com 50 unidades, como ficaria o custo se eu usar a minha própria embalagem?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:00.028457+00:00"
+  },
+  {
+    "id": "49c4d957-b4bf-4187-9dc5-325b321af557",
+    "role": "assistant",
+    "content": "o 250g sai R$23,90 a unidade, ja com embalagem e silk da sua logo",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:07.779734+00:00"
+  },
+  {
+    "id": "465d37e4-0d0c-4f4f-a7a7-aad1b9815613",
+    "role": "assistant",
+    "content": "se voce ja tiver embalagem propria, cai pra R$22,90",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:11.530606+00:00"
+  },
+  {
+    "id": "5d82838a-7b4c-45db-af98-4d801dec33e0",
+    "role": "assistant",
+    "content": "o pedido minimo e de 100 unidades",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:13.36596+00:00"
+  },
+  {
+    "id": "06e114a4-af89-4de1-bd2d-3fd918a1aabf",
+    "role": "assistant",
+    "content": "quer que eu te envie umas fotos dos modelos que temos? ajuda bastante a visualizar o que voce pode fazer",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:19.354403+00:00"
+  },
+  {
+    "id": "2dc97720-9fac-4d4b-ae22-be88776c501a",
+    "role": "user",
+    "content": "Opa, manda as fotos sim, por favor! E só pra confirmar, o pedido mínimo é 100 ou ainda existe aquela opção de 50 unidades que você comentou antes?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:30.685589+00:00"
+  },
+  {
+    "id": "733db8d8-1bf4-462d-b0e2-961108578f3f",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-21T21:49:35.972177+00:00"
+  },
+  {
+    "id": "a0dc586c-efb2-4f23-80f3-d76a8779b62a",
+    "role": "assistant",
+    "content": "to enviando as fotos dos modelos que temos pra private label",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:47.466952+00:00"
+  },
+  {
+    "id": "247b68bb-1fc4-4d9a-958b-59d8d41804ee",
+    "role": "assistant",
+    "content": "o pedido minimo e 100 unidades para os pacotes 250g e 500g",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:50.252817+00:00"
+  },
+  {
+    "id": "f111b968-6900-4930-bc03-dfb3b3481577",
+    "role": "assistant",
+    "content": "ja o microlote 250g com embalagem propria tem pedido minimo de 50 unidades",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:56.075672+00:00"
+  },
+  {
+    "id": "639915ff-1ffe-4d9e-875d-d5d800cb4dd1",
+    "role": "assistant",
+    "content": "faz sentido pra voce? quer que eu te envie os valores do microlote com embalagem propria?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:49:59.389265+00:00"
+  },
+  {
+    "id": "cd2d7646-8253-43b6-9f8e-b6668f7ce310",
+    "role": "user",
+    "content": "Faz todo o sentido agora, pode mandar os valores sim! E aproveitando, qual o prazo de produção depois que a arte é aprovada?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:50:12.387737+00:00"
+  },
+  {
+    "id": "f63f65b2-c655-4e0c-9eb0-9d763c272bc8",
+    "role": "assistant",
+    "content": "o prazo medio e 10 a 15 dias uteis apos a aprovacao da arte e recebimento da logo e embalagem, dependendo do volume e da complexidade do pedido",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:50:21.515725+00:00"
+  },
+  {
+    "id": "e1c44347-1e82-418b-b536-f60f4db1c636",
+    "role": "assistant",
+    "content": "faz sentido pra voce? quer que eu te detalhe as etapas do processo?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:50:26.0577+00:00"
+  },
+  {
+    "id": "d63fc2a8-dce2-45b1-8009-ceba5ed01f1c",
+    "role": "user",
+    "content": "Com certeza, Valeria, pode detalhar sim! Já estou super empolgado imaginando tudo pronto, então quanto mais eu souber do processo, melhor.",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:50:36.51066+00:00"
+  },
+  {
+    "id": "85dcc6c4-bd99-4b45-96bb-16cd31681fc3",
+    "role": "assistant",
+    "content": "o microlote 250g com embalagem propria sai R$25,40 a unidade, com pedido minimo de 50 unidades mesmo",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:50:49.492785+00:00"
+  },
+  {
+    "id": "613438c7-54e8-4a55-a735-7d429cc6bffe",
+    "role": "assistant",
+    "content": "quer que eu te explique os detalhes dos drip coffee e capsulas nespresso?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:50:55.235546+00:00"
+  },
+  {
+    "id": "0739f913-a620-4f0f-bb19-65dcba3c2eb6",
+    "role": "user",
+    "content": "Drip e cápsulas são super interessantes pra uma segunda fase, com certeza! Mas antes, pode me detalhar as etapas do processo do café em pacote, desde a aprovação da arte até o envio?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:09.140427+00:00"
+  },
+  {
+    "id": "200f43d1-7473-4813-ad47-1b33672d59ad",
+    "role": "assistant",
+    "content": "com certeza, Leo, o processo e assim",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:24.225812+00:00"
+  },
+  {
+    "id": "c3e28987-a2ec-4e9b-af7a-a3953807ee70",
+    "role": "assistant",
+    "content": "voce envia a logo e a gente desenvolve a arte da embalagem junto com voce",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:28.845706+00:00"
+  },
+  {
+    "id": "ec37f927-4c14-4598-8187-78d90f8489f7",
+    "role": "assistant",
+    "content": "quando a arte estiver aprovada, produzimos a embalagem",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:32.393526+00:00"
+  },
+  {
+    "id": "a431c7b3-2941-423f-bbcd-1321ce5bb2f6",
+    "role": "assistant",
+    "content": "ai a gente torra o cafe, moa se for o caso, embala, sela, data e separa tudo",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:35.339851+00:00"
+  },
+  {
+    "id": "c0b2ff57-589a-4228-b489-de1f3a3c3806",
+    "role": "assistant",
+    "content": "por fim, enviamos os pedidos prontos pra voce vender",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:37.75191+00:00"
+  },
+  {
+    "id": "537d93bb-a6da-4151-92a4-b1fa259543c6",
+    "role": "assistant",
+    "content": "quer que eu te explique os prazos de cada etapa?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:41.308531+00:00"
+  },
+  {
+    "id": "cbc45310-4494-4463-b3be-3f86295e257a",
+    "role": "user",
+    "content": "Com certeza, Valeria, manda bala! Entender os prazos de cada etapa é essencial pra eu já começar a me planejar para o lançamento.",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:51:55.47239+00:00"
+  },
+  {
+    "id": "fb056593-0ba1-4c68-ad37-f1a1dbbebbe1",
+    "role": "assistant",
+    "content": "o processo e assim: depois que a arte da embalagem estiver aprovada, a torra e moagem sao feitas sob demanda aqui na torrefacao da fazenda em Sao Roque de Minas",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:04.157554+00:00"
+  },
+  {
+    "id": "a87124f5-7c1e-4e28-92d8-2b98cdcde57c",
+    "role": "assistant",
+    "content": "entao tem a parte de empacotamento, selagem, datacao e separacao",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:07.18677+00:00"
+  },
+  {
+    "id": "291f181f-ed6b-49e6-bdb4-fa96fd076c14",
+    "role": "assistant",
+    "content": "o prazo medio total e de 10 a 15 dias uteis",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:10.411078+00:00"
+  },
+  {
+    "id": "9f809d45-8f57-4616-a86a-91f0be01252a",
+    "role": "assistant",
+    "content": "faz sentido pra voce? quer que eu detalhe as etapas?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:12.577319+00:00"
+  },
+  {
+    "id": "16111934-8080-4ffd-b3aa-30496f5cf7e0",
+    "role": "user",
+    "content": "Opa, sim! Só pra eu conseguir montar o cronograma do lançamento aqui, como esses 10 a 15 dias se dividem entre a aprovação da arte, produção da embalagem e a parte do café em si?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:27.007613+00:00"
+  },
+  {
+    "id": "6f5bc166-4441-4037-b54b-ce73f7cfbdd3",
+    "role": "assistant",
+    "content": "o prazo medio e 10 a 15 dias uteis, Leo",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:31.590105+00:00"
+  },
+  {
+    "id": "1f9c5e36-827c-4d5b-b74d-c8ba3623d8f3",
+    "role": "assistant",
+    "content": "o processo e assim: primeiro voce envia a arte da sua marca pra gente aprovar e ajustar se precisar",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:39.537035+00:00"
+  },
+  {
+    "id": "b2fc89c7-2f37-40d0-bae5-dc7bf3295d71",
+    "role": "assistant",
+    "content": "depois a embalagem é produzida com o design aprovado",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:42.518382+00:00"
+  },
+  {
+    "id": "3f205bf2-1b7c-45e7-8627-88d08cd849c5",
+    "role": "assistant",
+    "content": "enquanto isso a gente torra e prepara o cafe conforme pedido",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:46.1152+00:00"
+  },
+  {
+    "id": "38d317ca-ff6c-44e2-80fc-0951a774dc3a",
+    "role": "assistant",
+    "content": "por fim, fazemos o empacotamento, datacao e envio",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:48.23205+00:00"
+  },
+  {
+    "id": "c67e31cf-7aaf-4f94-b5e3-768b31b9d19f",
+    "role": "assistant",
+    "content": "quer que eu detalhe mais alguma etapa?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:52:49.675794+00:00"
+  },
+  {
+    "id": "42896ab2-5780-4382-986b-a37c5d6f55ac",
+    "role": "user",
+    "content": "Beleza, acho que entendi o fluxo geral! Só pra eu fechar meu cronograma aqui, quantos dias desses 10-15 são só para a produção da embalagem? Talvez seja mais fácil a gente bater um papo rápido pra alinhar isso e os próximos passos, o que acha?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:53:06.556654+00:00"
+  },
+  {
+    "id": "19412948-8a6d-495d-ac1e-8f84d23f9bfc",
+    "role": "assistant",
+    "content": "na verdade o prazo medio de producao e em torno de 10 a 15 dias uteis contando toda a torra, embalagem e preparo do pedido pra envio",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:53:18.206025+00:00"
+  },
+  {
+    "id": "96dba18c-f9fe-499d-9a48-d65efc1029eb",
+    "role": "assistant",
+    "content": "se quiser posso detalhar as etapas pra voce entender melhor",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:53:22.739603+00:00"
+  },
+  {
+    "id": "cf7896d5-7d43-411a-bd22-dbff1f72c214",
+    "role": "assistant",
+    "content": "me diz uma coisa, voce ja tem uma marca ou ta pensando em criar uma do zero?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:53:28.189346+00:00"
+  },
+  {
+    "id": "d06f9f01-362f-4203-aec3-16cb76cfe218",
+    "role": "user",
+    "content": "Estou criando a marca do zero, por isso que entender o cronograma em detalhes é tão importante pra mim. A gente consegue marcar aquele papo rápido pra alinhar isso e os próximos passos?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:53:38.546461+00:00"
+  },
+  {
+    "id": "ece20711-1fc7-4b9d-8da1-fafc0e50bc1f",
+    "role": "system",
+    "content": "[tool:encaminhar_humano] Lead encaminhado para Joao Bras: private label — cliente criando marca do zero",
+    "stage": null,
+    "created_at": "2026-04-21T21:53:41.563323+00:00"
+  },
+  {
+    "id": "45697700-c540-44f7-b3d3-da4a3b37a8d2",
+    "role": "assistant",
+    "content": "passei seu projeto pro Joao Bras, ele e quem conduz os proximos passos de arte, amostra piloto e fechamento. ele fala com voce aqui mesmo em instantes",
+    "stage": "private_label",
+    "created_at": "2026-04-21T21:53:48.098832+00:00"
+  }
+]

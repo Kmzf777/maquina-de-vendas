@@ -1,0 +1,30 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 8,
+    "linhas_robotizadas": [
+      "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente ignorou a pergunta sobre o 'prazo de produção' na primeira vez que foi feita, forçando o lead a perguntar novamente na mensagem seguinte.",
+    "veredito_curto": "O agente conduziu a conversa de forma natural e cumpriu os objetivos, mas falhou em responder a todas as perguntas do lead de uma só vez, necessitando que o lead repetisse a questão."
+  },
+  "turns_count": 5,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}

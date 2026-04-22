@@ -1,0 +1,660 @@
+[
+  {
+    "id": "a8627e44-e866-4bef-976b-531587659906",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:16.18112+00:00"
+  },
+  {
+    "id": "01878a78-2091-4fff-95d3-b4bb9a460672",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:21.185323+00:00"
+  },
+  {
+    "id": "ffb85a2e-db18-47e0-a4f8-2bc9ec311f10",
+    "role": "assistant",
+    "content": "aqui e a Valeria, do comercial da Cafe Canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:23.696353+00:00"
+  },
+  {
+    "id": "604c508e-2502-45e6-9bcc-3047cf3f35e3",
+    "role": "assistant",
+    "content": "vi que voce demonstrou interesse nos nossos cafes, queria entender melhor sua demanda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:30.408465+00:00"
+  },
+  {
+    "id": "d7b13957-485c-4cd8-9a58-1175e21f3387",
+    "role": "assistant",
+    "content": "com quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:32.525056+00:00"
+  },
+  {
+    "id": "ebaaf6e1-f3d9-4421-ad1c-c6e0e2a49bec",
+    "role": "user",
+    "content": "aqui e o marcos. qual o preco do kg de vcs?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:45.164448+00:00"
+  },
+  {
+    "id": "0227624f-3ac7-43f6-9b5a-306fd28116ba",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: secretaria",
+    "stage": null,
+    "created_at": "2026-04-21T18:26:46.998844+00:00"
+  },
+  {
+    "id": "194a4f20-5149-4bf0-bb98-205ad3c527ad",
+    "role": "assistant",
+    "content": "prazer, Marcos",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:49.605352+00:00"
+  },
+  {
+    "id": "9c2b8cab-edaa-46df-a9e7-5fac653ee68b",
+    "role": "assistant",
+    "content": "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:52.975402+00:00"
+  },
+  {
+    "id": "95cffee6-b1aa-494d-b470-da189bf4dfc0",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:26:59.827605+00:00"
+  },
+  {
+    "id": "331cb464-b921-43bd-bb7e-6a0db2c2f425",
+    "role": "user",
+    "content": "brasil. e pra ca mesmo. agora pode me falar o preco?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:27:14.745473+00:00"
+  },
+  {
+    "id": "e4de592a-d9d2-47d1-848d-9482a3778c77",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: consumo",
+    "stage": null,
+    "created_at": "2026-04-21T18:27:16.365105+00:00"
+  },
+  {
+    "id": "032ef9dc-be7f-4a8b-af2f-676928175d19",
+    "role": "assistant",
+    "content": "Marcos, pra consumo proprio a gente recomenda comprar direto na loja online que tem o frescor garantido e varias opcoes de embalagem",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:27:27.330337+00:00"
+  },
+  {
+    "id": "f34a2352-3572-4391-951e-493f6e705cb6",
+    "role": "assistant",
+    "content": "posso te passar o link com um cupom de 10% de desconto pra facilitar sua compra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:27:33.501625+00:00"
+  },
+  {
+    "id": "b8741a64-d8b3-4c02-bd1c-93b34dcacf33",
+    "role": "assistant",
+    "content": "e assim vc escolhe o melhor tipo e quantidade pra voce, faz sentido?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:27:36.52607+00:00"
+  },
+  {
+    "id": "b06b7585-3969-42b2-8fcc-ee4065b126ea",
+    "role": "user",
+    "content": "Nao, e pra minha cafeteria. Qual o preco pra atacado?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:27:52.290051+00:00"
+  },
+  {
+    "id": "d2deefc6-31dd-4614-aa90-fe8c06e5ed61",
+    "role": "assistant",
+    "content": "entendi, Marcos, bacana que voce ta nesse ramo",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:27:58.642894+00:00"
+  },
+  {
+    "id": "ea8a9b04-57b5-4918-99c7-136b46d2a445",
+    "role": "assistant",
+    "content": "vou mudar aqui para o atendimento de atacado pra te passar as opcoes",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:01.685743+00:00"
+  },
+  {
+    "id": "d83837bb-a0be-4419-aed9-86ed7b27a822",
+    "role": "assistant",
+    "content": "me conta uma coisa, sua cafeteria tem qual publico?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:06.454376+00:00"
+  },
+  {
+    "id": "2e84ac97-4ccb-4efc-a5a4-a1c67f2795f6",
+    "role": "user",
+    "content": "Olha, o publico aqui e variado. Me fala o preco do kg e se voces mandam amostra.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:19.733875+00:00"
+  },
+  {
+    "id": "47a8cffa-497f-4819-bdaa-5efbe1f6eb0b",
+    "role": "assistant",
+    "content": "Marcos, o preço do kg varia conforme o tipo de café e a quantidade que voce vai comprar",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:27.032268+00:00"
+  },
+  {
+    "id": "f43e41d7-0d10-4c5a-b497-009dcde8db54",
+    "role": "assistant",
+    "content": "o pedido minimo para atacado é R$ 300,00",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:28.598295+00:00"
+  },
+  {
+    "id": "d1d13f93-fa0d-4f34-b78e-30f7963368ea",
+    "role": "assistant",
+    "content": "sobre amostra, a gente nao trabalha com amostra gratuita",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:30.790769+00:00"
+  },
+  {
+    "id": "7e4807e9-ad71-438d-ba28-e87aaea418d3",
+    "role": "assistant",
+    "content": "mas voce pode fazer um pedido pequeno pelo minimo e testar o sabor direto, assim ja garante o preco de revenda",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:36.664376+00:00"
+  },
+  {
+    "id": "54541a97-0b38-42f1-8ea1-df93a5e3b002",
+    "role": "assistant",
+    "content": "quer que eu te passe os valores dos tipos de café que temos?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:41.191562+00:00"
+  },
+  {
+    "id": "46dc5f62-6e79-41c0-820a-4af3432069d6",
+    "role": "user",
+    "content": "Pode mandar. Ja me fala da entrega pra BH tambem.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:28:53.868888+00:00"
+  },
+  {
+    "id": "8736cc46-b9cb-41d7-9bf5-55b585eff5ff",
+    "role": "assistant",
+    "content": "entrega pra BH a gente faz normalmente, o frete e calculado conforme o volume e a transportadora escolhida",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:01.788126+00:00"
+  },
+  {
+    "id": "7cef67a7-b2f9-46b2-9610-b6e5238ad224",
+    "role": "assistant",
+    "content": "o prazo médio é de 10 a 15 dias úteis para produção e envio",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:06.158629+00:00"
+  },
+  {
+    "id": "7bbc5290-329e-4526-af43-f417c268737a",
+    "role": "assistant",
+    "content": "posso te passar os valores dos cafés agora?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:10.166191+00:00"
+  },
+  {
+    "id": "1621404a-02d8-4cc2-99fc-86337ef1aa0e",
+    "role": "user",
+    "content": "Sim. Manda os precos.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:21.613457+00:00"
+  },
+  {
+    "id": "9f662c76-0289-49de-b268-c640fdd39d1b",
+    "role": "assistant",
+    "content": "o Classico, que e o nosso blend mais equilibrado, sai a R$ 65,00 o kg no atacado com pedido minimo de R$ 300",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:32.605473+00:00"
+  },
+  {
+    "id": "04793c52-2017-448f-b5e2-42017e4ea7fc",
+    "role": "assistant",
+    "content": "temos o Suave, com notas mais doces e delicadas, por R$ 68,00 o kg",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:35.310031+00:00"
+  },
+  {
+    "id": "6e424897-1d78-4c39-993c-586978e9923c",
+    "role": "assistant",
+    "content": "e o Canela, com perfil mais encorpado e aroma intenso, por R$ 70,00 o kg",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:39.702856+00:00"
+  },
+  {
+    "id": "4292e30e-e89b-41d2-ba1e-1573db69cace",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:41.706151+00:00"
+  },
+  {
+    "id": "52cbe7cb-7390-458b-bbb4-f36dcdd4298b",
+    "role": "user",
+    "content": "O preco ta ok. Mas sem provar o cafe antes nao rola comprar 300 reais.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:29:53.184211+00:00"
+  },
+  {
+    "id": "2706878b-0cae-44f4-a293-0b066b0462ca",
+    "role": "assistant",
+    "content": "Marcos, entendo que provar antes é importante pra voce decidir",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:00.491873+00:00"
+  },
+  {
+    "id": "66915be8-077d-4616-b8cb-30c4647c19dc",
+    "role": "assistant",
+    "content": "mas a gente nao trabalha com amostra gratuita",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:03.228041+00:00"
+  },
+  {
+    "id": "c95f31d9-a369-4b74-b926-6ac48b9bceb9",
+    "role": "assistant",
+    "content": "o pedido minimo é R$ 300,00, que já dá pra testar e sentir o sabor de verdade do nosso café especial",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:10.548471+00:00"
+  },
+  {
+    "id": "ff4b3e28-b2fe-4ce7-8052-ea64078f6ab7",
+    "role": "assistant",
+    "content": "quer que eu te ajude a escolher qual o melhor tipo pro perfil do seu público?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:15.213848+00:00"
+  },
+  {
+    "id": "38def88e-f9c3-4688-8a4d-d9847a670eea",
+    "role": "user",
+    "content": "Nao, eu mesmo tenho que provar pra ver se gosto. Nao da pra fazer um pedido menor, so pra teste?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:31.853994+00:00"
+  },
+  {
+    "id": "70dc49e1-52c1-401a-8d5b-8c66f293a33a",
+    "role": "assistant",
+    "content": "o pedido minimo para atacado e R$ 300,00, Marcos, esse valor ja da pra testar e sentir a qualidade no seu negocio mesmo de perto",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:42.98218+00:00"
+  },
+  {
+    "id": "0e55884e-9a66-4d05-83df-64490200e4a8",
+    "role": "assistant",
+    "content": "se quiser, posso detalhar os tipos de café e valores pra esse minimo de R$ 300,00",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:47.663393+00:00"
+  },
+  {
+    "id": "d8ed7638-697c-4579-81b9-58d06ec8fff5",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:30:49.883325+00:00"
+  },
+  {
+    "id": "027541ef-e98f-4401-8e07-6386093a4648",
+    "role": "user",
+    "content": "Nao, nao faz sentido. 300 reais e muito so pra teste. Se nao tiver outro jeito, obrigado.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:02.108267+00:00"
+  },
+  {
+    "id": "48bed542-b88e-4957-8be1-36ee0aad98cf",
+    "role": "assistant",
+    "content": "entendo que R$ 300,00 pode parecer um valor alto pra teste, Marcos",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:09.335877+00:00"
+  },
+  {
+    "id": "6a3dceb5-7350-4103-8c0e-db0be209f00b",
+    "role": "assistant",
+    "content": "a gente realmente nao trabalha com amostras gratuitas",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:11.283801+00:00"
+  },
+  {
+    "id": "85ab4a1c-1e84-431a-9480-1b1be596adfb",
+    "role": "assistant",
+    "content": "mas se quiser, posso ajudar a montar um pedido que fique mais proximo do seu orçamento inicial",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:15.779978+00:00"
+  },
+  {
+    "id": "fddc9795-dac9-4796-ba9f-872bb899bb7b",
+    "role": "assistant",
+    "content": "quer tentar assim?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:17.257769+00:00"
+  },
+  {
+    "id": "2c37de28-e9d2-4f3a-8296-cb6e89ec200b",
+    "role": "user",
+    "content": "Nao adianta. Se nao der pra fazer um pedido menor so pra eu provar, entao nao vai rolar.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:27.355887+00:00"
+  },
+  {
+    "id": "0ca74275-0d07-43a0-aa34-fd88a461587f",
+    "role": "assistant",
+    "content": "Marcos, entendo sua colocação, mas o pedido minimo de R$ 300 e o caminho pra provar nosso café e garantir o preço bom no atacado",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:39.468514+00:00"
+  },
+  {
+    "id": "f08d95da-c7d0-40c4-b2cf-17aaf3748e2a",
+    "role": "assistant",
+    "content": "se quiser, posso ajudar a montar um pedido que caiba no seu orçamento e ainda te permita testar os sabores que a gente tem",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:45.194367+00:00"
+  },
+  {
+    "id": "54f86cec-b484-468d-a177-9f25d6bcbaca",
+    "role": "assistant",
+    "content": "quer que eu faça isso?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:31:46.530361+00:00"
+  },
+  {
+    "id": "132760e0-4dea-464e-9144-c04c86fc45c0",
+    "role": "user",
+    "content": "O problema nao e me ajudar a montar o pedido. Se o minimo pra testar e 300 reais, pra mim nao da.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:03.999897+00:00"
+  },
+  {
+    "id": "a430183b-52c7-42f3-9612-e10f6f5d8f37",
+    "role": "assistant",
+    "content": "entendo que o minimo pode ser um desafio no começo, Marcos",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:08.938795+00:00"
+  },
+  {
+    "id": "d0614e63-68b4-4fa0-9796-64393c1b8767",
+    "role": "assistant",
+    "content": "mas o mercado de cafe especial tem margem boa e a fidelizacao do cliente compensa o investimento inicial",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:17.890041+00:00"
+  },
+  {
+    "id": "30dd1ee8-5e4e-434b-80ea-c470e34c8656",
+    "role": "assistant",
+    "content": "se quiser, posso te ajudar a escolher um mix que fique mais próximo do seu orçamento e ainda assim garanta qualidade e frescor",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:27.195247+00:00"
+  },
+  {
+    "id": "889b9a1d-00d7-4719-afa1-4dd76feb0836",
+    "role": "assistant",
+    "content": "quer tentar assim?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:28.729834+00:00"
+  },
+  {
+    "id": "8a6ed1fb-76ed-497f-a914-8b140d36fd23",
+    "role": "user",
+    "content": "Nao. Ja te falei que esse valor so pra teste pra mim nao funciona. Obrigado.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:41.931321+00:00"
+  },
+  {
+    "id": "81e569f7-1435-4f63-818c-6395c3c731c9",
+    "role": "assistant",
+    "content": "entendo, Marcos",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:45.29378+00:00"
+  },
+  {
+    "id": "baff4300-3111-4123-87d5-62a17adb439c",
+    "role": "assistant",
+    "content": "o mercado de café especial tem esse padrão de preço justamente pela qualidade e cuidado em toda a cadeia",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:53.01714+00:00"
+  },
+  {
+    "id": "fcc03828-030f-4deb-a347-0ce4876c2994",
+    "role": "assistant",
+    "content": "se mudar de ideia, estou por aqui pra ajudar no que precisar",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:32:55.783033+00:00"
+  },
+  {
+    "id": "dd9dae70-6210-4cff-b717-6e451380f775",
+    "role": "user",
+    "content": "Ta bom. Entao nao da. Obrigado.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:12.615233+00:00"
+  },
+  {
+    "id": "a773f18c-ad7e-4893-ac7a-31b3d201235a",
+    "role": "assistant",
+    "content": "entendo, Marcos, obrigado pelo retorno mesmo assim",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:17.322633+00:00"
+  },
+  {
+    "id": "0956d94c-7f3f-4387-90c4-aaf46da99854",
+    "role": "assistant",
+    "content": "se mudar de ideia ou quiser conversar de novo, é só me chamar aqui",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:22.662313+00:00"
+  },
+  {
+    "id": "0c50b2bc-378a-46a5-ab1b-466de4bfc357",
+    "role": "user",
+    "content": "Blz entao. Valeu.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:43.153824+00:00"
+  },
+  {
+    "id": "66451574-586f-4d86-a646-755adeb3621e",
+    "role": "assistant",
+    "content": "Marcos, vou passar os valores dos cafés pra voce agora mesmo",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:49.651126+00:00"
+  },
+  {
+    "id": "7e3598b0-038d-4417-b1e9-7275e9749d83",
+    "role": "assistant",
+    "content": "o Classico, que é mais encorpado e com notas achocolatadas, sai por R$ 65 o kg no atacado",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:54.796159+00:00"
+  },
+  {
+    "id": "e6f85a24-6259-4bce-99df-cd078c654e0e",
+    "role": "assistant",
+    "content": "o Suave, com perfil mais leve e frutado, custa R$ 68 o kg",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:33:58.734626+00:00"
+  },
+  {
+    "id": "5cac1e80-73b0-47ac-940a-7fc4a340185b",
+    "role": "assistant",
+    "content": "o Canela, com toque especial e aroma marcante, fica em R$ 70 o kg",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:03.400909+00:00"
+  },
+  {
+    "id": "2e3ea8cf-560d-4184-9a04-ac4dbe59c0b7",
+    "role": "assistant",
+    "content": "os pedidos começam no minimo de R$ 300",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:05.923784+00:00"
+  },
+  {
+    "id": "ae03b47f-e6f0-49a4-8417-9960a24f1167",
+    "role": "assistant",
+    "content": "quer que eu te ajude a fechar esse pedido?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:09.071909+00:00"
+  },
+  {
+    "id": "26bcc356-0d03-4327-a65a-b7c84a6d2692",
+    "role": "user",
+    "content": "Uai, a gente ja falou disso. Eu nao vou pedir 300 reais so pra provar o cafe.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:18.631354+00:00"
+  },
+  {
+    "id": "650f6e6b-5abd-4de6-9e3b-54cddb238f26",
+    "role": "assistant",
+    "content": "entendo, Marcos, esse é um ponto comum no mercado de cafe especial pro atacado mesmo",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:26.816839+00:00"
+  },
+  {
+    "id": "60a990fa-979b-47c1-9c12-b6a4774db3cc",
+    "role": "assistant",
+    "content": "o pedido minimo e uma forma de garantir que o cafe chega fresco e com qualidade, alem de viabilizar a logistica",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:31.993167+00:00"
+  },
+  {
+    "id": "f7a90843-789c-43ec-a952-e881473a4879",
+    "role": "assistant",
+    "content": "posso te ajudar a escolher um sabor que combine com seu publico, pra maximizar a chance de sucesso na prova e venda",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:40.828027+00:00"
+  },
+  {
+    "id": "478003a3-23c9-4446-af5c-0e56f3a53d6e",
+    "role": "assistant",
+    "content": "quer que eu detalhe os perfis dos nossos principais cafés?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:44.425209+00:00"
+  },
+  {
+    "id": "616316c6-409a-430e-9d1d-b0cdffbb3db8",
+    "role": "user",
+    "content": "Nao precisa. O problema nao e o perfil do cafe, e o pedido minimo pra eu poder provar.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:34:53.957+00:00"
+  },
+  {
+    "id": "49bf6913-35ec-49c3-9187-e13e7fb3cacd",
+    "role": "assistant",
+    "content": "entendo, Marcos, o pedido minimo de R$ 300 é justamente pra garantir que o café seja fresco e a produção compense o investimento",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:03.491257+00:00"
+  },
+  {
+    "id": "cb3766d2-0a12-4760-923a-bb2dc752f168",
+    "role": "assistant",
+    "content": "se quiser, posso ajudar a escolher uma opção que te dê um bom custo-benefício dentro desse valor",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:09.347385+00:00"
+  },
+  {
+    "id": "41bf0187-d761-47db-b9b1-167e66d7a39a",
+    "role": "assistant",
+    "content": "quer que eu te ajude com isso?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:10.683858+00:00"
+  },
+  {
+    "id": "184767de-29f4-480d-854d-4c8d1e42263e",
+    "role": "user",
+    "content": "Nao. O problema nao e ajuda pra escolher, o problema e o valor minimo de 300 reais.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:19.975029+00:00"
+  },
+  {
+    "id": "9eef2845-b50a-4799-b0c5-eca237da5173",
+    "role": "assistant",
+    "content": "entendo sua preocupação com o minimo, Marcos",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:24.503701+00:00"
+  },
+  {
+    "id": "05d900d7-804a-47b6-af18-0296de6691ff",
+    "role": "assistant",
+    "content": "mas esse valor é importante pra gente garantir a qualidade e o frescor no envio",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:29.295149+00:00"
+  },
+  {
+    "id": "28da2f79-520c-4f43-b2cc-265ccae099d0",
+    "role": "assistant",
+    "content": "muita gente que começa com esse minimo depois amplia o pedido porque o retorno compensa demais",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:35.439644+00:00"
+  },
+  {
+    "id": "e55a3724-e226-494c-aa67-b16d5189a93b",
+    "role": "assistant",
+    "content": "quer que eu te passe os valores pra voce avaliar?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:37.471472+00:00"
+  },
+  {
+    "id": "837094fe-6b50-4453-acba-d10d551d07ab",
+    "role": "user",
+    "content": "Voce ja me passou os valores. O problema continua sendo o pedido minimo de 300 reais so pra eu provar.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:47.811942+00:00"
+  },
+  {
+    "id": "dbed4591-836f-4626-864e-730fd512661f",
+    "role": "assistant",
+    "content": "entendo que o pedido minimo pode parecer alto para quem quer testar primeiro, Marcos",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:35:55.079815+00:00"
+  },
+  {
+    "id": "95f0cce5-8a37-4028-aaa3-2b7f9ebef72d",
+    "role": "assistant",
+    "content": "mas com R$ 300 voce ja consegue um volume legal pra sua cafeteria e garante um preço competitivo",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:00.011728+00:00"
+  },
+  {
+    "id": "f12dfc67-d2f5-4ab1-b5f0-131090dbac0b",
+    "role": "assistant",
+    "content": "se quiser posso ajudar a escolher os sabores que combinam mais com seu publico, assim voce aproveita melhor o pedido",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:09.76898+00:00"
+  },
+  {
+    "id": "2382fde0-cf39-4f88-abc5-acb93e31909f",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:11.776185+00:00"
+  },
+  {
+    "id": "535765f0-cad0-44f3-9a08-181da14f165c",
+    "role": "user",
+    "content": "Nao, nao faz sentido. E muito dinheiro so pra eu provar um cafe que nem conheco.",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:26.697676+00:00"
+  },
+  {
+    "id": "2f610948-805a-473f-b2a8-a26678c625b8",
+    "role": "assistant",
+    "content": "entendo, Marcos, testar antes e super importante mesmo",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:32.532039+00:00"
+  },
+  {
+    "id": "314ff35e-d359-4170-87cc-5450bc5c9d45",
+    "role": "assistant",
+    "content": "por isso nosso pedido minimo e de R$ 300,00, que da pra montar um kit legal pra voce conhecer o sabor e qualidade do nosso café",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:38.659986+00:00"
+  },
+  {
+    "id": "58407f1e-a083-47f2-8e1d-49b39d0740b4",
+    "role": "assistant",
+    "content": "se quiser posso te ajudar a montar esse kit com variedades que combinam com o perfil do seu publico, faz sentido?",
+    "stage": "consumo",
+    "created_at": "2026-04-21T18:36:43.843738+00:00"
+  }
+]

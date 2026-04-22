@@ -1,0 +1,24 @@
+{
+  "started_at": "2026-04-20T16:30:30.309980+00:00",
+  "git_sha": "e81698484b0dee8b4c86427a79dbb934a09b6601",
+  "archetypes": [
+    "A1"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-20T16:30:46.320066+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "error",
+      "error": "lead_not_created",
+      "turns_count": 0,
+      "terminated_by": "error",
+      "soft_check": {},
+      "hard_checks": [],
+      "stages_visited": []
+    }
+  ]
+}

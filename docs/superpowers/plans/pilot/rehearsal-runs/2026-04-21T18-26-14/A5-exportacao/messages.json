@@ -1,0 +1,30 @@
+[
+  {
+    "id": "f002f936-fa44-465f-be71-450ae097c8d5",
+    "role": "user",
+    "content": "vou abrir um cafe em Lisboa no segundo semestre. voces exportam?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:56:18.352434+00:00"
+  },
+  {
+    "id": "e3406fd2-62fc-490c-9c9d-77e878da9dda",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: exportacao",
+    "stage": null,
+    "created_at": "2026-04-21T18:56:20.177888+00:00"
+  },
+  {
+    "id": "92110522-097e-4062-9b38-7a74e7c97353",
+    "role": "assistant",
+    "content": "me conta uma coisa",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:56:21.931962+00:00"
+  },
+  {
+    "id": "ac886884-3c40-4acb-895b-7d094f3553a6",
+    "role": "assistant",
+    "content": "vc ja tem compradores ai em Lisboa ou vai vender diretamente no seu cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:56:26.906677+00:00"
+  }
+]

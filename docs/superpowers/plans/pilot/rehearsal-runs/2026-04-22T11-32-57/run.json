@@ -1,0 +1,88 @@
+{
+  "started_at": "2026-04-22T11:32:57.732899+00:00",
+  "git_sha": "2c7005e2eb0878b56ffe1499724b2ba9e94c95a0",
+  "archetypes": [
+    "R5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T11:43:56.727119+00:00",
+  "verifications": [
+    {
+      "archetype_id": "R5",
+      "archetype_slug": "lojista-objecao-amostra",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        },
+        {
+          "name": "regex_endereçou objeção de amostra",
+          "passed": true,
+          "reason": "endereçou objeção de amostra (match)"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 5)"
+        }
+      ],
+      "forbids": [
+        {
+          "name": "forbid_pix",
+          "passed": true,
+          "reason": "PIX: sem violação"
+        },
+        {
+          "name": "forbid_preco_frete",
+          "passed": true,
+          "reason": "PRECO_FRETE: sem violação"
+        },
+        {
+          "name": "forbid_prazo",
+          "passed": true,
+          "reason": "PRAZO: sem violação"
+        },
+        {
+          "name": "forbid_desconto",
+          "passed": true,
+          "reason": "DESCONTO: sem violação"
+        },
+        {
+          "name": "forbid_papel",
+          "passed": true,
+          "reason": "PAPEL: sem violação"
+        },
+        {
+          "name": "forbid_ponto_venda_rs",
+          "passed": true,
+          "reason": "PONTO_VENDA_RS: sem violação"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 4,
+        "linhas_robotizadas": [
+          "jeferson, entendo que 100 unidades e um volume grande pra começar",
+          "no private label esse e o minimo que conseguimos trabalhar, pra garantir custo e qualidade na producao",
+          "se sua ideia for um teste menor, a loja online pode ser a melhor opcao pra voce iniciar",
+          "quer que eu te ajude a escolher algum cafe la?"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente entrou em um loop ao final da conversa. Após o lead comprar na loja online para provar o café e voltar para negociar um pedido pequeno com sua marca, a agente ignorou o contexto e sugeriu novamente que ele comprasse na loja online como uma opção para um 'teste menor'.",
+        "veredito_curto": "A agente gerou uma conversa circular e frustrante ao demorar para oferecer a solução da loja online e, principalmente, ao falhar em reter o contexto no final, sugerindo a mesma solução que o lead já havia utilizado."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "private_label"
+      ]
+    }
+  ]
+}

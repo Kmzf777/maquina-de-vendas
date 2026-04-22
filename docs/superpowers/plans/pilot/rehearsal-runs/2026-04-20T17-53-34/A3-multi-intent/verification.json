@@ -1,0 +1,27 @@
+{
+  "archetype_id": "A3",
+  "archetype_slug": "multi-intent",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "visited_gte_2_stages",
+      "passed": false,
+      "reason": "apenas 0 stage(s) visitado(s)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "quer que eu te explique como funciona o processo de private label enquanto isso?",
+      "enquanto isso, quer que eu te explique como funciona o processo do private label?",
+      "posso encaminhar seu contato pro nosso supervisor pra fazer essa negociacao direta, assim voce ja garante as melhores condicoes",
+      "posso encaminhar seu interesse para o comercial que vai analisar com voce essas possibilidades e simular o melhor desconto",
+      "posso encaminhar essa sua pergunta para o nosso supervisor pra ele analisar e te dar um retorno mais preciso"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente deu respostas contraditórias. Primeiro afirmou que era 'totalmente' possível combinar os volumes para negociar. Depois, disse que as tabelas oficiais não tinham 'combinacao direta entre os volumes'. E por fim, afirmou que a prática 'nao e uma pratica padrao'. Essa inconsistência confundiu a negociação.",
+    "veredito_curto": "O agente se mostrou ineficaz e repetitivo ao não conseguir fornecer uma simulação de preços solicitada, contradizendo-se e entrando em um loop de desvio para o supervisor, o que frustrou o lead e atrasou o processo."
+  },
+  "turns_count": 18,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": []
+}

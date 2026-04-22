@@ -1,0 +1,31 @@
+{
+  "archetype_id": "A4",
+  "archetype_slug": "objetor-preco",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "20 turnos (>= 5)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 2,
+    "linhas_robotizadas": [
+      "faz sentido pra voce?",
+      "isso mesmo, nao trabalhamos com amostras gratuitas infelizmente, o pedido minimo no atacado e de R$ 300",
+      "compreendo sua postura, faz sentido querer validar antes de avançar",
+      "vou te explicar o processo da gente entao, pra voce entender como garantimos essa qualidade que eu falei"
+    ],
+    "resposta_incorreta_ou_inventada": "No final da conversa, após o lead encerrar a negociação por falta de dados ou amostras, o bot ignorou completamente o contexto e disparou a lista de produtos de atacado como se o lead tivesse demonstrado interesse em comprar.",
+    "veredito_curto": "O agente não soube lidar com as objeções do lead, ficou preso em um loop repetitivo sobre o pedido mínimo e, no final, ignorou o encerramento da conversa pelo cliente para enviar uma lista de produtos irrelevante."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": []
+}

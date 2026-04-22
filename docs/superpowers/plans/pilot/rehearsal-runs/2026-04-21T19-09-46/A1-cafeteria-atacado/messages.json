@@ -1,0 +1,198 @@
+[
+  {
+    "id": "4c762d85-6ad5-451a-a08e-85c22069218d",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:09:47.16799+00:00"
+  },
+  {
+    "id": "423621d4-d7fd-43e6-979b-60da8f39d8fe",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:09:50.344149+00:00"
+  },
+  {
+    "id": "3ffee77a-423a-4cc6-98d6-8ad1806e4eb4",
+    "role": "assistant",
+    "content": "sou a valeria, do comercial da cafe canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:09:53.389141+00:00"
+  },
+  {
+    "id": "694590d7-b225-4369-9b6e-aa4f5b64105f",
+    "role": "assistant",
+    "content": "me diz uma coisa, qual o seu nome?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:09:55.802261+00:00"
+  },
+  {
+    "id": "36dbf729-745e-4a92-95be-f22215d8c26b",
+    "role": "user",
+    "content": "Joao. Me fala o preco do cafe de voces.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:10:08.913712+00:00"
+  },
+  {
+    "id": "46ee9a98-46d9-4379-867a-8ec8bb20fd02",
+    "role": "assistant",
+    "content": "prazer, joao",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:10:15.13378+00:00"
+  },
+  {
+    "id": "5f187de1-54be-496d-9408-75794e182429",
+    "role": "assistant",
+    "content": "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:10:21.755193+00:00"
+  },
+  {
+    "id": "0fe833ce-7396-4bd9-ba42-4cf74dc12db2",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:10:29.757808+00:00"
+  },
+  {
+    "id": "86471d23-400a-44c7-844b-0135e44997a7",
+    "role": "user",
+    "content": "Brasileiro, pra minha loja em BH. Voces mandam amostra?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:10:50.855988+00:00"
+  },
+  {
+    "id": "cee29244-2d4a-477f-9410-a083271ff05f",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo em BH, um mercado que tem crescido bastante",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:10:56.317591+00:00"
+  },
+  {
+    "id": "3c113f48-b36b-4de4-89c4-d6791b25b947",
+    "role": "assistant",
+    "content": "so um detalhe sobre amostras: a gente nao trabalha com amostra gratuita",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:02.088393+00:00"
+  },
+  {
+    "id": "7fa6083b-98a2-4c22-a6f7-0d92eef8791b",
+    "role": "assistant",
+    "content": "o caminho pra provar e fazer um pedido minimo no atacado, que comeca em R$ 300",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:06.93283+00:00"
+  },
+  {
+    "id": "b6424834-66af-4922-8e3c-f43f7859997b",
+    "role": "assistant",
+    "content": "ou voce pode comprar volumes pequenos direto na nossa loja online",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:10.498791+00:00"
+  },
+  {
+    "id": "8c453b18-729c-4889-aa06-530f61e4cffd",
+    "role": "assistant",
+    "content": "me conta mais, que tipo de cafe voce quer pra sua loja?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:13.857218+00:00"
+  },
+  {
+    "id": "1cf71bba-6c1a-4755-b4b4-08826fc5815c",
+    "role": "user",
+    "content": "Uso um pra espresso. Esse pedido minimo de 300 reais da quantos kg de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:31.432594+00:00"
+  },
+  {
+    "id": "81813355-9b53-401c-9516-864bda5edc1b",
+    "role": "assistant",
+    "content": "o pedido minimo de R$ 300 varia conforme o sabor e embalagem, mas geralmente da pra comprar uns 5 a 6 kg de cafe especiais no atacado nessa faixa",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:37.895418+00:00"
+  },
+  {
+    "id": "278a6faf-9132-42b3-843e-44586d7f0716",
+    "role": "assistant",
+    "content": "se quiser posso detalhar os sabores e os tamanhos de embalagem que temos, faz sentido?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:11:42.261341+00:00"
+  },
+  {
+    "id": "af3c3708-247b-4dcc-8045-28ff82e89397",
+    "role": "user",
+    "content": "Ta, pode mandar. Quero ver as opcoes pra espresso e o preco do quilo.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:05.075026+00:00"
+  },
+  {
+    "id": "de6b8b02-933d-4907-86c5-89b0f2a1872f",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-21T19:12:06.742324+00:00"
+  },
+  {
+    "id": "c37035e9-5b40-4c69-8a61-db0f5723febd",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-21T19:12:13.163059+00:00"
+  },
+  {
+    "id": "932b85d5-a423-4698-b55b-5c99957ab27d",
+    "role": "assistant",
+    "content": "o classico e o nosso carro chefe, torra media-escura, intenso, com notas achocolatadas e pontuacao 84 SCA",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:26.159381+00:00"
+  },
+  {
+    "id": "2b2037f9-0995-4e51-be9c-e386c0580f5b",
+    "role": "assistant",
+    "content": "temos ele em graos e moido, do 250g ate granel de 2kg",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:30.004469+00:00"
+  },
+  {
+    "id": "3466b350-7f72-48fa-8ea6-486211e357e8",
+    "role": "assistant",
+    "content": "(ja te mandei as fotos pra voce visualizar melhor)",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:34.072946+00:00"
+  },
+  {
+    "id": "587a4145-d003-47d2-9a94-a135f4d69db5",
+    "role": "assistant",
+    "content": "o classico graos 1kg sai R$ 88,70 no atacado",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:37.926845+00:00"
+  },
+  {
+    "id": "68ab7c03-8629-44af-8d21-133557aee2ee",
+    "role": "assistant",
+    "content": "temos tambem o suave, com torra media e notas de melaco e frutas amarelas, no mesmo formato e preco do classico",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:47.248457+00:00"
+  },
+  {
+    "id": "831144ec-d2c9-42b0-8e07-65e790a56f52",
+    "role": "assistant",
+    "content": "temos o canela, com um toque caramelizado e canela, 250g moido por R$ 27,70",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:50.022992+00:00"
+  },
+  {
+    "id": "43f3ed35-f16f-41d1-8aab-dce9fbdbf88a",
+    "role": "assistant",
+    "content": "e o microlote, mais especial ainda, com notas de mel, caramelo e cacau, 250g por R$ 31,70",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:54.633773+00:00"
+  },
+  {
+    "id": "c020b7c0-a249-4f44-84ac-ea63f24fd3e9",
+    "role": "assistant",
+    "content": "qual desses agradou mais pra sua loja em BH?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:12:56.64418+00:00"
+  }
+]

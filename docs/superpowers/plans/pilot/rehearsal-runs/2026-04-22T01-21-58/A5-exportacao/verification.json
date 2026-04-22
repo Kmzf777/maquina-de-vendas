@@ -1,0 +1,31 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": true,
+      "reason": "stage exportacao alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "vc ja trabalha com exportacao no brasil ou vai precisar que a gente cuide disso pra voce?",
+      "me conta qual o seu objetivo com o cafe: voce quer comprar nossos produtos pra vender la fora"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot ignorou o pedido direto e repetido do lead para conversar com um humano, continuando a fazer perguntas de qualificação cujas respostas já haviam sido dadas anteriormente na conversa.",
+    "veredito_curto": "O agente cumpriu os objetivos de qualificação e encaminhamento, mas criou uma experiência frustrante ao não reconhecer as respostas e os pedidos diretos do lead."
+  },
+  "turns_count": 4,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "exportacao"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 2,
+    "linhas_robotizadas": [
+      "o processo e assim: a gente pode te enviar amostras pra voce provar antes de fechar o pedido maior",
+      "me diz uma coisa, voce ja conhece o sabor do nosso cafe ou quer provar antes de fazer pedido maior?",
+      "quer que eu te envie uma amostra ou o link da loja online pra voce conhecer antes?",
+      "a gente nao trabalha com amostras gratuitas, mas o pedido minimo em atacado é só R$300",
+      "me diz uma coisa, voce gostaria de experimentar uma amostra antes de fechar pedido maior?",
+      "voce precisa de um fornecedor mais confiavel e pontual?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente se contradisse múltiplas vezes sobre a política de envio de amostras: primeiro negou enviá-las, depois confirmou que poderia enviar, para em seguida negar novamente, criando um loop confuso e frustrante.",
+    "veredito_curto": "O agente falhou completamente ao entrar em um loop contraditório sobre o envio de amostras, ignorando as perguntas diretas do lead e tornando a conversa ineficaz e frustrante."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": []
+}

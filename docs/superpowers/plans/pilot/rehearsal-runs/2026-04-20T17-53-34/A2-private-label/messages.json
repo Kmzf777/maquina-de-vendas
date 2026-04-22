@@ -1,0 +1,177 @@
+[
+  {
+    "id": "cc80f520-924a-4f57-b71d-b8c5d6fbbf54",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T18:03:35.407473+00:00"
+  },
+  {
+    "id": "7eea86eb-e392-476b-b6f0-55fd3b85efc0",
+    "role": "assistant",
+    "content": "prazer, cliente",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T18:03:44.607934+00:00"
+  },
+  {
+    "id": "2cc4fc66-58bf-4c01-bc60-e7b705acc022",
+    "role": "assistant",
+    "content": "vou te explicar como funciona o private label com a gente",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T18:03:49.204202+00:00"
+  },
+  {
+    "id": "a1a94a39-8476-4b21-9b21-af0c52a77477",
+    "role": "assistant",
+    "content": "a parte da marca, como logo e design, é responsabilidade sua",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T18:03:52.616454+00:00"
+  },
+  {
+    "id": "c5df94f1-fb1e-43e8-b036-e0a22fbee2e1",
+    "role": "assistant",
+    "content": "quando tivermos a logo, fazemos toda a embalagem, temos modelos sugeridos sem custo extra, beleza?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T18:03:58.213368+00:00"
+  },
+  {
+    "id": "5a5c7e03-9d09-4849-8dee-4a52947b80ef",
+    "role": "user",
+    "content": "Massa! E se eu quiser usar um design 100% meu, tem algum custo extra? Já aproveitando, qual a quantidade mínima e o prazo de produção?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:13.502267+00:00"
+  },
+  {
+    "id": "a8902bf6-c556-4ddf-9d9e-73c298b815df",
+    "role": "assistant",
+    "content": "esse modelo 100% seu não tem custo extra, pode mandar o design completo que a gente produz a embalagem toda pra você",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:19.870752+00:00"
+  },
+  {
+    "id": "8b7d28f6-9c86-4573-b3d5-ebb011df69e8",
+    "role": "assistant",
+    "content": "o pedido mínimo geralmente é de 100 unidades para os pacotes de 250g e 500g",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:23.828839+00:00"
+  },
+  {
+    "id": "eede7260-f561-432b-bb7b-5304a1deb8de",
+    "role": "assistant",
+    "content": "quer que eu te fale os preços dessas opções?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:25.543958+00:00"
+  },
+  {
+    "id": "f325a105-cb3e-4498-ac83-8015556df475",
+    "role": "user",
+    "content": "Com certeza, pode mandar os preços! Só pra eu não esquecer, qual o prazo de produção depois que eu aprovo o design?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:39.829871+00:00"
+  },
+  {
+    "id": "d8878c2a-a3f5-43cf-a92d-79d1eb9c66b1",
+    "role": "assistant",
+    "content": "o 250g sai R$23,90 a unidade, já com embalagem e silk da sua logo",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:46.097434+00:00"
+  },
+  {
+    "id": "1388ba00-442b-4ee6-8f2c-e2f37fc4f6d4",
+    "role": "assistant",
+    "content": "se você já tiver a embalagem pronta, cai pra R$22,90",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:48.393897+00:00"
+  },
+  {
+    "id": "556a64a4-2e1d-4b1f-bc5c-fc2fcde7f684",
+    "role": "assistant",
+    "content": "o pedido mínimo é 100 unidades",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:49.792944+00:00"
+  },
+  {
+    "id": "28d43783-e3bd-4592-a98c-62aa99a4a3af",
+    "role": "assistant",
+    "content": "quer que eu te mostre os exemplos de embalagem pra visualizar melhor?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:04:52.353433+00:00"
+  },
+  {
+    "id": "e19e2e40-7a10-4a03-8581-1b15df455b18",
+    "role": "user",
+    "content": "Opa, claro, adoraria ver os exemplos! E só pra eu anotar aqui, qual o prazo de produção depois que a arte final é aprovada?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:09.702329+00:00"
+  },
+  {
+    "id": "9d269b07-1f81-42ba-9aad-60673f19f36c",
+    "role": "system",
+    "content": "Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-20T18:05:14.764266+00:00"
+  },
+  {
+    "id": "98ca247a-d378-47d6-aa82-8481625b35c6",
+    "role": "assistant",
+    "content": "o prazo padrão é de cerca de 15 a 20 dias uteis apos a aprovação do design",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:19.637874+00:00"
+  },
+  {
+    "id": "0e047d5d-ceaf-4dae-96ef-276765a95327",
+    "role": "assistant",
+    "content": "isso inclui produção, torra, empacotamento e envio",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:22.455596+00:00"
+  },
+  {
+    "id": "1685e1c9-50e9-457e-859f-9f95c1dd474d",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:24.317626+00:00"
+  },
+  {
+    "id": "5d93fcef-865b-4fab-b050-fa32d1c2f477",
+    "role": "user",
+    "content": "Faz total sentido, adorei os exemplos! Qual seria o próximo passo pra gente alinhar o processo completo e eu já salvar um contato para quando for avançar?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:37.458769+00:00"
+  },
+  {
+    "id": "0c775ceb-b20d-4199-827c-ccf47d75da88",
+    "role": "assistant",
+    "content": "que bom que gostou dos exemplos, cliente",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:42.019126+00:00"
+  },
+  {
+    "id": "a45cdd07-685f-4c4b-abdc-c98d47010616",
+    "role": "assistant",
+    "content": "ce tem interesse em falar com meu supervisor pra fechar um pedido ou tirar dúvidas sobre condições?",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:46.225486+00:00"
+  },
+  {
+    "id": "65a65ce7-dcaf-44c2-aeb7-9379f6a625e2",
+    "role": "user",
+    "content": "Com certeza, tenho interesse! Adoraria falar com ele pra já entender as condições e me planejar direitinho.",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:05:59.76084+00:00"
+  },
+  {
+    "id": "2c3daa46-2836-48cf-946c-82113bf7e7ba",
+    "role": "system",
+    "content": "Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-20T18:06:01.008256+00:00"
+  },
+  {
+    "id": "f1644f75-9111-402d-a390-ec914b8ce98d",
+    "role": "assistant",
+    "content": "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat",
+    "stage": "private_label",
+    "created_at": "2026-04-20T18:06:07.628758+00:00"
+  }
+]

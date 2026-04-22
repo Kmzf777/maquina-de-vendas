@@ -1,0 +1,219 @@
+[
+  {
+    "id": "760db33d-580d-4bf1-985c-a020d4edd515",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:16.498394+00:00"
+  },
+  {
+    "id": "6a6df169-7609-4ea7-b6e1-f2ff99949080",
+    "role": "assistant",
+    "content": "boa noite, tudo bem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:21.922479+00:00"
+  },
+  {
+    "id": "adb4b749-1848-484c-825f-5ef8aaf2a764",
+    "role": "assistant",
+    "content": "aqui e a valeria, do comercial da cafe canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:24.148489+00:00"
+  },
+  {
+    "id": "2c4e0707-9364-440f-a2e4-ea457017f02b",
+    "role": "assistant",
+    "content": "me diz uma coisa, com quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:26.540297+00:00"
+  },
+  {
+    "id": "7a1c95ad-541e-494e-a62e-a495899f16ad",
+    "role": "user",
+    "content": "Pedro. qual o preco do cafe de voces?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:38.689431+00:00"
+  },
+  {
+    "id": "9732625a-e4cb-4bd3-ab5a-956dc65c69a9",
+    "role": "assistant",
+    "content": "prazer, Pedro",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:43.774066+00:00"
+  },
+  {
+    "id": "ec505ac6-de5c-4ab0-9daa-c76f615e11cd",
+    "role": "assistant",
+    "content": "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:46.606299+00:00"
+  },
+  {
+    "id": "2b8e1011-a7e0-4b81-86b6-fe2be8b89718",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:43:54.699404+00:00"
+  },
+  {
+    "id": "92fdf904-7140-4c7a-a659-24d1d3729eba",
+    "role": "user",
+    "content": "brasileiro. agora me fala o preco.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:44:07.879947+00:00"
+  },
+  {
+    "id": "f689d793-2f74-42ae-99bd-74630c709ee8",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: secretaria",
+    "stage": null,
+    "created_at": "2026-04-21T21:44:11.128779+00:00"
+  },
+  {
+    "id": "d4cafd4e-cfef-47b0-add6-a4982d714719",
+    "role": "assistant",
+    "content": "entendi! e qual seria sua necessidade especifica? voce quer comprar cafe para consumo proprio, pra usar em casa, ou pra algum negocio, tipo cafeteria, restaurante, hotel, loja? ou ta pensando em criar sua propria marca de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:44:22.096197+00:00"
+  },
+  {
+    "id": "0f4c9b7d-eaae-458a-aaad-2d66c5eaaebb",
+    "role": "user",
+    "content": "Pra cafeteria. Qual o preco do kg?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:44:37.329277+00:00"
+  },
+  {
+    "id": "62214128-b2ca-48b4-ae60-321206e6eaac",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-21T21:44:39.51589+00:00"
+  },
+  {
+    "id": "09fb5412-b064-453f-b6ca-07201fb78991",
+    "role": "assistant",
+    "content": "o classico graos 1kg sai R$88,70 no atacado",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:44:46.051146+00:00"
+  },
+  {
+    "id": "b299462e-4861-46a2-9d1e-00bd900b552e",
+    "role": "assistant",
+    "content": "qual seria o volume que voce taria precisando por mes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T21:44:50.001452+00:00"
+  },
+  {
+    "id": "b1a43bec-ff76-43e2-83c5-b1670fe6057e",
+    "role": "user",
+    "content": "Uso uns 10kg por mes. Qual o pedido minimo? E voces mandam amostra?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:02.341413+00:00"
+  },
+  {
+    "id": "011bdcfe-5fab-46da-80b5-dd86ee0e2373",
+    "role": "assistant",
+    "content": "o pedido minimo pra atacado e R$300, da pra montar com o classico 1kg mesmo, por exemplo",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:09.401439+00:00"
+  },
+  {
+    "id": "2f46869d-b01f-45d4-9de0-9f39854d6f4d",
+    "role": "assistant",
+    "content": "a gente nao trabalha com amostra gratis, mas esse minimo de R$300 ja permite testar o sabor e garantir preco de revenda",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:18.981836+00:00"
+  },
+  {
+    "id": "3a83cbf7-c61c-402c-b0c5-7b5313943695",
+    "role": "assistant",
+    "content": "qual o endereco de entrega que voce pensa?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:21.204394+00:00"
+  },
+  {
+    "id": "63e8203c-d358-4482-839e-15e65dc1b120",
+    "role": "user",
+    "content": "Pra BH. O frete ta incluso nesse valor?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:29.536771+00:00"
+  },
+  {
+    "id": "5f978d5b-3c93-4239-b26b-e51f4c88023e",
+    "role": "assistant",
+    "content": "o frete pra belo horizonte fica R$45 e o prazo de entrega e cerca de 7 dias uteis",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:36.569282+00:00"
+  },
+  {
+    "id": "89888087-e312-490d-8b94-01e640cb509c",
+    "role": "assistant",
+    "content": "pedido minimo e R$300 e frete e gratis acima de R$900",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:40.917312+00:00"
+  },
+  {
+    "id": "1582d100-8cb0-42f7-bd3d-4f5ca1e46461",
+    "role": "assistant",
+    "content": "quer que eu faca uma conta rapida com frete pro seu pedido de 10kg do classico?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:44.440996+00:00"
+  },
+  {
+    "id": "b1a4f10b-a7fb-4f83-b5ae-4bd8504c423d",
+    "role": "assistant",
+    "content": "entao fica 10kg do classico pra belo horizonte, total R$887 + R$45 de frete, fechando R$932 — confirma?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:45:53.204113+00:00"
+  },
+  {
+    "id": "41c25aaf-4d03-4ab0-b2b7-14a96a165a24",
+    "role": "user",
+    "content": "Uai, mas o total deu mais de 900. O frete nao sai de graça então?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:46:14.285187+00:00"
+  },
+  {
+    "id": "23475887-73c7-404d-a1d7-163724056708",
+    "role": "assistant",
+    "content": "sim, pelo valor total acima de R$900 o frete sai gratis mesmo pra belo horizonte, desculpa a confusao no calculo",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:46:25.272645+00:00"
+  },
+  {
+    "id": "8f05d1b6-ec87-4798-ae65-62fc4057e477",
+    "role": "assistant",
+    "content": "entao fica 10kg do classico pra belo horizonte, total R$887, frete gratis — confirma?",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:46:28.800336+00:00"
+  },
+  {
+    "id": "8efd5138-ee38-4eab-92b4-9e6b9b39fd1b",
+    "role": "user",
+    "content": "Ok, pode fechar. Me manda como paga.",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:46:42.524854+00:00"
+  },
+  {
+    "id": "2cbbc3b6-1c67-45ea-b7da-760a0b11ba1a",
+    "role": "system",
+    "content": "[tool:registrar_pedido_simples] Pedido registrado: Pedido atacado classico 10kg",
+    "stage": null,
+    "created_at": "2026-04-21T21:46:44.741078+00:00"
+  },
+  {
+    "id": "e2bd8675-af0e-4d3f-a751-cc49565da24c",
+    "role": "system",
+    "content": "[tool:encaminhar_humano] Lead encaminhado para Joao Bras: fechar pedido de atacado — 10kg classico",
+    "stage": null,
+    "created_at": "2026-04-21T21:46:44.842649+00:00"
+  },
+  {
+    "id": "25c7bebf-1595-460b-a539-99ec92f3182c",
+    "role": "assistant",
+    "content": "ja passei seu pedido pro Joao Bras. ele te chama aqui em instantes pra fechar o pagamento e endereco",
+    "stage": "atacado",
+    "created_at": "2026-04-21T21:46:53.990151+00:00"
+  }
+]

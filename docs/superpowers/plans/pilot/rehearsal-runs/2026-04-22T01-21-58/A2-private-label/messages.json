@@ -1,0 +1,135 @@
+[
+  {
+    "id": "72eaa1a6-d400-4f2a-b269-29ce3f05855f",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:31:24.912995+00:00"
+  },
+  {
+    "id": "2c418d8d-65df-4410-b529-d5c0b220e1f6",
+    "role": "assistant",
+    "content": "boa noite\n\nsim, a gente trabalha com private label, criando marcas proprias de cafe com a qualidade da Cafe Canastra\n\nme conta, voce ja tem uma marca ou ta pensando em criar uma do zero?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:31:28.13242+00:00"
+  },
+  {
+    "id": "97ea30f4-639f-4b2a-b60e-0697297644aa",
+    "role": "user",
+    "content": "Show! Estou criando do zero, a ideia é lançar em 2026. Já me diz, qual a quantidade mínima e como funciona pra gente usar um design nosso na embalagem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:31:57.111627+00:00"
+  },
+  {
+    "id": "0b54e617-fc57-4fcc-8df3-1b9ce12e6555",
+    "role": "assistant",
+    "content": "que projeto bacana, criar sua marca do zero e uma oportunidade enorme\n\nvou te explicar como funciona o private label pra voce entender certinho\n\na gente cultiva, torra e embala o cafe com a identidade visual da sua marca\n\nfaz sentido pra voce? se quiser posso detalhar mais essa parte do design e embalagem antes de passar os valores",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:31:58.812559+00:00"
+  },
+  {
+    "id": "7e31bef5-4e8c-4f72-ba01-920a7aacc618",
+    "role": "user",
+    "content": "Com certeza faz sentido! Por favor, detalha essa parte do design e da embalagem, que é super importante pra mim.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:32:35.212485+00:00"
+  },
+  {
+    "id": "90c7390d-2f0a-4026-b656-dc8b5c4be1ff",
+    "role": "assistant",
+    "content": "perfeito, vou te explicar essa parte com calma\n\na gente trabalha com embalagens personalizadas, onde voce pode aplicar sua arte e logo\n\nnormalmente usamos embalagens flexiveis que garantem qualidade e frescor do cafe\n\nalem disso, a gente cuida da impressão do design direto na embalagem, com alta qualidade\n\nquer que eu te explique como funciona a arte e o processo de aprovação?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:32:37.185458+00:00"
+  },
+  {
+    "id": "06b8148a-a73d-43e4-8f57-d0414b86d087",
+    "role": "user",
+    "content": "Sim, por favor, me explica o processo da arte! E aproveitando, já pode me adiantar a quantidade mínima e uma ideia de custo para a personalização da embalagem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:33:13.085551+00:00"
+  },
+  {
+    "id": "bf6f3630-1da8-4031-aa4c-a60e9003156c",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T01:33:14.490068+00:00"
+  },
+  {
+    "id": "c2b8c730-b68c-481f-bc77-1c1fc54cd38f",
+    "role": "assistant",
+    "content": "o processo da arte e o seguinte: voce envia sua logo e o layout que deseja para a embalagem\n\nse nao tiver um layout pronto, podemos sugerir alguns modelos basicos que ja temos, sem custo adicional\n\numa vez com a arte, a gente faz a prova digital para voce aprovar antes da producao\n\nsobre a quantidade minima, o pedido minimo e de 100 unidades para embalagens personalizadas\n\nos custos variam conforme o tamanho e tipo do pacote, mas vou te adiantar alguns valores para voce ter ideia, tudo incluso o silk com sua logo e o produto\n\nquer que eu te passe os valores do 250g ou prefere o 500g?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:33:16.813439+00:00"
+  },
+  {
+    "id": "ec1844ac-c8d2-456d-9c43-4b85549431f4",
+    "role": "user",
+    "content": "Massa! Me passa os valores para os dois tamanhos, por favor, pra eu poder comparar. E qual o prazo de produção depois que a gente aprova a arte?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:34:02.501929+00:00"
+  },
+  {
+    "id": "d17854c6-f08b-4e96-ba4b-2e222d88ebdb",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T01:34:09.171283+00:00"
+  },
+  {
+    "id": "4bc04d90-c421-4206-bb5f-32a0acbdd1c4",
+    "role": "assistant",
+    "content": "enviei algumas fotos das embalagens que a gente ja produz para clientes\n\nassim voce pode visualizar melhor como fica o resultado final\n\nquer que eu te explique os sabores que temos disponiveis pra fazer seu cafe?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:34:10.132139+00:00"
+  },
+  {
+    "id": "f409efe5-833a-4f52-ac37-1a53ab33c314",
+    "role": "user",
+    "content": "Uau, as embalagens ficaram incríveis, já deu pra visualizar o projeto! Antes de falarmos dos sabores, pode me passar os valores para 250g e 500g e o prazo de produção que eu tinha perguntado?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:34:29.755147+00:00"
+  },
+  {
+    "id": "33feb26c-7776-4bd0-8896-5ec76090c815",
+    "role": "assistant",
+    "content": "claro\n\no 250g sai R$23,90 a unidade, ja com embalagem e silk da sua logo\n\nse voce ja tiver a embalagem propria, cai pra R$22,90\n\no pedido minimo e de 100 unidades\n\npara o 500g o valor e R$44,90 com embalagem e silk\n\nse tiver a embalagem propria cai pra R$43,40\n\no pedido minimo tambem e de 100 unidades\n\nsobre o prazo, apos a aprovacao da arte a producao leva em media 20 dias uteis\n\nfaz sentido pra voce?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:34:32.431843+00:00"
+  },
+  {
+    "id": "1bb52217-a402-4219-8e43-f4575678fb7b",
+    "role": "user",
+    "content": "Perfeito, os valores e o prazo fazem todo sentido! Pra gente avançar, como funciona pra provar os cafés e com quem eu posso falar pra alinhar os próximos passos do projeto?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:35:13.62156+00:00"
+  },
+  {
+    "id": "09f6f634-f22d-412a-b335-bace19f38ac6",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo e ja esta pensando nos detalhes\n\na gente pode mandar amostras dos nossos blends para voce provar e escolher o que mais combina com sua marca\n\npara os proximos passos, ce tem interesse em falar com meu supervisor pra fechar um pedido ou tirar duvidas sobre condicoes?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:35:15.122438+00:00"
+  },
+  {
+    "id": "731c5b44-78ea-4e14-9439-0a0068a8839f",
+    "role": "user",
+    "content": "Com certeza, quero muito provar as amostras! Pode me colocar em contato com seu supervisor pra gente alinhar os próximos passos do projeto, por favor?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:35:46.0852+00:00"
+  },
+  {
+    "id": "2a4f5e7c-0b6c-4483-86fc-a07981c24a7a",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T01:35:47.662598+00:00"
+  },
+  {
+    "id": "fff19f8f-e14a-4a1d-adb6-9095d8e2fc7f",
+    "role": "assistant",
+    "content": "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat\n\nele vai te ajudar com as amostras e detalhes finais do seu pedido",
+    "stage": "private_label",
+    "created_at": "2026-04-22T01:35:48.790587+00:00"
+  }
+]

@@ -1,0 +1,79 @@
+[
+  {
+    "id": "51886464-316a-4f96-af7c-8cc63e142b1b",
+    "role": "user",
+    "content": "vou abrir um cafe em Lisboa no segundo semestre. voces exportam?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:18.572343+00:00"
+  },
+  {
+    "id": "e673d17c-b2e4-455d-8193-3ed98afc0e6b",
+    "role": "assistant",
+    "content": "lisboa, que lugar bacana pra abrir um cafe especial",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:23.831558+00:00"
+  },
+  {
+    "id": "ade7eadf-74c5-4636-89f4-edd5a9172abc",
+    "role": "assistant",
+    "content": "imagina, a gente exporta sim pra varios paises, sempre com foco em rastreabilidade e qualidade",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:27.23136+00:00"
+  },
+  {
+    "id": "30338dd3-e71c-41d3-8391-900ec1d9d149",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:31.294306+00:00"
+  },
+  {
+    "id": "712653ad-e115-40e7-af29-bb1154e2b7a8",
+    "role": "user",
+    "content": "É para exportação, para a cafeteria que vou abrir em Lisboa. Você pode me direcionar para o setor responsável para eu entender melhor os prazos e a documentação necessária?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:46.137599+00:00"
+  },
+  {
+    "id": "5e8dc35b-dfc4-4bfe-807e-0b6f6f63d0e8",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: exportacao",
+    "stage": null,
+    "created_at": "2026-04-21T19:35:47.698866+00:00"
+  },
+  {
+    "id": "06383ef9-525f-44e8-aa7c-54b5928ce29b",
+    "role": "user",
+    "content": "E aí, pessoal, tudo bem? Vi o trabalho de vocês e achei incrível! Queria saber se vocês fazem private label, porque estou planejando lançar minha própria marca de café.",
+    "stage": "exportacao",
+    "created_at": "2026-04-21T19:35:47.955914+00:00"
+  },
+  {
+    "id": "4242ed38-46c4-4069-96c9-4a9934596fc9",
+    "role": "system",
+    "content": "[tool:encaminhar_humano] Lead encaminhado para Joao Bras: exportacao — portugal, cafeteria em lisboa",
+    "stage": null,
+    "created_at": "2026-04-21T19:35:48.660218+00:00"
+  },
+  {
+    "id": "a476d254-ad87-4fd4-a62b-f81aead56138",
+    "role": "assistant",
+    "content": "exportacao pra portugal?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:51.740536+00:00"
+  },
+  {
+    "id": "e0a90e29-0778-4bf8-8a40-41fa8445a74b",
+    "role": "assistant",
+    "content": "que projeto bacana, criar uma marca propria e o melhor investimento que voce pode fazer nesse ramo",
+    "stage": "exportacao",
+    "created_at": "2026-04-21T19:35:54.827155+00:00"
+  },
+  {
+    "id": "25546bd8-2f94-479c-82a2-7355afdb36e7",
+    "role": "assistant",
+    "content": "passei pro Joao Bras que cuida do comercial de exportacao. ele te chama aqui com a proposta e a documentacao necessaria",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:35:56.375897+00:00"
+  }
+]

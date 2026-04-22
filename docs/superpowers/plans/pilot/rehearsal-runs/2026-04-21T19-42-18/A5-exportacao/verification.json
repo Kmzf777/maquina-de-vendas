@@ -1,0 +1,30 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": true,
+      "reason": "stage exportacao alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "exportacao pra qual pais exatamente?"
+    ],
+    "resposta_incorreta_ou_inventada": "A pergunta final 'exportacao pra qual pais exatamente?' ignora completamente a informação de que o lead abrirá um café em 'Lisboa', fornecida na primeira mensagem.",
+    "veredito_curto": "O agente identificou o tema e encaminhou para um humano, mas falhou gravemente ao perguntar o país que já havia sido claramente informado no início da conversa."
+  },
+  "turns_count": 2,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "exportacao"
+  ]
+}

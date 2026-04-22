@@ -1,0 +1,604 @@
+[
+  {
+    "id": "c0e5971c-54df-423d-b1e2-a791b73d7ff8",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:53:35.811376+00:00"
+  },
+  {
+    "id": "78b1cf10-b179-4d8a-8f3f-faf7be271bd1",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:53:39.703539+00:00"
+  },
+  {
+    "id": "46687b10-2ea4-4614-ae0c-fa0ede7c85da",
+    "role": "assistant",
+    "content": "sou a valeria, do comercial da cafe canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:53:43.266379+00:00"
+  },
+  {
+    "id": "de8d931c-6315-417f-8590-cf656fa083da",
+    "role": "assistant",
+    "content": "vi que voce demonstrou interesse nos nossos cafes, queria entender melhor sua demanda",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:53:47.361536+00:00"
+  },
+  {
+    "id": "6d20529d-2ac6-4978-a27a-d8c97aae0c90",
+    "role": "assistant",
+    "content": "com quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:53:49.069057+00:00"
+  },
+  {
+    "id": "0a95940c-0872-4301-b9c6-6bc7a640ea70",
+    "role": "user",
+    "content": "Pedro. Qual o preco do kg de voces?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:53:59.071633+00:00"
+  },
+  {
+    "id": "682d6753-7d51-4214-90bf-ab8d13c9769b",
+    "role": "assistant",
+    "content": "prazer, Pedro",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:04.920308+00:00"
+  },
+  {
+    "id": "af3dfb9c-5802-483a-ad77-3bc36109057b",
+    "role": "assistant",
+    "content": "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:11.336066+00:00"
+  },
+  {
+    "id": "cad3e57b-7766-4815-9147-c8e814fcc9c1",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:19.408291+00:00"
+  },
+  {
+    "id": "75dd8b49-ac4e-4736-9c53-489f4d1b6233",
+    "role": "user",
+    "content": "Brasil. Pra BH. Qual o preco?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:33.020296+00:00"
+  },
+  {
+    "id": "4c1965ed-d8e8-4afe-bc9f-bab3dd4fca38",
+    "role": "assistant",
+    "content": "entendi! e qual seria sua necessidade especifica?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:38.839519+00:00"
+  },
+  {
+    "id": "fe2273b2-f34c-4058-a126-719186c6b928",
+    "role": "assistant",
+    "content": "comprar cafe para consumo proprio, para o negocio ou pra criar sua propria marca?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:42.877611+00:00"
+  },
+  {
+    "id": "cc90b689-f901-407a-b99d-cd4b3d9bed71",
+    "role": "user",
+    "content": "Pro negocio. Qual o valor do kg?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:54:57.662367+00:00"
+  },
+  {
+    "id": "5fcb05c8-8733-4c47-824a-adaac2228a3c",
+    "role": "assistant",
+    "content": "prazer, Pedro",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:55:01.035091+00:00"
+  },
+  {
+    "id": "133b54f9-bae3-41ed-81a1-9617471ed31a",
+    "role": "assistant",
+    "content": "o cafe que voce vende atualmente atende as expectativas dos seus clientes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-20T17:55:06.852376+00:00"
+  },
+  {
+    "id": "45d25e56-b0a6-45b0-be76-5e8b5fec4b55",
+    "role": "user",
+    "content": "Mais ou menos. Por isso to pesquisando. Qual o valor do kg?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:55:29.588347+00:00"
+  },
+  {
+    "id": "4f710e63-8483-4df1-8d81-50fe21238903",
+    "role": "system",
+    "content": "Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-20T17:55:37.7147+00:00"
+  },
+  {
+    "id": "d60459ed-45c8-439d-aa6b-f0b0e8f3bcc0",
+    "role": "assistant",
+    "content": "o classico tem torra media-escura, sabor intenso com notas achocolatadas, pontuacao 84 SCA",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:55:43.177721+00:00"
+  },
+  {
+    "id": "84f2a18e-1f6c-4bb7-aa0d-a12c4c4c6a97",
+    "role": "assistant",
+    "content": "o suave e de torra media, intensidade intermediaria, com notas de melaço e frutas amarelas, tambem 84 SCA",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:55:47.75938+00:00"
+  },
+  {
+    "id": "794ddee5-deec-48d2-bd00-3342891ab4af",
+    "role": "assistant",
+    "content": "o canela e torra media, intermediaria, caramelizado com um toque de canela, pontuacao 84 SCA",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:55:54.87386+00:00"
+  },
+  {
+    "id": "b2396771-1e2c-4f11-8809-aaedcbb51129",
+    "role": "assistant",
+    "content": "o microlote tem media intensidade, com notas de mel, caramelo e cacau, e pontuacao 86 SCA",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:02.111807+00:00"
+  },
+  {
+    "id": "0e76a239-054b-4924-b49a-a283b860fc3f",
+    "role": "assistant",
+    "content": "temos tambem drip coffee suave em sachês individuais e cápsulas compatíveis com sistema Nespresso, nas opções classico e canela",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:06.588355+00:00"
+  },
+  {
+    "id": "8bcc1da6-8d35-47fa-bc8d-d6965ae8d5ee",
+    "role": "assistant",
+    "content": "qual deles te interessou mais?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:08.190831+00:00"
+  },
+  {
+    "id": "6449131f-cc4d-46fb-9a38-76a824252042",
+    "role": "assistant",
+    "content": "ce quer que eu passe os valores?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:11.360655+00:00"
+  },
+  {
+    "id": "eddba753-b5f0-489d-9239-12a0f26f5159",
+    "role": "user",
+    "content": "Claro. Manda os precos.",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:25.122464+00:00"
+  },
+  {
+    "id": "7a655126-62c6-4be3-bcbc-ad2e6d9e6def",
+    "role": "assistant",
+    "content": "o classico moido 250g sai R$27,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:30.664058+00:00"
+  },
+  {
+    "id": "daa82279-5d21-46f4-b66b-b3f98dab47d2",
+    "role": "assistant",
+    "content": "se preferir em graos, R$29,70 no mesmo tamanho",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:33.450497+00:00"
+  },
+  {
+    "id": "206650ad-ff02-4c9a-b76c-d4f86338bfc3",
+    "role": "assistant",
+    "content": "temos de 250g ate granel de 2kg",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:35.494352+00:00"
+  },
+  {
+    "id": "07f77c4f-a5c2-44bb-876f-8eefe8488584",
+    "role": "assistant",
+    "content": "o suave segue a mesma faixa de preco, R$27,70 o moido 250g e R$29,70 o grao 250g",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:42.15999+00:00"
+  },
+  {
+    "id": "9cf817ac-35fb-4ba3-90ac-b4df95f93b5a",
+    "role": "assistant",
+    "content": "temos tambem o microlote 250g moido ou graos por R$31,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:44.729944+00:00"
+  },
+  {
+    "id": "637528f3-a41d-4418-8443-c018e720dc7c",
+    "role": "assistant",
+    "content": "e o canela moido 250g sai R$27,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:47.432619+00:00"
+  },
+  {
+    "id": "e59ebe1b-d9a5-4d47-b7df-26be193dafda",
+    "role": "assistant",
+    "content": "temos drip coffee suave em display com 10 unidades por R$24,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:51.38406+00:00"
+  },
+  {
+    "id": "5452430b-4b73-4f2c-9d16-46b1c8f1e113",
+    "role": "assistant",
+    "content": "capsulas nespresso classico ou canela 10 unidades por R$17,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:54.261994+00:00"
+  },
+  {
+    "id": "bf4f5a88-0a46-43a6-82f9-bc09d59d89fe",
+    "role": "assistant",
+    "content": "o que achou dos precos? tem alguma duvida?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:56:55.896554+00:00"
+  },
+  {
+    "id": "28e40600-385b-45c5-adf0-9ea35d5971b8",
+    "role": "user",
+    "content": "Esse e o preço de atacado? Quanto sai o kg pra mim?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:07.607066+00:00"
+  },
+  {
+    "id": "49cb2bd4-1ea8-4ede-8f76-3929c42fc3e6",
+    "role": "assistant",
+    "content": "sim, esses sao precos para atacado mesmo, Pedro",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:12.122295+00:00"
+  },
+  {
+    "id": "95037ee3-4e4f-4e88-b522-7ed0eb969875",
+    "role": "assistant",
+    "content": "o classico em graos 1kg sai por R$88,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:14.534847+00:00"
+  },
+  {
+    "id": "ab2dbc5c-28a3-4163-9ff0-e7a0879436a3",
+    "role": "assistant",
+    "content": "o suave no mesmo tamanho tambem custa R$88,70",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:18.49682+00:00"
+  },
+  {
+    "id": "9a375f66-d1f4-43ab-8e61-e0ec9104aabb",
+    "role": "assistant",
+    "content": "o microlote 250g sai R$31,70, entao o kg ficaria mais caro proporcionalmente",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:23.750627+00:00"
+  },
+  {
+    "id": "d13736fb-fcf4-4118-b6ea-1cf4d530ab6f",
+    "role": "assistant",
+    "content": "quer que eu te mande mais detalhes?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:27.365459+00:00"
+  },
+  {
+    "id": "8aaffc2c-0ecd-4306-8ede-d0b589a38707",
+    "role": "user",
+    "content": "Tem como mandar amostra? Qual o pedido minimo e a entrega pra BH?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:40.564971+00:00"
+  },
+  {
+    "id": "bb9141ee-29dc-409c-975d-f0a49a38fd44",
+    "role": "assistant",
+    "content": "o pedido minimo para a regiao de bh e R$300, com frete de R$55 e prazo de entrega de 7 dias úteis",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:46.919169+00:00"
+  },
+  {
+    "id": "803a08a0-785c-4f0a-a12b-308d69f17938",
+    "role": "assistant",
+    "content": "se o pedido passar de R$900, o frete sai gratis",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:49.637265+00:00"
+  },
+  {
+    "id": "aa1854d9-6fab-4c77-874e-fb32ddf5415a",
+    "role": "assistant",
+    "content": "sobre amostra, a gente nao trabalha com amostras, mas o cafe e torrado sob demanda e voce pode conferir a qualidade pelo nosso site ou loja online",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:56.001537+00:00"
+  },
+  {
+    "id": "d6ea8b8b-3655-4f35-9e04-0edc4dabdae4",
+    "role": "assistant",
+    "content": "quer que eu te explique como funciona o processo de entrega?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:57:59.865893+00:00"
+  },
+  {
+    "id": "dedd3617-0b07-4022-aacc-4327fde59c5c",
+    "role": "user",
+    "content": "Nao precisa. Mas como vou comprar um cafe pra cafeteria sem provar antes?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:15.280453+00:00"
+  },
+  {
+    "id": "17ddf8c2-7b4e-47fe-8c8e-a73a6f7d5bc7",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo e essa pergunta faz total sentido",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:20.353498+00:00"
+  },
+  {
+    "id": "f860e4a9-c230-4b25-8719-60e635b4e680",
+    "role": "assistant",
+    "content": "o processo e assim: a gente pode te enviar amostras pra voce provar antes de fechar o pedido maior",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:24.307783+00:00"
+  },
+  {
+    "id": "03a71540-c76f-4e3a-879b-084af3dd4631",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:25.652244+00:00"
+  },
+  {
+    "id": "09b66578-2e0e-4ec1-88b9-7a52f28835e4",
+    "role": "user",
+    "content": "Sim, faz. Como funciona pra mandar?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:39.360403+00:00"
+  },
+  {
+    "id": "780f2bfc-1238-48c8-badc-4d40a808c5ca",
+    "role": "assistant",
+    "content": "a entrega pra bh tem pedido minimo de R$300 e frete de R$55, com prazo de 7 dias úteis pra chegar aí",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:45.220061+00:00"
+  },
+  {
+    "id": "746beb8d-5af4-4f78-b746-2da294437b07",
+    "role": "user",
+    "content": "Pera, esse pedido minimo e frete e pra amostra? Nao entendi.",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:55.727353+00:00"
+  },
+  {
+    "id": "b3a93597-167f-461e-84b1-868ea4fb7afe",
+    "role": "assistant",
+    "content": "me diz uma coisa, onde voce fica em BH?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:58:59.700634+00:00"
+  },
+  {
+    "id": "9059a32a-7727-4ed5-8ab2-f7e557fcb5d0",
+    "role": "user",
+    "content": "Antes, me explica a amostra. Tem que pagar esse pedido minimo e frete so pra provar?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:59:18.914426+00:00"
+  },
+  {
+    "id": "fed84b5c-eb15-4e14-a9c4-2345e7e7daf4",
+    "role": "assistant",
+    "content": "me diz uma coisa",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:59:21.378006+00:00"
+  },
+  {
+    "id": "a7c188fc-a215-483f-8775-815d7a61da34",
+    "role": "assistant",
+    "content": "voce ja conhece o sabor do nosso cafe ou quer provar antes de fazer pedido maior?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:59:26.998912+00:00"
+  },
+  {
+    "id": "7bbf7063-0af9-46d4-ba9d-db04b977ed23",
+    "role": "user",
+    "content": "Nao conheco, por isso quero provar. A amostra tem esse pedido minimo e frete tambem?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:59:39.627112+00:00"
+  },
+  {
+    "id": "d06854cd-bf36-4391-b413-650c3b314788",
+    "role": "assistant",
+    "content": "pra quem esta em bh, o pedido minimo e R$300 e o frete sai R$55, com frete gratis acima de R$900 e prazo de 7 dias úteis. faz sentido pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T17:59:51.712274+00:00"
+  },
+  {
+    "id": "ba289c7c-63e6-478e-b17e-3117182c88cb",
+    "role": "user",
+    "content": "Não, nao faz sentido pra uma amostra. Eu tenho que fazer um pedido de 300 reais so pra provar?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:07.339927+00:00"
+  },
+  {
+    "id": "bedaba74-f790-4025-95aa-28c5f989ead6",
+    "role": "assistant",
+    "content": "pra pedidos em bh o minimo e R$300, entao sim, para entrega a gente precisa desse valor minimo",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:12.553283+00:00"
+  },
+  {
+    "id": "c3436b18-657f-4af8-a719-e0ae9e63674e",
+    "role": "assistant",
+    "content": "mas o frete e gratis acima de R$900 e o prazo e de 7 dias",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:17.611104+00:00"
+  },
+  {
+    "id": "9ef81130-372b-494e-ac7f-00430268dcba",
+    "role": "assistant",
+    "content": "se quiser, posso ajudar a montar um pedido que aproveite bem esse valor, faz sentido?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:23.090418+00:00"
+  },
+  {
+    "id": "67043dd1-6fdf-43b3-aa34-15a5c63da011",
+    "role": "user",
+    "content": "Olha, pra mim não dá. Nao vou gastar 300 reais num cafe que nunca provei.",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:40.677494+00:00"
+  },
+  {
+    "id": "f8423585-5416-431b-bc21-396b1dfdec81",
+    "role": "assistant",
+    "content": "entendo que seja um valor alto pra quem ainda nao conhece o produto direito, Pedro",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:49.305399+00:00"
+  },
+  {
+    "id": "fd24c585-3d3e-4a9c-a724-fe13b3842b0d",
+    "role": "assistant",
+    "content": "mas cafe especial e um diferencial enorme, a margem e boa e o cliente fideliza",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:00:55.314387+00:00"
+  },
+  {
+    "id": "91c55ca3-994e-41d5-b656-3ab02faf67ae",
+    "role": "assistant",
+    "content": "quer que eu te envie uma amostra ou o link da loja online pra voce conhecer antes?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:02.707473+00:00"
+  },
+  {
+    "id": "f66427d1-c35b-4759-853a-b64302383f92",
+    "role": "user",
+    "content": "Ue, a gente ta voltando pro começo? Eu quero a amostra, como funciona pra enviar?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:16.317071+00:00"
+  },
+  {
+    "id": "67490ddd-c72c-4830-8f46-6684dcf64e1b",
+    "role": "assistant",
+    "content": "entendo, Pedro",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:19.053313+00:00"
+  },
+  {
+    "id": "3d15a065-7c6d-4257-8582-6fd5574ba3ab",
+    "role": "assistant",
+    "content": "a gente nao trabalha com amostras gratuitas, mas o pedido minimo em atacado é só R$300",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:21.776341+00:00"
+  },
+  {
+    "id": "e816ae95-d7ea-4015-ab37-d2f1aadd4900",
+    "role": "assistant",
+    "content": "se quiser posso te ajudar a montar um pedido inicial pra você testar o cafe no seu negocio",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:26.032198+00:00"
+  },
+  {
+    "id": "4bf2b1f3-6838-4492-8086-3311fb91ea35",
+    "role": "assistant",
+    "content": "faz sentido pra você?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:27.892222+00:00"
+  },
+  {
+    "id": "c32d5843-a37a-4162-903e-97c627ce26d9",
+    "role": "user",
+    "content": "Cara, ja te falei que nao. Nao vou gastar 300 reais num cafe que nao conheco.",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:42.980823+00:00"
+  },
+  {
+    "id": "b168ace6-b122-415e-a22d-dfcf93b05d0b",
+    "role": "assistant",
+    "content": "entendo que o investimento inicial possa ser alto, Pedro",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:48.254163+00:00"
+  },
+  {
+    "id": "077535af-9802-413b-9cfd-d1001e79ec4d",
+    "role": "assistant",
+    "content": "muitos clientes tinham essa mesma preocupação, mas depois que provaram nosso cafe especial, viram que compensa em qualidade e fidelizacao",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:01:59.847138+00:00"
+  },
+  {
+    "id": "948e5a07-9e5b-463e-a600-0c4322159618",
+    "role": "assistant",
+    "content": "me diz uma coisa, voce gostaria de experimentar uma amostra antes de fechar pedido maior?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:07.164826+00:00"
+  },
+  {
+    "id": "7af56cef-d12d-4b16-bd77-a950e3058413",
+    "role": "user",
+    "content": "A gente ta andando em circulos. Eu quero a amostra, como eu faco pra receber?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:19.984412+00:00"
+  },
+  {
+    "id": "a9438d53-933a-4f65-9590-c7fa8515cfb1",
+    "role": "assistant",
+    "content": "entendo, Pedro",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:23.274768+00:00"
+  },
+  {
+    "id": "35644662-d919-49b3-b292-12ed679e28a2",
+    "role": "assistant",
+    "content": "a gente nao trabalha com amostras gratuitas, mas voce pode comprar os tamanhos menores pra testar o cafe",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:28.078909+00:00"
+  },
+  {
+    "id": "81713662-d396-44cf-b283-6332da080b23",
+    "role": "assistant",
+    "content": "posso te ajudar a escolher o melhor pra sua necessidade e te passar os valores detalhados",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:31.872128+00:00"
+  },
+  {
+    "id": "864095e0-faab-4590-9f3e-e9d9cae6a289",
+    "role": "assistant",
+    "content": "faz sentido pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:33.7159+00:00"
+  },
+  {
+    "id": "da13c5f6-a29e-4d32-bbb6-d05af8243fb7",
+    "role": "user",
+    "content": "Nao. Quanto fica pra mandar so um pacote pequeno pra eu provar?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:46.615735+00:00"
+  },
+  {
+    "id": "55d6cf1a-43f6-4ea8-ac6e-a16c9a949395",
+    "role": "assistant",
+    "content": "o pedido minimo pra entrega em BH e R$300, mas posso te explicar as opcoes de embalagem pra facilitar sua escolha",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:02:54.126903+00:00"
+  },
+  {
+    "id": "5ae0e5be-80d7-4784-af1b-379462f8bc83",
+    "role": "user",
+    "content": "Esquece a embalagem. Tem como eu provar o cafe sem fazer um pedido de 300 reais?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:03:08.650848+00:00"
+  },
+  {
+    "id": "afda2690-ddfb-487d-b4cb-95966acb5d9d",
+    "role": "assistant",
+    "content": "o pedido minimo pro seu endereco em bh e R$300, isso inclui embalagem sim",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:03:12.530616+00:00"
+  },
+  {
+    "id": "c07d0300-d1be-4c4c-a0a2-03af63eb46b7",
+    "role": "assistant",
+    "content": "mas me diz uma coisa",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:03:13.481402+00:00"
+  },
+  {
+    "id": "fef415d7-29fb-4f3b-b98b-7c30484d3776",
+    "role": "assistant",
+    "content": "voce precisa de um fornecedor mais confiavel e pontual?",
+    "stage": "atacado",
+    "created_at": "2026-04-20T18:03:16.016876+00:00"
+  }
+]

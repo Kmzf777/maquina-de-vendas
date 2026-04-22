@@ -1,0 +1,40 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": false,
+      "reason": "mencao de volume em kg (sem match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 2,
+    "linhas_robotizadas": [
+      "faz sentido pra voce?",
+      "Marcos, vou passar os valores dos cafés pra voce agora mesmo",
+      "quer que eu te passe os valores pra voce avaliar?",
+      "se quiser posso ajudar a escolher os sabores que combinam mais com seu publico, assim voce aproveita melhor o pedido",
+      "quer que eu te ajude com isso?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente entrou em um loop severo, reenviando a lista de preços que já havia sido enviada e ignorando a afirmação explícita do lead de que o problema era o valor do pedido mínimo, não a falta dos preços.",
+    "veredito_curto": "O agente falhou completamente em lidar com uma objeção simples, entrando em um loop repetitivo, ignorando o contexto da conversa e frustrando o lead."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "consumo",
+    "secretaria"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "archetype_id": "A3",
+  "archetype_slug": "multi-intent",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "visited_gte_2_stages",
+      "passed": false,
+      "reason": "apenas 0 stage(s) visitado(s)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "quer que eu te passe os valores de cada um pra voce analisar?",
+      "quer que eu te explique algum ponto especifico de um dos modelos?",
+      "quer que eu te envie os detalhes dos produtos private label e seus pedidos minimos pra voce analisar?"
+    ],
+    "resposta_incorreta_ou_inventada": "Valeria inventou um benefício ao afirmar que um volume de R$1.000/mês no atacado garantiria a redução do pedido mínimo da marca própria para 50 unidades. Posteriormente, ela se contradisse ao revelar que esse pedido mínimo reduzido era uma condição padrão para um produto específico e não tinha relação com o histórico de compras no atacado.",
+    "veredito_curto": "Valeria falhou ao não conseguir explicar a sinergia entre os dois modelos de negócio, fornecendo informações vagas e, por fim, contraditórias, o que demonstrou despreparo e minou a confiança do lead."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": []
+}

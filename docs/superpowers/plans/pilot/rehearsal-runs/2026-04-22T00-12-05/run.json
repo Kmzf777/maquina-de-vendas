@@ -1,0 +1,83 @@
+{
+  "started_at": "2026-04-22T00:12:05.991931+00:00",
+  "git_sha": "eee5fce841396b0dc5542b850238fdeec399b95b",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T00:21:41.094056+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "pronto, fernando\n\npix gerado na chave cpf 123.456.789-00, em nome de cafe canastra\n\nassim que o pagamento for confirmado eu te aviso aqui",
+          "pronto, fernando\n\npix enviado no mesmo cpf 123.456.789-00, cafe canastra\n\nassim que o pagamento for confirmado eu te aviso sobre o envio e prazo de entrega",
+          "voce ja fez o pagamento dos 10kg, certo?\n\nme confirma se foi feito hoje pra eu acompanhar o envio e te atualizar o prazo de entrega"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente entrou em um loop de erro grave na segunda compra. Após o cliente informar que já havia pago o pix, o agente confirmou o pagamento, mas em seguida enviou os dados do pix novamente por duas vezes, ignorando as correções do cliente e causando grande confusão.",
+        "veredito_curto": "O agente conduziu bem a primeira venda, mas falhou catastroficamente na segunda ao entrar em um loop e enviar repetidamente os dados de pagamento após o pagamento já ter sido confirmado."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "consumo",
+        "secretaria"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 10,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "Valeria teve um desempenho excelente, respondendo de forma direta e natural às perguntas do lead e mantendo a conversa fluida e engajada."
+      },
+      "turns_count": 2,
+      "terminated_by": "stage_reached",
+      "stages_visited": [
+        "private_label"
+      ]
+    }
+  ]
+}

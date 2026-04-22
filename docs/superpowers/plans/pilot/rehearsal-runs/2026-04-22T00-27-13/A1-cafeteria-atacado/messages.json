@@ -1,0 +1,303 @@
+[
+  {
+    "id": "7f005b0a-c2fe-418f-ae4b-04a8270e809f",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:27:14.274637+00:00"
+  },
+  {
+    "id": "2540fa04-a101-4128-8343-1064a55b1533",
+    "role": "assistant",
+    "content": "boa noite\n\naqui e a valeria, do comercial da cafe canastra\n\nme diz uma coisa, com quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:27:15.50163+00:00"
+  },
+  {
+    "id": "9aba70c3-5ce5-46fa-a106-ac46f5ce0140",
+    "role": "user",
+    "content": "Carlos. Qual o preco do kg de voces?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:27:37.973351+00:00"
+  },
+  {
+    "id": "56f2c19a-74e3-4675-a44e-21e4ba9e394c",
+    "role": "assistant",
+    "content": "prazer, carlos\n\nvou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro\n\npra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:27:39.3064+00:00"
+  },
+  {
+    "id": "55eb5ceb-533d-415d-845c-cbc9c85e09a8",
+    "role": "user",
+    "content": "Brasileiro. E o preco, qual e?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:28:03.039669+00:00"
+  },
+  {
+    "id": "16c39616-a6ea-4f3a-80b5-24965a328b97",
+    "role": "assistant",
+    "content": "entendi, carlos\n\ne qual seria sua necessidade especifica no mercado brasileiro?\n\nquer comprar cafe pra consumo proprio, pra revenda no seu negocio, ou pra criar uma marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:28:04.261655+00:00"
+  },
+  {
+    "id": "0dc4c6ef-e911-489d-8d6e-3e2b940070b8",
+    "role": "user",
+    "content": "Pra revenda. Me fala o preco do kg e se manda amostra.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:28:29.136872+00:00"
+  },
+  {
+    "id": "00239427-78dd-4a76-88da-3279d876fc4a",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T00:28:30.31593+00:00"
+  },
+  {
+    "id": "bd5ddfe7-ac38-4758-abe0-c78e3a36f418",
+    "role": "assistant",
+    "content": "carlos, cafe especial e um diferencial enorme, a margem e boa e o cliente fideliza\n\nvoce sente que o cafe que vc vende atualmente atende as expectativas dos seus clientes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:28:31.615713+00:00"
+  },
+  {
+    "id": "88749cf2-3adc-4779-a408-a3e6f95e45f4",
+    "role": "user",
+    "content": "Atende sim. Qual o pedido minimo e como funciona a entrega pra BH?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:28:54.298868+00:00"
+  },
+  {
+    "id": "b53dd58b-2865-4eef-8a68-1fdbcfb36cce",
+    "role": "system",
+    "content": "Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T00:29:03.61344+00:00"
+  },
+  {
+    "id": "e8205f77-9116-4b54-be2f-d437662c028e",
+    "role": "assistant",
+    "content": "temos o classico, com torra media-escura, intenso, notas achocolatadas, pontuacao 84 SCA\n\no suave, torra media, intensidade intermediaria, notas de melaço e frutas amarelas, tambem 84 SCA\n\no canela, tambem torra media, intensidade intermediaria, caramelizado com toque de canela, pontuacao 84 SCA\n\ne o microlote, com media intensidade, notas de mel, caramelo e cacau, pontuacao 86 SCA\n\nqual desses te agradou mais?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:29:05.989402+00:00"
+  },
+  {
+    "id": "0a7d7ebb-cae9-42e2-b3fb-d9177951d3aa",
+    "role": "user",
+    "content": "O classico parece bom. Qual o preco dele e do microlote? E a amostra?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:29:40.75931+00:00"
+  },
+  {
+    "id": "5ef87256-178e-4ac7-811f-f2a4b41fdacc",
+    "role": "system",
+    "content": "Foto de classico enviada",
+    "stage": null,
+    "created_at": "2026-04-22T00:29:42.949575+00:00"
+  },
+  {
+    "id": "185d98ce-6384-47e4-9642-8d5e39c1f092",
+    "role": "system",
+    "content": "Foto de microlote enviada",
+    "stage": null,
+    "created_at": "2026-04-22T00:29:43.027537+00:00"
+  },
+  {
+    "id": "19947d47-0448-45d7-bfb6-a68d1a117d62",
+    "role": "assistant",
+    "content": "o classico moido 250g sai R$27,70\n\nse preferir em graos, R$29,70 no mesmo tamanho\n\ntemos de 250g ate granel de 2kg\n\no microlote 250g, tanto moido quanto em graos, sai R$31,70\n\nsobre amostra, nao enviamos amostras gratuitas, mas o cafe e colhido e torrado sob demanda, garantindo frescor e qualidade\n\nquer que eu passe os valores mais detalhados ou algum outro detalhe?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:29:45.173407+00:00"
+  },
+  {
+    "id": "31919abc-c9dd-4fe2-869a-14ff28f4fa23",
+    "role": "user",
+    "content": "Ok, mas esse e o preço de varejo. Quanto sai o quilo no atacado?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:30:25.066178+00:00"
+  },
+  {
+    "id": "5cff1f97-5ef0-4d2e-b257-8d5f5d83863c",
+    "role": "system",
+    "content": "Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-04-22T00:30:31.997319+00:00"
+  },
+  {
+    "id": "ba7bdabb-65e2-4466-9511-ab6619dc650f",
+    "role": "assistant",
+    "content": "enviei as fotos pra voce dar uma olhada\n\ntem interesse em fechar um pedido agora?\n\nqual o volume que voce pensa em comprar?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:30:32.90194+00:00"
+  },
+  {
+    "id": "35c2adb0-922d-494b-ba2b-9a2afb941ba8",
+    "role": "user",
+    "content": "Ainda nao sei o preço do kg no atacado. Compro uns 10kg por mes, mas preciso saber o valor primeiro.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:30:52.359285+00:00"
+  },
+  {
+    "id": "00ce8e8f-07d6-44a9-a8a2-880184630ce2",
+    "role": "assistant",
+    "content": "carlos, vou te passar os valores no atacado entao\n\no classico em graos 1kg sai R$88,70\n\ntemos tambem o classico em granel de 2kg por R$155,70\n\no microlote 250g moido ou em graos custa R$31,70\n\nquer que eu detalhe mais formatos e precos?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:30:54.45456+00:00"
+  },
+  {
+    "id": "4e4e7162-524e-43c3-97f0-1b49cee13929",
+    "role": "user",
+    "content": "O microlote nao tem de 1kg? E como funciona a entrega e a amostra pra BH?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:31:24.351631+00:00"
+  },
+  {
+    "id": "b15e3c4e-d866-40e8-8253-d15f932af8c0",
+    "role": "assistant",
+    "content": "microlote nao temos de 1kg, carlos, apenas o pacote de 250g mesmo\n\nsobre entrega pra bh, o pedido minimo e R$300\n\ntem frete gratis pra compras acima de R$900\n\no valor do frete fica em R$55, com prazo de 7 dias uteis\n\nem relacao a amostra, nao enviamos amostra gratuita, mas nosso cafe e fresco e de alta qualidade\n\nfaz sentido pra voce essa condicao?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:31:26.92409+00:00"
+  },
+  {
+    "id": "0cfec64c-237f-4120-8251-1d970fddee59",
+    "role": "user",
+    "content": "Entendi. Mas sem provar o cafe fica dificil fechar 10kg. Nao tem como mandar nem que seja um pouco pra eu provar?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:31:55.812339+00:00"
+  },
+  {
+    "id": "88977b7b-51e6-4320-ad65-5d9b7ffab7f1",
+    "role": "assistant",
+    "content": "entendo perfeitamente, carlos\n\nnao enviamos amostras gratuitas, mas uma sugestao que damos pros clientes e pedir o pacote menor, de 250g\n\nassim voce pode provar sem compromisso e sentir a qualidade do nosso cafe\n\nquer que eu te envie o link pra esse tamanho?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:31:58.170874+00:00"
+  },
+  {
+    "id": "503c4ae1-d195-43cd-932d-8e3626e02b24",
+    "role": "user",
+    "content": "Mas ai tenho que pagar o frete so pra um pacote? Nao faz sentido.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:32:24.518049+00:00"
+  },
+  {
+    "id": "60a7b213-5246-49ad-9184-03549d76e27f",
+    "role": "assistant",
+    "content": "faz sentido sim, carlos\n\nmas para bh o pedido minimo e R$300, entao voce poderia incluir mais produtos ou mais quantidade pra aproveitar o frete gratis acima de R$900\n\nse quiser posso calcular o valor total pra voce com algumas opcoes\n\nquer que eu faça isso?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:32:25.866089+00:00"
+  },
+  {
+    "id": "c7bb9bd5-c987-4a5a-95d3-bae77205366d",
+    "role": "user",
+    "content": "Não precisa. Não vou fazer um pedido de R$300 sem provar antes. Se nao tem jeito de mandar amostra, nao vai rolar.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:33:03.562913+00:00"
+  },
+  {
+    "id": "ceb9d304-f380-42df-968e-6875c5f71401",
+    "role": "assistant",
+    "content": "carlos, entendo sua posicao\n\nmuitos dos nossos clientes diziam o mesmo, mas depois que mudaram pro nosso cafe especial, ganharam mais elogios e aumentaram as vendas\n\nse quiser posso te avisar caso lancemos alguma promocao ou formato especial pra degustacao\n\nquer que eu te mantenha informado?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:33:05.669179+00:00"
+  },
+  {
+    "id": "42255e52-8c7d-4c91-b032-7f9736951a28",
+    "role": "user",
+    "content": "Nao precisa, obrigado. Se nao tem amostra, pra mim nao da.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:33:38.603374+00:00"
+  },
+  {
+    "id": "cccdc569-44b0-4f3f-8c15-b8ad1ed3d001",
+    "role": "assistant",
+    "content": "carlos, obrigado por ser sincero\n\nse mudar de ideia, estamos aqui\n\nposso te encaminhar nosso contato comercial para quando quiser retomar?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:33:40.694644+00:00"
+  },
+  {
+    "id": "2ea02d75-084e-48d2-be1d-53cf2ee1adbf",
+    "role": "user",
+    "content": "Nao precisa nao, valeu.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:34:01.722857+00:00"
+  },
+  {
+    "id": "e1b0575a-3f03-4c47-8c8e-07656ec3165a",
+    "role": "assistant",
+    "content": "beleza, carlos\n\nse mudar de ideia ou quiser conversar de novo, estou por aqui\n\num bom dia pra voce",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:34:03.631166+00:00"
+  },
+  {
+    "id": "e3d05cf1-0351-499c-ae05-3d831657a6ef",
+    "role": "user",
+    "content": "Ta bom. Se um dia tiver amostra me fala.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:34:25.643203+00:00"
+  },
+  {
+    "id": "61f90a0b-993d-4e84-ba14-c8ef68737f2b",
+    "role": "assistant",
+    "content": "combinado, carlos\n\nse surgir alguma novidade sobre amostras ou degustacoes, eu te aviso\n\nmais alguma coisa que queira saber sobre o cafe ou nossos produtos?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:34:26.773324+00:00"
+  },
+  {
+    "id": "87c222e5-232b-4b3d-b1ae-4a006ddd7bb7",
+    "role": "user",
+    "content": "Nao, so isso mesmo. Valeu.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:34:47.434431+00:00"
+  },
+  {
+    "id": "3c383a6d-bc72-445b-8d41-44ffd558e2cf",
+    "role": "assistant",
+    "content": "obrigada pelo contato, carlos\n\nse mudar de ideia ou quiser conversar sobre outros formatos, estou aqui\n\nboa noite pra voce",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:34:48.684751+00:00"
+  },
+  {
+    "id": "9fdb6a59-c73d-4230-bdd9-4b9500a3aab5",
+    "role": "user",
+    "content": "Beleza, boa noite ai.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:35:10.893968+00:00"
+  },
+  {
+    "id": "c502526e-3b7c-4718-bcc4-17ea51bae38e",
+    "role": "assistant",
+    "content": "boa noite, carlos\n\nqualquer coisa, estou por aqui\n\num abraço",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:35:12.437294+00:00"
+  },
+  {
+    "id": "cc9ad336-93b6-4437-858e-4c46233b5f08",
+    "role": "user",
+    "content": "Ok, valeu. Se um dia tiver amostra me avisa de verdade.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:35:36.404768+00:00"
+  },
+  {
+    "id": "a215e3cf-e3eb-49fc-9539-404d51a088ae",
+    "role": "assistant",
+    "content": "carlos, pode deixar que se tivermos alguma novidade, voce sera o primeiro a saber\n\nfico a disposicao caso mude de ideia\n\nboa noite pra voce",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:35:37.778343+00:00"
+  },
+  {
+    "id": "30548dd9-9295-4192-8a8e-bd38d9888f34",
+    "role": "user",
+    "content": "Ok, falou.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:35:53.36385+00:00"
+  },
+  {
+    "id": "379d4ffe-9d3e-4ba9-8496-79b0c30f98d9",
+    "role": "assistant",
+    "content": "obrigada pelo contato, carlos\n\nse mudar de ideia, pode me chamar a qualquer momento\n\num otimo dia pra voce",
+    "stage": "atacado",
+    "created_at": "2026-04-22T00:35:54.840752+00:00"
+  }
+]

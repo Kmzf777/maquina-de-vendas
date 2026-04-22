@@ -1,0 +1,41 @@
+{
+  "started_at": "2026-04-21T23:42:35.285033+00:00",
+  "git_sha": "ada5b78648419be919ae74bce8622e84bbf2194a",
+  "archetypes": [
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T23:45:02.999389+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_exportacao",
+          "passed": false,
+          "reason": "stage exportacao NAO alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 5,
+        "linhas_robotizadas": [
+          "por fim, qual o seu objetivo com esse projeto?\n\nvoce quer ser agente comercial nosso em lisboa, ou vai comprar os produtos para vender ai?"
+        ],
+        "resposta_incorreta_ou_inventada": "A pergunta sobre o objetivo do projeto (ser agente comercial ou comprar para vender) ignora a informação que o lead já havia fornecido duas vezes: que o café seria para sua própria cafeteria.",
+        "veredito_curto": "O agente cumpriu os objetivos de qualificação e encaminhamento, mas demonstrou falha de compreensão e insistiu em perguntas desnecessárias, gerando atrito na conversa."
+      },
+      "turns_count": 5,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": []
+    }
+  ]
+}

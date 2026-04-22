@@ -1,0 +1,296 @@
+[
+  {
+    "id": "52a342b1-f495-4e2e-aab5-b18a4b77f446",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:12:07.172753+00:00"
+  },
+  {
+    "id": "b7a1f724-ca98-4b86-abdf-78c7b4b253af",
+    "role": "assistant",
+    "content": "boa noite, tudo bem?\\n\\naqui e a valeria, do comercial da cafe canastra\\n\\nvi que voce demonstrou interesse nos nossos cafes, queria entender melhor sua demanda\\n\\ncom quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:12:09.177867+00:00"
+  },
+  {
+    "id": "6e8faf9b-90d5-44d7-b0ad-c910cef27b91",
+    "role": "user",
+    "content": "aqui e o fernando. qual o preco do kg?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:12:37.608474+00:00"
+  },
+  {
+    "id": "04c11d3a-8061-45e4-8017-a8d58eb4d3c7",
+    "role": "system",
+    "content": "stage alterado para: secretaria",
+    "stage": null,
+    "created_at": "2026-04-22T00:12:39.421678+00:00"
+  },
+  {
+    "id": "00d30b82-3f0a-426e-a765-600bed203841",
+    "role": "assistant",
+    "content": "prazer, fernando\\n\\nvou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro\\n\\npra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:12:40.764551+00:00"
+  },
+  {
+    "id": "56e36669-640a-41d9-bc5d-7cf5db567cfd",
+    "role": "user",
+    "content": "Mercado brasileiro. E pra ca mesmo, pra BH. E o preco?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:13:04.127344+00:00"
+  },
+  {
+    "id": "c8596df7-e038-49e0-9c72-ab76abc9ed40",
+    "role": "system",
+    "content": "stage alterado para: consumo",
+    "stage": null,
+    "created_at": "2026-04-22T00:13:05.993396+00:00"
+  },
+  {
+    "id": "fa201901-5783-48ff-ae4e-71dbf30459be",
+    "role": "assistant",
+    "content": "bacana que voce ta em bh, a gente conhece bem a regiao e o paladar do consumidor\\n\\nme diz uma coisa, e pra consumo proprio, pra voce e familia? ou voce ta pensando em revender, montar uma cafeteria, algo assim?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:13:07.599811+00:00"
+  },
+  {
+    "id": "35834a42-fabd-44d6-bdc6-fc433763ad92",
+    "role": "user",
+    "content": "Tenho uma cafeteria. Me passa o valor do quilo.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:13:36.906655+00:00"
+  },
+  {
+    "id": "8270a3c2-32f7-4667-908f-7a3d50171f03",
+    "role": "assistant",
+    "content": "entendi, fernando\\n\\ncafe especial e um diferencial enorme, a margem e boa e o cliente fideliza\\n\\npra um cafe especial na sua cafeteria, o valor do kilo com a gente fica em torno de R$80 a R$100 dependendo do lote e da torra\\n\\nse quiser posso detalhar mais sobre cada tipo de cafe e embalagem que a gente oferece",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:13:39.892969+00:00"
+  },
+  {
+    "id": "eac47879-7e18-4b27-88db-41b748016b5c",
+    "role": "user",
+    "content": "Ok. Vcs mandam amostra? Qual o pedido minimo e a entrega pra BH?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:14:16.256527+00:00"
+  },
+  {
+    "id": "4a992846-bc8f-48ef-a07d-2877ab167ba4",
+    "role": "assistant",
+    "content": "claro que sim, fernando, a gente sempre manda amostras pra todo cliente que quer conhecer o cafe de perto\\n\\no pedido minimo e de 5 kilos pra amostra e teste, pra garantir frescor e qualidade\\n\\nentrega pra bh costuma levar de 3 a 5 dias uteis, dependendo do transporte\\n\\nquer que eu te envie os detalhes das variedades que temos?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:14:18.999241+00:00"
+  },
+  {
+    "id": "2103c78b-201c-453e-9a96-b272232c0de3",
+    "role": "user",
+    "content": "Ok. Manda 5kg do que voce mais vende pra cafeteria. Como faço pra pagar?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:14:58.832289+00:00"
+  },
+  {
+    "id": "c39f01c2-2e5a-4a35-9fb6-ce2b7f0971e9",
+    "role": "assistant",
+    "content": "perfeito, fernando\\n\\no nosso carro-chefe pra cafeteria e o cafe classico, que tem notas achocolatadas e corpo equilibrado\\n\\nse quiser posso ja reservar os 5kg pra voce\\n\\na gente trabalha com pagamento por transferencia bancaria ou pix, o que for mais facil pra voce\\n\\nce quer que eu te passe os dados pra pagamento?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:15:00.868298+00:00"
+  },
+  {
+    "id": "51d0e6f6-317d-42ba-b957-a2bbede42659",
+    "role": "user",
+    "content": "Pode mandar os dados do pix. Fico aguardando.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:15:36.345992+00:00"
+  },
+  {
+    "id": "8a1e949c-578e-4749-8b75-e0295b83f656",
+    "role": "assistant",
+    "content": "vou ja providenciar isso pra voce, fernando\\n\\nme confirma o endereco completo pra entrega, assim ja deixo tudo organizado aqui\\n\\ndepois te mando os dados do pix e o comprovante do envio da amostra, combinado?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:15:39.725168+00:00"
+  },
+  {
+    "id": "a16a39bb-2b4d-47e1-ad74-c1e1d21272ed",
+    "role": "user",
+    "content": "O endereco e Rua Timbiras, 123 - Centro, BH. Pode mandar o pix.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:16:03.189953+00:00"
+  },
+  {
+    "id": "ac325ae9-0696-4cca-b6cc-d3bf7488e7cb",
+    "role": "assistant",
+    "content": "endereco confirmado, fernando\\n\\nja vou gerar o pix e te passo aqui em seguida\\n\\nso um momento que ja volto com os dados",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:16:05.616147+00:00"
+  },
+  {
+    "id": "4ca873d1-c546-4b81-b45c-831c25fcaa84",
+    "role": "user",
+    "content": "Ok, no aguardo.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:16:21.344345+00:00"
+  },
+  {
+    "id": "f09b6cf1-0731-49f4-a3f7-647b6ed2b8d0",
+    "role": "assistant",
+    "content": "pronto, fernando\\n\\no pix para pagamento e a chave cpf 123.456.789-00, em nome de cafe canastra\\n\\nassim que o pagamento for confirmado, ja encaminho a amostra para o endereco que voce passou\\n\\ntem mais alguma coisa que voce queira saber?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:16:23.595031+00:00"
+  },
+  {
+    "id": "bbc5ccae-d18d-4964-8544-3bdec9c0e462",
+    "role": "user",
+    "content": "Blz, ja vou fazer o pix aqui. Me avisa do envio.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:16:45.41886+00:00"
+  },
+  {
+    "id": "e01084d7-7e6e-4b27-8b6d-efbcb8f59a7f",
+    "role": "assistant",
+    "content": "combinado, fernando\\n\\nassim que o pagamento for confirmado eu te aviso aqui imediatamente\\n\\nqualquer coisa, me chama aqui que eu acompanho pra voce\\n\\nobrigada pela compra, voce vai gostar muito do nosso cafe",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:16:47.828296+00:00"
+  },
+  {
+    "id": "7fa32e2a-d4dc-4850-95ab-579d57a88f01",
+    "role": "user",
+    "content": "Ok, valeu. Fico no aguardo entao.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:17:11.52551+00:00"
+  },
+  {
+    "id": "308a6a25-d7bd-475e-82f8-54dd0896bceb",
+    "role": "assistant",
+    "content": "por nada, fernando\\n\\nfico no aguardo do seu pix pra agilizar tudo aqui\\n\\nqualquer novidade te aviso sem demora\\n\\nboa noite pra voce",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:17:12.452284+00:00"
+  },
+  {
+    "id": "9555043c-314c-45d7-93d6-5c8122ef61a7",
+    "role": "user",
+    "content": "Opa, recebi o cafe aqui, gostei. Vamos fechar 10kg entao?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:17:29.597144+00:00"
+  },
+  {
+    "id": "43fc707f-841f-4c05-ba3d-540e8f332d23",
+    "role": "assistant",
+    "content": "que bom que voce gostou do cafe, fernando\\n\\n10kg e uma otima escolha pra sua cafeteria\\n\\nposso ja reservar pra voce e passar o valor atualizado?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:17:30.649111+00:00"
+  },
+  {
+    "id": "682bd119-f12c-4f6c-ac7b-32467115149f",
+    "role": "user",
+    "content": "Pode ser. Quanto fica os 10kg?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:17:48.395927+00:00"
+  },
+  {
+    "id": "ff95a902-b33a-4196-8d9a-db6866a29d64",
+    "role": "assistant",
+    "content": "pra 10kg o valor fica em R$85 o kilo, totalizando R$850\\n\\nposso mandar o pix pra voce agora mesmo\\n\\nquer que eu envie?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:17:49.530273+00:00"
+  },
+  {
+    "id": "22ed7952-0d1f-4822-9910-3635c3e8143c",
+    "role": "user",
+    "content": "Pode mandar. O pix e o mesmo da outra vez?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:18:08.282737+00:00"
+  },
+  {
+    "id": "658c7a69-638f-4ae6-9ad8-27b1eb41a153",
+    "role": "assistant",
+    "content": "sim, fernando, o pix e o mesmo da ultima vez\\n\\nja vou preparar e te envio aqui\\n\\nso um instante",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:18:09.138726+00:00"
+  },
+  {
+    "id": "7672f48f-1745-483e-aaaa-e9836663f6c4",
+    "role": "user",
+    "content": "Beleza, ja to fazendo aqui. Me manda o comprovante depois.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:18:30.498851+00:00"
+  },
+  {
+    "id": "4c8ab040-46f9-4684-8571-c7aaf44ba0ad",
+    "role": "assistant",
+    "content": "combinado, fernando\\n\\nassim que o pagamento for confirmado eu te envio o comprovante e atualizo o pedido\\n\\nqualquer coisa me chama aqui",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:18:31.684794+00:00"
+  },
+  {
+    "id": "ddde876f-611d-4b38-b4be-bd77b026838e",
+    "role": "user",
+    "content": "Feito. Fico no aguardo.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:18:47.40527+00:00"
+  },
+  {
+    "id": "7f68d769-2322-44e3-b8bc-2486e0ef54a5",
+    "role": "assistant",
+    "content": "confirmado o pagamento, fernando\\n\\nja estou providenciando o envio dos 10kg para seu endereco\\n\\nassim que sair do transporte eu aviso voce aqui, combinado?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:18:48.385495+00:00"
+  },
+  {
+    "id": "79e079c6-db3c-4e5b-b1df-e41e22be46ee",
+    "role": "user",
+    "content": "Blz, me avisa entao.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:19:02.530164+00:00"
+  },
+  {
+    "id": "7e76017d-7d7b-4ed7-9d98-06b5f8b322e2",
+    "role": "assistant",
+    "content": "pronto, fernando\\n\\npix gerado na chave cpf 123.456.789-00, em nome de cafe canastra\\n\\nassim que o pagamento for confirmado eu te aviso aqui\\n\\nobrigada pela confiança, voce vai ver que o cafe vai manter a qualidade que voce ja conhece",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:19:03.62289+00:00"
+  },
+  {
+    "id": "2d1249a1-4cf6-4664-a25c-c684570e0076",
+    "role": "user",
+    "content": "Ue, ja paguei. So to esperando o envio.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:19:29.622918+00:00"
+  },
+  {
+    "id": "92cfc8b2-ceec-453d-86f6-48149dd06320",
+    "role": "assistant",
+    "content": "entendi, fernando\\n\\nvou verificar aqui rapidinho pra te atualizar sobre o envio\\n\\nso um momento que ja volto com a confirmacao",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:19:30.795953+00:00"
+  },
+  {
+    "id": "17b20339-38d7-49b5-bd9d-d0fe5acbca5b",
+    "role": "user",
+    "content": "Ok, ve ai e me fala quando chega.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:19:49.303561+00:00"
+  },
+  {
+    "id": "8f91892a-8b88-49da-89e7-4cf6dbc89ac2",
+    "role": "assistant",
+    "content": "pronto, fernando\\n\\npix enviado no mesmo cpf 123.456.789-00, cafe canastra\\n\\nassim que o pagamento for confirmado eu te aviso sobre o envio e prazo de entrega\\n\\nposso ajudar em mais alguma coisa?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:19:50.640404+00:00"
+  },
+  {
+    "id": "37643a52-e46f-4f5f-ac1e-3afa7267427f",
+    "role": "user",
+    "content": "Ue, de novo? Eu ja paguei. So quero saber quando meu cafe chega.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:20:15.022645+00:00"
+  },
+  {
+    "id": "f0ab2532-9fa1-485b-bba8-fb53d0b9e0a6",
+    "role": "assistant",
+    "content": "entendi, fernando\\n\\nvoce ja fez o pagamento dos 10kg, certo?\\n\\nme confirma se foi feito hoje pra eu acompanhar o envio e te atualizar o prazo de entrega",
+    "stage": "consumo",
+    "created_at": "2026-04-22T00:20:16.328136+00:00"
+  }
+]

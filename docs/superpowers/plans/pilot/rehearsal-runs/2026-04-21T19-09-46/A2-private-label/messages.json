@@ -1,0 +1,324 @@
+[
+  {
+    "id": "9cbdb2f7-7172-49f6-b5d7-7cbc2b93aaf2",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:09.168822+00:00"
+  },
+  {
+    "id": "1facae17-9f02-4bb3-8c01-9c5260287b25",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:11.469265+00:00"
+  },
+  {
+    "id": "07efc618-9e8b-4213-bb6c-1dc9d3455088",
+    "role": "assistant",
+    "content": "sou a Valeria, do comercial da Cafe Canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:15.340787+00:00"
+  },
+  {
+    "id": "54318455-0f92-4fa8-b150-e10ce6de394b",
+    "role": "assistant",
+    "content": "me diz uma coisa, voce ja tem uma marca de cafe ou ta pensando em criar uma do zero?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:22.386051+00:00"
+  },
+  {
+    "id": "9e15648e-321b-4f5a-a094-9df53f43633a",
+    "role": "user",
+    "content": "Opa, Valeria! Tô criando do zero, a ideia é lançar a minha própria marca de café. Me conta um pouco mais de como funciona o processo de private label com vocês?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:38.542581+00:00"
+  },
+  {
+    "id": "379f3b19-b365-4e4a-9d63-f00ba129886a",
+    "role": "assistant",
+    "content": "que projeto bacana, criar sua marca e o melhor investimento que voce pode fazer nesse ramo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:45.754465+00:00"
+  },
+  {
+    "id": "d9c96bc7-ceea-412d-8ba5-230641fbef8e",
+    "role": "assistant",
+    "content": "o processo e assim: a gente trabalha com cafe especial 100% arabica da Serra da Canastra, com torra sob demanda pra garantir frescor",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:53.62459+00:00"
+  },
+  {
+    "id": "04a28ddc-ba17-4148-bb1b-fb4f5a803556",
+    "role": "assistant",
+    "content": "voce escolhe o perfil de torra e o blend, e a gente cuida da embalagem personalizada com sua marca",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:13:58.958818+00:00"
+  },
+  {
+    "id": "50cf853c-b9ab-43b8-a784-308866facf83",
+    "role": "assistant",
+    "content": "faz sentido pra voce? quer que eu detalhe as etapas?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:14:02.765316+00:00"
+  },
+  {
+    "id": "98c947ce-d15a-4982-ad8f-228000a472a4",
+    "role": "user",
+    "content": "Com certeza, Valeria, pode detalhar! E já me tira umas dúvidas: qual a quantidade mínima pra um primeiro pedido e como funciona para usar meu próprio design na embalagem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:14:16.492689+00:00"
+  },
+  {
+    "id": "cb256375-4b42-4f60-9e4b-eaf0b9935f19",
+    "role": "assistant",
+    "content": "o pedido minimo para private label geralmente parte de 100kg, mas isso a gente ajusta conforme seu projeto e embalagem desejada",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:14:22.626559+00:00"
+  },
+  {
+    "id": "f7f6795c-533d-4b98-9795-4740c0212e34",
+    "role": "assistant",
+    "content": "quanto ao design, voce envia a arte que deseja, a gente revisa pra garantir qualidade na impressao e produz conforme seu layout",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:14:32.473287+00:00"
+  },
+  {
+    "id": "9a642c50-de00-48cd-8dcc-8a3a3c2cc0af",
+    "role": "assistant",
+    "content": "faz sentido ate aqui? quer que eu te passe os valores pra voce ter uma ideia?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:14:38.182493+00:00"
+  },
+  {
+    "id": "7352cd41-ddab-443c-bc78-ee7d195f5edf",
+    "role": "user",
+    "content": "Faz total sentido, Valeria! Por favor, pode me passar uma ideia dos valores sim. E aproveitando, qual o prazo de entrega depois que a gente aprova a arte da embalagem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:14:50.955397+00:00"
+  },
+  {
+    "id": "649d4643-4ecb-4e3f-96c8-3edbc6b45b5e",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-21T19:14:51.992628+00:00"
+  },
+  {
+    "id": "dfe2e72f-b7f2-46fd-b99b-1acee428c597",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-21T19:14:58.603352+00:00"
+  },
+  {
+    "id": "d4458a58-7e64-4627-82c7-a94e67ac19d6",
+    "role": "assistant",
+    "content": "o cafe em 250g sai R$23,90 a unidade, ja com embalagem e silk da sua logo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:15:03.391854+00:00"
+  },
+  {
+    "id": "465a2a24-4e48-44ba-a25f-7e7b7d33852a",
+    "role": "assistant",
+    "content": "se voce ja tiver a embalagem propria, cai para R$22,90",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:15:07.585631+00:00"
+  },
+  {
+    "id": "a20a3664-36fe-416b-b23f-95200b58d89a",
+    "role": "assistant",
+    "content": "o pedido minimo e de 100 unidades",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:15:10.222845+00:00"
+  },
+  {
+    "id": "d2de72b4-fb1a-495c-bc47-1745914cba94",
+    "role": "assistant",
+    "content": "quer que eu continue e te falo o preco do 500g?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:15:12.610566+00:00"
+  },
+  {
+    "id": "6eaaa426-8150-4265-ae71-ce6c362e02ef",
+    "role": "user",
+    "content": "Claro, pode passar o de 500g sim! E aproveitando, me fala qual o prazo de entrega que vocês costumam trabalhar depois que a gente aprova a arte final da embalagem?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:15:27.717364+00:00"
+  },
+  {
+    "id": "162b8af4-cd0e-4eee-a8ae-be4a231b2301",
+    "role": "assistant",
+    "content": "o 500g sai R$44,90 a unidade, com embalagem personalizada e silk da sua logo",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:15:34.652399+00:00"
+  },
+  {
+    "id": "baca65ef-e176-412d-abfc-5a8778ca352d",
+    "role": "assistant",
+    "content": "se voce usar embalagem propria, cai pra R$43,40",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:15:38.964853+00:00"
+  },
+  {
+    "id": "2c01329a-8fe5-4a01-9443-beb7b277c0bd",
+    "role": "assistant",
+    "content": "o pedido minimo tambem e de 100 unidades",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:15:41.281065+00:00"
+  },
+  {
+    "id": "10296143-75b7-4362-b535-aca15d080c00",
+    "role": "assistant",
+    "content": "sobre o prazo, o medio e de 10 a 15 dias uteis apos a aprovacao da arte final",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:15:44.693201+00:00"
+  },
+  {
+    "id": "cd4f32b0-18b3-4ea3-a9d5-b7137bc61cc9",
+    "role": "assistant",
+    "content": "faz sentido pra voce? quer que eu envie fotos dos produtos e embalagens pro voce visualizar?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:15:50.823886+00:00"
+  },
+  {
+    "id": "0dc933da-6d9d-40db-a6f0-ee9a88dfb4f9",
+    "role": "user",
+    "content": "Opa, com certeza, Valeria! Manda as fotos sim, por favor, quero muito ver as opções de embalagem e o visual do produto.",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:16:05.161329+00:00"
+  },
+  {
+    "id": "be9eaf49-cc63-4f5f-a83f-e2c05b318c1b",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-21T19:16:10.297134+00:00"
+  },
+  {
+    "id": "ce7dd0c3-2600-4fa2-bacd-d892be2bc007",
+    "role": "assistant",
+    "content": "essas fotos mostram alguns dos modelos que a gente faz, com embalagens sanfonadas e standup, ja com silk da sua marca no pacote",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:16:21.385501+00:00"
+  },
+  {
+    "id": "e7f11ea1-e553-4621-886a-1f3651a0ce04",
+    "role": "assistant",
+    "content": "tem bastante flexibilidade pra voce escolher o que mais combina com seu publico e projeto",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:16:28.795771+00:00"
+  },
+  {
+    "id": "0190a4c6-9c13-420f-8969-19ffeaa87404",
+    "role": "assistant",
+    "content": "ce quer que eu te apresente as opcoes de sabores que a gente tem disponivel?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:16:34.082384+00:00"
+  },
+  {
+    "id": "abacb31d-decb-4104-a03d-8f692fc7202c",
+    "role": "user",
+    "content": "Claro, pode apresentar sim! Tô super curioso pra conhecer as opções de perfis sensoriais e ver o que mais combina com a minha galera.",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:16:44.354249+00:00"
+  },
+  {
+    "id": "60f15272-9f8d-47d0-af04-544bc1e4362e",
+    "role": "system",
+    "content": "[tool:enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-21T19:16:49.840416+00:00"
+  },
+  {
+    "id": "6264bf93-2235-474d-81f0-d0b93453cc3b",
+    "role": "assistant",
+    "content": "os sabores que voce pode escolher sao tres principais: o classico, que tem torra escura e notas amadeiradas e caramelizadas, com amargor mais presente",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:16:58.445203+00:00"
+  },
+  {
+    "id": "350fff9d-e321-450a-85ec-d9840062b471",
+    "role": "assistant",
+    "content": "tem o suave, com torra media e notas achocolatadas, ideal pra quem quer um cafe mais leve e menos amargo",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:17:04.77049+00:00"
+  },
+  {
+    "id": "50f30fab-5c15-4686-a6a6-42bd9c274790",
+    "role": "assistant",
+    "content": "e o canela, que e o classico com paus de canela natural moidos, esse e um diferencial no mercado, quem ama canela fica encantado",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:17:15.786558+00:00"
+  },
+  {
+    "id": "438b57b7-b5e8-44a8-87ef-57b56433e3c3",
+    "role": "assistant",
+    "content": "qual deles te chamou mais atencao ate agora?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:17:18.483954+00:00"
+  },
+  {
+    "id": "5ca7d58a-1e9f-4c1c-9745-9253ccfb32fd",
+    "role": "user",
+    "content": "Nossa, o Suave e o de Canela me pareceram bem interessantes, acho que minha galera ia curtir! Existe a possibilidade de enviar amostras para eu provar e ter certeza?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:17:32.776454+00:00"
+  },
+  {
+    "id": "3891c07a-e08d-44cb-9a43-6bc238358ed2",
+    "role": "assistant",
+    "content": "a gente nao trabalha com amostra gratis, mas o minimo do atacado e R$ 300 — da pra testar o sabor e ja garantir o preco de revenda",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:17:44.122963+00:00"
+  },
+  {
+    "id": "2b7ae747-a88c-4f83-84bc-c3d8159efca8",
+    "role": "user",
+    "content": "Entendi, Valeria! Com esses R$300 eu consigo pedir um mix do Suave e do Canela pra provar? E a gente consegue agendar uma chamada pra alinhar os próximos passos do projeto?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:17:55.27359+00:00"
+  },
+  {
+    "id": "af565998-34a7-4e9d-8045-19e3d36824dc",
+    "role": "assistant",
+    "content": "o minimo de R$300 da pra montar um pedido com os sabores que voce quiser, incluindo Suave e Canela sim, perfeito pra testar e ja vender com a sua marca",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:18:06.881416+00:00"
+  },
+  {
+    "id": "001295b1-136c-4d4a-8041-598c97ae9d9b",
+    "role": "assistant",
+    "content": "legal! voce ja tem uma marca ou ta pensando em criar uma do zero?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:18:12.939604+00:00"
+  },
+  {
+    "id": "633e1107-37d9-497d-a1ab-296cafa2c34d",
+    "role": "user",
+    "content": "Opa, tô criando do zero sim, como te falei lá no comecinho! Mas e aí, a gente consegue marcar aquela chamada pra alinhar os próximos passos do projeto?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:18:25.19911+00:00"
+  },
+  {
+    "id": "b72036c5-05d4-4e8b-b469-dbbc7b267eb1",
+    "role": "system",
+    "content": "[tool:encaminhar_humano] Lead encaminhado para Joao Bras: private label — cliente criando marca do zero, interessado em alinhar projeto",
+    "stage": null,
+    "created_at": "2026-04-21T19:18:26.560897+00:00"
+  },
+  {
+    "id": "9bfc4c1f-e3cf-4b5f-a647-08c27810ef9b",
+    "role": "assistant",
+    "content": "legal! voce ja tem uma marca ou ta pensando em criar uma do zero?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:18:32.295759+00:00"
+  },
+  {
+    "id": "ae544d66-5092-4ff6-b1be-49eee26a334d",
+    "role": "assistant",
+    "content": "passei seu projeto pro Joao Bras, ele e quem conduz os proximos passos de arte, amostra piloto e fechamento. ele fala com voce aqui mesmo em instantes",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:18:38.885195+00:00"
+  }
+]

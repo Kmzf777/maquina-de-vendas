@@ -1,0 +1,86 @@
+{
+  "started_at": "2026-04-22T00:27:13.210312+00:00",
+  "git_sha": "f02caec674608f1155bf92574b8478e028f38d25",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T00:39:25.090963+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "faz sentido pra voce essa condicao?",
+          "se mudar de ideia, estamos aqui",
+          "se mudar de ideia ou quiser conversar de novo, estou por aqui",
+          "fico a disposicao caso mude de ideia",
+          "se mudar de ideia, pode me chamar a qualquer momento"
+        ],
+        "resposta_incorreta_ou_inventada": "Ao ser questionada sobre o preço do quilo para revenda (atacado), a agente respondeu com os preços de varejo para pacotes de 250g, ignorando completamente o contexto da pergunta.",
+        "veredito_curto": "O agente foi excessivamente evasivo em relação ao preço, demonstrou rigidez e pouca habilidade na objeção sobre amostras, e encerrou a conversa de forma muito repetitiva e robótica, resultando na perda do lead."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "atacado"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 8,
+        "linhas_robotizadas": [
+          "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente ignorou a pergunta sobre o 'prazo de produção' na primeira vez que foi feita, forçando o lead a perguntar novamente na mensagem seguinte.",
+        "veredito_curto": "O agente conduziu a conversa de forma natural e cumpriu os objetivos, mas falhou em responder a todas as perguntas do lead de uma só vez, necessitando que o lead repetisse a questão."
+      },
+      "turns_count": 5,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "private_label"
+      ]
+    }
+  ]
+}

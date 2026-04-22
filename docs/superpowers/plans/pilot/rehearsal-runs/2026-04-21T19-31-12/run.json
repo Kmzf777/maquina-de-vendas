@@ -1,0 +1,146 @@
+{
+  "started_at": "2026-04-21T19:31:12.260811+00:00",
+  "git_sha": "56b57a0b2cc753e63183081b4758f9f35d7814f1",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T19:45:18.485464+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": false,
+          "reason": "mencao de volume em kg (sem match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 0,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+        "veredito_curto": "Não foi possível realizar a avaliação pois a transcrição da conversa está ausente."
+      },
+      "turns_count": 4,
+      "terminated_by": "timeout",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 1,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+        "veredito_curto": "Não é possível realizar a avaliação pois a transcrição da conversa está ausente."
+      },
+      "turns_count": 5,
+      "terminated_by": "timeout",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "error",
+      "error": "",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "5 turnos (>= 5)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 1,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": "A transcrição da conversa não foi fornecida, impossibilitando a avaliação.",
+        "veredito_curto": "A avaliação não pôde ser realizada pois a transcrição da conversa está ausente no prompt."
+      },
+      "turns_count": 5,
+      "terminated_by": "timeout",
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_exportacao",
+          "passed": true,
+          "reason": "stage exportacao alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 2,
+        "linhas_robotizadas": [
+          "posso saber seu nome antes de encaminhar?",
+          "quer que eu te explique o que esta incluso no private label?",
+          "exportacao pra qual pais?"
+        ],
+        "resposta_incorreta_ou_inventada": "O bot falhou em reter informações cruciais fornecidas pelo lead. Perguntou o nome do lead (\"posso saber seu nome?\") logo após ele ter se apresentado (\"sou o Léo\"), e perguntou o país de destino (\"exportacao pra qual pais?\") depois do lead já ter mencionado Lisboa/Portugal duas vezes.",
+        "veredito_curto": "O bot ignorou o tópico principal (exportação), não registrou informações básicas como nome e país, e insistiu em um assunto secundário, resultando em uma péssima experiência."
+      },
+      "turns_count": 3,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "exportacao",
+        "private_label"
+      ]
+    }
+  ]
+}

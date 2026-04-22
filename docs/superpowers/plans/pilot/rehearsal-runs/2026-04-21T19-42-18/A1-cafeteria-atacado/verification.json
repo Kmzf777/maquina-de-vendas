@@ -1,0 +1,38 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 4,
+    "linhas_robotizadas": [
+      "qual seria sua necessidade especifica?",
+      "comprar cafe pra consumo proprio, pra seu negocio ou criar sua propria marca?",
+      "entendo, voce ja tem fornecedor com um preco definido"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "O agente foi repetitivo, demorou a responder perguntas diretas sobre preço e soou robótico ao enviar múltiplas mensagens curtas e duplicadas."
+  },
+  "turns_count": 3,
+  "terminated_by": "stage_reached",
+  "stages_visited": [
+    "atacado",
+    "secretaria"
+  ]
+}

@@ -1,0 +1,205 @@
+[
+  {
+    "id": "c4213977-b6b4-49b7-a015-2e18daef4f3b",
+    "role": "user",
+    "content": "sou lojista, minha loja é especializada em chimarrão no RS. pessoal me pede muito cafe. gostaria de experimentar antes de fechar, o ideal seria com a minha marca",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T19:00:06.95751+00:00"
+  },
+  {
+    "id": "34dccf5d-847d-4ed9-a2b9-f815b14a2a8b",
+    "role": "assistant",
+    "content": "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?\nentendi, que tipo de negocio voce tem?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T19:00:10.706603+00:00"
+  },
+  {
+    "id": "b5aed50d-eef9-45ad-b43b-c71563bbdec3",
+    "role": "user",
+    "content": "pra ca pro brasil. mas antes de falar de negocio, como q eu provo esse cafe? tem amostra?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T19:00:37.182176+00:00"
+  },
+  {
+    "id": "c7c2ea22-d9a1-4f50-829a-954793ea7d77",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T19:00:38.840458+00:00"
+  },
+  {
+    "id": "0c7f5b0d-db5d-49fa-a6ea-99b7428b87a5",
+    "role": "assistant",
+    "content": "bacana que voce ta no ramo de chimarrao, um mercado com publico fiel e que valoriza produtos de qualidade\n\nno esquema de private label, a gente torra e embala o cafe com a sua marca, entao o cliente recebe ele pronto pra vender direto na loja\n\nsobre provar, a gente nao trabalha com amostras avulsas, mas tem a opcao de encomendar um lote pequeno pra testar a recepcao\n\nquer que eu te explique como funciona o private label e os volumes minimos?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T19:00:41.708606+00:00"
+  },
+  {
+    "id": "de07663c-7c76-48f7-990f-853956c3b424",
+    "role": "user",
+    "content": "mas comprar um lote sem provar nao da. eu presiso saber se o café é bom antes.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:01:25.450501+00:00"
+  },
+  {
+    "id": "26ad63f4-dc2e-4a51-88d9-8b7c5047c4be",
+    "role": "assistant",
+    "content": "entendo perfeitamente, fazer a degustacao antes e essencial\n\numa alternativa que temos e voce adquirir um cafe nosso ja pronto, com a marca Cafe Canastra mesmo\n\nassim voce prova a qualidade, o sabor e o frescor do nosso cafe especial direto da serra da canastra\n\nse quiser, posso te indicar os produtos que voce pode comprar pra degustar antes de decidir pelo private label",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:01:27.345069+00:00"
+  },
+  {
+    "id": "25ad9408-ecbb-45ad-a347-7b507c478010",
+    "role": "user",
+    "content": "ta, e onde eu acho esse Cafe Canastra pra comprar? tem em algum mercado aqui por perto de Charqueadas?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:01:57.718955+00:00"
+  },
+  {
+    "id": "ab057d0f-97fb-4bae-8a6e-f70be61fbf8d",
+    "role": "assistant",
+    "content": "Charqueadas, uma regiao com potencial pra cafe especial\n\nno momento nao temos pontos fisicos na sua regiao, mas voce pode comprar diretamente pelo nosso site\n\na entrega e feita com todo cuidado pra manter o frescor do cafe\n\nquer que eu te mande os links dos produtos que combinam com o seu publico de chimarrao?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:01:59.882381+00:00"
+  },
+  {
+    "id": "daab34ca-d44f-4b98-bce2-4fc63c200a46",
+    "role": "user",
+    "content": "Manda o link entao. mas eh um custo so pra provar ne. nao tem outro jeito?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:02:28.727048+00:00"
+  },
+  {
+    "id": "8c5aba3e-1908-4adc-83c2-94f3dce14d37",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T19:02:35.301474+00:00"
+  },
+  {
+    "id": "d8e176b6-8983-43b9-9576-78ec27cb5935",
+    "role": "assistant",
+    "content": "te enviei algumas fotos de embalagens e formatos que temos no private label\n\ntem o classico, mais amargo e amadeirado, que combina com quem gosta de chimarrao forte\n\ntem o suave, com notas achocolatadas, pra quem prefere um cafe mais leve e sem acucar\n\ntem tb o canela, que leva paus de canela natural, um diferencial pra quem gosta de sabores marcantes\n\nquer que eu te fale os precos e volumes minimos dessas opcoes?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:02:38.093632+00:00"
+  },
+  {
+    "id": "9029d0f0-812f-4cfe-bb59-9deb92a0fd0a",
+    "role": "user",
+    "content": "Nao adianta falar de preco se eu ainda nao sei o gosto do cafe. continua o problema de ter q comprar no site so pra provar.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:03:20.108992+00:00"
+  },
+  {
+    "id": "1e796857-bf48-4f6f-9a53-12d88e40fa0a",
+    "role": "assistant",
+    "content": "entendo, essa questao de provar antes de investir e comum mesmo\n\nme conta mais, voce ja trabalha com algum cafe especial hoje ou seria uma novidade pra sua loja?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:03:21.908597+00:00"
+  },
+  {
+    "id": "21d4baf6-dc36-4035-b732-523d71b5864e",
+    "role": "user",
+    "content": "seria novidade. mas isso nao muda nada. continuo sem poder provar o cafe.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:03:44.223147+00:00"
+  },
+  {
+    "id": "1b72e541-b656-4edf-bbf1-65b1d0cec01b",
+    "role": "assistant",
+    "content": "faz sentido, experimentar antes e fundamental\n\numa forma bastante usada por clientes novos e comprar um pacote de 250g no nosso site, a gente torra sob demanda e entrega fresco\n\ncomo voce vai testar ainda, esse volume pequeno pode ser ideal\n\nquer que eu te passe os links dos 250g disponiveis pra voce escolher o sabor?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:03:46.553274+00:00"
+  },
+  {
+    "id": "33bd6d5e-bff8-46b8-aecd-b9841d61c257",
+    "role": "user",
+    "content": "mas ai eu pago o cafe e mais o frete so pra provar? nao tem um jeito mais facil.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:04:16.590909+00:00"
+  },
+  {
+    "id": "b99ff463-39be-4980-8da3-80a1cddbf230",
+    "role": "assistant",
+    "content": "imagina, entendo que o frete pode pesar no teste\n\numa possibilidade e negociar direto conosco um lote pequeno no private label, assim voce ja garante o cafe com sua marca\n\neu te explico como funciona esse processo pra voce avaliar se vale a pena\n\nquer que eu te explique?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:04:17.630888+00:00"
+  },
+  {
+    "id": "869d60d3-d610-43b2-8429-ab7cf5dd7a0b",
+    "role": "user",
+    "content": "mas isso é a mesma coisa. continuo sem saber o gosto do cafe pra poder comprar um lote.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:04:49.892188+00:00"
+  },
+  {
+    "id": "d013bf65-1b5f-4ff4-b6dd-dbe81b2626be",
+    "role": "assistant",
+    "content": "tem toda razao, o risco de comprar sem provar e real\n\nme diz uma coisa, voce tem interesse em conhecer os perfis dos nossos cafes? assim da pra ter uma ideia do sabor antes\n\nposso te enviar fotos e descrever os sabores do classico, suave e canela que temos no private label",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:04:51.22524+00:00"
+  },
+  {
+    "id": "2dda4e32-67bb-42a0-97c0-9a0a9aa3cbec",
+    "role": "user",
+    "content": "Ver foto e ler o que vc escreve nao me diz o gosto do café. Continuamos na mesma.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:05:19.800085+00:00"
+  },
+  {
+    "id": "18148c5a-fc50-4ba1-bdb3-fa7aa0d445c6",
+    "role": "assistant",
+    "content": "to entendendo sua dificuldade, provar de verdade e fundamental pra confiar e investir\n\nme fala uma coisa, voce conhece alguem que poderia comprar cafe da gente e te passar uma amostra? assim voce teria uma degustacao real antes de fazer seu proprio pedido",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:05:21.821726+00:00"
+  },
+  {
+    "id": "cd8570ec-92de-44a5-9fbc-13955a5cd053",
+    "role": "user",
+    "content": "Nao conheco ninguem. Isso é jeito de vender? vcs q tem q me dar um jeito de provar.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:05:51.219758+00:00"
+  },
+  {
+    "id": "a75ca12f-d731-41e8-94f4-1087996b77d3",
+    "role": "assistant",
+    "content": "imagina, entendo sua frustração, a gente trabalha pra facilitar ao maximo o processo\n\no mercado de marca propria ta crescendo muito, voce ta no caminho certo\n\nquer que eu te encaminhe para um dos nossos vendedores que pode ajudar melhor a encontrar uma solucao pro seu teste?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:05:52.726191+00:00"
+  },
+  {
+    "id": "a0f99167-8adb-4598-b1e0-041738909bbe",
+    "role": "user",
+    "content": "E o que esse vendedor vai fazer? Vai conseguir me mandar uma amostra ou vai me dizer pra comprar no site de novo?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:06:15.498575+00:00"
+  },
+  {
+    "id": "ff4c78c4-324c-4a08-a3e1-d0f7bb1a1fc3",
+    "role": "assistant",
+    "content": "o vendedor tem mais flexibilidade pra negociar e pode avaliar uma forma de facilitar essa degustacao pra voce\n\nele conhece nossos processos e pode oferecer condicoes especiais que eu nao consigo pelo chat\n\nquer que eu te encaminhe pra ele?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:06:17.368743+00:00"
+  },
+  {
+    "id": "c7adff19-2e8b-4882-912b-7ce66a4ab50c",
+    "role": "user",
+    "content": "Se for pra ele me mandar comprar no site de novo, nem presisa.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:06:47.652457+00:00"
+  },
+  {
+    "id": "be04c485-27f6-4d10-b678-6c42f487a3e4",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T19:06:49.788124+00:00"
+  },
+  {
+    "id": "056284e9-ce4d-40ab-895d-20fc49ce0390",
+    "role": "assistant",
+    "content": "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat",
+    "stage": "private_label",
+    "created_at": "2026-04-22T19:06:50.912893+00:00"
+  }
+]

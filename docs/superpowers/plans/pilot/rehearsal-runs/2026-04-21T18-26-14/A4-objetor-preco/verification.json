@@ -1,0 +1,32 @@
+{
+  "archetype_id": "A4",
+  "archetype_slug": "objetor-preco",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": false,
+      "reason": "apenas 4 turno(s)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 6,
+    "linhas_robotizadas": [
+      "valeu por compartilhar seu ponto de partida, isso ajuda bastante",
+      "entendi, preco e importante mesmo pra decidir com segurança",
+      "assim vou te passar um preco que realmente vale a pena pra voce"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "O agente foi excessivamente evasivo sobre o preço, necessitando de múltiplas insistências do lead para fornecer a informação, o que tornou a conversa repetitiva e pouco natural."
+  },
+  "turns_count": 4,
+  "terminated_by": "stage_reached",
+  "stages_visited": [
+    "atacado"
+  ]
+}

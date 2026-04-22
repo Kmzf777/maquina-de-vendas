@@ -1,0 +1,65 @@
+[
+  {
+    "id": "03c5f9bb-d860-4af7-849b-0e45536acde8",
+    "role": "user",
+    "content": "vou abrir um cafe em Lisboa no segundo semestre. voces exportam?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:01:10.517831+00:00"
+  },
+  {
+    "id": "4fd46170-1c49-4541-a132-d65258c75320",
+    "role": "assistant",
+    "content": "me diz uma coisa\\n\\nvc ja tem compradores em lisboa ou ta buscando parceiros la?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:01:16.030481+00:00"
+  },
+  {
+    "id": "a204934f-ab9b-4f97-bfc2-fb09a05ac6ef",
+    "role": "user",
+    "content": "O comprador sou eu mesmo, para a minha cafeteria. Você poderia me encaminhar para a pessoa responsável pela exportação para eu entender os prazos e a documentação?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T00:01:37.015655+00:00"
+  },
+  {
+    "id": "99a7b0f0-ced8-43a6-b7ca-7ec6965620c9",
+    "role": "assistant",
+    "content": "bacana que voce vai abrir cafe em lisboa, um mercado que valoriza muito cafe brasileiro especial\\n\\nme conta uma coisa\\n\\nvc ja trabalha com exportacao no brasil ou vai precisar que a Cafe Canastra faca toda a exportacao pra voce?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T00:01:38.536814+00:00"
+  },
+  {
+    "id": "4a7afaed-3b9c-41bc-81a1-78f7962540d8",
+    "role": "user",
+    "content": "Vou precisar que a Café Canastra faça toda a exportação, por isso queria conversar com a pessoa responsável para entender os próximos passos.",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T00:02:04.454914+00:00"
+  },
+  {
+    "id": "ce88bd17-0ebe-49f6-8941-14d7dd248b42",
+    "role": "assistant",
+    "content": "entendi\\n\\nme diz uma coisa\\n\\nqual o seu objetivo com essa exportacao\\n\\nquer ser uma especie de agente comercial nosso ou vai comprar nossos produtos pra vender na sua cafeteria?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T00:02:06.071693+00:00"
+  },
+  {
+    "id": "c02fb37e-14d0-42e8-8cef-57d599a5459b",
+    "role": "user",
+    "content": "Como mencionei antes, o objetivo é comprar o café de vocês para vender na minha cafeteria em Lisboa. Com quem eu posso conversar sobre o processo de exportação?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T00:02:34.017262+00:00"
+  },
+  {
+    "id": "38a95c5d-9146-4f2b-b317-f780f95f26a7",
+    "role": "system",
+    "content": "Lead encaminhado para Arthur: lead qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T00:02:35.128914+00:00"
+  },
+  {
+    "id": "5bf59c5f-4c9e-478b-8886-91e3eca6fbe2",
+    "role": "assistant",
+    "content": "perfeito\\n\\nvou passar seu contato para o Arthur, que e o responsavel pelo setor de exportacao\\n\\nassim que ele estiver disponivel, vai entrar em contato com voce pra detalhar os prazos e a documentacao\\n\\nmais alguma coisa que queira acrescentar pra eu avisar pra ele?",
+    "stage": "exportacao",
+    "created_at": "2026-04-22T00:02:36.924039+00:00"
+  }
+]

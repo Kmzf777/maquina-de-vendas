@@ -1,0 +1,29 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": false,
+      "reason": "stage private_label NAO alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 6,
+    "linhas_robotizadas": [
+      "prazer, cliente",
+      "que bom que gostou dos exemplos, cliente"
+    ],
+    "resposta_incorreta_ou_inventada": "A agente ignorou a pergunta sobre o prazo de produção duas vezes, forçando o lead a repetir a mesma pergunta uma terceira vez para obter a resposta.",
+    "veredito_curto": "A agente qualificou e encaminhou o lead com sucesso, mas demonstrou uma falha de conversação ao ignorar a mesma pergunta do cliente repetidamente."
+  },
+  "turns_count": 6,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": []
+}

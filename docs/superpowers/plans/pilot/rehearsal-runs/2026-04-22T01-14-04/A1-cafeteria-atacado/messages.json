@@ -1,0 +1,191 @@
+[
+  {
+    "id": "98ce8226-5976-4e1a-972c-0679ae2d0001",
+    "role": "user",
+    "content": "oi, vi a mensagem. o que voces tem de cafe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:14:05.656565+00:00"
+  },
+  {
+    "id": "1bfe544d-9ece-4d30-bec8-341f759256c3",
+    "role": "assistant",
+    "content": "boa noite\n\naqui e a Valeria, do comercial da Cafe Canastra\n\nvi que voce demonstrou interesse nos nossos cafes, queria entender melhor sua demanda\n\ncom quem eu to falando?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:14:08.876533+00:00"
+  },
+  {
+    "id": "3ab6739a-f36f-4c1a-bb93-40ccc31750c1",
+    "role": "user",
+    "content": "Opa, aqui e o João. Já me fala o preco do kg por favor.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:14:30.020185+00:00"
+  },
+  {
+    "id": "1238ee7c-3378-4ad8-ab0c-15ff6c1b7e15",
+    "role": "system",
+    "content": "stage alterado para: secretaria",
+    "stage": null,
+    "created_at": "2026-04-22T01:14:31.974231+00:00"
+  },
+  {
+    "id": "beb49cff-3640-4ce4-928b-10d75cce9c2f",
+    "role": "assistant",
+    "content": "prazer, João\n\nvou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro\n\npra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:14:33.130326+00:00"
+  },
+  {
+    "id": "2c143c09-e061-45c5-bc27-5d00a62d0b3f",
+    "role": "user",
+    "content": "É pra ca, mercado brasileiro. Agora pode me passar o preco?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:15:00.142215+00:00"
+  },
+  {
+    "id": "6a47b3ad-7bb3-45f1-9ecc-bf1be4a00e04",
+    "role": "system",
+    "content": "stage alterado para: consumo",
+    "stage": null,
+    "created_at": "2026-04-22T01:15:01.40197+00:00"
+  },
+  {
+    "id": "0258e2ce-6c8b-4dcc-884f-ceb0cd51ba37",
+    "role": "assistant",
+    "content": "entendi, João\n\npra consumo proprio temos o cafe ja torrado e embalado, vendido em pacotes\n\nvale a pena conhecer, vou te passar um cupom de 10% de desconto pra nossa loja online\n\nlink: https://loja.cafecanastra.com\n\ncupom: ESPECIAL10\n\nqualquer duvida sobre os cafes, me chama aqui",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T01:15:03.015057+00:00"
+  },
+  {
+    "id": "71fc1965-7cd8-4c3c-89a5-f6d5fe05ab8e",
+    "role": "user",
+    "content": "Nao e consumo proprio, e pra cafeteria. Preciso do preço de atacado.",
+    "stage": "consumo",
+    "created_at": "2026-04-22T01:15:38.537736+00:00"
+  },
+  {
+    "id": "6d241fff-85d3-471f-8fe8-0fd954629fb9",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T01:15:39.660363+00:00"
+  },
+  {
+    "id": "5dab7258-61e1-4487-be29-94c52fdaaf43",
+    "role": "assistant",
+    "content": "entendi, João\n\nvoce tem uma cafeteria, certo? me conta mais, como ta o movimento?",
+    "stage": "consumo",
+    "created_at": "2026-04-22T01:15:40.405318+00:00"
+  },
+  {
+    "id": "42de4b6e-c49b-4184-9939-6605c0f04cdd",
+    "role": "user",
+    "content": "Sim, cafeteria. O movimento ta corrido, me adianta o preço do kg no atacado.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:16:01.652614+00:00"
+  },
+  {
+    "id": "4cfc512d-27c3-4a2f-82f5-9b6681616970",
+    "role": "assistant",
+    "content": "cafe especial e um diferencial enorme, a margem e boa e o cliente fideliza\n\npra te ajudar a escolher, vou te apresentar os tipos que temos, assim fica mais facil decidir\n\nmanda eu te enviar as fotos e as descrições?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:16:03.1554+00:00"
+  },
+  {
+    "id": "dbac4521-00c2-4508-9492-8e3f8b9d439c",
+    "role": "user",
+    "content": "Nao precisa de foto. Me passa o preço do kg. Se for bom eu peço amostra.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:16:35.139955+00:00"
+  },
+  {
+    "id": "929db73b-b18e-43ec-aec8-75002b26150a",
+    "role": "assistant",
+    "content": "perfeito, João\n\nos nossos cafes sao todos 100% arabica, cultivados na serra da Canastra e torrados sob demanda\n\ntemos o Classico e o Suave que sao os mais pedidos, ambos com graos de 1kg por R$88,70\n\ntemos o Microlote, que e um pouco mais especial, 250g por R$31,70, mas nao temos 1kg dele\n\nfaz sentido pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:16:36.597473+00:00"
+  },
+  {
+    "id": "23bdeac7-c230-4a2e-8686-91d757d74741",
+    "role": "user",
+    "content": "Ok, entendi. Voces mandam amostra? E qual o pedido minimo e frete pra BH?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:17:09.516547+00:00"
+  },
+  {
+    "id": "e5dd8e49-8213-4268-b8dd-d3d3bb70354a",
+    "role": "assistant",
+    "content": "sim, enviamos amostra sim, para voce sentir o sabor e qualidade antes de comprar\n\no pedido minimo para atacado e R$300\n\npra BH, que e Sudeste, o frete custa R$55 se o pedido for abaixo de R$900\n\nacima de R$900 o frete e gratis\n\no prazo de entrega e de 7 dias\n\nquer que eu te envie as fotos dos produtos pra voce escolher a amostra?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:17:11.407098+00:00"
+  },
+  {
+    "id": "fc9c5d54-54c7-4c37-80f7-18c6b97ac804",
+    "role": "user",
+    "content": "Nao precisa da foto. Me manda amostra do Classico e do Suave pra eu provar.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:17:50.768692+00:00"
+  },
+  {
+    "id": "0bba6fa0-184f-4c28-8472-90d34793bc0a",
+    "role": "assistant",
+    "content": "pra agilizar o seu pedido, vou precisar que voce confirme o volume da amostra\n\ngeralmente enviamos pacotes de 250g, tudo bem pra voce?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:17:51.848924+00:00"
+  },
+  {
+    "id": "f2f723f6-c008-4137-87de-37be90803f5d",
+    "role": "user",
+    "content": "Pode ser, 250g de cada. Precisa do meu endereco pra enviar?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:18:10.942805+00:00"
+  },
+  {
+    "id": "0148bf4e-9037-4001-bdeb-ace8bd077599",
+    "role": "assistant",
+    "content": "sim, por favor, me passa o endereco completo pra organizar o envio\n\nja vou registrar o pedido da amostra com 500g no total, 250g do Classico e 250g do Suave\n\nquer me confirmar o endereco?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:18:12.472936+00:00"
+  },
+  {
+    "id": "85049a7b-c07e-4bc3-9ad0-6469db188084",
+    "role": "user",
+    "content": "Rua Goitacazes 71, Centro. Quando chega?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:18:34.063251+00:00"
+  },
+  {
+    "id": "88eacf9b-8a1f-462e-b228-ebcfe9164326",
+    "role": "assistant",
+    "content": "perfeito, João\n\nja registrei seu pedido de amostra com 250g do Classico e 250g do Suave\n\npra BH, o prazo de entrega e de 7 dias uteis\n\nassim que o pedido for despachado, te aviso aqui\n\nquer que eu encaminhe seu pedido para o nosso comercial para acompanhar?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:18:35.276881+00:00"
+  },
+  {
+    "id": "2e992ce8-019e-4597-840b-d8e7329c6199",
+    "role": "user",
+    "content": "Pode ser. Me avisa quando enviar, entao.",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:18:57.951839+00:00"
+  },
+  {
+    "id": "c32475b2-a3a0-44d7-97f0-baf820ea99b4",
+    "role": "system",
+    "content": "Pedido registrado: Pedido atacado classico e suave 0.5kg. Obs: amostra para Joao, endereco Rua Goitacazes 71, Centro, BH",
+    "stage": null,
+    "created_at": "2026-04-22T01:19:00.065936+00:00"
+  },
+  {
+    "id": "67c45dfd-b5c6-4eb6-a870-807af780e5c9",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Comercial: lead pronto para acompanhar amostra e prosseguir pedido",
+    "stage": null,
+    "created_at": "2026-04-22T01:19:00.177624+00:00"
+  },
+  {
+    "id": "7af5ea00-668c-47bc-b241-8980277514cb",
+    "role": "assistant",
+    "content": "beleza, João\n\nja passei seu pedido de amostra pro nosso comercial\n\neles vao acompanhar o envio e te avisar quando despachar\n\nfica tranquilo e qualquer coisa me chama aqui",
+    "stage": "atacado",
+    "created_at": "2026-04-22T01:19:01.563654+00:00"
+  }
+]

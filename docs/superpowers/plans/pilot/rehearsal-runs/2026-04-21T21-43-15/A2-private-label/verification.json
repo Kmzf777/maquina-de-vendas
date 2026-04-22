@@ -1,0 +1,34 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 4,
+    "linhas_robotizadas": [
+      "o prazo medio total e de 10 a 15 dias uteis",
+      "faz sentido pra voce? quer que eu detalhe as etapas?",
+      "o prazo medio e 10 a 15 dias uteis, Leo",
+      "na verdade o prazo medio de producao e em torno de 10 a 15 dias uteis contando toda a torra, embalagem e preparo do pedido pra envio",
+      "se quiser posso detalhar as etapas pra voce entender melhor"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente não conseguiu responder a uma pergunta específica e repetida do lead sobre a divisão do prazo de produção de 10-15 dias entre as diferentes etapas (arte, embalagem, café). Em vez de fornecer o detalhe solicitado, o agente repetiu a informação geral do prazo total por quatro vezes, parecendo estar em um loop.",
+    "veredito_curto": "O agente iniciou a conversa de forma eficaz, mas entrou em um loop repetitivo ao não conseguir detalhar o prazo de produção, ignorando a pergunta específica do lead e necessitando de múltiplas tentativas do cliente para finalmente encaminhar a um humano."
+  },
+  "turns_count": 12,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "archetype_id": "A5",
+  "archetype_slug": "exportacao",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_exportacao",
+      "passed": true,
+      "reason": "stage exportacao alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 9,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "A agente iniciou a conversa de forma natural e fez uma pergunta de qualificação excelente para entender o modelo de negócio do lead."
+  },
+  "turns_count": 1,
+  "terminated_by": "stage_reached",
+  "stages_visited": [
+    "exportacao"
+  ]
+}

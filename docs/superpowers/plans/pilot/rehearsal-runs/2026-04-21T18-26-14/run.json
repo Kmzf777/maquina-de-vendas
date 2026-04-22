@@ -1,0 +1,176 @@
+{
+  "started_at": "2026-04-21T18:26:14.835875+00:00",
+  "git_sha": "a65536de05f6fa245329a559ed4653a20536f02f",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-21T18:56:39.791919+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": false,
+          "reason": "enviar_foto nao foi chamada"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": false,
+          "reason": "mencao de volume em kg (sem match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 2,
+        "linhas_robotizadas": [
+          "faz sentido pra voce?",
+          "Marcos, vou passar os valores dos cafés pra voce agora mesmo",
+          "quer que eu te passe os valores pra voce avaliar?",
+          "se quiser posso ajudar a escolher os sabores que combinam mais com seu publico, assim voce aproveita melhor o pedido",
+          "quer que eu te ajude com isso?"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente entrou em um loop severo, reenviando a lista de preços que já havia sido enviada e ignorando a afirmação explícita do lead de que o problema era o valor do pedido mínimo, não a falta dos preços.",
+        "veredito_curto": "O agente falhou completamente em lidar com uma objeção simples, entrando em um loop repetitivo, ignorando o contexto da conversa e frustrando o lead."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "consumo",
+        "secretaria"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 7,
+        "linhas_robotizadas": [
+          "quer que eu te explique o que esta incluso no servico?"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente não respondeu à pergunta direta do lead sobre a 'quantidade mínima'.",
+        "veredito_curto": "A agente conduziu bem a conversa sobre marca própria, mas falhou em responder a pergunta do lead sobre a quantidade mínima."
+      },
+      "turns_count": 2,
+      "terminated_by": "stage_reached",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "visited_gte_2_stages",
+          "passed": true,
+          "reason": "2 stages visitados"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 2,
+        "linhas_robotizadas": [
+          "legal! voce ja tem uma marca ou ta pensando em criar uma do zero?",
+          "quer que eu te passe os valores e condicoes para private label agora?",
+          "vou te explicar primeiro o private label, que e o mais complexo",
+          "qual desses produtos chamou mais sua atencao pra eu te passar mais detalhes?"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente falha sistematicamente em fornecer a informação central solicitada pelo lead: uma tabela de preços consolidada de atacado. Apesar dos múltiplos pedidos diretos, o agente desvia o assunto para marca própria, repete informações já dadas ou envia fotos de catálogos sem fornecer a lista de preços de forma clara e direta como solicitado.",
+        "veredito_curto": "O agente ignorou os pedidos repetidos do lead por uma tabela de preços consolidada, entrando em um loop frustrante e não respondendo à necessidade principal do cliente."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "atacado",
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": false,
+          "reason": "apenas 4 turno(s)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 6,
+        "linhas_robotizadas": [
+          "valeu por compartilhar seu ponto de partida, isso ajuda bastante",
+          "entendi, preco e importante mesmo pra decidir com segurança",
+          "assim vou te passar um preco que realmente vale a pena pra voce"
+        ],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "O agente foi excessivamente evasivo sobre o preço, necessitando de múltiplas insistências do lead para fornecer a informação, o que tornou a conversa repetitiva e pouco natural."
+      },
+      "turns_count": 4,
+      "terminated_by": "stage_reached",
+      "stages_visited": [
+        "atacado"
+      ]
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_exportacao",
+          "passed": true,
+          "reason": "stage exportacao alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 9,
+        "linhas_robotizadas": [],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "A agente iniciou a conversa de forma natural e fez uma pergunta de qualificação excelente para entender o modelo de negócio do lead."
+      },
+      "turns_count": 1,
+      "terminated_by": "stage_reached",
+      "stages_visited": [
+        "exportacao"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+[
+  {
+    "id": "a84e1f0f-18d2-4eb5-af51-f497951690cb",
+    "role": "user",
+    "content": "ja tenho fornecedor, mas me conta o que voces tem de diferente",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:53:35.55417+00:00"
+  },
+  {
+    "id": "1bf01c40-5b7d-40be-b4c2-e682d074d246",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:53:38.285783+00:00"
+  },
+  {
+    "id": "8d3d5384-c58c-4c8d-b74f-cff8057de482",
+    "role": "assistant",
+    "content": "legal saber que voce ja tem fornecedor",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:53:40.339614+00:00"
+  },
+  {
+    "id": "5aab3dc0-e697-48cc-9823-2e8e5a387d60",
+    "role": "assistant",
+    "content": "me conta, qual o tipo de cafe que voce costuma comprar ou oferecer hoje?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:53:43.427299+00:00"
+  },
+  {
+    "id": "f01ffe87-5357-47b4-80d0-7cf553cfbd51",
+    "role": "assistant",
+    "content": "assim eu ja te falo o que tem de diferente no nosso cafe",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:53:46.591437+00:00"
+  },
+  {
+    "id": "d7b3d717-8a8c-49ff-8d02-18df53d5ae55",
+    "role": "user",
+    "content": "Uso um café arábica padrão e pago R$ 35/kg. Me diga o seu preço, prazo de entrega e por que eu deveria considerar trocar.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:11.477465+00:00"
+  },
+  {
+    "id": "0edd6b9d-aae4-43a2-9c99-75f76414ede3",
+    "role": "assistant",
+    "content": "valeu por compartilhar seu ponto de partida, isso ajuda bastante",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:16.067918+00:00"
+  },
+  {
+    "id": "159ec390-7ac0-43c3-bcf8-3d073b4b7225",
+    "role": "assistant",
+    "content": "sobre preco e prazo, vou te explicar que a gente trabalha com cafe especial, então o valor e diferente do mercado comum",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:20.367212+00:00"
+  },
+  {
+    "id": "62efd3ef-004a-4b7f-8f1e-5273d38c8d99",
+    "role": "assistant",
+    "content": "o prazo medio e de 10 a 15 dias uteis para producao e envio, tudo fresquinho e torrado sob demanda",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:23.967877+00:00"
+  },
+  {
+    "id": "469f13c4-cffb-4c33-afd0-cc582bc006ff",
+    "role": "assistant",
+    "content": "se quiser, posso detalhar os motivos que fazem nosso cafe se destacar — faz sentido pra voce?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:28.565622+00:00"
+  },
+  {
+    "id": "cc51d5fd-878a-46f4-879c-edfa486c5929",
+    "role": "user",
+    "content": "Pode detalhar, mas você ainda não respondeu o preço. Me diga o valor e os motivos para eu avaliar se justifica esse prazo de entrega.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:43.489633+00:00"
+  },
+  {
+    "id": "cfc535d3-93e5-4aab-91f1-56ebc00de56e",
+    "role": "assistant",
+    "content": "entendi, preco e importante mesmo pra decidir com segurança",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:50.041606+00:00"
+  },
+  {
+    "id": "eca68bb9-95e3-4dce-ac33-fc01d415cc8c",
+    "role": "assistant",
+    "content": "o valor varia conforme o tipo de cafe e embalagem, e tambem o volume do pedido",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:54:56.84448+00:00"
+  },
+  {
+    "id": "bfdcb2c2-c547-4d97-8d2c-be7657700cfe",
+    "role": "assistant",
+    "content": "posso passar valores especificos, mas antes queria entender melhor sua demanda, qual o seu modelo de negocio?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:55:03.27145+00:00"
+  },
+  {
+    "id": "9d522a43-01d3-4bd8-b136-3dc10f6baea5",
+    "role": "assistant",
+    "content": "assim vou te passar um preco que realmente vale a pena pra voce",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:55:06.012763+00:00"
+  },
+  {
+    "id": "74b2f8ef-f1c2-4add-8e4e-e943f41678fe",
+    "role": "user",
+    "content": "Somos uma cafeteria com um consumo de 20kg/mês. Me passe uma faixa de preço para esse volume, ou não temos como avançar.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:55:37.074378+00:00"
+  },
+  {
+    "id": "b32e0640-8840-4cd3-8867-01b275a0f955",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-21T18:55:39.362003+00:00"
+  },
+  {
+    "id": "49e34d9b-c38b-485c-8a57-99f41ba1878e",
+    "role": "assistant",
+    "content": "entendi, 20kg/mês e um volume bom pra atacado especial",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:55:46.330798+00:00"
+  },
+  {
+    "id": "4ee83dde-9708-426f-bd95-0a0592104f3a",
+    "role": "assistant",
+    "content": "o classico em graos 1kg sai R$88,70 e o granel 2kg R$155,70",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:55:49.171833+00:00"
+  },
+  {
+    "id": "e2be7e03-aced-4ceb-8b94-56b4856cf52c",
+    "role": "assistant",
+    "content": "temos o suave com os mesmos valores e perfil intermediario, e o microlote que custa R$31,70 a embalagem de 250g moido ou graos",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:55:56.04858+00:00"
+  },
+  {
+    "id": "017e307b-6cfb-4c9b-bd12-07822da8e9cb",
+    "role": "assistant",
+    "content": "posso enviar as fotos dos produtos pra voce visualizar melhor?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T18:56:00.184552+00:00"
+  }
+]

@@ -1,0 +1,28 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 10,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "Valeria teve um desempenho excelente, respondendo de forma direta e natural às perguntas do lead e mantendo a conversa fluida e engajada."
+  },
+  "turns_count": 2,
+  "terminated_by": "stage_reached",
+  "stages_visited": [
+    "private_label"
+  ]
+}

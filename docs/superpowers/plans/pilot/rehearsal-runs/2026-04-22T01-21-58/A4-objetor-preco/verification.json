@@ -1,0 +1,34 @@
+{
+  "archetype_id": "A4",
+  "archetype_slug": "objetor-preco",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "20 turnos (>= 5)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "o envio de amostras tem um custo sim, que inclui o frete e a embalagem especial para garantir o frescor",
+      "imagina, nao cobramos nada pelas amostras",
+      "nao mencionei custo para amostras, talvez tenha havido um mal entendido",
+      "me confirma o endereco para envio das amostras?",
+      "me confirma novamente o endereco completo para evitar qualquer erro?"
+    ],
+    "resposta_incorreta_ou_inventada": "A agente afirmou que o envio de amostras tinha um custo e, após a reclamação do lead, negou ter dito isso e afirmou que eram gratuitas, criando uma contradição direta e minando a confiança.",
+    "veredito_curto": "A agente demonstrou grave inconsistência ao contradizer informações sobre custos e esqueceu repetidamente o endereço do cliente, o que destruiu a credibilidade da negociação."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "atacado"
+  ]
+}

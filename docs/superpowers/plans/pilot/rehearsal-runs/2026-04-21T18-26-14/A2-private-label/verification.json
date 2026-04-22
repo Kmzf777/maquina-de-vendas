@@ -1,0 +1,30 @@
+{
+  "archetype_id": "A2",
+  "archetype_slug": "private-label",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 7,
+    "linhas_robotizadas": [
+      "quer que eu te explique o que esta incluso no servico?"
+    ],
+    "resposta_incorreta_ou_inventada": "A agente não respondeu à pergunta direta do lead sobre a 'quantidade mínima'.",
+    "veredito_curto": "A agente conduziu bem a conversa sobre marca própria, mas falhou em responder a pergunta do lead sobre a quantidade mínima."
+  },
+  "turns_count": 2,
+  "terminated_by": "stage_reached",
+  "stages_visited": [
+    "private_label"
+  ]
+}

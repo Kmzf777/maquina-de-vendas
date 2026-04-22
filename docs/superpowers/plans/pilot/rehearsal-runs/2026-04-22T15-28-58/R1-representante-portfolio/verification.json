@@ -1,0 +1,65 @@
+{
+  "archetype_id": "R1",
+  "archetype_slug": "representante-portfolio",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_any_atacado_private_label",
+      "passed": true,
+      "reason": "stage atacado alcancado (entre ['atacado', 'private_label'])"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "15 turnos (>= 5)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 6,
+    "linhas_robotizadas": [
+      "vou te mostrar os cafes que temos para revenda",
+      "sao materiais simples, mas que ajudam bastante no pdv, como wobblers, displays e flyers",
+      "sobre o material de ponto de venda, a gente costuma oferecer algumas artes digitais para ajudar na divulgacao, mas nao temos material fisico padrao"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot deu respostas contraditórias sobre o fornecimento de material de ponto de venda. Em uma mensagem, ele cita materiais físicos como 'wobblers, displays e flyers', mas na mensagem seguinte afirma que a empresa não fornece material físico, apenas as artes digitais.",
+    "veredito_curto": "O agente cumpriu os objetivos de qualificação e encaminhamento, mas apresentou uma contradição grave sobre o material de ponto de venda, o que prejudicou a qualidade da interação."
+  },
+  "turns_count": 15,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

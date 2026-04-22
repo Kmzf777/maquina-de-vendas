@@ -1,0 +1,69 @@
+{
+  "archetype_id": "R4",
+  "archetype_slug": "exploradora-contemplativa",
+  "status": "passed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": true,
+      "reason": "enviar_foto presente nos eventos"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    },
+    {
+      "name": "min_8_turns",
+      "passed": true,
+      "reason": "11 turnos (>= 8)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 8,
+    "linhas_robotizadas": [
+      "bacana que voce ta nesse ramo e queira entender detalhes da embalagem",
+      "faz sentido essa busca por garantia, qualidade e sabor sao o que fazem a diferenca no cafe especial",
+      "bacana, o mercado de marca propria ta crescendo muito, voce ta no caminho certo"
+    ],
+    "resposta_incorreta_ou_inventada": null,
+    "veredito_curto": "A agente conduziu o lead de forma eficaz, qualificando a necessidade de private label, contornando a objeção sobre amostras e encaminhando corretamente para um vendedor humano."
+  },
+  "turns_count": 11,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "private_label"
+  ]
+}

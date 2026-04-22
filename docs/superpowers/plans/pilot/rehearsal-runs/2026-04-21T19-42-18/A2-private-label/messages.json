@@ -1,0 +1,142 @@
+[
+  {
+    "id": "3216b95c-1841-4330-b592-07832d96189e",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:15.437849+00:00"
+  },
+  {
+    "id": "de19af3a-a0ee-4653-a36e-26dd6b619cc9",
+    "role": "assistant",
+    "content": "boa tarde",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:17.407776+00:00"
+  },
+  {
+    "id": "126efee9-59d7-4680-bfec-95717fb646fe",
+    "role": "assistant",
+    "content": "sou a valeria, do comercial da cafe canastra",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:20.488756+00:00"
+  },
+  {
+    "id": "37347d0a-a611-4086-b9ae-c2193728cb6e",
+    "role": "assistant",
+    "content": "posso saber seu nome?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:22.490363+00:00"
+  },
+  {
+    "id": "4a9575a2-c5f6-4269-93ec-27c18b82a0c8",
+    "role": "user",
+    "content": "Boa tarde! Estou planejando abrir uma cafeteria em Lisboa e gostaria de entender como funciona o processo de exportação para Portugal; com quem eu poderia conversar sobre isso?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:31.315876+00:00"
+  },
+  {
+    "id": "924770d7-796c-4c53-a913-963b17df49e2",
+    "role": "assistant",
+    "content": "Lisboa, mercado externo muito interessante pra cafe especial brasileiro",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:35.47481+00:00"
+  },
+  {
+    "id": "f6b4c6fa-509b-4166-8a05-b1711533ee14",
+    "role": "user",
+    "content": "Opa Valéria, sou o Léo! Me conta, vocês fazem sim? Já tô cheio de ideias pra minha marca.",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:36.45115+00:00"
+  },
+  {
+    "id": "612d10ac-b903-4cbb-951e-5ec02edc183c",
+    "role": "assistant",
+    "content": "posso saber seu nome antes de encaminhar?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:37.501406+00:00"
+  },
+  {
+    "id": "72ef9415-1811-49c1-9ef4-054cd5c61d6f",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-21T19:44:37.886226+00:00"
+  },
+  {
+    "id": "78372604-af45-4552-8722-795aba8947c4",
+    "role": "assistant",
+    "content": "prazer, Léo",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:40.796735+00:00"
+  },
+  {
+    "id": "b4d9e23d-55e0-4ab4-a128-9497af94f789",
+    "role": "assistant",
+    "content": "a gente faz sim, e o processo e assim",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:42.717074+00:00"
+  },
+  {
+    "id": "e2b04a9f-54cb-4248-9dcf-3d3b7d51317e",
+    "role": "assistant",
+    "content": "quando voce tem a marca, a responsabilidade da arte e sua",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:47.43234+00:00"
+  },
+  {
+    "id": "0260127c-6f51-4295-8725-7bbd3505d7ad",
+    "role": "assistant",
+    "content": "voce nos manda a logo, e a gente produz a embalagem com ela",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:50.546222+00:00"
+  },
+  {
+    "id": "c056b980-87a1-456b-ab6f-b3ad8cc9f9df",
+    "role": "assistant",
+    "content": "temos modelos de embalagem sanfonada ou standup, que nao geram custo extra pra voce",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:44:57.221431+00:00"
+  },
+  {
+    "id": "2f90cdb7-ffd8-47c0-88ba-6398548bc16b",
+    "role": "user",
+    "content": "Claro, meu nome é Léo. Fico no aguardo para conversar com o responsável pela exportação, obrigado",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:44:58.579289+00:00"
+  },
+  {
+    "id": "24419c6a-2079-4092-9d9d-341fbc626fac",
+    "role": "system",
+    "content": "[event:stage] stage alterado para: exportacao",
+    "stage": null,
+    "created_at": "2026-04-21T19:45:00.84897+00:00"
+  },
+  {
+    "id": "901bc4bf-3c89-4f7a-9616-e0a4306ba46c",
+    "role": "assistant",
+    "content": "quer que eu te explique o que esta incluso no private label?",
+    "stage": "secretaria",
+    "created_at": "2026-04-21T19:45:00.99613+00:00"
+  },
+  {
+    "id": "330c9121-57ac-440b-be79-35cfc9476294",
+    "role": "system",
+    "content": "[tool:encaminhar_humano] Lead encaminhado para Joao Bras: exportacao — Portugal, cafeteria",
+    "stage": null,
+    "created_at": "2026-04-21T19:45:02.667831+00:00"
+  },
+  {
+    "id": "34739ae7-e1ba-4eac-b718-950cddf46eee",
+    "role": "assistant",
+    "content": "exportacao pra qual pais?",
+    "stage": "private_label",
+    "created_at": "2026-04-21T19:45:04.965277+00:00"
+  },
+  {
+    "id": "5f0cc8aa-1006-4226-9e9b-8c719dc36b3d",
+    "role": "user",
+    "content": "Opa, com certeza, Valéria! E já aproveita e me fala qual a quantidade mínima pra começar, o prazo e se tem algum custo extra pra usar meu próprio design?",
+    "stage": "exportacao",
+    "created_at": "2026-04-21T19:45:15.841704+00:00"
+  }
+]

@@ -1,0 +1,34 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 7,
+    "linhas_robotizadas": [],
+    "resposta_incorreta_ou_inventada": "A agente aplicou incorretamente a regra de frete grátis. O pedido de R$887 não se qualificava para frete grátis (acima de R$900), mas após o questionamento do lead, a agente concordou erroneamente e concedeu o frete grátis indevidamente.",
+    "veredito_curto": "A agente conduziu uma boa qualificação e fechamento, mas cometeu um erro crítico ao aplicar a política de frete grátis incorretamente."
+  },
+  "turns_count": 8,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado",
+    "secretaria"
+  ]
+}

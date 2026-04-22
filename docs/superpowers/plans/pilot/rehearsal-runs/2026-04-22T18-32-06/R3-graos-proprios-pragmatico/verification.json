@@ -1,0 +1,67 @@
+{
+  "archetype_id": "R3",
+  "archetype_slug": "graos-proprios-pragmatico",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    },
+    {
+      "name": "min_4_turns",
+      "passed": true,
+      "reason": "20 turnos (>= 4)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "se precisar, é só chamar",
+      "qualquer coisa, é só chamar",
+      "fico à disposição, até mais",
+      "se precisar, ja sabe onde me encontrar",
+      "perfeito, fico no aguardo se precisar de algo mais",
+      "Já entendi, não precisa repetir."
+    ],
+    "resposta_incorreta_ou_inventada": "A agente demorou múltiplas interações para responder diretamente que não oferece o serviço de torra e embalagem para grãos externos, fornecendo antes preços que incluíam o café da própria empresa, o que não foi o solicitado pelo lead.",
+    "veredito_curto": "O agente falhou em ser direto sobre a inviabilidade do serviço solicitado e entrou em um loop de despedida extremamente repetitivo e frustrante no final da conversa."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "private_label"
+  ]
+}

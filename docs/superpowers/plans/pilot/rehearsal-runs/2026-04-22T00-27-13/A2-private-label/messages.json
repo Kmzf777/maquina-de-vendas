@@ -1,0 +1,93 @@
+[
+  {
+    "id": "1cf20d61-51af-4d5a-bfb9-5b9cba6cddb7",
+    "role": "user",
+    "content": "voces fazem marca propria?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:36:30.973507+00:00"
+  },
+  {
+    "id": "385d178b-b429-4978-a658-d0e80e342210",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T00:36:34.265402+00:00"
+  },
+  {
+    "id": "0dac1110-9bd4-4996-9de0-4d7d9691d1a6",
+    "role": "assistant",
+    "content": "pra te explicar como funciona o private label\n\ntoda a parte de marca e responsabilidade sua\n\nquando tivermos a sua logo, a gente faz toda a embalagem\n\ntemos modelos prontos que nao cobram nada a mais\n\nquer que eu te conte o que esta incluso no servico?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T00:36:35.878228+00:00"
+  },
+  {
+    "id": "6356b9f2-4c51-42c6-99e4-c507398cee2f",
+    "role": "user",
+    "content": "Claro, por favor! Me diz o que está incluso e já aproveita pra me falar a quantidade mínima e como funciona pra usar meu próprio design.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:37:08.270903+00:00"
+  },
+  {
+    "id": "ee8e2cc3-a7fd-41f1-8ad4-9039bd8d75c2",
+    "role": "system",
+    "content": "Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T00:37:19.458155+00:00"
+  },
+  {
+    "id": "4ec44ac7-ca80-4e11-86c0-b903c0522f4e",
+    "role": "assistant",
+    "content": "to te enviando umas fotos dos modelos ja feitos pra voce ter ideia\n\no 250g sai R$23,90 a unidade, ja com embalagem e silk da sua logo\n\nse voce ja tiver embalagem propria, cai pra R$22,90\n\no pedido minimo e de 100 unidades pra esse tamanho\n\nquer que eu te fale sobre o 500g agora?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:37:21.052347+00:00"
+  },
+  {
+    "id": "667980d4-3ce9-4131-a774-d4ecaf1ac1f8",
+    "role": "user",
+    "content": "Opa, legal! Pode falar do de 500g sim, mas antes me diz qual o prazo de produção e se é possível fazer um design 100% meu na embalagem com vocês, ou só o silk no modelo pronto.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:37:57.949418+00:00"
+  },
+  {
+    "id": "4f8cd275-7436-4247-8d07-ed03ee041285",
+    "role": "assistant",
+    "content": "o 500g sai R$44,90 a unidade ja com embalagem e silk da sua logo\n\nse voce ja tiver embalagem propria, cai pra R$43,40\n\no pedido minimo tambem e de 100 unidades\n\nsobre o design, a gente trabalha com os modelos que tem a estrutura pronta\n\nentao seu design entra no silk e na arte da embalagem, mas nao fazemos a estrutra do pacote do zero\n\nfaz sentido pra voce?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:38:00.257562+00:00"
+  },
+  {
+    "id": "45444edb-2936-4f3e-8a9c-07a42aedc7b7",
+    "role": "user",
+    "content": "Entendido sobre a embalagem, faz sentido! E o prazo de produção, qual é? Já queria saber os próximos passos pra gente conversar e tirar esse projeto do papel",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:38:38.181969+00:00"
+  },
+  {
+    "id": "963c5b4f-ce84-4a2c-89a4-1200364e111d",
+    "role": "assistant",
+    "content": "o prazo de producao costuma ser em torno de 15 a 20 dias uteis apos a aprovacao da arte\n\nbacana que voce ja quer tirar o projeto do papel\n\nce tem interesse em falar com meu supervisor pra fechar um pedido ou tirar duvidas sobre condicoes?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:38:39.792116+00:00"
+  },
+  {
+    "id": "8ebd0404-203c-4919-8b72-9305259d9028",
+    "role": "user",
+    "content": "Com certeza! Adoraria falar com seu supervisor pra gente já alinhar os próximos passos e tirar as últimas dúvidas.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:39:06.211411+00:00"
+  },
+  {
+    "id": "9c9527bf-e147-4198-a835-c36ee2b830a0",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T00:39:07.628985+00:00"
+  },
+  {
+    "id": "6d437af4-96f4-497f-943c-815eb127eec2",
+    "role": "assistant",
+    "content": "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat",
+    "stage": "private_label",
+    "created_at": "2026-04-22T00:39:08.383634+00:00"
+  }
+]

@@ -1,0 +1,177 @@
+{
+  "started_at": "2026-04-22T01:21:58.386719+00:00",
+  "git_sha": "33f0ce61c7e7cc1cca7d47bbb83e5ab0a04036c4",
+  "archetypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T01:59:41.017337+00:00",
+  "verifications": [
+    {
+      "archetype_id": "A1",
+      "archetype_slug": "cafeteria-atacado",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": true,
+          "reason": "enviar_foto presente nos eventos"
+        },
+        {
+          "name": "regex_mencao de volume em kg",
+          "passed": true,
+          "reason": "mencao de volume em kg (match)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 2,
+        "linhas_robotizadas": [
+          "se quiser, posso te indicar para o nosso comercial que pode ajudar a esclarecer tudo direitinho",
+          "se quiser, posso passar seu contato para o comercial para discutir outras possibilidades",
+          "mas se preferir, posso passar seu contato para o comercial para conversar melhor",
+          "posso te passar os valores para voce comprar direto e provar nosso cafe?"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente se apresentou como 'valeria, do comercial' e, ao encontrar uma objeção que não soube responder (pedido de amostra), entrou em um loop oferecendo transferir o lead para 'o comercial', o que causou grande confusão e demonstrou uma falha grave de lógica e contexto.",
+        "veredito_curto": "A agente falhou gravemente ao entrar em loops repetitivos, se contradizer sobre ser do setor comercial e gerenciar de forma confusa e ineficaz a objeção sobre o envio de amostras."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "atacado"
+      ]
+    },
+    {
+      "archetype_id": "A2",
+      "archetype_slug": "private-label",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 6,
+        "linhas_robotizadas": [
+          "enviei algumas fotos das embalagens que a gente ja produz para clientes\n\nassim voce pode visualizar melhor como fica o resultado final\n\nquer que eu te explique os sabores que temos disponiveis pra fazer seu cafe?"
+        ],
+        "resposta_incorreta_ou_inventada": "O agente ignorou completamente a pergunta do lead sobre valores e prazo de produção, enviando fotos e fazendo uma nova pergunta sobre sabores, o que forçou o lead a repetir sua dúvida anterior.",
+        "veredito_curto": "O agente atingiu os objetivos de qualificar e encaminhar o lead, mas falhou em manter a fluidez da conversa ao ignorar uma pergunta direta, o que tornou a interação frustrante e robótica."
+      },
+      "turns_count": 8,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A3",
+      "archetype_slug": "multi-intent",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "visited_gte_2_stages",
+          "passed": true,
+          "reason": "2 stages visitados"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 8,
+        "linhas_robotizadas": [
+          "posso encaminhar pra um vendedor que vai montar a proposta detalhada e negociar melhor esses valores com voce",
+          "quer que eu encaminhe pra um vendedor que vai ajudar voce a planejar isso da melhor forma?"
+        ],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "Valeria conduziu bem uma conversa complexa sobre dois modelos de negócio, mas demonstrou dificuldade em fornecer a simulação de sinergia solicitada, recorrendo repetidamente à transferência para um vendedor."
+      },
+      "turns_count": 13,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "atacado",
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "A4",
+      "archetype_slug": "objetor-preco",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": true,
+          "reason": "stage atacado alcancado"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 5)"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "o envio de amostras tem um custo sim, que inclui o frete e a embalagem especial para garantir o frescor",
+          "imagina, nao cobramos nada pelas amostras",
+          "nao mencionei custo para amostras, talvez tenha havido um mal entendido",
+          "me confirma o endereco para envio das amostras?",
+          "me confirma novamente o endereco completo para evitar qualquer erro?"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente afirmou que o envio de amostras tinha um custo e, após a reclamação do lead, negou ter dito isso e afirmou que eram gratuitas, criando uma contradição direta e minando a confiança.",
+        "veredito_curto": "A agente demonstrou grave inconsistência ao contradizer informações sobre custos e esqueceu repetidamente o endereço do cliente, o que destruiu a credibilidade da negociação."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "atacado"
+      ]
+    },
+    {
+      "archetype_id": "A5",
+      "archetype_slug": "exportacao",
+      "status": "passed",
+      "hard_checks": [
+        {
+          "name": "reached_exportacao",
+          "passed": true,
+          "reason": "stage exportacao alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "vc ja trabalha com exportacao no brasil ou vai precisar que a gente cuide disso pra voce?",
+          "me conta qual o seu objetivo com o cafe: voce quer comprar nossos produtos pra vender la fora"
+        ],
+        "resposta_incorreta_ou_inventada": "O bot ignorou o pedido direto e repetido do lead para conversar com um humano, continuando a fazer perguntas de qualificação cujas respostas já haviam sido dadas anteriormente na conversa.",
+        "veredito_curto": "O agente cumpriu os objetivos de qualificação e encaminhamento, mas criou uma experiência frustrante ao não reconhecer as respostas e os pedidos diretos do lead."
+      },
+      "turns_count": 4,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "exportacao"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 3,
+    "linhas_robotizadas": [
+      "pronto, fernando\n\npix gerado na chave cpf 123.456.789-00, em nome de cafe canastra\n\nassim que o pagamento for confirmado eu te aviso aqui",
+      "pronto, fernando\n\npix enviado no mesmo cpf 123.456.789-00, cafe canastra\n\nassim que o pagamento for confirmado eu te aviso sobre o envio e prazo de entrega",
+      "voce ja fez o pagamento dos 10kg, certo?\n\nme confirma se foi feito hoje pra eu acompanhar o envio e te atualizar o prazo de entrega"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente entrou em um loop de erro grave na segunda compra. Após o cliente informar que já havia pago o pix, o agente confirmou o pagamento, mas em seguida enviou os dados do pix novamente por duas vezes, ignorando as correções do cliente e causando grande confusão.",
+    "veredito_curto": "O agente conduziu bem a primeira venda, mas falhou catastroficamente na segunda ao entrar em um loop e enviar repetidamente os dados de pagamento após o pagamento já ter sido confirmado."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "consumo",
+    "secretaria"
+  ]
+}

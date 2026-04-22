@@ -1,0 +1,39 @@
+{
+  "archetype_id": "A1",
+  "archetype_slug": "cafeteria-atacado",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": true,
+      "reason": "stage atacado alcancado"
+    },
+    {
+      "name": "has_enviar_foto",
+      "passed": false,
+      "reason": "enviar_foto nao foi chamada"
+    },
+    {
+      "name": "regex_mencao de volume em kg",
+      "passed": true,
+      "reason": "mencao de volume em kg (match)"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 7,
+    "linhas_robotizadas": [
+      "manda eu te enviar as fotos e as descrições?",
+      "pra agilizar o seu pedido, vou precisar que voce confirme o volume da amostra",
+      "quer que eu encaminhe seu pedido para o nosso comercial para acompanhar?"
+    ],
+    "resposta_incorreta_ou_inventada": "O agente presumiu incorretamente que a demanda era para consumo próprio e ofereceu um cupom de desconto para a loja online, mesmo o lead tendo perguntado o preço do kg, um indicativo de interesse comercial.",
+    "veredito_curto": "O agente conduziu o lead até o pedido de amostra com sucesso, mas cometeu um erro inicial ao classificá-lo como varejo, o que atrasou a negociação."
+  },
+  "turns_count": 11,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado",
+    "consumo",
+    "secretaria"
+  ]
+}
