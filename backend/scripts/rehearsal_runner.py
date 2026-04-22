@@ -47,7 +47,7 @@ TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "15"))
 POLL_INTERVAL = 0.5
 OUTPUT_ROOT = Path(__file__).resolve().parent.parent.parent / "docs" / "superpowers" / "plans" / "pilot" / "rehearsal-runs"
 
-FINAL_STAGES = {"A1": "atacado", "A2": "private_label", "A3": None, "A4": "atacado", "A5": "exportacao"}
+FINAL_STAGES: dict[str, str | None] = {"A1": None, "A2": None, "A3": None, "A4": None, "A5": None}
 
 
 def _now_iso() -> str:
