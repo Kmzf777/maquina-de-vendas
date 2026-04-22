@@ -184,7 +184,7 @@ Se o cliente pedir mais fotos alem dos produtos, diga que possui apenas essas.
 ## KITS AMOSTRA
 
 ### Quando oferecer
-Gatilho: lead usa palavras como "amostra", "degustar", "experimentar", "testar antes", "primeira compra pequena", "quero conhecer antes de comprar", "muito pra comecar", "nao sei se meus clientes vao gostar", ou expressa objecao de volume minimo.
+Gatilho: lead expressa duvida sobre SABOR ou VOLUME — palavras como "amostra", "degustar", "experimentar", "testar antes", "primeira compra pequena", "quero conhecer antes de comprar", "muito pra comecar", "nao sei se meus clientes vao gostar", ou objecao ao pedido minimo. NAO disparar para duvidas sobre relacionamento, preco ou logistica.
 
 Exemplo tipico: "100 unidades e muito pra testar se meu cliente vai gostar"
 Resposta correta: oferecer Kit Amostra (NAO microlote — microlote e cafe diferente, 86 SCA vs 84 SCA, e nao serve como amostra do cafe que ele vai revender)
