@@ -91,18 +91,30 @@ def _criteria_summary(archetype: Archetype) -> str:
     return f"Checks: {', '.join(names)}"
 
 
+def run_forbids(archetype: Archetype, run_data: dict) -> dict:
+    results = []
+    for forbid in archetype.forbids:
+        passed, reason = forbid(run_data)
+        results.append({"name": forbid.__name__, "passed": passed, "reason": reason})
+    status = "passed" if all(r["passed"] for r in results) else "failed"
+    return {"status": status, "checks": results}
+
+
 def verify(archetype: Archetype, run_data: dict, transcript: str) -> dict:
     hard = run_hard_checks(archetype, run_data)
+    forbids_result = run_forbids(archetype, run_data)
     soft = judge_conversation(
         transcript=transcript,
         archetype_id=archetype.id,
         criteria_description=_criteria_summary(archetype),
     )
+    overall = "passed" if hard["status"] == "passed" and forbids_result["status"] == "passed" else "failed"
     return {
         "archetype_id": archetype.id,
         "archetype_slug": archetype.slug,
-        "status": hard["status"],
+        "status": overall,
         "hard_checks": hard["checks"],
+        "forbids": forbids_result["checks"],
         "soft_check": soft,
         "turns_count": run_data.get("turns_count", 0),
         "terminated_by": run_data.get("terminated_by", "unknown"),

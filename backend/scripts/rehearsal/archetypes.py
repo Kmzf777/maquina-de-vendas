@@ -10,6 +10,7 @@ class Archetype:
     persona_prompt: str
     first_message: str
     hard_checks: list[Callable[[dict], tuple[bool, str]]] = field(default_factory=list)
+    forbids: list[Callable[[dict], tuple[bool, str]]] = field(default_factory=list)
 
 
 def has_tool_call(name: str):
