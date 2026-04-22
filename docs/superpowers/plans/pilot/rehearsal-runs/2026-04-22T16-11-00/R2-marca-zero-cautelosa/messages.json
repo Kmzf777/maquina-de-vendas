@@ -1,0 +1,289 @@
+[
+  {
+    "id": "3e838a1e-e352-4f1c-b0da-13c22fc956b3",
+    "role": "user",
+    "content": "boa tarde, meu nome é Maria Emilia, falo de Botucatu SP. gostaria de fazer minha marca de cafe, ja tive cafeteria e amo cafe. queria comecar com dois tipos: um tradicional e um gourmet. pode me passar todas as informacoes?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:17:44.496974+00:00"
+  },
+  {
+    "id": "f80d45e4-2c66-4574-8b03-6fd969578cc3",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T16:17:45.76626+00:00"
+  },
+  {
+    "id": "d4a60ac9-0d37-49a9-a920-1774514e9dd6",
+    "role": "assistant",
+    "content": "boa tarde, Maria Emilia\\n\\nque legal que vc ja teve cafeteria e quer criar sua marca de cafe\\n\\no mercado de marca propria ta crescendo muito, voce ta no caminho certo\\n\\nvou te explicar como funciona nosso private label pra voce entender o processo\ntoda a parte de marca e responsabilidade sua\\n\\nquando a gente recebe a logo da sua marca, a gente produz a embalagem com ela\\n\\ntemos alguns modelos padrao que nao geram custo adicional\\n\\ndepois a gente torra, moemos, embala, sela, data e separa tudo pra envio\\n\\nos cafes chegam prontos pra serem vendidos com sua marca mesmo\\n\\nfaz sentido ate aqui?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:17:48.366782+00:00"
+  },
+  {
+    "id": "889db507-e44e-4a4f-af20-413f7cf858cb",
+    "role": "user",
+    "content": "Ficou claro sim, obrigada.\nPode me mandar os valores?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:18:34.491494+00:00"
+  },
+  {
+    "id": "e2e0aa22-cf64-44b1-935b-8d4964deaa19",
+    "role": "assistant",
+    "content": "perfeito, Maria Emilia\\n\\nvou te passar os valores do private label pra voce ter uma ideia\\n\\no nosso cafe em graos ou moido no pacote de 250g sai por volta de R$23,90 a unidade\\n\\nesse valor ja inclui embalagem personalizada com a sua logo e silk na embalagem e no produto mesmo\\n\\no pedido minimo e de 100 unidades nessa opcao\\n\\nse voce preferir trazer a embalagem pronta, o valor cai pra uns R$22,90 cada unidade\\n\\nquer que eu te envie fotos dos modelos de embalagem e do cafe pra voce visualizar melhor?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:18:36.947436+00:00"
+  },
+  {
+    "id": "7bb8eb28-6e74-4adb-8db5-f793c0099075",
+    "role": "user",
+    "content": "Entendi. Esse valor já inclui o frete?\nE o preço é o mesmo para o café tradicional e o gourmet?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:19:20.908617+00:00"
+  },
+  {
+    "id": "b2a0c4e6-6c07-4ee5-b4d7-c24e4eef98b1",
+    "role": "assistant",
+    "content": "o valor que te passei nao inclui frete\\n\\nsobre o tradicional e gourmet, deixa eu te explicar como funciona os sabores\\n\\no tradicional que temos e o classico, com torra escura, notas amadeiradas e caramelizadas, amargor mais presente\\n\\nja o gourmet pode ser o nosso microlote, que e um cafe especial selecionado com cuidado, tambem em 250g\\n\\nquer que eu te envie fotos do classico e do microlote pra voce comparar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:19:23.746147+00:00"
+  },
+  {
+    "id": "ec0a2792-2748-4f86-a848-62bbb2471e84",
+    "role": "user",
+    "content": "Certo, entendi a diferença.\nMas o preço do microlote é o mesmo do clássico?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:20:05.423744+00:00"
+  },
+  {
+    "id": "200c6e55-2e8a-4503-8deb-9597c9348baf",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T16:20:12.833106+00:00"
+  },
+  {
+    "id": "cc9a8899-c5aa-4c7f-98c4-6fad5390db6c",
+    "role": "assistant",
+    "content": "enviei as fotos do classico e do microlote pra voce comparar\\n\\nalém desses, temos também o suave, que é uma torra média, com notas achocolatadas, bem suave pra quem quer reduzir o açúcar\\n\\ntem interesse em seguir e falar com o meu supervisor pra tirar dúvidas ou já fechar seu pedido?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:20:14.930162+00:00"
+  },
+  {
+    "id": "8f001eea-3e40-4dd5-b616-343fd77a67ea",
+    "role": "user",
+    "content": "Antes de falar com o supervisor, eu preciso entender o preço.\nO microlote e o clássico têm o mesmo valor?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:20:49.700252+00:00"
+  },
+  {
+    "id": "adaef9b0-efde-4777-9a01-0ca5551c5deb",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T16:20:57.930341+00:00"
+  },
+  {
+    "id": "0d977a48-44a1-475a-a4ad-1e5a077db9e4",
+    "role": "assistant",
+    "content": "enviei as fotos dos modelos de embalagem pra voce\\n\\nalém do 250g, temos o tamanho 500g que sai por volta de R$44,90 com embalagem e silk\\n\\nse voce ja tiver embalagem propria, cai pra R$43,40\\n\\nqualquer coisa me fala o que voce quer que eu te explique melhor",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:20:59.795169+00:00"
+  },
+  {
+    "id": "e0149bba-0e4f-46f8-9033-cde67e306221",
+    "role": "user",
+    "content": "Certo, mas ainda não entendi uma coisa.\nO clássico e o gourmet têm o mesmo preço?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:21:20.711675+00:00"
+  },
+  {
+    "id": "d3301788-c15f-41e9-a270-6f42812ccca0",
+    "role": "assistant",
+    "content": "o microlote, que e o gourmet, tem um valor um pouco maior que o classico\\n\\no microlote 250g sai por volta de R$26,90 com embalagem personalizada e silk\\n\\nse voce trouxer sua embalagem, cai pra R$25,40\\n\\nquer que eu te envie as fotos do microlote e da embalagem novamente?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:21:25.330403+00:00"
+  },
+  {
+    "id": "b5e7306c-663f-4b8a-ac7e-78fdd1eed10a",
+    "role": "user",
+    "content": "Ok, entendi agora os valores.\nSeus clientes de marca própria costumam vender por onde?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:21:55.542985+00:00"
+  },
+  {
+    "id": "63dca40b-63e9-4df7-aac2-c987af2d2843",
+    "role": "assistant",
+    "content": "bacana que voce ta nesse ramo de marca propria\\n\\nmuitos clientes vendem em lojas fisicas, online, empórios, cafeterias e até em eventos\\n\\na vantagem do private label e que o cafe ja chega pronto pra venda, com sua marca, facilitando a comercializacao\\n\\nme conta mais, onde voce pensa em vender seu cafe?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:21:57.398135+00:00"
+  },
+  {
+    "id": "c1742b3e-bfab-44b6-a08a-5f1d3aa13c69",
+    "role": "user",
+    "content": "Legal. E no Mercado Livre, por exemplo, o pessoal vende bem?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:22:21.352811+00:00"
+  },
+  {
+    "id": "d3848425-3c4a-4fd9-b1b5-5ce503d79642",
+    "role": "assistant",
+    "content": "mercado livre e um canal de venda com bastante alcance sim\\n\\nmuita gente que cria marca propria aproveita muito esse canal pra atingir clientes de todo o brasil\\n\\nalem disso, a gente ja viu marcas crescerem bastante com vendas diretas online\\n\\nquer que eu te envie os detalhes dos produtos e valores pra voce ja ir planejando as vendas?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:22:24.558471+00:00"
+  },
+  {
+    "id": "236cba73-6211-49ef-b435-e5c7d61e8a70",
+    "role": "user",
+    "content": "Tô fazendo umas contas aqui... o preço final pro consumidor vai ficar um pouco apertado, né?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:22:53.664544+00:00"
+  },
+  {
+    "id": "8f8c0094-1713-4f76-9909-eea737196976",
+    "role": "assistant",
+    "content": "entendo sua preocupacao, Maria Emilia\\n\\ncafe especial tem um custo maior, mas o diferencial na qualidade e fidelizacao do cliente compensam\\n\\nquem vende cafe especial percebe rapido a diferenca no ticket medio e na recorrencia\\n\\nse quiser posso te passar os valores detalhados pra voce avaliar melhor",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:22:55.44921+00:00"
+  },
+  {
+    "id": "06370a52-4da5-4d15-9be0-ccc146da0fec",
+    "role": "user",
+    "content": "Entendi... Antes de decidir, eu gostaria de provar.\nConsigo comprar uma unidade de cada pra experimentar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:23:24.667147+00:00"
+  },
+  {
+    "id": "1cd7386a-13c8-4b00-95d8-bbbf0b80cb01",
+    "role": "assistant",
+    "content": "quem prova cafe especial de verdade nao volta mais pro comercial\\n\\npor enquanto a gente trabalha com private label em lote minimo, entao nao vendemos unidades avulsas\\n\\nmas se quiser, posso encaminhar voce para meu supervisor pra combinar um pedido inicial e te ajudar a escolher os melhores sabores\\n\\nquer que eu faça isso?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:23:26.292256+00:00"
+  },
+  {
+    "id": "ed2ee195-a276-4b20-bcb2-24dac05377df",
+    "role": "user",
+    "content": "Entendi.\nE por qual valor vocês vendem direto para o consumidor final?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:23:58.956843+00:00"
+  },
+  {
+    "id": "b879634d-d746-4ea5-b65d-6562b2d3a33b",
+    "role": "assistant",
+    "content": "a venda direta para consumidor final e feita pela nossa loja online\\n\\nos valores la sao um pouco diferentes porque sao para compra individual e consumo\\n\\nse quiser, posso te passar o link da loja pra voce conferir e pedir direto\\n\\nquer que eu envie o link?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:24:00.369835+00:00"
+  },
+  {
+    "id": "953f2266-ad3c-48ec-82e0-4d280a44450c",
+    "role": "user",
+    "content": "Sim, por favor, me envia o link.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:24:24.785985+00:00"
+  },
+  {
+    "id": "7032b063-6ba1-4c25-9756-94aa3253fced",
+    "role": "assistant",
+    "content": "segue o link da nossa loja online para voce conhecer e comprar direto: https://www.loja.cafecanastra.com\n\nse quiser depois a gente pode conversar sobre private label de novo, como voce preferir",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:24:26.732134+00:00"
+  },
+  {
+    "id": "da93a95e-a038-4586-9ad6-fdafd2e4d78f",
+    "role": "user",
+    "content": "Obrigada, vou dar uma olhada aqui nos preços.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:24:45.596614+00:00"
+  },
+  {
+    "id": "b6d85918-66dd-46c9-9f4d-399e1a6f34b8",
+    "role": "assistant",
+    "content": "por nada, Maria Emilia\\n\\nfica a vontade pra olhar tudo com calma\\n\\nquando quiser continuar a conversa sobre sua marca propria, e so me chamar aqui mesmo",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:24:46.904913+00:00"
+  },
+  {
+    "id": "06bd007d-49eb-47cb-b47c-24ab3609fcdf",
+    "role": "user",
+    "content": "Vi os preços no site.\nRealmente a margem fica bem pequena pra revender.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:25:06.502827+00:00"
+  },
+  {
+    "id": "befc77b7-cde0-40f0-b8d3-8a7dcc0a4f1d",
+    "role": "assistant",
+    "content": "quem vende cafe especial percebe rapido a diferenca no ticket medio\\n\\no diferencial do cafe especial faz cliente voltar e indica\\n\\nmas entendo que a margem pode parecer apertada no começo\\n\\nme conta mais, voce pensa em revender ou montar marca propria?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:25:10.260486+00:00"
+  },
+  {
+    "id": "4866e761-aea6-499c-ae98-f008218246e9",
+    "role": "user",
+    "content": "A ideia é ter minha própria marca, como te falei no começo.\nPor isso que essa conta da margem de revenda me preocupa.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:25:39.965548+00:00"
+  },
+  {
+    "id": "30678453-afa7-4c65-a72b-f7eaf2504cd6",
+    "role": "assistant",
+    "content": "compreendo sua preocupacao com margem\\n\\ncriar sua marca e o melhor investimento que voce pode fazer nesse ramo pra ter controle do preco e da qualidade\\n\\na gente ja ajudou varios clientes a lancar marcas do zero e sempre da certo quando a pessoa tem visao\\n\\nquer que eu te explique os detalhes do private label pra voce ver como funciona na pratica?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:25:43.044917+00:00"
+  },
+  {
+    "id": "9d30e890-a7fc-422b-a428-d94983152b7f",
+    "role": "user",
+    "content": "O processo eu já entendi, obrigada.\nMinha preocupação é realmente com os números, com a viabilidade do negócio.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:26:15.526536+00:00"
+  },
+  {
+    "id": "94dbc047-fe7f-4840-8c64-e89df2db9d56",
+    "role": "assistant",
+    "content": "entendo seu ponto, Maria Emilia\\n\\nviabilidade financeira e crucial em qualquer projeto\\n\\nse quiser, posso encaminhar voce para um dos nossos especialistas que pode ajudar a analisar melhor os numeros e possibilidades\\n\\nquer que eu faça isso?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:26:16.865053+00:00"
+  },
+  {
+    "id": "58b64d5e-277e-4349-a529-588b1165d0d5",
+    "role": "user",
+    "content": "Por enquanto não, obrigada.\nO ideal pra mim seria conseguir provar o café antes de avançar.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:26:44.771769+00:00"
+  },
+  {
+    "id": "7d35cfa8-1b36-4872-af21-dbd9324243b5",
+    "role": "assistant",
+    "content": "entendo, Maria Emilia\\n\\nprovar antes faz toda a diferenca mesmo\\n\\nse quiser, posso te encaminhar para meu supervisor para ver alguma possibilidade de amostra ou pedido inicial\\n\\nquer que eu faça isso pra voce?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:26:46.178446+00:00"
+  },
+  {
+    "id": "968c9f42-b9b9-4d21-ac34-11819b3eeb0f",
+    "role": "user",
+    "content": "Sim, por favor. Se for o único jeito de conseguir provar, pode me encaminhar pra ele.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:27:07.968898+00:00"
+  },
+  {
+    "id": "9dd046e7-8397-4564-a514-9f8de34b01ea",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T16:27:09.42657+00:00"
+  },
+  {
+    "id": "8ad81bd7-22f1-4643-92a5-4eb61a7a13b3",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T16:27:10.578369+00:00"
+  },
+  {
+    "id": "1fbe1f83-a08e-4c3a-93fb-e139223c652f",
+    "role": "assistant",
+    "content": "perfeito, Maria Emilia\\n\\num dos nossos vendedores vai dar continuidade aqui mesmo nesse chat e vai te ajudar com o pedido e amostras",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:27:11.942649+00:00"
+  }
+]

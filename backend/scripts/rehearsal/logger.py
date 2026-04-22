@@ -55,15 +55,22 @@ def write_archetype_artifacts(
 
 
 def write_run_summary(run_dir: Path, verifications: list[dict], run_meta: dict) -> None:
-    rows = ["| Arquétipo | Status | Turnos | Terminated_by | Bot score | Veredito |",
-            "|---|---|---|---|---|---|"]
+    rows = ["| Arquétipo | Status | Turnos | Terminated_by | Bot score | Violações | Veredito |",
+            "|---|---|---|---|---|---|---|"]
     for v in verifications:
         soft = v.get("soft_check", {}) or {}
         bot = soft.get("bot_score_1_10", "-")
         veredito = soft.get("veredito_curto", "-")
+        forbids = v.get("forbids", []) or []
+        violations = [
+            f["name"].replace("forbid_", "").upper()
+            for f in forbids
+            if not f.get("passed", True)
+        ]
+        violations_cell = ", ".join(violations) if violations else "-"
         rows.append(
             f"| {v.get('archetype_id')} - {v.get('archetype_slug')} | {v.get('status')} | "
-            f"{v.get('turns_count')} | {v.get('terminated_by')} | {bot} | {veredito} |"
+            f"{v.get('turns_count')} | {v.get('terminated_by')} | {bot} | {violations_cell} | {veredito} |"
         )
 
     summary = (

@@ -1,0 +1,303 @@
+[
+  {
+    "id": "7786a2c4-4d0d-41b2-9f0a-f79442c03425",
+    "role": "user",
+    "content": "sou lojista, minha loja é especializada em chimarrão no RS. pessoal me pede muito cafe. gostaria de experimentar antes de fechar, o ideal seria com a minha marca",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T12:26:07.327229+00:00"
+  },
+  {
+    "id": "12a9698b-11d8-4c97-803b-e2aa96c34127",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-04-22T12:26:08.906539+00:00"
+  },
+  {
+    "id": "b128207e-dc74-44cb-af19-987a1270400f",
+    "role": "assistant",
+    "content": "bom dia\n\nbacana que vc tem uma loja especializada em chimarrão no RS e o pessoal ja te pede cafe\n\nme conta mais, esse pedido de cafe ta crescendo muito?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T12:26:10.305981+00:00"
+  },
+  {
+    "id": "e7dec4d1-e165-4425-9f4d-4b93a6400116",
+    "role": "user",
+    "content": "tá crescendo sim. mas primeiro preciso de uma amostra pra provar. vcs enviam?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T12:26:33.353057+00:00"
+  },
+  {
+    "id": "84f15488-443f-48fc-9159-5f9229d06746",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T12:26:38.505954+00:00"
+  },
+  {
+    "id": "1bf8eecd-ae8a-4892-aa3a-f1171bef8d92",
+    "role": "assistant",
+    "content": "me conta mais, voce ja tem a logo pronta ou precisa ajuda com o design?",
+    "stage": "atacado",
+    "created_at": "2026-04-22T12:26:39.456202+00:00"
+  },
+  {
+    "id": "80973bc1-ae35-4e57-a794-90347e3bb95e",
+    "role": "user",
+    "content": "antes da logo eu preciso provar. vcs mandam amostra?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:27:00.995252+00:00"
+  },
+  {
+    "id": "02ad8645-0b0f-4a47-9e5c-1ca558b9a047",
+    "role": "assistant",
+    "content": "entendo\n\nno private label a gente nao costuma enviar amostras sem marca, porque o produto ja vem embalado com a sua marca\n\nmas se quiser, posso te apresentar os nossos blends e o processo pra voce decidir qual combina mais com seu publico\n\nquer que eu explique como funciona?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:27:02.956605+00:00"
+  },
+  {
+    "id": "c11559f6-7976-44dd-8e1c-906b30d82754",
+    "role": "user",
+    "content": "mas como vou botar minha marca numa coisa q eu nunca provei? Nao faz sentido isso.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:27:30.144966+00:00"
+  },
+  {
+    "id": "41b8e6d6-c741-4afe-94ec-9d963e6a2f4f",
+    "role": "assistant",
+    "content": "faz sentido sim\n\npor isso a gente sempre orienta a escolher o blend olhando as descrições e avaliando as notas de sabor\n\nalém disso, o nosso cafe e cultivado na serra da canastra, tem pontuacao 84 pontos e a torra e feita sob demanda\n\nme diz uma coisa, voce pretende fazer o private label com os graos em moido ou em grao?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:27:36.299301+00:00"
+  },
+  {
+    "id": "afd393e4-aee6-438e-acb9-ad3bb8f49e3c",
+    "role": "user",
+    "content": "Olha, nao adianta falar de grao ou po. Onde eu acho esse cafe da canastra pra comprar aqui no RS pra eu provar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:28:13.253485+00:00"
+  },
+  {
+    "id": "a77bded6-8ba2-4f23-ab91-e0e5d046ce51",
+    "role": "assistant",
+    "content": "entendo sua necessidade\n\na gente tem venda direta no nosso site e tambem trabalha com alguns distribuidores, mas no RS nao temos ponto fixo ainda\n\no que eu posso fazer pra voce provar e ja garantir o private label depois e enviar algumas unidades com a sua marca?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:28:14.982849+00:00"
+  },
+  {
+    "id": "a8401286-e622-4554-b7cd-0c29e60bba8a",
+    "role": "user",
+    "content": "mas eu vou ter que pagar por isso? Nao posso só comprar um pacote normal no site de vcs pra provar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:28:46.404252+00:00"
+  },
+  {
+    "id": "54b7a98c-0f07-4bd4-9bf9-b0415643bb6b",
+    "role": "assistant",
+    "content": "pode sim\n\nno nosso site a gente vende o cafe em embalagens ja padronizadas, que vao te dar uma ideia exata do sabor e qualidade\n\nassim voce prova e depois a gente faz o private label com a sua marca, mantendo o mesmo padrao de qualidade\n\nquer que eu passe o link do site pra voce comprar direto?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:28:49.39297+00:00"
+  },
+  {
+    "id": "2ba80bc3-6d87-44f3-b5b6-26db422c9474",
+    "role": "user",
+    "content": "Ok, me manda o linque pra eu comprar. Vamos ver se o cafe e bom mesmo.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:29:14.840375+00:00"
+  },
+  {
+    "id": "25cbad20-f794-4ee5-a69b-c0daa3d54873",
+    "role": "assistant",
+    "content": "segue o link da nossa loja online pra voce conferir as opcoes: https://www.loja.cafecanastra.com\n\nla voce encontra varios sabores e formatos, tudo direto da fazenda pra sua xicara\n\nse depois de provar quiser que eu te explique sobre o private label, e so falar comigo aqui",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:29:16.472405+00:00"
+  },
+  {
+    "id": "be692c6e-65ea-4473-8f86-3ba542991737",
+    "role": "user",
+    "content": "blz vou olhar. se o cafe for bom mesmo a gente volta a falar.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:29:43.90932+00:00"
+  },
+  {
+    "id": "09629fae-9967-475b-9399-0c10e33adcf4",
+    "role": "assistant",
+    "content": "perfeito, fica a vontade pra testar e me chamar quando quiser\n\ngosto de acompanhar de perto quem ta entrando no mercado de cafe especial\n\nqualquer coisa, to por aqui",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:29:45.613825+00:00"
+  },
+  {
+    "id": "7275aeec-7e57-4cc1-bd2b-19bb6ab149f8",
+    "role": "user",
+    "content": "bah o frete pra ca deu quase o valor do pacote. mas vou comprar pra ver qual é.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:30:11.912281+00:00"
+  },
+  {
+    "id": "b2d41cc3-e1cb-4688-abe1-1dd5d05842f9",
+    "role": "assistant",
+    "content": "frete alto no RS e comum, infelizmente\n\nmas vale a pena pelo cafe fresco e a qualidade que a gente entrega direto da serra da canastra\n\nquando quiser, a gente pode conversar sobre pedidos maiores no private label, ai o frete fica mais diluido\n\nquer que eu te explique como funciona o private label?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:30:13.411524+00:00"
+  },
+  {
+    "id": "be6e6fbb-44ab-4755-b8db-b96ab066a0fb",
+    "role": "user",
+    "content": "Nao. Primeiro vou provar. Se for bom a gente volta a falar.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:30:47.844558+00:00"
+  },
+  {
+    "id": "0dc68ded-7813-4c75-a2d1-596b4a00df4a",
+    "role": "assistant",
+    "content": "perfeito, faz todo sentido\n\nquando tiver provado e quiser avancar, e so me chamar aqui\n\nfico no aguardo do seu feedback sobre o cafe",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:30:49.664598+00:00"
+  },
+  {
+    "id": "608d801a-1d8e-4b62-a174-ea4b03a74ce2",
+    "role": "user",
+    "content": "Ok, provei o cafe. Nao é ruim. Me explica de novo como funciona o private label.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:31:13.909716+00:00"
+  },
+  {
+    "id": "3eabccc3-5ad3-4228-beaa-93324ac3ffca",
+    "role": "assistant",
+    "content": "que bom que voce ja provou e gostou do cafe\n\nvou te explicar como funciona o private label\n\nbasicamente, toda a parte da marca e design e responsabilidade sua\n\nquando voce nos envia a logo, a gente faz a embalagem com a sua marca usando alguns modelos que ja temos, sem custo extra\n\na gente torra o cafe na quantidade que voce pedir, pode ser em grao ou moido, faz a moagem, empacota, sela, data e separa o pedido pra envio\n\no produto chega pronto pra voce vender com a sua marca\n\nfaz sentido ate aqui?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:31:16.630746+00:00"
+  },
+  {
+    "id": "4630b7c8-df05-4ee2-ade2-0fd2c99bdeb4",
+    "role": "user",
+    "content": "Tá, entendi. mas qual o valor? e tem pedido minimo?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:32:04.218969+00:00"
+  },
+  {
+    "id": "258a2777-2297-4161-a110-9fd3939c9528",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T12:32:10.816859+00:00"
+  },
+  {
+    "id": "2e3813e4-14be-4912-8c48-9ef6340278b9",
+    "role": "assistant",
+    "content": "enviei algumas fotos das embalagens que a gente produz pra voce visualizar melhor\n\ntem modelos sanfonados e standup, todos com silk personalizado da sua marca\n\nposso te passar os valores das outras opcoes, tipo 500g, microlote e capsulas?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:32:12.253683+00:00"
+  },
+  {
+    "id": "4e8e97eb-d1a8-48a9-8772-b82f11d14b81",
+    "role": "user",
+    "content": "ta mas e o preço? e o pedido minimo pra esse de 250g?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:32:39.644605+00:00"
+  },
+  {
+    "id": "b8bb52c0-4061-4bf1-ab62-3ef9831a6c78",
+    "role": "assistant",
+    "content": "o cafe em 250g sai R$23,90 a unidade ja com embalagem e silk da sua logo\n\nse voce ja tiver a embalagem propria, cai pra R$22,90\n\no pedido minimo e de 100 unidades\n\nquer que eu te passe o preco do 500g?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:32:41.174346+00:00"
+  },
+  {
+    "id": "44f45791-9577-4740-8229-d9f3da514d12",
+    "role": "user",
+    "content": "hmmm 100un é um pedido grande. o café vai ser exatamente o msm q eu comprei no site?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:33:09.187831+00:00"
+  },
+  {
+    "id": "d270c252-5807-4e4b-b3ad-925649286aa7",
+    "role": "assistant",
+    "content": "sim, o cafe e o mesmo blend cultivado na serra da canastra que voce ja provou no site\n\na diferenca e que a gente torra sob demanda e faz todo o processo com a sua marca\n\nessa garantia de frescor e rastreabilidade faz toda a diferenca na qualidade final\n\nquer que eu te fale do 500g agora?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:33:12.576649+00:00"
+  },
+  {
+    "id": "fe452d34-cd6f-45ef-bcef-cda1bcde5222",
+    "role": "user",
+    "content": "Mas 100 unidades é muito pra um primeiro pedido. Nao tem como fazer menos, so pra eu testar a saida aqui?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:33:38.393878+00:00"
+  },
+  {
+    "id": "37bb140c-2078-40db-818b-e73543757277",
+    "role": "assistant",
+    "content": "entendo que 100 unidades pode ser um volume alto no começo\n\nmas esse e o lote minimo que a gente consegue produzir mantendo a qualidade e viabilidade do private label\n\nse quiser, posso te apresentar o microlote, que tem pedido minimo menor e tambem pode vir com sua marca\n\nquer que eu te explique o microlote?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:33:40.384696+00:00"
+  },
+  {
+    "id": "c3d8ac42-a7b7-45b6-90b1-bda889c01dd2",
+    "role": "user",
+    "content": "Tá, me fala desse microlote. Qual o pedido minimo e o preço?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:34:08.513458+00:00"
+  },
+  {
+    "id": "06aa03c3-9816-4b06-8885-b762edeeb593",
+    "role": "assistant",
+    "content": "o microlote 250g sai R$26,90 com embalagem e silk da sua marca\n\nse voce tiver a embalagem propria, cai pra R$25,40\n\no pedido minimo e 50 unidades se for embalagem propria ou 100 unidades se for embalagem Cafe Canastra\n\nesse cafe e um blend especial, com notas mais complexas e pontuacao alta\n\nquer que eu envie as fotos pra voce ver?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:34:10.382969+00:00"
+  },
+  {
+    "id": "cb4c3414-6ff5-427d-91e1-7c554602cdf4",
+    "role": "user",
+    "content": "Peraí, mas o pedido mínimo continua 100 então? E esse microlote é um café diferente do que eu já provei?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:34:42.440723+00:00"
+  },
+  {
+    "id": "795ecd77-0aec-436b-957a-3f4142968807",
+    "role": "assistant",
+    "content": "sim, o pedido minimo de 100 unidades e o padrao para a embalagem padrao Cafe Canastra\n\nquanto ao cafe, o microlote e um produto especial, diferente do blend tradicional que voce provou no site\n\nele tem uma selecao mais criteriosa de graos e notas de sabor mais marcantes\n\nquer que eu te envie fotos do microlote?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:34:45.008489+00:00"
+  },
+  {
+    "id": "9d0d4f98-4e5a-45e3-9d32-e209bf88c982",
+    "role": "user",
+    "content": "Bah, mas aí não adianta. Eu provei um café, agora tu me oferece outro que eu não conheço.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:35:16.522113+00:00"
+  },
+  {
+    "id": "008630c0-7267-434b-aefb-390b0db21bc3",
+    "role": "assistant",
+    "content": "entendo seu ponto\n\no cafe que voce prova no site e exatamente o mesmo blend que a gente usa no private label\n\na diferenca e que no private label voce tem a sua marca na embalagem e a gente produz sob demanda\n\nassim voce garante exclusividade e frescor\n\nfaz sentido?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:35:18.329575+00:00"
+  },
+  {
+    "id": "87cf9cac-8a42-4540-b2d0-a4cd01f1cfbd",
+    "role": "user",
+    "content": "Tá, mas e o pedido mínimo de 100? Pra mim continua sendo o problema.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:35:43.438871+00:00"
+  },
+  {
+    "id": "47cc127b-525a-4198-89f3-731990fb7f5b",
+    "role": "assistant",
+    "content": "entendo que 100 unidades seja um volume consideravel pra voce\n\no pedido minimo e esse porque a gente produz sob demanda e tem custos fixos na fabricacao e embalagem\n\numa coisa que pode ajudar e pensar no private label como um investimento que agrega valor e fideliza seus clientes\n\nme diz uma coisa, qual o volume que voce imagina que conseguiria vender no inicio?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:35:45.510594+00:00"
+  },
+  {
+    "id": "a79569d1-3116-4f68-84ef-02624923f478",
+    "role": "user",
+    "content": "Bah, nao sei te dizer. Tenho que botar na prateleira pra ver se sai. 100 é muito pra começar do zero.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:36:21.095708+00:00"
+  },
+  {
+    "id": "a3e9915b-6814-4f7f-a906-3f4b83b47a26",
+    "role": "assistant",
+    "content": "entendo que 100 unidades e um volume considerado grande para iniciar\n\no cafe do private label e exatamente o mesmo blend que voce achou no site, so que com a sua marca na embalagem\n\no lote minimo e uma forma de garantir a fabricacao com qualidade e controle de estoque\n\nse quiser, posso te explicar outras opcoes que temos com volumes diferentes, talvez te ajude a decidir melhor\n\nquer que eu te conte?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T12:36:24.75893+00:00"
+  }
+]

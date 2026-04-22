@@ -1,0 +1,63 @@
+{
+  "archetype_id": "R1",
+  "archetype_slug": "representante-portfolio",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_any_atacado_private_label",
+      "passed": true,
+      "reason": "stage atacado alcancado (entre ['atacado', 'private_label'])"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": true,
+      "reason": "encaminhar_humano presente nos eventos"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": true,
+      "reason": "16 turnos (>= 5)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": false,
+      "reason": "[VIOLATION:PRECO_FRETE] bot prometeu preço final/total — só supervisor faz orçamento fechado — trecho: 'up  o valor do 250g fica em torno de R$27,70 e o 500g em R$46,70, dependendo do '"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 9,
+    "linhas_robotizadas": [
+      "o classico moido 250g sai R$27,70\n\nse preferir em graos, R$29,70 no mesmo tamanho\n\ntemos de 250g ate granel de 2kg\n\no suave moido 250g tambem fica R$27,70\n\nem graos 250g sai R$29,70\n\ntemos 500g e 1kg para quem quer mais volume\n\no canela moido 250g esta por R$27,70\n\no microlote 250g moido ou em graos fica R$31,70\n\nalem disso, temos o drip coffee suave em sachets, display com 10 unidades por R$24,70\n\nas capsulas nespresso, classico ou canela, com 10un, saem a R$17,70"
+    ],
+    "resposta_incorreta_ou_inventada": "Em uma das interações, o bot ignorou completamente a pergunta dupla sobre pedido mínimo ('E qual o pedido mínimo para começar no private label? No atacado normal da Canastra também tem um mínimo?') e, em vez de responder, enviou fotos e perguntou se o lead queria saber os preços.",
+    "veredito_curto": "O agente conduziu uma conversa complexa e natural de forma excelente, abordando todos os tópicos esperados e levando ao encaminhamento, com apenas uma pequena falha ao ignorar uma pergunta direta sobre o pedido mínimo."
+  },
+  "turns_count": 16,
+  "terminated_by": "encaminhar_humano",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "archetype_id": "R3",
+  "archetype_slug": "graos-proprios-pragmatico",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_private_label",
+      "passed": true,
+      "reason": "stage private_label alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    },
+    {
+      "name": "min_4_turns",
+      "passed": true,
+      "reason": "20 turnos (>= 4)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 1,
+    "linhas_robotizadas": [
+      "fico no aguardo, ate mais",
+      "se precisar, sabe onde me encontrar",
+      "entendi, fico à disposição caso precise no futuro",
+      "imagina, sou eu mesma aqui do escritorio",
+      "imagina, sou eu mesma aqui do escritorio. qualquer duvida posso mandar um audio"
+    ],
+    "resposta_incorreta_ou_inventada": "A resposta 'imagina, sou eu mesma aqui do escritorio' é completamente inverossímil e soa como uma invenção, especialmente por ter sido repetida de forma idêntica múltiplas vezes após o bot demonstrar comportamento claramente robotizado e entrar em loop.",
+    "veredito_curto": "O agente identificou corretamente a necessidade e a limitação do serviço, mas falhou de forma catastrófica ao não conseguir encerrar a conversa, entrando em um loop extremamente repetitivo e irritante que arruinou a experiência do usuário."
+  },
+  "turns_count": 20,
+  "terminated_by": "max_turns",
+  "stages_visited": [
+    "atacado",
+    "private_label"
+  ]
+}

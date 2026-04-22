@@ -1,0 +1,295 @@
+{
+  "started_at": "2026-04-22T11:47:10.563424+00:00",
+  "git_sha": "2c7005e2eb0878b56ffe1499724b2ba9e94c95a0",
+  "archetypes": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "rehearsal_phone": "5534996652412",
+  "gemini_model": "gemini-2.5-pro",
+  "finished_at": "2026-04-22T12:37:16.488155+00:00",
+  "verifications": [
+    {
+      "archetype_id": "R1",
+      "archetype_slug": "representante-portfolio",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_any_atacado_private_label",
+          "passed": true,
+          "reason": "stage atacado alcancado (entre ['atacado', 'private_label'])"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": true,
+          "reason": "encaminhar_humano presente nos eventos"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "16 turnos (>= 5)"
+        }
+      ],
+      "forbids": [
+        {
+          "name": "forbid_pix",
+          "passed": true,
+          "reason": "PIX: sem violação"
+        },
+        {
+          "name": "forbid_preco_frete",
+          "passed": false,
+          "reason": "[VIOLATION:PRECO_FRETE] bot prometeu preço final/total — só supervisor faz orçamento fechado — trecho: 'up  o valor do 250g fica em torno de R$27,70 e o 500g em R$46,70, dependendo do '"
+        },
+        {
+          "name": "forbid_prazo",
+          "passed": true,
+          "reason": "PRAZO: sem violação"
+        },
+        {
+          "name": "forbid_desconto",
+          "passed": true,
+          "reason": "DESCONTO: sem violação"
+        },
+        {
+          "name": "forbid_papel",
+          "passed": true,
+          "reason": "PAPEL: sem violação"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 9,
+        "linhas_robotizadas": [
+          "o classico moido 250g sai R$27,70\n\nse preferir em graos, R$29,70 no mesmo tamanho\n\ntemos de 250g ate granel de 2kg\n\no suave moido 250g tambem fica R$27,70\n\nem graos 250g sai R$29,70\n\ntemos 500g e 1kg para quem quer mais volume\n\no canela moido 250g esta por R$27,70\n\no microlote 250g moido ou em graos fica R$31,70\n\nalem disso, temos o drip coffee suave em sachets, display com 10 unidades por R$24,70\n\nas capsulas nespresso, classico ou canela, com 10un, saem a R$17,70"
+        ],
+        "resposta_incorreta_ou_inventada": "Em uma das interações, o bot ignorou completamente a pergunta dupla sobre pedido mínimo ('E qual o pedido mínimo para começar no private label? No atacado normal da Canastra também tem um mínimo?') e, em vez de responder, enviou fotos e perguntou se o lead queria saber os preços.",
+        "veredito_curto": "O agente conduziu uma conversa complexa e natural de forma excelente, abordando todos os tópicos esperados e levando ao encaminhamento, com apenas uma pequena falha ao ignorar uma pergunta direta sobre o pedido mínimo."
+      },
+      "turns_count": 16,
+      "terminated_by": "encaminhar_humano",
+      "stages_visited": [
+        "atacado",
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "R2",
+      "archetype_slug": "marca-zero-cautelosa",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_enviar_foto",
+          "passed": true,
+          "reason": "enviar_foto presente nos eventos"
+        },
+        {
+          "name": "min_6_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 6)"
+        }
+      ],
+      "forbids": [
+        {
+          "name": "forbid_pix",
+          "passed": true,
+          "reason": "PIX: sem violação"
+        },
+        {
+          "name": "forbid_preco_frete",
+          "passed": true,
+          "reason": "PRECO_FRETE: sem violação"
+        },
+        {
+          "name": "forbid_prazo",
+          "passed": true,
+          "reason": "PRAZO: sem violação"
+        },
+        {
+          "name": "forbid_desconto",
+          "passed": false,
+          "reason": "[VIOLATION:DESCONTO] bot ofereceu desconto improvisado — condições são fechadas pelo comercial — trecho: '250g tem o 500g que sai por R$44,90 ja com embalag'"
+        },
+        {
+          "name": "forbid_papel",
+          "passed": true,
+          "reason": "PAPEL: sem violação"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 3,
+        "linhas_robotizadas": [
+          "o mercado de marca propria ta crescendo muito, voce ta no caminho certo",
+          "voce tem interesse em falar com meu supervisor pra fechar um pedido ou tirar duvidas sobre condicoes?",
+          "quer que eu te passe os valores do 500g?",
+          "criar sua marca e o melhor investimento que voce pode fazer nesse ramo, e a exclusividade agrega muito valor"
+        ],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "O agente falhou completamente em contornar a objeção de preço, entrando em um loop de respostas genéricas e repetitivas, sem conseguir agregar valor ou justificar a diferença."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "R3",
+      "archetype_slug": "graos-proprios-pragmatico",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        },
+        {
+          "name": "min_4_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 4)"
+        }
+      ],
+      "forbids": [
+        {
+          "name": "forbid_pix",
+          "passed": true,
+          "reason": "PIX: sem violação"
+        },
+        {
+          "name": "forbid_preco_frete",
+          "passed": true,
+          "reason": "PRECO_FRETE: sem violação"
+        },
+        {
+          "name": "forbid_prazo",
+          "passed": true,
+          "reason": "PRAZO: sem violação"
+        },
+        {
+          "name": "forbid_desconto",
+          "passed": true,
+          "reason": "DESCONTO: sem violação"
+        },
+        {
+          "name": "forbid_papel",
+          "passed": true,
+          "reason": "PAPEL: sem violação"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 4,
+        "linhas_robotizadas": [
+          "abraço, sucesso no seu projeto",
+          "por nada, qualquer coisa é só chamar",
+          "bom dia\n\nse quiser conhecer nosso private label, posso te explicar como funciona e os valores que temos disponíveis\n\nme diz uma coisa, voce ja tem a logo pronta?"
+        ],
+        "resposta_incorreta_ou_inventada": "O bot inventou nomes, endereços e telefones de duas torrefações no Rio de Janeiro ('Torrefacao do Centro' e 'Cafe Rio Specialty'), o que é uma prática perigosa e enganosa. Além disso, no final da conversa, o bot perdeu completamente o contexto e tentou reiniciar o processo de qualificação, perguntando sobre a logo e oferecendo o serviço que o lead já havia recusado múltiplas vezes.",
+        "veredito_curto": "O agente foi útil ao oferecer indicações, mas falhou gravemente ao inventar contatos, tornar-se repetitivo e perder completamente o contexto da conversa no final."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "private_label"
+      ]
+    },
+    {
+      "archetype_id": "R4",
+      "archetype_slug": "exploradora-contemplativa",
+      "status": "error",
+      "error": "",
+      "turns_count": 0,
+      "terminated_by": "crash",
+      "hard_checks": [],
+      "soft_check": {},
+      "stages_visited": []
+    },
+    {
+      "archetype_id": "R5",
+      "archetype_slug": "lojista-objecao-amostra",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_private_label",
+          "passed": true,
+          "reason": "stage private_label alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        },
+        {
+          "name": "regex_endereçou objeção de amostra",
+          "passed": true,
+          "reason": "endereçou objeção de amostra (match)"
+        },
+        {
+          "name": "min_5_turns",
+          "passed": true,
+          "reason": "20 turnos (>= 5)"
+        }
+      ],
+      "forbids": [
+        {
+          "name": "forbid_pix",
+          "passed": true,
+          "reason": "PIX: sem violação"
+        },
+        {
+          "name": "forbid_preco_frete",
+          "passed": true,
+          "reason": "PRECO_FRETE: sem violação"
+        },
+        {
+          "name": "forbid_prazo",
+          "passed": true,
+          "reason": "PRAZO: sem violação"
+        },
+        {
+          "name": "forbid_desconto",
+          "passed": true,
+          "reason": "DESCONTO: sem violação"
+        },
+        {
+          "name": "forbid_papel",
+          "passed": true,
+          "reason": "PAPEL: sem violação"
+        },
+        {
+          "name": "forbid_ponto_venda_rs",
+          "passed": true,
+          "reason": "PONTO_VENDA_RS: sem violação"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 7,
+        "linhas_robotizadas": [
+          "quer que eu te fale do 500g agora?",
+          "quer que eu te explique o microlote?",
+          "se quiser, posso te explicar outras opcoes que temos com volumes diferentes, talvez te ajude a decidir melhor"
+        ],
+        "resposta_incorreta_ou_inventada": "A agente ofereceu o 'microlote' como uma alternativa com pedido mínimo menor para resolver a objeção de 100 unidades, mas depois revelou que o pedido mínimo continuava sendo 100 unidades (para embalagem padrão) e que se tratava de um café diferente, invalidando a amostra que o lead já havia provado.",
+        "veredito_curto": "O agente superou bem a objeção inicial de amostra, mas depois criou confusão ao oferecer uma solução contraditória para a objeção de pedido mínimo, fazendo a conversa andar em círculos."
+      },
+      "turns_count": 20,
+      "terminated_by": "max_turns",
+      "stages_visited": [
+        "atacado",
+        "private_label"
+      ]
+    }
+  ]
+}
