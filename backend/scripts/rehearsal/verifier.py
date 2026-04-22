@@ -70,6 +70,12 @@ UNIVERSAL_FORBIDS = [
     FORBID_PAPEL,
 ]
 
+FORBID_PONTO_VENDA_FISICO = forbids_regex(
+    r"(temos\s+(ponto|loja)|voce\s+encontra\s+em|disponivel\s+em\s+loja)\s+(em|no|na|em\s+lojas)?\s*(charqueadas|rs\b|rio\s+grande\s+do\s+sul|porto\s+alegre)",
+    label="PONTO_VENDA_RS",
+    description="bot inventou ponto de venda físico no RS — Canastra só tem venda direta",
+)
+
 
 def run_hard_checks(archetype: Archetype, run_data: dict) -> dict:
     results = []
