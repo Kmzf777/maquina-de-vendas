@@ -1,0 +1,163 @@
+[
+  {
+    "id": "13de3d8f-9d94-47e7-9700-e23a7c7cfc14",
+    "role": "user",
+    "content": "oi, estou querendo conhecer como funciona a criacao da propria marca",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:35:49.50141+00:00"
+  },
+  {
+    "id": "b226dfc1-ac9d-48c8-85e6-687dd0120c74",
+    "role": "assistant",
+    "content": "obrigada, cliente\\n\\ncriar sua propria marca e o melhor investimento que voce pode fazer nesse ramo\\n\\npra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?\naguardando resposta do cliente para continuar o atendimento.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:35:53.569695+00:00"
+  },
+  {
+    "id": "1b2bceaf-b087-48f1-9444-2a3352616ce5",
+    "role": "user",
+    "content": "Olá! O foco inicial é o mercado brasileiro. Ainda estou na fase de pesquisa, sabe?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:36:25.43551+00:00"
+  },
+  {
+    "id": "5c242037-0cc4-423b-bd73-6938bf63a639",
+    "role": "assistant",
+    "content": "perfeito, mercado brasileiro tem muita oportunidade\\n\\nme conta mais\\n\\nvoce ja possui uma marca de cafe ou ta pensando em criar uma do zero?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:36:27.390227+00:00"
+  },
+  {
+    "id": "942f5b25-f757-4c8a-8841-af88f6d335d6",
+    "role": "user",
+    "content": "Estou criando do zero, sim. Minha maior preocupação é com a qualidade do grão e a apresentação do produto.",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:36:48.790372+00:00"
+  },
+  {
+    "id": "842d0ab5-0f0c-492a-b340-4da88610131a",
+    "role": "system",
+    "content": "stage alterado para: private_label",
+    "stage": null,
+    "created_at": "2026-04-22T16:36:49.941052+00:00"
+  },
+  {
+    "id": "37b4b5c0-2286-4898-824b-f9a546d52a25",
+    "role": "assistant",
+    "content": "que projeto bacana criar do zero\\n\\naqui na Cafe Canastra a qualidade do grao e nosso foco principal\\n\\no processo e assim\\n\\nquando voce nos passa a logo, fazemos o design da embalagem com a sua marca\\n\\nentao produzimos a embalagem (temos modelos sanfonada e standup, sem custo extra) e torramos o cafe nas nossas fazendas na serra da canastra\\n\\nmoagem, empacotamento, selagem, datacao e envio tudo incluso, o produto chega pronto pra vender com a sua marca\\n\\nfaz sentido pra voce?",
+    "stage": "secretaria",
+    "created_at": "2026-04-22T16:36:51.986716+00:00"
+  },
+  {
+    "id": "e5d21cc6-1c0a-4adf-a52f-d3075226b412",
+    "role": "user",
+    "content": "Faz sentido sim, obrigada. Sobre a embalagem, como é a impressão? É o que chamam de silk?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:37:33.015417+00:00"
+  },
+  {
+    "id": "c82a876f-9645-4f4b-ac31-19d38d605c2f",
+    "role": "assistant",
+    "content": "exato, a impressao e silk\\n\\na embalagem ja sai com sua logo e os detalhes do produto\\n\\ntemos inclusive exemplos que posso te mostrar\\n\\nquer que eu envie as fotos das embalagens que a gente produz no private label?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:37:34.555438+00:00"
+  },
+  {
+    "id": "4faa61e2-d6fb-44c2-8f80-7985a045634d",
+    "role": "user",
+    "content": "Quero ver sim, por favor. Ajuda a ter uma ideia melhor da qualidade final.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:37:57.346326+00:00"
+  },
+  {
+    "id": "b977619c-e8d1-4ba2-8a5c-7582dc1a7017",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)",
+    "stage": null,
+    "created_at": "2026-04-22T16:38:02.3392+00:00"
+  },
+  {
+    "id": "d95e5175-aefa-4eb5-beac-089511cfa1d3",
+    "role": "assistant",
+    "content": "enviei algumas fotos das embalagens que a gente produz pra private label\\n\\nrepare que temos modelos sanfonada e standup, ambos com silk da sua logo\\n\\nisso garante acabamento profissional e visual premium pro seu produto\\n\\nme diz uma coisa\\n\\nvoce ja tem ideia do volume de cafe que pretende produzir inicialmente?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:38:03.914153+00:00"
+  },
+  {
+    "id": "ff82675e-8886-4ac6-9e64-a4db2dac91b0",
+    "role": "user",
+    "content": "Ainda estou definindo o volume, depende um pouco do custo. O preço por unidade diminui se a minha demanda aumentar?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:38:34.240377+00:00"
+  },
+  {
+    "id": "a6519ac3-838f-4ae6-a3f1-eff6d7658f20",
+    "role": "assistant",
+    "content": "entendo, o volume influencia mesmo no custo final\\n\\npra voce ter uma ideia, o cafe em graos ou moido de 250g sai na faixa de R$23,90 a unidade com embalagem e silk da sua logo\\n\\nse voce ja tiver embalagem propria, cai pra R$22,90\\n\\no pedido minimo e de 100 unidades\\n\\nquer que eu te fale sobre o 500g ou algum outro formato?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:38:36.415393+00:00"
+  },
+  {
+    "id": "f284366e-e5a9-4de4-adb1-cd7d597b9a9a",
+    "role": "user",
+    "content": "Entendi. Esse valor de R$23,90 diminui para pedidos maiores? E como funciona a entrega aqui para o ES?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:39:10.68877+00:00"
+  },
+  {
+    "id": "9a551a50-fb48-483e-a653-afa4f58729e2",
+    "role": "assistant",
+    "content": "sobre desconto pra volume maior, nosso comercial humano cuida disso\\n\\nentao se quiser posso encaminhar voce pra ele, que vai esclarecer tudo e fechar seu pedido\\n\\nquanto a entrega pra espirito santo, fazemos envio para todo o brasil\\n\\nme diz uma coisa\\n\\nce ja tem a logo pronta ou precisa de ajuda com essa parte?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:39:12.411865+00:00"
+  },
+  {
+    "id": "4c4882fc-5b59-4622-b442-0caf5b311c37",
+    "role": "user",
+    "content": "A logo está encaminhada. Antes de avançar, é possível receber uma amostra para provar a qualidade? E o frete para o ES, como funciona o cálculo?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:39:41.304826+00:00"
+  },
+  {
+    "id": "53b5023c-45e3-441f-803b-c52cacfb34bc",
+    "role": "assistant",
+    "content": "bacana que voce ja tem a logo encaminhada\\n\\nsobre amostra, a gente nao costuma enviar amostras porque o cafe especial e colhido e torrado sob demanda\\n\\nmas posso garantir que o nosso cafe tem padrao alto e o feedback e sempre muito positivo\\n\\nquanto ao frete, o custo varia conforme peso e distancia, geralmente calculado pelas transportadoras\\n\\nquer que eu te passe os valores dos outros formatos de cafe que temos pra private label?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:39:43.168695+00:00"
+  },
+  {
+    "id": "523344c6-0b27-4609-a0d4-62db5c666ad5",
+    "role": "user",
+    "content": "Humm, entendo. Mas sem provar o café fica difícil, a qualidade é o ponto mais importante para mim.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:40:21.188341+00:00"
+  },
+  {
+    "id": "ef01a85a-96a9-469e-84d3-032c4a3de8a8",
+    "role": "assistant",
+    "content": "entendo perfeitamente a importancia da qualidade pra voce\\n\\nquem prova cafe especial de verdade nao volta mais pro comercial\\n\\nse quiser posso encaminhar voce pra falar diretamente com um dos nossos vendedores\\n\\neles podem ajudar com esse tipo de questao e fechar seu pedido quando quiser\\n\\nquer que eu faça isso?",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:40:23.489002+00:00"
+  },
+  {
+    "id": "2e6b5992-20ef-46df-a843-8cb683431a65",
+    "role": "user",
+    "content": "Certo. Mas para eu avançar e falar com um vendedor, preciso mesmo validar a qualidade com uma amostra, entende? É o ponto principal do meu projeto.",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:40:53.295402+00:00"
+  },
+  {
+    "id": "e34bd0ca-8e18-418f-9a93-1b1b1258795b",
+    "role": "system",
+    "content": "[encaminhar_humano] Lead encaminhado para Joao Bras: private label qualificado",
+    "stage": null,
+    "created_at": "2026-04-22T16:40:55.922167+00:00"
+  },
+  {
+    "id": "481affa9-c74f-44fa-b346-e5f7729e5167",
+    "role": "assistant",
+    "content": "um dos nossos vendedores vai dar continuidade aqui mesmo nesse chat",
+    "stage": "private_label",
+    "created_at": "2026-04-22T16:40:56.623222+00:00"
+  }
+]
