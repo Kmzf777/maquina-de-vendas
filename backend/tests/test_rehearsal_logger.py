@@ -68,3 +68,34 @@ def test_write_run_summary(tmp_path):
     run_json = json.loads((run_dir / "run.json").read_text())
     assert run_json["started_at"] == "2026-04-20T10:00:00Z"
     assert len(run_json["verifications"]) == 2
+
+
+def test_run_summary_shows_forbid_violations(tmp_path):
+    from scripts.rehearsal import logger as rlogger
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    verifications = [
+        {
+            "archetype_id": "R1",
+            "archetype_slug": "representante-portfolio",
+            "status": "failed",
+            "hard_checks": [{"name": "min_5_turns", "passed": True, "reason": "ok"}],
+            "forbids": [
+                {"name": "forbid_pix", "passed": True, "reason": "PIX: sem violação"},
+                {"name": "forbid_papel", "passed": False, "reason": "[VIOLATION:PAPEL] ..."},
+            ],
+            "soft_check": {"bot_score_1_10": 4, "veredito_curto": "ruim"},
+            "turns_count": 10,
+            "terminated_by": "encaminhar_humano",
+            "stages_visited": ["atacado"],
+        }
+    ]
+
+    rlogger.write_run_summary(run_dir, verifications, {"started_at": "x", "finished_at": "y"})
+
+    summary_text = (run_dir / "summary.md").read_text()
+
+    assert "PAPEL" in summary_text
+    assert "Violações" in summary_text or "Violacoes" in summary_text
