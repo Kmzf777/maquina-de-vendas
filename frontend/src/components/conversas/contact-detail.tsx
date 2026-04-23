@@ -66,7 +66,7 @@ export function ContactDetail({
   useEffect(() => {
     setAiEnabled(conversation.ai_enabled);
     setAgentProfileId(conversation.agent_profile_id);
-  }, [conversation.id]);
+  }, [conversation.id, conversation.ai_enabled, conversation.agent_profile_id]);
 
   useEffect(() => {
     fetch("/api/agent-profiles")
