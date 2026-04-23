@@ -22,6 +22,14 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
+
+      - name: TypeScript type-check
+        if: steps.crm_changed.outputs.changed == 'true'
+        working-directory: frontend
+        run: |
+          npm ci || npm install
+          npm run type-check
+
       - name: Deploy CRM via SSH
         if: steps.crm_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
@@ -34,6 +42,9 @@ jobs:
           script: |
             set -e
             cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
+            rm -f .git/index.lock
+            git clean -fd
+            git reset --hard origin/master
             git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
 
             if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
