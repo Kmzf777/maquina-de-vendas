@@ -78,9 +78,10 @@ class MetaCloudClient(WhatsAppProvider):
                 except Exception:
                     error_body = resp.text
                 logger.error(
-                    "[Meta API] Media upload failed %s %s — response: %s",
+                    "[Meta API] Media upload failed %s %s — mimetype: %s — response: %s",
                     resp.status_code,
                     resp.reason_phrase,
+                    mimetype,
                     json.dumps(error_body) if isinstance(error_body, dict) else error_body,
                 )
             resp.raise_for_status()
