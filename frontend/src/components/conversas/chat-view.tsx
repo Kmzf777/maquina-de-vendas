@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { Message, Conversation, Tag } from "@/lib/types";
 import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
+import { EventCard } from "@/components/conversas/event-card";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -158,6 +159,9 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
           <p className="text-[#7b7b78] text-sm text-center py-8">Nenhuma mensagem.</p>
         )}
         {displayMessages.map((msg) => {
+          if (msg.role === "system") {
+            return <EventCard key={msg.id} message={msg} />;
+          }
           const isFromMe = msg.role === "assistant";
           const isTemp = msg.id.startsWith("temp_");
           return (
