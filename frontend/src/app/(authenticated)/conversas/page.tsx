@@ -30,7 +30,14 @@ export default function ConversasPage() {
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        setConversations(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setConversations(list);
+        // Sync selectedConversation when its data changes
+        setSelectedConversation((prev: Conversation | null) => {
+          if (!prev) return prev;
+          const updated = list.find((c: Conversation) => c.id === prev.id);
+          return updated ?? prev;
+        });
       }
     } catch {
       // ignore
