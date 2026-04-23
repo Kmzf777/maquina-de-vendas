@@ -230,7 +230,10 @@ async def execute_tool(
                 sent += 1
                 await asyncio.sleep(1)
             except Exception as e:
-                logger.warning(f"Failed to send photo {photo.name}: {e}")
+                logger.error(
+                    "Failed to send photo %s to %s: %s",
+                    photo.name, phone, e, exc_info=True,
+                )
 
         save_message(lead_id, "system", f"[enviar_fotos] Fotos de {categoria} enviadas ({sent}/{len(photos)})", conversation_id=conversation_id)
         return f"{sent} fotos de {categoria} enviadas ao lead"
@@ -262,7 +265,10 @@ async def execute_tool(
             save_message(lead_id, "system", f"[enviar_foto_produto] Foto de {produto} enviada", conversation_id=conversation_id)
             return f"foto de {produto} enviada ao lead"
         except Exception as e:
-            logger.warning(f"Failed to send product photo {produto}: {e}")
+            logger.error(
+                "Failed to send product photo '%s' to %s: %s",
+                produto, phone, e, exc_info=True,
+            )
             return f"erro ao enviar foto de {produto}"
 
     elif tool_name == "registrar_pedido_simples":
