@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import httpx
@@ -14,6 +15,7 @@ class MetaCloudClient(WhatsAppProvider):
         self.access_token = config["access_token"]
         api_version = config.get("api_version", "v21.0")
         self._messages_url = f"{META_API_BASE}/{api_version}/{self.phone_number_id}/messages"
+        self._media_url = f"{META_API_BASE}/{api_version}/{self.phone_number_id}/media"
 
     def _url(self) -> str:
         return self._messages_url
@@ -61,9 +63,45 @@ class MetaCloudClient(WhatsAppProvider):
             payload["image"]["caption"] = caption
         return await self._post(payload)
 
+    async def upload_media(self, image_bytes: bytes, mimetype: str) -> str:
+        """Upload image bytes to Meta Media API and return the media_id."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                self._media_url,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                files={"file": ("image", image_bytes, mimetype)},
+                data={"messaging_product": "whatsapp", "type": mimetype},
+            )
+            if not resp.is_success:
+                try:
+                    error_body = resp.json()
+                except Exception:
+                    error_body = resp.text
+                logger.error(
+                    "[Meta API] Media upload failed %s %s — response: %s",
+                    resp.status_code,
+                    resp.reason_phrase,
+                    json.dumps(error_body) if isinstance(error_body, dict) else error_body,
+                )
+            resp.raise_for_status()
+            return resp.json()["id"]
+
+    async def send_image_bytes(self, to: str, image_bytes: bytes, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
+        """Upload image to Meta and send via media_id (required — Meta rejects data: URIs)."""
+        media_id = await self.upload_media(image_bytes, mimetype)
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "image",
+            "image": {"id": media_id},
+        }
+        if caption:
+            payload["image"]["caption"] = caption
+        return await self._post(payload)
+
     async def send_image_base64(self, to: str, base64_data: str, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
-        data_url = f"data:{mimetype};base64,{base64_data}"
-        return await self.send_image(to, data_url, caption)
+        image_bytes = base64.b64decode(base64_data)
+        return await self.send_image_bytes(to, image_bytes, mimetype, caption=caption)
 
     async def send_audio(self, to: str, audio_url: str) -> dict:
         return await self._post({
