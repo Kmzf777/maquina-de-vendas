@@ -81,14 +81,20 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "encaminhar_humano",
-            "description": "Encaminha o lead qualificado para um vendedor humano continuar o atendimento",
+            "description": (
+                "Registra o encerramento da interacao com o lead e transfere o controle para um humano. "
+                "USE OBRIGATORIAMENTE nos seguintes casos: "
+                "(1) lead qualificado pronto para fechar com vendedor humano; "
+                "(2) lead recusou o servico, afirmou que vai procurar outro fornecedor, ou se despediu devido a incompatibilidade — neste caso passe motivo='Cliente nao aceitou o modelo de negocio'. "
+                "Esta ferramenta ENCERRA a conversa automatica. Apos chama-la, NAO envie mais nenhuma mensagem de texto."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "vendedor": {"type": "string", "description": "Nome do vendedor"},
-                    "motivo": {"type": "string", "description": "Motivo do encaminhamento"},
+                    "vendedor": {"type": "string", "description": "Nome do vendedor (opcional — omita em casos de rejeicao)"},
+                    "motivo": {"type": "string", "description": "Motivo do encaminhamento ou encerramento"},
                 },
-                "required": ["vendedor"],
+                "required": [],
             },
         },
     },
