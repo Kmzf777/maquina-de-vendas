@@ -33,7 +33,7 @@ def _patch_httpx(responses: list):
     return patch("app.whatsapp.meta.httpx.AsyncClient", return_value=mock_client), mock_client
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_upload_media_returns_media_id():
     client = MetaCloudClient(CONFIG)
     upload_resp = _make_mock_resp({"id": "media_abc123"})
@@ -50,7 +50,7 @@ async def test_upload_media_returns_media_id():
     assert "file" in call.kwargs["files"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_upload_media_logs_error_on_failure():
     client = MetaCloudClient(CONFIG)
     error_resp = _make_mock_resp(
@@ -64,7 +64,7 @@ async def test_upload_media_logs_error_on_failure():
         await client.upload_media(FAKE_JPEG, "image/jpeg")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_image_bytes_uses_media_id_not_data_url():
     client = MetaCloudClient(CONFIG)
 
@@ -79,19 +79,19 @@ async def test_send_image_bytes_uses_media_id_not_data_url():
     assert "link" not in payload["image"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_image_bytes_no_caption():
     client = MetaCloudClient(CONFIG)
 
     with patch.object(client, "upload_media", new_callable=AsyncMock, return_value="media_no_cap"), \
          patch.object(client, "_post", new_callable=AsyncMock, return_value={}) as mock_post:
-        await client.send_image_bytes("5511999...", FAKE_JPEG)
+        await client.send_image_bytes("5511999...", FAKE_JPEG, "image/jpeg")
 
     payload = mock_post.call_args[0][0]
     assert "caption" not in payload["image"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_image_base64_delegates_to_send_image_bytes():
     client = MetaCloudClient(CONFIG)
 
