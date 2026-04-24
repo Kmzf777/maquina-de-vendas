@@ -1,17 +1,50 @@
+import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from app.db.supabase import get_supabase
 
+logger = logging.getLogger(__name__)
+
+_PHONE_RE = re.compile(r"[^\d]+")
+
+
+def _normalize_phone(phone: str | None) -> str:
+    """Strip everything but digits. Keeps country code as provided — does NOT invent '55'."""
+    if not phone:
+        return ""
+    # Drop common wrappers like 'whatsapp:' prefix
+    if phone.startswith("whatsapp:"):
+        phone = phone[len("whatsapp:"):]
+    return _PHONE_RE.sub("", phone)
+
 
 def get_or_create_lead(phone: str) -> dict[str, Any]:
     sb = get_supabase()
-    result = sb.table("leads").select("*").eq("phone", phone).execute()
+    normalized = _normalize_phone(phone)
 
+    # Look up by normalized phone first. Fallback to raw to catch legacy rows.
+    result = sb.table("leads").select("*").eq("phone", normalized).execute()
     if result.data:
         return result.data[0]
 
-    new_lead = {"phone": phone, "stage": "pending", "status": "imported"}
+    if normalized != phone:
+        legacy = sb.table("leads").select("*").eq("phone", phone).execute()
+        if legacy.data:
+            # Backfill: rewrite legacy row to the normalized phone so future lookups match.
+            row = dict(legacy.data[0])
+            try:
+                sb.table("leads").update({"phone": normalized}).eq("id", row["id"]).execute()
+                row["phone"] = normalized
+            except Exception as exc:
+                logger.warning(
+                    "leads.service: failed to backfill phone normalization for lead %s: %s",
+                    row.get("id"), exc,
+                )
+            return row
+
+    new_lead = {"phone": normalized, "stage": "pending", "status": "imported"}
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 

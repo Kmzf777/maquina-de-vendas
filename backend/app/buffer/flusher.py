@@ -48,7 +48,7 @@ async def flush_due_items(r: aioredis.Redis) -> None:
         )
 
         try:
-            channel = get_channel(channel_id)
+            _ = get_channel(channel_id)  # validate channel exists before processing
         except Exception as e:
             logger.error(
                 f"Channel {channel_id} not found during flush, "
@@ -56,7 +56,9 @@ async def flush_due_items(r: aioredis.Redis) -> None:
             )
             continue
 
-        await process_buffered_messages(phone, combined, channel, push_name=push_name)
+        # processor expects channel_id (string), not the full channel dict.
+        logger.info(f"Flushing buffered messages for {phone} (push_name={push_name})")
+        await process_buffered_messages(phone, combined, channel_id)
 
 
 async def run_flusher(app) -> None:

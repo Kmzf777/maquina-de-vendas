@@ -68,6 +68,29 @@ def test_secretaria_tools_exclude_enviar_foto_produto():
 
 
 @pytest.mark.asyncio
+async def test_encaminhar_humano_logs_when_update_lead_fails(caplog):
+    """If update_lead raises, tool must log an ERROR and still return a non-crashing string."""
+    import logging
+    from app.agent.tools import execute_tool
+
+    with patch("app.agent.tools.update_lead", side_effect=RuntimeError("db dead")), \
+         patch("app.agent.tools.save_message"), \
+         patch("app.agent.tools.create_deal") as mock_create_deal, \
+         patch("app.agent.tools.get_lead", return_value={"id": "lead-x", "stage": "atacado"}):
+        caplog.set_level(logging.ERROR, logger="app.agent.tools")
+        out = await execute_tool(
+            "encaminhar_humano",
+            {"vendedor": "Joao Bras", "motivo": "pronto pra fechar"},
+            lead_id="lead-x",
+            phone="5511999990000",
+            conversation_id="conv-x",
+        )
+    assert "CRITICAL" in out or "erro" in out.lower()
+    assert any("encaminhar_humano" in rec.message and rec.levelname == "ERROR" for rec in caplog.records)
+    mock_create_deal.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_registrar_pedido_simples_cria_deal(monkeypatch):
     calls = []
     def fake_create_deal(lead_id, title, **kwargs):

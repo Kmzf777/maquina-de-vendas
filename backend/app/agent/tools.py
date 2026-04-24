@@ -195,12 +195,30 @@ async def execute_tool(
         return f"Stage alterado para: {new_stage}"
 
     elif tool_name == "encaminhar_humano":
-        update_lead(lead_id, status="converted", human_control=True)
         motivo = args.get("motivo", "lead qualificado")
         vendedor = args.get("vendedor", "Vendedor")
-        lead = get_lead(lead_id)
-        lead_stage = lead.get("stage") if lead else None
-        create_deal(lead_id, title=f"{vendedor} - {motivo}", category=lead_stage)
+        try:
+            update_lead(lead_id, status="converted", human_control=True)
+        except Exception as exc:
+            logger.error(
+                "CRITICAL: encaminhar_humano failed to set human_control for lead %s: %s",
+                lead_id, exc, exc_info=True,
+            )
+            save_message(
+                lead_id, "system",
+                f"[encaminhar_humano][ERRO] nao foi possivel marcar human_control: {exc}",
+                conversation_id=conversation_id,
+            )
+            return f"CRITICAL: erro ao encaminhar para {vendedor} — humano precisa verificar lead manualmente"
+        try:
+            lead = get_lead(lead_id)
+            lead_stage = lead.get("stage") if lead else None
+            create_deal(lead_id, title=f"{vendedor} - {motivo}", category=lead_stage)
+        except Exception as exc:
+            logger.error(
+                "encaminhar_humano marked human_control but failed to create deal for lead %s: %s",
+                lead_id, exc, exc_info=True,
+            )
         save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
         return f"Lead encaminhado para {vendedor}"
 
