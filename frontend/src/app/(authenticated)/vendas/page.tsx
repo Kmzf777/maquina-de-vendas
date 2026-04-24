@@ -9,6 +9,7 @@ import { useDroppable, useDraggable } from "@dnd-kit/core";
 import { useRealtimeDeals } from "@/hooks/use-realtime-deals";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
 import { usePipelines, usePipelineStages } from "@/hooks/use-pipelines";
+import { useDragScroll } from "@/hooks/use-drag-scroll";
 import { DealCard } from "@/components/deals/deal-card";
 import { DealKanbanMetrics } from "@/components/deals/deal-kanban-metrics";
 import { DealKanbanFilters } from "@/components/deals/deal-kanban-filters";
@@ -93,6 +94,8 @@ export default function VendasPage() {
   }, [pipelines, selectedPipelineId]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const { ref: kanbanRef, onMouseDown: kanbanMouseDown, onMouseMove: kanbanMouseMove, onMouseUp: kanbanMouseUp, onMouseLeave: kanbanMouseLeave } = useDragScroll();
 
   function handleDragStart(event: DragStartEvent) { setActiveDrag(event.active.data.current as Deal); }
 
@@ -249,7 +252,14 @@ export default function VendasPage() {
         </div>
 
         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className="flex gap-3 overflow-x-auto p-6 pt-2">
+          <div
+            ref={kanbanRef}
+            className="flex gap-3 overflow-x-auto p-6 pt-2"
+            onMouseDown={kanbanMouseDown}
+            onMouseMove={kanbanMouseMove}
+            onMouseUp={kanbanMouseUp}
+            onMouseLeave={kanbanMouseLeave}
+          >
             {stages.map((stage) => {
               const stageDeals = filteredDeals.filter((d) => d.stage_id === stage.id);
               return (
