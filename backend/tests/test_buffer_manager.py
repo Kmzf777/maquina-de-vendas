@@ -147,3 +147,19 @@ async def test_media_url_gera_placeholder_no_buffer(fake_redis):
     assert len(items) == 1
     assert "audio" in items[0]
     assert "media_url" in items[0]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_does_not_force_buffer_off():
+    """main.lifespan MUST NOT override a pre-set buffer_enabled flag to '0' on boot."""
+    import inspect
+    import app.main as main_module
+
+    # source-level guard: wrong call must be absent, right call must be present
+    src = inspect.getsource(main_module)
+    assert 'set("config:buffer_enabled", "0")' not in src, (
+        "main.py still force-disables the message buffer on boot"
+    )
+    assert 'setnx("config:buffer_enabled", "1")' in src, (
+        "main.py must set buffer ON via setnx on boot"
+    )
