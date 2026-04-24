@@ -98,6 +98,25 @@ export function LeadCard({
         </div>
       )}
 
+      {/* Row 2b: Status badges */}
+      {(lead.human_control || lead.on_hold) && (
+        <div className="flex gap-1 mb-1.5">
+          {lead.human_control && (
+            <span
+              className="text-[9px] font-medium px-2 py-0.5 rounded-[4px] border"
+              style={{ background: "#fff3cd", color: "#8a6914", borderColor: "#f0d060" }}
+            >
+              Humano
+            </span>
+          )}
+          {lead.on_hold && (
+            <span className="text-[9px] font-medium px-2 py-0.5 rounded-[4px] border border-[#dedbd6] bg-[#f4f4f0] text-[#7b7b78]">
+              Parado
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Row 3: Last message preview */}
       {lastMessage && (
         <p className="text-[11px] text-[#7b7b78] truncate">
