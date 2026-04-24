@@ -6,6 +6,7 @@ export interface Lead {
   stage: string;
   status: string;
   last_msg_at: string | null;
+  last_customer_message_at: string | null;
   created_at: string;
   assigned_to: string | null;
   human_control: boolean;
