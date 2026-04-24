@@ -183,6 +183,15 @@ async def process_buffered_messages(
         # Abort: do not run agent without persistence — avoids unlogged AI responses
         return
 
+    # Track last inbound message time for WhatsApp 24h window enforcement
+    try:
+        sb = get_supabase()
+        sb.table("leads").update(
+            {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", lead["id"]).execute()
+    except Exception as e:
+        logger.warning(f"Failed to update last_customer_message_at for {lead['id']}: {e}")
+
     # If human already took control, stop here — message is saved, agent skipped
     if lead.get("human_control"):
         logger.info(f"[HUMAN CONTROL] Lead {phone} is under human control — agent skipped")
