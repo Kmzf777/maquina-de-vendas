@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
+import { useDragScroll } from "@/hooks/use-drag-scroll";
 import { AGENT_STAGES } from "@/lib/constants";
 import { KanbanColumn } from "@/components/kanban-column";
 import { KanbanMetricsBar } from "@/components/kanban-metrics-bar";
@@ -20,6 +21,7 @@ export default function QualificacaoPage() {
   const [leadTagsMap, setLeadTagsMap] = useState<Record<string, Tag[]>>({});
   const [lastMessagesMap, setLastMessagesMap] = useState<Record<string, string>>({});
   const supabase = createClient();
+  const { ref: kanbanRef, onMouseDown: kanbanMouseDown, onMouseMove: kanbanMouseMove, onMouseUp: kanbanMouseUp, onMouseLeave: kanbanMouseLeave } = useDragScroll();
 
   useEffect(() => {
     async function loadTags() {
@@ -106,7 +108,14 @@ export default function QualificacaoPage() {
           onToggleActive={() => setShowActive(!showActive)}
         />
 
-        <div className="flex gap-3 overflow-x-auto pb-4">
+        <div
+          ref={kanbanRef}
+          className="flex gap-3 overflow-x-auto pb-4"
+          onMouseDown={kanbanMouseDown}
+          onMouseMove={kanbanMouseMove}
+          onMouseUp={kanbanMouseUp}
+          onMouseLeave={kanbanMouseLeave}
+        >
           {AGENT_STAGES.map((stage) => {
             const stageLeads = filteredLeads.filter((l) => l.stage === stage.key);
             return (
