@@ -22,8 +22,9 @@ async def lifespan(app: FastAPI):
         settings.redis_url, decode_responses=True,
         socket_connect_timeout=5, socket_timeout=5,
     )
-    # Start with buffer OFF; toggle via POST /api/buffer
-    await app.state.redis.set("config:buffer_enabled", "0")
+    # Default buffer ON; can be overridden in Redis via POST /api/buffer.
+    # setnx only sets the key if it does NOT exist — preserves runtime toggles across restarts.
+    await app.state.redis.setnx("config:buffer_enabled", "1")
 
     flusher_task = asyncio.create_task(run_flusher(app))
 
