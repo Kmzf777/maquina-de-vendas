@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CONVERSATION_TABS, AGENT_STAGES } from "@/lib/constants";
 import type { Conversation, Channel } from "@/lib/types";
+import { getWindowStatus, windowExpiresInMs, formatTimeRemaining } from "@/lib/window-status";
 
 interface ChatListProps {
   conversations: Conversation[];
@@ -135,6 +136,13 @@ export function ChatList({
 
           const hasAgent = conv.agent_profile_id !== null || conv.channels?.agent_profile_id !== null;
 
+          const provider = conv.channels?.provider ?? null;
+          const lastCustomerMsgAt = conv.leads?.last_customer_message_at ?? null;
+          const windowStatus = getWindowStatus(lastCustomerMsgAt, provider);
+          const timeRemainingMs = windowStatus === "expiring" && lastCustomerMsgAt
+            ? windowExpiresInMs(lastCustomerMsgAt)
+            : 0;
+
           return (
             <button
               key={conv.id}
@@ -159,9 +167,27 @@ export function ChatList({
                   <span className={`text-[13px] truncate font-medium ${isActive ? "text-white" : "text-[#313130]"}`}>
                     {displayName}
                   </span>
-                  <span className={`text-[11px] flex-shrink-0 ${isActive ? "text-white/70" : "text-[#7b7b78]"}`}>
-                    {formatTime(conv.last_msg_at)}
-                  </span>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {windowStatus === "expiring" && (
+                      <span
+                        title={`Janela expira em ${formatTimeRemaining(timeRemainingMs)}`}
+                        className="text-[11px]"
+                      >
+                        ⏱
+                      </span>
+                    )}
+                    {windowStatus === "closed" && (
+                      <span
+                        title="Janela de 24h encerrada"
+                        className="text-[11px]"
+                      >
+                        🔴
+                      </span>
+                    )}
+                    <span className={`text-[11px] ${isActive ? "text-white/70" : "text-[#7b7b78]"}`}>
+                      {formatTime(conv.last_msg_at)}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   {channel && (
