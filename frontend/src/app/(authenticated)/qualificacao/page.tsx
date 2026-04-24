@@ -18,6 +18,7 @@ export default function QualificacaoPage() {
   const [showActive, setShowActive] = useState(true);
   const [tags, setTags] = useState<Tag[]>([]);
   const [leadTagsMap, setLeadTagsMap] = useState<Record<string, Tag[]>>({});
+  const [lastMessagesMap, setLastMessagesMap] = useState<Record<string, string>>({});
   const supabase = createClient();
 
   useEffect(() => {
@@ -41,6 +42,28 @@ export default function QualificacaoPage() {
     }
     loadTags();
   }, []);
+
+  useEffect(() => {
+    if (leads.length === 0) return;
+    async function loadLastMessages() {
+      const leadIds = leads.map((l) => l.id);
+      const { data } = await supabase
+        .from("messages")
+        .select("lead_id, content, role")
+        .in("lead_id", leadIds)
+        .neq("role", "system")
+        .order("created_at", { ascending: false })
+        .limit(leadIds.length * 5);
+
+      if (!data) return;
+      const map: Record<string, string> = {};
+      data.forEach((msg: { lead_id: string; content: string }) => {
+        if (!map[msg.lead_id]) map[msg.lead_id] = msg.content;
+      });
+      setLastMessagesMap(map);
+    }
+    loadLastMessages();
+  }, [leads]);
 
   if (loading) {
     return (
@@ -96,6 +119,7 @@ export default function QualificacaoPage() {
                 avatarColor={stage.avatarColor}
                 onLeadClick={setSelectedLead}
                 leadTagsMap={leadTagsMap}
+                lastMessagesMap={lastMessagesMap}
                 footer={<QuickAddLead stage={stage.key} />}
               />
             );
