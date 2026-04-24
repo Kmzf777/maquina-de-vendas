@@ -11,6 +11,7 @@ from app.agent.tools import get_tools_for_stage, execute_tool
 from app.conversations.service import get_history
 from app.agent.token_tracker import track_token_usage
 from app.agent_profiles.service import get_agent_profile
+from app.leads.service import get_lead
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,21 @@ async def run_agent(
     lead = conversation.get("leads", {}) or {}
     lead_id = lead.get("id") or conversation.get("lead_id")
     conversation_id = conversation["id"]
+
+    # Defense-in-depth: re-fetch lead from DB to catch any race where human_control
+    # was set after the processor's own check but before run_agent was called.
+    if lead_id:
+        fresh = get_lead(lead_id)
+        if fresh and fresh.get("human_control"):
+            logger.info(
+                "[HUMAN CONTROL DEFENSE] orchestrator bailing out for lead %s — human_control=True",
+                lead_id,
+            )
+            return ""
+        if fresh:
+            # Keep downstream code using the freshest lead state
+            lead = fresh
+            conversation["leads"] = fresh
 
     # Resolve agent profile
     profile = None
