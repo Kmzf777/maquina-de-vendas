@@ -9,7 +9,7 @@ export async function GET(
   const { id: leadId } = await params;
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status");
-  const limit = parseInt(searchParams.get("limit") || "10", 10);
+  const limit = Math.min(Math.max(1, parseInt(searchParams.get("limit") || "10", 10) || 10), 100);
 
   const supabase = await getServiceSupabase();
 
