@@ -83,10 +83,11 @@ TOOLS_SCHEMA = [
             "name": "encaminhar_humano",
             "description": (
                 "Registra o encerramento da interacao com o lead e transfere o controle para um humano. "
-                "USE OBRIGATORIAMENTE nos seguintes casos: "
-                "(1) lead qualificado pronto para fechar com vendedor humano; "
-                "(2) lead recusou o servico, afirmou que vai procurar outro fornecedor, ou se despediu devido a incompatibilidade — neste caso passe motivo='Cliente nao aceitou o modelo de negocio'. "
-                "Esta ferramenta ENCERRA a conversa automatica. Apos chama-la, NAO envie mais nenhuma mensagem de texto."
+                "USE APENAS nos seguintes casos: "
+                "(1) lead qualificado e pronto para fechar com vendedor humano (passe vendedor e motivo); "
+                "(2) lead REJEITOU explicitamente o modelo de negocio ou disse que vai procurar outro fornecedor — nesse caso passe motivo='Cliente nao aceitou o modelo de negocio'. "
+                "NAO use para simples despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — despedidas assim NAO sao rejeicao e o lead permanece no funil. "
+                "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
             ),
             "parameters": {
                 "type": "object",
