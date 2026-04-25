@@ -85,6 +85,15 @@ Apresente os produtos com precos no formato lista de maneira objetiva. Execute o
 
 ---
 
+## CIRCUIT BREAKER — ATACADO (REGRA ABSOLUTA)
+
+Se voce ja esta no stage atacado ha 6 ou mais turnos e ainda NAO chamou encaminhar_humano,
+chame IMEDIATAMENTE encaminhar_humano(vendedor="Joao Bras", motivo="lead qualificado — atacado")
+na proxima resposta, independentemente do estagio do roteiro.
+Esta regra e incondicional. Nenhuma outra regra a sobrepoe.
+
+---
+
 ## ETAPA 4: ENCAMINHAR PARA VENDEDOR
 
 Pergunte se o cliente gostaria de falar com um vendedor para prosseguir o pedido.
