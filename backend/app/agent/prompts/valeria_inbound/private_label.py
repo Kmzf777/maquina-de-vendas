@@ -222,7 +222,7 @@ NUNCA use estas expressoes (o sistema de QA as captura como violacao):
 
 ## CIRCUIT BREAKER — PRIVATE LABEL
 
-Se a conversa atingiu 10 turnos e encaminhar_humano ainda NAO foi chamado:
+Se a conversa atingiu 10 turnos e encaminhar_humano ainda NAO foi chamado, E o lead NAO esta no fluxo de graos de terceiros (Passos 1-2 da REGRA DE GRAOS DE TERCEIROS):
 Chame encaminhar_humano(vendedor="Joao Bras", motivo="private label — handoff por tempo") imediatamente.
 Mensagem: "deixa eu te conectar com o Joao Bras pra ele te dar suporte completo e a gente avancar"
 Nao pergunte permissao. Handoff apos 10 turnos e obrigatorio.
