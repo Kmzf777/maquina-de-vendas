@@ -53,3 +53,20 @@ def test_private_label_prompt_responde_pergunta_direta():
         assert idx_regra < idx_etapa1, (
             "REGRA PRIORITARIA deve aparecer antes de ETAPA 1 no prompt"
         )
+
+
+def test_atacado_prompt_responde_pergunta_direta():
+    """A regra de perguntas diretas deve estar no prompt de atacado."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    assert "PERGUNTA DIRETA" in ATACADO_PROMPT, (
+        "Prompt atacado não contém a regra PERGUNTA DIRETA"
+    )
+    # Verificar posicionamento: regra deve aparecer antes das ETAPAS/FLUXO
+    idx_regra = ATACADO_PROMPT.find("PERGUNTA DIRETA")
+    for marker in ["ETAPA 1", "ETAPA1", "## ETAPA", "FLUXO:"]:
+        idx_marker = ATACADO_PROMPT.find(marker)
+        if idx_marker != -1:
+            assert idx_regra < idx_marker, (
+                f"PERGUNTA DIRETA deve aparecer antes de '{marker}' no prompt"
+            )
+            break
