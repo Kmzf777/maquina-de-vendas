@@ -54,11 +54,11 @@ FINAL_STAGES: dict[str, str | None] = {"T1": None, "T2": None, "T3": None, "T4":
 
 
 def _now_iso() -> str:
-    return dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 def _utc_ts_path_component() -> str:
-    return dt.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H-%M-%S")
 
 
 def _git_sha() -> str:
@@ -302,13 +302,14 @@ async def main():
 
     verifications: list[dict] = []
     for archetype, result in zip(archetypes, raw_results):
-        if isinstance(result, Exception):
-            log.error(f"[{archetype.id}] Erro catastrofico: {result}")
+        if isinstance(result, BaseException):
+            err_repr = f"{type(result).__name__}: {result}" if str(result) else type(result).__name__
+            log.error(f"[{archetype.id}] Erro catastrofico: {err_repr}")
             verifications.append({
                 "archetype_id": archetype.id,
                 "archetype_slug": archetype.slug,
                 "status": "error",
-                "error": str(result),
+                "error": err_repr,
                 "turns_count": 0,
                 "terminated_by": "crash",
                 "hard_checks": [],
@@ -318,7 +319,7 @@ async def main():
         else:
             verifications.append(result)
 
-    await redis.close()
+    await redis.aclose()
 
     run_json = {
         "started_at": started_at,
