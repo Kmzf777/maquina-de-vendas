@@ -33,3 +33,16 @@ def test_base_prompt_lead_context_overrides_name():
     ctx = {"name": "Maria"}
     prompt = build_base_prompt(lead_name="João", lead_company=None, now=_now(), lead_context=ctx)
     assert "Maria" in prompt
+
+
+def test_private_label_prompt_responde_pergunta_direta():
+    """A regra de perguntas diretas deve estar no prompt de private_label."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "PERGUNTA DIRETA" in PRIVATE_LABEL_PROMPT, (
+        "Prompt private_label não contém a regra PERGUNTA DIRETA"
+    )
+    assert "ANTES de qualquer" in PRIVATE_LABEL_PROMPT or \
+           "antes de qualquer" in PRIVATE_LABEL_PROMPT or \
+           "ANTES DE qualquer" in PRIVATE_LABEL_PROMPT, (
+        "Regra de prioridade ausente"
+    )
