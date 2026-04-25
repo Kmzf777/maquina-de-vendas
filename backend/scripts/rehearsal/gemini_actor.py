@@ -11,7 +11,7 @@ import time
 
 logger = logging.getLogger(__name__)
 
-ACTOR_MODEL_NAME = "gemini-3.1-flash-lite-preview"
+ACTOR_MODEL_NAME = "gemini-2.5-flash-lite"
 JUDGE_MODEL_NAME = "gemini-2.5-pro"
 MODEL_NAME = JUDGE_MODEL_NAME  # backward-compat for rehearsal_runner.py run.json
 MAX_RETRIES = 3
