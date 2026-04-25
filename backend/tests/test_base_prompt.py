@@ -70,3 +70,15 @@ def test_atacado_prompt_responde_pergunta_direta():
                 f"PERGUNTA DIRETA deve aparecer antes de '{marker}' no prompt"
             )
             break
+
+
+def test_atacado_prompt_tem_circuit_breaker():
+    """O prompt de atacado deve ter circuit breaker para evitar loop."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    tem_circuit_breaker = (
+        "CIRCUIT BREAKER" in ATACADO_PROMPT or
+        "circuit breaker" in ATACADO_PROMPT.lower()
+    )
+    assert tem_circuit_breaker, (
+        "Prompt atacado não contém CIRCUIT BREAKER para evitar loop"
+    )
