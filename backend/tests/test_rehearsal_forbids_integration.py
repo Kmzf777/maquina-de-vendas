@@ -3,7 +3,7 @@ proibicoes universais, o verifier reprova e lista cada violacao."""
 from unittest.mock import patch
 
 from scripts.rehearsal import verifier
-from scripts.rehearsal.archetypes import R1
+from scripts.rehearsal.archetypes import T1 as R1
 
 
 @patch("scripts.rehearsal.verifier.judge_conversation")
