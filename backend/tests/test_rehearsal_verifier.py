@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from scripts.rehearsal import verifier
-from scripts.rehearsal.archetypes import R1
+from scripts.rehearsal.archetypes import T1 as R1
 
 
 def test_hard_checks_all_pass_returns_passed():
@@ -52,7 +52,7 @@ def test_verify_combines_hard_and_soft(mock_judge):
 
     assert result["status"] == "passed"
     assert result["soft_check"]["bot_score_1_10"] == 7
-    assert result["archetype_id"] == "R1"
+    assert result["archetype_id"] == "T1"
     assert result["turns_count"] == 6
 
 

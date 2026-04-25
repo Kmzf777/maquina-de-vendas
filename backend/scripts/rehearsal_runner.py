@@ -9,7 +9,7 @@ Uso:
     REHEARSAL_ONLY=R5 python -m scripts.rehearsal_runner  # roda so uma
 
 Envs necessarias (em .env.local):
-    GEMINI_API_KEY, DEV_BACKEND_URL, REHEARSAL_PHONE, SUPABASE_URL,
+    GEMINI_API_KEY, DEV_BACKEND_URL, SUPABASE_URL,
     SUPABASE_SERVICE_KEY, REDIS_URL
 Opcionais:
     REHEARSAL_TURN_TIMEOUT (default 15), REHEARSAL_MAX_TURNS (default 20)
@@ -19,7 +19,6 @@ import datetime as dt
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 import uuid
@@ -44,7 +43,6 @@ logging.basicConfig(
 log = logging.getLogger("rehearsal")
 
 DEV_BACKEND_URL = os.environ.get("DEV_BACKEND_URL", "http://127.0.0.1:8001")
-REHEARSAL_PHONE = os.environ.get("REHEARSAL_PHONE", "").strip()
 META_PHONE_NUMBER_ID = os.environ.get("META_PHONE_NUMBER_ID", "rehearsal")
 MAX_TURNS = int(os.environ.get("REHEARSAL_MAX_TURNS", "20"))
 TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "15"))
@@ -60,13 +58,6 @@ def _now_iso() -> str:
 
 def _utc_ts_path_component() -> str:
     return dt.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
-
-
-def _git_sha() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except Exception:
-        return "unknown"
 
 
 async def _health_check(client: httpx.AsyncClient) -> None:
@@ -140,26 +131,27 @@ async def _run_archetype(
     client: httpx.AsyncClient,
     redis,
     run_dir: Path,
+    phone: str,
 ) -> dict:
-    log.info(f"=== Iniciando arquetipo {archetype.id} ({archetype.slug}) ===")
+    log.info(f"[{archetype.id}] Iniciando ({archetype.slug}) phone={phone}")
 
-    supabase_io.wipe_lead(REHEARSAL_PHONE)
-    await supabase_io.wipe_redis_buffer(REHEARSAL_PHONE, redis)
+    supabase_io.wipe_lead(phone)
+    await supabase_io.wipe_redis_buffer(phone, redis)
 
     start_iso = _now_iso()
-    await _send_user_message(client, REHEARSAL_PHONE, archetype.first_message)
+    await _send_user_message(client, phone, archetype.first_message)
 
     lead_id: str | None = None
     deadline = time.time() + TURN_TIMEOUT
     while time.time() < deadline and lead_id is None:
         await asyncio.sleep(POLL_INTERVAL)
-        lead = supabase_io.get_lead_by_phone(REHEARSAL_PHONE)
+        lead = supabase_io.get_lead_by_phone(phone)
         if lead:
             lead_id = lead["id"]
             break
 
     if not lead_id:
-        log.error(f"{archetype.id}: lead nao foi criado em {TURN_TIMEOUT}s — abortando arquetipo")
+        log.error(f"[{archetype.id}] Lead nao criado em {TURN_TIMEOUT}s — abortando")
         return {"archetype_id": archetype.id, "archetype_slug": archetype.slug,
                 "status": "error", "error": "lead_not_created", "turns_count": 0,
                 "terminated_by": "error", "soft_check": {}, "hard_checks": [],
@@ -191,7 +183,7 @@ async def _run_archetype(
 
         if not valeria_msgs:
             consecutive_timeouts += 1
-            log.warning(f"{archetype.id}: turno {turns} sem resposta (timeout #{consecutive_timeouts})")
+            log.warning(f"[{archetype.id}] Turno {turns} sem resposta (timeout #{consecutive_timeouts})")
             if consecutive_timeouts >= 2:
                 terminated_by = "timeout"
                 break
@@ -213,17 +205,17 @@ async def _run_archetype(
                 last_assistant_message=last_assistant,
             )
         except gemini_actor.GeminiFailure as e:
-            log.error(f"{archetype.id}: Gemini falhou — {e}")
+            log.error(f"[{archetype.id}] Gemini falhou — {e}")
             terminated_by = "gemini_error"
             break
 
         if not next_user_msg:
-            log.warning(f"{archetype.id}: Gemini retornou vazio — encerrando")
+            log.warning(f"[{archetype.id}] Gemini retornou vazio — encerrando")
             terminated_by = "empty_gemini"
             break
 
-        log.info(f"{archetype.id} turno {turns + 1} — Lead: {next_user_msg[:80]}")
-        await _send_user_message(client, REHEARSAL_PHONE, next_user_msg)
+        log.info(f"[{archetype.id}] Turno {turns + 1} — Lead: {next_user_msg[:80]}")
+        await _send_user_message(client, phone, next_user_msg)
         turns += 1
 
         if turns >= MAX_TURNS:
@@ -249,7 +241,7 @@ async def _run_archetype(
         verification=verification,
     )
 
-    log.info(f"=== {archetype.id} finalizado: status={verification['status']} turns={turns} by={terminated_by} ===")
+    log.info(f"[{archetype.id}] Finalizado: status={verification['status']} turns={turns} by={terminated_by}")
     return verification
 
 
@@ -263,8 +255,6 @@ def _render_inline(messages: list[dict]) -> str:
 
 
 async def main():
-    if not REHEARSAL_PHONE:
-        raise SystemExit("REHEARSAL_PHONE nao definido em .env.local")
     if not os.environ.get("GEMINI_API_KEY"):
         raise SystemExit("GEMINI_API_KEY nao definido em .env.local")
 
@@ -278,32 +268,28 @@ async def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     log.info(f"Run dir: {run_dir}")
 
-    started_at = _now_iso()
-    run_meta = {
-        "started_at": started_at,
-        "git_sha": _git_sha(),
-        "archetypes": [a.id for a in archetypes],
-        "dev_backend_url": DEV_BACKEND_URL,
-        "rehearsal_phone": REHEARSAL_PHONE,
-        "gemini_model": gemini_actor.MODEL_NAME,
-    }
-
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     verifications: list[dict] = []
-
     async with httpx.AsyncClient() as client:
         await _health_check(client)
-        for archetype in archetypes:
+        for idx, archetype in enumerate(archetypes):
+            phone = f"5511{(idx + 1):08d}"
             try:
-                v = await _run_archetype(archetype, client, redis, run_dir)
+                v = await _run_archetype(archetype, client, redis, run_dir, phone=phone)
             except Exception as e:
-                log.exception(f"Erro catastrofico em {archetype.id}")
-                v = {"archetype_id": archetype.id, "archetype_slug": archetype.slug,
-                     "status": "error", "error": str(e), "turns_count": 0,
-                     "terminated_by": "crash", "hard_checks": [], "soft_check": {},
-                     "stages_visited": []}
+                log.exception(f"[{archetype.id}] Erro catastrofico")
+                v = {
+                    "archetype_id": archetype.id,
+                    "archetype_slug": archetype.slug,
+                    "status": "error",
+                    "error": str(e),
+                    "turns_count": 0,
+                    "terminated_by": "crash",
+                    "hard_checks": [],
+                    "soft_check": {},
+                    "stages_visited": [],
+                }
             verifications.append(v)
-            rlogger.write_run_summary(run_dir, verifications, {**run_meta, "finished_at": _now_iso()})
 
     await redis.close()
 
