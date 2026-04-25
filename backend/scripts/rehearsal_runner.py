@@ -19,6 +19,7 @@ import datetime as dt
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -58,6 +59,13 @@ def _now_iso() -> str:
 
 def _utc_ts_path_component() -> str:
     return dt.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        return "unknown"
 
 
 async def _health_check(client: httpx.AsyncClient) -> None:
@@ -276,6 +284,7 @@ async def main():
     if not archetypes:
         raise SystemExit(f"Nenhum arquetipo encontrado com REHEARSAL_ONLY={only}")
 
+    started_at = _now_iso()
     run_ts = _utc_ts_path_component()
     run_dir = OUTPUT_ROOT / run_ts
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -310,6 +319,20 @@ async def main():
             verifications.append(result)
 
     await redis.close()
+
+    run_json = {
+        "started_at": started_at,
+        "finished_at": _now_iso(),
+        "git_sha": _git_sha(),
+        "archetypes": [a.id for a in archetypes],
+        "dev_backend_url": DEV_BACKEND_URL,
+        "phones": {a.id: f"5511{(idx + 1):08d}" for idx, a in enumerate(archetypes)},
+        "gemini_model": gemini_actor.MODEL_NAME,
+        "verifications": verifications,
+    }
+    (run_dir / "run.json").write_text(
+        json.dumps(run_json, ensure_ascii=False, indent=2, default=str)
+    )
 
     log.info(f"Run completo. Artefatos em: {run_dir}")
     any_fail = any(v.get("status") != "passed" for v in verifications)
