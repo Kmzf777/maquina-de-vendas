@@ -88,9 +88,10 @@ Apresente os produtos com precos no formato lista de maneira objetiva. Execute o
 ## CIRCUIT BREAKER — ATACADO (REGRA ABSOLUTA)
 
 Se voce ja esta no stage atacado ha 6 ou mais turnos e ainda NAO chamou encaminhar_humano,
-chame IMEDIATAMENTE encaminhar_humano(vendedor="Joao Bras", motivo="lead qualificado — atacado")
-na proxima resposta, independentemente do estagio do roteiro.
-Esta regra e incondicional. Nenhuma outra regra a sobrepoe.
+na proxima resposta faca EXATAMENTE isso, nesta ordem:
+1. Se ainda nao enviou fotos: chame enviar_fotos("atacado") NESTA MESMA MENSAGEM.
+2. Chame encaminhar_humano(vendedor="Joao Bras", motivo="lead qualificado — atacado").
+Esta regra e incondicional e sobrepoe qualquer outra regra de fluxo.
 
 ---
 
