@@ -254,6 +254,19 @@ def _render_inline(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _run_with_jitter(
+    idx: int,
+    archetype: Archetype,
+    client: httpx.AsyncClient,
+    redis,
+    run_dir: Path,
+) -> dict:
+    phone = f"5511{(idx + 1):08d}"
+    log.info(f"[{archetype.id}] Agendado — phone={phone} jitter={idx * 2.0}s")
+    await asyncio.sleep(idx * 2.0)
+    return await _run_archetype(archetype, client, redis, run_dir, phone)
+
+
 async def main():
     if not os.environ.get("GEMINI_API_KEY"):
         raise SystemExit("GEMINI_API_KEY nao definido em .env.local")
@@ -269,27 +282,32 @@ async def main():
     log.info(f"Run dir: {run_dir}")
 
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
-    verifications: list[dict] = []
+
     async with httpx.AsyncClient() as client:
         await _health_check(client)
-        for idx, archetype in enumerate(archetypes):
-            phone = f"5511{(idx + 1):08d}"
-            try:
-                v = await _run_archetype(archetype, client, redis, run_dir, phone=phone)
-            except Exception as e:
-                log.exception(f"[{archetype.id}] Erro catastrofico")
-                v = {
-                    "archetype_id": archetype.id,
-                    "archetype_slug": archetype.slug,
-                    "status": "error",
-                    "error": str(e),
-                    "turns_count": 0,
-                    "terminated_by": "crash",
-                    "hard_checks": [],
-                    "soft_check": {},
-                    "stages_visited": [],
-                }
-            verifications.append(v)
+        tasks = [
+            _run_with_jitter(idx, archetype, client, redis, run_dir)
+            for idx, archetype in enumerate(archetypes)
+        ]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    verifications: list[dict] = []
+    for archetype, result in zip(archetypes, raw_results):
+        if isinstance(result, Exception):
+            log.error(f"[{archetype.id}] Erro catastrofico: {result}")
+            verifications.append({
+                "archetype_id": archetype.id,
+                "archetype_slug": archetype.slug,
+                "status": "error",
+                "error": str(result),
+                "turns_count": 0,
+                "terminated_by": "crash",
+                "hard_checks": [],
+                "soft_check": {},
+                "stages_visited": [],
+            })
+        else:
+            verifications.append(result)
 
     await redis.close()
 
