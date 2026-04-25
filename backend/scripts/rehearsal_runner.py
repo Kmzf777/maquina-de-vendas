@@ -48,6 +48,8 @@ META_PHONE_NUMBER_ID = os.environ.get("META_PHONE_NUMBER_ID", "rehearsal")
 MAX_TURNS = int(os.environ.get("REHEARSAL_MAX_TURNS", "20"))
 TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "15"))
 POLL_INTERVAL = 0.5
+# T6 inicia com ~10s de jitter; connect timeout maior + retry evita ConnectTimeout sob carga
+_MAX_CONNECT_RETRIES = 2
 OUTPUT_ROOT = Path(__file__).resolve().parent.parent.parent / "docs" / "superpowers" / "plans" / "pilot" / "rehearsal-runs"
 
 FINAL_STAGES: dict[str, str | None] = {"T1": None, "T2": None, "T3": None, "T4": None, "T5": None, "T6": None}
@@ -109,7 +111,7 @@ async def _send_user_message(client: httpx.AsyncClient, phone: str, text: str) -
             r = await client.post(
                 f"{DEV_BACKEND_URL}/webhook/meta",
                 json=payload,
-                timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=15.0),
+                timeout=httpx.Timeout(connect=20.0, read=90.0, write=10.0, pool=15.0),
             )
             if r.status_code >= 400:
                 log.warning(f"Webhook POST retornou {r.status_code}: {r.text[:200]}")
@@ -160,7 +162,27 @@ async def _run_archetype(
     await supabase_io.wipe_redis_buffer(phone, redis)
 
     start_iso = _now_iso()
-    await _send_user_message(client, phone, archetype.first_message)
+    for _attempt in range(_MAX_CONNECT_RETRIES + 1):
+        try:
+            await _send_user_message(client, phone, archetype.first_message)
+            break
+        except httpx.ConnectTimeout:
+            if _attempt == _MAX_CONNECT_RETRIES:
+                log.error(f"[{archetype.id}] ConnectTimeout apos {_MAX_CONNECT_RETRIES + 1} tentativas — abortando")
+                return {
+                    "archetype_id": archetype.id,
+                    "archetype_slug": archetype.slug,
+                    "status": "error",
+                    "error": "ConnectTimeout",
+                    "turns_count": 0,
+                    "terminated_by": "crash",
+                    "hard_checks": [],
+                    "soft_check": {},
+                    "stages_visited": [],
+                }
+            wait = 5.0 * (_attempt + 1)
+            log.warning(f"[{archetype.id}] ConnectTimeout — tentativa {_attempt + 1}, aguardando {wait:.0f}s")
+            await asyncio.sleep(wait)
 
     lead_id: str | None = None
     deadline = time.time() + TURN_TIMEOUT
@@ -311,7 +333,7 @@ async def main():
             max_keepalive_connections=5,
             keepalive_expiry=30,
         ),
-        timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=15.0),
+        timeout=httpx.Timeout(connect=20.0, read=90.0, write=10.0, pool=15.0),
     ) as client:
         await _health_check(client)
         tasks = [
