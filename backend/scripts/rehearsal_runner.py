@@ -104,9 +104,22 @@ def _build_meta_payload(phone: str, text: str) -> dict:
 
 async def _send_user_message(client: httpx.AsyncClient, phone: str, text: str) -> None:
     payload = _build_meta_payload(phone, text)
-    r = await client.post(f"{DEV_BACKEND_URL}/webhook/meta", json=payload, timeout=60)
-    if r.status_code >= 400:
-        log.warning(f"Webhook POST retornou {r.status_code}: {r.text[:200]}")
+    for attempt in range(3):
+        try:
+            r = await client.post(
+                f"{DEV_BACKEND_URL}/webhook/meta",
+                json=payload,
+                timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=15.0),
+            )
+            if r.status_code >= 400:
+                log.warning(f"Webhook POST retornou {r.status_code}: {r.text[:200]}")
+            return
+        except (httpx.ReadError, httpx.ConnectError, httpx.PoolTimeout) as exc:
+            wait = 2 ** attempt
+            log.warning(f"Webhook POST falhou ({exc.__class__.__name__}) tentativa {attempt + 1}/3 — aguardando {wait}s")
+            if attempt == 2:
+                raise
+            await asyncio.sleep(wait)
 
 
 def _extract_stage_from_event(content: str) -> str | None:
@@ -292,7 +305,14 @@ async def main():
 
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(
+        limits=httpx.Limits(
+            max_connections=10,
+            max_keepalive_connections=5,
+            keepalive_expiry=30,
+        ),
+        timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=15.0),
+    ) as client:
         await _health_check(client)
         tasks = [
             _run_with_jitter(idx, archetype, client, redis, run_dir)
