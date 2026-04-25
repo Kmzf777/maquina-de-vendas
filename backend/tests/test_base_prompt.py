@@ -82,3 +82,19 @@ def test_atacado_prompt_tem_circuit_breaker():
     assert tem_circuit_breaker, (
         "Prompt atacado não contém CIRCUIT BREAKER para evitar loop"
     )
+
+
+def test_atacado_prompt_guardrail_registrar_pedido():
+    """O prompt de atacado deve distinguir pedido confirmado de orçamento."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    prompt_lower = ATACADO_PROMPT.lower()
+    tem_guardrail = (
+        "orcamento" in prompt_lower or
+        "orçamento" in prompt_lower or
+        "nao registrar" in prompt_lower or
+        "não registrar" in prompt_lower or
+        "quanto fica" in prompt_lower
+    )
+    assert tem_guardrail, (
+        "Prompt atacado não distingue pedido confirmado de orçamento/cotação"
+    )
