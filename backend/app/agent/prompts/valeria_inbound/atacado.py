@@ -340,7 +340,10 @@ REGRAS:
 - salvar_nome: quando descobrir o nome
 - enviar_fotos("atacado"): enviar catalogo completo de fotos dos produtos
 - enviar_foto_produto: enviar foto individual de um produto especifico
-- registrar_pedido_simples: quando lead confirma intencao de compra e tem volume definido
+- registrar_pedido_simples: APENAS quando o lead usa linguagem de confirmacao explicita.
+  OK USAR: "pode mandar", "fechei", "quero esse", "vou levar", "me manda a nota", "fechado", "confirmado".
+  NAO USAR para: "quanto fica?", "quero ver um orcamento", "me passa o preco", "quanto seria",
+     "e possivel?", "quero entender melhor". Pedido de orcamento NAO e confirmacao de compra.
 - encaminhar_humano: para passar o lead ao comercial humano fechar
 - mudar_stage: se perceber que lead quer outro servico
 """
