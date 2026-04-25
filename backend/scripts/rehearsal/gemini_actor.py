@@ -1,4 +1,4 @@
-"""Gemini 2.5 Pro wrapper — plays lead archetypes and judges conversations.
+"""Gemini wrapper — plays lead archetypes (flash-lite) and judges conversations (2.5 pro).
 
 Lazy imports of google.generativeai so tests don't require the package to be
 installed to run (they monkeypatch _get_model).
@@ -11,7 +11,9 @@ import time
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "gemini-2.5-pro"
+ACTOR_MODEL_NAME = "gemini-3.1-flash-lite-preview"
+JUDGE_MODEL_NAME = "gemini-2.5-pro"
+MODEL_NAME = JUDGE_MODEL_NAME  # backward-compat for rehearsal_runner.py run.json
 MAX_RETRIES = 3
 
 
@@ -19,14 +21,14 @@ class GeminiFailure(Exception):
     """Raised when Gemini calls fail after max retries."""
 
 
-def _get_model():
+def _get_model(model_name: str = JUDGE_MODEL_NAME):
     """Lazy-build the Gemini model. Overridable in tests via monkeypatch."""
     import google.generativeai as genai
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise GeminiFailure("GEMINI_API_KEY not set in environment")
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel(MODEL_NAME)
+    return genai.GenerativeModel(model_name)
 
 
 def _with_retry(call, *args, **kwargs):
@@ -71,7 +73,7 @@ def generate_next_lead_message(
 """
 
     def _call():
-        model = _get_model()
+        model = _get_model(ACTOR_MODEL_NAME)
         response = model.generate_content(prompt, request_options={"timeout": 120})
         return response.text.strip() if response.text else ""
 
