@@ -46,3 +46,10 @@ def test_private_label_prompt_responde_pergunta_direta():
            "ANTES DE qualquer" in PRIVATE_LABEL_PROMPT, (
         "Regra de prioridade ausente"
     )
+    # Verificar que a regra de prioridade está posicionada antes do roteiro
+    idx_regra = PRIVATE_LABEL_PROMPT.find("REGRA PRIORITARIA")
+    idx_etapa1 = PRIVATE_LABEL_PROMPT.find("ETAPA 1")
+    if idx_etapa1 != -1:  # só valida se ETAPA 1 existe no prompt
+        assert idx_regra < idx_etapa1, (
+            "REGRA PRIORITARIA deve aparecer antes de ETAPA 1 no prompt"
+        )
