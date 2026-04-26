@@ -124,3 +124,27 @@ def test_consumo_prompt_anti_loop():
     assert "SEM RETOMADA" in CONSUMO_PROMPT or "retomada" in CONSUMO_PROMPT.lower(), (
         "Prompt consumo não contém regra de sem retomada"
     )
+
+
+def test_base_prompt_silencio_pos_handoff():
+    """Base prompt deve ter regra de silêncio após encaminhar_humano."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime, timezone, timedelta
+    prompt = build_base_prompt(
+        lead_name=None, lead_company=None,
+        now=datetime.now(timezone(timedelta(hours=-3)))
+    )
+    assert "ULTIMO TURNO" in prompt or "ultimo turno" in prompt.lower(), (
+        "Base prompt não contém regra de silêncio pós-handoff (ULTIMO TURNO)"
+    )
+    assert "NAO pergunte nome" in prompt or "nao pergunte nome" in prompt.lower(), (
+        "Base prompt não proíbe perguntar nome após handoff"
+    )
+
+
+def test_private_label_proibe_nome_apos_handoff():
+    """Prompt private_label deve proibir perguntar nome após handoff."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "PROIBIDO na mensagem de handoff" in PRIVATE_LABEL_PROMPT, (
+        "Prompt private_label não contém proibição explícita na mensagem de handoff"
+    )
