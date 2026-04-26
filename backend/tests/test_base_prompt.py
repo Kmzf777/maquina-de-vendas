@@ -100,6 +100,18 @@ def test_atacado_prompt_guardrail_registrar_pedido():
     )
 
 
+def test_atacado_prompt_fardo_escala_joao_bras():
+    """Quando lead pede preço de fardo, prompt deve obrigar escalação para João Brás."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    assert "REGRA ABSOLUTA" in ATACADO_PROMPT and "fardo" in ATACADO_PROMPT.lower(), (
+        "Prompt atacado não tem REGRA ABSOLUTA para fardo"
+    )
+    assert "NAO cite preco por unidade" in ATACADO_PROMPT or \
+           "NAO sao precos de fardo" in ATACADO_PROMPT, (
+        "Prompt atacado não instrui que preços unitários ≠ preços de fardo"
+    )
+
+
 def test_consumo_prompt_anti_loop():
     """Prompt consumo deve ter regra anti-loop após link enviado."""
     from app.agent.prompts.valeria_inbound.consumo import CONSUMO_PROMPT
