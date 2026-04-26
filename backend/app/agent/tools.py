@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.leads.service import update_lead, save_message, create_deal, get_lead
+from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history
 from app.conversations.service import update_conversation
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_active_channel
@@ -223,6 +223,10 @@ async def execute_tool(
         return f"Lead encaminhado para {vendedor}"
 
     elif tool_name == "enviar_fotos":
+        history = get_history(lead_id, limit=100)
+        if any("[enviar_fotos]" in m.get("content", "") for m in history if m.get("role") == "system"):
+            return "fotos ja enviadas nesta conversa — nao reenviar"
+
         categoria = args["categoria"]
         photos_dir = Path(__file__).parent.parent / "photos" / categoria
         if not photos_dir.exists():
@@ -260,6 +264,12 @@ async def execute_tool(
     elif tool_name == "enviar_foto_produto":
         categoria = args["categoria"]
         produto = args["produto"].lower().strip()
+
+        history = get_history(lead_id, limit=100)
+        marker = f"[enviar_foto_produto] Foto de {produto}"
+        if any(marker in m.get("content", "") for m in history if m.get("role") == "system"):
+            return f"foto de {produto} ja enviada nesta conversa — nao reenviar"
+
         cat_map = PRODUTO_PHOTO_MAP.get(categoria, {})
         entry = cat_map.get(produto)
         if not entry:

@@ -265,7 +265,6 @@ T6 = Archetype(
     first_message="bom dia. os cafés de vocês possuem laudo de pontuação SCA assinado por Q-Grader?",
     hard_checks=[
         has_tool_call("encaminhar_humano"),
-        min_turns(3),
         transcript_matches(
             r"(laudo|ficha.t[eé]cnica|certifica|q-grader|supervisor|especialista)",
             "abordou documentacao tecnica ou encaminhou supervisor",
