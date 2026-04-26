@@ -98,3 +98,17 @@ def test_atacado_prompt_guardrail_registrar_pedido():
     assert tem_guardrail, (
         "Prompt atacado não distingue pedido confirmado de orçamento/cotação"
     )
+
+
+def test_consumo_prompt_anti_loop():
+    """Prompt consumo deve ter regra anti-loop após link enviado."""
+    from app.agent.prompts.valeria_inbound.consumo import CONSUMO_PROMPT
+    assert "NAO REPITA O LINK" in CONSUMO_PROMPT or "NAO repita o link" in CONSUMO_PROMPT, (
+        "Prompt consumo não contém regra anti-repetição de link"
+    )
+    assert "PERGUNTA DIRETA" in CONSUMO_PROMPT or "pergunta direta" in CONSUMO_PROMPT.lower(), (
+        "Prompt consumo não contém regra de pergunta direta pós-link"
+    )
+    assert "SEM RETOMADA" in CONSUMO_PROMPT or "retomada" in CONSUMO_PROMPT.lower(), (
+        "Prompt consumo não contém regra de sem retomada"
+    )
