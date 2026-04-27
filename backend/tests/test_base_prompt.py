@@ -205,3 +205,19 @@ def test_atacado_inbound_handoff_instrui_encaminhar_humano():
     handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
     assert "encaminhar_humano" in handoff_section
     assert "NUNCA use registrar_pedido_simples" in handoff_section
+
+
+def test_private_label_inbound_handoff_nao_chama_registrar_pedido():
+    """ETAPA DE HANDOFF do private_label inbound não deve instruir registrar_pedido_simples."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    handoff_section = PRIVATE_LABEL_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## VOCABULARIO")[0]
+    assert "Chame registrar_pedido_simples" not in handoff_section
+    assert "NUNCA use registrar_pedido_simples" in handoff_section
+
+
+def test_private_label_inbound_etapa3_responde_todas_perguntas():
+    """Etapa 3 do private_label não deve limitar respostas a 1 pergunta antes do handoff."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    # O texto antigo proibia responder mais de 1 pergunta antes do handoff
+    assert "NO MAXIMO 1 pergunta de detalhe" not in PRIVATE_LABEL_PROMPT
+    assert "responda TODAS as perguntas diretas pendentes" in PRIVATE_LABEL_PROMPT
