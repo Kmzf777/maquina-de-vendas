@@ -148,3 +148,14 @@ def test_private_label_proibe_nome_apos_handoff():
     assert "PROIBIDO na mensagem de handoff" in PRIVATE_LABEL_PROMPT, (
         "Prompt private_label não contém proibição explícita na mensagem de handoff"
     )
+
+
+def test_private_label_calcula_preco_por_quantidade():
+    """Prompt private_label deve ter regra de cálculo de preço por quantidade."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "CALCULE" in PRIVATE_LABEL_PROMPT, (
+        "Prompt private_label não contém instrução CALCULE por quantidade"
+    )
+    assert "NUNCA diga que nao sabe calcular" in PRIVATE_LABEL_PROMPT, (
+        "Prompt private_label não proíbe dizer que não sabe calcular"
+    )
