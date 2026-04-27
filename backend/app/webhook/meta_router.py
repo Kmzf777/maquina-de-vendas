@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 
@@ -12,8 +13,20 @@ from app.leads.service import get_or_create_lead, reset_lead
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route
 from app.dev_router.forwarder import forward_to_dev
+from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+def _track_inbound_message_time(phone: str) -> None:
+    """Update last_customer_message_at so the 24h window status stays current."""
+    try:
+        sb = get_supabase()
+        sb.table("leads").update(
+            {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("phone", phone).execute()
+    except Exception as e:
+        logger.warning(f"Failed to update last_customer_message_at for {phone}: {e}")
 
 router = APIRouter()
 
@@ -121,6 +134,7 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
                 logger.error(f"Failed to reset lead: {e}", exc_info=True)
             continue
 
+        background_tasks.add_task(_track_inbound_message_time, msg.from_number)
         await push_to_buffer(redis, msg)
 
     return {"status": "ok"}
