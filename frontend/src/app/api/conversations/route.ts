@@ -112,6 +112,7 @@ async function fetchEvolutionConversations(channel: {
         // Extra field for Evolution-specific data
         _evo_remote_jid: chat.remoteJid,
         _evo_last_message: extractLastMessageContent(chat.lastMessage?.message),
+        // Evolution messages have no role info — no "IA:" prefix possible
         last_message_text: extractLastMessageContent(chat.lastMessage?.message) || null,
       };
     })
