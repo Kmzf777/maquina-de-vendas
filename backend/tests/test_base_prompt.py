@@ -159,3 +159,14 @@ def test_private_label_calcula_preco_por_quantidade():
     assert "NUNCA diga que nao sabe calcular" in PRIVATE_LABEL_PROMPT, (
         "Prompt private_label não proíbe dizer que não sabe calcular"
     )
+
+
+def test_atacado_fardo_qualifica_antes_de_escalar():
+    """Prompt atacado deve pedir produto antes de escalar fardo quando não há qualificação prévia."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    assert "SEM QUALIFICACAO PREVIA" in ATACADO_PROMPT, (
+        "Prompt atacado não contém exceção SEM QUALIFICACAO PREVIA para fardo"
+    )
+    assert "qual produto voce precisa" in ATACADO_PROMPT, (
+        "Prompt atacado não pergunta qual produto antes de escalar fardo sem contexto"
+    )
