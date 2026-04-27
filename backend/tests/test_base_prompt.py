@@ -186,3 +186,22 @@ def test_base_prompt_espelha_saudacao_lead():
     assert "ESPELHE" in prompt, (
         "Base prompt não contém instrução ESPELHE para saudação do lead"
     )
+
+
+def test_atacado_inbound_handoff_nao_chama_registrar_pedido():
+    """ETAPA DE HANDOFF do atacado inbound não deve instruir registrar_pedido_simples."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    # Isola só a seção de handoff
+    handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
+    assert "registrar_pedido_simples" not in handoff_section, (
+        "ETAPA DE HANDOFF ainda instrui chamar registrar_pedido_simples. "
+        "A Valéria não deve registrar pedidos — apenas encaminhar_humano."
+    )
+
+
+def test_atacado_inbound_handoff_instrui_encaminhar_humano():
+    """ETAPA DE HANDOFF do atacado inbound deve instruir encaminhar_humano diretamente."""
+    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
+    handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
+    assert "encaminhar_humano" in handoff_section
+    assert "NUNCA use registrar_pedido_simples" in handoff_section
