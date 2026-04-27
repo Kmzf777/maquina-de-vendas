@@ -258,6 +258,7 @@ export interface Conversation {
   created_at: string;
   agent_profile_id: string | null;
   ai_enabled: boolean;
+  last_message_text: string | null;
   leads?: Lead;
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null } | null;
   agent_profiles?: { id: string; name: string } | null;

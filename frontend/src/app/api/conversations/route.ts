@@ -112,6 +112,7 @@ async function fetchEvolutionConversations(channel: {
         // Extra field for Evolution-specific data
         _evo_remote_jid: chat.remoteJid,
         _evo_last_message: extractLastMessageContent(chat.lastMessage?.message),
+        last_message_text: extractLastMessageContent(chat.lastMessage?.message) || null,
       };
     })
     .filter(Boolean);
@@ -138,6 +139,22 @@ export async function GET(request: NextRequest) {
   const { data: dbConversations } = await dbQuery
     .order("last_msg_at", { ascending: false, nullsFirst: false })
     .limit(100);
+
+  // Fetch last message text for meta_cloud conversations via RPC
+  const metaConvIds = (dbConversations || [])
+    .filter((c) => (c.channels as { provider?: string } | null)?.provider === "meta_cloud")
+    .map((c) => c.id as string);
+
+  const lastMsgMap = new Map<string, string>();
+  if (metaConvIds.length > 0) {
+    const { data: lastMsgs } = await supabase.rpc("get_last_messages", {
+      conv_ids: metaConvIds,
+    });
+    for (const row of lastMsgs || []) {
+      const prefix = row.role === "assistant" ? "IA: " : "";
+      lastMsgMap.set(row.conversation_id, prefix + row.content);
+    }
+  }
 
   // 2. Get Evolution channels and fetch their chats
   let channelsQuery = supabase
@@ -178,8 +195,14 @@ export async function GET(request: NextRequest) {
     })
   );
 
+  // Add last_message_text to DB conversations
+  const dbWithLastMsg = (dbConversations || []).map((c) => ({
+    ...c,
+    last_message_text: lastMsgMap.get(c.id as string) ?? null,
+  }));
+
   // Add Evolution conversations that don't already exist in DB
-  const merged = [...(dbConversations || [])];
+  const merged = [...dbWithLastMsg];
   for (const evoConv of evoConversations) {
     if (!evoConv) continue;
     const key = `${evoConv.channel_id}_${(evoConv.leads as { phone: string }).phone}`;
