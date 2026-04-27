@@ -170,3 +170,19 @@ def test_atacado_fardo_qualifica_antes_de_escalar():
     assert "qual produto voce precisa" in ATACADO_PROMPT, (
         "Prompt atacado não pergunta qual produto antes de escalar fardo sem contexto"
     )
+
+
+def test_base_prompt_espelha_saudacao_lead():
+    """Base prompt deve ter regra de espelhar a saudação do lead."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime, timezone, timedelta
+    prompt = build_base_prompt(
+        lead_name=None, lead_company=None,
+        now=datetime.now(timezone(timedelta(hours=-3)))
+    )
+    assert "SAUDACAO DO LEAD" in prompt, (
+        "Base prompt não contém regra SAUDACAO DO LEAD"
+    )
+    assert "ESPELHE" in prompt, (
+        "Base prompt não contém instrução ESPELHE para saudação do lead"
+    )
