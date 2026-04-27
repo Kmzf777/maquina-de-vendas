@@ -224,7 +224,13 @@ async def execute_tool(
 
     elif tool_name == "enviar_fotos":
         history = get_history(lead_id, limit=100)
-        if any("[enviar_fotos]" in m.get("content", "") for m in history if m.get("role") == "system"):
+        system_messages = [m for m in history if m.get("role") == "system"]
+        logger.info(
+            "enviar_fotos dedup check: %d system messages no histórico para lead %s",
+            len(system_messages), lead_id
+        )
+        if any("[enviar_fotos]" in m.get("content", "") for m in system_messages):
+            logger.info("enviar_fotos: dedup ativado — fotos já enviadas para lead %s", lead_id)
             return "fotos ja enviadas nesta conversa — nao reenviar"
 
         categoria = args["categoria"]

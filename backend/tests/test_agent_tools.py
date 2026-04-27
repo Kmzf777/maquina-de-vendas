@@ -136,3 +136,29 @@ def test_registrar_pedido_simples_nao_disponivel_em_private_label():
         "registrar_pedido_simples foi encontrado nas tools do stage private_label. "
         "A Valéria não deve registrar pedidos — só encaminhar_humano."
     )
+
+
+@pytest.mark.asyncio
+async def test_enviar_fotos_nao_reenvia_se_ja_enviado():
+    """enviar_fotos não deve enviar se já foi enviado nesta conversa."""
+    lead_id = "lead-joana-test"
+
+    # Histórico simulado com a marca de fotos já enviadas — formato exato salvo em produção
+    history_com_fotos = [
+        {"role": "system", "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)"},
+    ]
+
+    with patch("app.agent.tools.get_history", return_value=history_com_fotos), \
+         patch("app.agent.tools.get_active_channel") as mock_channel:
+
+        result = await execute_tool(
+            "enviar_fotos",
+            {"categoria": "private_label"},
+            lead_id=lead_id,
+            phone="5511999999999",
+        )
+
+    assert "ja enviadas" in result.lower() or "nao reenviar" in result.lower(), (
+        f"Deveria retornar mensagem de dedup, mas retornou: '{result}'"
+    )
+    mock_channel.assert_not_called()  # não deve chegar a buscar canal
