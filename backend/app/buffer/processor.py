@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import os
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -14,13 +15,26 @@ from app.conversations.service import (
 )
 from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
-from app.humanizer.typing import calculate_typing_delay
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.cadence.service import get_active_enrollment, pause_enrollment
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+def _bubble_delays(count: int, is_rehearsal: bool) -> list[float]:
+    """Returns per-bubble pre-send delay in seconds.
+
+    Production: first bubble immediate, second after 4s, rest after 2s.
+    Rehearsal: no delays to keep tests fast.
+    """
+    if is_rehearsal or count == 0:
+        return [0.0] * count
+    delays = [0.0]
+    for i in range(1, count):
+        delays.append(4.0 if i == 1 else 2.0)
+    return delays
 
 _openai_client: AsyncOpenAI | None = None
 
@@ -213,10 +227,12 @@ async def process_buffered_messages(
         logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
     # Send bubbles
+    is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
     bubbles = split_into_bubbles(response)
-    for bubble in bubbles:
-        delay = calculate_typing_delay(bubble)
-        await asyncio.sleep(delay)
+    delays = _bubble_delays(len(bubbles), is_rehearsal)
+    for delay, bubble in zip(delays, bubbles):
+        if delay > 0:
+            await asyncio.sleep(delay)
         try:
             await provider.send_text(phone, bubble)
         except Exception as e:
