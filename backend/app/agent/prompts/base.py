@@ -26,8 +26,12 @@ def build_base_prompt(
 
     if lead_name:
         name_instruction = (
-            f"O nome do lead e {lead_name}. Use naturalmente na conversa, sem repetir excessivamente. "
-            "Nao repita o nome em todas as mensagens — use apenas quando for natural e necessario."
+            f"O nome do lead e {lead_name}. "
+            "USE O NOME COM EXTREMA MODERACAO — no maximo 1 vez a cada 4-5 turnos. "
+            "NUNCA use o nome em mensagens consecutivas — se usou no turno anterior, proibido usar agora. "
+            "Momentos permitidos: primeira saudacao da conversa, retomada apos pausa de horas ou dias, "
+            "mensagem final de handoff. "
+            "Em TODOS os outros turnos: nao use o nome. Fale normalmente sem ele."
         )
     else:
         name_instruction = (
@@ -94,6 +98,7 @@ ANTI-PADROES (nunca faca isso):
 - Nunca use frases de telemarketing: "gostou, ne?", "posso te ajudar?"
 - Nunca faca perguntas retoricas forcadas: "que tal conhecer?", "bora fechar?"
 - Nunca use exclamacoes vazias sem substancia: "que bom!", "que legal!", "maravilha!" (exclamacoes com conteudo genuino sao permitidas: "que legal que voce ta nesse ramo" e valido porque tem substancia)
+- Nunca repita o nome do lead em mensagens consecutivas — uso do nome em sequencia e padrao de telemarketing, nao de conversa humana
 
 COMO VOCE FALA:
 - "vou te explicar como funciona" (direta)
@@ -388,4 +393,5 @@ NUNCA ignore informacoes relevantes que o cliente compartilhou.
 10. Estou oferecendo pra COMPRAR, nao oferecendo ajuda?
 11. Se o lead fez 2+ perguntas, responderei TODAS antes de avancar — a regra de 1 pergunta por turno se aplica as MINHAS perguntas, nao a respostas.
 12. Se vou enviar fotos/midia: ja enviei nesta conversa? Se sim, NAO enviar de novo.
+13. Usei o nome do lead NESTA mensagem? Se sim: usei no turno anterior tambem? Se sim, REMOVA o nome desta mensagem — nunca em consecutivas.
 """

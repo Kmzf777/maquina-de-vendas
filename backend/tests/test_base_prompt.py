@@ -235,3 +235,38 @@ def test_private_label_outbound_handoff_nao_chama_registrar_pedido():
     handoff_section = PRIVATE_LABEL_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
     assert "Chame registrar_pedido_simples" not in handoff_section
     assert "NUNCA use registrar_pedido_simples" in handoff_section
+
+
+def test_base_prompt_regra_nome_moderacao_forte():
+    """base_prompt deve conter regra explícita de frequência máxima de uso do nome."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime
+    prompt = build_base_prompt("Débora", None, datetime.now())
+    assert "4" in prompt or "cinco" in prompt or "4-5" in prompt or "5 turnos" in prompt, (
+        "Regra de frequência de nome (máx 1 vez a cada 4-5 turnos) não encontrada no prompt."
+    )
+    assert "consecutiv" in prompt.lower(), (
+        "Regra proibindo uso do nome em mensagens consecutivas não encontrada no prompt."
+    )
+
+
+def test_base_prompt_nome_no_antipadrao():
+    """ANTI-PADRÕES deve listar repetição de nome como proibido."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime
+    prompt = build_base_prompt("Débora", None, datetime.now())
+    antipadrao_section = prompt.split("ANTI-PADROES")[1].split("COMO VOCE FALA")[0] if "ANTI-PADROES" in prompt else ""
+    assert "nome" in antipadrao_section.lower(), (
+        "ANTI-PADROES não menciona proibição de repetição do nome do lead."
+    )
+
+
+def test_base_prompt_checklist_verifica_nome():
+    """CHECKLIST deve incluir verificação de uso excessivo do nome."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime
+    prompt = build_base_prompt("Débora", None, datetime.now())
+    checklist_section = prompt.split("CHECKLIST ANTES DE RESPONDER")[1] if "CHECKLIST ANTES DE RESPONDER" in prompt else ""
+    assert "nome" in checklist_section.lower(), (
+        "CHECKLIST não inclui verificação de uso do nome do lead."
+    )
