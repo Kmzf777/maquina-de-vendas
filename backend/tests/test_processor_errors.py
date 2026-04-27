@@ -82,7 +82,7 @@ async def test_falha_no_send_nao_cancela_save_da_resposta():
          patch("app.buffer.processor.save_message", side_effect=mock_save), \
          patch("app.buffer.processor.run_agent", return_value="Olá! Como posso ajudar?"), \
          patch("app.buffer.processor.split_into_bubbles", return_value=["Olá! Como posso ajudar?"]), \
-         patch("app.buffer.processor.calculate_typing_delay", return_value=0), \
+         patch("app.buffer.processor._bubble_delays", return_value=[0.0]), \
          patch("app.buffer.processor.update_conversation", return_value={}), \
          patch("app.buffer.processor.get_active_enrollment", return_value=None), \
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
