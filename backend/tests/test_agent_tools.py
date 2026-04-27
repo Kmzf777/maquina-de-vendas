@@ -114,3 +114,25 @@ async def test_registrar_pedido_simples_cria_deal(monkeypatch):
     assert len(calls) == 1
     assert "atacado" in calls[0]["title"].lower() or "pedido" in calls[0]["title"].lower()
     assert "registrado" in result.lower() or "ok" in result.lower()
+
+
+def test_registrar_pedido_simples_nao_disponivel_em_atacado():
+    """registrar_pedido_simples não deve estar disponível no stage atacado."""
+    from app.agent.tools import get_tools_for_stage
+    tools = get_tools_for_stage("atacado")
+    names = [t["function"]["name"] for t in tools]
+    assert "registrar_pedido_simples" not in names, (
+        "registrar_pedido_simples foi encontrado nas tools do stage atacado. "
+        "A Valéria não deve registrar pedidos — só encaminhar_humano."
+    )
+
+
+def test_registrar_pedido_simples_nao_disponivel_em_private_label():
+    """registrar_pedido_simples não deve estar disponível no stage private_label."""
+    from app.agent.tools import get_tools_for_stage
+    tools = get_tools_for_stage("private_label")
+    names = [t["function"]["name"] for t in tools]
+    assert "registrar_pedido_simples" not in names, (
+        "registrar_pedido_simples foi encontrado nas tools do stage private_label. "
+        "A Valéria não deve registrar pedidos — só encaminhar_humano."
+    )

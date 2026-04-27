@@ -163,8 +163,8 @@ def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
         "secretaria": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
-        "atacado": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "registrar_pedido_simples"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto", "registrar_pedido_simples"],
+        "atacado": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto"],
         "exportacao": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
         "consumo": ["salvar_nome", "mudar_stage"],
     }
