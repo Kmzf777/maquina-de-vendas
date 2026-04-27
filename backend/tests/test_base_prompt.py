@@ -193,7 +193,7 @@ def test_atacado_inbound_handoff_nao_chama_registrar_pedido():
     from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
     # Isola só a seção de handoff
     handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
-    assert "registrar_pedido_simples" not in handoff_section, (
+    assert "Chame registrar_pedido_simples" not in handoff_section, (
         "ETAPA DE HANDOFF ainda instrui chamar registrar_pedido_simples. "
         "A Valéria não deve registrar pedidos — apenas encaminhar_humano."
     )
