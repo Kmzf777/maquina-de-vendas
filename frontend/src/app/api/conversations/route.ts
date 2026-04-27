@@ -101,6 +101,7 @@ async function fetchEvolutionConversations(channel: {
           company: null,
           stage: "secretaria",
           status: "active",
+          last_customer_message_at: null,
         },
         channels: {
           id: channel.id,

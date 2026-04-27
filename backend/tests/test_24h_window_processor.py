@@ -24,10 +24,18 @@ async def test_process_buffered_messages_updates_last_customer_message_at():
         from app.buffer.processor import process_buffered_messages
         await process_buffered_messages("5511999999999", "hello", "channel-1")
 
-    # Verify the update was called with last_customer_message_at on the correct lead
+    # Verify last_customer_message_at was updated on the lead (check all update calls)
     update_calls = mock_sb.table.return_value.update.call_args_list
-    assert len(update_calls) >= 1, "update() was never called on leads table"
-    update_args = update_calls[0].args[0]
-    assert "last_customer_message_at" in update_args, "last_customer_message_at not in update payload"
-    assert update_args["last_customer_message_at"] is not None, "last_customer_message_at must not be None"
+    assert any(
+        "last_customer_message_at" in call.args[0]
+        for call in update_calls
+        if call.args
+    ), "last_customer_message_at was not updated on leads"
+
+    # Verify the correct field value and lead ID
+    matching_call = next(
+        call for call in update_calls
+        if call.args and "last_customer_message_at" in call.args[0]
+    )
+    assert matching_call.args[0]["last_customer_message_at"] is not None
     mock_sb.table.return_value.update.return_value.eq.assert_called_with("id", "lead-1")
