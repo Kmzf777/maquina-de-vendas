@@ -242,7 +242,7 @@ def test_base_prompt_regra_nome_moderacao_forte():
     from app.agent.prompts.base import build_base_prompt
     from datetime import datetime
     prompt = build_base_prompt("Débora", None, datetime.now())
-    assert "4" in prompt or "cinco" in prompt or "4-5" in prompt or "5 turnos" in prompt, (
+    assert "4-5" in prompt or "cinco" in prompt or "5 turnos" in prompt, (
         "Regra de frequência de nome (máx 1 vez a cada 4-5 turnos) não encontrada no prompt."
     )
     assert "consecutiv" in prompt.lower(), (
