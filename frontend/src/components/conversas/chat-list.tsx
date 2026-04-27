@@ -199,6 +199,11 @@ export function ChatList({
                     {lead?.phone || ""}
                   </span>
                 </div>
+                {conv.last_message_text && (
+                  <p className={`text-[12px] truncate mt-0.5 ${isActive ? "text-white/60" : "text-[#7b7b78]"}`}>
+                    {conv.last_message_text}
+                  </p>
+                )}
                 {hasAgent && (
                   <div className="flex items-center gap-1 mt-0.5">
                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${conv.ai_enabled ? "bg-green-500" : "bg-[#9b9b98]"}`} />

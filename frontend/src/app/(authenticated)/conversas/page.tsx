@@ -221,7 +221,7 @@ export default function ConversasPage() {
               Selecione uma conversa
             </p>
             <p className="text-[#7b7b78] text-[14px] mt-1">
-              Escolha um contato para ver as mensagens
+              {conversations.length} conversa{conversations.length !== 1 ? "s" : ""} aberta{conversations.length !== 1 ? "s" : ""}
             </p>
           </div>
         </div>
