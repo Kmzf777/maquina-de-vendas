@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import type { Message, Conversation, Tag } from "@/lib/types";
 import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 import { EventCard } from "@/components/conversas/event-card";
+import { getWindowStatus, windowExpiresInMs, formatTimeRemaining, type WindowStatus } from "@/lib/window-status";
+import { WindowReactivatePanel } from "@/components/conversas/window-reactivate-panel";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -32,9 +34,21 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  const [showReactivatePanel, setShowReactivatePanel] = useState(false);
+  const [, setTick] = useState(0);
+
+  const provider = channel?.provider ?? null;
+  const lastCustomerMsgAt = lead?.last_customer_message_at ?? null;
+  const windowStatus: WindowStatus = getWindowStatus(lastCustomerMsgAt, provider);
+  const isInputBlocked = windowStatus === "closed";
+  const timeRemainingMs = windowStatus === "expiring" && lastCustomerMsgAt
+    ? windowExpiresInMs(lastCustomerMsgAt)
+    : 0;
+
   // Clear optimistic messages when switching conversations
   useEffect(() => {
     setOptimisticMessages([]);
+    setShowReactivatePanel(false);
   }, [conversation.id]);
 
   // Abort in-flight fetch on conversation switch
@@ -54,8 +68,15 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [displayMessages]);
 
+  // Tick every 60s to refresh the expiring countdown while window is still open
+  useEffect(() => {
+    if (windowStatus !== "expiring") return;
+    const interval = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(interval);
+  }, [windowStatus]);
+
   async function handleSend() {
-    if (!text.trim() || sendingRef.current) return;
+    if (!text.trim() || sendingRef.current || isInputBlocked) return;
     sendingRef.current = true;
 
     const content = text.trim();
@@ -191,6 +212,36 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
         <div ref={bottomRef} />
       </div>
 
+      {/* Window status banner */}
+      {windowStatus === "expiring" && (
+        <div className="bg-[#fef3c7] border-t border-[#f59e0b]/30 px-4 py-2 flex items-center gap-2">
+          <span className="text-[12px] text-[#92400e]">
+            ⏱ Janela expira em {formatTimeRemaining(timeRemainingMs)} — responda logo ou envie um template.
+          </span>
+        </div>
+      )}
+      {windowStatus === "closed" && (
+        <div className="bg-[#fff7ed] border-t border-[#f97316]/30 px-4 py-2 flex items-center justify-between gap-2">
+          <span className="text-[12px] text-[#7c2d12]">
+            🔴 Janela de 24h encerrada. Não é possível enviar mensagens de texto livre.
+          </span>
+          <button
+            onClick={() => setShowReactivatePanel((v) => !v)}
+            className="flex-shrink-0 text-[12px] bg-[#111111] text-white px-3 py-1.5 rounded-[4px] hover:opacity-90 transition-opacity whitespace-nowrap"
+          >
+            Reativar conversa
+          </button>
+        </div>
+      )}
+
+      {/* Reactivate panel */}
+      {showReactivatePanel && windowStatus === "closed" && (
+        <WindowReactivatePanel
+          conversation={conversation}
+          onClose={() => setShowReactivatePanel(false)}
+        />
+      )}
+
       {/* Input */}
       <div className="border-t border-[#dedbd6] bg-[#faf9f6] p-3 flex gap-2">
         <textarea
@@ -198,13 +249,14 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Digitar mensagem..."
+          placeholder={isInputBlocked ? "Janela encerrada — use Reativar conversa" : "Digitar mensagem..."}
           rows={1}
-          className="flex-1 bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none resize-none max-h-32"
+          disabled={isInputBlocked}
+          className={`flex-1 bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none resize-none max-h-32 ${isInputBlocked ? "opacity-40 cursor-not-allowed" : ""}`}
         />
         <button
           onClick={handleSend}
-          disabled={sending || !text.trim()}
+          disabled={sending || !text.trim() || isInputBlocked}
           className="bg-[#111111] text-white px-4 py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-40 flex-shrink-0 self-end"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
