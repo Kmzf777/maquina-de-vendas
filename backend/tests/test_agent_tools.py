@@ -9,7 +9,7 @@ def test_secretaria_tools():
     names = [t["function"]["name"] for t in tools]
     assert "salvar_nome" in names
     assert "mudar_stage" in names
-    assert "encaminhar_humano" not in names
+    assert "encaminhar_humano" in names
 
 
 def test_atacado_tools():
@@ -23,7 +23,7 @@ def test_atacado_tools():
 def test_consumo_tools():
     tools = get_tools_for_stage("consumo")
     names = [t["function"]["name"] for t in tools]
-    assert names == ["salvar_nome"]
+    assert names == ["salvar_nome", "mudar_stage"]
 
 
 def test_photo_captions_exist_for_atacado():
