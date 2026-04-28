@@ -16,14 +16,20 @@ from app.leads.service import get_lead
 logger = logging.getLogger(__name__)
 
 _openai_client: AsyncOpenAI | None = None
+_gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gpt-4.1-mini"
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
 def _is_valid_openai_model(model: str) -> bool:
     return any(model.startswith(p) for p in _OPENAI_MODEL_PREFIXES)
+
+
+def _is_gemini_model(model: str) -> bool:
+    return model.startswith("gemini-")
 
 
 def _get_openai() -> AsyncOpenAI:
@@ -31,6 +37,20 @@ def _get_openai() -> AsyncOpenAI:
     if _openai_client is None:
         _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     return _openai_client
+
+
+def _get_gemini() -> AsyncOpenAI:
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = AsyncOpenAI(
+            api_key=settings.gemini_api_key,
+            base_url=_GEMINI_BASE_URL,
+        )
+    return _gemini_client
+
+
+def _get_client(model: str) -> AsyncOpenAI:
+    return _get_gemini() if _is_gemini_model(model) else _get_openai()
 
 
 def _resolve_prompt_key(profile: dict | None) -> str:
@@ -95,8 +115,8 @@ async def run_agent(
 
     prompt_key = _resolve_prompt_key(profile)
     model = profile.get("model", DEFAULT_MODEL) if profile else DEFAULT_MODEL
-    if not _is_valid_openai_model(model):
-        logger.warning("Agent profile model '%s' is not a valid OpenAI model, falling back to %s", model, DEFAULT_MODEL)
+    if not (_is_valid_openai_model(model) or _is_gemini_model(model)):
+        logger.warning("Agent profile model '%s' is not a valid model, falling back to %s", model, DEFAULT_MODEL)
         model = DEFAULT_MODEL
 
     tools = get_tools_for_stage(stage)
@@ -113,7 +133,7 @@ async def run_agent(
             messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_text})
 
-    response = await _get_openai().chat.completions.create(
+    response = await _get_client(model).chat.completions.create(
         model=model,
         messages=messages,
         tools=tools if tools else None,
@@ -158,7 +178,7 @@ async def run_agent(
                 messages[0] = {"role": "system", "content": system_prompt}
                 break
 
-        response = await _get_openai().chat.completions.create(
+        response = await _get_client(model).chat.completions.create(
             model=model,
             messages=messages,
             tools=tools if tools else None,
