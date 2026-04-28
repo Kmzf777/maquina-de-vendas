@@ -11,7 +11,7 @@ from app.agent.tools import get_tools_for_stage, execute_tool
 from app.conversations.service import get_history
 from app.agent.token_tracker import track_token_usage
 from app.agent_profiles.service import get_agent_profile
-from app.leads.service import get_lead
+from app.leads.service import get_lead, update_lead
 
 logger = logging.getLogger(__name__)
 
@@ -176,10 +176,16 @@ async def run_agent(
         for tc in message.tool_calls:
             if tc.function.name == "mudar_stage":
                 new_stage = json.loads(tc.function.arguments).get("stage", stage)
+                old_stage = stage
                 stage = new_stage
                 tools = get_tools_for_stage(stage)
                 system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
                 messages[0] = {"role": "system", "content": system_prompt}
+                if lead_id:
+                    current_meta = lead.get("metadata") or {}
+                    updated_meta = {**current_meta, "previous_stage": old_stage}
+                    update_lead(lead_id, metadata=updated_meta)
+                    lead["metadata"] = updated_meta
                 break
 
         response = await _get_client(model).chat.completions.create(
