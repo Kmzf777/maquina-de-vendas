@@ -162,3 +162,10 @@ async def test_enviar_fotos_nao_reenvia_se_ja_enviado():
         f"Deveria retornar mensagem de dedup, mas retornou: '{result}'"
     )
     mock_channel.assert_not_called()  # não deve chegar a buscar canal
+
+
+def test_registrar_pedido_simples_removida_do_schema():
+    """registrar_pedido_simples não deve existir no TOOLS_SCHEMA — é dead code."""
+    from app.agent.tools import TOOLS_SCHEMA
+    names = [t["function"]["name"] for t in TOOLS_SCHEMA]
+    assert "registrar_pedido_simples" not in names

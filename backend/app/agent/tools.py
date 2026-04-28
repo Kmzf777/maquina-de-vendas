@@ -139,23 +139,6 @@ TOOLS_SCHEMA = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "registrar_pedido_simples",
-            "description": "Registra o briefing do pedido para o comercial humano fechar. Chame quando o lead confirmar intencao de compra E volume em kg definido, antes de encaminhar_humano.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "categoria": {"type": "string", "enum": ["atacado", "private_label"]},
-                    "produto": {"type": "string", "description": "Nome do produto (ex: classico, suave, microlote)"},
-                    "volume_kg": {"type": "number"},
-                    "observacoes": {"type": "string", "description": "Notas livres — prazo, endereço, preferências"},
-                },
-                "required": ["categoria", "volume_kg"],
-            },
-        },
-    },
 ]
 
 
@@ -305,21 +288,5 @@ async def execute_tool(
                 produto, phone, e, exc_info=True,
             )
             return f"erro ao enviar foto de {produto}"
-
-    elif tool_name == "registrar_pedido_simples":
-        categoria = args.get("categoria", "")
-        produto = args.get("produto", "")
-        volume = args.get("volume_kg", 0)
-        obs = args.get("observacoes", "")
-        parts = ["Pedido", categoria, produto, f"{volume}kg"]
-        title = " ".join(p for p in parts if p)
-        create_deal(lead_id, title=title, category=categoria)
-        save_message(
-            lead_id,
-            "system",
-            f"Pedido registrado: {title}. Obs: {obs}" if obs else f"Pedido registrado: {title}",
-            conversation_id=conversation_id,
-        )
-        return f"Pedido registrado ({title})"
 
     return f"Tool {tool_name} nao reconhecida"
