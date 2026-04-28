@@ -336,18 +336,8 @@ Quando o lead demonstrar intencao de compra — qualquer variante de "quero comp
 3. Envie: "perfeito! vou te colocar em contato com nosso comercial agora. em breve eles entram aqui pra combinar tudo contigo."
 
 REGRAS ABSOLUTAS:
-- NUNCA use registrar_pedido_simples quando o lead expressar intencao de compra. O produto e o volume serao coletados pelo comercial humano.
 - NUNCA assuma qual produto o lead quer comprar com base no ultimo produto discutido na conversa.
 - NUNCA chame encaminhar_humano sem antes ter chamado enviar_fotos("atacado") ou enviar_foto_produto pelo menos uma vez.
 - NUNCA envie links de pagamento. Isso e papel do comercial humano.
 - NUNCA prometa prazo ou preco sem confirmacao do comercial.
-
----
-
-## TOOLS DISPONIVEIS
-- salvar_nome: quando descobrir o nome
-- enviar_fotos("atacado"): enviar catalogo completo de fotos dos produtos
-- enviar_foto_produto: enviar foto individual de um produto especifico
-- encaminhar_humano: para passar o lead ao comercial humano fechar
-- mudar_stage: se perceber que lead quer outro servico
 """

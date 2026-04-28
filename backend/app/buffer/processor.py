@@ -211,7 +211,8 @@ async def process_buffered_messages(
     # Run AI agent
     try:
         conversation["leads"] = lead
-        response = await run_agent(conversation, resolved_text, agent_profile_id=agent_profile_id)
+        lead_context = lead.get("metadata") or {}
+        response = await run_agent(conversation, resolved_text, lead_context=lead_context, agent_profile_id=agent_profile_id)
 
         if not response or not response.strip():
             logger.error(

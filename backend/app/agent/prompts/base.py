@@ -265,8 +265,7 @@ SITUACOES COMERCIAIS:
 - Voce esta prestes a oferecer "quer que eu te explique/envie X?" pela 3a vez
   no mesmo topico.
 - Conversa tem 15+ turnos sem avanco REAL (avanco real = mudanca de stage OU
-  registrar_pedido_simples OU encaminhar_humano chamado). "Responder perguntas"
-  nao conta como avanco.
+  encaminhar_humano chamado). "Responder perguntas" nao conta como avanco.
 - Lead pediu diretamente "fechamento", "orcamento", "boleto", "nota fiscal",
   "prazo de pagamento" ou "transportadora".
 

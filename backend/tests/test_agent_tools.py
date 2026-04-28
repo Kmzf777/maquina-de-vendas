@@ -90,53 +90,6 @@ async def test_encaminhar_humano_logs_when_update_lead_fails(caplog):
     mock_create_deal.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_registrar_pedido_simples_cria_deal(monkeypatch):
-    calls = []
-    def fake_create_deal(lead_id, title, **kwargs):
-        calls.append({"lead_id": lead_id, "title": title, **kwargs})
-        return {"id": "deal-fake"}
-    monkeypatch.setattr("app.agent.tools.create_deal", fake_create_deal)
-
-    with patch("app.agent.tools.save_message"):
-        result = await execute_tool(
-            "registrar_pedido_simples",
-            {
-                "categoria": "atacado",
-                "produto": "classico",
-                "volume_kg": 10,
-                "observacoes": "lead pediu entrega urgente",
-            },
-            lead_id="lead-test-id",
-            phone="+5500000000",
-            conversation_id="conv-test-id",
-        )
-    assert len(calls) == 1
-    assert "atacado" in calls[0]["title"].lower() or "pedido" in calls[0]["title"].lower()
-    assert "registrado" in result.lower() or "ok" in result.lower()
-
-
-def test_registrar_pedido_simples_nao_disponivel_em_atacado():
-    """registrar_pedido_simples não deve estar disponível no stage atacado."""
-    from app.agent.tools import get_tools_for_stage
-    tools = get_tools_for_stage("atacado")
-    names = [t["function"]["name"] for t in tools]
-    assert "registrar_pedido_simples" not in names, (
-        "registrar_pedido_simples foi encontrado nas tools do stage atacado. "
-        "A Valéria não deve registrar pedidos — só encaminhar_humano."
-    )
-
-
-def test_registrar_pedido_simples_nao_disponivel_em_private_label():
-    """registrar_pedido_simples não deve estar disponível no stage private_label."""
-    from app.agent.tools import get_tools_for_stage
-    tools = get_tools_for_stage("private_label")
-    names = [t["function"]["name"] for t in tools]
-    assert "registrar_pedido_simples" not in names, (
-        "registrar_pedido_simples foi encontrado nas tools do stage private_label. "
-        "A Valéria não deve registrar pedidos — só encaminhar_humano."
-    )
-
 
 @pytest.mark.asyncio
 async def test_enviar_fotos_nao_reenvia_se_ja_enviado():
@@ -162,3 +115,33 @@ async def test_enviar_fotos_nao_reenvia_se_ja_enviado():
         f"Deveria retornar mensagem de dedup, mas retornou: '{result}'"
     )
     mock_channel.assert_not_called()  # não deve chegar a buscar canal
+
+
+def test_registrar_pedido_simples_removida_do_schema():
+    """registrar_pedido_simples não deve existir no TOOLS_SCHEMA — é dead code."""
+    from app.agent.tools import TOOLS_SCHEMA
+    names = [t["function"]["name"] for t in TOOLS_SCHEMA]
+    assert "registrar_pedido_simples" not in names
+
+
+def test_mudar_stage_description_contem_gatilhos():
+    """description de mudar_stage deve conter os gatilhos por stage."""
+    from app.agent.tools import TOOLS_SCHEMA
+    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "mudar_stage")
+    desc = schema["function"]["description"]
+    assert "atacado" in desc
+    assert "private_label" in desc
+    assert "exportacao" in desc
+    assert "consumo" in desc
+    assert "sem avisar" in desc or "silenciosa" in desc
+
+
+def test_encaminhar_humano_description_contem_casos():
+    """description de encaminhar_humano deve cobrir qualificado, rejeição e circuit breaker."""
+    from app.agent.tools import TOOLS_SCHEMA
+    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "encaminhar_humano")
+    desc = schema["function"]["description"]
+    assert "qualificado" in desc
+    assert "REJEITOU" in desc
+    assert "turnos" in desc
+    assert "NAO envie" in desc or "nao envie" in desc.lower()

@@ -188,31 +188,11 @@ def test_base_prompt_espelha_saudacao_lead():
     )
 
 
-def test_atacado_inbound_handoff_nao_chama_registrar_pedido():
-    """ETAPA DE HANDOFF do atacado inbound não deve instruir registrar_pedido_simples."""
-    from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
-    # Isola só a seção de handoff
-    handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
-    assert "Chame registrar_pedido_simples" not in handoff_section, (
-        "ETAPA DE HANDOFF ainda instrui chamar registrar_pedido_simples. "
-        "A Valéria não deve registrar pedidos — apenas encaminhar_humano."
-    )
-
-
 def test_atacado_inbound_handoff_instrui_encaminhar_humano():
     """ETAPA DE HANDOFF do atacado inbound deve instruir encaminhar_humano diretamente."""
     from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
-    handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
+    handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1]
     assert "encaminhar_humano" in handoff_section
-    assert "NUNCA use registrar_pedido_simples" in handoff_section
-
-
-def test_private_label_inbound_handoff_nao_chama_registrar_pedido():
-    """ETAPA DE HANDOFF do private_label inbound não deve instruir registrar_pedido_simples."""
-    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
-    handoff_section = PRIVATE_LABEL_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## VOCABULARIO")[0]
-    assert "Chame registrar_pedido_simples" not in handoff_section
-    assert "NUNCA use registrar_pedido_simples" in handoff_section
 
 
 def test_private_label_inbound_etapa3_responde_todas_perguntas():
@@ -222,19 +202,6 @@ def test_private_label_inbound_etapa3_responde_todas_perguntas():
     assert "NO MAXIMO 1 pergunta de detalhe" not in PRIVATE_LABEL_PROMPT
     assert "responda TODAS as perguntas diretas pendentes" in PRIVATE_LABEL_PROMPT
 
-
-def test_atacado_outbound_handoff_nao_chama_registrar_pedido():
-    from app.agent.prompts.valeria_outbound.atacado import ATACADO_PROMPT
-    handoff_section = ATACADO_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
-    assert "Chame registrar_pedido_simples" not in handoff_section
-    assert "NUNCA use registrar_pedido_simples" in handoff_section
-
-
-def test_private_label_outbound_handoff_nao_chama_registrar_pedido():
-    from app.agent.prompts.valeria_outbound.private_label import PRIVATE_LABEL_PROMPT
-    handoff_section = PRIVATE_LABEL_PROMPT.split("## ETAPA DE HANDOFF PARA FECHAMENTO")[1].split("## TOOLS")[0]
-    assert "Chame registrar_pedido_simples" not in handoff_section
-    assert "NUNCA use registrar_pedido_simples" in handoff_section
 
 
 def test_base_prompt_regra_nome_moderacao_forte():

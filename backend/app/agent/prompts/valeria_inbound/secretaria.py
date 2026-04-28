@@ -173,9 +173,4 @@ Mapeamento de stage:
 - Se o cliente perguntar sobre precos ou produtos antes do redirecionamento, diga algo como: "vou te explicar tudo isso ja ja, so preciso entender melhor sua demanda primeiro"
 - NUNCA invente dados. Se nao esta escrito neste prompt, voce nao sabe.
 
----
-
-## TOOLS DISPONIVEIS
-- salvar_nome: usar somente depois de perguntar o nome e o cliente realmente disser
-- mudar_stage: quando identificar a necessidade (atacado/private_label/exportacao/consumo)
 """

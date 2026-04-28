@@ -63,7 +63,15 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "mudar_stage",
-            "description": "Transfere o lead para outro stage quando a necessidade for identificada. Usar de forma silenciosa, sem avisar o cliente.",
+            "description": (
+                "Transfere o lead para outro stage de forma silenciosa — nunca avise o cliente sobre a mudanca. "
+                "Gatilhos por stage: "
+                "atacado — lead menciona revenda, distribuidora, cafeteria, restaurante ou qualquer negocio querendo cafe em volume; "
+                "private_label — lead quer marca propria, embalagem personalizada ou produto com identidade visual propria; "
+                "exportacao — lead menciona mercado externo, exportacao ou pais de destino; "
+                "consumo — pessoa fisica comprando para uso proprio, sem fins comerciais. "
+                "Execute imediatamente ao identificar o gatilho, sem perguntar ao cliente."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -82,11 +90,12 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "encaminhar_humano",
             "description": (
-                "Registra o encerramento da interacao com o lead e transfere o controle para um humano. "
-                "USE APENAS nos seguintes casos: "
-                "(1) lead qualificado e pronto para fechar com vendedor humano (passe vendedor e motivo); "
-                "(2) lead REJEITOU explicitamente o modelo de negocio ou disse que vai procurar outro fornecedor — nesse caso passe motivo='Cliente nao aceitou o modelo de negocio'. "
-                "NAO use para simples despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — despedidas assim NAO sao rejeicao e o lead permanece no funil. "
+                "Registra o encerramento da interacao e transfere o controle para um humano. "
+                "USE nos seguintes casos: "
+                "(1) lead qualificado e pronto para fechar — passe vendedor e motivo; "
+                "(2) lead REJEITOU explicitamente o modelo de negocio — passe motivo='Cliente nao aceitou o modelo de negocio'; "
+                "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ turnos no stage private_label — chame imediatamente. "
+                "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
                 "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
             ),
             "parameters": {
@@ -136,23 +145,6 @@ TOOLS_SCHEMA = [
                     },
                 },
                 "required": ["categoria", "produto"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "registrar_pedido_simples",
-            "description": "Registra o briefing do pedido para o comercial humano fechar. Chame quando o lead confirmar intencao de compra E volume em kg definido, antes de encaminhar_humano.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "categoria": {"type": "string", "enum": ["atacado", "private_label"]},
-                    "produto": {"type": "string", "description": "Nome do produto (ex: classico, suave, microlote)"},
-                    "volume_kg": {"type": "number"},
-                    "observacoes": {"type": "string", "description": "Notas livres — prazo, endereço, preferências"},
-                },
-                "required": ["categoria", "volume_kg"],
             },
         },
     },
@@ -305,21 +297,5 @@ async def execute_tool(
                 produto, phone, e, exc_info=True,
             )
             return f"erro ao enviar foto de {produto}"
-
-    elif tool_name == "registrar_pedido_simples":
-        categoria = args.get("categoria", "")
-        produto = args.get("produto", "")
-        volume = args.get("volume_kg", 0)
-        obs = args.get("observacoes", "")
-        parts = ["Pedido", categoria, produto, f"{volume}kg"]
-        title = " ".join(p for p in parts if p)
-        create_deal(lead_id, title=title, category=categoria)
-        save_message(
-            lead_id,
-            "system",
-            f"Pedido registrado: {title}. Obs: {obs}" if obs else f"Pedido registrado: {title}",
-            conversation_id=conversation_id,
-        )
-        return f"Pedido registrado ({title})"
 
     return f"Tool {tool_name} nao reconhecida"
