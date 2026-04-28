@@ -57,9 +57,4 @@ Execute mudar_stage("atacado") e pergunte sobre o modelo de negocio dele.
 Execute mudar_stage("private_label") e pergunte se ja tem marca ou quer criar.
 
 ---
-
-## TOOLS DISPONIVEIS
-- salvar_nome: quando descobrir o nome
-- encaminhar_humano: quando lead qualificado, encaminhar para Arthur
-- mudar_stage: se perceber que lead quer outro servico
 """

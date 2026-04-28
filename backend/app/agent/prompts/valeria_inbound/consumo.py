@@ -75,8 +75,4 @@ Execute mudar_stage("private_label") e pergunte se ja tem marca ou quer criar.
 Execute mudar_stage("exportacao") e pergunte sobre o pais de destino.
 
 ---
-
-## TOOLS DISPONIVEIS
-- salvar_nome: quando descobrir o nome
-- mudar_stage: se perceber que lead quer atacado/private_label/exportacao
 """

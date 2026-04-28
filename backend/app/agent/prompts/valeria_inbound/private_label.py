@@ -249,11 +249,4 @@ UNICA EXCECAO: lead disse EXPLICITAMENTE que tem graos proprios e quer so servic
 Microlote Canastra, sabores — NAO sao excecao. Circuit breaker se aplica normalmente a todas as perguntas sobre produtos da nossa linha.
 
 ---
-
-## TOOLS DISPONIVEIS
-- salvar_nome: quando descobrir o nome
-- enviar_fotos("private_label"): enviar catalogo completo de exemplos de embalagens
-- enviar_foto_produto: enviar foto individual de um exemplo especifico
-- encaminhar_humano: para passar o lead ao comercial humano fechar
-- mudar_stage: se perceber que lead quer outro servico
 """
