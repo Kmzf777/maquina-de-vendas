@@ -270,3 +270,35 @@ def test_base_prompt_checklist_verifica_nome():
     assert "nome" in checklist_section.lower(), (
         "CHECKLIST não inclui verificação de uso do nome do lead."
     )
+
+
+def test_private_label_inbound_preco_vem_do_csv():
+    """Preços no prompt inbound devem vir do CSV, não hardcoded."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "R$26,70" in PRIVATE_LABEL_PROMPT, "250g com embalagem (CSV) ausente no inbound"
+    assert "R$48,70" in PRIVATE_LABEL_PROMPT, "500g com embalagem (CSV) ausente no inbound"
+    assert "R$23,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 250g ainda presente no inbound"
+    assert "R$44,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 500g ainda presente no inbound"
+
+
+def test_private_label_inbound_sem_produtos_removidos():
+    """Drip Coffee e Cápsulas Nespresso não devem estar no prompt inbound."""
+    from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "Drip Coffee" not in PRIVATE_LABEL_PROMPT
+    assert "Capsulas Nespresso" not in PRIVATE_LABEL_PROMPT
+
+
+def test_private_label_outbound_preco_vem_do_csv():
+    """Preços no prompt outbound devem vir do CSV."""
+    from app.agent.prompts.valeria_outbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "R$26,70" in PRIVATE_LABEL_PROMPT, "250g com embalagem (CSV) ausente no outbound"
+    assert "R$48,70" in PRIVATE_LABEL_PROMPT, "500g com embalagem (CSV) ausente no outbound"
+    assert "R$23,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 250g ainda presente no outbound"
+    assert "R$44,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 500g ainda presente no outbound"
+
+
+def test_private_label_outbound_sem_produtos_removidos():
+    """Drip Coffee e Cápsulas Nespresso não devem estar no prompt outbound."""
+    from app.agent.prompts.valeria_outbound.private_label import PRIVATE_LABEL_PROMPT
+    assert "Drip Coffee" not in PRIVATE_LABEL_PROMPT
+    assert "Capsulas Nespresso" not in PRIVATE_LABEL_PROMPT
