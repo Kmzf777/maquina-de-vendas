@@ -14,18 +14,20 @@ def test_get_client_roteia_gemini_para_cliente_gemini():
     from app.agent.orchestrator import _get_client
     with patch("app.agent.orchestrator._get_gemini") as mock_gemini, \
          patch("app.agent.orchestrator._get_openai") as mock_openai:
-        _get_client("gemini-2.5-flash")
+        result = _get_client("gemini-2.5-flash")
         mock_gemini.assert_called_once()
         mock_openai.assert_not_called()
+        assert result is mock_gemini.return_value
 
 
 def test_get_client_roteia_openai_para_cliente_openai():
     from app.agent.orchestrator import _get_client
     with patch("app.agent.orchestrator._get_gemini") as mock_gemini, \
          patch("app.agent.orchestrator._get_openai") as mock_openai:
-        _get_client("gpt-4.1-mini")
+        result = _get_client("gpt-4.1-mini")
         mock_openai.assert_called_once()
         mock_gemini.assert_not_called()
+        assert result is mock_openai.return_value
 
 
 @pytest.mark.asyncio
