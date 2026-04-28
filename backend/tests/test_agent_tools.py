@@ -122,3 +122,26 @@ def test_registrar_pedido_simples_removida_do_schema():
     from app.agent.tools import TOOLS_SCHEMA
     names = [t["function"]["name"] for t in TOOLS_SCHEMA]
     assert "registrar_pedido_simples" not in names
+
+
+def test_mudar_stage_description_contem_gatilhos():
+    """description de mudar_stage deve conter os gatilhos por stage."""
+    from app.agent.tools import TOOLS_SCHEMA
+    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "mudar_stage")
+    desc = schema["function"]["description"]
+    assert "atacado" in desc
+    assert "private_label" in desc
+    assert "exportacao" in desc
+    assert "consumo" in desc
+    assert "sem avisar" in desc or "silenciosa" in desc
+
+
+def test_encaminhar_humano_description_contem_casos():
+    """description de encaminhar_humano deve cobrir qualificado, rejeição e circuit breaker."""
+    from app.agent.tools import TOOLS_SCHEMA
+    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "encaminhar_humano")
+    desc = schema["function"]["description"]
+    assert "qualificado" in desc
+    assert "REJEITOU" in desc
+    assert "turnos" in desc
+    assert "NAO envie" in desc or "nao envie" in desc.lower()
