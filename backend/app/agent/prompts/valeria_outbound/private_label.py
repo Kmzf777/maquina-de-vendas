@@ -1,4 +1,21 @@
-PRIVATE_LABEL_PROMPT = """
+import csv
+from pathlib import Path
+
+_CSV_PATH = Path(__file__).parents[5] / ".rags" / "tabela_precos_cafe_canastra.csv"
+
+
+def _build_products_block() -> str:
+    lines = ["## PRODUTOS PRIVATE LABEL"]
+    with open(_CSV_PATH, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            lines.append(row["descricao_para_rag"])
+    return "\n\n".join(lines)
+
+
+_products_block = _build_products_block()
+
+PRIVATE_LABEL_PROMPT = f"""
 ## CONTEXTO OUTBOUND — ABORDAGEM ATIVA
 
 Voce iniciou o contato com este lead de private label. Leia o historico antes de qualquer coisa.
@@ -23,7 +40,7 @@ Voce esta atendendo um lead que quer criar sua propria marca de cafe. Seu objeti
 REGRA CALCULO DE QUANTIDADE:
 SE o lead perguntar "qual o valor para X unidades?" / "quanto fica pra X unidades?" / "preco pra 100 unidades?":
 CALCULE: preco_unitario × quantidade usando os precos listados em PRODUTOS PRIVATE LABEL.
-Exemplo: 100 unidades do 500g opcao 1 = 100 × R$44,90 = R$4.490,00.
+Exemplo: 100 unidades do 500g opcao 1 = 100 × R$48,70 = R$4.870,00.
 Apresente o total calculado. NUNCA diga que nao sabe calcular. SEMPRE forneca o total ANTES de encaminhar.
 
 ---
@@ -71,37 +88,7 @@ A mensagem de handoff e a ultima coisa que voce diz. STOP.
 
 ---
 
-## PRODUTOS PRIVATE LABEL
-
-### Cafe Canastra 250g
-- opcao 1: R$23,90 — incluso embalagem, silk com logo do cliente e produto
-- opcao 2: R$22,90 — embalagem por conta do cliente
-- lote minimo: 100 unidades
-- produto: cafe em graos e/ou moido de 250g
-
-### Cafe Canastra 500g
-- opcao 1: R$44,90 — incluso embalagem, silk com logo do cliente e produto
-- opcao 2: R$43,40 — embalagem por conta do cliente
-- lote minimo: 100 unidades
-- produto: cafe em graos e/ou moido de 500g
-
-### Microlote 250g
-- opcao 1: R$26,90 — incluso embalagem, silk com logo do cliente e produto
-- opcao 2: R$25,40 — embalagem por conta do cliente
-- lote minimo: 50 unidades (embalagem do cliente) ou 100 unidades (embalagem Cafe Canastra)
-- produto: cafe em graos e/ou moido de 250g
-
-### Drip Coffee
-- saches com o cafe
-- valor unitario: R$2,39 (cada sache)
-- pedido minimo: 200 unidades
-- caixinha do drip (display): R$1,70 por unidade, pedido minimo 3.000 unidades
-
-### Capsulas Nespresso
-- pedido minimo: 200 displays (2.000 unidades de capsula — 10 em cada display)
-- valor: R$15,70 (embalagem do cliente)
-- valor: R$16,70 (embalagem fornecida por nos — obs: minimo de 3.000 caixinhas com a grafica)
-- capsulas compativeis com sistema Nespresso
+{_products_block}
 
 ### Sabores Disponiveis
 - **Classico:** torra escura. notas amadeiradas e caramelizadas. amargor mais presente.
@@ -121,13 +108,9 @@ A mensagem de handoff e a ultima coisa que voce diz. STOP.
 Nunca copie a tabela acima como lista. Use os dados pra montar frases naturais.
 
 Exemplo para 250g:
-"o 250g sai R$23,90 a unidade, ja com embalagem e silk da sua logo"
-"se voce ja tiver embalagem propria, cai pra R$22,90"
+"o 250g sai R$26,70 a unidade, ja com embalagem e silk da sua logo"
+"se voce ja tiver embalagem propria, cai pra R$25,70"
 "o pedido minimo e de 100 unidades"
-
-Exemplo para capsulas:
-"as capsulas nespresso saem R$16,70 o display com 10 unidades"
-"o pedido minimo e de 200 displays"
 
 Apresente um formato por turno. Espere o cliente reagir antes de passar pro proximo.
 
