@@ -42,6 +42,8 @@ def _get_openai() -> AsyncOpenAI:
 def _get_gemini() -> AsyncOpenAI:
     global _gemini_client
     if _gemini_client is None:
+        if not settings.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is not configured — set it in .env to use Gemini models")
         _gemini_client = AsyncOpenAI(
             api_key=settings.gemini_api_key,
             base_url=_GEMINI_BASE_URL,
@@ -118,6 +120,8 @@ async def run_agent(
     if not (_is_valid_openai_model(model) or _is_gemini_model(model)):
         logger.warning("Agent profile model '%s' is not a valid model, falling back to %s", model, DEFAULT_MODEL)
         model = DEFAULT_MODEL
+    elif _is_gemini_model(model):
+        logger.info("Using Gemini model '%s' via OpenAI-compatible API", model)
 
     tools = get_tools_for_stage(stage)
     system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
