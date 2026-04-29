@@ -202,6 +202,14 @@ async def execute_tool(
                 conversation_id=conversation_id,
             )
             return f"CRITICAL: erro ao encaminhar para {vendedor} — humano precisa verificar lead manualmente"
+        if conversation_id:
+            try:
+                update_conversation(conversation_id, ai_enabled=False)
+            except Exception as exc:
+                logger.warning(
+                    "encaminhar_humano: failed to set ai_enabled=False for conversation %s: %s",
+                    conversation_id, exc,
+                )
         try:
             lead = get_lead(lead_id)
             lead_stage = lead.get("stage") if lead else None
