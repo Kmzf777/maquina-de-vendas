@@ -1,13 +1,9 @@
 import type { Message } from "@/lib/types";
+import { formatTimeOnly } from "@/lib/datetime";
 
 interface MessageBubbleProps {
   message: Message;
   isGrouped: boolean;
-}
-
-function formatTime(ts: string): string {
-  const date = new Date(ts);
-  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function getSenderBadge(message: Message): string | null {
@@ -40,7 +36,7 @@ export function MessageBubble({ message, isGrouped }: MessageBubbleProps) {
               isFromMe ? "text-white/50" : "text-[#7b7b78]"
             }`}
           >
-            {isTemp ? "Enviando..." : formatTime(message.created_at)}
+            {isTemp ? "Enviando..." : formatTimeOnly(message.created_at)}
           </p>
           {senderBadge && (
             <span
