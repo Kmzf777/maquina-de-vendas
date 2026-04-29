@@ -1,10 +1,25 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_window_expiration(conversation: dict[str, Any]) -> str | None:
+    """Retorna ISO da expiração da janela 24h ou None se nunca houve inbound."""
+    leads = conversation.get("leads")
+    if not leads:
+        return None
+    last = leads.get("last_customer_message_at")
+    if not last:
+        return None
+    try:
+        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return (last_dt + timedelta(hours=24)).isoformat()
 
 
 def get_or_create_conversation(lead_id: str, channel_id: str) -> dict[str, Any]:
@@ -40,7 +55,10 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
         .single()
         .execute()
     )
-    return result.data
+    data = result.data
+    if data:
+        data["whatsapp_window_expires_at"] = _compute_window_expiration(data)
+    return data
 
 
 def list_conversations(
@@ -52,7 +70,11 @@ def list_conversations(
     sb = get_supabase()
     query = (
         sb.table("conversations")
-        .select("*, leads(id, phone, name, company), channels(id, name, phone, provider)")
+        .select(
+            "*, "
+            "leads(id, phone, name, company, last_customer_message_at), "
+            "channels(id, name, phone, provider)"
+        )
     )
 
     if channel_id:
@@ -65,7 +87,10 @@ def list_conversations(
         .range(offset, offset + limit - 1)
         .execute()
     )
-    return result.data
+    rows = result.data or []
+    for row in rows:
+        row["whatsapp_window_expires_at"] = _compute_window_expiration(row)
+    return rows
 
 
 def update_conversation(conversation_id: str, **fields) -> dict[str, Any]:
