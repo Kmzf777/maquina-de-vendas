@@ -7,6 +7,7 @@ import { getWindowStatus, formatTimeRemaining, windowExpiresInMs } from "@/lib/w
 import { WindowReactivatePanel } from "@/components/conversas/window-reactivate-panel";
 import { ChatHeader } from "@/components/conversas/chat-header";
 import { MessageList } from "@/components/conversas/message-list";
+import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -111,27 +112,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
       <MessageList key={conversation.id} messages={displayMessages} loading={loading} />
 
-      {/* Window status banner */}
-      {windowStatus === "expiring" && (
-        <div className="bg-[#fef3c7] border-t border-[#f59e0b]/30 px-4 py-2 flex items-center gap-2 flex-shrink-0">
-          <span className="text-[12px] text-[#92400e]">
-            ⏱ Janela expira em {formatTimeRemaining(timeRemainingMs)} — responda logo ou envie um template.
-          </span>
-        </div>
-      )}
-      {windowStatus === "closed" && (
-        <div className="bg-[#fff7ed] border-t border-[#f97316]/30 px-4 py-2 flex items-center justify-between gap-2 flex-shrink-0">
-          <span className="text-[12px] text-[#7c2d12]">
-            🔴 Janela de 24h encerrada. Não é possível enviar mensagens de texto livre.
-          </span>
-          <button
-            onClick={() => setShowReactivatePanel((v) => !v)}
-            className="flex-shrink-0 text-[12px] bg-[#111111] text-white px-3 py-1.5 rounded-[4px] hover:opacity-90 transition-opacity whitespace-nowrap"
-          >
-            Reativar conversa
-          </button>
-        </div>
-      )}
+      <WhatsappWindowIndicator
+        expiresAt={conversation.whatsapp_window_expires_at}
+        variant="banner"
+      />
 
       {showReactivatePanel && windowStatus === "closed" && (
         <WindowReactivatePanel
