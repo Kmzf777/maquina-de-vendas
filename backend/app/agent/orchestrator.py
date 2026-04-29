@@ -19,6 +19,7 @@ _openai_client: AsyncOpenAI | None = None
 _gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gpt-4.1-mini"
+MAX_TOOL_ITERATIONS = 5
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -157,14 +158,41 @@ async def run_agent(
 
     message = response.choices[0].message
 
+    tool_iterations = 0
     while message.tool_calls:
+        tool_iterations += 1
+        if tool_iterations > MAX_TOOL_ITERATIONS:
+            logger.error(
+                "[LOOP GUARD] max tool iterations (%d) reached for conv %s — breaking",
+                MAX_TOOL_ITERATIONS, conversation_id,
+            )
+            break
         messages.append(message.model_dump(exclude_none=True))
         for tool_call in message.tool_calls:
             func_name = tool_call.function.name
-            func_args = json.loads(tool_call.function.arguments)
-            result = await execute_tool(
-                func_name, func_args, lead_id, lead.get("phone", ""), conversation_id
-            )
+            try:
+                func_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as exc:
+                logger.error(
+                    "Malformed JSON args for tool %s in conv %s: %s",
+                    func_name, conversation_id, exc,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": f"erro: argumentos inválidos para {func_name} — tente novamente",
+                })
+                continue
+            try:
+                result = await execute_tool(
+                    func_name, func_args, lead_id, lead.get("phone", ""), conversation_id
+                )
+            except Exception as exc:
+                logger.error(
+                    "Tool %s raised exception for conv %s: %s",
+                    func_name, conversation_id, exc, exc_info=True,
+                )
+                result = f"erro ao executar {func_name} — tente novamente"
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -175,7 +203,10 @@ async def run_agent(
         # uses the correct stage prompt and tools — prevents infinite transition loop.
         for tc in message.tool_calls:
             if tc.function.name == "mudar_stage":
-                new_stage = json.loads(tc.function.arguments).get("stage", stage)
+                try:
+                    new_stage = json.loads(tc.function.arguments).get("stage", stage)
+                except json.JSONDecodeError:
+                    break
                 old_stage = stage
                 stage = new_stage
                 tools = get_tools_for_stage(stage)
