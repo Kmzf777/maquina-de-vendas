@@ -256,7 +256,6 @@ export default function ConversasPage() {
             tags={tags}
             leadTags={selectedLeadTags}
             onTagToggle={handleTagToggle}
-            onAgentUpdate={handleAgentUpdate}
           />
         </>
       ) : (
