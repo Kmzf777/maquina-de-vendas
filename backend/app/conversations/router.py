@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from app.db.supabase import get_supabase
+from app.conversations.service import reset_unread_count
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -30,3 +31,12 @@ async def update_conversation_agent(conversation_id: str, body: AgentUpdate):
     if not result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return result.data[0]
+
+
+@router.post("/{conversation_id}/mark-read", status_code=204)
+async def mark_conversation_read(conversation_id: str):
+    """Zera unread_count da conversa (chamado quando o vendedor abre a conversa)."""
+    result = reset_unread_count(conversation_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return Response(status_code=204)

@@ -135,3 +135,18 @@ def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
         .execute()
     )
     return result.data
+
+
+def reset_unread_count(conversation_id: str) -> dict[str, Any]:
+    """Zera o contador de mensagens não-lidas. Chamado quando o vendedor abre a conversa."""
+    sb = get_supabase()
+    result = (
+        sb.table("conversations")
+        .update({"unread_count": 0})
+        .eq("id", conversation_id)
+        .select("id, unread_count")
+        .execute()
+    )
+    if not result.data:
+        return {}
+    return result.data[0]
