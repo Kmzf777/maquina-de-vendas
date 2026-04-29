@@ -259,6 +259,8 @@ export interface Conversation {
   agent_profile_id: string | null;
   ai_enabled: boolean;
   last_message_text: string | null;
+  unread_count: number;
+  whatsapp_window_expires_at: string | null;
   leads?: Lead;
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null } | null;
   agent_profiles?: { id: string; name: string } | null;
