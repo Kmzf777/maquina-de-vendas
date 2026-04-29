@@ -16,6 +16,7 @@ interface Props {
   expiresAt: string | null;
   variant: Variant;
   className?: string;
+  onReactivate?: () => void;
 }
 
 const TOOLTIP_TEXT =
@@ -80,7 +81,7 @@ const pillClassFor = (state: State): string => {
   }
 };
 
-export function WhatsappWindowIndicator({ expiresAt, variant, className }: Props) {
+export function WhatsappWindowIndicator({ expiresAt, variant, className, onReactivate }: Props) {
   // Re-render a cada minuto para o countdown ficar vivo
   const [, tick] = useState(0);
   useEffect(() => {
@@ -90,18 +91,41 @@ export function WhatsappWindowIndicator({ expiresAt, variant, className }: Props
 
   const { state, minutesLeft } = computeState(expiresAt);
 
-  if (state === "none" && variant !== "banner") return null;
+  if (state === "none" && variant === "header") return null;
 
   if (variant === "compact") {
+    const compactDotClass: Record<State, string> = {
+      active: "bg-[#5aad65]",
+      warning: "bg-amber-500",
+      critical: "bg-[#ff5600] animate-pulse",
+      expired: "bg-[#7b7b78]",
+      none: "bg-[#dedbd6]",
+    };
+    const hours = Math.floor(minutesLeft / 60);
+    const compactLabel: Record<State, string> = {
+      active: minutesLeft >= 60 ? `${hours}h` : `${minutesLeft}min`,
+      warning: minutesLeft >= 60 ? `${hours}h` : `${minutesLeft}min`,
+      critical: `${minutesLeft}min`,
+      expired: "fechada",
+      none: "",
+    };
+    const ariaLabel: Record<State, string> = {
+      active: "Janela 24h ativa",
+      warning: "Janela 24h expirando em breve",
+      critical: "Janela 24h crítica",
+      expired: "Janela 24h fechada",
+      none: "Sem janela aberta",
+    };
     return (
-      <span className={cn("inline-flex items-center gap-1 text-xs text-[#7b7b78]", className)}>
+      <span
+        className={cn("inline-flex items-center gap-1 text-xs text-[#7b7b78]", className)}
+        aria-label={ariaLabel[state]}
+      >
         <span
-          className={cn("inline-block h-1.5 w-1.5 rounded-full", dotClassFor(state))}
+          className={cn("inline-block h-2 w-2 rounded-full flex-shrink-0", compactDotClass[state])}
           aria-hidden
         />
-        {state !== "active" && state !== "none" && (
-          <span>{labelFor(state, minutesLeft)}</span>
-        )}
+        {compactLabel[state] && <span>{compactLabel[state]}</span>}
       </span>
     );
   }
@@ -143,9 +167,18 @@ export function WhatsappWindowIndicator({ expiresAt, variant, className }: Props
       )}
       role="status"
     >
-      <span className={cn("inline-block h-2 w-2 rounded-full", dotClassFor(state))} aria-hidden />
+      <span className={cn("inline-block h-2 w-2 rounded-full flex-shrink-0", "bg-[#7b7b78]")} aria-hidden />
       <span className="font-medium text-[#111111]">Janela 24h expirada</span>
       <span className="text-[#7b7b78]">— só é possível enviar templates aprovados.</span>
+      {onReactivate && (
+        <button
+          type="button"
+          onClick={onReactivate}
+          className="ml-auto text-xs bg-[#111111] text-white px-3 py-1 rounded-[4px] hover:opacity-90 transition-opacity flex-shrink-0"
+        >
+          Reativar conversa
+        </button>
+      )}
     </div>
   );
 }
