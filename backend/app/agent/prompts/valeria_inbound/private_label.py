@@ -1,7 +1,7 @@
 import csv
 from pathlib import Path
 
-_CSV_PATH = Path(__file__).parents[5] / ".rags" / "tabela_precos_cafe_canastra.csv"
+_CSV_PATH = Path(__file__).parents[1] / "tabela_precos_cafe_canastra.csv"
 
 
 def _build_products_block() -> str:
