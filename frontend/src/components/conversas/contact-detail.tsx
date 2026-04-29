@@ -24,6 +24,7 @@ interface ContactDetailProps {
   tags: Tag[];
   leadTags: Tag[];
   onTagToggle: (tagId: string, add: boolean) => void;
+  onAgentUpdate?: (conversationId: string, patch: { ai_enabled?: boolean; agent_profile_id?: string | null }) => void;
 }
 
 export function ContactDetail({
@@ -31,6 +32,7 @@ export function ContactDetail({
   tags,
   leadTags,
   onTagToggle,
+  onAgentUpdate,
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -66,7 +68,8 @@ export function ContactDetail({
   useEffect(() => {
     setAiEnabled(conversation.ai_enabled);
     setAgentProfileId(conversation.agent_profile_id);
-  }, [conversation.id, conversation.ai_enabled, conversation.agent_profile_id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation.id]);
 
   useEffect(() => {
     fetch("/api/agent-profiles")
@@ -90,6 +93,8 @@ export function ContactDetail({
     if (!res.ok) {
       setAiEnabled(prevAiEnabled);
       setAgentProfileId(prevAgentProfileId);
+    } else {
+      onAgentUpdate?.(conversation.id, patch);
     }
   }
 

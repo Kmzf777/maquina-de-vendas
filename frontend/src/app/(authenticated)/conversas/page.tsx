@@ -139,6 +139,19 @@ export default function ConversasPage() {
     setSelectedConversation(null);
   }
 
+  function handleAgentUpdate(
+    conversationId: string,
+    patch: { ai_enabled?: boolean; agent_profile_id?: string | null }
+  ) {
+    setConversations((prev) =>
+      prev.map((c) => (c.id === conversationId ? { ...c, ...patch } : c))
+    );
+    setSelectedConversation((prev) => {
+      if (!prev || prev.id !== conversationId) return prev;
+      return { ...prev, ...patch };
+    });
+  }
+
   const selectedLead = selectedConversation?.leads as Lead | undefined | null;
 
   const selectedLeadTags = selectedLead
@@ -199,6 +212,7 @@ export default function ConversasPage() {
             tags={tags}
             leadTags={selectedLeadTags}
             onTagToggle={handleTagToggle}
+            onAgentUpdate={handleAgentUpdate}
           />
         </>
       ) : (
