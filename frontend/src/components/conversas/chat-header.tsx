@@ -1,16 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import type { Conversation, Tag } from "@/lib/types";
-import {
-  getWindowStatus,
-  windowExpiresInMs,
-  formatTimeRemaining,
-} from "@/lib/window-status";
+import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 
 interface ChatHeaderProps {
   conversation: Conversation;
   tags: Tag[];
+  aiEnabled: boolean;
+  togglingAi?: boolean;
+  onToggleAi: () => void | Promise<void>;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -24,25 +22,9 @@ function getStageColor(stage: string | undefined): string {
   return map[stage ?? ""] ?? "#8a8a80";
 }
 
-export function ChatHeader({ conversation, tags }: ChatHeaderProps) {
+export function ChatHeader({ conversation, tags, aiEnabled, togglingAi, onToggleAi }: ChatHeaderProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
-  const [, setTick] = useState(0);
-
-  const provider = channel?.provider ?? null;
-  const lastCustomerMsgAt = lead?.last_customer_message_at ?? null;
-  const windowStatus = getWindowStatus(lastCustomerMsgAt, provider);
-  const timeRemainingMs =
-    (windowStatus === "open" || windowStatus === "expiring") && lastCustomerMsgAt
-      ? windowExpiresInMs(lastCustomerMsgAt)
-      : 0;
-
-  // Refresh countdown every 60s while window is open or expiring
-  useEffect(() => {
-    if (windowStatus === "closed" || windowStatus === "n/a") return;
-    const interval = setInterval(() => setTick((t) => t + 1), 60_000);
-    return () => clearInterval(interval);
-  }, [windowStatus]);
 
   const displayName = lead?.name || lead?.phone || "Desconhecido";
   const initial = displayName.charAt(0).toUpperCase();
@@ -92,22 +74,33 @@ export function ChatHeader({ conversation, tags }: ChatHeaderProps) {
         </span>
       )}
 
-      {/* 24h window countdown — only for meta_cloud */}
-      {windowStatus === "open" && (
-        <span className="text-[12px] text-green-700 flex-shrink-0 flex items-center gap-1">
-          ⏳ Janela · {formatTimeRemaining(timeRemainingMs)}
-        </span>
-      )}
-      {windowStatus === "expiring" && (
-        <span className="text-[12px] text-amber-700 flex-shrink-0 flex items-center gap-1 animate-pulse">
-          ⏱ Expira em {formatTimeRemaining(timeRemainingMs)}
-        </span>
-      )}
-      {windowStatus === "closed" && (
-        <span className="text-[12px] text-red-700 flex-shrink-0">
-          🔒 Janela fechada
-        </span>
-      )}
+      {/* WhatsApp 24h window indicator */}
+      <WhatsappWindowIndicator
+        expiresAt={conversation.whatsapp_window_expires_at ?? null}
+        variant="header"
+        className="flex-shrink-0"
+      />
+
+      {/* Valéria IA toggle */}
+      <button
+        type="button"
+        onClick={() => onToggleAi()}
+        disabled={togglingAi}
+        className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors flex-shrink-0 ${
+          aiEnabled
+            ? "bg-[#ff5600] text-white hover:bg-[#e64e00]"
+            : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+        } ${togglingAi ? "opacity-60 cursor-not-allowed" : ""}`}
+        aria-pressed={aiEnabled}
+      >
+        <span
+          className={`inline-block h-1.5 w-1.5 rounded-full ${
+            aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"
+          }`}
+          aria-hidden
+        />
+        Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
+      </button>
     </div>
   );
 }

@@ -11,9 +11,12 @@ import { MessageList } from "@/components/conversas/message-list";
 interface ChatViewProps {
   conversation: Conversation;
   tags: Tag[];
+  aiEnabled: boolean;
+  togglingAi?: boolean;
+  onToggleAi: () => void | Promise<void>;
 }
 
-export function ChatView({ conversation, tags }: ChatViewProps) {
+export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi }: ChatViewProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
 
@@ -98,7 +101,13 @@ export function ChatView({ conversation, tags }: ChatViewProps) {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#faf9f6]">
-      <ChatHeader conversation={conversation} tags={tags} />
+      <ChatHeader
+        conversation={conversation}
+        tags={tags}
+        aiEnabled={aiEnabled}
+        togglingAi={togglingAi}
+        onToggleAi={onToggleAi}
+      />
 
       <MessageList key={conversation.id} messages={displayMessages} loading={loading} />
 

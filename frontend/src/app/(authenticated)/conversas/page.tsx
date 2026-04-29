@@ -21,6 +21,7 @@ export default function ConversasPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<string>("");
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
+  const [togglingAi, setTogglingAi] = useState(false);
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -152,6 +153,46 @@ export default function ConversasPage() {
     });
   }
 
+  async function handleToggleAi() {
+    if (!selectedConversation || togglingAi) return;
+    const next = !selectedConversation.ai_enabled;
+    setTogglingAi(true);
+    // Optimistic update — mirrors contact-detail.tsx pattern
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === selectedConversation.id ? { ...c, ai_enabled: next } : c
+      )
+    );
+    setSelectedConversation((prev) =>
+      prev && prev.id === selectedConversation.id
+        ? { ...prev, ai_enabled: next }
+        : prev
+    );
+    try {
+      const res = await fetch(`/api/conversations/${selectedConversation.id}/agent`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ai_enabled: next }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (err) {
+      console.warn("[toggle-ai] failed:", err);
+      // Roll back optimistic update on failure
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === selectedConversation.id ? { ...c, ai_enabled: !next } : c
+        )
+      );
+      setSelectedConversation((prev) =>
+        prev && prev.id === selectedConversation.id
+          ? { ...prev, ai_enabled: !next }
+          : prev
+      );
+    } finally {
+      setTogglingAi(false);
+    }
+  }
+
   const selectedLead = selectedConversation?.leads as Lead | undefined | null;
 
   const selectedLeadTags = selectedLead
@@ -206,6 +247,9 @@ export default function ConversasPage() {
           <ChatView
             conversation={selectedConversation}
             tags={tags}
+            aiEnabled={selectedConversation.ai_enabled}
+            togglingAi={togglingAi}
+            onToggleAi={handleToggleAi}
           />
           <ContactDetail
             conversation={selectedConversation}
