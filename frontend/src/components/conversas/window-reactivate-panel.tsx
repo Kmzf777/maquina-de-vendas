@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import type { Conversation } from "@/lib/types";
+import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 
 interface MetaTemplate {
   name: string;
@@ -216,6 +217,10 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
 
   return (
     <div className="border-t border-[#dedbd6] bg-[#faf9f6] px-4 py-3 space-y-3">
+      <WhatsappWindowIndicator
+        expiresAt={conversation.whatsapp_window_expires_at}
+        variant="header"
+      />
       {!showTemplatePicker && !showCadencePicker && (
         <div className="flex gap-2">
           {provider === "meta_cloud" && (
