@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { CONVERSATION_TABS, AGENT_STAGES } from "@/lib/constants";
 import type { Conversation, Channel } from "@/lib/types";
-import { getWindowStatus, windowExpiresInMs, formatTimeRemaining } from "@/lib/window-status";
+import { formatRelativeTime } from "@/lib/datetime";
+import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 
 interface ChatListProps {
   conversations: Conversation[];
@@ -28,28 +29,25 @@ function getStageColor(stage: string | undefined): string {
   return avatarColorMap[stage] || "bg-[#8a8a80]";
 }
 
+function getStagePillColor(stage: string | undefined): string {
+  const pillColorMap: Record<string, string> = {
+    secretaria: "bg-[#8a8a80]/10 text-[#8a8a80]",
+    atacado: "bg-[#5b8aad]/10 text-[#5b8aad]",
+    private_label: "bg-[#8b6bab]/10 text-[#8b6bab]",
+    exportacao: "bg-[#5aad65]/10 text-[#5aad65]",
+    consumo: "bg-[#ad9c4a]/10 text-[#ad9c4a]",
+  };
+  if (!stage) return "bg-[#dedbd6] text-[#7b7b78]";
+  return pillColorMap[stage] || "bg-[#dedbd6] text-[#7b7b78]";
+}
+
 function getInitial(name: string | null | undefined): string {
   if (!name) return "?";
   return name.charAt(0).toUpperCase();
 }
 
-function formatTime(ts: string | null): string {
-  if (!ts) return "";
-  const date = new Date(ts);
-  const now = new Date();
-  const isToday =
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear();
-
-  if (isToday) {
-    return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  }
-  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-}
-
 export function ChatList({
-  conversations,
+  conversations: initialConversations,
   channels,
   activeTab,
   selectedConversationId,
@@ -59,6 +57,30 @@ export function ChatList({
   onChannelChange,
 }: ChatListProps) {
   const [search, setSearch] = useState("");
+  const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
+
+  // Sync if parent passes new conversations (e.g. after polling refresh)
+  // We use a ref-less approach: only update if the incoming array reference changed
+  const [prevInitial, setPrevInitial] = useState(initialConversations);
+  if (prevInitial !== initialConversations) {
+    setPrevInitial(initialConversations);
+    setConversations(initialConversations);
+  }
+
+  const handleSelectConversation = (conv: Conversation) => {
+    onSelectConversation(conv);
+    if ((conv.unread_count ?? 0) > 0) {
+      fetch(`/api/conversations/${conv.id}/mark-read`, { method: "POST" })
+        .then((res) => {
+          if (res.ok) {
+            setConversations((prev) =>
+              prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c)),
+            );
+          }
+        })
+        .catch((err) => console.warn("[mark-read] failed:", err));
+    }
+  };
 
   const filteredConversations = conversations
     .filter((conv) => {
@@ -133,81 +155,82 @@ export function ChatList({
           const displayName = lead?.name || lead?.phone || "Desconhecido";
           const stage = lead?.stage;
           const isActive = selectedConversationId === conv.id;
-
           const hasAgent = conv.agent_profile_id !== null || conv.channels?.agent_profile_id !== null;
-
-          const provider = conv.channels?.provider ?? null;
-          const lastCustomerMsgAt = conv.leads?.last_customer_message_at ?? null;
-          const windowStatus = getWindowStatus(lastCustomerMsgAt, provider);
-          const timeRemainingMs = windowStatus === "expiring" && lastCustomerMsgAt
-            ? windowExpiresInMs(lastCustomerMsgAt)
-            : 0;
+          const unreadCount = conv.unread_count ?? 0;
 
           return (
             <button
               key={conv.id}
-              onClick={() => onSelectConversation(conv)}
-              className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors ${
+              onClick={() => handleSelectConversation(conv)}
+              className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-[#ff5600] focus-visible:ring-offset-1 focus-visible:outline-none ${
                 isActive
-                  ? "bg-[#111111] text-white rounded-[6px] mx-2 px-3 py-3"
-                  : "hover:bg-[#dedbd6]/60 rounded-[6px] mx-2 px-3 py-3 cursor-pointer"
+                  ? "border-l-[3px] border-l-[#ff5600] bg-[#faf9f6] rounded-r-[6px] mx-2 cursor-pointer"
+                  : "hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent"
               }`}
-              style={isActive ? { width: "calc(100% - 16px)" } : { width: "calc(100% - 16px)" }}
+              style={{ width: "calc(100% - 16px)" }}
             >
               {/* Avatar */}
               <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 ${getStageColor(stage)}`}
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 mt-0.5 ${getStageColor(stage)}`}
               >
                 {getInitial(displayName)}
               </div>
 
               {/* Info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-1">
-                  <span className={`text-[13px] truncate font-medium ${isActive ? "text-white" : "text-[#313130]"}`}>
+                {/* L1 — Lead name + unread badge */}
+                <div className="flex items-center gap-1">
+                  <span
+                    className={`text-sm truncate ${
+                      unreadCount > 0 ? "font-bold text-[#111111]" : "font-semibold text-[#111111]"
+                    }`}
+                  >
                     {displayName}
                   </span>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {windowStatus === "expiring" && (
-                      <span
-                        title={`Janela expira em ${formatTimeRemaining(timeRemainingMs)}`}
-                        className="text-[11px]"
-                      >
-                        ⏱
-                      </span>
-                    )}
-                    {windowStatus === "closed" && (
-                      <span
-                        title="Janela de 24h encerrada"
-                        className="text-[11px]"
-                      >
-                        🔴
-                      </span>
-                    )}
-                    <span className={`text-[11px] ${isActive ? "text-white/70" : "text-[#7b7b78]"}`}>
-                      {formatTime(conv.last_msg_at)}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  {channel && (
-                    <span className={`text-[11px] px-2 py-0.5 rounded-[4px] flex-shrink-0 ${isActive ? "bg-white/20 text-white/80" : "bg-[#dedbd6]/60 text-[#7b7b78]"}`}>
-                      {channel.name}
+                  {unreadCount > 0 && (
+                    <span
+                      className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-[#ff5600] px-1.5 py-0.5 text-[10px] font-semibold text-white animate-pulse flex-shrink-0"
+                      aria-label={`${unreadCount} mensagens não lidas`}
+                    >
+                      {unreadCount > 9 ? "9+" : unreadCount}
                     </span>
                   )}
-                  <span className={`text-[12px] truncate ${isActive ? "text-white/70" : "text-[#7b7b78]"}`}>
-                    {lead?.phone || ""}
-                  </span>
                 </div>
+
+                {/* L2 — Last message preview */}
                 {conv.last_message_text && (
-                  <p className={`text-[12px] truncate mt-0.5 ${isActive ? "text-white/60" : "text-[#7b7b78]"}`}>
+                  <p className="text-sm truncate text-[#7b7b78] mt-0.5">
                     {conv.last_message_text}
                   </p>
                 )}
+
+                {/* L3 — Meta row: timestamp · stage · window indicator */}
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span className="text-xs text-[#7b7b78]">
+                    {formatRelativeTime(conv.last_msg_at)}
+                  </span>
+                  {stage && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded-[4px] flex-shrink-0 font-medium ${getStagePillColor(stage)}`}
+                    >
+                      {stage}
+                    </span>
+                  )}
+                  <WhatsappWindowIndicator
+                    expiresAt={conv.whatsapp_window_expires_at}
+                    variant="compact"
+                  />
+                </div>
+
+                {/* AI status row */}
                 {hasAgent && (
                   <div className="flex items-center gap-1 mt-0.5">
-                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${conv.ai_enabled ? "bg-green-500" : "bg-[#9b9b98]"}`} />
-                    <span className={`text-[10px] ${isActive ? "text-white/60" : "text-[#9b9b98]"}`}>
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        conv.ai_enabled ? "bg-green-500" : "bg-[#9b9b98]"
+                      }`}
+                    />
+                    <span className="text-[10px] text-[#9b9b98]">
                       {conv.ai_enabled ? "IA ativa" : "IA pausada"}
                     </span>
                   </div>
