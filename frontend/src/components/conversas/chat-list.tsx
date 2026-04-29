@@ -155,7 +155,6 @@ export function ChatList({
           const displayName = lead?.name || lead?.phone || "Desconhecido";
           const stage = lead?.stage;
           const isActive = selectedConversationId === conv.id;
-          const hasAgent = conv.agent_profile_id !== null || conv.channels?.agent_profile_id !== null;
           const unreadCount = conv.unread_count ?? 0;
 
           return (
@@ -221,20 +220,6 @@ export function ChatList({
                     variant="compact"
                   />
                 </div>
-
-                {/* AI status row */}
-                {hasAgent && (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <div
-                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        conv.ai_enabled ? "bg-green-500" : "bg-[#9b9b98]"
-                      }`}
-                    />
-                    <span className="text-[10px] text-[#9b9b98]">
-                      {conv.ai_enabled ? "IA ativa" : "IA pausada"}
-                    </span>
-                  </div>
-                )}
               </div>
             </button>
           );
