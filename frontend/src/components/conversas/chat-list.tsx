@@ -47,6 +47,14 @@ function getInitial(name: string | null | undefined): string {
   return name.charAt(0).toUpperCase();
 }
 
+function getWindowBgClass(expiresAt: string | null | undefined): string {
+  if (!expiresAt) return "";
+  const minutesLeft = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 60000);
+  if (minutesLeft <= 0) return "bg-[#fdf2ec]";
+  if (minutesLeft < 60) return "bg-[#fff8f5]";
+  return "";
+}
+
 export function ChatList({
   conversations,
   channels,
@@ -141,6 +149,7 @@ export function ChatList({
           const stage = lead?.stage;
           const isActive = selectedConversationId === conv.id;
           const unreadCount = conv.unread_count ?? 0;
+          const windowBg = getWindowBgClass(conv.whatsapp_window_expires_at);
 
           return (
             <button
@@ -149,7 +158,7 @@ export function ChatList({
               className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-[#ff5600] focus-visible:ring-offset-1 focus-visible:outline-none ${
                 isActive
                   ? "border-l-[3px] border-l-[#ff5600] bg-[#faf9f6] rounded-r-[6px] mx-2 cursor-pointer"
-                  : "hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent"
+                  : `hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent ${windowBg}`
               }`}
               style={{ width: "calc(100% - 16px)" }}
             >
