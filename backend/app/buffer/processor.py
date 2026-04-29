@@ -192,6 +192,21 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {lead['id']}: {e}")
 
+    # Incrementa contador de não-lidas para o vendedor (resetado quando ele abre a conversa)
+    try:
+        sb = get_supabase()
+        current = (
+            sb.table("conversations")
+            .select("unread_count")
+            .eq("id", conversation["id"])
+            .single()
+            .execute()
+        )
+        new_count = (current.data.get("unread_count") or 0) + 1
+        sb.table("conversations").update({"unread_count": new_count}).eq("id", conversation["id"]).execute()
+    except Exception as e:
+        logger.warning(f"Failed to increment unread_count for {conversation['id']}: {e}")
+
     # If human already took control, stop here — message is saved, agent skipped
     if lead.get("human_control"):
         logger.info(f"[HUMAN CONTROL] Lead {phone} is under human control — agent skipped")
