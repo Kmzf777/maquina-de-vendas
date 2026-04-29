@@ -115,6 +115,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       <WhatsappWindowIndicator
         expiresAt={conversation.whatsapp_window_expires_at}
         variant="banner"
+        onReactivate={() => setShowReactivatePanel(true)}
       />
 
       {showReactivatePanel && windowStatus === "closed" && (
