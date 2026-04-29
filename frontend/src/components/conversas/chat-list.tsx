@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CONVERSATION_TABS, AGENT_STAGES } from "@/lib/constants";
 import type { Conversation, Channel } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/datetime";
+import { getWindowStatus } from "@/lib/window-status";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 
 interface ChatListProps {
@@ -47,12 +48,16 @@ function getInitial(name: string | null | undefined): string {
   return name.charAt(0).toUpperCase();
 }
 
-function getWindowBgClass(expiresAt: string | null | undefined): string {
-  if (!expiresAt) return "";
-  const minutesLeft = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 60000);
-  if (minutesLeft <= 0) return "bg-[#fdf2ec]";
-  if (minutesLeft < 60) return "bg-[#fff8f5]";
+function getWindowBgClass(lastCustomerMsgAt: string | null | undefined, provider: string | null | undefined): string {
+  const status = getWindowStatus(lastCustomerMsgAt ?? null, provider ?? null);
+  if (status === "closed") return "bg-[#fdf2ec]";
+  if (status === "expiring") return "bg-[#fff8f5]";
   return "";
+}
+
+function computeExpiresAt(lastCustomerMsgAt: string | null | undefined, provider: string | null | undefined): string | null {
+  if (provider !== "meta_cloud" || !lastCustomerMsgAt) return null;
+  return new Date(new Date(lastCustomerMsgAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
 }
 
 export function ChatList({
@@ -149,7 +154,10 @@ export function ChatList({
           const stage = lead?.stage;
           const isActive = selectedConversationId === conv.id;
           const unreadCount = conv.unread_count ?? 0;
-          const windowBg = getWindowBgClass(conv.whatsapp_window_expires_at);
+          const provider = channel?.provider;
+          const lastCustomerMsgAt = lead?.last_customer_message_at;
+          const windowBg = getWindowBgClass(lastCustomerMsgAt, provider);
+          const windowExpiresAt = computeExpiresAt(lastCustomerMsgAt, provider);
 
           return (
             <button
@@ -210,7 +218,7 @@ export function ChatList({
                     </span>
                   )}
                   <WhatsappWindowIndicator
-                    expiresAt={conv.whatsapp_window_expires_at}
+                    expiresAt={windowExpiresAt}
                     variant="compact"
                   />
                 </div>
