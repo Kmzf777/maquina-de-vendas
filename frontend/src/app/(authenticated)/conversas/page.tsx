@@ -22,6 +22,21 @@ export default function ConversasPage() {
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
   const [togglingAi, setTogglingAi] = useState(false);
+  // Tracks conversations marked-as-read locally so we can override stale realtime payloads
+  // for ~30s. Without this, the Supabase realtime push wins and the badge reappears.
+  const recentlyMarkedRef = useRef<Map<string, number>>(new Map());
+
+  const applyRecentlyMarkedOverride = useCallback((list: Conversation[]): Conversation[] => {
+    const now = Date.now();
+    // Drop entries older than 30s
+    for (const [id, ts] of recentlyMarkedRef.current) {
+      if (now - ts > 30_000) recentlyMarkedRef.current.delete(id);
+    }
+    if (recentlyMarkedRef.current.size === 0) return list;
+    return list.map((c) =>
+      recentlyMarkedRef.current.has(c.id) ? { ...c, unread_count: 0 } : c,
+    );
+  }, []);
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -31,7 +46,8 @@ export default function ConversasPage() {
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        const list = Array.isArray(data) ? data : [];
+        const raw = Array.isArray(data) ? data : [];
+        const list = applyRecentlyMarkedOverride(raw);
         setConversations(list);
         // Sync selectedConversation when its data changes
         setSelectedConversation((prev: Conversation | null) => {
@@ -43,7 +59,7 @@ export default function ConversasPage() {
     } catch {
       // ignore
     }
-  }, [selectedChannelId]);
+  }, [selectedChannelId, applyRecentlyMarkedOverride]);
 
   useEffect(() => {
     loadData();
@@ -133,6 +149,24 @@ export default function ConversasPage() {
 
   function handleSelectConversation(conv: Conversation) {
     setSelectedConversation(conv);
+  }
+
+  async function handleMarkRead(conversationId: string) {
+    // Track immediately so any realtime push that fires before the response
+    // can be overridden client-side
+    recentlyMarkedRef.current.set(conversationId, Date.now());
+    // Optimistic local zero
+    setConversations((prev) =>
+      prev.map((c) => (c.id === conversationId ? { ...c, unread_count: 0 } : c)),
+    );
+    setSelectedConversation((prev) =>
+      prev && prev.id === conversationId ? { ...prev, unread_count: 0 } : prev,
+    );
+    try {
+      await fetch(`/api/conversations/${conversationId}/mark-read`, { method: "POST" });
+    } catch (err) {
+      console.warn("[mark-read] failed:", err);
+    }
   }
 
   function handleChannelChange(channelId: string) {
@@ -238,6 +272,7 @@ export default function ConversasPage() {
         selectedConversationId={selectedConversation?.id || null}
         selectedChannelId={selectedChannelId}
         onSelectConversation={handleSelectConversation}
+        onMarkRead={handleMarkRead}
         onTabChange={setActiveTab}
         onChannelChange={handleChannelChange}
       />

@@ -13,6 +13,7 @@ interface ChatListProps {
   selectedConversationId: string | null;
   selectedChannelId: string;
   onSelectConversation: (conv: Conversation) => void;
+  onMarkRead?: (conversationId: string) => void;
   onTabChange: (tab: string) => void;
   onChannelChange: (channelId: string) => void;
 }
@@ -47,38 +48,22 @@ function getInitial(name: string | null | undefined): string {
 }
 
 export function ChatList({
-  conversations: initialConversations,
+  conversations,
   channels,
   activeTab,
   selectedConversationId,
   selectedChannelId,
   onSelectConversation,
+  onMarkRead,
   onTabChange,
   onChannelChange,
 }: ChatListProps) {
   const [search, setSearch] = useState("");
-  const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
-
-  // Sync if parent passes new conversations (e.g. after polling refresh)
-  // We use a ref-less approach: only update if the incoming array reference changed
-  const [prevInitial, setPrevInitial] = useState(initialConversations);
-  if (prevInitial !== initialConversations) {
-    setPrevInitial(initialConversations);
-    setConversations(initialConversations);
-  }
 
   const handleSelectConversation = (conv: Conversation) => {
     onSelectConversation(conv);
-    if ((conv.unread_count ?? 0) > 0) {
-      fetch(`/api/conversations/${conv.id}/mark-read`, { method: "POST" })
-        .then((res) => {
-          if (res.ok) {
-            setConversations((prev) =>
-              prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c)),
-            );
-          }
-        })
-        .catch((err) => console.warn("[mark-read] failed:", err));
+    if ((conv.unread_count ?? 0) > 0 && onMarkRead) {
+      onMarkRead(conv.id);
     }
   };
 
