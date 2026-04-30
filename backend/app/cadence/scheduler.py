@@ -68,7 +68,7 @@ async def process_due_cadences(now: datetime | None = None):
 
         if cadence["status"] != "active":
             continue
-        if lead.get("human_control"):
+        if not lead.get("ai_enabled", True):
             continue
         if not is_within_send_window(now, cadence["send_start_hour"], cadence["send_end_hour"]):
             continue
@@ -129,7 +129,7 @@ async def process_reengagements(now: datetime | None = None):
 
         if cadence["status"] != "active":
             continue
-        if lead.get("human_control"):
+        if not lead.get("ai_enabled", True):
             continue
 
         responded_at = enrollment["responded_at"]
@@ -175,7 +175,7 @@ async def process_stagnation_triggers(now: datetime | None = None):
                 sb.table("leads")
                 .select("id, phone")
                 .eq("stage", target_stage)
-                .eq("human_control", False)
+                .eq("ai_enabled", True)
                 .lte("entered_stage_at", cutoff)
                 .limit(20)
                 .execute()
@@ -193,7 +193,7 @@ async def process_stagnation_triggers(now: datetime | None = None):
         elif target_type == "deal_stage":
             deals = (
                 sb.table("deals")
-                .select("id, lead_id, leads!inner(id, phone, human_control)")
+                .select("id, lead_id, leads!inner(id, phone, ai_enabled)")
                 .eq("stage", target_stage)
                 .lte("updated_at", cutoff)
                 .limit(20)
@@ -202,7 +202,7 @@ async def process_stagnation_triggers(now: datetime | None = None):
             )
             for deal in deals:
                 lead = deal["leads"]
-                if lead.get("human_control"):
+                if not lead.get("ai_enabled", True):
                     continue
                 if not is_enrolled(cadence["id"], lead["id"]):
                     try:

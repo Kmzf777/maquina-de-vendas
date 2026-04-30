@@ -146,7 +146,7 @@ def get_due_enrollments(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (
         sb.table("cadence_enrollments")
-        .select("*, leads!inner(phone, stage, human_control, name, company), cadences!inner(id, name, send_start_hour, send_end_hour, max_messages, status)")
+        .select("*, leads!inner(phone, stage, ai_enabled, name, company), cadences!inner(id, name, send_start_hour, send_end_hour, max_messages, status)")
         .eq("status", "active")
         .eq("env_tag", _ENV_TAG)
         .lte("next_send_at", now.isoformat())
@@ -160,7 +160,7 @@ def get_reengagement_enrollments(now: datetime, limit: int = 10) -> list[dict[st
     sb = get_supabase()
     result = (
         sb.table("cadence_enrollments")
-        .select("*, leads!inner(phone, last_msg_at, human_control), cadences!inner(id, cooldown_hours, status)")
+        .select("*, leads!inner(phone, last_msg_at, ai_enabled), cadences!inner(id, cooldown_hours, status)")
         .eq("status", "responded")
         .eq("env_tag", _ENV_TAG)
         .lte("responded_at", now.isoformat())
