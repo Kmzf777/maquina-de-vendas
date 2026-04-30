@@ -24,6 +24,7 @@ export interface Lead {
   entered_stage_at: string | null;
   first_response_at: string | null;
   on_hold: boolean;
+  ai_enabled: boolean;
 }
 
 export interface Pipeline {
@@ -257,7 +258,6 @@ export interface Conversation {
   last_msg_at: string | null;
   created_at: string;
   agent_profile_id: string | null;
-  ai_enabled: boolean;
   last_message_text: string | null;
   unread_count: number;
   whatsapp_window_expires_at: string | null;

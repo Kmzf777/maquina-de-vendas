@@ -189,17 +189,20 @@ export default function ConversasPage() {
 
   async function handleToggleAi() {
     if (!selectedConversation || togglingAi) return;
-    const next = !selectedConversation.ai_enabled;
+    const currentAiEnabled = (selectedConversation.leads as any)?.ai_enabled ?? true;
+    const next = !currentAiEnabled;
     setTogglingAi(true);
     // Optimistic update — mirrors contact-detail.tsx pattern
     setConversations((prev) =>
       prev.map((c) =>
-        c.id === selectedConversation.id ? { ...c, ai_enabled: next } : c
+        c.id === selectedConversation.id
+          ? { ...c, leads: { ...(c.leads as any), ai_enabled: next } }
+          : c
       )
     );
     setSelectedConversation((prev) =>
       prev && prev.id === selectedConversation.id
-        ? { ...prev, ai_enabled: next }
+        ? { ...prev, leads: { ...(prev.leads as any), ai_enabled: next } }
         : prev
     );
     try {
@@ -214,12 +217,14 @@ export default function ConversasPage() {
       // Roll back optimistic update on failure
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === selectedConversation.id ? { ...c, ai_enabled: !next } : c
+          c.id === selectedConversation.id
+            ? { ...c, leads: { ...(c.leads as any), ai_enabled: !next } }
+            : c
         )
       );
       setSelectedConversation((prev) =>
         prev && prev.id === selectedConversation.id
-          ? { ...prev, ai_enabled: !next }
+          ? { ...prev, leads: { ...(prev.leads as any), ai_enabled: !next } }
           : prev
       );
     } finally {
@@ -282,7 +287,7 @@ export default function ConversasPage() {
           <ChatView
             conversation={selectedConversation}
             tags={tags}
-            aiEnabled={selectedConversation.ai_enabled}
+            aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
             togglingAi={togglingAi}
             onToggleAi={handleToggleAi}
           />
