@@ -93,13 +93,13 @@ async def run_agent(
     lead_id = lead.get("id") or conversation.get("lead_id")
     conversation_id = conversation["id"]
 
-    # Defense-in-depth: re-fetch lead from DB to catch any race where human_control
-    # was set after the processor's own check but before run_agent was called.
+    # Defense-in-depth: re-fetch lead from DB to catch any race where ai_enabled
+    # was changed after the processor's own check but before run_agent was called.
     if lead_id:
         fresh = get_lead(lead_id)
-        if fresh and fresh.get("human_control"):
+        if fresh and not fresh.get("ai_enabled", True):
             logger.info(
-                "[HUMAN CONTROL DEFENSE] orchestrator bailing out for lead %s — human_control=True",
+                "[AI DISABLED DEFENSE] orchestrator bailing out for lead %s — ai_enabled=False",
                 lead_id,
             )
             return ""
