@@ -160,6 +160,12 @@ async def process_buffered_messages(
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
 
+    # Extract media metadata for pure audio messages (Meta Cloud API)
+    _audio_meta_pattern = r"^\s*\[audio: media_id=(\S+)\]\s*$"
+    _audio_match = re.fullmatch(_audio_meta_pattern, combined_text)
+    _media_url: str | None = _audio_match.group(1) if _audio_match else None
+    _message_type: str | None = "audio" if _audio_match else None
+
     # Dedup: skip if this exact message was already processed recently
     if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
         logger.warning(f"Duplicate user message detected for {phone}, skipping")
@@ -180,6 +186,8 @@ async def process_buffered_messages(
             conversation["id"], lead["id"], "user",
             resolved_text, conversation.get("stage"),
             sent_by="user",
+            media_url=_media_url,
+            message_type=_message_type,
         )
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
