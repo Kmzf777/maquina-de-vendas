@@ -190,33 +190,25 @@ async def execute_tool(
         motivo = args.get("motivo", "lead qualificado")
         vendedor = args.get("vendedor", "Vendedor")
         try:
-            update_lead(lead_id, status="converted", human_control=True)
+            update_lead(lead_id, status="converted", human_control=True, ai_enabled=False)
         except Exception as exc:
             logger.error(
-                "CRITICAL: encaminhar_humano failed to set human_control for lead %s: %s",
+                "CRITICAL: encaminhar_humano failed to set ai_enabled=False for lead %s: %s",
                 lead_id, exc, exc_info=True,
             )
             save_message(
                 lead_id, "system",
-                f"[encaminhar_humano][ERRO] nao foi possivel marcar human_control: {exc}",
+                f"[encaminhar_humano][ERRO] nao foi possivel desativar AI: {exc}",
                 conversation_id=conversation_id,
             )
             return f"CRITICAL: erro ao encaminhar para {vendedor} — humano precisa verificar lead manualmente"
-        if conversation_id:
-            try:
-                update_conversation(conversation_id, ai_enabled=False)
-            except Exception as exc:
-                logger.warning(
-                    "encaminhar_humano: failed to set ai_enabled=False for conversation %s: %s",
-                    conversation_id, exc,
-                )
         try:
             lead = get_lead(lead_id)
             lead_stage = lead.get("stage") if lead else None
             create_deal(lead_id, title=f"{vendedor} - {motivo}", category=lead_stage)
         except Exception as exc:
             logger.error(
-                "encaminhar_humano marked human_control but failed to create deal for lead %s: %s",
+                "encaminhar_humano failed to create deal for lead %s: %s",
                 lead_id, exc, exc_info=True,
             )
         save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
