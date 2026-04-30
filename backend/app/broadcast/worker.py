@@ -18,6 +18,7 @@ from app.broadcast.service import (
 )
 from app.cadence.service import create_enrollment
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
+from app.leads.service import update_lead
 from app.cadence.scheduler import (
     process_due_cadences,
     process_reengagements,
@@ -129,17 +130,22 @@ def _build_template_components(template_variables: dict, lead: dict) -> list | N
 
 
 def _build_conv_updates(broadcast: dict) -> dict:
-    """Builds the conversation fields to update after a template is sent.
+    """Builds conversation-level updates for a broadcast dispatch.
 
-    Invariant: broadcast with agent → ai_enabled=True; without → ai_enabled=False.
+    Only status and agent_profile_id — ai_enabled lives on the lead now.
     """
     conv_updates: dict = {"status": "template_sent"}
     if broadcast.get("agent_profile_id"):
         conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
-        conv_updates["ai_enabled"] = True
-    else:
-        conv_updates["ai_enabled"] = False
     return conv_updates
+
+
+def _broadcast_ai_enabled(broadcast: dict) -> bool:
+    """Returns the ai_enabled value to set on the lead for this broadcast.
+
+    Invariant: broadcast with agent → ai_enabled=True; without → ai_enabled=False.
+    """
+    return bool(broadcast.get("agent_profile_id"))
 
 
 async def run_worker():
@@ -253,6 +259,10 @@ async def process_single_broadcast(broadcast: dict):
                 logger.info(f"[DEBUG-BROADCAST] step=update_conversation id={conversation['id']} updates={conv_updates}")
                 update_conversation(conversation["id"], **conv_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_conversation OK")
+                ai_enabled = _broadcast_ai_enabled(broadcast)
+                logger.info(f"[DEBUG-BROADCAST] step=update_lead ai_enabled={ai_enabled} lead_id={lead['id']}")
+                update_lead(lead["id"], ai_enabled=ai_enabled)
+                logger.info(f"[DEBUG-BROADCAST] update_lead OK")
             except Exception as ce:
                 logger.error(
                     f"[BROADCAST] Could not update conversation for {lead['phone']}: {ce}",
