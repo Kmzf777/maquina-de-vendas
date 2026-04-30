@@ -47,7 +47,9 @@ def _log_webhook(
             "message_count": message_count,
         }).execute()
     except Exception as e:
-        logger.warning(f"[META LOG] Failed to persist webhook log: {e}")
+        logger.warning(
+            f"[META LOG] Failed to persist webhook log channel={channel_id} from={from_number}: {e}"
+        )
 
 
 router = APIRouter()
