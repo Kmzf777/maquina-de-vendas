@@ -80,6 +80,8 @@ export interface Message {
   stage: string | null;
   sent_by: string;    // "agent" | "seller" | "cadence" | "user"
   created_at: string;
+  message_type?: string;
+  media_url?: string;
 }
 
 export interface Tag {

@@ -107,7 +107,12 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         onToggleAi={onToggleAi}
       />
 
-      <MessageList key={conversation.id} messages={displayMessages} loading={loading} />
+      <MessageList
+        key={conversation.id}
+        messages={displayMessages}
+        loading={loading}
+        conversationId={conversation.id}
+      />
 
       <WhatsappWindowIndicator
         expiresAt={conversation.whatsapp_window_expires_at}

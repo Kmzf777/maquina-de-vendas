@@ -9,6 +9,7 @@ import { EventCard } from "@/components/conversas/event-card";
 interface MessageListProps {
   messages: Message[];
   loading: boolean;
+  conversationId: string;
 }
 
 export interface MessageListHandle {
@@ -33,7 +34,7 @@ function isGrouped(current: Message, previous: Message | undefined): boolean {
 }
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
-  function MessageList({ messages, loading }, ref) {
+  function MessageList({ messages, loading, conversationId }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
@@ -115,7 +116,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                 {msg.role === "system" ? (
                   <EventCard message={msg} />
                 ) : (
-                  <MessageBubble message={msg} isGrouped={grouped} />
+                  <MessageBubble
+                    message={msg}
+                    isGrouped={grouped}
+                    conversationId={conversationId}
+                  />
                 )}
               </div>
             );
