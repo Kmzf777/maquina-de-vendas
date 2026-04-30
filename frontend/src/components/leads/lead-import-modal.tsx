@@ -32,6 +32,15 @@ const AUTO_MAP: Record<string, string> = {
   stage: "stage", etapa: "stage",
 };
 
+function normalizePhone(raw: string): string | null {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 10 || digits.length === 11) digits = "55" + digits;
+  if ((digits.length === 12 || digits.length === 13) && !digits.startsWith("55")) return null;
+  if (digits.length < 12 || digits.length > 13) return null;
+  return digits;
+}
+
 interface LeadImportModalProps {
   onClose: () => void;
   onImportDone: () => void;
@@ -88,15 +97,20 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
   async function handleImport() {
     setImporting(true);
 
-    const leads = csvRows.map((row) => {
-      const lead: Record<string, string> = {};
-      Object.entries(mapping).forEach(([colIdx, field]) => {
-        if (field) {
-          lead[field] = row[Number(colIdx)] || "";
-        }
-      });
-      return lead;
-    }).filter((l) => l.phone);
+    const leads = csvRows
+      .map((row) => {
+        const lead: Record<string, string> = {};
+        Object.entries(mapping).forEach(([colIdx, field]) => {
+          if (field) lead[field] = row[Number(colIdx)] || "";
+        });
+        return lead;
+      })
+      .map((lead) => {
+        if (!lead.phone) return lead;
+        const normalized = normalizePhone(lead.phone);
+        return normalized ? { ...lead, phone: normalized } : { ...lead, phone: "" };
+      })
+      .filter((l) => l.phone);
 
     const res = await fetch("/api/leads/import", {
       method: "POST",
