@@ -28,6 +28,28 @@ def _track_inbound_message_time(phone: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {phone}: {e}")
 
+
+def _log_webhook(
+    channel_id: str | None,
+    phone_number_id: str | None,
+    from_number: str | None,
+    payload: dict,
+    message_count: int,
+) -> None:
+    """Persists raw Meta webhook payload to Supabase for audit/debugging. Fire-and-forget."""
+    try:
+        sb = get_supabase()
+        sb.table("meta_webhook_logs").insert({
+            "channel_id": channel_id,
+            "phone_number_id": phone_number_id,
+            "from_number": from_number,
+            "payload": payload,
+            "message_count": message_count,
+        }).execute()
+    except Exception as e:
+        logger.warning(f"[META LOG] Failed to persist webhook log: {e}")
+
+
 router = APIRouter()
 
 
@@ -113,6 +135,15 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
                 return {"status": "ok"}
 
     messages = parse_meta_webhook_payload(payload)
+
+    background_tasks.add_task(
+        _log_webhook,
+        channel_id=channel["id"],
+        phone_number_id=phone_number_id,
+        from_number=_extract_from_number(payload),
+        payload=payload,
+        message_count=len(messages),
+    )
 
     for msg in messages:
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
