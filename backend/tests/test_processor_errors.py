@@ -35,7 +35,7 @@ async def test_mensagem_do_usuario_sempre_salva_mesmo_quando_agente_falha():
 
     saved_messages = []
 
-    def mock_save(conv_id, lead_id, role, content, stage=None):
+    def mock_save(conv_id, lead_id, role, content, stage=None, **kwargs):
         saved_messages.append({"role": role, "content": content})
         return {}
 
@@ -51,6 +51,7 @@ async def test_mensagem_do_usuario_sempre_salva_mesmo_quando_agente_falha():
          patch("app.buffer.processor.update_conversation", return_value={}), \
          patch("app.buffer.processor.get_active_enrollment", return_value=None), \
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.get_supabase"), \
          patch("app.buffer.processor._update_last_msg"):
         await process_buffered_messages("5511999999999", "oi", "chan-uuid")
 
@@ -65,7 +66,7 @@ async def test_falha_no_send_nao_cancela_save_da_resposta():
 
     saved_messages = []
 
-    def mock_save(conv_id, lead_id, role, content, stage=None):
+    def mock_save(conv_id, lead_id, role, content, stage=None, **kwargs):
         saved_messages.append({"role": role, "content": content})
         return {}
 
@@ -86,6 +87,7 @@ async def test_falha_no_send_nao_cancela_save_da_resposta():
          patch("app.buffer.processor.update_conversation", return_value={}), \
          patch("app.buffer.processor.get_active_enrollment", return_value=None), \
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.get_supabase"), \
          patch("app.buffer.processor._update_last_msg"):
         await process_buffered_messages("5511999999999", "oi", "chan-uuid")
 
@@ -99,7 +101,7 @@ async def test_canal_sem_agent_profile_salva_mensagem_usuario():
 
     saved_messages = []
 
-    def mock_save(conv_id, lead_id, role, content, stage=None):
+    def mock_save(conv_id, lead_id, role, content, stage=None, **kwargs):
         saved_messages.append({"role": role, "content": content})
         return {}
 
@@ -114,6 +116,7 @@ async def test_canal_sem_agent_profile_salva_mensagem_usuario():
          patch("app.buffer.processor.update_conversation", return_value={}), \
          patch("app.buffer.processor.get_active_enrollment", return_value=None), \
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.get_supabase"), \
          patch("app.buffer.processor._update_last_msg"):
         await process_buffered_messages("5511999999999", "oi", "chan-uuid")
 

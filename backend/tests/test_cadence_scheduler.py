@@ -142,7 +142,7 @@ class TestProcessDueCadences:
             "cadence_id": "cad-1",
             "current_step": 0,
             "total_messages_sent": 0,
-            "leads": {"phone": "5511999999999", "stage": "atacado", "human_control": True},
+            "leads": {"phone": "5511999999999", "stage": "atacado", "human_control": True, "ai_enabled": False},
             "cadences": {"status": "active", "send_start_hour": 7, "send_end_hour": 18, "max_messages": 8},
         }]
 

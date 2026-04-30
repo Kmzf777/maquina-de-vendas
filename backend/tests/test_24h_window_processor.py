@@ -38,4 +38,4 @@ async def test_process_buffered_messages_updates_last_customer_message_at():
         if call.args and "last_customer_message_at" in call.args[0]
     )
     assert matching_call.args[0]["last_customer_message_at"] is not None
-    mock_sb.table.return_value.update.return_value.eq.assert_called_with("id", "lead-1")
+    mock_sb.table.return_value.update.return_value.eq.assert_any_call("id", "lead-1")

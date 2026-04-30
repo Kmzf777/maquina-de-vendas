@@ -11,6 +11,7 @@ async def test_human_control_skips_agent():
         "stage": "atacado",
         "status": "active",
         "human_control": True,
+        "ai_enabled": False,
         "name": "João",
     }
     channel = {

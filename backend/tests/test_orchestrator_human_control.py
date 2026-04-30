@@ -19,6 +19,7 @@ async def test_run_agent_bails_when_lead_has_human_control():
         "phone": "5511999990000",
         "stage": "atacado",
         "human_control": True,
+        "ai_enabled": False,
         "status": "converted",
     }) as mock_get, \
          patch("app.agent.orchestrator._get_openai") as mock_openai, \
