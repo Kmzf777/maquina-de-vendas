@@ -5,8 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   // Auth check: require a valid session
   const authClient = await createClient();
-  const { data: { session } } = await authClient.auth.getSession();
-  if (!session) {
+  const { data: { user } } = await authClient.auth.getUser();
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
 
   // SSRF guard: only allow Meta's CDN domain
   const allowed = new URL(downloadUrl);
-  if (!allowed.hostname.endsWith(".fbcdn.net")) {
+  if (!allowed.hostname.endsWith(".fbcdn.net") || allowed.protocol !== "https:") {
     return NextResponse.json({ error: "Unexpected media host" }, { status: 502 });
   }
 
