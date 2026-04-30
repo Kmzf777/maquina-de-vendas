@@ -128,6 +128,20 @@ def _build_template_components(template_variables: dict, lead: dict) -> list | N
     return [{"type": "body", "parameters": parameters}]
 
 
+def _build_conv_updates(broadcast: dict) -> dict:
+    """Builds the conversation fields to update after a template is sent.
+
+    Invariant: broadcast with agent → ai_enabled=True; without → ai_enabled=False.
+    """
+    conv_updates: dict = {"status": "template_sent"}
+    if broadcast.get("agent_profile_id"):
+        conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
+        conv_updates["ai_enabled"] = True
+    else:
+        conv_updates["ai_enabled"] = False
+    return conv_updates
+
+
 async def run_worker():
     """Main worker loop: processes broadcasts, cadences, and stagnation triggers."""
     logger.info("Broadcast + Cadence worker started")
@@ -235,12 +249,7 @@ async def process_single_broadcast(broadcast: dict):
                 logger.info(f"[DEBUG-BROADCAST] step=get_or_create_conversation lead_id={lead['id']} channel_id={channel_id}")
                 conversation = get_or_create_conversation(lead["id"], channel_id)
                 logger.info(f"[DEBUG-BROADCAST] got conversation id={conversation.get('id') if conversation else None}")
-                conv_updates = {"status": "template_sent"}
-                if broadcast.get("agent_profile_id"):
-                    conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
-                    conv_updates["ai_enabled"] = True
-                else:
-                    conv_updates["ai_enabled"] = False
+                conv_updates = _build_conv_updates(broadcast)
                 logger.info(f"[DEBUG-BROADCAST] step=update_conversation id={conversation['id']} updates={conv_updates}")
                 update_conversation(conversation["id"], **conv_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_conversation OK")

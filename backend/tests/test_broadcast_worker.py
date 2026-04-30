@@ -3,20 +3,7 @@
 These tests verify the invariant: disparo com agente → ai_enabled=True,
 disparo sem agente → ai_enabled=False.
 """
-
-
-def _build_conv_updates(broadcast: dict) -> dict:
-    """Replica a lógica de conv_updates do worker para teste isolado.
-
-    Copiar EXATAMENTE a mesma lógica do worker.py — se o worker mudar, mudar aqui.
-    """
-    conv_updates: dict = {"status": "template_sent"}
-    if broadcast.get("agent_profile_id"):
-        conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
-        conv_updates["ai_enabled"] = True
-    else:
-        conv_updates["ai_enabled"] = False
-    return conv_updates
+from app.broadcast.worker import _build_conv_updates
 
 
 def test_without_agent_disables_ai():
