@@ -238,6 +238,9 @@ async def process_single_broadcast(broadcast: dict):
                 conv_updates = {"status": "template_sent"}
                 if broadcast.get("agent_profile_id"):
                     conv_updates["agent_profile_id"] = broadcast["agent_profile_id"]
+                    conv_updates["ai_enabled"] = True
+                else:
+                    conv_updates["ai_enabled"] = False
                 logger.info(f"[DEBUG-BROADCAST] step=update_conversation id={conversation['id']} updates={conv_updates}")
                 update_conversation(conversation["id"], **conv_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_conversation OK")
