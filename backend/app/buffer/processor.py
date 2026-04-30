@@ -210,12 +210,6 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning(f"Failed to increment unread_count for {conversation['id']}: {e}")
 
-    # If human already took control, stop here — message is saved, agent skipped
-    if lead.get("human_control"):
-        logger.info(f"[HUMAN CONTROL] Lead {phone} is under human control — agent skipped")
-        _update_last_msg(conversation["id"])
-        return
-
     # If AI is disabled globally, skip agent
     if not VALERIA_ENABLED:
         logger.info(
@@ -224,10 +218,10 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # If AI is disabled for this specific conversation (toggled by user or broadcast sem agente)
-    if not conversation.get("ai_enabled", True):
+    # Single AI gate: lead.ai_enabled is the sole source of truth
+    if not lead.get("ai_enabled", True):
         logger.info(
-            f"[AI DISABLED] ai_enabled=false — conv={conversation['id']} phone={phone} — agente nao vai responder"
+            f"[AI DISABLED] lead.ai_enabled=false — conv={conversation['id']} phone={phone}"
         )
         _update_last_msg(conversation["id"])
         return
