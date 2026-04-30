@@ -20,7 +20,7 @@ from app.channels.service import get_channel_by_id
 from app.cadence.service import get_active_enrollment, pause_enrollment
 
 # Kill switch global — mude para True para reativar a Valéria
-VALERIA_ENABLED = False
+VALERIA_ENABLED = True
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -216,9 +216,19 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # If AI is disabled globally or for this conversation, skip agent silently
-    if not VALERIA_ENABLED or not conversation.get("ai_enabled", True):
-        logger.info(f"[AI DISABLED] Conversation {conversation['id']} — ai paused per CRM setting")
+    # If AI is disabled globally, skip agent
+    if not VALERIA_ENABLED:
+        logger.info(
+            f"[AI DISABLED] kill switch ativo — conv={conversation['id']} phone={phone}"
+        )
+        _update_last_msg(conversation["id"])
+        return
+
+    # If AI is disabled for this specific conversation (toggled by user or broadcast sem agente)
+    if not conversation.get("ai_enabled", True):
+        logger.info(
+            f"[AI DISABLED] ai_enabled=false — conv={conversation['id']} phone={phone} — agente nao vai responder"
+        )
         _update_last_msg(conversation["id"])
         return
 
