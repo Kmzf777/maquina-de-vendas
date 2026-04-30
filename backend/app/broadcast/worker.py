@@ -260,8 +260,11 @@ async def process_single_broadcast(broadcast: dict):
                 update_conversation(conversation["id"], **conv_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_conversation OK")
                 ai_enabled = _broadcast_ai_enabled(broadcast)
-                logger.info(f"[DEBUG-BROADCAST] step=update_lead ai_enabled={ai_enabled} lead_id={lead['id']}")
-                update_lead(lead["id"], ai_enabled=ai_enabled)
+                lead_updates: dict = {"ai_enabled": ai_enabled}
+                if ai_enabled:
+                    lead_updates["human_control"] = False
+                logger.info(f"[DEBUG-BROADCAST] step=update_lead updates={lead_updates} lead_id={lead['id']}")
+                update_lead(lead["id"], **lead_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_lead OK")
             except Exception as ce:
                 logger.error(
