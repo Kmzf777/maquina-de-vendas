@@ -55,7 +55,7 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ inserted: number; updated: number; skipped: number } | null>(null);
+  const [result, setResult] = useState<{ inserted: number; updated: number; skipped: number; invalidPhones?: number } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -97,6 +97,11 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
   async function handleImport() {
     setImporting(true);
 
+    const phoneColIdx = Object.entries(mapping).find(([, field]) => field === "phone")?.[0];
+    const rowsWithPhone = phoneColIdx !== undefined
+      ? csvRows.filter((row) => (row[Number(phoneColIdx)] || "").trim().length > 0).length
+      : 0;
+
     const leads = csvRows
       .map((row) => {
         const lead: Record<string, string> = {};
@@ -112,13 +117,15 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
       })
       .filter((l) => l.phone);
 
+    const invalidPhoneCount = rowsWithPhone - leads.length;
+
     const res = await fetch("/api/leads/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ leads, skipDuplicates }),
     });
     const data = await res.json();
-    setResult(data);
+    setResult({ ...data, invalidPhones: invalidPhoneCount });
     setImporting(false);
     onImportDone();
   }
@@ -318,6 +325,11 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                   <p className="text-[12px] text-[#7b7b78]">Pulados</p>
                 </div>
               </div>
+              {(result.invalidPhones ?? 0) > 0 && (
+                <p className="text-[13px] text-[#c41c1c] mb-5">
+                  {result.invalidPhones} telefone{result.invalidPhones !== 1 ? "s" : ""} inválido{result.invalidPhones !== 1 ? "s" : ""} descartado{result.invalidPhones !== 1 ? "s" : ""}
+                </p>
+              )}
               <button
                 onClick={onClose}
                 className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
