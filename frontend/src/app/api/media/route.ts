@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
+  // Auth check: require a valid session
+  const authClient = await createClient();
+  const { data: { session } } = await authClient.auth.getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { searchParams } = request.nextUrl;
   const mediaId = searchParams.get("media_id");
   const conversationId = searchParams.get("conversation_id");
@@ -11,11 +19,15 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = await getServiceSupabase();
-  const { data: conv } = await supabase
+  const { data: conv, error: dbError } = await supabase
     .from("conversations")
     .select("channels(provider_config)")
     .eq("id", conversationId)
     .single();
+
+  if (dbError) {
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
 
   if (!conv) {
     return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
@@ -46,6 +58,12 @@ export async function GET(request: NextRequest) {
 
   if (!downloadUrl) {
     return NextResponse.json({ error: "No download URL from Meta" }, { status: 502 });
+  }
+
+  // SSRF guard: only allow Meta's CDN domain
+  const allowed = new URL(downloadUrl);
+  if (!allowed.hostname.endsWith(".fbcdn.net")) {
+    return NextResponse.json({ error: "Unexpected media host" }, { status: 502 });
   }
 
   // Step 2: Download audio bytes
