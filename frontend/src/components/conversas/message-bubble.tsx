@@ -21,6 +21,14 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
 
   const isAudio = message.message_type === "audio";
 
+  // New messages: media_url is a Supabase Storage URL (https://...)
+  // Legacy messages: media_url is a Meta media_id (numeric string) — use proxy fallback
+  const audioSrc = message.media_url
+    ? message.media_url.startsWith("http")
+      ? message.media_url
+      : `/api/media?media_id=${encodeURIComponent(message.media_url)}&conversation_id=${encodeURIComponent(conversationId)}`
+    : null;
+
   return (
     <div
       className={`flex ${isFromMe ? "justify-end" : "justify-start"} ${isGrouped ? "mt-0.5" : "mt-2"}`}
@@ -33,10 +41,10 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
         } ${isTemp ? "opacity-70" : ""}`}
       >
         {isAudio ? (
-          message.media_url ? (
+          audioSrc ? (
             <audio
               controls
-              src={`/api/media?media_id=${encodeURIComponent(message.media_url)}&conversation_id=${encodeURIComponent(conversationId)}`}
+              src={audioSrc}
               className="h-10 max-w-[240px]"
             />
           ) : (

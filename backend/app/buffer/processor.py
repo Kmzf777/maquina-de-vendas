@@ -153,19 +153,14 @@ async def process_buffered_messages(
         except Exception as e:
             logger.warning(f"Failed to activate conversation {conversation['id']}: {e}")
 
-    # Resolve media placeholders
+    # Resolve media placeholders (also uploads audio to Supabase Storage)
+    _media_url: str | None = None
+    _message_type: str | None = None
     try:
-        resolved_text = await _resolve_media(combined_text, provider)
+        resolved_text, _media_url, _message_type = await _resolve_media(combined_text, provider)
     except Exception as e:
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
-
-    # Extract media metadata for pure audio messages
-    # Buffer manager always formats as [audio: media_url=XXX] regardless of provider
-    _audio_meta_pattern = r"^\s*\[audio: media_url=(\S+)\]\s*$"
-    _audio_match = re.fullmatch(_audio_meta_pattern, combined_text)
-    _media_url: str | None = _audio_match.group(1) if _audio_match else None
-    _message_type: str | None = "audio" if _audio_match else None
 
     # Dedup: skip if this exact message was already processed recently
     if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
@@ -293,8 +288,28 @@ def _update_last_msg(conversation_id: str) -> None:
         logger.warning(f"Failed to update last_msg_at for {conversation_id}: {e}")
 
 
-async def _resolve_media(text: str, provider) -> str:
-    """Replace media placeholders with actual content using Gemini."""
+def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: str, ext: str) -> str | None:
+    """Upload audio to Supabase Storage and return permanent public URL."""
+    try:
+        from app.db.supabase import get_supabase
+        sb = get_supabase()
+        path = f"{media_ref}.{ext}"
+        sb.storage.from_("audio").upload(
+            path, audio_bytes,
+            file_options={"content-type": content_type, "x-upsert": "true"},
+        )
+        return sb.storage.from_("audio").get_public_url(path)
+    except Exception as e:
+        logger.warning(f"Failed to upload audio to storage: {e}")
+        return None
+
+
+async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | None]:
+    """Replace media placeholders with actual content using Gemini.
+
+    Returns (resolved_text, storage_url, message_type).
+    storage_url is the permanent Supabase Storage URL when audio upload succeeds.
+    """
     # Meta-style: [audio: media_id=xxx]
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
     image_id_pattern = r"\[image: media_id=(\S+)\]"
@@ -303,12 +318,31 @@ async def _resolve_media(text: str, provider) -> str:
     audio_url_pattern = r"\[audio: media_url=(\S+)\]"
     image_url_pattern = r"\[image: media_url=(\S+)\]"
 
+    storage_url: str | None = None
+    message_type: str | None = None
+
     for pattern in [audio_id_pattern, audio_url_pattern]:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
+            audio_bytes: bytes | None = None
+            content_type: str = "audio/ogg"
             try:
                 audio_bytes, content_type = await provider.download_media(media_ref)
-                ext = "ogg" if "ogg" in content_type else "mp4"
+            except Exception as e:
+                logger.warning(f"Failed to download audio {media_ref}: {e}")
+                text = text.replace(match.group(0), "[audio: nao foi possivel transcrever]")
+                continue
+
+            ext = "ogg" if "ogg" in content_type else "mp4"
+
+            # Upload to Supabase Storage for permanent playback URL
+            uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
+            if uploaded_url:
+                storage_url = uploaded_url
+                message_type = "audio"
+
+            # Transcribe for AI agent context
+            try:
                 transcript = await _get_openai().audio.transcriptions.create(
                     model="gemini-3-flash-preview",
                     file=(f"audio.{ext}", audio_bytes, content_type),
@@ -341,4 +375,4 @@ async def _resolve_media(text: str, provider) -> str:
                 logger.warning(f"Failed to describe image {media_ref}: {e}")
                 text = text.replace(match.group(0), "[imagem: nao foi possivel descrever]")
 
-    return text
+    return text, storage_url, message_type
