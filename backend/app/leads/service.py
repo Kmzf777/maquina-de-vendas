@@ -27,13 +27,16 @@ def get_or_create_lead(phone: str) -> dict[str, Any]:
     sb = get_supabase()
     normalized = normalize_phone(phone)
 
-    # Look up by normalized phone first. Fallback to raw to catch legacy rows.
+    # Digits-only form without 9th digit injection — matches legacy DB rows stored before normalization
+    digits_only = _PHONE_RE.sub("", phone[len("whatsapp:"):] if phone.startswith("whatsapp:") else phone)
+
+    # Look up by normalized phone first. Fallback to digits-only to catch legacy rows.
     result = sb.table("leads").select("*").eq("phone", normalized).execute()
     if result.data:
         return result.data[0]
 
-    if normalized != phone:
-        legacy = sb.table("leads").select("*").eq("phone", phone).execute()
+    if digits_only != normalized:
+        legacy = sb.table("leads").select("*").eq("phone", digits_only).execute()
         if legacy.data:
             # Backfill: rewrite legacy row to the normalized phone so future lookups match.
             row = dict(legacy.data[0])

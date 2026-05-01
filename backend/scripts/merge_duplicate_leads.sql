@@ -19,6 +19,7 @@ DO $$
 DECLARE
     r            RECORD;
     conv_conflict RECORD;
+    v_deleted    INTEGER;
 BEGIN
     FOR r IN (
         WITH raw_pairs AS (
@@ -96,6 +97,10 @@ BEGIN
           AND broadcast_id IN (
               SELECT broadcast_id FROM broadcast_leads WHERE lead_id = r.pai_id
           );
+        GET DIAGNOSTICS v_deleted = ROW_COUNT;
+        IF v_deleted > 0 THEN
+            RAISE NOTICE '  broadcast_leads: % registro(s) do filho descartado(s) por conflito (pai já tem esse broadcast)', v_deleted;
+        END IF;
         UPDATE broadcast_leads SET lead_id = r.pai_id WHERE lead_id = r.filho_id;
 
         -- ── cadence_enrollments: UNIQUE(cadence_id, lead_id) ─────────────────
@@ -105,6 +110,10 @@ BEGIN
           AND cadence_id IN (
               SELECT cadence_id FROM cadence_enrollments WHERE lead_id = r.pai_id
           );
+        GET DIAGNOSTICS v_deleted = ROW_COUNT;
+        IF v_deleted > 0 THEN
+            RAISE NOTICE '  cadence_enrollments: % registro(s) do filho descartado(s) por conflito', v_deleted;
+        END IF;
         UPDATE cadence_enrollments SET lead_id = r.pai_id WHERE lead_id = r.filho_id;
 
         -- ── lead_tags: PK (lead_id, tag_id) ──────────────────────────────────
@@ -114,6 +123,10 @@ BEGIN
           AND tag_id IN (
               SELECT tag_id FROM lead_tags WHERE lead_id = r.pai_id
           );
+        GET DIAGNOSTICS v_deleted = ROW_COUNT;
+        IF v_deleted > 0 THEN
+            RAISE NOTICE '  lead_tags: % registro(s) do filho descartado(s) por conflito', v_deleted;
+        END IF;
         UPDATE lead_tags SET lead_id = r.pai_id WHERE lead_id = r.filho_id;
 
         -- ── cadence_state: UNIQUE em lead_id (uma linha por lead) ─────────────
@@ -121,6 +134,10 @@ BEGIN
         DELETE FROM cadence_state
         WHERE lead_id = r.filho_id
           AND EXISTS (SELECT 1 FROM cadence_state WHERE lead_id = r.pai_id);
+        GET DIAGNOSTICS v_deleted = ROW_COUNT;
+        IF v_deleted > 0 THEN
+            RAISE NOTICE '  cadence_state: registro do filho descartado por conflito';
+        END IF;
         UPDATE cadence_state SET lead_id = r.pai_id WHERE lead_id = r.filho_id;
 
         -- ── Deletar o lead filho ──────────────────────────────────────────────

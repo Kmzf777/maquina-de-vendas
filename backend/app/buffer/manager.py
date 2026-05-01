@@ -7,6 +7,7 @@ import redis.asyncio as aioredis
 FLUSH_QUEUE_KEY = "flush_queue"
 
 from app.config import settings
+from app.leads.service import normalize_phone
 from app.webhook.parser import IncomingMessage
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     """Push a message to the buffer (or process immediately if buffer is off)."""
     from app.buffer.processor import process_buffered_messages
 
-    phone = msg.from_number
+    phone = normalize_phone(msg.from_number)
     channel_id = msg.channel_id or ""
 
     # Determine text content (will be resolved later for media)
