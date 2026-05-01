@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 
 def _track_inbound_message_time(phone: str) -> None:
     """Update last_customer_message_at so the 24h window status stays current."""
+    normalized = normalize_phone(phone)
     try:
         sb = get_supabase()
         sb.table("leads").update(
             {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("phone", normalize_phone(phone)).execute()
+        ).eq("phone", normalized).execute()
     except Exception as e:
-        logger.warning(f"Failed to update last_customer_message_at for {phone}: {e}")
+        logger.warning(f"Failed to update last_customer_message_at for {normalized}: {e}")
 
 
 def _log_webhook(
