@@ -31,9 +31,6 @@ def normalize_phone(phone: str) -> str | None:
     else:
         return None
 
-    if len(digits) not in (12, 13):
-        return None
-
     return _canonical_normalize(digits)
 
 
