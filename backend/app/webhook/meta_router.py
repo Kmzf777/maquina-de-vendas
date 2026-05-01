@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response
 from app.webhook.meta_parser import parse_meta_webhook_payload, extract_phone_number_id
 from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
-from app.leads.service import get_or_create_lead, reset_lead
+from app.leads.service import get_or_create_lead, normalize_phone, reset_lead
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route
 from app.dev_router.forwarder import forward_to_dev
@@ -24,7 +24,7 @@ def _track_inbound_message_time(phone: str) -> None:
         sb = get_supabase()
         sb.table("leads").update(
             {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("phone", phone).execute()
+        ).eq("phone", normalize_phone(phone)).execute()
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {phone}: {e}")
 
