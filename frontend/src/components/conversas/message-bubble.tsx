@@ -4,6 +4,7 @@ import { formatTimeOnly } from "@/lib/datetime";
 interface MessageBubbleProps {
   message: Message;
   isGrouped: boolean;
+  conversationId: string;
 }
 
 function getSenderBadge(message: Message): string | null {
@@ -13,10 +14,12 @@ function getSenderBadge(message: Message): string | null {
   return null;
 }
 
-export function MessageBubble({ message, isGrouped }: MessageBubbleProps) {
+export function MessageBubble({ message, isGrouped, conversationId }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const senderBadge = getSenderBadge(message);
+
+  const isAudio = message.message_type === "audio";
 
   return (
     <div
@@ -29,7 +32,24 @@ export function MessageBubble({ message, isGrouped }: MessageBubbleProps) {
             : "bg-white border border-[#dedbd6] text-[#111111]"
         } ${isTemp ? "opacity-70" : ""}`}
       >
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        {isAudio ? (
+          message.media_url ? (
+            <audio
+              controls
+              src={`/api/media?media_id=${message.media_url}&conversation_id=${conversationId}`}
+              className="h-10 max-w-[240px]"
+            />
+          ) : (
+            <div className="flex items-center gap-2 py-1">
+              <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zm-1 3a1 1 0 0 1 2 0v8a1 1 0 0 1-2 0V4zm7.25 5a.75.75 0 0 0-1.5 0 5.75 5.75 0 0 1-11.5 0 .75.75 0 0 0-1.5 0 7.25 7.25 0 0 0 6.5 7.2V20H9a.75.75 0 0 0 0 1.5h6a.75.75 0 0 0 0-1.5h-2.25v-3.8A7.25 7.25 0 0 0 19.25 9z" />
+              </svg>
+              <span className="text-[13px] opacity-60">Áudio</span>
+            </div>
+          )
+        ) : (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        )}
         <div className={`flex items-center gap-1 mt-1 ${isFromMe ? "justify-end" : "justify-start"}`}>
           <p
             className={`text-[11px] ${
