@@ -13,9 +13,9 @@ class MetaCloudClient(WhatsAppProvider):
     def __init__(self, config: dict):
         self.phone_number_id = config["phone_number_id"]
         self.access_token = config["access_token"]
-        api_version = config.get("api_version", "v21.0")
-        self._messages_url = f"{META_API_BASE}/{api_version}/{self.phone_number_id}/messages"
-        self._media_url = f"{META_API_BASE}/{api_version}/{self.phone_number_id}/media"
+        self.api_version = config.get("api_version", "v21.0")
+        self._messages_url = f"{META_API_BASE}/{self.api_version}/{self.phone_number_id}/messages"
+        self._media_url = f"{META_API_BASE}/{self.api_version}/{self.phone_number_id}/media"
 
     def _url(self) -> str:
         return self._messages_url
@@ -125,6 +125,27 @@ class MetaCloudClient(WhatsAppProvider):
         if components:
             payload["template"]["components"] = components
         return await self._post(payload)
+
+    async def download_media(self, media_id: str) -> tuple[bytes, str]:
+        """Download media from Meta using media_id. Returns (bytes, content_type)."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 1: resolve media_id → temporary download URL
+            info_resp = await client.get(
+                f"{META_API_BASE}/{self.api_version}/{media_id}",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+            )
+            info_resp.raise_for_status()
+            info = info_resp.json()
+            download_url = info["url"]
+            mime_type = info.get("mime_type", "audio/ogg")
+
+            # Step 2: download bytes with Bearer token
+            audio_resp = await client.get(
+                download_url,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+            )
+            audio_resp.raise_for_status()
+            return audio_resp.content, mime_type
 
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         return await self._post({

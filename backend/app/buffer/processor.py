@@ -324,8 +324,12 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
     for pattern in [audio_id_pattern, audio_url_pattern]:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
-            audio_bytes: bytes | None = None
-            content_type: str = "audio/ogg"
+
+            # Always mark as audio and store media_ref as fallback for proxy,
+            # regardless of whether download/upload/transcription succeeds.
+            message_type = "audio"
+            storage_url = media_ref
+
             try:
                 audio_bytes, content_type = await provider.download_media(media_ref)
             except Exception as e:
@@ -335,12 +339,10 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
 
             ext = "ogg" if "ogg" in content_type else "mp4"
 
-            # This is audio — always mark it as such
-            message_type = "audio"
-
-            # Try Supabase Storage for permanent URL; fall back to media_id for proxy
+            # Try Supabase Storage for permanent URL; keep media_id fallback if it fails
             uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
-            storage_url = uploaded_url if uploaded_url else media_ref
+            if uploaded_url:
+                storage_url = uploaded_url
 
             # Transcribe for AI agent context
             try:
