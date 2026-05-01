@@ -60,13 +60,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "No download URL from Meta" }, { status: 502 });
   }
 
-  // SSRF guard: only allow Meta's CDN domain
-  const allowed = new URL(downloadUrl);
-  if (!allowed.hostname.endsWith(".fbcdn.net") || allowed.protocol !== "https:") {
+  // SSRF guard: only allow Meta's media CDN domains
+  const { hostname, protocol } = new URL(downloadUrl);
+  const isMetaDomain =
+    hostname.endsWith(".fbsbx.com") ||   // lookaside.fbsbx.com (WhatsApp media)
+    hostname.endsWith(".fbcdn.net") ||   // Meta CDN
+    hostname.endsWith(".whatsapp.net");  // WhatsApp CDN
+  if (!isMetaDomain || protocol !== "https:") {
     return NextResponse.json({ error: "Unexpected media host" }, { status: 502 });
   }
 
-  // Step 2: Download audio bytes
+  // Step 2: Stream audio directly to client — avoids buffering in memory
   const audioRes = await fetch(downloadUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -74,12 +78,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Audio download failed" }, { status: 502 });
   }
 
-  const audioBuffer = await audioRes.arrayBuffer();
-
-  return new NextResponse(audioBuffer, {
+  return new Response(audioRes.body, {
     headers: {
       "Content-Type": mimeType,
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": "private, max-age=86400",
     },
   });
 }

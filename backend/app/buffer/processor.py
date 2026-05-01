@@ -335,11 +335,12 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
 
             ext = "ogg" if "ogg" in content_type else "mp4"
 
-            # Upload to Supabase Storage for permanent playback URL
+            # This is audio — always mark it as such
+            message_type = "audio"
+
+            # Try Supabase Storage for permanent URL; fall back to media_id for proxy
             uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
-            if uploaded_url:
-                storage_url = uploaded_url
-                message_type = "audio"
+            storage_url = uploaded_url if uploaded_url else media_ref
 
             # Transcribe for AI agent context
             try:
