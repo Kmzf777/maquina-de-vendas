@@ -3,6 +3,8 @@ import io
 import re
 from dataclasses import dataclass
 
+from app.leads.service import normalize_phone as _canonical_normalize
+
 
 @dataclass
 class ImportResult:
@@ -11,29 +13,28 @@ class ImportResult:
 
 
 def normalize_phone(phone: str) -> str | None:
-    """Normalize a Brazilian phone number to international format (5511999999999).
-    Returns None if invalid.
+    """Normalize a Brazilian phone number to E.164 without '+'.
+    Handles missing country code, then delegates to canonical normalization
+    (which includes 9th digit injection for 12-digit BR numbers).
+    Returns None if the number is structurally invalid.
     """
     digits = re.sub(r"\D", "", phone)
 
-    # Remove leading 0
     if digits.startswith("0"):
         digits = digits[1:]
 
-    # Add country code if missing
-    if len(digits) == 10 or len(digits) == 11:
+    if len(digits) in (10, 11):
         digits = "55" + digits
-    elif len(digits) == 12 or len(digits) == 13:
+    elif len(digits) in (12, 13):
         if not digits.startswith("55"):
             return None
     else:
         return None
 
-    # Validate: 55 + 2 digit DDD + 8-9 digit number
-    if len(digits) < 12 or len(digits) > 13:
+    if len(digits) not in (12, 13):
         return None
 
-    return digits
+    return _canonical_normalize(digits)
 
 
 def parse_csv(file_content: str | bytes) -> ImportResult:

@@ -18,7 +18,13 @@ def test_normalize_with_formatting():
 
 
 def test_normalize_landline():
-    assert normalize_phone("3432221111") == "553432221111"
+    # 10 dígitos (sem DDI) → add 55 → 12 dígitos → injeta 9 (contexto WhatsApp = mobile only)
+    assert normalize_phone("3432221111") == "5534932221111"
+
+
+def test_normalize_old_mobile_12digits():
+    # CSV com número no formato antigo (12 dígitos com DDI) → injeta 9
+    assert normalize_phone("553898422923") == "5538998422923"
 
 
 def test_normalize_invalid():
@@ -31,6 +37,13 @@ def test_parse_csv_basic():
     result = parse_csv(csv_content)
     assert len(result.valid) == 2
     assert result.valid[0] == "5534999999999"
+
+
+def test_parse_csv_normalizes_old_format():
+    # CSV com número antigo (12 dígitos) → deve sair normalizado (13 dígitos)
+    csv_content = "telefone\n553898422923\n"
+    result = parse_csv(csv_content)
+    assert result.valid[0] == "5538998422923"
 
 
 def test_parse_csv_with_invalid():
