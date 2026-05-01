@@ -160,8 +160,9 @@ async def process_buffered_messages(
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
 
-    # Extract media metadata for pure audio messages (Meta Cloud API)
-    _audio_meta_pattern = r"^\s*\[audio: media_id=(\S+)\]\s*$"
+    # Extract media metadata for pure audio messages
+    # Buffer manager always formats as [audio: media_url=XXX] regardless of provider
+    _audio_meta_pattern = r"^\s*\[audio: media_url=(\S+)\]\s*$"
     _audio_match = re.fullmatch(_audio_meta_pattern, combined_text)
     _media_url: str | None = _audio_match.group(1) if _audio_match else None
     _message_type: str | None = "audio" if _audio_match else None
