@@ -10,19 +10,22 @@ logger = logging.getLogger(__name__)
 _PHONE_RE = re.compile(r"[^\d]+")
 
 
-def _normalize_phone(phone: str | None) -> str:
-    """Strip everything but digits. Keeps country code as provided — does NOT invent '55'."""
+def normalize_phone(phone: str | None) -> str:
+    """Normalize to E.164 without '+'. Injects the Brazilian 9th digit when missing."""
     if not phone:
         return ""
-    # Drop common wrappers like 'whatsapp:' prefix
     if phone.startswith("whatsapp:"):
         phone = phone[len("whatsapp:"):]
-    return _PHONE_RE.sub("", phone)
+    digits = _PHONE_RE.sub("", phone)
+    # Brazilian mobiles stored without 9th digit: 55 + 2-digit DDD + 8 digits = 12 total
+    if len(digits) == 12 and digits.startswith("55"):
+        digits = digits[:4] + "9" + digits[4:]
+    return digits
 
 
 def get_or_create_lead(phone: str) -> dict[str, Any]:
     sb = get_supabase()
-    normalized = _normalize_phone(phone)
+    normalized = normalize_phone(phone)
 
     # Look up by normalized phone first. Fallback to raw to catch legacy rows.
     result = sb.table("leads").select("*").eq("phone", normalized).execute()
