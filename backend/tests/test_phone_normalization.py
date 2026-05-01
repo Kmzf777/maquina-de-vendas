@@ -20,6 +20,7 @@ from app.leads.service import normalize_phone
     ("whatsapp:553898422923", "5538998422923"),  # whatsapp prefix + 12 dígitos
     ("551299990000", "5512999990000"),           # DDD 12 (SP interior) sem 9
     ("5521912345678", "5521912345678"),          # 13 dígitos RJ → inalterado
+    ("541199990000", "541199990000"),            # 12 dígitos não-BR → sem injeção
 ])
 def test_normalize_phone(raw, expected):
     assert normalize_phone(raw) == expected
