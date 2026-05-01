@@ -36,7 +36,7 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
           message.media_url ? (
             <audio
               controls
-              src={`/api/media?media_id=${message.media_url}&conversation_id=${conversationId}`}
+              src={`/api/media?media_id=${encodeURIComponent(message.media_url)}&conversation_id=${encodeURIComponent(conversationId)}`}
               className="h-10 max-w-[240px]"
             />
           ) : (
