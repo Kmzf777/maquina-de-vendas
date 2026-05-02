@@ -25,6 +25,8 @@ export default function ConversasPage() {
   // Tracks conversations marked-as-read locally so we can override stale realtime payloads
   // for ~30s. Without this, the Supabase realtime push wins and the badge reappears.
   const recentlyMarkedRef = useRef<Map<string, number>>(new Map());
+  // Tracks ai_enabled value for in-flight toggles so realtime doesn't overwrite the optimistic state.
+  const recentlyToggledAiRef = useRef<Map<string, boolean>>(new Map());
 
   const applyRecentlyMarkedOverride = useCallback((list: Conversation[]): Conversation[] => {
     const now = Date.now();
@@ -47,7 +49,13 @@ export default function ConversasPage() {
       if (res.ok) {
         const data = await res.json();
         const raw = Array.isArray(data) ? data : [];
-        const list = applyRecentlyMarkedOverride(raw);
+        const base = applyRecentlyMarkedOverride(raw);
+        // Preserve in-flight ai_enabled toggles so realtime doesn't race against PATCH
+        const list = base.map((c) => {
+          const pending = recentlyToggledAiRef.current.get(c.id);
+          if (pending === undefined) return c;
+          return { ...c, leads: { ...(c.leads as any), ai_enabled: pending } };
+        });
         setConversations(list);
         // Sync selectedConversation when its data changes
         setSelectedConversation((prev: Conversation | null) => {
@@ -192,6 +200,7 @@ export default function ConversasPage() {
     const currentAiEnabled = (selectedConversation.leads as any)?.ai_enabled ?? true;
     const next = !currentAiEnabled;
     setTogglingAi(true);
+    recentlyToggledAiRef.current.set(selectedConversation.id, next);
     // Optimistic update — mirrors contact-detail.tsx pattern
     setConversations((prev) =>
       prev.map((c) =>
@@ -228,6 +237,7 @@ export default function ConversasPage() {
           : prev
       );
     } finally {
+      recentlyToggledAiRef.current.delete(selectedConversation.id);
       setTogglingAi(false);
     }
   }
