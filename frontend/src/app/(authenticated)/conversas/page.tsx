@@ -219,8 +219,24 @@ export default function ConversasPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ai_enabled: next }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
+      // Confirm against server value — protects against silent backend failures
+      const data = await res.json();
+      const confirmed: boolean = data?.leads?.ai_enabled ?? next;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === selectedConversation.id
+            ? { ...c, leads: { ...(c.leads as any), ai_enabled: confirmed } }
+            : c
+        )
+      );
+      setSelectedConversation((prev) =>
+        prev && prev.id === selectedConversation.id
+          ? { ...prev, leads: { ...(prev.leads as any), ai_enabled: confirmed } }
+          : prev
+      );
     } catch (err) {
       console.warn("[toggle-ai] failed:", err);
       // Roll back optimistic update on failure
