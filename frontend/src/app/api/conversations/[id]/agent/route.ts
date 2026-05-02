@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServiceSupabase } from "@/lib/supabase/api";
 
 export async function PATCH(
   request: NextRequest,
@@ -6,19 +7,33 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await request.json();
+  const supabase = await getServiceSupabase();
 
-  const backendUrl = process.env.BACKEND_URL || "http://localhost:8000";
-  const res = await fetch(`${backendUrl}/api/conversations/${id}/agent`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  // Resolve lead_id for this conversation
+  const { data: conv, error: convErr } = await supabase
+    .from("conversations")
+    .select("lead_id")
+    .eq("id", id)
+    .single();
 
-  if (!res.ok) {
-    const error = await res.text();
-    return NextResponse.json({ error }, { status: res.status });
+  if (convErr || !conv?.lead_id) {
+    return NextResponse.json({ error: "conversation not found" }, { status: 404 });
   }
 
-  const data = await res.json();
-  return NextResponse.json(data);
+  const patch: Record<string, unknown> = {};
+  if (body.ai_enabled !== undefined) patch.ai_enabled = body.ai_enabled;
+  if (body.agent_profile_id !== undefined) patch.agent_profile_id = body.agent_profile_id;
+
+  const { data: lead, error: leadErr } = await supabase
+    .from("leads")
+    .update(patch)
+    .eq("id", conv.lead_id)
+    .select("id, ai_enabled")
+    .single();
+
+  if (leadErr) {
+    return NextResponse.json({ error: leadErr.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ id, leads: lead });
 }
