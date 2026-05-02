@@ -1,15 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
-  // Auth check: require a valid session
-  const authClient = await createClient();
-  const { data: { user } } = await authClient.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { searchParams } = request.nextUrl;
   const mediaId = searchParams.get("media_id");
   const conversationId = searchParams.get("conversation_id");
