@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { AGENT_STAGES } from "@/lib/constants";
 import { EditableField } from "./editable-field";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
-import { createClient } from "@/lib/supabase/client";
 import type { Lead, Tag, Conversation, Pipeline, PipelineStage } from "@/lib/types";
 
 interface LeadDeal {
@@ -39,7 +38,6 @@ export function ContactDetail({
   const lead = conversation.leads as Lead | undefined | null;
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
-  const supabase = createClient();
 
   const fetchDeals = useCallback(async () => {
     if (!lead) return;
@@ -67,7 +65,11 @@ export function ContactDetail({
 
   async function updateLeadField(field: string, value: string) {
     if (!lead) return;
-    await supabase.from("leads").update({ [field]: value }).eq("id", lead.id);
+    await fetch(`/api/leads/${lead.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [field]: value }),
+    });
   }
 
   async function handleCreateDeal(data: {
@@ -89,9 +91,8 @@ export function ContactDetail({
     }
   }
 
-  const daysActive = lead
-    ? Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24))
-    : 0;
+  const createdMs = lead?.created_at ? new Date(lead.created_at).getTime() : NaN;
+  const daysActive = isNaN(createdMs) ? 0 : Math.floor((Date.now() - createdMs) / (1000 * 60 * 60 * 24));
 
   return (
     <div className="w-[320px] bg-white border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
