@@ -15,9 +15,12 @@ interface ChatViewProps {
   aiEnabled: boolean;
   togglingAi?: boolean;
   onToggleAi: () => void | Promise<void>;
+  followupEnabled: boolean;
+  togglingFollowup?: boolean;
+  onToggleFollowup: () => void | Promise<void>;
 }
 
-export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi }: ChatViewProps) {
+export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup }: ChatViewProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
 
@@ -105,6 +108,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         aiEnabled={aiEnabled}
         togglingAi={togglingAi}
         onToggleAi={onToggleAi}
+        followupEnabled={followupEnabled}
+        togglingFollowup={togglingFollowup}
+        onToggleFollowup={onToggleFollowup}
       />
 
       <MessageList
