@@ -25,6 +25,7 @@ from app.cadence.scheduler import (
     process_stagnation_triggers,
     calculate_next_send_at,
 )
+from app.follow_up.scheduler import process_due_followups
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
@@ -158,6 +159,7 @@ async def run_worker():
             await process_due_cadences()
             await process_reengagements()
             await process_stagnation_triggers()
+            await process_due_followups()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
 
