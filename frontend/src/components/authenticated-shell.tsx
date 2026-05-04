@@ -72,3 +72,4 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
     </div>
   );
 }
+
