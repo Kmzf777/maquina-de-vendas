@@ -263,6 +263,7 @@ export interface Conversation {
   last_message_text: string | null;
   unread_count: number;
   whatsapp_window_expires_at: string | null;
+  followup_enabled: boolean;
   leads?: Lead;
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null } | null;
   agent_profiles?: { id: string; name: string } | null;

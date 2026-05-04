@@ -261,7 +261,7 @@ export default function ConversasPage() {
 
   async function handleToggleFollowup() {
     if (!selectedConversation || togglingFollowup) return;
-    const current = (selectedConversation as any)?.followup_enabled ?? true;
+    const current = selectedConversation.followup_enabled ?? true;
     const next = !current;
     setTogglingFollowup(true);
 
@@ -362,7 +362,7 @@ export default function ConversasPage() {
             aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
             togglingAi={togglingAi}
             onToggleAi={handleToggleAi}
-            followupEnabled={(selectedConversation as any)?.followup_enabled ?? true}
+            followupEnabled={selectedConversation.followup_enabled ?? true}
             togglingFollowup={togglingFollowup}
             onToggleFollowup={handleToggleFollowup}
           />
