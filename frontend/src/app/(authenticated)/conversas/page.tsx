@@ -22,6 +22,7 @@ export default function ConversasPage() {
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
   const [togglingAi, setTogglingAi] = useState(false);
+  const [togglingFollowup, setTogglingFollowup] = useState(false);
   // Tracks conversations marked-as-read locally so we can override stale realtime payloads
   // for ~30s. Without this, the Supabase realtime push wins and the badge reappears.
   const recentlyMarkedRef = useRef<Map<string, number>>(new Map());
@@ -258,6 +259,51 @@ export default function ConversasPage() {
     }
   }
 
+  async function handleToggleFollowup() {
+    if (!selectedConversation || togglingFollowup) return;
+    const current = (selectedConversation as any)?.followup_enabled ?? true;
+    const next = !current;
+    setTogglingFollowup(true);
+
+    // Optimistic update
+    const patch = { followup_enabled: next };
+    setConversations((prev) =>
+      prev.map((c) => (c.id === selectedConversation.id ? { ...c, ...patch } : c))
+    );
+    setSelectedConversation((prev) =>
+      prev && prev.id === selectedConversation.id ? { ...prev, ...patch } : prev
+    );
+
+    try {
+      const res = await fetch(
+        `/api/conversations/${selectedConversation.id}/followup`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: next }),
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (err) {
+      console.warn("[toggle-followup] failed:", err);
+      // Rollback
+      const rollback = { followup_enabled: current };
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === selectedConversation.id ? { ...c, ...rollback } : c
+        )
+      );
+      setSelectedConversation((prev) =>
+        prev && prev.id === selectedConversation.id
+          ? { ...prev, ...rollback }
+          : prev
+      );
+    } finally {
+      setTogglingFollowup(false);
+    }
+  }
+
   const selectedLead = selectedConversation?.leads as Lead | undefined | null;
 
   const selectedLeadTags = selectedLead
@@ -316,6 +362,9 @@ export default function ConversasPage() {
             aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
             togglingAi={togglingAi}
             onToggleAi={handleToggleAi}
+            followupEnabled={(selectedConversation as any)?.followup_enabled ?? true}
+            togglingFollowup={togglingFollowup}
+            onToggleFollowup={handleToggleFollowup}
           />
           <ContactDetail
             conversation={selectedConversation}
