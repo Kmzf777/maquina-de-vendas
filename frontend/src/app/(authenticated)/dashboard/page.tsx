@@ -57,7 +57,7 @@ export default function DashboardPage() {
             <div className="h-4 w-72 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]/40" />
           </div>
         </div>
-        <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+        <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
           <div className="grid grid-cols-3 gap-5">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
@@ -125,7 +125,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Main content */}
-      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+      <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
         <div className="grid grid-cols-3 gap-5 mb-8">
           <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />
           <KpiCard label="Deals ativos" value={activeDeals.length} subtitle={fmt(activeValue)} icon={UsersIcon} />

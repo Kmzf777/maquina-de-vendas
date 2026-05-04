@@ -22,7 +22,7 @@ export default function ConfigPage() {
         <p className="text-[14px] text-[#7b7b78] mt-0.5">Preferências e integrações</p>
       </div>
 
-      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
+      <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
         <div className="max-w-3xl">
           <div className="flex border-b border-[#dedbd6] mb-8">
             {TABS.map((tab) => (

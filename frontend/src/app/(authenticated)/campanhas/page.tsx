@@ -143,7 +143,7 @@ export default function CampanhasPage() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-auto p-8 bg-[#faf9f6]">
+      <div className="flex-1 overflow-auto px-4 md:px-8 py-4 md:py-8 bg-[#faf9f6]">
         {activeTab === "visao-geral" && (
           <div className="space-y-6">
             <CampaignsDashboard period={period} onPeriodChange={setPeriod} />

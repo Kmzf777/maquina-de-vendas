@@ -142,7 +142,7 @@ export default function LeadsPage() {
           <div className="h-8 w-32 rounded-[8px] animate-pulse bg-[#dedbd6]" />
           <div className="h-4 w-64 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]" />
         </div>
-        <div className="flex-1 overflow-auto bg-[#faf9f6] px-8 py-6 space-y-6">
+        <div className="flex-1 overflow-auto bg-[#faf9f6] px-4 md:px-8 py-4 md:py-6 space-y-6">
           <div className="grid grid-cols-4 gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-24 animate-pulse" />
