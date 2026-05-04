@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 
@@ -8,6 +8,18 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
   const pathname = usePathname();
   const isConversas = pathname === "/conversas";
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    document.body.style.overflow = drawerOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [drawerOpen]);
 
   return (
     <div className="flex h-screen bg-[#faf9f6]">
