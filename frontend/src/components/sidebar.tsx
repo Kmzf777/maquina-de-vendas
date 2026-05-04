@@ -111,7 +111,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                   <Link
                     key={item.href}
                     href={item.href}
-                    onClick={onClose}
+                    {...(onClose ? { onClick: onClose } : {})}
                     className={`flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-all duration-150 ${
                       isActive
                         ? "bg-[#111111] text-white"
