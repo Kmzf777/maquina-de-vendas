@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from openai import AsyncOpenAI
 
 from app.config import settings
-from app.follow_up.service import get_due_followups, cancel_followups
+from app.follow_up.service import get_due_followups
 from app.leads.service import save_message
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
@@ -28,7 +28,7 @@ async def _generate_followup_message(history: list[dict], sequence: int) -> str:
 
     messages_text = "\n".join(
         f"{'Cliente' if m['role'] == 'user' else 'Vendedor'}: {m['content']}"
-        for m in history[-15:]
+        for m in history
     )
 
     resp = await client.chat.completions.create(
@@ -137,6 +137,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
                 content=message,
                 stage=conversation.get("stage"),
                 sent_by="followup",
+                conversation_id=conversation_id,
             )
         except Exception as e:
             logger.warning(f"[FOLLOWUP] Falha ao salvar mensagem seq={sequence}: {e}")
