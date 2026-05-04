@@ -29,6 +29,14 @@ def _track_inbound_message_time(phone: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {normalized}: {e}")
 
+    # Cancela follow-ups pendentes pois cliente respondeu
+    try:
+        from app.follow_up.service import cancel_followups_by_phone
+        normalized_for_cancel = normalize_phone(phone)
+        cancel_followups_by_phone(normalized_for_cancel, reason="client_replied")
+    except Exception as e:
+        logger.warning(f"[FOLLOWUP] Failed to cancel follow-ups for {phone}: {e}")
+
 
 def _log_webhook(
     channel_id: str | None,
