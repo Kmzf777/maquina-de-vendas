@@ -183,6 +183,7 @@ export default function ConversasPage() {
   function handleChannelChange(channelId: string) {
     setSelectedChannelId(channelId);
     setSelectedConversation(null);
+    setMobileView("list");
   }
 
   function handleAgentUpdate(

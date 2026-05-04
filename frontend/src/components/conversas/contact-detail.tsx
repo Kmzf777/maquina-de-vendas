@@ -97,7 +97,7 @@ export function ContactDetail({
   const daysActive = isNaN(createdMs) ? 0 : Math.floor((Date.now() - createdMs) / (1000 * 60 * 60 * 24));
 
   return (
-    <div className="w-[320px] bg-white border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
+    <div className="w-full md:w-[320px] bg-white border-l-0 md:border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
       {onBack && (
         <div className="md:hidden border-b border-[#dedbd6] px-4 py-3 flex items-center gap-3 flex-shrink-0 bg-[#faf9f6]">
           <button
