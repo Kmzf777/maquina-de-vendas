@@ -71,13 +71,12 @@ const NAV_GROUPS = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
 
   return (
     <aside className="w-[220px] flex flex-col h-screen bg-[#f0ede8] border-r border-[#dedbd6] flex-shrink-0">
-      {/* Logo */}
-      <div className="px-5 py-5 border-b border-[#dedbd6]">
+      <div className="px-5 py-5 border-b border-[#dedbd6] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-[4px] bg-[#111111] flex items-center justify-center flex-shrink-0">
             <span className="text-xs font-medium text-white">V</span>
@@ -86,9 +85,19 @@ export function Sidebar() {
             ValerIA<span className="text-[#ff5600] ml-0.5">·</span>
           </span>
         </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 hover:text-[#111111] transition-colors"
+            aria-label="Fechar menu"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
 
-      {/* Navigation groups */}
       <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-5">
         {NAV_GROUPS.map((group) => (
           <div key={group.label}>
@@ -102,6 +111,7 @@ export function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    onClick={onClose}
                     className={`flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-all duration-150 ${
                       isActive
                         ? "bg-[#111111] text-white"
@@ -118,7 +128,6 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* User section */}
       <div className="px-3 pb-4 border-t border-[#dedbd6] pt-3">
         <div className="flex items-center gap-2.5 px-3 py-2">
           <div className="w-7 h-7 rounded-[6px] bg-[#dedbd6] flex items-center justify-center flex-shrink-0">
