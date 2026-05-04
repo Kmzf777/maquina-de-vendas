@@ -114,6 +114,15 @@ export async function POST(
       .update({ last_msg_at: new Date().toISOString() })
       .eq("id", conversationId);
 
+    // Agenda follow-up no backend Python (fire-and-forget)
+    const backendUrl = (
+      process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000"
+    ).replace(/\/+$/, "");
+    fetch(
+      `${backendUrl}/api/conversations/${conversationId}/followup/schedule`,
+      { method: "POST", signal: AbortSignal.timeout(5_000) }
+    ).catch(() => {/* ignorado intencionalmente */});
+
     return NextResponse.json({ status: "sent" });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to send";
