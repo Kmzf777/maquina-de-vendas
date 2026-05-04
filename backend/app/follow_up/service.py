@@ -19,11 +19,41 @@ def schedule_followup(
     sb = get_supabase()
     now = datetime.now(timezone.utc)
 
+    # Verifica se a conversa existe
+    try:
+        conv_check = (
+            sb.table("conversations")
+            .select("id")
+            .eq("id", conversation_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(
+            f"[FOLLOWUP] Erro ao verificar existência da conversa {conversation_id}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao verificar conversa {conversation_id} no banco de dados"
+        ) from exc
+
+    if not conv_check.data:
+        raise ValueError(
+            f"conversation_id '{conversation_id}' não existe na tabela conversations"
+        )
+
     # Cancela pending da mesma conversa (idempotência)
-    sb.table("follow_up_jobs").update({
-        "status": "cancelled",
-        "cancel_reason": "rescheduled",
-    }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+    try:
+        sb.table("follow_up_jobs").update({
+            "status": "cancelled",
+            "cancel_reason": "rescheduled",
+        }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+    except Exception as exc:
+        logger.error(
+            f"[FOLLOWUP] Erro ao cancelar jobs anteriores da conversa {conversation_id}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao cancelar follow-up jobs pendentes para conversa {conversation_id}"
+        ) from exc
 
     jobs = [
         {
@@ -45,17 +75,34 @@ def schedule_followup(
             "env_tag": _ENV_TAG,
         },
     ]
-    sb.table("follow_up_jobs").insert(jobs).execute()
+    try:
+        sb.table("follow_up_jobs").insert(jobs).execute()
+    except Exception as exc:
+        logger.error(
+            f"[FOLLOWUP] Erro ao inserir jobs para conversa {conversation_id}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao criar follow-up jobs para conversa {conversation_id}"
+        ) from exc
+
     logger.info(f"[FOLLOWUP] Agendado seq=1 e seq=2 conversation={conversation_id}")
 
 
 def cancel_followups(conversation_id: str, reason: str) -> None:
     """Cancela todos os jobs pending de uma conversa."""
     sb = get_supabase()
-    sb.table("follow_up_jobs").update({
-        "status": "cancelled",
-        "cancel_reason": reason,
-    }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+    try:
+        sb.table("follow_up_jobs").update({
+            "status": "cancelled",
+            "cancel_reason": reason,
+        }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+    except Exception as exc:
+        logger.error(
+            f"[FOLLOWUP] Erro ao cancelar follow-ups da conversa {conversation_id}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao cancelar follow-up jobs para conversa {conversation_id}"
+        ) from exc
     logger.info(f"[FOLLOWUP] Cancelado reason={reason} conversation={conversation_id}")
 
 
@@ -63,51 +110,84 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
     """Cancela follow-ups pending de todas as conversas de um lead pelo phone."""
     sb = get_supabase()
 
-    lead_result = (
-        sb.table("leads")
-        .select("id")
-        .eq("phone", phone)
-        .limit(1)
-        .execute()
-    )
+    try:
+        lead_result = (
+            sb.table("leads")
+            .select("id")
+            .eq("phone", phone)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(f"[FOLLOWUP] Erro ao buscar lead pelo phone {phone}: {exc}")
+        raise RuntimeError(
+            f"Falha ao buscar lead pelo phone {phone}"
+        ) from exc
+
     if not lead_result.data:
         return
 
     lead_id = lead_result.data[0]["id"]
 
-    conversations = (
-        sb.table("conversations")
-        .select("id")
-        .eq("lead_id", lead_id)
-        .execute()
-    )
+    try:
+        conversations = (
+            sb.table("conversations")
+            .select("id")
+            .eq("lead_id", lead_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(
+            f"[FOLLOWUP] Erro ao buscar conversas do lead {lead_id}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao buscar conversas do lead {lead_id}"
+        ) from exc
+
     if not conversations.data:
         return
 
     conv_ids = [c["id"] for c in conversations.data]
-    sb.table("follow_up_jobs").update({
-        "status": "cancelled",
-        "cancel_reason": reason,
-    }).in_("conversation_id", conv_ids).eq("status", "pending").execute()
+    try:
+        sb.table("follow_up_jobs").update({
+            "status": "cancelled",
+            "cancel_reason": reason,
+        }).in_("conversation_id", conv_ids).eq("status", "pending").execute()
+    except Exception as exc:
+        logger.error(
+            f"[FOLLOWUP] Erro ao cancelar follow-ups pelo phone {phone}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao cancelar follow-up jobs para o phone {phone}"
+        ) from exc
+
     logger.info(f"[FOLLOWUP] Cancelado reason={reason} phone={phone}")
 
 
 def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     """Retorna jobs pending cujo fire_at já passou."""
     sb = get_supabase()
-    result = (
-        sb.table("follow_up_jobs")
-        .select(
-            "*, "
-            "leads!inner(id, phone, last_customer_message_at), "
-            "channels!inner(id, name, provider, provider_config), "
-            "conversations!inner(id, stage, followup_enabled)"
+    try:
+        result = (
+            sb.table("follow_up_jobs")
+            .select(
+                "*, "
+                "leads!inner(id, phone, last_customer_message_at), "
+                "channels!inner(id, name, provider, provider_config), "
+                "conversations!inner(id, stage, followup_enabled)"
+            )
+            .eq("status", "pending")
+            .eq("env_tag", _ENV_TAG)
+            .lte("fire_at", now.isoformat())
+            .order("fire_at", desc=False)
+            .limit(limit)
+            .execute()
         )
-        .eq("status", "pending")
-        .eq("env_tag", _ENV_TAG)
-        .lte("fire_at", now.isoformat())
-        .order("fire_at", desc=False)
-        .limit(limit)
-        .execute()
-    )
+    except Exception as exc:
+        logger.error(f"[FOLLOWUP] Erro ao buscar follow-ups devidos: {exc}")
+        raise RuntimeError("Falha ao buscar follow-up jobs devidos") from exc
+
+    if not result.data:
+        return []
+
     return result.data
