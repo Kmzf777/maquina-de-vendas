@@ -18,6 +18,7 @@ from app.humanizer.splitter import split_into_bubbles
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.cadence.service import get_active_enrollment, pause_enrollment
+from app.follow_up.service import schedule_followup as _schedule_followup
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
@@ -261,6 +262,17 @@ async def process_buffered_messages(
         )
     except Exception as e:
         logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
+
+    # Agenda follow-up se habilitado para a conversa
+    if conversation.get("followup_enabled", True) and channel:
+        try:
+            _schedule_followup(
+                conversation_id=conversation["id"],
+                lead_id=lead["id"],
+                channel_id=channel["id"],
+            )
+        except Exception as e:
+            logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
 
     # Send bubbles
     is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
