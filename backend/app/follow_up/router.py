@@ -1,9 +1,13 @@
 # backend/app/follow_up/router.py
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.follow_up.service import schedule_followup, cancel_followups
 from app.db.supabase import get_supabase
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["follow_up"])
 
@@ -28,7 +32,10 @@ async def toggle_followup(conversation_id: str, body: FollowupToggle):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     if not body.enabled:
-        cancel_followups(conversation_id, reason="manual")
+        try:
+            cancel_followups(conversation_id, reason="manual")
+        except Exception as e:
+            logger.error(f"[FOLLOWUP] Falha ao cancelar jobs ao desativar toggle conversation={conversation_id}: {e}")
 
     return result.data[0]
 
