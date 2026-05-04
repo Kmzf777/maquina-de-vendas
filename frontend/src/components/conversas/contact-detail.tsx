@@ -23,6 +23,7 @@ interface ContactDetailProps {
   tags: Tag[];
   leadTags: Tag[];
   onTagToggle: (tagId: string, add: boolean) => void;
+  onBack?: () => void;
 }
 
 export function ContactDetail({
@@ -30,6 +31,7 @@ export function ContactDetail({
   tags,
   leadTags,
   onTagToggle,
+  onBack,
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -96,6 +98,20 @@ export function ContactDetail({
 
   return (
     <div className="w-[320px] bg-white border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
+      {onBack && (
+        <div className="md:hidden border-b border-[#dedbd6] px-4 py-3 flex items-center gap-3 flex-shrink-0 bg-[#faf9f6]">
+          <button
+            onClick={onBack}
+            className="w-8 h-8 flex items-center justify-center rounded-[4px] text-[#313130] hover:bg-[#dedbd6]/60 transition-colors"
+            aria-label="Voltar"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+          <span className="text-[14px] font-medium text-[#111111]">Informações do Lead</span>
+        </div>
+      )}
       {/* Avatar + Name */}
       <div className="flex flex-col items-center pt-8 pb-4 px-4 border-b border-[#dedbd6]">
         <div className="w-20 h-20 rounded-full bg-[#8a8a80] flex items-center justify-center text-white text-2xl font-medium mb-3">

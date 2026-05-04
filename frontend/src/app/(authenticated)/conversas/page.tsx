@@ -23,6 +23,7 @@ export default function ConversasPage() {
   const [loading, setLoading] = useState(true);
   const [togglingAi, setTogglingAi] = useState(false);
   const [togglingFollowup, setTogglingFollowup] = useState(false);
+  const [mobileView, setMobileView] = useState<"list" | "chat" | "contact">("list");
   // Tracks conversations marked-as-read locally so we can override stale realtime payloads
   // for ~30s. Without this, the Supabase realtime push wins and the badge reappears.
   const recentlyMarkedRef = useRef<Map<string, number>>(new Map());
@@ -158,6 +159,7 @@ export default function ConversasPage() {
 
   function handleSelectConversation(conv: Conversation) {
     setSelectedConversation(conv);
+    setMobileView("chat");
   }
 
   async function handleMarkRead(conversationId: string) {
@@ -342,20 +344,24 @@ export default function ConversasPage() {
 
   return (
     <div className="flex h-full overflow-hidden bg-[#faf9f6]">
-      <ChatList
-        conversations={conversations}
-        channels={channels}
-        activeTab={activeTab}
-        selectedConversationId={selectedConversation?.id || null}
-        selectedChannelId={selectedChannelId}
-        onSelectConversation={handleSelectConversation}
-        onMarkRead={handleMarkRead}
-        onTabChange={setActiveTab}
-        onChannelChange={handleChannelChange}
-      />
 
-      {selectedConversation ? (
-        <>
+      {/* Mobile: one panel at a time */}
+      <div className={`md:hidden flex-1 flex flex-col h-full ${mobileView === "list" ? "flex" : "hidden"}`}>
+        <ChatList
+          conversations={conversations}
+          channels={channels}
+          activeTab={activeTab}
+          selectedConversationId={selectedConversation?.id || null}
+          selectedChannelId={selectedChannelId}
+          onSelectConversation={handleSelectConversation}
+          onMarkRead={handleMarkRead}
+          onTabChange={setActiveTab}
+          onChannelChange={handleChannelChange}
+        />
+      </div>
+
+      <div className={`md:hidden flex-1 flex flex-col h-full ${mobileView === "chat" && selectedConversation ? "flex" : "hidden"}`}>
+        {selectedConversation && (
           <ChatView
             conversation={selectedConversation}
             tags={tags}
@@ -365,39 +371,82 @@ export default function ConversasPage() {
             followupEnabled={selectedConversation.followup_enabled ?? true}
             togglingFollowup={togglingFollowup}
             onToggleFollowup={handleToggleFollowup}
+            onBack={() => setMobileView("list")}
+            onOpenContact={() => setMobileView("contact")}
           />
+        )}
+      </div>
+
+      <div className={`md:hidden flex-1 flex flex-col h-full overflow-y-auto ${mobileView === "contact" && selectedConversation ? "flex" : "hidden"}`}>
+        {selectedConversation && (
           <ContactDetail
             conversation={selectedConversation}
             tags={tags}
             leadTags={selectedLeadTags}
             onTagToggle={handleTagToggle}
+            onBack={() => setMobileView("chat")}
           />
-        </>
-      ) : (
-        <div className="flex-1 flex items-center justify-center bg-[#faf9f6]">
-          <div className="text-center">
-            <svg
-              className="w-16 h-16 mx-auto mb-4 text-[#dedbd6]"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-            <p className="text-[#111111] text-[16px] font-medium">
-              Selecione uma conversa
-            </p>
-            <p className="text-[#7b7b78] text-[14px] mt-1">
-              {conversations.length} conversa{conversations.length !== 1 ? "s" : ""} aberta{conversations.length !== 1 ? "s" : ""}
-            </p>
+        )}
+      </div>
+
+      {/* Desktop: side-by-side panels */}
+      <div className="hidden md:flex flex-1 overflow-hidden">
+        <ChatList
+          conversations={conversations}
+          channels={channels}
+          activeTab={activeTab}
+          selectedConversationId={selectedConversation?.id || null}
+          selectedChannelId={selectedChannelId}
+          onSelectConversation={handleSelectConversation}
+          onMarkRead={handleMarkRead}
+          onTabChange={setActiveTab}
+          onChannelChange={handleChannelChange}
+        />
+        {selectedConversation ? (
+          <>
+            <ChatView
+              conversation={selectedConversation}
+              tags={tags}
+              aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
+              togglingAi={togglingAi}
+              onToggleAi={handleToggleAi}
+              followupEnabled={selectedConversation.followup_enabled ?? true}
+              togglingFollowup={togglingFollowup}
+              onToggleFollowup={handleToggleFollowup}
+            />
+            <ContactDetail
+              conversation={selectedConversation}
+              tags={tags}
+              leadTags={selectedLeadTags}
+              onTagToggle={handleTagToggle}
+            />
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center bg-[#faf9f6]">
+            <div className="text-center">
+              <svg
+                className="w-16 h-16 mx-auto mb-4 text-[#dedbd6]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                />
+              </svg>
+              <p className="text-[#111111] text-[16px] font-medium">
+                Selecione uma conversa
+              </p>
+              <p className="text-[#7b7b78] text-[14px] mt-1">
+                {conversations.length} conversa{conversations.length !== 1 ? "s" : ""} aberta{conversations.length !== 1 ? "s" : ""}
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

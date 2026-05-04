@@ -12,6 +12,8 @@ interface ChatHeaderProps {
   followupEnabled: boolean;
   togglingFollowup?: boolean;
   onToggleFollowup: () => void | Promise<void>;
+  onBack?: () => void;
+  onOpenContact?: () => void;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -34,6 +36,8 @@ export function ChatHeader({
   followupEnabled,
   togglingFollowup,
   onToggleFollowup,
+  onBack,
+  onOpenContact,
 }: ChatHeaderProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
@@ -48,16 +52,33 @@ export function ChatHeader({
 
   return (
     <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-3 flex items-center gap-3 flex-shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+      {/* Mobile back button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="md:hidden flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-[4px] text-[#313130] hover:bg-[#dedbd6]/60 transition-colors"
+          aria-label="Voltar"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+        </button>
+      )}
+
       {/* Avatar */}
       <div
-        className="w-9 h-9 rounded-full flex items-center justify-center text-white font-medium text-sm flex-shrink-0"
+        className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-medium text-sm flex-shrink-0${onOpenContact ? " cursor-pointer" : ""}`}
         style={{ backgroundColor: avatarColor }}
+        onClick={onOpenContact}
       >
         {initial}
       </div>
 
       {/* Name + phone */}
-      <div className="flex-1 min-w-0">
+      <div
+        className={`flex-1 min-w-0${onOpenContact ? " cursor-pointer" : ""}`}
+        onClick={onOpenContact}
+      >
         <h2 className="text-[#111111] font-medium text-[14px] truncate">
           {displayName}
         </h2>
