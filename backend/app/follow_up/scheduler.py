@@ -105,6 +105,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
                 .execute()
             )
             history = list(reversed(history_result.data or []))
+            history = [m for m in history if m.get("role") and m.get("content")]
             message = await _generate_followup_message(history, sequence)
         except Exception as e:
             logger.error(f"[FOLLOWUP] Erro ao gerar mensagem seq={sequence} conversation={conversation_id}: {e}", exc_info=True)
@@ -126,7 +127,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
                 f"[FOLLOWUP] Falha ao enviar seq={sequence} lead={lead['phone']}: {e}",
                 exc_info=True,
             )
-            # Não cancela — job fica pending para retentativa
+            # Intencional per spec: em caso de falha no envio, não atualiza status — job será retentado no próximo tick
             continue
 
         # Persiste mensagem
@@ -140,7 +141,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
                 conversation_id=conversation_id,
             )
         except Exception as e:
-            logger.warning(f"[FOLLOWUP] Falha ao salvar mensagem seq={sequence}: {e}")
+            logger.error(f"[FOLLOWUP] Falha ao salvar mensagem seq={sequence}: {e}")
 
         _mark_sent(job["id"])
         logger.info(f"[FOLLOWUP] Enviado seq={sequence} lead={lead['phone']}")
