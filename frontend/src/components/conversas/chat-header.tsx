@@ -9,6 +9,9 @@ interface ChatHeaderProps {
   aiEnabled: boolean;
   togglingAi?: boolean;
   onToggleAi: () => void | Promise<void>;
+  followupEnabled: boolean;
+  togglingFollowup?: boolean;
+  onToggleFollowup: () => void | Promise<void>;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -22,7 +25,16 @@ function getStageColor(stage: string | undefined): string {
   return map[stage ?? ""] ?? "#8a8a80";
 }
 
-export function ChatHeader({ conversation, tags, aiEnabled, togglingAi, onToggleAi }: ChatHeaderProps) {
+export function ChatHeader({
+  conversation,
+  tags,
+  aiEnabled,
+  togglingAi,
+  onToggleAi,
+  followupEnabled,
+  togglingFollowup,
+  onToggleFollowup,
+}: ChatHeaderProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
 
@@ -100,6 +112,27 @@ export function ChatHeader({ conversation, tags, aiEnabled, togglingAi, onToggle
           aria-hidden
         />
         Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
+      </button>
+
+      {/* Follow-up toggle */}
+      <button
+        type="button"
+        onClick={() => onToggleFollowup()}
+        disabled={togglingFollowup}
+        className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors flex-shrink-0 ${
+          followupEnabled
+            ? "bg-[#1e6ee8] text-white hover:bg-[#1a5ec8]"
+            : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+        } ${togglingFollowup ? "opacity-60 cursor-not-allowed" : ""}`}
+        aria-pressed={followupEnabled}
+      >
+        <span
+          className={`inline-block h-1.5 w-1.5 rounded-full ${
+            followupEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"
+          }`}
+          aria-hidden
+        />
+        Follow-up · {followupEnabled ? "Ativo" : "Pausado"}
       </button>
     </div>
   );
