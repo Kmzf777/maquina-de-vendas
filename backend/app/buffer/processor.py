@@ -150,7 +150,8 @@ async def process_buffered_messages(
     # Activate conversation when lead first responds after template dispatch
     if conversation.get("status") in ("imported", "template_sent"):
         try:
-            conversation = activate_conversation(conversation["id"])
+            activate_conversation(conversation["id"])
+            conversation["status"] = "active"
         except Exception as e:
             logger.warning(f"Failed to activate conversation {conversation['id']}: {e}")
 
