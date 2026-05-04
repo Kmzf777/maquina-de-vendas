@@ -220,7 +220,7 @@ export default function VendasPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Page Header */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 py-3 md:py-5 flex items-center justify-between flex-shrink-0">
         <PipelineSwitcher
           pipelines={pipelines}
           activePipelineId={selectedPipelineId}
@@ -254,7 +254,7 @@ export default function VendasPage() {
         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div
             ref={kanbanRef}
-            className="flex gap-3 overflow-x-auto p-6 pt-2"
+            className="flex gap-3 overflow-x-auto p-4 md:p-6 pt-2 touch-pan-x"
             onMouseDown={kanbanMouseDown}
             onMouseMove={kanbanMouseMove}
             onMouseUp={kanbanMouseUp}
