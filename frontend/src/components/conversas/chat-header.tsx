@@ -51,7 +51,7 @@ export function ChatHeader({
   const leadTags = tags.filter((t) => tagIds.includes(t.id));
 
   return (
-    <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-3 flex items-center gap-3 flex-shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+    <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-3 flex items-center gap-3 flex-shrink-0">
       {/* Mobile back button */}
       {onBack && (
         <button
@@ -85,76 +85,69 @@ export function ChatHeader({
         <p className="text-[#7b7b78] text-[12px]">{lead?.phone || ""}</p>
       </div>
 
-      {/* Tags */}
-      {leadTags.length > 0 && (
-        <div className="flex gap-1 flex-shrink-0">
-          {leadTags.map((tag) => (
-            <span
-              key={tag.id}
-              className="px-2 py-0.5 rounded-[4px] text-[11px] text-white"
-              style={{ backgroundColor: tag.color }}
-            >
-              {tag.name}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* Desktop-only: tags, channel, WA indicator, AI toggle, follow-up */}
+      <div className="hidden md:flex items-center gap-3 flex-shrink-0">
+        {leadTags.length > 0 && (
+          <div className="flex gap-1">
+            {leadTags.map((tag) => (
+              <span
+                key={tag.id}
+                className="px-2 py-0.5 rounded-[4px] text-[11px] text-white"
+                style={{ backgroundColor: tag.color }}
+              >
+                {tag.name}
+              </span>
+            ))}
+          </div>
+        )}
 
-      {/* Channel badge */}
-      {channel && (
-        <span className="text-[11px] px-2 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78] flex-shrink-0">
-          {channel.name}
-        </span>
-      )}
+        {channel && (
+          <span className="text-[11px] px-2 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78]">
+            {channel.name}
+          </span>
+        )}
 
-      {/* WhatsApp 24h window indicator */}
-      <WhatsappWindowIndicator
-        expiresAt={conversation.whatsapp_window_expires_at ?? null}
-        variant="header"
-        className="flex-shrink-0"
-      />
-
-      {/* Valéria IA toggle */}
-      <button
-        type="button"
-        onClick={() => onToggleAi()}
-        disabled={togglingAi}
-        className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors flex-shrink-0 ${
-          aiEnabled
-            ? "bg-[#ff5600] text-white hover:bg-[#e64e00]"
-            : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
-        } ${togglingAi ? "opacity-60 cursor-not-allowed" : ""}`}
-        aria-pressed={aiEnabled}
-      >
-        <span
-          className={`inline-block h-1.5 w-1.5 rounded-full ${
-            aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"
-          }`}
-          aria-hidden
+        <WhatsappWindowIndicator
+          expiresAt={conversation.whatsapp_window_expires_at ?? null}
+          variant="header"
         />
-        Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
-      </button>
 
-      {/* Follow-up toggle */}
-      <button
-        type="button"
-        onClick={() => onToggleFollowup()}
-        disabled={togglingFollowup}
-        className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors flex-shrink-0 ${
-          followupEnabled
-            ? "bg-[#1e6ee8] text-white hover:bg-[#1a5ec8]"
-            : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
-        } ${togglingFollowup ? "opacity-60 cursor-not-allowed" : ""}`}
-        aria-pressed={followupEnabled}
-      >
-        <span
-          className={`inline-block h-1.5 w-1.5 rounded-full ${
-            followupEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"
-          }`}
-          aria-hidden
-        />
-        Follow-up · {followupEnabled ? "Ativo" : "Pausado"}
-      </button>
+        <button
+          type="button"
+          onClick={() => onToggleAi()}
+          disabled={togglingAi}
+          className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors ${
+            aiEnabled
+              ? "bg-[#ff5600] text-white hover:bg-[#e64e00]"
+              : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+          } ${togglingAi ? "opacity-60 cursor-not-allowed" : ""}`}
+          aria-pressed={aiEnabled}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`}
+            aria-hidden
+          />
+          Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onToggleFollowup()}
+          disabled={togglingFollowup}
+          className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors ${
+            followupEnabled
+              ? "bg-[#1e6ee8] text-white hover:bg-[#1a5ec8]"
+              : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+          } ${togglingFollowup ? "opacity-60 cursor-not-allowed" : ""}`}
+          aria-pressed={followupEnabled}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${followupEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`}
+            aria-hidden
+          />
+          Follow-up · {followupEnabled ? "Ativo" : "Pausado"}
+        </button>
+      </div>
     </div>
   );
 }

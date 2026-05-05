@@ -386,6 +386,12 @@ export default function ConversasPage() {
             leadTags={selectedLeadTags}
             onTagToggle={handleTagToggle}
             onBack={() => setMobileView("chat")}
+            aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
+            togglingAi={togglingAi}
+            onToggleAi={handleToggleAi}
+            followupEnabled={selectedConversation.followup_enabled ?? true}
+            togglingFollowup={togglingFollowup}
+            onToggleFollowup={handleToggleFollowup}
           />
         )}
       </div>

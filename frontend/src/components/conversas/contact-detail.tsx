@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { AGENT_STAGES } from "@/lib/constants";
 import { EditableField } from "./editable-field";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
+import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import type { Lead, Tag, Conversation, Pipeline, PipelineStage } from "@/lib/types";
 
 interface LeadDeal {
@@ -24,6 +25,12 @@ interface ContactDetailProps {
   leadTags: Tag[];
   onTagToggle: (tagId: string, add: boolean) => void;
   onBack?: () => void;
+  aiEnabled?: boolean;
+  togglingAi?: boolean;
+  onToggleAi?: () => void | Promise<void>;
+  followupEnabled?: boolean;
+  togglingFollowup?: boolean;
+  onToggleFollowup?: () => void | Promise<void>;
 }
 
 export function ContactDetail({
@@ -32,6 +39,12 @@ export function ContactDetail({
   leadTags,
   onTagToggle,
   onBack,
+  aiEnabled,
+  togglingAi,
+  onToggleAi,
+  followupEnabled,
+  togglingFollowup,
+  onToggleFollowup,
 }: ContactDetailProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -99,17 +112,59 @@ export function ContactDetail({
   return (
     <div className="w-full md:w-[320px] bg-white border-l-0 md:border-l border-[#dedbd6] flex flex-col h-full overflow-y-auto">
       {onBack && (
-        <div className="md:hidden border-b border-[#dedbd6] px-4 py-3 flex items-center gap-3 flex-shrink-0 bg-[#faf9f6]">
-          <button
-            onClick={onBack}
-            className="w-8 h-8 flex items-center justify-center rounded-[4px] text-[#313130] hover:bg-[#dedbd6]/60 transition-colors"
-            aria-label="Voltar"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          </button>
-          <span className="text-[14px] font-medium text-[#111111]">Informações do Lead</span>
+        <div className="md:hidden border-b border-[#dedbd6] px-4 py-3 flex flex-col gap-3 flex-shrink-0 bg-[#faf9f6]">
+          {/* Back bar */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="w-8 h-8 flex items-center justify-center rounded-[4px] text-[#313130] hover:bg-[#dedbd6]/60 transition-colors"
+              aria-label="Voltar"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+            </button>
+            <span className="text-[14px] font-medium text-[#111111]">Informações do Lead</span>
+          </div>
+          {/* Mobile controls: AI toggle, follow-up, WA indicator */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {onToggleAi && (
+              <button
+                type="button"
+                onClick={() => onToggleAi()}
+                disabled={togglingAi}
+                className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
+                  aiEnabled
+                    ? "bg-[#ff5600] text-white hover:bg-[#e64e00]"
+                    : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+                } ${togglingAi ? "opacity-60 cursor-not-allowed" : ""}`}
+                aria-pressed={aiEnabled}
+              >
+                <span className={`inline-block h-1.5 w-1.5 rounded-full ${aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`} aria-hidden />
+                Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
+              </button>
+            )}
+            {onToggleFollowup && (
+              <button
+                type="button"
+                onClick={() => onToggleFollowup()}
+                disabled={togglingFollowup}
+                className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
+                  followupEnabled
+                    ? "bg-[#1e6ee8] text-white hover:bg-[#1a5ec8]"
+                    : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+                } ${togglingFollowup ? "opacity-60 cursor-not-allowed" : ""}`}
+                aria-pressed={followupEnabled}
+              >
+                <span className={`inline-block h-1.5 w-1.5 rounded-full ${followupEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`} aria-hidden />
+                Follow-up · {followupEnabled ? "Ativo" : "Pausado"}
+              </button>
+            )}
+            <WhatsappWindowIndicator
+              expiresAt={conversation.whatsapp_window_expires_at ?? null}
+              variant="header"
+            />
+          </div>
         </div>
       )}
       {/* Avatar + Name */}
