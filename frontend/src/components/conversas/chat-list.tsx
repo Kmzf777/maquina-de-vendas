@@ -95,7 +95,7 @@ export function ChatList({
     });
 
   return (
-    <div className="w-[320px] bg-[#f0ede8] border-r border-[#dedbd6] flex flex-col h-full">
+    <div className="w-full md:w-[320px] bg-[#f0ede8] border-r border-[#dedbd6] flex flex-col h-full">
       {/* Channel filter */}
       <div className="px-3 pt-3 pb-2">
         <select

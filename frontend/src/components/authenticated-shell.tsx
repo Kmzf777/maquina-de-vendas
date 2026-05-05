@@ -22,7 +22,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
   }, [drawerOpen]);
 
   return (
-    <div className="flex h-screen bg-[#faf9f6]">
+    <div className="flex h-svh bg-[#faf9f6] overflow-x-hidden">
       {/* Desktop sidebar — hidden on mobile */}
       <div className="hidden md:flex flex-shrink-0">
         <Sidebar />
