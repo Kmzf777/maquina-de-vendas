@@ -77,6 +77,16 @@ export default function LeadsPage() {
   // Reset page when filters change
   useEffect(() => { setPage(1); }, [filters]);
 
+  // Close mobile bottom sheet on Escape
+  useEffect(() => {
+    if (!mobileSelectedLead) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileSelectedLead(null);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [mobileSelectedLead]);
+
   // KPIs
   const kpis = useMemo(() => {
     const total = leads.length;
@@ -209,7 +219,7 @@ export default function LeadsPage() {
           filteredCount={filtered.length}
         />
 
-        <div className="px-8 py-6">
+        <div className="px-4 md:px-8 py-4 md:py-6">
           {/* KPI Bar */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
             <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4">
@@ -250,7 +260,10 @@ export default function LeadsPage() {
                   key={lead.id}
                   lead={lead}
                   tags={getLeadTags(lead.id)}
-                  onClick={(l) => { setSelectedLead(l); setMobileSelectedLead(l); }}
+                  onClick={(l) => {
+                    setMobileSelectedLead(l);
+                    if (window.innerWidth >= 768) setSelectedLead(l);
+                  }}
                 />
               ))}
             </div>
@@ -339,6 +352,8 @@ export default function LeadsPage() {
         >
           <div className="absolute inset-0 bg-black/40" />
           <div
+            role="dialog"
+            aria-modal="true"
             className="relative bg-white rounded-t-[12px] border-t border-[#dedbd6] max-h-[80vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
@@ -360,6 +375,7 @@ export default function LeadsPage() {
                 </div>
               </div>
               <button
+                aria-label="Fechar"
                 onClick={() => setMobileSelectedLead(null)}
                 className="w-8 h-8 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60"
               >
