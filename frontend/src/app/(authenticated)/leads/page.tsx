@@ -24,6 +24,7 @@ export default function LeadsPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [mobileSelectedLead, setMobileSelectedLead] = useState<Lead | null>(null);
 
   const supabase = createClient();
 
@@ -143,12 +144,12 @@ export default function LeadsPage() {
           <div className="h-4 w-64 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]" />
         </div>
         <div className="flex-1 overflow-auto bg-[#faf9f6] px-4 md:px-8 py-4 md:py-6 space-y-6">
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-24 animate-pulse" />
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-40 animate-pulse" />
             ))}
@@ -161,7 +162,7 @@ export default function LeadsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Page Header */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 py-3 md:py-5 flex items-center justify-between flex-shrink-0">
         <div>
           <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">
             Leads
@@ -210,7 +211,7 @@ export default function LeadsPage() {
 
         <div className="px-8 py-6">
           {/* KPI Bar */}
-          <div className="grid grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
             <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4">
               <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Total de Leads</p>
               <p className="text-[28px] font-normal text-[#111111] mt-1" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>{kpis.total}</p>
@@ -243,13 +244,13 @@ export default function LeadsPage() {
 
           {/* Cards Grid */}
           {paginated.length > 0 ? (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
               {paginated.map((lead) => (
                 <LeadGridCard
                   key={lead.id}
                   lead={lead}
                   tags={getLeadTags(lead.id)}
-                  onClick={setSelectedLead}
+                  onClick={(l) => { setSelectedLead(l); setMobileSelectedLead(l); }}
                 />
               ))}
             </div>
@@ -328,6 +329,86 @@ export default function LeadsPage() {
           onClose={() => setShowImport(false)}
           onImportDone={() => {}}
         />
+      )}
+
+      {/* Mobile lead detail bottom sheet */}
+      {mobileSelectedLead && (
+        <div
+          className="md:hidden fixed inset-0 z-50 flex flex-col justify-end"
+          onClick={() => setMobileSelectedLead(null)}
+        >
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="relative bg-white rounded-t-[12px] border-t border-[#dedbd6] max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Handle */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full bg-[#dedbd6]" />
+            </div>
+            {/* Header */}
+            <div className="px-5 pt-2 pb-4 flex items-center justify-between border-b border-[#dedbd6]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#8a8a80] flex items-center justify-center text-white font-medium">
+                  {(mobileSelectedLead.name || mobileSelectedLead.phone || "?").charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-[15px] font-medium text-[#111111]">
+                    {mobileSelectedLead.name || mobileSelectedLead.phone}
+                  </p>
+                  <p className="text-[12px] text-[#7b7b78]">{mobileSelectedLead.phone}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setMobileSelectedLead(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {/* Details */}
+            <div className="px-5 py-4 space-y-3">
+              {mobileSelectedLead.stage && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Stage</span>
+                  <span className="text-[13px] text-[#111111]">{mobileSelectedLead.stage}</span>
+                </div>
+              )}
+              {mobileSelectedLead.company && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Empresa</span>
+                  <span className="text-[13px] text-[#111111]">{mobileSelectedLead.company}</span>
+                </div>
+              )}
+              {mobileSelectedLead.email && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Email</span>
+                  <span className="text-[13px] text-[#111111]">{mobileSelectedLead.email}</span>
+                </div>
+              )}
+              {mobileSelectedLead.channel && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Canal</span>
+                  <span className="text-[13px] text-[#111111]">{mobileSelectedLead.channel}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">AI</span>
+                <span className={`text-[12px] px-2 py-0.5 rounded-[4px] ${mobileSelectedLead.ai_enabled ? "bg-[#ff5600]/10 text-[#ff5600]" : "bg-[#dedbd6]/60 text-[#7b7b78]"}`}>
+                  {mobileSelectedLead.ai_enabled ? "Ativa" : "Pausada"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Criado em</span>
+                <span className="text-[13px] text-[#111111]">
+                  {new Date(mobileSelectedLead.created_at).toLocaleDateString("pt-BR")}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
