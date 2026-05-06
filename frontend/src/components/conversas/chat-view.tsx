@@ -59,6 +59,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     setMediaState('idle');
     setMediaBlob(null);
     setMediaMessageType(null);
+    if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
+    setMediaObjectUrl(null);
+    chunksRef.current = [];
+    setRecordingSeconds(0);
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, [conversation.id]);
@@ -167,8 +171,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       setRecordingSeconds(0);
       setMediaState('recording');
       recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
-    } catch {
-      // User denied microphone access or browser not supported
+    } catch (err) {
+      const name = err instanceof Error ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        alert('Permissão de microfone negada. Habilite o microfone nas configurações do navegador.');
+      } else if (name === 'NotFoundError') {
+        alert('Nenhum microfone encontrado.');
+      }
     }
   }
 
@@ -234,18 +243,27 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
     try {
       const fd = new FormData();
-      const filename = typeToSend === 'audio' ? 'audio.webm' : 'image.jpg';
+      const ext = blobToSend instanceof File
+        ? blobToSend.name.split('.').pop() || (typeToSend === 'audio' ? 'webm' : 'jpg')
+        : (typeToSend === 'audio' ? 'webm' : 'jpg');
+      const filename = `${typeToSend}.${ext}`;
       fd.append('file', blobToSend, filename);
 
+      const controller = new AbortController();
+      abortRef.current = controller;
       const res = await fetch(`/api/conversations/${conversation.id}/send-media`, {
         method: 'POST',
         body: fd,
+        signal: controller.signal,
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Falha ao enviar' }));
         alert(data.error || 'Falha ao enviar');
       }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      alert('Falha ao enviar mídia');
     } finally {
       setOptimisticMessages(prev => prev.filter(m => m.id !== tempMsg.id));
       URL.revokeObjectURL(urlToRevoke);
