@@ -59,6 +59,20 @@ export async function POST(
           content: text.trim(),
           stage: lead.stage || "secretaria",
         });
+
+        // Zera badge de não-lidas — busca conversa real por lead+channel
+        const { data: realConv } = await supabase
+          .from("conversations")
+          .select("id")
+          .eq("lead_id", lead.id)
+          .eq("channel_id", evoInfo.channelId)
+          .maybeSingle();
+        if (realConv) {
+          await supabase
+            .from("conversations")
+            .update({ unread_count: 0 })
+            .eq("id", realConv.id);
+        }
       }
 
       return NextResponse.json({ status: "sent" });
@@ -112,6 +126,12 @@ export async function POST(
     await supabase
       .from("conversations")
       .update({ last_msg_at: new Date().toISOString() })
+      .eq("id", conversationId);
+
+    // Zera badge de não-lidas — vendedor respondeu
+    await supabase
+      .from("conversations")
+      .update({ unread_count: 0 })
       .eq("id", conversationId);
 
     // Agenda follow-up no backend Python (fire-and-forget)
