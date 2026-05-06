@@ -122,16 +122,10 @@ export async function POST(
       stage: conv.stage || "secretaria",
     });
 
-    // Update conversation last_msg_at
+    // Update last_msg_at and zero unread badge
     await supabase
       .from("conversations")
-      .update({ last_msg_at: new Date().toISOString() })
-      .eq("id", conversationId);
-
-    // Zera badge de não-lidas — vendedor respondeu
-    await supabase
-      .from("conversations")
-      .update({ unread_count: 0 })
+      .update({ last_msg_at: new Date().toISOString(), unread_count: 0 })
       .eq("id", conversationId);
 
     // Agenda follow-up no backend Python (fire-and-forget)
