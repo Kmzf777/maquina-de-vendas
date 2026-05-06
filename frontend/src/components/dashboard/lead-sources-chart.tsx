@@ -69,7 +69,7 @@ export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
       >
         Fontes de Lead
       </h3>
-      <div className="flex items-center gap-6">
+      <div className="flex flex-col md:flex-row items-center gap-4 md:gap-6">
         <svg width={180} height={180} viewBox="0 0 180 180">
           {segments.map((seg) => (
             <circle

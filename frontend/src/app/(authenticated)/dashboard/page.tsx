@@ -51,7 +51,7 @@ export default function DashboardPage() {
   if (leadsLoading || dealsLoading) {
     return (
       <div className="flex flex-col h-full">
-        <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+        <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 py-3 md:py-5 flex items-center justify-between flex-shrink-0">
           <div>
             <div className="h-8 w-48 rounded-[8px] animate-pulse bg-[#dedbd6]/40" />
             <div className="h-4 w-72 rounded-[8px] animate-pulse mt-2 bg-[#dedbd6]/40" />
@@ -115,7 +115,7 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 py-3 md:py-5 flex items-center justify-between flex-shrink-0">
         <div>
           <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[32px] font-normal text-[#111111]">
             Dashboard
@@ -126,7 +126,7 @@ export default function DashboardPage() {
 
       {/* Main content */}
       <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
-        <div className="grid grid-cols-3 gap-5 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-5 mb-8">
           <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />
           <KpiCard label="Deals ativos" value={activeDeals.length} subtitle={fmt(activeValue)} icon={UsersIcon} />
           <KpiCard label="Deals ganhos" value={wonDeals.length} subtitle={fmt(wonValue)} icon={CheckIcon} />
@@ -135,7 +135,7 @@ export default function DashboardPage() {
           <KpiCard label="Tempo de resposta" value={responseStr} icon={ClockIcon} />
         </div>
 
-        <div className="grid grid-cols-2 gap-5 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 mb-8">
           <FunnelChart data={funnelData} />
           <LeadSourcesChart leads={leads} />
         </div>
