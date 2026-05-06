@@ -19,7 +19,6 @@ interface Props {
 
 export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Props) {
   const channelId = conversation.channel_id;
-  const lead = conversation.leads;
 
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,47 +36,23 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
   }, [channelId]);
 
   async function handleSend() {
-    if (!selected || !lead?.phone || !channelId) return;
+    if (!selected || !conversation.id) return;
     setSending(true);
     setError(null);
     try {
-      const dateStr = new Date().toLocaleDateString("pt-BR");
-      const broadcastName = `Reativação — ${selected.name} — ${dateStr}`;
-
-      const bRes = await fetch("/api/broadcasts", {
+      const res = await fetch(`/api/conversations/${conversation.id}/send-template`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: broadcastName,
-          channel_id: channelId,
           template_name: selected.name,
           template_language_code: selected.language,
           template_variables: null,
-          send_interval_min: 0,
-          send_interval_max: 0,
         }),
       });
-      if (!bRes.ok) throw new Error("Erro ao criar disparo");
-      const broadcast: { id: string } = await bRes.json();
-
-      const lRes = await fetch("/api/leads/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: lead.phone }),
-      });
-      if (!lRes.ok) throw new Error("Erro ao resolver lead");
-      const leadResolved: { id: string } = await lRes.json();
-
-      const aRes = await fetch(`/api/broadcasts/${broadcast.id}/leads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lead_ids: [leadResolved.id] }),
-      });
-      if (!aRes.ok) throw new Error("Erro ao associar lead ao disparo");
-
-      const sRes = await fetch(`/api/broadcasts/${broadcast.id}/start`, { method: "POST" });
-      if (!sRes.ok) throw new Error("Erro ao iniciar disparo");
-
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Erro ao enviar template");
+      }
       onSuccess();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado");
