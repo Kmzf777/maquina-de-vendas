@@ -1,8 +1,47 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import ffmpegPath from 'ffmpeg-static';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { writeFile, readFile, unlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomBytes } from 'crypto';
 
 const META_API_VERSION = "v21.0";
 const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB
+
+const META_SUPPORTED_AUDIO_TYPES = new Set([
+  'audio/aac',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/amr',
+  'audio/ogg',
+  'audio/opus',
+]);
+
+const execFileAsync = promisify(execFile);
+
+async function convertToOgg(inputBuffer: Buffer, inputMime: string): Promise<Buffer> {
+  const id = randomBytes(8).toString('hex');
+  const ext = inputMime.includes('webm') ? 'webm' : 'bin';
+  const inputPath = join(tmpdir(), `mv_audio_${id}.${ext}`);
+  const outputPath = join(tmpdir(), `mv_audio_${id}.ogg`);
+  try {
+    await writeFile(inputPath, inputBuffer);
+    await execFileAsync(ffmpegPath as string, [
+      '-y',
+      '-i', inputPath,
+      '-c:a', 'libopus',
+      '-b:a', '64k',
+      outputPath,
+    ]);
+    return await readFile(outputPath);
+  } finally {
+    await unlink(inputPath).catch(() => {});
+    await unlink(outputPath).catch(() => {});
+  }
+}
 
 export async function POST(
   request: NextRequest,
@@ -85,11 +124,27 @@ export async function POST(
   }
 
   try {
+    // Convert unsupported audio formats (e.g. audio/webm from Chrome) to audio/ogg
+    let uploadBlob: Blob = file;
+    let uploadMime = mimeType;
+    let uploadFilename = file.name || 'audio';
+    if (messageType === 'audio') {
+      const baseMime = mimeType.split(';')[0].trim();
+      if (!META_SUPPORTED_AUDIO_TYPES.has(baseMime)) {
+        console.log(`[send-media] converting ${mimeType} → audio/ogg`);
+        const inputBuffer = Buffer.from(await file.arrayBuffer());
+        const oggBuffer = await convertToOgg(inputBuffer, mimeType);
+        uploadBlob = new Blob([new Uint8Array(oggBuffer)], { type: 'audio/ogg' });
+        uploadMime = 'audio/ogg';
+        uploadFilename = 'audio.ogg';
+      }
+    }
+
     // Step 1: Upload to Meta Media API
     const uploadForm = new FormData();
-    uploadForm.append("file", file);
+    uploadForm.append("file", uploadBlob, uploadFilename);
     uploadForm.append("messaging_product", "whatsapp");
-    uploadForm.append("type", mimeType);
+    uploadForm.append("type", uploadMime);
 
     const uploadResp = await fetch(
       `https://graph.facebook.com/${version}/${phone_number_id}/media`,
