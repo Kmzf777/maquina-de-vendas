@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Message } from "@/lib/types";
 
 export function useRealtimeMessages(leadId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const fetchMessages = useCallback(async () => {
     if (!leadId) {
@@ -25,7 +25,7 @@ export function useRealtimeMessages(leadId: string | null) {
 
     if (data) setMessages(data);
     setLoading(false);
-  }, [leadId]);
+  }, [leadId, supabase]);
 
   useEffect(() => {
     // Reset state immediately on leadId change to avoid stale message flash
@@ -54,7 +54,7 @@ export function useRealtimeMessages(leadId: string | null) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [leadId, fetchMessages]);
+  }, [leadId, fetchMessages, supabase]);
 
-  return { messages, loading };
+  return { messages, loading, refetch: fetchMessages };
 }

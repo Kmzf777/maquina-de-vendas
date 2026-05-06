@@ -57,6 +57,7 @@ export async function POST(
           lead_id: lead.id,
           role: "assistant",
           content: text.trim(),
+          sent_by: "seller",
           stage: lead.stage || "secretaria",
         });
 
@@ -119,6 +120,7 @@ export async function POST(
       conversation_id: conversationId,
       role: "assistant",
       content: text.trim(),
+      sent_by: "seller",
       stage: conv.stage || "secretaria",
     });
 

@@ -26,7 +26,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const lead = conversation.leads;
   const channel = conversation.channels;
 
-  const { messages, loading } = useRealtimeMessages(lead?.id ?? null);
+  const { messages, loading, refetch } = useRealtimeMessages(lead?.id ?? null);
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -115,14 +115,19 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: content }),
         signal: controller.signal,
+        keepalive: true,
       });
-      if (!res.ok) setText(content);
-      setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
+      if (!res.ok) {
+        setText(content);
+      } else {
+        await refetch().catch(() => {});
+      }
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-      setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
-      setText(content);
+      if (!(err instanceof Error && err.name === "AbortError")) {
+        setText(content);
+      }
     } finally {
+      setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
       setSending(false);
       sendingRef.current = false;
     }
@@ -268,10 +273,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Falha ao enviar' }));
         alert(data.error || 'Falha ao enviar');
+      } else {
+        await refetch().catch(() => {});
       }
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return;
-      alert('Falha ao enviar mídia');
+      if (!(err instanceof Error && err.name === 'AbortError')) {
+        alert('Falha ao enviar mídia');
+      }
     } finally {
       setOptimisticMessages(prev => prev.filter(m => m.id !== tempMsg.id));
       URL.revokeObjectURL(urlToRevoke);
