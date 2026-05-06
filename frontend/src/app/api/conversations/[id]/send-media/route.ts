@@ -29,6 +29,10 @@ export async function POST(
     );
   }
 
+  if (file.size === 0) {
+    return NextResponse.json({ error: "Arquivo vazio" }, { status: 400 });
+  }
+
   const mimeType = file.type;
   let messageType: "audio" | "image";
   if (mimeType.startsWith("audio/")) {
@@ -74,6 +78,11 @@ export async function POST(
 
   const { phone_number_id, access_token, api_version } = channel.provider_config;
   const version = api_version || META_API_VERSION;
+
+  if (!phone_number_id || !access_token) {
+    console.error("[send-media] channel misconfigured — missing phone_number_id or access_token");
+    return NextResponse.json({ error: "Canal não configurado corretamente" }, { status: 500 });
+  }
 
   try {
     // Step 1: Upload to Meta Media API
