@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Message } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 
@@ -17,6 +18,7 @@ function getSenderBadge(message: Message): string | null {
 export function MessageBubble({ message, isGrouped, conversationId }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
+  const [imgError, setImgError] = useState(false);
   const senderBadge = getSenderBadge(message);
 
   const isAudio = message.message_type === "audio";
@@ -58,11 +60,21 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
           )
         ) : isImage ? (
           mediaSrc ? (
-            <img
-              src={mediaSrc}
-              alt="imagem"
-              className="max-w-[240px] rounded-[4px] block"
-            />
+            imgError ? (
+              <div className="flex items-center gap-2 py-1">
+                <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2l1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z" />
+                </svg>
+                <span className="text-[13px] opacity-60">Imagem</span>
+              </div>
+            ) : (
+              <img
+                src={mediaSrc}
+                alt="Imagem enviada"
+                className="max-w-[240px] max-h-[320px] object-contain rounded-[4px] block"
+                onError={() => setImgError(true)}
+              />
+            )
           ) : (
             <div className="flex items-center gap-2 py-1">
               <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
