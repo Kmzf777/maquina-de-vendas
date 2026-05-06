@@ -120,7 +120,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       if (!res.ok) {
         setText(content);
       } else {
-        await refetch().catch(() => {});
+        refetch().catch(() => {});
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === "AbortError")) {
@@ -274,7 +274,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         const data = await res.json().catch(() => ({ error: 'Falha ao enviar' }));
         alert(data.error || 'Falha ao enviar');
       } else {
-        await refetch().catch(() => {});
+        refetch().catch(() => {});
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
