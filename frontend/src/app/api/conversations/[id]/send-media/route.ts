@@ -1,0 +1,158 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { getServiceSupabase } from "@/lib/supabase/api";
+
+const META_API_VERSION = "v21.0";
+const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: conversationId } = await params;
+
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+  }
+
+  const file = formData.get("file") as File | null;
+  if (!file) {
+    return NextResponse.json({ error: "file is required" }, { status: 400 });
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    return NextResponse.json(
+      { error: "Arquivo muito grande (máx 16MB)" },
+      { status: 400 }
+    );
+  }
+
+  const mimeType = file.type;
+  let messageType: "audio" | "image";
+  if (mimeType.startsWith("audio/")) {
+    messageType = "audio";
+  } else if (mimeType.startsWith("image/")) {
+    messageType = "image";
+  } else {
+    return NextResponse.json(
+      { error: "Tipo de arquivo não suportado. Use áudio ou imagem." },
+      { status: 400 }
+    );
+  }
+
+  const supabase = await getServiceSupabase();
+
+  const { data: conv, error: convError } = await supabase
+    .from("conversations")
+    .select("*, leads(id, phone), channels(id, provider, provider_config)")
+    .eq("id", conversationId)
+    .single();
+
+  if (convError || !conv) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
+
+  const channel = conv.channels as {
+    id: string;
+    provider: string;
+    provider_config: Record<string, string>;
+  } | null;
+  const lead = conv.leads as { id: string; phone: string } | null;
+
+  if (!channel || !lead?.phone) {
+    return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
+  }
+
+  if (channel.provider !== "meta_cloud") {
+    return NextResponse.json(
+      { error: "Envio de mídia disponível apenas para Meta Cloud" },
+      { status: 400 }
+    );
+  }
+
+  const { phone_number_id, access_token, api_version } = channel.provider_config;
+  const version = api_version || META_API_VERSION;
+
+  try {
+    // Step 1: Upload to Meta Media API
+    const uploadForm = new FormData();
+    uploadForm.append("file", file);
+    uploadForm.append("messaging_product", "whatsapp");
+    uploadForm.append("type", mimeType);
+
+    const uploadResp = await fetch(
+      `https://graph.facebook.com/${version}/${phone_number_id}/media`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${access_token}` },
+        body: uploadForm,
+      }
+    );
+
+    if (!uploadResp.ok) {
+      const err = await uploadResp.text();
+      console.error("[send-media] Meta upload failed:", err);
+      return NextResponse.json(
+        { error: "Falha ao enviar arquivo para WhatsApp" },
+        { status: 502 }
+      );
+    }
+
+    const { id: mediaId } = (await uploadResp.json()) as { id: string };
+
+    // Step 2: Send message via Meta Graph API
+    const sendPayload = {
+      messaging_product: "whatsapp",
+      to: lead.phone,
+      type: messageType,
+      [messageType]: { id: mediaId },
+    };
+
+    const sendResp = await fetch(
+      `https://graph.facebook.com/${version}/${phone_number_id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(sendPayload),
+      }
+    );
+
+    if (!sendResp.ok) {
+      const err = await sendResp.text();
+      console.error("[send-media] Meta send failed:", err);
+      return NextResponse.json(
+        { error: "Falha ao enviar mensagem" },
+        { status: 502 }
+      );
+    }
+
+    // Step 3: Save to DB
+    await supabase.from("messages").insert({
+      lead_id: lead.id,
+      conversation_id: conversationId,
+      role: "assistant",
+      content: "",
+      sent_by: "seller",
+      message_type: messageType,
+      media_url: mediaId,
+    });
+
+    await supabase
+      .from("conversations")
+      .update({
+        unread_count: 0,
+        last_msg_at: new Date().toISOString(),
+      })
+      .eq("id", conversationId);
+
+    return NextResponse.json({ status: "sent" });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to send media";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
