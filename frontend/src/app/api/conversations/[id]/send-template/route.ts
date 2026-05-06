@@ -25,12 +25,12 @@ export async function POST(
     return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
   }
 
-  const channel = conv.channels as {
+  const channel = conv.channels as unknown as {
     id: string;
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as { id: string; phone: string } | null;
+  const lead = conv.leads as unknown as { id: string; phone: string } | null;
 
   if (!channel || !lead?.phone) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
