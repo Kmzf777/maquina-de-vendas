@@ -201,7 +201,7 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {lead['id']}: {e}")
 
-    # Incrementa contador de não-lidas para o vendedor (resetado quando ele abre a conversa)
+    # Incrementa contador de não-lidas para o vendedor (resetado quando o vendedor responde)
     try:
         sb = get_supabase()
         current = (

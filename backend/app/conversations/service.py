@@ -144,11 +144,12 @@ def save_message(
         logger.error(f"[DEBUG-SAVE_MESSAGE] insert returned empty data — NADA SALVO (payload={msg})")
         return {}
 
-    # Keep conversations.last_msg_at current so the UI sorts correctly
+    # Keep conversations.last_msg_at current; zero unread badge on outbound
     try:
-        sb.table("conversations").update(
-            {"last_msg_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("id", conversation_id).execute()
+        update_fields: dict = {"last_msg_at": datetime.now(timezone.utc).isoformat()}
+        if role == "assistant":
+            update_fields["unread_count"] = 0
+        sb.table("conversations").update(update_fields).eq("id", conversation_id).execute()
     except Exception as e:
         logger.warning(f"[DEBUG-SAVE_MESSAGE] failed to update last_msg_at: {e}")
 

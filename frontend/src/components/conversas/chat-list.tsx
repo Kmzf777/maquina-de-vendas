@@ -75,9 +75,6 @@ export function ChatList({
 
   const handleSelectConversation = (conv: Conversation) => {
     onSelectConversation(conv);
-    if ((conv.unread_count ?? 0) > 0 && onMarkRead) {
-      onMarkRead(conv.id);
-    }
   };
 
   const filteredConversations = conversations
