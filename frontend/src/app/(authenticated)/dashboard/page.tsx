@@ -58,7 +58,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
-          <div className="grid grid-cols-3 gap-5">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-5">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
                 key={i}
