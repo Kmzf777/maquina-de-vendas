@@ -30,13 +30,19 @@ async function convertToOgg(inputBuffer: Buffer, inputMime: string): Promise<Buf
   try {
     await writeFile(inputPath, inputBuffer);
     await execFileAsync(ffmpegPath as string, [
+      '-loglevel', 'error',
       '-y',
       '-i', inputPath,
       '-c:a', 'libopus',
       '-b:a', '64k',
       outputPath,
-    ]);
+    ], { maxBuffer: 50 * 1024 * 1024 });
     return await readFile(outputPath);
+  } catch (err) {
+    const details = err instanceof Error ? err.message : String(err);
+    const stderr = (err as { stderr?: string }).stderr ?? '';
+    console.error('[convertToOgg] ffmpeg failed:', details, stderr ? `\nstderr: ${stderr}` : '');
+    throw new Error(`Falha na conversão de áudio: ${details}`);
   } finally {
     await unlink(inputPath).catch(() => {});
     await unlink(outputPath).catch(() => {});
@@ -217,6 +223,7 @@ export async function POST(
     return NextResponse.json({ status: "sent" });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to send media";
+    console.error('[send-media] unhandled error:', msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
