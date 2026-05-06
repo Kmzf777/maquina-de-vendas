@@ -75,6 +75,14 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     };
   }, [conversation.id]);
 
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      mediaRecorderRef.current?.stop();
+    };
+  }, []);
+
   const displayMessages = useMemo(
     () => [...messages, ...optimisticMessages],
     [messages, optimisticMessages]

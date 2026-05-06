@@ -10,6 +10,8 @@ export async function POST(
 ) {
   const { id: conversationId } = await params;
 
+  const supabase = await getServiceSupabase();
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -45,8 +47,6 @@ export async function POST(
       { status: 400 }
     );
   }
-
-  const supabase = await getServiceSupabase();
 
   const { data: conv, error: convError } = await supabase
     .from("conversations")
