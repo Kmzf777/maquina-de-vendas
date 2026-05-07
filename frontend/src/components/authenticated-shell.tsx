@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import { NotificationToast } from "@/components/notification-toast";
 
 export function AuthenticatedShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -69,6 +70,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
       >
         {children}
       </main>
+      <NotificationToast />
     </div>
   );
 }
