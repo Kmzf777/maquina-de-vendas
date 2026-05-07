@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent,
@@ -19,20 +19,34 @@ import { LostReasonModal } from "@/components/deals/lost-reason-modal";
 import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
 import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
 import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
+import { BulkMoveDealsModal } from "@/components/deals/bulk-move-deals-modal";
 import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 
 function DroppableColumn({
-  id, title, dotColor, deals, onDealClick,
+  id, title, dotColor, deals, onDealClick, onBulkMove,
 }: {
-  id: string; title: string; dotColor: string; deals: Deal[]; onDealClick: (deal: Deal) => void;
+  id: string; title: string; dotColor: string; deals: Deal[]; onDealClick: (deal: Deal) => void; onBulkMove?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   const columnValue = deals.reduce((sum, d) => sum + (d.value || 0), 0);
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showMenu]);
 
   return (
     <div className="bg-[#f7f5f1] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
-      <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between">
+      <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between group">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
           <h3 className="text-[13px] font-medium text-[#111111] uppercase tracking-[0.6px]">{title}</h3>
@@ -40,6 +54,27 @@ function DroppableColumn({
         <div className="flex items-center gap-2">
           {columnValue > 0 && <span className="text-[11px] text-[#7b7b78]">{fmt(columnValue)}</span>}
           <span className="text-[12px] text-[#7b7b78] bg-white border border-[#dedbd6] rounded-full px-2 py-0.5">{deals.length}</span>
+          {deals.length > 0 && (
+            <div ref={menuRef} className="relative">
+              <button
+                onClick={() => setShowMenu((v) => !v)}
+                className="opacity-0 group-hover:opacity-100 transition-opacity text-[#7b7b78] hover:text-[#111111] px-1 leading-none text-[16px]"
+                title="Opções da coluna"
+              >
+                ···
+              </button>
+              {showMenu && (
+                <div className="absolute right-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] shadow-none z-20 min-w-[140px]">
+                  <button
+                    onClick={() => { setShowMenu(false); onBulkMove?.(); }}
+                    className="w-full text-left px-3 py-2 text-[13px] text-[#111111] hover:bg-[#faf9f6] rounded-[6px] transition-colors"
+                  >
+                    Mover deals...
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div
@@ -85,6 +120,7 @@ export default function VendasPage() {
   const [category, setCategory] = useState("");
   const [showActive, setShowActive] = useState(true);
   const [lostDeal, setLostDeal] = useState<{ deal: Deal; stageId: string } | null>(null);
+  const [bulkMoveStage, setBulkMoveStage] = useState<PipelineStage | null>(null);
 
   // Auto-selecionar primeiro pipeline
   useEffect(() => {
@@ -176,6 +212,21 @@ export default function VendasPage() {
       return;
     }
     setSelectedPipelineId(pipelines.find((p) => p.id !== pipeline.id)?.id ?? null);
+  }
+
+  async function handleBulkMove(dealIds: string[], targetStageId: string) {
+    const results = await Promise.all(
+      dealIds.map((id) =>
+        fetch(`/api/deals/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stage_id: targetStageId }),
+        })
+      )
+    );
+    if (results.some((r) => !r.ok)) {
+      alert("Erro ao mover alguns deals. Tente novamente.");
+    }
   }
 
   async function handleDeleteDeal(dealId: string) {
@@ -270,6 +321,7 @@ export default function VendasPage() {
                   dotColor={stage.dot_color}
                   deals={stageDeals}
                   onDealClick={(deal) => setSelectedDealId(deal.id)}
+                  onBulkMove={() => setBulkMoveStage(stage)}
                 />
               );
             })}
@@ -303,6 +355,16 @@ export default function VendasPage() {
           stages={stages}
           onClose={() => setShowPipelineEdit(false)}
           onSaved={refetchStages}
+        />
+      )}
+      {bulkMoveStage && (
+        <BulkMoveDealsModal
+          deals={filteredDeals.filter((d) => d.stage_id === bulkMoveStage.id)}
+          stages={stages}
+          sourceStageId={bulkMoveStage.id}
+          sourceStageName={bulkMoveStage.label}
+          onClose={() => setBulkMoveStage(null)}
+          onMove={handleBulkMove}
         />
       )}
     </div>
