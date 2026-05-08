@@ -21,11 +21,13 @@ async def toggle_followup(conversation_id: str, body: FollowupToggle):
     """Ativa/desativa follow-up automático para a conversa."""
     sb = get_supabase()
 
+    sb.table("conversations").update({"followup_enabled": body.enabled}).eq("id", conversation_id).execute()
+
     result = (
         sb.table("conversations")
-        .update({"followup_enabled": body.enabled})
-        .eq("id", conversation_id)
         .select("id, followup_enabled")
+        .eq("id", conversation_id)
+        .single()
         .execute()
     )
     if not result.data:
@@ -37,7 +39,7 @@ async def toggle_followup(conversation_id: str, body: FollowupToggle):
         except Exception as e:
             logger.error(f"[FOLLOWUP] Falha ao cancelar jobs ao desativar toggle conversation={conversation_id}: {e}")
 
-    return result.data[0]
+    return result.data
 
 
 @router.post("/{conversation_id}/followup/schedule")
