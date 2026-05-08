@@ -29,6 +29,8 @@ export default function ConversasPage() {
   const recentlyMarkedRef = useRef<Map<string, number>>(new Map());
   // Tracks ai_enabled value for in-flight toggles so realtime doesn't overwrite the optimistic state.
   const recentlyToggledAiRef = useRef<Map<string, boolean>>(new Map());
+  // Same protection for followup_enabled toggles.
+  const recentlyToggledFollowupRef = useRef<Map<string, boolean>>(new Map());
 
   const applyRecentlyMarkedOverride = useCallback((list: Conversation[]): Conversation[] => {
     const now = Date.now();
@@ -52,11 +54,14 @@ export default function ConversasPage() {
         const data = await res.json();
         const raw = Array.isArray(data) ? data : [];
         const base = applyRecentlyMarkedOverride(raw);
-        // Preserve in-flight ai_enabled toggles so realtime doesn't race against PATCH
+        // Preserve in-flight toggles so realtime doesn't race against PATCH
         const list = base.map((c) => {
-          const pending = recentlyToggledAiRef.current.get(c.id);
-          if (pending === undefined) return c;
-          return { ...c, leads: { ...(c.leads as any), ai_enabled: pending } };
+          let out = c;
+          const pendingAi = recentlyToggledAiRef.current.get(c.id);
+          if (pendingAi !== undefined) out = { ...out, leads: { ...(out.leads as any), ai_enabled: pendingAi } };
+          const pendingFollowup = recentlyToggledFollowupRef.current.get(c.id);
+          if (pendingFollowup !== undefined) out = { ...out, followup_enabled: pendingFollowup };
+          return out;
         });
         setConversations(list);
         // Sync selectedConversation when its data changes
@@ -267,6 +272,7 @@ export default function ConversasPage() {
     const current = selectedConversation.followup_enabled ?? true;
     const next = !current;
     setTogglingFollowup(true);
+    recentlyToggledFollowupRef.current.set(selectedConversation.id, next);
 
     // Optimistic update
     const patch = { followup_enabled: next };
@@ -303,6 +309,7 @@ export default function ConversasPage() {
           : prev
       );
     } finally {
+      recentlyToggledFollowupRef.current.delete(selectedConversation.id);
       setTogglingFollowup(false);
     }
   }
