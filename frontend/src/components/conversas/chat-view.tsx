@@ -18,11 +18,12 @@ interface ChatViewProps {
   followupEnabled: boolean;
   togglingFollowup?: boolean;
   onToggleFollowup: () => void | Promise<void>;
+  onMarkRead?: () => void | Promise<void>;
   onBack?: () => void;
   onOpenContact?: () => void;
 }
 
-export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup, onBack, onOpenContact }: ChatViewProps) {
+export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup, onMarkRead, onBack, onOpenContact }: ChatViewProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
 
@@ -297,6 +298,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         followupEnabled={followupEnabled}
         togglingFollowup={togglingFollowup}
         onToggleFollowup={onToggleFollowup}
+        onMarkRead={onMarkRead}
         onBack={onBack}
         onOpenContact={onOpenContact}
       />
