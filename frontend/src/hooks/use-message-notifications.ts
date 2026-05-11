@@ -49,9 +49,8 @@ export function useMessageNotifications() {
             .maybeSingle();
 
           if (!conv) return;
-          const leads = conv.leads as { id: string; name: string; ai_enabled: boolean }[] | null;
-          if (!leads || !leads[0] || leads[0].ai_enabled !== false) return;
-          const lead = leads[0];
+          const lead = (conv.leads as unknown) as { id: string; name: string; ai_enabled: boolean } | null;
+          if (!lead || lead.ai_enabled !== false) return;
 
           const notification: MessageNotification = {
             id: crypto.randomUUID(),
