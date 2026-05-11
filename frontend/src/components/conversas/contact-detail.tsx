@@ -126,7 +126,7 @@ export function ContactDetail({
             </button>
             <span className="text-[14px] font-medium text-[#111111]">Informações do Lead</span>
           </div>
-          {/* Mobile controls: AI toggle, follow-up, WA indicator */}
+          {/* Mobile controls: AI toggle, WA indicator */}
           <div className="flex items-center gap-2 flex-wrap">
             {onToggleAi && (
               <button
@@ -142,22 +142,6 @@ export function ContactDetail({
               >
                 <span className={`inline-block h-1.5 w-1.5 rounded-full ${aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`} aria-hidden />
                 Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
-              </button>
-            )}
-            {onToggleFollowup && (
-              <button
-                type="button"
-                onClick={() => onToggleFollowup()}
-                disabled={togglingFollowup}
-                className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
-                  followupEnabled
-                    ? "bg-[#1e6ee8] text-white hover:bg-[#1a5ec8]"
-                    : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
-                } ${togglingFollowup ? "opacity-60 cursor-not-allowed" : ""}`}
-                aria-pressed={followupEnabled}
-              >
-                <span className={`inline-block h-1.5 w-1.5 rounded-full ${followupEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`} aria-hidden />
-                Follow-up · {followupEnabled ? "Ativo" : "Pausado"}
               </button>
             )}
             <WhatsappWindowIndicator
