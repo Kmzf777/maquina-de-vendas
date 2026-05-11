@@ -379,6 +379,7 @@ export default function ConversasPage() {
             followupEnabled={selectedConversation.followup_enabled ?? true}
             togglingFollowup={togglingFollowup}
             onToggleFollowup={handleToggleFollowup}
+            onMarkRead={() => handleMarkRead(selectedConversation.id)}
             onBack={() => setMobileView("list")}
             onOpenContact={() => setMobileView("contact")}
           />
@@ -427,6 +428,7 @@ export default function ConversasPage() {
               followupEnabled={selectedConversation.followup_enabled ?? true}
               togglingFollowup={togglingFollowup}
               onToggleFollowup={handleToggleFollowup}
+              onMarkRead={() => handleMarkRead(selectedConversation.id)}
             />
             <ContactDetail
               conversation={selectedConversation}
