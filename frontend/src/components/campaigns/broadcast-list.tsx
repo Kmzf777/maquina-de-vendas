@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { Broadcast } from "@/lib/types";
 import { BroadcastCard } from "./broadcast-card";
 
@@ -10,6 +11,7 @@ interface BroadcastListProps {
 }
 
 export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
 
@@ -69,7 +71,7 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
               broadcast={b}
               onStart={() => handleAction(b.id, "start")}
               onPause={() => handleAction(b.id, "pause")}
-              onClick={() => {}}
+              onClick={() => router.push(`/campanhas/disparos/${b.id}`)}
             />
           ))}
         </div>

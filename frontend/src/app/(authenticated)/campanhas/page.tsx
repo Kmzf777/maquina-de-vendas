@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useRealtimeBroadcasts } from "@/hooks/use-realtime-broadcasts";
 import { useRealtimeCadences } from "@/hooks/use-realtime-cadences";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
-import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
+import { CreateBroadcastModal, type BroadcastPrefill } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
-import { CreateTemplateModal } from "@/components/canais/create-template-modal";
+import { TemplatesTab } from "@/components/campaigns/templates-tab";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -31,18 +32,65 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export default function CampanhasPage() {
+const VALID_TABS = ["visao-geral", "disparos", "cadencias", "templates"] as const;
+type TabId = typeof VALID_TABS[number];
+
+function CampanhasPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const { broadcasts, loading: bLoading } = useRealtimeBroadcasts();
   const { cadences, loading: cLoading } = useRealtimeCadences();
   const [period, setPeriod] = useState("30d");
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
-  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showQuickSendModal, setShowQuickSendModal] = useState(false);
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
   const [creatingSaving, setCreatingSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"visao-geral" | "disparos" | "cadencias">("visao-geral");
+  const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
+  const [prefill, setPrefill] = useState<BroadcastPrefill | undefined>(undefined);
+
+  // Read ?tab= query param on mount / change
+  useEffect(() => {
+    const tab = searchParams.get("tab") as TabId | null;
+    if (tab && (VALID_TABS as readonly string[]).includes(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
+  // Handle ?retry=<broadcastId>
+  useEffect(() => {
+    const retryId = searchParams.get("retry");
+    if (!retryId) return;
+
+    Promise.all([
+      fetch(`/api/broadcasts/${retryId}`).then((r) => r.json()),
+      fetch(`/api/broadcasts/${retryId}/leads`).then((r) => r.json()),
+    ]).then(([broadcast, leads]) => {
+      const failedLeads = (Array.isArray(leads) ? leads : []).filter(
+        (l: { status: string }) => l.status === "failed"
+      );
+
+      fetch(`/api/channels/${broadcast.channel_id}/templates`)
+        .then((r) => r.json())
+        .then((templates: Array<{ name: string; language: string; category: string; body: string; params: string[] }>) => {
+          const tpl = templates.find((t) => t.name === broadcast.template_name);
+          if (!tpl) return;
+          setPrefill({
+            channelId: broadcast.channel_id,
+            templateName: tpl.name,
+            templateLanguage: tpl.language,
+            varValues: broadcast.template_variables as Record<string, string> ?? {},
+            leadIds: failedLeads.map((l: { lead_id: string }) => l.lead_id),
+          });
+          setShowBroadcastModal(true);
+          router.replace("/campanhas?tab=disparos");
+        });
+    }).catch(() => {
+      // silently ignore fetch errors for retry
+    });
+  }, [searchParams, router]);
 
   const handleCreateCadence = async () => {
     if (!cadenceName.trim()) return;
@@ -114,19 +162,13 @@ export default function CampanhasPage() {
           >
             + Cadencia
           </button>
-          <button
-            onClick={() => setShowTemplateModal(true)}
-            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
-          >
-            + Template
-          </button>
         </div>
       </div>
 
       {/* Tab nav */}
       <div className="border-b border-[#dedbd6] bg-white px-8 flex-shrink-0">
         <div className="flex">
-          {(["visao-geral", "disparos", "cadencias"] as const).map((tab) => (
+          {(VALID_TABS).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -136,7 +178,10 @@ export default function CampanhasPage() {
                   : "border-transparent text-[#7b7b78] hover:text-[#111111]"
               }`}
             >
-              {tab === "visao-geral" ? "Visão Geral" : tab === "disparos" ? "Disparos" : "Cadências"}
+              {tab === "visao-geral" ? "Visão Geral"
+                : tab === "disparos" ? "Disparos"
+                : tab === "cadencias" ? "Cadências"
+                : "Templates"}
             </button>
           ))}
         </div>
@@ -161,7 +206,11 @@ export default function CampanhasPage() {
                   const pct = b.total_leads > 0 ? Math.round((b.sent / b.total_leads) * 100) : 0;
                   const fillColor = b.status === "completed" ? "#0bdf50" : b.status === "running" ? "#ff5600" : "#dedbd6";
                   return (
-                    <div key={b.id} className="flex items-center gap-4">
+                    <div
+                      key={b.id}
+                      className="flex items-center gap-4 cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={() => router.push(`/campanhas/disparos/${b.id}`)}
+                    >
                       <StatusBadge status={b.status} />
                       <span className="text-[14px] text-[#111111] flex-1 truncate">{b.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -205,12 +254,14 @@ export default function CampanhasPage() {
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
         {activeTab === "cadencias" && <CadenceList cadences={cadences} />}
+        {activeTab === "templates" && <TemplatesTab />}
       </div>
 
       <CreateBroadcastModal
         open={showBroadcastModal}
-        onClose={() => setShowBroadcastModal(false)}
+        onClose={() => { setShowBroadcastModal(false); setPrefill(undefined); }}
         onCreated={() => {}}
+        prefill={prefill}
       />
 
       <QuickSendModal
@@ -230,12 +281,6 @@ export default function CampanhasPage() {
           </button>
         </div>
       )}
-
-      <CreateTemplateModal
-        open={showTemplateModal}
-        onClose={() => setShowTemplateModal(false)}
-        onCreated={() => setShowTemplateModal(false)}
-      />
 
       {/* Create Cadence Modal */}
       {showCadenceModal && (
@@ -280,5 +325,13 @@ export default function CampanhasPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function CampanhasPage() {
+  return (
+    <Suspense>
+      <CampanhasPageInner />
+    </Suspense>
   );
 }
