@@ -38,10 +38,14 @@ async def create_template(channel_id: str, data: dict) -> tuple[dict, str]:
         meta_response = await meta_client.create_template(payload)
     except httpx.HTTPStatusError as exc:
         logger.exception("Meta Templates API error for channel %s", channel_id)
-        raise HTTPException(502, "Failed to create template on Meta") from exc
+        try:
+            detail = exc.response.json()
+        except Exception:
+            detail = str(exc)
+        raise HTTPException(502, detail=detail) from exc
     except httpx.RequestError as exc:
         logger.exception("Meta Templates API unreachable for channel %s", channel_id)
-        raise HTTPException(502, "Failed to reach Meta API") from exc
+        raise HTTPException(502, detail={"error": "Failed to reach Meta API", "detail": str(exc)}) from exc
 
     meta_category = meta_response.get("category", requested_category)
     meta_template_id = meta_response.get("id")

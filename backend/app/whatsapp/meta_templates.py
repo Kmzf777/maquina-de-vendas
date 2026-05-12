@@ -32,7 +32,12 @@ class MetaTemplateClient:
                     payload,
                     error_body,
                 )
-            resp.raise_for_status()
+                # Raise with detail so callers can surface it to the client
+                raise httpx.HTTPStatusError(
+                    message=str(error_body),
+                    request=resp.request,
+                    response=resp,
+                )
             return resp.json()
 
     async def delete_template(self, template_name: str, meta_template_id: str | None = None) -> None:
