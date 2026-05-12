@@ -198,6 +198,17 @@ export interface CadenceEnrollment {
   deals?: { id: string; title: string; stage: string } | null;
 }
 
+export interface MessageTemplate {
+  id: string;
+  channel_id: string;
+  name: string;
+  language: string;
+  category: string | null;
+  requested_category: string | null;
+  status: string;
+  created_at: string;
+}
+
 export interface TemplatePreset {
   id: string;
   name: string;
