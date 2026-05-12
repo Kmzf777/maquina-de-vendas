@@ -31,6 +31,7 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
   const [expectedClose, setExpectedClose] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const filteredLeads = leads.filter((l) => {
     if (!leadSearch) return true;
@@ -46,16 +47,21 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
     e.preventDefault();
     if (!selectedLeadId || !title.trim()) return;
     setSaving(true);
-    await onCreate({
-      lead_id: selectedLeadId,
-      title: title.trim(),
-      value: Number(value) || 0,
-      category,
-      expected_close_date: expectedClose,
-      pipeline_id: selectedPipelineId || undefined,
-    });
-    setSaving(false);
-    onClose();
+    setError(null);
+    try {
+      await onCreate({
+        lead_id: selectedLeadId,
+        title: title.trim(),
+        value: Number(value) || 0,
+        category,
+        expected_close_date: expectedClose,
+        pipeline_id: selectedPipelineId || undefined,
+      });
+      onClose();
+    } catch (err) {
+      setSaving(false);
+      setError(err instanceof Error ? err.message : "Erro ao criar oportunidade.");
+    }
   }
 
   return (
@@ -131,6 +137,9 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
             <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Previsao de fechamento</label>
             <input type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
           </div>
+          {error && (
+            <p className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-[6px] px-3 py-2">{error}</p>
+          )}
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" onClick={onClose} className="border border-[#dedbd6] text-[#313130] px-3 py-1.5 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors">Cancelar</button>
             <button type="submit" disabled={saving || !selectedLeadId || !title.trim() || (!!pipelines?.length && !selectedPipelineId)} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50">

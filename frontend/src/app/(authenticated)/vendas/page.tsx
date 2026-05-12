@@ -169,13 +169,16 @@ export default function VendasPage() {
   async function handleCreateDeal(data: {
     lead_id: string; title: string; value: number; category: string; expected_close_date: string; pipeline_id?: string;
   }) {
-    if (!selectedPipelineId) return;
+    if (!selectedPipelineId) throw new Error("Nenhum funil selecionado.");
     const res = await fetch("/api/deals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...data, pipeline_id: selectedPipelineId }),
     });
-    if (!res.ok) alert("Erro ao criar deal. Tente novamente.");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Erro ao criar deal.");
+    }
   }
 
   async function handleUpdateDeal(dealId: string, data: Record<string, unknown>) {
