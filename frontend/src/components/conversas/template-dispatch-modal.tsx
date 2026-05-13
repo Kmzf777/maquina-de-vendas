@@ -8,7 +8,7 @@ interface MetaTemplate {
   language: string;
   category: string;
   body: string;
-  params: string[];
+  params: { index: number; paramName: string; example: string }[];
 }
 
 interface Props {

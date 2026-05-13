@@ -74,7 +74,7 @@ function CampanhasPageInner() {
 
       fetch(`/api/channels/${broadcast.channel_id}/templates`)
         .then((r) => r.json())
-        .then((templates: Array<{ name: string; language: string; category: string; body: string; params: string[] }>) => {
+        .then((templates: Array<{ name: string; language: string; category: string; body: string; params: { index: number; paramName: string; example: string }[] }>) => {
           const tpl = templates.find((t) => t.name === broadcast.template_name);
           if (!tpl) return;
           setPrefill({

@@ -2,15 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import type { Channel } from "@/lib/types";
-
-interface MetaTemplate {
-  name: string;
-  language: string;
-  category: string;
-  body: string;
-  buttons: Array<{ type: string; text: string }>;
-  params: string[];
-}
+import { type MetaTemplate, autoSuggestToken } from "@/components/campaigns/template-preview-card";
 
 interface SavedPhone {
   id: string;
@@ -22,17 +14,6 @@ interface QuickSendModalProps {
   open: boolean;
   onClose: () => void;
   onSuccess: (count: number) => void;
-}
-
-const DYNAMIC_VARS: Record<string, string> = {
-  primeiro_nome: "{{first_name}}",
-  first_name: "{{first_name}}",
-  nome: "{{first_name}}",
-  name: "{{first_name}}",
-};
-
-function defaultValue(paramName: string): string {
-  return DYNAMIC_VARS[paramName.toLowerCase()] ?? "";
 }
 
 function normalizePhone(raw: string): string {
@@ -135,10 +116,19 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
       const bodyVars = (tpl.body.match(/\{\{([^}]+)\}\}/g) || []).map((m) =>
         m.replace(/^\{\{|\}\}$/g, "")
       );
-      const allVars = [...new Set([...tpl.params, ...bodyVars])];
+      const paramNames = tpl.params.map((p) => p.paramName);
+      const allVars = [...new Set([...paramNames, ...bodyVars])];
       const defaults: Record<string, string> = {};
-      allVars.forEach((p) => {
-        defaults[p] = defaultValue(p);
+      tpl.params.forEach((p) => {
+        defaults[p.paramName] = autoSuggestToken(p.example);
+      });
+      // Fill any body-only vars not covered by params
+      bodyVars.forEach((v) => {
+        if (!(v in defaults)) defaults[v] = "";
+      });
+      // Ensure allVars keys exist (no-op if already set above)
+      allVars.forEach((v) => {
+        if (!(v in defaults)) defaults[v] = "";
       });
       setTemplateVarValues(defaults);
     }
@@ -205,11 +195,12 @@ export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps
         )
       )]
     : [];
-  const allTemplateVars = [...new Set([...(selectedTemplate?.params ?? []), ...bodyVars])];
+  const paramNames = selectedTemplate ? selectedTemplate.params.map((p) => p.paramName) : [];
+  const allTemplateVars = [...new Set([...paramNames, ...bodyVars])];
   const allVarsFilled =
     !selectedTemplate ||
     allTemplateVars.length === 0 ||
-    allTemplateVars.every((p) => (templateVarValues[p] ?? "").trim() !== "");
+    allTemplateVars.every((v) => (templateVarValues[v] ?? "").trim() !== "");
 
   const canSend = channelId !== "" && selectedTemplate !== null && validPhones.length > 0 && allVarsFilled;
 
