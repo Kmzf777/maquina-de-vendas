@@ -251,6 +251,33 @@ async def process_single_broadcast(broadcast: dict):
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
 
+            # Move lead's deal to configured Kanban stage if set
+            move_to_stage_id = broadcast.get("move_to_stage_id")
+            if move_to_stage_id:
+                try:
+                    stage_row = (
+                        sb.table("pipeline_stages")
+                        .select("pipeline_id")
+                        .eq("id", move_to_stage_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if stage_row.data:
+                        target_pipeline_id = stage_row.data[0]["pipeline_id"]
+                        sb.table("deals").update({
+                            "stage_id": move_to_stage_id,
+                            "pipeline_id": target_pipeline_id,
+                        }).eq("lead_id", lead["id"]).eq("pipeline_id", target_pipeline_id).execute()
+                        logger.info(
+                            "[BROADCAST] Moved deals for lead %s to stage %s",
+                            lead["id"], move_to_stage_id,
+                        )
+                except Exception as move_err:
+                    logger.warning(
+                        "[BROADCAST] Failed to move deal for lead %s: %s",
+                        lead["id"], move_err,
+                    )
+
             # Always record conversation and persist outbound message
             conversation = None
             try:
