@@ -166,6 +166,9 @@ export function CreateBroadcastModal({
         defaults[p.paramName] =
           prefill.varValues?.[p.paramName] ?? autoSuggestToken(p.example);
       });
+      if (prefill.varValues?.["__header_url__"]) {
+        defaults["__header_url__"] = prefill.varValues["__header_url__"];
+      }
       setTemplateVarValues(defaults);
     }
   }, [prefill, templates]);
@@ -982,7 +985,7 @@ export function CreateBroadcastModal({
                     <span className="text-[#111111]">{selectedTemplate?.name}</span>{" "}
                     <span className="text-[#7b7b78]">({selectedTemplate?.language})</span>
                   </p>
-                  {selectedTemplate && selectedTemplate.params.length > 0 && (
+                  {selectedTemplate && (selectedTemplate.params.length > 0 || !!templateVarValues["__header_url__"]) && (
                     <div>
                       <span className="text-[#7b7b78]">Variáveis:</span>
                       <ul className="ml-3 mt-1 space-y-0.5">
