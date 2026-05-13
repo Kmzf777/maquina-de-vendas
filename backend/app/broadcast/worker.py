@@ -15,6 +15,7 @@ from app.broadcast.service import (
     mark_broadcast_lead_failed,
     increment_broadcast_sent,
     increment_broadcast_failed,
+    save_broadcast_lead_wamid,
 )
 from app.cadence.service import create_enrollment
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
@@ -291,7 +292,7 @@ async def process_single_broadcast(broadcast: dict):
                 lead["phone"],
                 components,
             )
-            await provider.send_template(
+            send_response = await provider.send_template(
                 to=lead["phone"],
                 template_name=broadcast["template_name"],
                 components=components,
@@ -299,6 +300,13 @@ async def process_single_broadcast(broadcast: dict):
             )
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
+            # Save wamid so delivery webhooks can be matched back to this broadcast lead
+            try:
+                wamid = (send_response.get("messages") or [{}])[0].get("id")
+                if wamid:
+                    save_broadcast_lead_wamid(bl["id"], wamid)
+            except Exception as wamid_err:
+                logger.warning("[BROADCAST] Could not save wamid for lead %s: %s", lead["phone"], wamid_err)
 
             # Move lead's deal to configured Kanban stage if set
             move_to_stage_id = broadcast.get("move_to_stage_id")

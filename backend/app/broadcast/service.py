@@ -48,3 +48,35 @@ def increment_broadcast_failed(broadcast_id: str) -> None:
     sb = get_supabase()
     broadcast = sb.table("broadcasts").select("failed").eq("id", broadcast_id).single().execute().data
     sb.table("broadcasts").update({"failed": broadcast["failed"] + 1}).eq("id", broadcast_id).execute()
+
+
+def save_broadcast_lead_wamid(bl_id: str, wamid: str) -> None:
+    sb = get_supabase()
+    sb.table("broadcast_leads").update({"wamid": wamid}).eq("id", bl_id).execute()
+
+
+def find_broadcast_lead_by_wamid(wamid: str) -> dict | None:
+    sb = get_supabase()
+    result = (
+        sb.table("broadcast_leads")
+        .select("id, broadcast_id, delivered_at")
+        .eq("wamid", wamid)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def mark_broadcast_lead_delivered(bl_id: str) -> None:
+    from datetime import datetime, timezone
+    sb = get_supabase()
+    sb.table("broadcast_leads").update({
+        "delivered_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", bl_id).execute()
+
+
+def increment_broadcast_delivered(broadcast_id: str) -> None:
+    sb = get_supabase()
+    broadcast = sb.table("broadcasts").select("delivered").eq("id", broadcast_id).single().execute().data
+    current = broadcast.get("delivered") or 0
+    sb.table("broadcasts").update({"delivered": current + 1}).eq("id", broadcast_id).execute()

@@ -87,6 +87,33 @@ def _extract_from_number(payload: dict) -> str | None:
     return None
 
 
+def _extract_statuses(payload: dict) -> list[dict]:
+    """Extract all status events from a Meta webhook payload."""
+    statuses = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            statuses.extend(change.get("value", {}).get("statuses", []))
+    return statuses
+
+
+def _handle_delivery_status(wamid: str, status: str) -> None:
+    """Increment broadcast delivered counter when Meta confirms delivery."""
+    if status != "delivered":
+        return
+    try:
+        from app.broadcast.service import find_broadcast_lead_by_wamid, mark_broadcast_lead_delivered, increment_broadcast_delivered
+        bl = find_broadcast_lead_by_wamid(wamid)
+        if not bl:
+            return
+        if bl.get("delivered_at"):
+            return  # Already counted — idempotent guard
+        mark_broadcast_lead_delivered(bl["id"])
+        increment_broadcast_delivered(bl["broadcast_id"])
+        logger.info("[DELIVERY] wamid=%s broadcast_lead=%s delivered", wamid, bl["id"])
+    except Exception as e:
+        logger.warning("[DELIVERY] Failed to process delivery for wamid=%s: %s", wamid, e)
+
+
 def _verify_signature(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False
@@ -168,6 +195,13 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         payload=payload,
         message_count=len(messages),
     )
+
+    # Process delivery receipts — updates broadcasts.delivered counter
+    for status_event in _extract_statuses(payload):
+        wamid = status_event.get("id")
+        status = status_event.get("status")
+        if wamid and status:
+            background_tasks.add_task(_handle_delivery_status, wamid, status)
 
     for msg in messages:
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
