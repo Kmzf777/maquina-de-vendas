@@ -90,8 +90,9 @@ function parseParamsAndType(components: MetaApiComponent[]): {
   // Fallback: count {{N}} occurrences in body text
   const matches = [...(body.text ?? "").matchAll(/\{\{(\d+)\}\}/g)];
   if (matches.length) {
+    const unique = [...new Map(matches.map((m) => [m[1], m])).values()];
     return {
-      params: matches.map((m, i) => ({
+      params: unique.map((m, i) => ({
         index: i + 1,
         paramName: m[1],
         example: "",
@@ -168,7 +169,7 @@ export async function GET(
   }
 
   const json = await metaRes.json();
-  const templates: MetaTemplate[] = (json.data as MetaApiTemplate[])
+  const templates: MetaTemplate[] = ((json.data ?? []) as MetaApiTemplate[])
     .filter((t) => t.status === "APPROVED")
     .map((t) => {
       const { params, paramsType } = parseParamsAndType(t.components ?? []);
