@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
       send_interval_max: body.send_interval_max || 8,
       cadence_id: body.cadence_id || null,
       agent_profile_id: body.agent_profile_id || null,
+      move_to_stage_id: body.move_to_stage_id || null,
       scheduled_at: body.scheduled_at || null,
       status: body.scheduled_at ? "scheduled" : "draft",
       env_tag: APP_ENV,
