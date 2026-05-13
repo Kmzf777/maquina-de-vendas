@@ -33,9 +33,15 @@ logger = logging.getLogger(__name__)
 
 # Dynamic variable tokens that get resolved from the lead record at send time.
 _LEAD_FIELD_TOKENS = {
-    "{{first_name}}": lambda lead: (lead.get("name") or "").split()[0] if lead.get("name") else "",
-    "{{lead_name}}":  lambda lead: lead.get("name") or "",
-    "{{phone}}":      lambda lead: lead.get("phone") or "",
+    # New tokens (used by smart broadcast modal)
+    "{{primeiro_nome}}": lambda lead: (lead.get("name") or "").split()[0] if lead.get("name") else "",
+    "{{nome_completo}}": lambda lead: lead.get("name") or "",
+    "{{telefone}}":      lambda lead: lead.get("phone") or "",
+    "{{empresa}}":       lambda lead: lead.get("company") or lead.get("nome_fantasia") or "",
+    # Legacy tokens kept for backward compatibility
+    "{{first_name}}":    lambda lead: (lead.get("name") or "").split()[0] if lead.get("name") else "",
+    "{{lead_name}}":     lambda lead: lead.get("name") or "",
+    "{{phone}}":         lambda lead: lead.get("phone") or "",
 }
 
 
@@ -113,21 +119,64 @@ async def _render_template_body(template_name: str, template_variables: dict, le
 
 
 def _build_template_components(template_variables: dict, lead: dict) -> list | None:
-    """Convert {param_name: value} dict into Meta named-parameter components array."""
+    """Build Meta template components from stored variable mappings.
+
+    Supports:
+    - Named params: {param_name: token_or_text, ...}
+    - Positional params: {"1": token, "2": token, ...} with __params_type__="positional"
+    - Media headers: __header_type__ = IMAGE|VIDEO|DOCUMENT, __header_url__ = url
+    Reserved keys starting with __ control behaviour and are excluded from body params.
+    Old broadcasts without __params_type__ default to named (backward compat).
+    """
     if not template_variables:
         return None
-    parameters = [
-        {
-            "type": "text",
-            "parameter_name": k,
-            "text": _resolve_value(str(v), lead),
-        }
-        for k, v in template_variables.items()
-        if k != "components"  # skip legacy raw-components key
-    ]
-    if not parameters:
-        return None
-    return [{"type": "body", "parameters": parameters}]
+
+    params_type = template_variables.get("__params_type__", "named")
+    header_type = template_variables.get("__header_type__")
+    header_url = template_variables.get("__header_url__")
+
+    # Exclude reserved keys and legacy "components" key from body variables
+    body_vars = {
+        k: v for k, v in template_variables.items()
+        if not str(k).startswith("__") and k != "components"
+    }
+
+    components: list = []
+
+    # Header component — media types only (TEXT header has no parameters)
+    if header_type in ("IMAGE", "VIDEO", "DOCUMENT") and header_url:
+        media_key = header_type.lower()
+        components.append({
+            "type": "header",
+            "parameters": [{"type": media_key, media_key: {"link": header_url}}],
+        })
+
+    # Body component
+    if params_type == "positional":
+        # Sort by numeric key (1, 2, 3…); non-numeric keys sort last
+        ordered = sorted(
+            body_vars.items(),
+            key=lambda x: int(x[0]) if str(x[0]).isdigit() else 999,
+        )
+        parameters = [
+            {"type": "text", "text": _resolve_value(str(v), lead)}
+            for _, v in ordered
+        ]
+    else:
+        # Named params (default — also handles legacy broadcasts)
+        parameters = [
+            {
+                "type": "text",
+                "parameter_name": k,
+                "text": _resolve_value(str(v), lead),
+            }
+            for k, v in body_vars.items()
+        ]
+
+    if parameters:
+        components.append({"type": "body", "parameters": parameters})
+
+    return components if components else None
 
 
 def _build_conv_updates(broadcast: dict) -> dict:
