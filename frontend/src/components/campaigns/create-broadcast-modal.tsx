@@ -26,13 +26,6 @@ interface MoveStage {
   dot_color: string;
 }
 
-// Variables auto-resolved from the lead record at send time.
-const AUTO_VARS = new Set(["first_name", "primeiro_nome", "nome", "name", "phone"]);
-
-function defaultVarValue(paramName: string): string {
-  return AUTO_VARS.has(paramName.toLowerCase()) ? `{{${paramName}}}` : "";
-}
-
 // ─── Prefill prop ─────────────────────────────────────────────────────────────
 
 export interface BroadcastPrefill {
@@ -167,6 +160,8 @@ export function CreateBroadcastModal({
     if (tpl) {
       setSelectedTemplate(tpl);
       const defaults: Record<string, string> = {};
+      if (tpl.paramsType !== "none") defaults["__params_type__"] = tpl.paramsType;
+      if (tpl.header) defaults["__header_type__"] = tpl.header.type;
       tpl.params.forEach((p) => {
         defaults[p.paramName] =
           prefill.varValues?.[p.paramName] ?? autoSuggestToken(p.example);
@@ -199,6 +194,8 @@ export function CreateBroadcastModal({
     setSelectedTemplate(tpl);
     if (tpl) {
       const defaults: Record<string, string> = {};
+      if (tpl.paramsType !== "none") defaults["__params_type__"] = tpl.paramsType;
+      if (tpl.header) defaults["__header_type__"] = tpl.header.type;
       tpl.params.forEach((p) => {
         defaults[p.paramName] = autoSuggestToken(p.example);
       });
@@ -414,7 +411,16 @@ export function CreateBroadcastModal({
 
   // ─── Step advancement guards ──────────────────────────────────────────────
   const canGoToStep2 = name.trim() !== "" && channelId !== "";
-  const canGoToStep3 = selectedTemplate !== null;
+  const canGoToStep3 =
+    selectedTemplate !== null &&
+    selectedTemplate.params.every(
+      (p) => (templateVarValues[p.paramName] ?? "").trim() !== ""
+    ) &&
+    (
+      !selectedTemplate.header ||
+      selectedTemplate.header.type === "TEXT" ||
+      (templateVarValues["__header_url__"] ?? "").trim() !== ""
+    );
   const canGoToStep4 = leadTab === "crm" ? selectedLeadIds.size > 0 : csvFile !== null;
   const canGoToStep5 =
     moveAction === "none" || (moveAction === "move" && moveStageId !== "");
@@ -976,20 +982,34 @@ export function CreateBroadcastModal({
                     <span className="text-[#111111]">{selectedTemplate?.name}</span>{" "}
                     <span className="text-[#7b7b78]">({selectedTemplate?.language})</span>
                   </p>
-                  {Object.keys(templateVarValues).length > 0 && (
+                  {selectedTemplate && selectedTemplate.params.length > 0 && (
                     <div>
                       <span className="text-[#7b7b78]">Variáveis:</span>
                       <ul className="ml-3 mt-1 space-y-0.5">
-                        {Object.entries(templateVarValues).map(([k, v]) => (
-                          <li key={k} className="text-[12px]">
-                            <span className="text-[#7b7b78]">{k}:</span>{" "}
-                            {v ? (
-                              <span className="text-[#111111]">{v}</span>
-                            ) : (
-                              <em className="text-[#b0aca6]">vazio</em>
-                            )}
+                        {selectedTemplate.params.map((p) => {
+                          const v = templateVarValues[p.paramName] ?? "";
+                          return (
+                            <li key={p.paramName} className="text-[12px]">
+                              <span className="text-[#7b7b78]">
+                                {selectedTemplate.paramsType === "positional"
+                                  ? `{{${p.index}}}`
+                                  : `{{${p.paramName}}}`}
+                                :
+                              </span>{" "}
+                              {v ? (
+                                <span className="text-[#111111]">{v}</span>
+                              ) : (
+                                <em className="text-[#b0aca6]">vazio</em>
+                              )}
+                            </li>
+                          );
+                        })}
+                        {(templateVarValues["__header_url__"] ?? "") && (
+                          <li className="text-[12px]">
+                            <span className="text-[#7b7b78]">mídia:</span>{" "}
+                            <span className="text-[#111111] truncate">{templateVarValues["__header_url__"]}</span>
                           </li>
-                        ))}
+                        )}
                       </ul>
                     </div>
                   )}
