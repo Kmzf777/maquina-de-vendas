@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Channel, AgentProfile } from "@/lib/types";
 import { TemplatePreviewCard } from "@/components/campaigns/template-preview-card";
 import { LeadFilterPanel, type LeadFilters } from "@/components/campaigns/lead-filter-panel";
@@ -97,6 +97,7 @@ export function CreateBroadcastModal({
   const [leadTab, setLeadTab] = useState<"crm" | "csv">("crm");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [leadsError, setLeadsError] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [csvFile, setCsvFile] = useState<File | null>(null);
 
@@ -198,9 +199,20 @@ export function CreateBroadcastModal({
   };
 
   // ─── Load leads from CRM ──────────────────────────────────────────────────
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const handleApplyLeadFilters = useCallback(async (filters: LeadFilters) => {
+    // Cancel any in-flight request so stale results never overwrite newer ones
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoadingLeads(true);
+    setLeadsError(null);
     setSelectedLeadIds(new Set());
+
     try {
       const params = new URLSearchParams();
       if (filters.pipelineId) params.set("pipeline_id", filters.pipelineId);
@@ -211,9 +223,17 @@ export function CreateBroadcastModal({
       if (filters.createdBefore) params.set("created_before", filters.createdBefore);
 
       const url = `/api/leads?${params.toString()}`;
-      const res = await fetch(url);
-      const data = await res.json();
+      const res = await fetch(url, { signal: controller.signal });
 
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        setLeadsError(errBody.error ?? `Erro ${res.status} ao buscar leads.`);
+        setLeads([]);
+        setLoadingLeads(false);
+        return;
+      }
+
+      const data = await res.json();
       let result: Lead[] = Array.isArray(data) ? data : [];
 
       // Client-side filter: search and tags
@@ -234,9 +254,13 @@ export function CreateBroadcastModal({
       }
 
       setLeads(result);
-    } catch {
+      setLoadingLeads(false);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return; // Newer request is in flight — don't touch state
+      }
       setLeads([]);
-    } finally {
+      setLeadsError("Erro ao buscar leads. Tente novamente.");
       setLoadingLeads(false);
     }
   }, []);
@@ -701,6 +725,10 @@ export function CreateBroadcastModal({
                         {loadingLeads ? (
                           <div className="p-4 text-[13px] text-[#7b7b78] text-center">
                             Carregando...
+                          </div>
+                        ) : leadsError ? (
+                          <div className="p-4 text-[13px] text-[#c41c1c] text-center">
+                            {leadsError}
                           </div>
                         ) : leads.length === 0 ? (
                           <div className="p-4 text-[13px] text-[#7b7b78] text-center">
