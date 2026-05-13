@@ -18,6 +18,19 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 
+def _register_lead(from_number: str, push_name: str | None) -> None:
+    """Ensure the lead exists in the CRM the moment they contact us.
+
+    Called as a BackgroundTask so it never delays the webhook response.
+    Runs before the buffer flushes, guaranteeing CRM registration even if
+    the buffer fails (e.g. backend restart during buffering).
+    """
+    try:
+        get_or_create_lead(from_number, name=push_name, channel="whatsapp")
+    except Exception as exc:
+        logger.warning("Failed to register lead for %s: %s", from_number, exc)
+
+
 def _track_inbound_message_time(phone: str) -> None:
     """Update last_customer_message_at so the 24h window status stays current."""
     normalized = normalize_phone(phone)
@@ -159,6 +172,9 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
     for msg in messages:
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
         msg.channel_id = channel["id"]
+
+        # Register lead immediately — guarantees CRM entry before buffer flushes
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name)
 
         try:
             provider = get_provider(channel)

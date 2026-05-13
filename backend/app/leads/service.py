@@ -23,7 +23,11 @@ def normalize_phone(phone: str | None) -> str:
     return digits
 
 
-def get_or_create_lead(phone: str) -> dict[str, Any]:
+def get_or_create_lead(
+    phone: str,
+    name: str | None = None,
+    channel: str | None = None,
+) -> dict[str, Any]:
     sb = get_supabase()
     normalized = normalize_phone(phone)
 
@@ -33,7 +37,15 @@ def get_or_create_lead(phone: str) -> dict[str, Any]:
     # Look up by normalized phone first. Fallback to digits-only to catch legacy rows.
     result = sb.table("leads").select("*").eq("phone", normalized).execute()
     if result.data:
-        return result.data[0]
+        lead = result.data[0]
+        # Backfill name from WhatsApp push_name if the lead has none yet.
+        if name and not lead.get("name"):
+            try:
+                sb.table("leads").update({"name": name}).eq("id", lead["id"]).execute()
+                lead = {**lead, "name": name}
+            except Exception as exc:
+                logger.warning("leads.service: failed to backfill name for lead %s: %s", lead["id"], exc)
+        return lead
 
     if digits_only != normalized:
         legacy = sb.table("leads").select("*").eq("phone", digits_only).execute()
@@ -41,8 +53,13 @@ def get_or_create_lead(phone: str) -> dict[str, Any]:
             # Backfill: rewrite legacy row to the normalized phone so future lookups match.
             row = dict(legacy.data[0])
             try:
-                sb.table("leads").update({"phone": normalized}).eq("id", row["id"]).execute()
+                update_fields: dict[str, Any] = {"phone": normalized}
+                if name and not row.get("name"):
+                    update_fields["name"] = name
+                sb.table("leads").update(update_fields).eq("id", row["id"]).execute()
                 row["phone"] = normalized
+                if "name" in update_fields:
+                    row["name"] = name
             except Exception as exc:
                 logger.warning(
                     "leads.service: failed to backfill phone normalization for lead %s: %s",
@@ -50,7 +67,11 @@ def get_or_create_lead(phone: str) -> dict[str, Any]:
                 )
             return row
 
-    new_lead = {"phone": normalized, "stage": "pending", "status": "imported"}
+    new_lead: dict[str, Any] = {"phone": normalized, "stage": "pending", "status": "imported"}
+    if name:
+        new_lead["name"] = name
+    if channel:
+        new_lead["channel"] = channel
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 
