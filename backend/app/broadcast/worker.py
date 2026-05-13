@@ -56,7 +56,7 @@ def _apply_variables(text: str, template_variables: dict, lead: dict) -> str:
     resolved = [
         _resolve_value(str(v), lead)
         for k, v in template_variables.items()
-        if k != "components"
+        if not str(k).startswith("__") and k != "components"
     ]
     for i, value in enumerate(resolved, start=1):
         text = text.replace(f"{{{{{i}}}}}", value)
@@ -156,7 +156,7 @@ def _build_template_components(template_variables: dict, lead: dict) -> list | N
         # Sort by numeric key (1, 2, 3…); non-numeric keys sort last
         ordered = sorted(
             body_vars.items(),
-            key=lambda x: int(x[0]) if str(x[0]).isdigit() else 999,
+            key=lambda x: int(str(x[0]).lstrip("0") or "0") if str(x[0]).isdigit() else 999,
         )
         parameters = [
             {"type": "text", "text": _resolve_value(str(v), lead)}
