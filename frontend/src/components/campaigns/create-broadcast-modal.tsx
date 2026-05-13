@@ -2,20 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Channel, AgentProfile } from "@/lib/types";
-import { TemplatePreviewCard } from "@/components/campaigns/template-preview-card";
+import { TemplatePreviewCard, autoSuggestToken, type MetaTemplate } from "@/components/campaigns/template-preview-card";
 import { LeadFilterPanel, type LeadFilters } from "@/components/campaigns/lead-filter-panel";
 import { CreateTemplateModal } from "@/components/canais/create-template-modal";
-
-// ─── Local types ──────────────────────────────────────────────────────────────
-
-interface MetaTemplate {
-  name: string;
-  language: string;
-  category: string;
-  body: string;
-  params: string[];
-  buttons?: { type: string; text: string }[];
-}
 
 interface Lead {
   id: string;
@@ -179,7 +168,8 @@ export function CreateBroadcastModal({
       setSelectedTemplate(tpl);
       const defaults: Record<string, string> = {};
       tpl.params.forEach((p) => {
-        defaults[p] = prefill.varValues?.[p] ?? defaultVarValue(p);
+        defaults[p.paramName] =
+          prefill.varValues?.[p.paramName] ?? autoSuggestToken(p.example);
       });
       setTemplateVarValues(defaults);
     }
@@ -210,7 +200,7 @@ export function CreateBroadcastModal({
     if (tpl) {
       const defaults: Record<string, string> = {};
       tpl.params.forEach((p) => {
-        defaults[p] = defaultVarValue(p);
+        defaults[p.paramName] = autoSuggestToken(p.example);
       });
       setTemplateVarValues(defaults);
     } else {
