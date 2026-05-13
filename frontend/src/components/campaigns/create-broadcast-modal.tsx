@@ -26,6 +26,17 @@ interface Lead {
   lead_tags?: { tag_id: string; tags: { id: string; name: string; color: string } | null }[];
 }
 
+interface MovePipeline {
+  id: string;
+  name: string;
+}
+
+interface MoveStage {
+  id: string;
+  label: string;
+  dot_color: string;
+}
+
 // Variables auto-resolved from the lead record at send time.
 const AUTO_VARS = new Set(["first_name", "primeiro_nome", "nome", "name", "phone"]);
 
@@ -45,7 +56,7 @@ export interface BroadcastPrefill {
 
 // ─── Step labels ──────────────────────────────────────────────────────────────
 
-const STEPS = ["Configuração", "Template", "Leads", "Revisão"] as const;
+const STEPS = ["Configuração", "Template", "Leads", "Ação", "Revisão"] as const;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +111,15 @@ export function CreateBroadcastModal({
   const [leadsError, setLeadsError] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [csvFile, setCsvFile] = useState<File | null>(null);
+
+  // ── Step 4: Post-dispatch action ──────────────────────────────────────────
+  const [moveAction, setMoveAction] = useState<"none" | "move">("none");
+  const [movePipelineId, setMovePipelineId] = useState("");
+  const [moveStageId, setMoveStageId] = useState("");
+  const [movePipelines, setMovePipelines] = useState<MovePipeline[]>([]);
+  const [moveStages, setMoveStages] = useState<MoveStage[]>([]);
+  const [loadingMovePipelines, setLoadingMovePipelines] = useState(false);
+  const [loadingMoveStages, setLoadingMoveStages] = useState(false);
 
   // ── Saving ────────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -282,6 +302,32 @@ export function CreateBroadcastModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, leadTab]);
 
+  // Load pipelines when entering step 4
+  useEffect(() => {
+    if (step !== 4 || movePipelines.length > 0) return;
+    setLoadingMovePipelines(true);
+    fetch("/api/pipelines")
+      .then((r) => r.json())
+      .then((d) => setMovePipelines(Array.isArray(d) ? d : []))
+      .catch(() => setMovePipelines([]))
+      .finally(() => setLoadingMovePipelines(false));
+  }, [step, movePipelines.length]);
+
+  // Load stages when a pipeline is selected in step 4
+  useEffect(() => {
+    if (!movePipelineId) {
+      setMoveStages([]);
+      setMoveStageId("");
+      return;
+    }
+    setLoadingMoveStages(true);
+    fetch(`/api/pipelines/${movePipelineId}/stages`)
+      .then((r) => r.json())
+      .then((d) => setMoveStages(Array.isArray(d) ? d : []))
+      .catch(() => setMoveStages([]))
+      .finally(() => setLoadingMoveStages(false));
+  }, [movePipelineId]);
+
   // ─── Select/deselect lead ─────────────────────────────────────────────────
   const toggleLead = (id: string) => {
     setSelectedLeadIds((prev) => {
@@ -323,6 +369,7 @@ export function CreateBroadcastModal({
           send_interval_min: intervalMin,
           send_interval_max: intervalMax,
           status: "draft",
+          move_to_stage_id: moveAction === "move" && moveStageId ? moveStageId : null,
         }),
       });
       const broadcast = await res.json();
@@ -368,17 +415,25 @@ export function CreateBroadcastModal({
     setLeads([]);
     setSelectedLeadIds(new Set());
     setCsvFile(null);
+    setMoveAction("none");
+    setMovePipelineId("");
+    setMoveStageId("");
+    setMovePipelines([]);
+    setMoveStages([]);
   };
 
   // ─── Step advancement guards ──────────────────────────────────────────────
   const canGoToStep2 = name.trim() !== "" && channelId !== "";
   const canGoToStep3 = selectedTemplate !== null;
   const canGoToStep4 = leadTab === "crm" ? selectedLeadIds.size > 0 : csvFile !== null;
+  const canGoToStep5 =
+    moveAction === "none" || (moveAction === "move" && moveStageId !== "");
 
   const canAdvance =
     step === 1 ? canGoToStep2 :
     step === 2 ? canGoToStep3 :
     step === 3 ? canGoToStep4 :
+    step === 4 ? canGoToStep5 :
     true;
 
   // ─── Filtered templates ───────────────────────────────────────────────────
@@ -814,9 +869,105 @@ export function CreateBroadcastModal({
             )}
 
             {/* ════════════════════════════════════════════════════════════════
-                STEP 4 — Revisão
+                STEP 4 — Ação pós-disparo
             ════════════════════════════════════════════════════════════════ */}
             {step === 4 && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">
+                    Ação pós-disparo
+                  </label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="move-action"
+                        value="none"
+                        checked={moveAction === "none"}
+                        onChange={() => {
+                          setMoveAction("none");
+                          setMovePipelineId("");
+                          setMoveStageId("");
+                        }}
+                        className="accent-[#111111]"
+                      />
+                      <span className="text-[14px] text-[#111111]">Não mover leads</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="move-action"
+                        value="move"
+                        checked={moveAction === "move"}
+                        onChange={() => setMoveAction("move")}
+                        className="accent-[#111111]"
+                      />
+                      <span className="text-[14px] text-[#111111]">Mover para etapa do Kanban</span>
+                    </label>
+                  </div>
+                </div>
+
+                {moveAction === "move" && (
+                  <div className="space-y-3 pl-6">
+                    <div>
+                      <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                        Funil
+                      </label>
+                      {loadingMovePipelines ? (
+                        <div className="text-[13px] text-[#7b7b78]">Carregando funis...</div>
+                      ) : (
+                        <select
+                          value={movePipelineId}
+                          onChange={(e) => {
+                            setMovePipelineId(e.target.value);
+                            setMoveStageId("");
+                          }}
+                          className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                        >
+                          <option value="">Selecionar funil...</option>
+                          {movePipelines.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+
+                    {movePipelineId && (
+                      <div>
+                        <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                          Etapa de destino
+                        </label>
+                        {loadingMoveStages ? (
+                          <div className="text-[13px] text-[#7b7b78]">Carregando etapas...</div>
+                        ) : (
+                          <select
+                            value={moveStageId}
+                            onChange={(e) => setMoveStageId(e.target.value)}
+                            className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                          >
+                            <option value="">Selecionar etapa...</option>
+                            {moveStages.map((s) => (
+                              <option key={s.id} value={s.id}>{s.label}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    )}
+
+                    {moveStageId && (
+                      <p className="text-[12px] text-[#7b7b78]">
+                        Os deals dos leads disparados com sucesso serão movidos para esta etapa.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ════════════════════════════════════════════════════════════════
+                STEP 5 — Revisão
+            ════════════════════════════════════════════════════════════════ */}
+            {step === 5 && (
               <div className="space-y-3">
                 <h3 className="text-[14px] font-normal text-[#111111]">Revisão do disparo</h3>
                 <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 space-y-2 text-[14px]">
@@ -872,6 +1023,16 @@ export function CreateBroadcastModal({
                     <span className="text-[#7b7b78]">Agente:</span>{" "}
                     <span className="text-[#111111]">{resolvedAgentName}</span>
                   </p>
+                  <p>
+                    <span className="text-[#7b7b78]">Ação pós-disparo:</span>{" "}
+                    <span className="text-[#111111]">
+                      {moveAction === "none"
+                        ? "Não mover leads"
+                        : moveStageId
+                        ? `Mover para "${moveStages.find((s) => s.id === moveStageId)?.label ?? "—"}" (${movePipelines.find((p) => p.id === movePipelineId)?.name ?? "—"})`
+                        : "—"}
+                    </span>
+                  </p>
                 </div>
                 <p className="text-[12px] text-[#7b7b78]">
                   O disparo será criado como rascunho. Você poderá agendá-lo ou iniciá-lo manualmente.
@@ -893,7 +1054,7 @@ export function CreateBroadcastModal({
               <div />
             )}
 
-            {step < 4 ? (
+            {step < 5 ? (
               <button
                 onClick={() => setStep(step + 1)}
                 disabled={!canAdvance}
