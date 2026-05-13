@@ -37,40 +37,36 @@ export async function GET(request: NextRequest) {
         return NextResponse.json(data ?? []);
       }
 
-      // Step 1: find which lead_ids are in the requested pipeline/stage/category
+      // Single query: fetch deals with embedded lead data (avoids large .in() URL)
       let dealQuery = supabase
         .from("deals")
-        .select("lead_id")
-        .limit(5000);
+        .select("leads(*, lead_tags(tag_id, tags(*)))");
       if (pipelineId) dealQuery = dealQuery.eq("pipeline_id", pipelineId);
       if (stageId) dealQuery = dealQuery.eq("stage_id", stageId);
       if (dealCategory) dealQuery = dealQuery.eq("category", dealCategory);
 
-      const { data: matchingDeals, error: dealError } = await dealQuery;
+      const { data: dealRows, error: dealError } = await dealQuery;
       if (dealError) {
-        console.error("[leads] deals filter query failed:", dealError);
+        console.error("[leads] deals+leads embedded query failed:", dealError);
         return NextResponse.json({ error: `deals: ${dealError.message}` }, { status: 500 });
       }
 
-      const leadIds = [...new Set((matchingDeals ?? []).map((d: { lead_id: string }) => d.lead_id))];
-      if (leadIds.length === 0) return NextResponse.json([]);
+      // Deduplicate leads (a lead may have multiple deals in the same pipeline)
+      const seen = new Set<string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let leads = (dealRows ?? []).map((d: any) => d.leads).filter((l: any) => {
+        if (!l || seen.has(l.id)) return false;
+        seen.add(l.id);
+        return true;
+      });
 
-      // Step 2: fetch lead rows for those ids
-      let q = supabase
-        .from("leads")
-        .select("*, lead_tags(tag_id, tags(*))")
-        .in("id", leadIds)
-        .order("last_msg_at", { ascending: false, nullsFirst: false });
+      if (leads.length === 0) return NextResponse.json([]);
 
-      if (createdAfter) q = q.gte("created_at", createdAfter);
-      if (createdBefore) q = q.lte("created_at", createdBefore);
+      // Apply date filters client-side (they are on leads.created_at)
+      if (createdAfter) leads = leads.filter((l: any) => l.created_at >= createdAfter);
+      if (createdBefore) leads = leads.filter((l: any) => l.created_at <= createdBefore);
 
-      const { data, error } = await q;
-      if (error) {
-        console.error("[leads] leads.in() query failed:", error);
-        return NextResponse.json({ error: `leads: ${error.message}` }, { status: 500 });
-      }
-      return NextResponse.json(data ?? []);
+      return NextResponse.json(leads);
     }
 
     // No deal filter — plain leads query
