@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _register_lead(from_number: str, push_name: str | None) -> None:
+    """Ensure the lead exists in the CRM the moment they contact us.
+
+    Called as a BackgroundTask so it never delays the webhook response.
+    Runs before the buffer flushes, guaranteeing CRM registration even if
+    the buffer fails (e.g. backend restart during buffering).
+    """
+    try:
+        get_or_create_lead(from_number, name=push_name, channel="whatsapp")
+    except Exception as exc:
+        logger.warning("Failed to register lead for %s: %s", from_number, exc)
+
+
 def _find_evolution_channel(payload: dict) -> dict | None:
     instance_name = ""
     instance_data = payload.get("instance")
@@ -57,6 +70,9 @@ async def receive_evolution_webhook(request: Request, background_tasks: Backgrou
     for msg in messages:
         logger.info(f"Message from {msg.from_number} ({msg.push_name}): type={msg.type}")
         msg.channel_id = channel["id"]
+
+        # Register lead immediately — guarantees CRM entry before buffer flushes
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name)
 
         dev_url = await get_dev_route(redis, msg.from_number)
         if dev_url and request.headers.get("x-dev-routed") != "1":
