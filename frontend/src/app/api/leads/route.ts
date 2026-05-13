@@ -10,66 +10,91 @@ export async function GET(request: NextRequest) {
   const createdAfter = searchParams.get("created_after");
   const createdBefore = searchParams.get("created_before");
 
-  const supabase = await getServiceSupabase();
+  try {
+    const supabase = await getServiceSupabase();
 
-  if (pipelineId || stageId || dealCategory || noDeal) {
-    if (noDeal) {
-      const { data: leadsWithDeals } = await supabase
+    if (pipelineId || stageId || dealCategory || noDeal) {
+      if (noDeal) {
+        const { data: leadsWithDeals } = await supabase
+          .from("deals")
+          .select("lead_id");
+        const excludeIds = (leadsWithDeals ?? []).map((d: { lead_id: string }) => d.lead_id);
+
+        let q = supabase
+          .from("leads")
+          .select("*, lead_tags(tag_id, tags(*))")
+          .order("last_msg_at", { ascending: false, nullsFirst: false });
+
+        if (excludeIds.length > 0) q = q.not("id", "in", `(${excludeIds.join(",")})`);
+        if (createdAfter) q = q.gte("created_at", createdAfter);
+        if (createdBefore) q = q.lte("created_at", createdBefore);
+
+        const { data, error } = await q;
+        if (error) {
+          console.error("[leads] noDeal leads query failed:", error);
+          return NextResponse.json({ error: `leads: ${error.message}` }, { status: 500 });
+        }
+        return NextResponse.json(data ?? []);
+      }
+
+      // Step 1: find which lead_ids are in the requested pipeline/stage/category
+      let dealQuery = supabase
         .from("deals")
-        .select("lead_id");
-      const excludeIds = (leadsWithDeals ?? []).map((d: { lead_id: string }) => d.lead_id);
+        .select("lead_id")
+        .limit(5000);
+      if (pipelineId) dealQuery = dealQuery.eq("pipeline_id", pipelineId);
+      if (stageId) dealQuery = dealQuery.eq("stage_id", stageId);
+      if (dealCategory) dealQuery = dealQuery.eq("category", dealCategory);
 
+      const { data: matchingDeals, error: dealError } = await dealQuery;
+      if (dealError) {
+        console.error("[leads] deals filter query failed:", dealError);
+        return NextResponse.json({ error: `deals: ${dealError.message}` }, { status: 500 });
+      }
+
+      const leadIds = [...new Set((matchingDeals ?? []).map((d: { lead_id: string }) => d.lead_id))];
+      if (leadIds.length === 0) return NextResponse.json([]);
+
+      // Step 2: fetch lead rows for those ids
       let q = supabase
         .from("leads")
         .select("*, lead_tags(tag_id, tags(*))")
+        .in("id", leadIds)
         .order("last_msg_at", { ascending: false, nullsFirst: false });
 
-      if (excludeIds.length > 0) q = q.not("id", "in", `(${excludeIds.join(",")})`);
       if (createdAfter) q = q.gte("created_at", createdAfter);
       if (createdBefore) q = q.lte("created_at", createdBefore);
 
       const { data, error } = await q;
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        console.error("[leads] leads.in() query failed:", error);
+        return NextResponse.json({ error: `leads: ${error.message}` }, { status: 500 });
+      }
       return NextResponse.json(data ?? []);
     }
 
-    let dealQuery = supabase.from("deals").select("lead_id");
-    if (pipelineId) dealQuery = dealQuery.eq("pipeline_id", pipelineId);
-    if (stageId) dealQuery = dealQuery.eq("stage_id", stageId);
-    if (dealCategory) dealQuery = dealQuery.eq("category", dealCategory);
-
-    const { data: matchingDeals, error: dealError } = await dealQuery;
-    if (dealError) return NextResponse.json({ error: dealError.message }, { status: 500 });
-
-    const leadIds = [...new Set((matchingDeals ?? []).map((d: { lead_id: string }) => d.lead_id))];
-    if (leadIds.length === 0) return NextResponse.json([]);
-
+    // No deal filter — plain leads query
     let q = supabase
       .from("leads")
       .select("*, lead_tags(tag_id, tags(*))")
-      .in("id", leadIds)
       .order("last_msg_at", { ascending: false, nullsFirst: false });
 
     if (createdAfter) q = q.gte("created_at", createdAfter);
     if (createdBefore) q = q.lte("created_at", createdBefore);
 
     const { data, error } = await q;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      console.error("[leads] plain leads query failed:", error);
+      return NextResponse.json({ error: `leads: ${error.message}` }, { status: 500 });
+    }
     return NextResponse.json(data ?? []);
+  } catch (err) {
+    console.error("[leads] unhandled exception:", err);
+    return NextResponse.json(
+      { error: `Erro interno: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 }
+    );
   }
-
-  // Sem filtro de deal — busca normal
-  let q = supabase
-    .from("leads")
-    .select("*, lead_tags(tag_id, tags(*))")
-    .order("last_msg_at", { ascending: false, nullsFirst: false });
-
-  if (createdAfter) q = q.gte("created_at", createdAfter);
-  if (createdBefore) q = q.lte("created_at", createdBefore);
-
-  const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
 }
 
 export async function POST(request: NextRequest) {
