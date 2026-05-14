@@ -23,6 +23,7 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
 
   const isAudio = message.message_type === "audio";
   const isImage = message.message_type === "image";
+  const isDocument = message.message_type === "document";
 
   // New messages: media_url is a Supabase Storage URL (https://...) or object URL (blob:...)
   // Legacy messages: media_url is a Meta media_id (numeric string) — use proxy fallback
@@ -83,6 +84,15 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
               <span className="text-[13px] opacity-60">Imagem</span>
             </div>
           )
+        ) : isDocument ? (
+          <div className="flex items-center gap-2 py-1">
+            <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
+            </svg>
+            <span className="text-[13px] truncate max-w-[180px]">
+              {message.content || "Documento"}
+            </span>
+          </div>
         ) : (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
