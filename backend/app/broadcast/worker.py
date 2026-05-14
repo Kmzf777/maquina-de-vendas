@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import httpx
 
@@ -246,16 +246,22 @@ async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
 
+    # Recover leads stuck in 'processing' for over 5 minutes (worker crash/restart)
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    sb.table("broadcast_leads").update({"status": "pending", "claimed_at": None}).eq(
+        "broadcast_id", broadcast_id
+    ).eq("status", "processing").lt("claimed_at", cutoff).execute()
+
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
 
     if not pending_leads:
-        # Check if all leads are processed
+        # Count both pending and processing — don't mark complete while another worker holds claims
         remaining = (
             sb.table("broadcast_leads")
             .select("id", count="exact")
             .eq("broadcast_id", broadcast_id)
-            .eq("status", "pending")
+            .in_("status", ["pending", "processing"])
             .execute()
             .count
         )
@@ -265,6 +271,17 @@ async def process_single_broadcast(broadcast: dict):
         return
 
     for bl in pending_leads:
+        # Atomic claim: only proceeds if this worker wins the race
+        claim = (
+            sb.table("broadcast_leads")
+            .update({"status": "processing", "claimed_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", bl["id"])
+            .eq("status", "pending")
+            .execute()
+        )
+        if not claim.data:
+            logger.info(f"[BROADCAST] Lead {bl['id']} already claimed by another worker, skipping")
+            continue
         # Check if still running
         current = sb.table("broadcasts").select("status").eq("id", broadcast_id).single().execute().data
         if current["status"] != "running":
@@ -345,6 +362,7 @@ async def process_single_broadcast(broadcast: dict):
                             sb.table("deals").insert({
                                 "lead_id": lead["id"],
                                 "title": title,
+                                "stage": "novo",
                                 "pipeline_id": target_pipeline_id,
                                 "stage_id": move_to_stage_id,
                             }).execute()
