@@ -89,10 +89,11 @@ export function ChatList({
   useEffect(() => {
     const el = tabsScrollRef.current;
     if (!el) return;
-    updateScrollButtons();
+    const raf = requestAnimationFrame(updateScrollButtons);
     el.addEventListener("scroll", updateScrollButtons);
     window.addEventListener("resize", updateScrollButtons);
     return () => {
+      cancelAnimationFrame(raf);
       el.removeEventListener("scroll", updateScrollButtons);
       window.removeEventListener("resize", updateScrollButtons);
     };
@@ -162,6 +163,7 @@ export function ChatList({
       <div className="relative pb-2">
         {/* Seta esquerda — desktop only */}
         <button
+          type="button"
           onClick={() => tabsScrollRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
           aria-label="Rolar tabs para esquerda"
           className={`hidden md:flex absolute left-0 top-1/2 -translate-y-1/2 z-10 w-6 h-6 items-center justify-center bg-[#f0ede8] text-[#7b7b78] hover:text-[#111111] transition-opacity ${
@@ -189,7 +191,10 @@ export function ChatList({
             >
               Não lidas
               {unreadTotal > 0 && (
-                <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-[#ff5600] px-1 text-[10px] font-semibold text-white leading-none">
+                <span
+                  aria-label={`${unreadTotal} conversas não lidas`}
+                  className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-[#ff5600] px-1 text-[10px] font-semibold text-white leading-none"
+                >
                   {unreadTotal > 9 ? "9+" : unreadTotal}
                 </span>
               )}
@@ -212,6 +217,7 @@ export function ChatList({
 
         {/* Seta direita — desktop only */}
         <button
+          type="button"
           onClick={() => tabsScrollRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
           aria-label="Rolar tabs para direita"
           className={`hidden md:flex absolute right-0 top-1/2 -translate-y-1/2 z-10 w-6 h-6 items-center justify-center bg-[#f0ede8] text-[#7b7b78] hover:text-[#111111] transition-opacity ${
