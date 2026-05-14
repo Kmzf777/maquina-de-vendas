@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.follow_up.service import schedule_followup, cancel_followups
 from app.db.supabase import get_supabase
+from app.channels.service import get_channel_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,10 @@ async def schedule_followup_for_conversation(conversation_id: str):
     data = conv.data[0]
     if not data.get("followup_enabled", True):
         return {"status": "skipped", "reason": "followup_disabled"}
+
+    channel = get_channel_by_id(data["channel_id"])
+    if channel and channel.get("mode", "ai") == "human":
+        return {"status": "skipped", "reason": "human_channel"}
 
     schedule_followup(
         conversation_id=conversation_id,

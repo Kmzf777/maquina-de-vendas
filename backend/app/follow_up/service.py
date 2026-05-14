@@ -173,7 +173,7 @@ def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
             .select(
                 "*, "
                 "leads!inner(id, phone, last_customer_message_at), "
-                "channels!inner(id, name, provider, provider_config), "
+                "channels!inner(id, name, provider, provider_config, mode), "
                 "conversations!inner(id, stage, followup_enabled)"
             )
             .eq("status", "pending")
