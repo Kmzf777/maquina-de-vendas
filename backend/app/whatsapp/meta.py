@@ -11,8 +11,12 @@ logger = logging.getLogger(__name__)
 
 class MetaCloudClient(WhatsAppProvider):
     def __init__(self, config: dict):
-        self.phone_number_id = config["phone_number_id"]
-        self.access_token = config["access_token"]
+        self.phone_number_id = config.get("phone_number_id") or ""
+        self.access_token = config.get("access_token") or ""
+        if not self.phone_number_id:
+            raise ValueError("Canal Meta Cloud sem phone_number_id configurado")
+        if not self.access_token:
+            raise ValueError("Canal Meta Cloud sem access_token configurado")
         self.api_version = config.get("api_version", "v21.0")
         self._messages_url = f"{META_API_BASE}/{self.api_version}/{self.phone_number_id}/messages"
         self._media_url = f"{META_API_BASE}/{self.api_version}/{self.phone_number_id}/media"

@@ -87,17 +87,18 @@ function parseParamsAndType(components: MetaApiComponent[]): {
     };
   }
 
-  // Fallback: count {{N}} occurrences in body text
-  const matches = [...(body.text ?? "").matchAll(/\{\{(\d+)\}\}/g)];
+  // Fallback: detect any {{param}} in body text — numeric = positional, named = named
+  const matches = [...(body.text ?? "").matchAll(/\{\{([\w]+)\}\}/g)];
   if (matches.length) {
     const unique = [...new Map(matches.map((m) => [m[1], m])).values()];
+    const allNumeric = unique.every((m) => /^\d+$/.test(m[1]));
     return {
       params: unique.map((m, i) => ({
         index: i + 1,
         paramName: m[1],
         example: "",
       })),
-      paramsType: "positional",
+      paramsType: allNumeric ? "positional" : "named",
     };
   }
 

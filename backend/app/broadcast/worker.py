@@ -54,13 +54,21 @@ def _resolve_value(value: str, lead: dict) -> str:
 
 
 def _apply_variables(text: str, template_variables: dict, lead: dict) -> str:
-    resolved = [
-        _resolve_value(str(v), lead)
-        for k, v in template_variables.items()
+    params_type = template_variables.get("__params_type__", "named")
+    body_vars = {
+        k: v for k, v in template_variables.items()
         if not str(k).startswith("__") and k != "components"
-    ]
-    for i, value in enumerate(resolved, start=1):
-        text = text.replace(f"{{{{{i}}}}}", value)
+    }
+    if params_type == "positional":
+        ordered = sorted(
+            body_vars.items(),
+            key=lambda x: int(str(x[0]).lstrip("0") or "0") if str(x[0]).isdigit() else 999,
+        )
+        for i, (_, v) in enumerate(ordered, start=1):
+            text = text.replace(f"{{{{{i}}}}}", _resolve_value(str(v), lead))
+    else:
+        for k, v in body_vars.items():
+            text = text.replace(f"{{{{{k}}}}}", _resolve_value(str(v), lead))
     return text
 
 
@@ -416,6 +424,19 @@ async def process_single_broadcast(broadcast: dict):
 
             logger.info(f"Template sent to {lead['phone']}")
 
+        except httpx.HTTPStatusError as http_err:
+            try:
+                meta_err = http_err.response.json().get("error", {})
+                detail = meta_err.get("message", str(http_err))
+                code = meta_err.get("code", "")
+                error_msg = f"Meta {http_err.response.status_code}: {detail}"
+                if code:
+                    error_msg += f" (código {code})"
+            except Exception:
+                error_msg = str(http_err)
+            logger.error(f"[BROADCAST] Meta API error para {lead['phone']}: {error_msg}")
+            mark_broadcast_lead_failed(bl["id"], error_msg)
+            increment_broadcast_failed(broadcast_id)
         except Exception as e:
             logger.error(f"Failed to send to {lead['phone']}: {e}")
             mark_broadcast_lead_failed(bl["id"], str(e))

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.campaign.importer import parse_csv
 
@@ -45,6 +46,8 @@ async def create_broadcast(broadcast: BroadcastCreate):
         data["template_variables"] = {}
     status = "scheduled" if data.get("scheduled_at") else "draft"
     data["status"] = status
+    settings = get_settings()
+    data["env_tag"] = "dev" if settings.is_dev_env else "production"
     result = sb.table("broadcasts").insert(data).execute()
     return result.data[0]
 
