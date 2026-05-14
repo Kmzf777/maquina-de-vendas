@@ -1,0 +1,804 @@
+# Auth Roles (Admin/Vendedor) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **FRONTEND:** Any agent touching frontend files MUST invoke the `frontend-design` skill before making changes.
+
+**Goal:** Adicionar controle de acesso baseado em roles (admin/vendedor) ao CRM, com proteção em duas camadas: Next.js middleware (páginas + API routes) e FastAPI (defense in depth).
+
+**Architecture:** Roles armazenados em `app_metadata.role` do Supabase (somente service role pode escrever). Next.js `middleware.ts` intercepta server-side todas as rotas protegidas antes de renderizar. FastAPI valida JWT com PyJWT nas rotas sensíveis como camada adicional.
+
+**Tech Stack:** Next.js App Router, @supabase/ssr, FastAPI, PyJWT, Supabase Auth (app_metadata)
+
+---
+
+## File Map
+
+**Criar:**
+- `frontend/src/lib/auth/roles.ts` — constante ROLE_PERMISSIONS + hook useRole
+- `frontend/src/middleware.ts` — proteção server-side de rotas e API routes
+- `frontend/src/app/api/admin/users/set-role/route.ts` — endpoint para definir role
+- `backend/app/auth/__init__.py` — módulo auth
+- `backend/app/auth/jwt.py` — validação JWT Supabase
+- `backend/app/auth/dependencies.py` — dependency require_role para FastAPI
+- `backend/tests/test_auth_jwt.py` — testes unitários do jwt.py
+
+**Modificar:**
+- `backend/requirements.txt` — adicionar PyJWT
+- `backend/app/config.py` — adicionar supabase_jwt_secret
+- `backend/tests/conftest.py` — adicionar SUPABASE_JWT_SECRET=test-jwt-secret
+- `frontend/src/components/sidebar.tsx` — filtrar nav items por role
+- `backend/app/channels/router.py` — adicionar require_role(['admin'])
+- `backend/app/stats/router.py` — adicionar require_role(['admin'])
+- `backend/app/agent_profiles/router.py` — adicionar require_role(['admin'])
+
+---
+
+## Task 1: Feature branch + roles.ts
+
+**Files:**
+- Create: `frontend/src/lib/auth/roles.ts`
+
+- [ ] **Step 1: Criar branch de feature**
+
+```bash
+git checkout -b feature/auth-roles
+```
+
+- [ ] **Step 2: Criar `frontend/src/lib/auth/roles.ts`**
+
+> IMPORTANTE: Este arquivo NÃO deve ter "use client" nem imports React — ele é importado pelo
+> `middleware.ts` que roda no Edge Runtime. O hook `useRole` fica no `sidebar.tsx`.
+
+```typescript
+export type UserRole = "admin" | "vendedor";
+
+// Rotas de página permitidas por role
+export const ROLE_PAGES: Record<UserRole, string[]> = {
+  admin: [
+    "/dashboard",
+    "/leads",
+    "/conversas",
+    "/campanhas",
+    "/qualificacao",
+    "/vendas",
+    "/canais",
+    "/estatisticas",
+    "/config",
+  ],
+  vendedor: [
+    "/dashboard",
+    "/leads",
+    "/conversas",
+    "/campanhas",
+    "/qualificacao",
+    "/vendas",
+  ],
+};
+
+// Prefixos de API route restritos a admin
+export const ADMIN_API_PREFIXES = [
+  "/api/channels",
+  "/api/stats",
+  "/api/agent-profiles",
+  "/api/evolution",
+  "/api/admin",
+];
+
+export function isAdminOnlyPage(pathname: string): boolean {
+  const adminOnly = ["/canais", "/estatisticas", "/config"];
+  return adminOnly.some((p) => pathname.startsWith(p));
+}
+
+export function isAdminOnlyApiRoute(pathname: string): boolean {
+  return ADMIN_API_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/lib/auth/roles.ts
+git commit -m "feat(auth): criar roles.ts com ROLE_PERMISSIONS e useRole hook"
+```
+
+---
+
+## Task 2: Next.js middleware
+
+**Files:**
+- Create: `frontend/src/middleware.ts`
+
+> REQUIRED: invoke `frontend-design` skill before touching frontend files.
+
+- [ ] **Step 1: Criar `frontend/src/middleware.ts`**
+
+```typescript
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import { isAdminOnlyPage, isAdminOnlyApiRoute } from "@/lib/auth/roles";
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  let supabaseResponse = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          );
+          supabaseResponse = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  // getUser() valida o token server-side (não usa cache local)
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const isApiRoute = pathname.startsWith("/api/");
+
+  // 1. Sem sessão: redireciona para login (páginas) ou retorna 401 (API)
+  if (!user) {
+    if (isApiRoute) {
+      return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  const role = user.app_metadata?.role as string | undefined;
+
+  // 2. Role inválido (usuário criado sem role definido)
+  if (role !== "admin" && role !== "vendedor") {
+    if (isApiRoute) {
+      return NextResponse.json(
+        { error: "Role não configurado. Contate o administrador." },
+        { status: 403 }
+      );
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // 3. Vendedor tentando acessar rota admin-only
+  if (role !== "admin") {
+    if (isApiRoute && isAdminOnlyApiRoute(pathname)) {
+      return NextResponse.json(
+        { error: "Permissão insuficiente" },
+        { status: 403 }
+      );
+    }
+    if (!isApiRoute && isAdminOnlyPage(pathname)) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+  }
+
+  return supabaseResponse;
+}
+
+export const config = {
+  matcher: [
+    "/dashboard/:path*",
+    "/leads/:path*",
+    "/conversas/:path*",
+    "/campanhas/:path*",
+    "/qualificacao/:path*",
+    "/vendas/:path*",
+    "/canais/:path*",
+    "/estatisticas/:path*",
+    "/config/:path*",
+    "/api/channels/:path*",
+    "/api/stats/:path*",
+    "/api/agent-profiles/:path*",
+    "/api/evolution/:path*",
+    "/api/admin/:path*",
+  ],
+};
+```
+
+- [ ] **Step 2: Verificar que a build não quebra**
+
+```bash
+cd frontend && npx tsc --noEmit
+```
+
+Expected: sem erros de tipo.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/middleware.ts
+git commit -m "feat(auth): middleware Next.js protege páginas e API routes por role"
+```
+
+---
+
+## Task 3: Sidebar — filtrar itens por role
+
+**Files:**
+- Modify: `frontend/src/components/sidebar.tsx`
+
+> REQUIRED: invoke `frontend-design` skill before touching frontend files.
+
+- [ ] **Step 1: Adicionar campo `roles` aos nav items e aplicar filtro**
+
+Substitua o conteúdo de `frontend/src/components/sidebar.tsx`. A única mudança lógica é adicionar `roles?: string[]` nos itens admin-only e filtrar no render.
+
+Localize a definição de `NAV_GROUPS` (linha 6) e substitua pelos grupos com roles.
+
+> `useRole` é definido inline neste arquivo (NÃO importado de roles.ts) para evitar conflito
+> com o Edge Runtime do middleware.
+
+Adicionar imports no topo do arquivo (após os imports existentes):
+```typescript
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { UserRole } from "@/lib/auth/roles";
+```
+
+Adicionar hook antes da definição de `NAV_GROUPS`:
+```typescript
+function useRole(): UserRole {
+  const [role, setRole] = useState<UserRole>("vendedor");
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const r = session?.user?.app_metadata?.role as UserRole | undefined;
+      if (r === "admin" || r === "vendedor") setRole(r);
+    });
+  }, []);
+  return role;
+}
+```
+
+Substitua a linha:
+```typescript
+const NAV_GROUPS = [
+```
+
+Pela versão com roles:
+```typescript
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  roles?: string[]; // undefined = todos os roles
+};
+
+type NavGroup = {
+  label: string;
+  items: NavItem[];
+};
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Vendas",
+    items: [
+      {
+        href: "/dashboard",
+        label: "Dashboard",
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25a2.25 2.25 0 01-2.25-2.25v-2.25z" /></svg>,
+      },
+      {
+        href: "/qualificacao",
+        label: "Visão Agent AI",
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" /></svg>,
+      },
+      {
+        href: "/leads",
+        label: "Leads",
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>,
+      },
+      {
+        href: "/vendas",
+        label: "Funis de venda",
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" /></svg>,
+      },
+    ],
+  },
+  {
+    label: "Comunicação",
+    items: [
+      {
+        href: "/conversas",
+        label: "WhatsApp",
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>,
+      },
+      {
+        href: "/campanhas",
+        label: "Campanhas",
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" /></svg>,
+      },
+    ],
+  },
+  {
+    label: "Dados",
+    items: [
+      {
+        href: "/estatisticas",
+        label: "Tokens AI",
+        roles: ["admin"],
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>,
+      },
+      {
+        href: "/canais",
+        label: "Instâncias",
+        roles: ["admin"],
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 8.25h3m-3 3h3m-3 3h3" /></svg>,
+      },
+    ],
+  },
+  {
+    label: "Sistema",
+    items: [
+      {
+        href: "/config",
+        label: "Configurações",
+        roles: ["admin"],
+        icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+      },
+    ],
+  },
+];
+```
+
+- [ ] **Step 2: Adicionar `useRole` e lógica de filtro no componente Sidebar**
+
+O hook `useRole` já foi definido inline no Step 1. Dentro da função `Sidebar`, antes do `return`, adicionar:
+```typescript
+const role = useRole();
+```
+
+No render dos grupos, substituir:
+```typescript
+{group.items.map((item) => {
+```
+por:
+```typescript
+{group.items
+  .filter((item) => !item.roles || item.roles.includes(role))
+  .map((item) => {
+```
+
+- [ ] **Step 3: Verificar tipos**
+
+```bash
+cd frontend && npx tsc --noEmit
+```
+
+Expected: sem erros.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add frontend/src/components/sidebar.tsx
+git commit -m "feat(auth): sidebar filtra itens de navegação por role"
+```
+
+---
+
+## Task 4: Endpoint set-role (Next.js API)
+
+**Files:**
+- Create: `frontend/src/app/api/admin/users/set-role/route.ts`
+
+> REQUIRED: invoke `frontend-design` skill before touching frontend files.
+
+- [ ] **Step 1: Criar `frontend/src/app/api/admin/users/set-role/route.ts`**
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createClient } from "@supabase/supabase-js";
+
+export async function POST(req: NextRequest) {
+  // Verificar que o chamador é admin
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+
+  if (user.app_metadata?.role !== "admin") {
+    return NextResponse.json(
+      { error: "Permissão insuficiente" },
+      { status: 403 }
+    );
+  }
+
+  // Validar body
+  const body = await req.json();
+  const { user_id, role } = body as { user_id?: string; role?: string };
+
+  if (!user_id || !role || !["admin", "vendedor"].includes(role)) {
+    return NextResponse.json(
+      { error: "Parâmetros inválidos. Informe user_id e role (admin|vendedor)." },
+      { status: 400 }
+    );
+  }
+
+  // Setar role via Admin API (service role)
+  const adminClient = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  const { error } = await adminClient.auth.admin.updateUserById(user_id, {
+    app_metadata: { role },
+  });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, user_id, role });
+}
+```
+
+- [ ] **Step 2: Verificar tipos**
+
+```bash
+cd frontend && npx tsc --noEmit
+```
+
+Expected: sem erros.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/app/api/admin/users/set-role/route.ts
+git commit -m "feat(auth): endpoint POST /api/admin/users/set-role para admin definir roles"
+```
+
+---
+
+## Task 5: Backend — dependências e config
+
+**Files:**
+- Modify: `backend/requirements.txt`
+- Modify: `backend/app/config.py`
+- Modify: `backend/tests/conftest.py`
+
+- [ ] **Step 1: Adicionar PyJWT em `backend/requirements.txt`**
+
+Após a linha `python-dateutil>=2.9.0,<3.0`, adicionar:
+```
+PyJWT>=2.8.0,<3.0
+```
+
+- [ ] **Step 2: Adicionar `supabase_jwt_secret` em `backend/app/config.py`**
+
+Dentro da classe `Settings`, após `supabase_service_key: str`, adicionar:
+```python
+supabase_jwt_secret: str = ""
+```
+
+- [ ] **Step 3: Adicionar env var de teste em `backend/tests/conftest.py`**
+
+Após `os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-service-key")`, adicionar:
+```python
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret-32-chars-minimum!")
+```
+
+> Nota: Após deploy, adicionar `SUPABASE_JWT_SECRET=<valor do painel Supabase em Settings > API > JWT Secret>` no `.env` de produção.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add backend/requirements.txt backend/app/config.py backend/tests/conftest.py
+git commit -m "feat(auth): adicionar PyJWT e supabase_jwt_secret ao backend"
+```
+
+---
+
+## Task 6: Backend — auth module (TDD)
+
+**Files:**
+- Create: `backend/app/auth/__init__.py`
+- Create: `backend/app/auth/jwt.py`
+- Create: `backend/app/auth/dependencies.py`
+- Create: `backend/tests/test_auth_jwt.py`
+
+- [ ] **Step 1: Escrever teste falhando em `backend/tests/test_auth_jwt.py`**
+
+```python
+import time
+import pytest
+import jwt as pyjwt
+from fastapi import HTTPException
+
+JWT_SECRET = "test-jwt-secret-32-chars-minimum!"
+
+
+def _make_token(role: str = "admin", expired: bool = False) -> str:
+    exp = int(time.time()) + (3600 if not expired else -1)
+    payload = {
+        "aud": "authenticated",
+        "exp": exp,
+        "sub": "00000000-0000-0000-0000-000000000001",
+        "email": "test@example.com",
+        "app_metadata": {"role": role},
+        "role": "authenticated",
+    }
+    return pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def test_valid_admin_token_returns_payload():
+    from app.auth.jwt import validate_token
+    token = _make_token("admin")
+    payload = validate_token(f"Bearer {token}")
+    assert payload["app_metadata"]["role"] == "admin"
+
+
+def test_valid_vendedor_token_returns_payload():
+    from app.auth.jwt import validate_token
+    token = _make_token("vendedor")
+    payload = validate_token(f"Bearer {token}")
+    assert payload["app_metadata"]["role"] == "vendedor"
+
+
+def test_expired_token_raises_401():
+    from app.auth.jwt import validate_token
+    token = _make_token(expired=True)
+    with pytest.raises(HTTPException) as exc_info:
+        validate_token(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+
+
+def test_invalid_signature_raises_401():
+    from app.auth.jwt import validate_token
+    token = pyjwt.encode({"aud": "authenticated", "exp": int(time.time()) + 3600}, "wrong-secret", algorithm="HS256")
+    with pytest.raises(HTTPException) as exc_info:
+        validate_token(f"Bearer {token}")
+    assert exc_info.value.status_code == 401
+
+
+def test_missing_bearer_prefix_raises_401():
+    from app.auth.jwt import validate_token
+    token = _make_token("admin")
+    with pytest.raises(HTTPException) as exc_info:
+        validate_token(token)  # sem "Bearer "
+    assert exc_info.value.status_code == 401
+
+
+def test_malformed_token_raises_401():
+    from app.auth.jwt import validate_token
+    with pytest.raises(HTTPException) as exc_info:
+        validate_token("Bearer not.a.valid.jwt")
+    assert exc_info.value.status_code == 401
+```
+
+- [ ] **Step 2: Rodar testes e confirmar que falham (módulo não existe)**
+
+```bash
+cd backend && python -m pytest tests/test_auth_jwt.py -v
+```
+
+Expected: `ModuleNotFoundError` ou `ImportError` em todos os testes.
+
+- [ ] **Step 3: Criar `backend/app/auth/__init__.py`**
+
+```python
+```
+(arquivo vazio)
+
+- [ ] **Step 4: Criar `backend/app/auth/jwt.py`**
+
+```python
+import jwt as pyjwt
+from fastapi import HTTPException
+
+from app.config import settings
+
+
+def validate_token(authorization: str) -> dict:
+    """Valida JWT Supabase e retorna o payload. Lança HTTPException em caso de falha."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+    token = authorization[len("Bearer "):]
+
+    try:
+        payload = pyjwt.decode(
+            token,
+            settings.supabase_jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+        return payload
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+```
+
+- [ ] **Step 5: Criar `backend/app/auth/dependencies.py`**
+
+```python
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.auth.jwt import validate_token
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_role(allowed_roles: list[str]):
+    """Retorna uma FastAPI dependency que exige um dos roles listados."""
+
+    def _dependency(
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> str:
+        if credentials is None:
+            raise HTTPException(status_code=401, detail="Não autenticado")
+
+        payload = validate_token(f"Bearer {credentials.credentials}")
+        role: str | None = payload.get("app_metadata", {}).get("role")
+
+        if role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Permissão insuficiente")
+
+        return role
+
+    return _dependency
+```
+
+- [ ] **Step 6: Rodar testes e confirmar que passam**
+
+```bash
+cd backend && python -m pytest tests/test_auth_jwt.py -v
+```
+
+Expected:
+```
+PASSED tests/test_auth_jwt.py::test_valid_admin_token_returns_payload
+PASSED tests/test_auth_jwt.py::test_valid_vendedor_token_returns_payload
+PASSED tests/test_auth_jwt.py::test_expired_token_raises_401
+PASSED tests/test_auth_jwt.py::test_invalid_signature_raises_401
+PASSED tests/test_auth_jwt.py::test_missing_bearer_prefix_raises_401
+PASSED tests/test_auth_jwt.py::test_malformed_token_raises_401
+6 passed
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/app/auth/ backend/tests/test_auth_jwt.py
+git commit -m "feat(auth): módulo JWT + dependency require_role no backend"
+```
+
+---
+
+## Task 7: Backend — proteger routers admin-only
+
+**Files:**
+- Modify: `backend/app/channels/router.py`
+- Modify: `backend/app/stats/router.py`
+- Modify: `backend/app/agent_profiles/router.py`
+
+- [ ] **Step 1: Proteger `backend/app/channels/router.py`**
+
+Adicionar import após as importações existentes:
+```python
+from fastapi import APIRouter, Depends, HTTPException
+from app.auth.dependencies import require_role
+```
+
+(Substitui o `from fastapi import APIRouter, HTTPException` já existente)
+
+Alterar a definição do router para incluir a dependency em todas as rotas:
+```python
+router = APIRouter(
+    prefix="/api/channels",
+    tags=["channels"],
+    dependencies=[Depends(require_role(["admin"]))],
+)
+```
+
+- [ ] **Step 2: Proteger `backend/app/stats/router.py`**
+
+Adicionar import:
+```python
+from fastapi import Depends
+from app.auth.dependencies import require_role
+```
+
+Alterar a definição do router:
+```python
+router = APIRouter(
+    prefix="/api/stats",
+    tags=["stats"],
+    dependencies=[Depends(require_role(["admin"]))],
+)
+```
+
+- [ ] **Step 3: Proteger `backend/app/agent_profiles/router.py`**
+
+Adicionar import:
+```python
+from fastapi import Depends
+from app.auth.dependencies import require_role
+```
+
+Alterar a definição do router:
+```python
+router = APIRouter(
+    prefix="/api/agent-profiles",
+    tags=["agent_profiles"],
+    dependencies=[Depends(require_role(["admin"]))],
+)
+```
+
+- [ ] **Step 4: Rodar suite completa de testes para verificar não há regressões**
+
+```bash
+cd backend && python -m pytest tests/ -v --tb=short
+```
+
+Expected: todos os testes existentes continuam passando. Os novos testes de auth passam.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/app/channels/router.py backend/app/stats/router.py backend/app/agent_profiles/router.py
+git commit -m "feat(auth): proteger routers channels/stats/agent_profiles com require_role admin"
+```
+
+---
+
+## Task 8: Instruções de configuração de role para usuários existentes
+
+> Esta task não envolve código. São instruções para o operador executar após o deploy.
+
+- [ ] **Step 1: Definir role para usuário existente via Supabase Dashboard**
+
+1. Acesse o painel Supabase → Authentication → Users
+2. Clique no usuário desejado
+3. Na seção "User metadata", NÃO altere. Na seção editar usuário, acesse o JSON de `app_metadata`
+4. Adicione: `{"role": "admin"}` ou `{"role": "vendedor"}`
+5. Salve
+
+- [ ] **Step 2: Definir role via endpoint (alternativa programática)**
+
+```bash
+curl -X POST https://<seu-dominio>/api/admin/users/set-role \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <cookie de sessão admin>" \
+  -d '{"user_id": "<uuid do usuário>", "role": "vendedor"}'
+```
+
+- [ ] **Step 3: Testar login como vendedor**
+
+1. Faça login com uma conta vendedor
+2. Verifique que o sidebar NÃO exibe: Instâncias, Tokens AI, Configurações
+3. Tente navegar para `/canais` → deve redirecionar para `/dashboard`
+4. Tente `GET /api/channels` → deve retornar 403
+
+- [ ] **Step 4: Testar login como admin**
+
+1. Faça login com conta admin
+2. Verifique que o sidebar exibe todos os itens
+3. Navegue para `/canais`, `/estatisticas`, `/config` → deve funcionar normalmente
+
+---
+
+## Notas de deploy
+
+Antes de fazer push para produção, garantir que `.env` contém:
+```
+SUPABASE_JWT_SECRET=<valor de Supabase Dashboard → Settings → API → JWT Secret>
+```
