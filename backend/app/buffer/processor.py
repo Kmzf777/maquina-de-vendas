@@ -216,6 +216,15 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning(f"Failed to increment unread_count for {conversation['id']}: {e}")
 
+    # Channel-level gate: human channels never run AI or schedule follow-ups
+    if channel.get("mode", "ai") == "human":
+        logger.info(
+            f"[HUMAN CHANNEL] mode=human — IA e follow-up desativados "
+            f"channel_id={channel_id} phone={phone}"
+        )
+        _update_last_msg(conversation["id"])
+        return
+
     # If AI is disabled globally, skip agent
     if not VALERIA_ENABLED:
         logger.info(
