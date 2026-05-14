@@ -329,13 +329,28 @@ async def process_single_broadcast(broadcast: dict):
                     )
                     if stage_row.data:
                         target_pipeline_id = stage_row.data[0]["pipeline_id"]
-                        sb.table("deals").update({
-                            "stage_id": move_to_stage_id,
-                            "pipeline_id": target_pipeline_id,
-                        }).eq("lead_id", lead["id"]).eq("pipeline_id", target_pipeline_id).execute()
+                        # Check if lead already has a deal in the target pipeline
+                        existing = (
+                            sb.table("deals")
+                            .select("id")
+                            .eq("lead_id", lead["id"])
+                            .eq("pipeline_id", target_pipeline_id)
+                            .limit(1)
+                            .execute()
+                        )
+                        if existing.data:
+                            sb.table("deals").update({"stage_id": move_to_stage_id}).eq("id", existing.data[0]["id"]).execute()
+                        else:
+                            title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
+                            sb.table("deals").insert({
+                                "lead_id": lead["id"],
+                                "title": title,
+                                "pipeline_id": target_pipeline_id,
+                                "stage_id": move_to_stage_id,
+                            }).execute()
                         logger.info(
-                            "[BROADCAST] Moved deals for lead %s to stage %s",
-                            lead["id"], move_to_stage_id,
+                            "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s",
+                            lead["id"], target_pipeline_id, move_to_stage_id,
                         )
                 except Exception as move_err:
                     logger.warning(
