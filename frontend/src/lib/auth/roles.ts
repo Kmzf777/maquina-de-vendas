@@ -33,7 +33,9 @@ export const ADMIN_API_PREFIXES = [
 ];
 
 export function isAdminOnlyPage(pathname: string): boolean {
-  const adminOnly = ["/canais", "/estatisticas", "/config"];
+  const adminOnly = ROLE_PAGES.admin.filter(
+    (p) => !ROLE_PAGES.vendedor.includes(p)
+  );
   return adminOnly.some((p) => pathname.startsWith(p));
 }
 
