@@ -75,6 +75,7 @@ async def test_ai_channel_processes_followup_job():
 
         mock_cancel.assert_not_called()
         mock_sent.assert_called_once_with("job-1")
+        mock_provider.send_text.assert_called_once()
 
 
 @pytest.mark.asyncio
