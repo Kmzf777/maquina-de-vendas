@@ -70,7 +70,7 @@ export async function POST(
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
-  const originalFilename = (formData.get("filename") as string | null) ?? file.name ?? "documento";
+  const originalFilename = ((formData.get("filename") as string | null) ?? file.name ?? "documento").slice(0, 255);
 
   if (file.size === 0) {
     return NextResponse.json({ error: "Arquivo vazio" }, { status: 400 });
