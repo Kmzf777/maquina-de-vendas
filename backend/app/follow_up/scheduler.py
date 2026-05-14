@@ -76,6 +76,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
             )
             continue
 
+        # Guard: canal humano nunca executa follow-up
+        if channel.get("mode", "ai") == "human":
+            _cancel_job(job["id"], "human_channel")
+            logger.info(
+                f"[FOLLOWUP] mode=human — cancelando seq={sequence} conversation={conversation_id}"
+            )
+            continue
+
         # Guard: janela de 24h
         last_msg_str = lead.get("last_customer_message_at")
         if not last_msg_str:

@@ -40,3 +40,33 @@ def test_status_always_template_sent():
         broadcast = {"agent_profile_id": agent_id}
         updates = _build_conv_updates(broadcast)
         assert updates["status"] == "template_sent"
+
+
+def test_broadcast_ai_enabled_human_channel_without_agent():
+    """Canal humano sem agente → False (comportamento esperado mesmo sem agent)."""
+    channel = {"mode": "human"}
+    assert _broadcast_ai_enabled({"agent_profile_id": None}, channel=channel) is False
+
+
+def test_broadcast_ai_enabled_human_channel_with_agent():
+    """Canal humano COM agente configurado → ainda False (canal humano tem precedência)."""
+    channel = {"mode": "human"}
+    assert _broadcast_ai_enabled({"agent_profile_id": "some-uuid"}, channel=channel) is False
+
+
+def test_broadcast_ai_enabled_ai_channel_with_agent():
+    """Canal IA com agente → True."""
+    channel = {"mode": "ai"}
+    assert _broadcast_ai_enabled({"agent_profile_id": "some-uuid"}, channel=channel) is True
+
+
+def test_broadcast_ai_enabled_ai_channel_without_agent():
+    """Canal IA sem agente → False."""
+    channel = {"mode": "ai"}
+    assert _broadcast_ai_enabled({"agent_profile_id": None}, channel=channel) is False
+
+
+def test_broadcast_ai_enabled_no_channel_arg_backwards_compat():
+    """Sem channel (arg omitido) → comportamento legado inalterado."""
+    assert _broadcast_ai_enabled({"agent_profile_id": "uuid"}) is True
+    assert _broadcast_ai_enabled({"agent_profile_id": None}) is False

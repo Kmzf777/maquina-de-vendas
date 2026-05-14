@@ -199,11 +199,13 @@ def _build_conv_updates(broadcast: dict) -> dict:
     return conv_updates
 
 
-def _broadcast_ai_enabled(broadcast: dict) -> bool:
+def _broadcast_ai_enabled(broadcast: dict, channel: dict | None = None) -> bool:
     """Returns the ai_enabled value to set on the lead for this broadcast.
 
-    Invariant: broadcast with agent → ai_enabled=True; without → ai_enabled=False.
+    Invariant: human channel → always False; ai channel with agent → True.
     """
+    if channel and channel.get("mode", "ai") == "human":
+        return False
     return bool(broadcast.get("agent_profile_id"))
 
 
@@ -395,7 +397,7 @@ async def process_single_broadcast(broadcast: dict):
             # Update ai_enabled on the lead regardless of whether conversation update succeeded.
             # This is the gate that controls whether Valeria responds when the lead replies.
             try:
-                ai_enabled = _broadcast_ai_enabled(broadcast)
+                ai_enabled = _broadcast_ai_enabled(broadcast, channel=channel)
                 lead_updates: dict = {"ai_enabled": ai_enabled}
                 if ai_enabled:
                     lead_updates["human_control"] = False
