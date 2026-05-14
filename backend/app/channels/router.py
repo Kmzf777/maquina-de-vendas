@@ -1,11 +1,16 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from app.auth.dependencies import require_role
 
 from app.channels.service import (
     list_channels, get_channel, create_channel, update_channel, delete_channel,
 )
 
-router = APIRouter(prefix="/api/channels", tags=["channels"])
+router = APIRouter(
+    prefix="/api/channels",
+    tags=["channels"],
+    dependencies=[Depends(require_role(["admin"]))],
+)
 
 
 class ChannelCreate(BaseModel):

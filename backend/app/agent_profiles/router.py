@@ -1,9 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.db.supabase import get_supabase
+from app.auth.dependencies import require_role
 
-router = APIRouter(prefix="/api/agent-profiles", tags=["agent_profiles"])
+router = APIRouter(
+    prefix="/api/agent-profiles",
+    tags=["agent_profiles"],
+    dependencies=[Depends(require_role(["admin"]))],
+)
 
 
 class ProfileCreate(BaseModel):

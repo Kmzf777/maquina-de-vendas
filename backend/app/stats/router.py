@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from datetime import date, timedelta
 from app.db.supabase import get_supabase
+from app.auth.dependencies import require_role
 
-router = APIRouter(prefix="/api/stats", tags=["stats"])
+router = APIRouter(
+    prefix="/api/stats",
+    tags=["stats"],
+    dependencies=[Depends(require_role(["admin"]))],
+)
 
 
 @router.get("/costs")
