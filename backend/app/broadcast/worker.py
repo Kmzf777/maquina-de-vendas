@@ -386,6 +386,15 @@ async def process_single_broadcast(broadcast: dict):
                 logger.info(f"[DEBUG-BROADCAST] step=update_conversation id={conversation['id']} updates={conv_updates}")
                 update_conversation(conversation["id"], **conv_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_conversation OK")
+            except Exception as ce:
+                logger.error(
+                    f"[BROADCAST] Could not update conversation for {lead['phone']}: {ce}",
+                    exc_info=True,
+                )
+
+            # Update ai_enabled on the lead regardless of whether conversation update succeeded.
+            # This is the gate that controls whether Valeria responds when the lead replies.
+            try:
                 ai_enabled = _broadcast_ai_enabled(broadcast)
                 lead_updates: dict = {"ai_enabled": ai_enabled}
                 if ai_enabled:
@@ -395,7 +404,7 @@ async def process_single_broadcast(broadcast: dict):
                 logger.info(f"[DEBUG-BROADCAST] update_lead OK")
             except Exception as ce:
                 logger.error(
-                    f"[BROADCAST] Could not update conversation for {lead['phone']}: {ce}",
+                    f"[BROADCAST] Could not update lead ai_enabled for {lead['phone']}: {ce}",
                     exc_info=True,
                 )
 

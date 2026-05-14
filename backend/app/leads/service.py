@@ -67,6 +67,34 @@ def get_or_create_lead(
                 )
             return row
 
+    # Reverse 9th-digit lookup: incoming phone is 13 digits (with 9), but DB has
+    # the old 12-digit format (without the 9th digit).  This happens when leads are
+    # imported directly with legacy numbers and then reply after a broadcast — Meta
+    # always returns the full 13-digit number in the from_number field.
+    if len(normalized) == 13 and normalized.startswith("55") and normalized[4] == "9":
+        twelve_digit = normalized[:4] + normalized[5:]
+        legacy12 = sb.table("leads").select("*").eq("phone", twelve_digit).execute()
+        if legacy12.data:
+            row = dict(legacy12.data[0])
+            try:
+                update_fields = {"phone": normalized}
+                if name and not row.get("name"):
+                    update_fields["name"] = name
+                sb.table("leads").update(update_fields).eq("id", row["id"]).execute()
+                row["phone"] = normalized
+                if "name" in update_fields:
+                    row["name"] = name
+                logger.info(
+                    "leads.service: backfilled phone (12→13 digit) for lead %s: %s → %s",
+                    row.get("id"), twelve_digit, normalized,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "leads.service: failed to backfill phone (12→13 digit) for lead %s: %s",
+                    row.get("id"), exc,
+                )
+            return row
+
     new_lead: dict[str, Any] = {"phone": normalized, "stage": "pending", "status": "imported"}
     if name:
         new_lead["name"] = name
