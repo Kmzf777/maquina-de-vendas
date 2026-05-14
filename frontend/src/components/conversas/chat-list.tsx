@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { CONVERSATION_TABS, AGENT_STAGES } from "@/lib/constants";
+import { CONVERSATION_TABS, AGENT_STAGES, UNREAD_TAB_KEY } from "@/lib/constants";
 import type { Conversation, Channel } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/datetime";
 import { getWindowStatus } from "@/lib/window-status";
@@ -104,7 +104,7 @@ export function ChatList({
 
   const filteredConversations = conversations
     .filter((conv) => {
-      if (activeTab === "nao_lidas") return (conv.unread_count ?? 0) > 0;
+      if (activeTab === UNREAD_TAB_KEY) return (conv.unread_count ?? 0) > 0;
       if (activeTab === "todos") return true;
       if (activeTab === "pessoal") return !conv.leads;
       return conv.leads?.stage === activeTab;
@@ -175,14 +175,14 @@ export function ChatList({
 
         <div
           ref={tabsScrollRef}
-          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] md:px-7"
         >
           <div className="flex gap-1 px-3 w-max">
             {/* Aba especial: Não lidas */}
             <button
-              onClick={() => onTabChange("nao_lidas")}
+              onClick={() => onTabChange(UNREAD_TAB_KEY)}
               className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 flex items-center gap-1.5 ${
-                activeTab === "nao_lidas"
+                activeTab === UNREAD_TAB_KEY
                   ? "bg-[#111111] text-white"
                   : "text-[#7b7b78] hover:text-[#111111] hover:bg-[#dedbd6]/30"
               }`}

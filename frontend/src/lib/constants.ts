@@ -22,6 +22,8 @@ export const DEAL_CATEGORIES = [
   { key: "consumo", label: "Consumo", color: "#d4b84a" },
 ] as const;
 
+export const UNREAD_TAB_KEY = "nao_lidas" as const;
+
 export const CONVERSATION_TABS = [
   { key: "todos", label: "Todos" },
   { key: "atacado", label: "Atacado" },
