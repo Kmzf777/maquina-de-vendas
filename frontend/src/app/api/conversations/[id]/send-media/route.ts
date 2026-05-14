@@ -9,7 +9,8 @@ import { join } from 'path';
 import { randomBytes } from 'crypto';
 
 const META_API_VERSION = "v21.0";
-const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB
+const MAX_SIZE_MEDIA = 16 * 1024 * 1024;   // 16MB — áudio e imagem
+const MAX_SIZE_DOCUMENT = 100 * 1024 * 1024; // 100MB — documentos
 
 const META_SUPPORTED_AUDIO_TYPES = new Set([
   'audio/aac',
@@ -69,26 +70,27 @@ export async function POST(
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
-  if (file.size > MAX_FILE_SIZE) {
-    return NextResponse.json(
-      { error: "Arquivo muito grande (máx 16MB)" },
-      { status: 400 }
-    );
-  }
+  const originalFilename = (formData.get("filename") as string | null) ?? file?.name ?? "documento";
 
   if (file.size === 0) {
     return NextResponse.json({ error: "Arquivo vazio" }, { status: 400 });
   }
 
   const mimeType = file.type;
-  let messageType: "audio" | "image";
+  let messageType: "audio" | "image" | "document";
   if (mimeType.startsWith("audio/")) {
     messageType = "audio";
   } else if (mimeType.startsWith("image/")) {
     messageType = "image";
   } else {
+    messageType = "document";
+  }
+
+  const maxSize = messageType === "document" ? MAX_SIZE_DOCUMENT : MAX_SIZE_MEDIA;
+  if (file.size > maxSize) {
+    const limitLabel = messageType === "document" ? "100MB" : "16MB";
     return NextResponse.json(
-      { error: "Tipo de arquivo não suportado. Use áudio ou imagem." },
+      { error: `Arquivo muito grande (máx ${limitLabel})` },
       { status: 400 }
     );
   }
@@ -173,11 +175,16 @@ export async function POST(
     const { id: mediaId } = (await uploadResp.json()) as { id: string };
 
     // Step 2: Send message via Meta Graph API
+    const mediaBody =
+      messageType === "document"
+        ? { id: mediaId, filename: originalFilename }
+        : { id: mediaId };
+
     const sendPayload = {
       messaging_product: "whatsapp",
       to: lead.phone,
       type: messageType,
-      [messageType]: { id: mediaId },
+      [messageType]: mediaBody,
     };
 
     const sendResp = await fetch(
@@ -206,7 +213,7 @@ export async function POST(
       lead_id: lead.id,
       conversation_id: conversationId,
       role: "assistant",
-      content: "",
+      content: messageType === "document" ? originalFilename : "",
       sent_by: "seller",
       message_type: messageType,
       media_url: mediaId,
