@@ -5,6 +5,7 @@ import pytest
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-service-key")
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret-32-chars-minimum!")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 
 
