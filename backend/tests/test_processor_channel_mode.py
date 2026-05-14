@@ -49,7 +49,8 @@ async def test_human_channel_skips_agent():
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
          patch("app.buffer.processor.update_conversation"), \
          patch("app.buffer.processor._schedule_followup") as mock_followup, \
-         patch("app.buffer.processor.get_supabase") as mock_sb:
+         patch("app.buffer.processor.get_supabase") as mock_sb, \
+         patch("app.buffer.processor._update_last_msg") as mock_update_last:
 
         mock_sb.return_value = MagicMock(
             table=MagicMock(return_value=MagicMock(
@@ -72,6 +73,7 @@ async def test_human_channel_skips_agent():
 
         mock_agent.assert_not_called()
         mock_followup.assert_not_called()
+        mock_update_last.assert_called_once_with("conv-1")
 
 
 @pytest.mark.asyncio
@@ -87,7 +89,8 @@ async def test_human_channel_still_saves_user_message():
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
          patch("app.buffer.processor.update_conversation"), \
          patch("app.buffer.processor._schedule_followup"), \
-         patch("app.buffer.processor.get_supabase") as mock_sb:
+         patch("app.buffer.processor.get_supabase") as mock_sb, \
+         patch("app.buffer.processor._update_last_msg") as mock_update_last:
 
         mock_sb.return_value = MagicMock(
             table=MagicMock(return_value=MagicMock(
@@ -110,6 +113,7 @@ async def test_human_channel_still_saves_user_message():
 
         assert mock_save.call_count == 1
         assert mock_save.call_args.args[2] == "user"
+        mock_update_last.assert_called_once_with("conv-1")
 
 
 @pytest.mark.asyncio
