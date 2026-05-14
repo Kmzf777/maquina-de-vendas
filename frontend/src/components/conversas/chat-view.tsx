@@ -40,8 +40,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   // Media states
   const [mediaState, setMediaState] = useState<'idle' | 'recording' | 'previewing' | 'sendingMedia'>('idle');
   const [mediaBlob, setMediaBlob] = useState<Blob | null>(null);
+  const [mediaFilename, setMediaFilename] = useState<string>("");
   const [mediaObjectUrl, setMediaObjectUrl] = useState<string | null>(null);
-  const [mediaMessageType, setMediaMessageType] = useState<'audio' | 'image' | null>(null);
+  const [mediaMessageType, setMediaMessageType] = useState<'audio' | 'image' | 'document' | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -59,6 +60,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     setDispatchSuccess(false);
     setMediaState('idle');
     setMediaBlob(null);
+    setMediaFilename("");
     setMediaMessageType(null);
     if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
     setMediaObjectUrl(null);
@@ -144,6 +146,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   function cancelMedia() {
     if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
     setMediaBlob(null);
+    setMediaFilename("");
     setMediaObjectUrl(null);
     setMediaMessageType(null);
     setMediaState('idle');
@@ -203,25 +206,22 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const MAX_SIZE = 16 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      alert('Arquivo muito grande. Máximo 16MB.');
-      e.target.value = '';
-      return;
-    }
-
-    const type = file.type.startsWith('audio/') ? 'audio'
+    const type: 'audio' | 'image' | 'document' =
+      file.type.startsWith('audio/') ? 'audio'
       : file.type.startsWith('image/') ? 'image'
-      : null;
+      : 'document';
 
-    if (!type) {
-      alert('Tipo não suportado. Use áudio ou imagem.');
+    const MAX_SIZE = type === 'document' ? 100 * 1024 * 1024 : 16 * 1024 * 1024;
+    const MAX_LABEL = type === 'document' ? '100MB' : '16MB';
+    if (file.size > MAX_SIZE) {
+      alert(`Arquivo muito grande. Máximo ${MAX_LABEL}.`);
       e.target.value = '';
       return;
     }
 
     const objectUrl = URL.createObjectURL(file);
     setMediaBlob(file);
+    setMediaFilename(file.name);
     setMediaObjectUrl(objectUrl);
     setMediaMessageType(type);
     setMediaState('previewing');
@@ -233,11 +233,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
     setMediaState('sendingMedia');
 
+    const capturedFilename = mediaFilename;
+
     const tempMsg: Message = {
       id: `temp_media_${Date.now()}`,
       lead_id: lead?.id ?? '',
       role: 'assistant',
-      content: '',
+      content: mediaMessageType === 'document' ? capturedFilename : '',
       stage: null,
       sent_by: 'seller',
       created_at: new Date().toISOString(),
@@ -251,17 +253,20 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     const typeToSend = mediaMessageType;
 
     setMediaBlob(null);
+    setMediaFilename("");
     setMediaObjectUrl(null);
     setMediaMessageType(null);
     setMediaState('idle');
 
     try {
       const fd = new FormData();
-      const ext = blobToSend instanceof File
-        ? blobToSend.name.split('.').pop() || (typeToSend === 'audio' ? 'webm' : 'jpg')
-        : (typeToSend === 'audio' ? 'webm' : 'jpg');
-      const filename = `${typeToSend}.${ext}`;
-      fd.append('file', blobToSend, filename);
+      const filenameToSend = capturedFilename || (
+        typeToSend === 'audio' ? 'audio.webm'
+        : typeToSend === 'image' ? 'image.jpg'
+        : 'documento'
+      );
+      fd.append('file', blobToSend, filenameToSend);
+      fd.append('filename', filenameToSend);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -351,6 +356,16 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
           {mediaMessageType === 'image' && mediaObjectUrl && (
             <img src={mediaObjectUrl} alt="preview" className="max-h-40 rounded-[4px] object-contain self-start" />
           )}
+          {mediaMessageType === 'document' && (
+            <div className="flex items-center gap-2 py-1 px-2 bg-white border border-[#dedbd6] rounded-[6px] self-start max-w-full">
+              <svg className="w-5 h-5 flex-shrink-0 text-[#7b7b78]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
+              </svg>
+              <span className="text-[13px] text-[#111111] truncate max-w-[220px]">
+                {mediaFilename || "Documento"}
+              </span>
+            </div>
+          )}
           <div className="flex gap-2 justify-end">
             <button
               onClick={cancelMedia}
@@ -386,7 +401,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
           <input
             ref={fileInputRef}
             type="file"
-            accept="audio/*,image/*"
+            accept="audio/*,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
             onChange={handleFileSelect}
             className="hidden"
           />
