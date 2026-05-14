@@ -70,7 +70,7 @@ export async function POST(
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
-  const originalFilename = (formData.get("filename") as string | null) ?? file?.name ?? "documento";
+  const originalFilename = (formData.get("filename") as string | null) ?? file.name ?? "documento";
 
   if (file.size === 0) {
     return NextResponse.json({ error: "Arquivo vazio" }, { status: 400 });
@@ -135,7 +135,7 @@ export async function POST(
     // Convert unsupported audio formats (e.g. audio/webm from Chrome) to audio/ogg
     let uploadBlob: Blob = file;
     let uploadMime = mimeType;
-    let uploadFilename = file.name || 'audio';
+    let uploadFilename = originalFilename || file.name || 'arquivo';
     if (messageType === 'audio') {
       const baseMime = mimeType.split(';')[0].trim();
       if (!META_SUPPORTED_AUDIO_TYPES.has(baseMime)) {
