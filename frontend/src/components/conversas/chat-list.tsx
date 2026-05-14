@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { CONVERSATION_TABS, AGENT_STAGES } from "@/lib/constants";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { CONVERSATION_TABS, AGENT_STAGES, UNREAD_TAB_KEY } from "@/lib/constants";
 import type { Conversation, Channel } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/datetime";
 import { getWindowStatus } from "@/lib/window-status";
@@ -73,12 +73,39 @@ export function ChatList({
 }: ChatListProps) {
   const [search, setSearch] = useState("");
 
+  const unreadTotal = conversations.filter((c) => (c.unread_count ?? 0) > 0).length;
+
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollButtons = useCallback(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    const raf = requestAnimationFrame(updateScrollButtons);
+    el.addEventListener("scroll", updateScrollButtons);
+    window.addEventListener("resize", updateScrollButtons);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener("scroll", updateScrollButtons);
+      window.removeEventListener("resize", updateScrollButtons);
+    };
+  }, [updateScrollButtons]);
+
   const handleSelectConversation = (conv: Conversation) => {
     onSelectConversation(conv);
   };
 
   const filteredConversations = conversations
     .filter((conv) => {
+      if (activeTab === UNREAD_TAB_KEY) return (conv.unread_count ?? 0) > 0;
       if (activeTab === "todos") return true;
       if (activeTab === "pessoal") return !conv.leads;
       return conv.leads?.stage === activeTab;
@@ -133,22 +160,74 @@ export function ChatList({
       </div>
 
       {/* Tabs — horizontal carousel */}
-      <div className="pb-2 overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-        <div className="flex gap-1 px-3 w-max">
-          {CONVERSATION_TABS.map((tab) => (
+      <div className="relative pb-2">
+        {/* Seta esquerda — desktop only */}
+        <button
+          type="button"
+          onClick={() => tabsScrollRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
+          aria-label="Rolar tabs para esquerda"
+          className={`hidden md:flex absolute left-0 top-1/2 -translate-y-1/2 z-10 w-6 h-6 items-center justify-center bg-[#f0ede8] text-[#7b7b78] hover:text-[#111111] transition-opacity ${
+            canScrollLeft ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+        </button>
+
+        <div
+          ref={tabsScrollRef}
+          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] md:px-7"
+        >
+          <div className="flex gap-1 px-3 w-max">
+            {/* Aba especial: Não lidas */}
             <button
-              key={tab.key}
-              onClick={() => onTabChange(tab.key)}
-              className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 ${
-                activeTab === tab.key
+              onClick={() => onTabChange(UNREAD_TAB_KEY)}
+              className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 flex items-center gap-1.5 ${
+                activeTab === UNREAD_TAB_KEY
                   ? "bg-[#111111] text-white"
                   : "text-[#7b7b78] hover:text-[#111111] hover:bg-[#dedbd6]/30"
               }`}
             >
-              {tab.label}
+              Não lidas
+              {unreadTotal > 0 && (
+                <span
+                  aria-label={`${unreadTotal} conversas não lidas`}
+                  className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-[#ff5600] px-1 text-[10px] font-semibold text-white leading-none"
+                >
+                  {unreadTotal > 9 ? "9+" : unreadTotal}
+                </span>
+              )}
             </button>
-          ))}
+            {CONVERSATION_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => onTabChange(tab.key)}
+                className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 ${
+                  activeTab === tab.key
+                    ? "bg-[#111111] text-white"
+                    : "text-[#7b7b78] hover:text-[#111111] hover:bg-[#dedbd6]/30"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Seta direita — desktop only */}
+        <button
+          type="button"
+          onClick={() => tabsScrollRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
+          aria-label="Rolar tabs para direita"
+          className={`hidden md:flex absolute right-0 top-1/2 -translate-y-1/2 z-10 w-6 h-6 items-center justify-center bg-[#f0ede8] text-[#7b7b78] hover:text-[#111111] transition-opacity ${
+            canScrollRight ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </button>
       </div>
 
       {/* Chat list */}
