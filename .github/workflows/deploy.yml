@@ -41,11 +41,11 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
+            cd "/srv/Maquinadevendascanastra"
             rm -f .git/index.lock
             git clean -fd
             git reset --hard origin/master
-            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
+            git config --global --add safe.directory "/srv/Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
 
             if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
             sg docker -c "docker build \
@@ -88,8 +88,8 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd "/home/Kelwin/Kelwin - Maquinadevendascanastra"
-            git config --global --add safe.directory "/home/Kelwin/Kelwin - Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
+            cd "/srv/Maquinadevendascanastra"
+            git config --global --add safe.directory "/srv/Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
             sg docker -c "docker build -t canastra-api:latest ./backend"
             sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
             sg docker -c "docker service update --force canastra_api"
