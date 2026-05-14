@@ -159,22 +159,69 @@ export function ChatList({
       </div>
 
       {/* Tabs — horizontal carousel */}
-      <div className="pb-2 overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-        <div className="flex gap-1 px-3 w-max">
-          {CONVERSATION_TABS.map((tab) => (
+      <div className="relative pb-2">
+        {/* Seta esquerda — desktop only */}
+        <button
+          onClick={() => tabsScrollRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
+          aria-label="Rolar tabs para esquerda"
+          className={`hidden md:flex absolute left-0 top-1/2 -translate-y-1/2 z-10 w-6 h-6 items-center justify-center bg-[#f0ede8] text-[#7b7b78] hover:text-[#111111] transition-opacity ${
+            canScrollLeft ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+        </button>
+
+        <div
+          ref={tabsScrollRef}
+          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+        >
+          <div className="flex gap-1 px-3 w-max">
+            {/* Aba especial: Não lidas */}
             <button
-              key={tab.key}
-              onClick={() => onTabChange(tab.key)}
-              className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 ${
-                activeTab === tab.key
+              onClick={() => onTabChange("nao_lidas")}
+              className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 flex items-center gap-1.5 ${
+                activeTab === "nao_lidas"
                   ? "bg-[#111111] text-white"
                   : "text-[#7b7b78] hover:text-[#111111] hover:bg-[#dedbd6]/30"
               }`}
             >
-              {tab.label}
+              Não lidas
+              {unreadTotal > 0 && (
+                <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-[#ff5600] px-1 text-[10px] font-semibold text-white leading-none">
+                  {unreadTotal > 9 ? "9+" : unreadTotal}
+                </span>
+              )}
             </button>
-          ))}
+            {CONVERSATION_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => onTabChange(tab.key)}
+                className={`px-3 py-1.5 rounded-[4px] text-[12px] transition-colors whitespace-nowrap flex-shrink-0 ${
+                  activeTab === tab.key
+                    ? "bg-[#111111] text-white"
+                    : "text-[#7b7b78] hover:text-[#111111] hover:bg-[#dedbd6]/30"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Seta direita — desktop only */}
+        <button
+          onClick={() => tabsScrollRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
+          aria-label="Rolar tabs para direita"
+          className={`hidden md:flex absolute right-0 top-1/2 -translate-y-1/2 z-10 w-6 h-6 items-center justify-center bg-[#f0ede8] text-[#7b7b78] hover:text-[#111111] transition-opacity ${
+            canScrollRight ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </button>
       </div>
 
       {/* Chat list */}
