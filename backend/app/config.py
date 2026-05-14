@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Supabase
     supabase_url: str
     supabase_service_key: str
-    supabase_jwt_secret: str = ""
+    supabase_jwt_secret: str
 
     # Redis
     redis_url: str = "redis://redis:6379"

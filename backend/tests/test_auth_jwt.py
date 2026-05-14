@@ -62,3 +62,50 @@ def test_malformed_token_raises_401():
     with pytest.raises(HTTPException) as exc_info:
         validate_token("Bearer not.a.valid.jwt")
     assert exc_info.value.status_code == 401
+
+
+def test_require_role_allows_admin():
+    from app.auth.dependencies import require_role
+    import jwt as pyjwt
+    import time
+    payload = {
+        "aud": "authenticated",
+        "exp": int(time.time()) + 3600,
+        "sub": "00000000-0000-0000-0000-000000000001",
+        "app_metadata": {"role": "admin"},
+        "role": "authenticated",
+    }
+    token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    from fastapi.security import HTTPAuthorizationCredentials
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    dep = require_role(["admin"])
+    result = dep(credentials=creds)
+    assert result == "admin"
+
+
+def test_require_role_blocks_vendedor_from_admin_route():
+    from app.auth.dependencies import require_role
+    import jwt as pyjwt
+    import time
+    payload = {
+        "aud": "authenticated",
+        "exp": int(time.time()) + 3600,
+        "sub": "00000000-0000-0000-0000-000000000001",
+        "app_metadata": {"role": "vendedor"},
+        "role": "authenticated",
+    }
+    token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    from fastapi.security import HTTPAuthorizationCredentials
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    dep = require_role(["admin"])
+    with pytest.raises(HTTPException) as exc_info:
+        dep(credentials=creds)
+    assert exc_info.value.status_code == 403
+
+
+def test_require_role_raises_401_when_no_credentials():
+    from app.auth.dependencies import require_role
+    dep = require_role(["admin"])
+    with pytest.raises(HTTPException) as exc_info:
+        dep(credentials=None)
+    assert exc_info.value.status_code == 401
