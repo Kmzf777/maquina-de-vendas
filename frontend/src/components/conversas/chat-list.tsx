@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { CONVERSATION_TABS, AGENT_STAGES } from "@/lib/constants";
 import type { Conversation, Channel } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/datetime";
@@ -73,12 +73,38 @@ export function ChatList({
 }: ChatListProps) {
   const [search, setSearch] = useState("");
 
+  const unreadTotal = conversations.filter((c) => (c.unread_count ?? 0) > 0).length;
+
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollButtons = useCallback(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    updateScrollButtons();
+    el.addEventListener("scroll", updateScrollButtons);
+    window.addEventListener("resize", updateScrollButtons);
+    return () => {
+      el.removeEventListener("scroll", updateScrollButtons);
+      window.removeEventListener("resize", updateScrollButtons);
+    };
+  }, [updateScrollButtons]);
+
   const handleSelectConversation = (conv: Conversation) => {
     onSelectConversation(conv);
   };
 
   const filteredConversations = conversations
     .filter((conv) => {
+      if (activeTab === "nao_lidas") return (conv.unread_count ?? 0) > 0;
       if (activeTab === "todos") return true;
       if (activeTab === "pessoal") return !conv.leads;
       return conv.leads?.stage === activeTab;
