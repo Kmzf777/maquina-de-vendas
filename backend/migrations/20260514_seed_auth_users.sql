@@ -50,6 +50,7 @@ BEGIN
 
   INSERT INTO auth.identities (
     id,
+    provider_id,
     user_id,
     identity_data,
     provider,
@@ -58,6 +59,7 @@ BEGIN
     updated_at
   ) VALUES (
     gen_random_uuid(),
+    'admin@canastra.com',                              -- ← mesmo email do usuário
     v_user_id,
     jsonb_build_object('sub', v_user_id::text, 'email', 'admin@canastra.com'),
     'email',
@@ -102,6 +104,7 @@ BEGIN
 
   INSERT INTO auth.identities (
     id,
+    provider_id,
     user_id,
     identity_data,
     provider,
@@ -110,6 +113,7 @@ BEGIN
     updated_at
   ) VALUES (
     gen_random_uuid(),
+    'vendedor1@canastra.com',                          -- ← mesmo email do usuário
     v_user_id,
     jsonb_build_object('sub', v_user_id::text, 'email', 'vendedor1@canastra.com'),
     'email',
@@ -154,6 +158,7 @@ BEGIN
 
   INSERT INTO auth.identities (
     id,
+    provider_id,
     user_id,
     identity_data,
     provider,
@@ -162,6 +167,7 @@ BEGIN
     updated_at
   ) VALUES (
     gen_random_uuid(),
+    'vendedor2@canastra.com',                          -- ← mesmo email do usuário
     v_user_id,
     jsonb_build_object('sub', v_user_id::text, 'email', 'vendedor2@canastra.com'),
     'email',
