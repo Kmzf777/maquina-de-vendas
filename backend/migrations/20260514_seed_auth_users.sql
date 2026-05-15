@@ -1,7 +1,6 @@
 -- =============================================================================
 -- SEED: Usuários do CRM com roles admin / vendedor
 -- Execute manualmente no Supabase SQL Editor (não é migration automática)
--- Substitua emails, senhas e nomes antes de executar
 -- =============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -38,11 +37,11 @@ BEGIN
     '00000000-0000-0000-0000-000000000000',
     'authenticated',
     'authenticated',
-    'admin@canastra.com',                              -- ← trocar email
-    crypt('Senha@Admin123', gen_salt('bf')),           -- ← trocar senha
+    'comercial@cafecanastra.com',
+    crypt('Canastrainteligencia#321', gen_salt('bf')),
     NOW(),
     '{"provider": "email", "providers": ["email"], "role": "admin"}',
-    '{"full_name": "Administrador"}',                  -- ← trocar nome
+    '{"full_name": "Administrador"}',
     NOW(),
     NOW(),
     '', '', '', ''
@@ -59,9 +58,9 @@ BEGIN
     updated_at
   ) VALUES (
     gen_random_uuid(),
-    'admin@canastra.com',                              -- ← mesmo email do usuário
+    'comercial@cafecanastra.com',
     v_user_id,
-    jsonb_build_object('sub', v_user_id::text, 'email', 'admin@canastra.com'),
+    jsonb_build_object('sub', v_user_id::text, 'email', 'comercial@cafecanastra.com'),
     'email',
     NOW(),
     NOW(),
@@ -92,11 +91,11 @@ BEGIN
     '00000000-0000-0000-0000-000000000000',
     'authenticated',
     'authenticated',
-    'vendedor1@canastra.com',                          -- ← trocar email
-    crypt('Senha@Venda123', gen_salt('bf')),           -- ← trocar senha
+    'Comercial2@cafecanastra.com',
+    crypt('Joao*321', gen_salt('bf')),
     NOW(),
     '{"provider": "email", "providers": ["email"], "role": "vendedor"}',
-    '{"full_name": "João Vendedor"}',                  -- ← trocar nome
+    '{"full_name": "Comercial 2"}',
     NOW(),
     NOW(),
     '', '', '', ''
@@ -113,63 +112,9 @@ BEGIN
     updated_at
   ) VALUES (
     gen_random_uuid(),
-    'vendedor1@canastra.com',                          -- ← mesmo email do usuário
+    'Comercial2@cafecanastra.com',
     v_user_id,
-    jsonb_build_object('sub', v_user_id::text, 'email', 'vendedor1@canastra.com'),
-    'email',
-    NOW(),
-    NOW(),
-    NOW()
-  );
-
-  -- ── Usuário 3: VENDEDOR (duplicar este bloco para mais vendedores) ──────────
-  v_user_id := gen_random_uuid();
-
-  INSERT INTO auth.users (
-    id,
-    instance_id,
-    aud,
-    role,
-    email,
-    encrypted_password,
-    email_confirmed_at,
-    raw_app_meta_data,
-    raw_user_meta_data,
-    created_at,
-    updated_at,
-    confirmation_token,
-    recovery_token,
-    email_change_token_new,
-    email_change
-  ) VALUES (
-    v_user_id,
-    '00000000-0000-0000-0000-000000000000',
-    'authenticated',
-    'authenticated',
-    'vendedor2@canastra.com',                          -- ← trocar email
-    crypt('Senha@Venda456', gen_salt('bf')),           -- ← trocar senha
-    NOW(),
-    '{"provider": "email", "providers": ["email"], "role": "vendedor"}',
-    '{"full_name": "Maria Vendedora"}',                -- ← trocar nome
-    NOW(),
-    NOW(),
-    '', '', '', ''
-  );
-
-  INSERT INTO auth.identities (
-    id,
-    provider_id,
-    user_id,
-    identity_data,
-    provider,
-    last_sign_in_at,
-    created_at,
-    updated_at
-  ) VALUES (
-    gen_random_uuid(),
-    'vendedor2@canastra.com',                          -- ← mesmo email do usuário
-    v_user_id,
-    jsonb_build_object('sub', v_user_id::text, 'email', 'vendedor2@canastra.com'),
+    jsonb_build_object('sub', v_user_id::text, 'email', 'Comercial2@cafecanastra.com'),
     'email',
     NOW(),
     NOW(),
@@ -188,7 +133,7 @@ END $$;
 -- Promover usuário existente para ADMIN:
 UPDATE auth.users
 SET raw_app_meta_data = raw_app_meta_data || '{"role": "admin"}'::jsonb
-WHERE email = 'usuario.existente@canastra.com';     -- ← trocar email
+WHERE email = 'comercial@cafecanastra.com';
 
 -- Definir usuário existente como VENDEDOR:
 -- UPDATE auth.users
