@@ -24,7 +24,7 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     channel_id = msg.channel_id or ""
 
     # Determine text content (will be resolved later for media)
-    _MEDIA_TYPES = ("image", "video", "audio", "document")
+    _MEDIA_TYPES = ("image", "video", "audio")
     if msg.media_url and msg.type in _MEDIA_TYPES:
         placeholder = f"[{msg.type}: media_url={msg.media_url}]"
         text = f"{msg.text}\n{placeholder}" if msg.text else placeholder

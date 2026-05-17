@@ -383,15 +383,17 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
     for pattern in [image_id_pattern, image_url_pattern]:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
-            message_type = "image"
-            storage_url = media_ref
+            if message_type is None:
+                message_type = "image"
+                storage_url = media_ref
             text = text.replace(match.group(0), "[imagem recebida]")
 
     for pattern in [video_id_pattern, video_url_pattern]:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
-            message_type = "video"
-            storage_url = media_ref
+            if message_type is None:
+                message_type = "video"
+                storage_url = media_ref
             text = text.replace(match.group(0), "[vídeo recebido]")
 
     return text.strip(), storage_url, message_type
