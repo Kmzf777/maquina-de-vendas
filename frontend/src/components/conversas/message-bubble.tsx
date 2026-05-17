@@ -19,11 +19,13 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
+  const [videoError, setVideoError] = useState(false);
   const senderBadge = getSenderBadge(message);
 
   const isAudio = message.message_type === "audio";
   const isImage = message.message_type === "image";
   const isDocument = message.message_type === "document";
+  const isVideo = message.message_type === "video";
 
   // New messages: media_url is a Supabase Storage URL (https://...) or object URL (blob:...)
   // Legacy messages: media_url is a Meta media_id (numeric string) — use proxy fallback
@@ -57,6 +59,31 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zm-1 3a1 1 0 0 1 2 0v8a1 1 0 0 1-2 0V4zm7.25 5a.75.75 0 0 0-1.5 0 5.75 5.75 0 0 1-11.5 0 .75.75 0 0 0-1.5 0 7.25 7.25 0 0 0 6.5 7.2V20H9a.75.75 0 0 0 0 1.5h6a.75.75 0 0 0 0-1.5h-2.25v-3.8A7.25 7.25 0 0 0 19.25 9z" />
               </svg>
               <span className="text-[13px] opacity-60">Áudio</span>
+            </div>
+          )
+        ) : isVideo ? (
+          mediaSrc ? (
+            videoError ? (
+              <div className="flex items-center gap-2 py-1">
+                <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.868v6.264a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <span className="text-[13px] opacity-60">Vídeo</span>
+              </div>
+            ) : (
+              <video
+                controls
+                src={mediaSrc}
+                className="max-w-[320px] max-h-[400px] rounded-[4px] block"
+                onError={() => setVideoError(true)}
+              />
+            )
+          ) : (
+            <div className="flex items-center gap-2 py-1">
+              <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.868v6.264a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span className="text-[13px] opacity-60">Vídeo</span>
             </div>
           )
         ) : isImage ? (

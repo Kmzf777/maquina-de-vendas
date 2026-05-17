@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import os
 import logging
 import re
@@ -327,18 +326,22 @@ def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: s
 
 
 async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | None]:
-    """Replace media placeholders with actual content using Gemini.
+    """Replace media placeholders with type/url metadata.
 
-    Returns (resolved_text, storage_url, message_type).
-    storage_url is the permanent Supabase Storage URL when audio upload succeeds.
+    Returns (resolved_text, media_ref, message_type).
+    media_ref is the Meta media_id or direct URL, used as media_url in the DB.
+    Audio is downloaded, transcribed, and uploaded to Supabase Storage.
+    Images and videos: only media_ref is extracted — no download, no AI processing.
     """
-    # Meta-style: [audio: media_id=xxx]
+    # Meta-style: [type: media_id=xxx]
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
     image_id_pattern = r"\[image: media_id=(\S+)\]"
+    video_id_pattern = r"\[video: media_id=(\S+)\]"
 
-    # Evolution-style: [audio: media_url=xxx]
+    # Evolution-style or captioned media: [type: media_url=xxx]
     audio_url_pattern = r"\[audio: media_url=(\S+)\]"
     image_url_pattern = r"\[image: media_url=(\S+)\]"
+    video_url_pattern = r"\[video: media_url=(\S+)\]"
 
     storage_url: str | None = None
     message_type: str | None = None
@@ -380,24 +383,17 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
     for pattern in [image_id_pattern, image_url_pattern]:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
-            try:
-                image_bytes, content_type = await provider.download_media(media_ref)
-                b64 = base64.b64encode(image_bytes).decode()
-                response = await _get_openai().chat.completions.create(
-                    model="gemini-3-flash-preview",
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Descreva esta imagem em uma frase curta em portugues. Se for uma foto de produto, descreva o produto."},
-                            {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
-                        ],
-                    }],
-                    max_tokens=150,
-                )
-                description = response.choices[0].message.content
-                text = text.replace(match.group(0), f"[imagem recebida: {description}]")
-            except Exception as e:
-                logger.warning(f"Failed to describe image {media_ref}: {e}")
-                text = text.replace(match.group(0), "[imagem: nao foi possivel descrever]")
+            if message_type is None:
+                message_type = "image"
+                storage_url = media_ref
+            text = text.replace(match.group(0), "[imagem recebida]")
 
-    return text, storage_url, message_type
+    for pattern in [video_id_pattern, video_url_pattern]:
+        for match in re.finditer(pattern, text):
+            media_ref = match.group(1)
+            if message_type is None:
+                message_type = "video"
+                storage_url = media_ref
+            text = text.replace(match.group(0), "[vídeo recebido]")
+
+    return text.strip(), storage_url, message_type

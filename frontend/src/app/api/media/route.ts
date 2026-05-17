@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
   }
   const info = await infoRes.json() as { url?: string; mime_type?: string };
   const downloadUrl = info.url;
-  const mimeType = info.mime_type ?? "audio/ogg";
+  const mimeType = info.mime_type ?? "application/octet-stream";
 
   if (!downloadUrl) {
     return NextResponse.json({ error: "No download URL from Meta" }, { status: 502 });
@@ -62,12 +62,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unexpected media host" }, { status: 502 });
   }
 
-  // Step 2: Stream audio directly to client — avoids buffering in memory
+  // Step 2: Stream media directly to client — avoids buffering in memory
   const audioRes = await fetch(downloadUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!audioRes.ok) {
-    return NextResponse.json({ error: "Audio download failed" }, { status: 502 });
+    return NextResponse.json({ error: "Media download failed" }, { status: 502 });
   }
 
   return new Response(audioRes.body, {
