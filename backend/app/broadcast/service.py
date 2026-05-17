@@ -40,14 +40,12 @@ def mark_broadcast_lead_failed(bl_id: str, error: str) -> None:
 
 def increment_broadcast_sent(broadcast_id: str) -> None:
     sb = get_supabase()
-    broadcast = sb.table("broadcasts").select("sent").eq("id", broadcast_id).single().execute().data
-    sb.table("broadcasts").update({"sent": broadcast["sent"] + 1}).eq("id", broadcast_id).execute()
+    sb.rpc("increment_broadcast_sent", {"broadcast_id_param": broadcast_id}).execute()
 
 
 def increment_broadcast_failed(broadcast_id: str) -> None:
     sb = get_supabase()
-    broadcast = sb.table("broadcasts").select("failed").eq("id", broadcast_id).single().execute().data
-    sb.table("broadcasts").update({"failed": broadcast["failed"] + 1}).eq("id", broadcast_id).execute()
+    sb.rpc("increment_broadcast_failed", {"broadcast_id_param": broadcast_id}).execute()
 
 
 def save_broadcast_lead_wamid(bl_id: str, wamid: str) -> None:
@@ -77,6 +75,4 @@ def mark_broadcast_lead_delivered(bl_id: str) -> None:
 
 def increment_broadcast_delivered(broadcast_id: str) -> None:
     sb = get_supabase()
-    broadcast = sb.table("broadcasts").select("delivered").eq("id", broadcast_id).single().execute().data
-    current = broadcast.get("delivered") or 0
-    sb.table("broadcasts").update({"delivered": current + 1}).eq("id", broadcast_id).execute()
+    sb.rpc("increment_broadcast_delivered", {"broadcast_id_param": broadcast_id}).execute()

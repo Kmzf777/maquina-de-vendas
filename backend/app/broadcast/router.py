@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.campaign.importer import parse_csv
+from app.leads.service import get_or_create_lead as _get_or_create_lead
 
 router = APIRouter(prefix="/api/broadcasts", tags=["broadcasts"])
 
@@ -116,20 +117,12 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
 
     for phone in result.valid:
         try:
-            lead_result = sb.table("leads").select("id").eq("phone", phone).execute()
-            if lead_result.data:
-                lead_id = lead_result.data[0]["id"]
-            else:
-                insert_result = sb.table("leads").insert({
-                    "phone": phone,
-                    "status": "imported",
-                    "stage": "pending",
-                }).execute()
-                lead_id = insert_result.data[0]["id"]
-
+            # get_or_create_lead handles 12→13-digit legacy backfill, preventing
+            # duplicate leads that would cause the same person to receive two templates.
+            lead = _get_or_create_lead(phone)
             sb.table("broadcast_leads").insert({
                 "broadcast_id": broadcast_id,
-                "lead_id": lead_id,
+                "lead_id": lead["id"],
             }).execute()
             created += 1
         except Exception:
