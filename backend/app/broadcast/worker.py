@@ -248,11 +248,19 @@ async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
 
-    # Recover leads stuck in 'processing' for over 5 minutes (worker crash/restart)
+    # Recover leads stuck in 'processing' for over 5 minutes (worker crash/restart).
+    # If wamid is set, the message reached Meta — mark as sent instead of re-queuing
+    # to avoid sending the same template twice.
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    sb.table("broadcast_leads").update({
+        "status": "sent",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("broadcast_id", broadcast_id).eq("status", "processing").lt(
+        "claimed_at", cutoff
+    ).filter("wamid", "not.is", "null").execute()
     sb.table("broadcast_leads").update({"status": "pending", "claimed_at": None}).eq(
         "broadcast_id", broadcast_id
-    ).eq("status", "processing").lt("claimed_at", cutoff).execute()
+    ).eq("status", "processing").lt("claimed_at", cutoff).filter("wamid", "is", "null").execute()
 
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
@@ -325,15 +333,16 @@ async def process_single_broadcast(broadcast: dict):
                 components=components,
                 language_code=broadcast.get("template_language_code", "pt_BR"),
             )
-            mark_broadcast_lead_sent(bl["id"])
-            increment_broadcast_sent(broadcast_id)
-            # Save wamid so delivery webhooks can be matched back to this broadcast lead
+            # Save wamid BEFORE marking as sent so the crash-recovery window can detect
+            # that the message already reached Meta and avoid a duplicate send.
             try:
                 wamid = (send_response.get("messages") or [{}])[0].get("id")
                 if wamid:
                     save_broadcast_lead_wamid(bl["id"], wamid)
             except Exception as wamid_err:
                 logger.warning("[BROADCAST] Could not save wamid for lead %s: %s", lead["phone"], wamid_err)
+            mark_broadcast_lead_sent(bl["id"])
+            increment_broadcast_sent(broadcast_id)
 
             # Move lead's deal to configured Kanban stage if set
             move_to_stage_id = broadcast.get("move_to_stage_id")
