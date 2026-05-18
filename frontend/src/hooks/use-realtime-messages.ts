@@ -20,8 +20,7 @@ export function useRealtimeMessages(leadId: string | null) {
       .from("messages")
       .select("*")
       .eq("lead_id", leadId)
-      .order("created_at", { ascending: false })
-      .limit(500);
+      .order("created_at", { ascending: false });
 
     if (data) setMessages([...data].reverse());
     setLoading(false);
