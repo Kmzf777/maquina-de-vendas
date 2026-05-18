@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
 
   const { data: dbConversations } = await dbQuery
     .order("last_msg_at", { ascending: false, nullsFirst: false })
-    .limit(100);
+    .limit(500);
 
   // Fetch last message text for meta_cloud conversations via RPC
   const metaConvIds = (dbConversations || [])
@@ -219,5 +219,5 @@ export async function GET(request: NextRequest) {
     return tb - ta;
   });
 
-  return NextResponse.json(merged.slice(0, 100));
+  return NextResponse.json(merged);
 }

@@ -184,14 +184,14 @@ export async function GET(
     }
   }
 
-  // Fallback: DB messages
+  // Fallback: DB messages — fetch latest 500 ordered descending, then reverse
   const { data, error } = await supabase
     .from("messages")
     .select("*")
     .eq("conversation_id", id)
-    .order("created_at", { ascending: true })
-    .limit(200);
+    .order("created_at", { ascending: false })
+    .limit(500);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+  return NextResponse.json((data ?? []).reverse());
 }

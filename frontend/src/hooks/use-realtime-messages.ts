@@ -20,10 +20,10 @@ export function useRealtimeMessages(leadId: string | null) {
       .from("messages")
       .select("*")
       .eq("lead_id", leadId)
-      .order("created_at", { ascending: true })
-      .limit(200);
+      .order("created_at", { ascending: false })
+      .limit(500);
 
-    if (data) setMessages(data);
+    if (data) setMessages([...data].reverse());
     setLoading(false);
   }, [leadId, supabase]);
 
