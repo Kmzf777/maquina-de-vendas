@@ -115,7 +115,7 @@ export async function POST(
                   components: tplData.components,
                   meta_template_id: tplData.id,
                   status: "approved",
-                }).then(() => {}).catch(() => {});
+                }).then(() => {}, () => {});
               }
             }
           }
