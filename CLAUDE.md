@@ -60,7 +60,22 @@ O **código** deve funcionar em ambos os ambientes sem modificação. Os arquivo
 
 ---
 
-## ⚛️ 4. Frontend — Next.js
+## ⚠️ 4. Login Temporariamente Desativado (REATIVAR!)
+
+> **Status:** Login Supabase está **desativado** desde 2026-05-18 na branch `fix/disable-login-temp` (mergeada em master).
+> O sistema foi implementado mas apresentava bugs em produção.
+
+**Para reativar o login:**
+1. Restaurar `frontend/src/middleware.ts` com a lógica completa de auth (ver git history antes do commit de desativação — buscar "disable-login-temp").
+2. O arquivo original usava `createServerClient` do `@supabase/ssr`, `supabase.auth.getUser()`, verificação de role (`admin` | `vendedor`) e redirecionamento para `/login`.
+3. A página de login já existe em `frontend/src/app/login/page.tsx` — não remover.
+4. Os helpers de role estão em `frontend/src/lib/auth/roles.ts` — não remover.
+
+**O que foi desativado:** apenas `middleware.ts` — o middleware agora retorna `NextResponse.next()` sem nenhuma verificação. Todo o restante do código (supabase client, login page, roles) foi **preservado**.
+
+---
+
+## ⚛️ 5. Frontend — Next.js
 
 - Esta versão usa **App Router e Server Components**. Convenções, APIs e estrutura de pastas podem diferir dos seus dados de treinamento.
 - **Consulte os padrões existentes em `frontend/src/app` antes de criar lógica nova.** Não confie em memória para APIs e estrutura de rotas.

@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
 
 type NavItem = {
   href: string;
@@ -18,15 +16,9 @@ type NavGroup = {
 };
 
 function useRole(): "admin" | "vendedor" {
-  const [role, setRole] = useState<"admin" | "vendedor">("vendedor");
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      const r = session?.user?.app_metadata?.role as "admin" | "vendedor" | undefined;
-      if (r === "admin" || r === "vendedor") setRole(r);
-    });
-  }, []);
-  return role;
+  // ⚠️ LOGIN DESATIVADO: retorna "admin" fixo para mostrar todos os itens da sidebar.
+  // Quando o login for reativado, restaurar o código original com getSession().
+  return "admin";
 }
 
 const NAV_GROUPS: NavGroup[] = [
