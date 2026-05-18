@@ -9,6 +9,7 @@ interface MetaTemplate {
   category: string;
   body: string;
   params: { index: number; paramName: string; example: string }[];
+  paramsType: "positional" | "named" | "none";
 }
 
 interface Props {
@@ -17,12 +18,43 @@ interface Props {
   onSuccess: () => void;
 }
 
+// Mirrors _LEAD_FIELD_TOKENS in backend/app/broadcast/worker.py
+const LEAD_RESOLVERS: Record<string, (l: { name?: string | null; phone?: string; company?: string | null }) => string> = {
+  primeiro_nome: (l) => (l.name ?? "").split(" ")[0],
+  nome_completo: (l) => l.name ?? "",
+  telefone: (l) => l.phone ?? "",
+  empresa: (l) => l.company ?? "",
+  first_name: (l) => (l.name ?? "").split(" ")[0],
+  lead_name: (l) => l.name ?? "",
+  phone: (l) => l.phone ?? "",
+};
+
+function resolveBody(
+  body: string,
+  params: MetaTemplate["params"],
+  lead: { name?: string | null; phone?: string; company?: string | null },
+  inputs: Record<string, string>
+): string {
+  let text = body;
+  for (const param of params) {
+    const value =
+      LEAD_RESOLVERS[param.paramName]?.(lead) ||
+      inputs[param.paramName] ||
+      (param.example ? `[${param.example}]` : `{{${param.paramName}}}`);
+    text = text.replaceAll(`{{${param.paramName}}}`, value);
+    text = text.replaceAll(`{{${param.index}}}`, value);
+  }
+  return text;
+}
+
 export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Props) {
   const channelId = conversation.channel_id;
+  const lead = conversation.leads;
 
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MetaTemplate | null>(null);
+  const [inputs, setInputs] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,10 +67,41 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
       .finally(() => setLoading(false));
   }, [channelId]);
 
+  function handleSelect(t: MetaTemplate) {
+    const isAlreadySelected = selected?.name === t.name && selected?.language === t.language;
+    if (isAlreadySelected) {
+      setSelected(null);
+      setInputs({});
+      return;
+    }
+    setSelected(t);
+    setInputs({});
+    setError(null);
+  }
+
+  const manualParams = (selected?.params ?? []).filter((p) => !LEAD_RESOLVERS[p.paramName]);
+  const previewText = selected
+    ? resolveBody(selected.body, selected.params, lead ?? {}, inputs)
+    : "";
+
   async function handleSend() {
     if (!selected || !conversation.id) return;
     setSending(true);
     setError(null);
+
+    // Build template_variables with resolved lead data + manual inputs
+    let templateVariables: Record<string, string> | null = null;
+    if (selected.params.length > 0) {
+      templateVariables = {};
+      if (selected.paramsType === "positional") {
+        templateVariables["__params_type__"] = "positional";
+      }
+      for (const p of selected.params) {
+        const value = LEAD_RESOLVERS[p.paramName]?.(lead ?? {}) || inputs[p.paramName] || p.example || "";
+        templateVariables[p.paramName] = value;
+      }
+    }
+
     try {
       const res = await fetch(`/api/conversations/${conversation.id}/send-template`, {
         method: "POST",
@@ -46,8 +109,8 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
         body: JSON.stringify({
           template_name: selected.name,
           template_language_code: selected.language,
-          template_variables: null,
-          template_body: selected.body,
+          template_variables: templateVariables,
+          template_body: previewText, // resolved text — stored as the message content in the chat
         }),
       });
       if (!res.ok) {
@@ -91,30 +154,30 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Template list */}
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.8px] text-[#7b7b78] mb-2">
-              Selecionar template
-            </p>
-            {loading ? (
-              <p className="text-[13px] text-[#7b7b78]">Buscando templates...</p>
-            ) : templates.length === 0 ? (
-              <p className="text-[13px] text-[#c41c1c]">Nenhum template aprovado encontrado.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {templates.map((t) => {
-                  const isSelected =
-                    selected?.name === t.name && selected?.language === t.language;
-                  return (
+        <div className="flex-1 overflow-y-auto p-5">
+          <p className="text-[11px] uppercase tracking-[0.8px] text-[#7b7b78] mb-2">
+            Selecionar template
+          </p>
+          {loading ? (
+            <p className="text-[13px] text-[#7b7b78]">Buscando templates...</p>
+          ) : templates.length === 0 ? (
+            <p className="text-[13px] text-[#c41c1c]">Nenhum template aprovado encontrado.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {templates.map((t) => {
+                const isSelected = selected?.name === t.name && selected?.language === t.language;
+                return (
+                  <div
+                    key={`${t.name}|${t.language}`}
+                    className={`rounded-[6px] border transition-colors ${
+                      isSelected
+                        ? "border-[#111111] bg-[#111111]/5"
+                        : "border-[#dedbd6] hover:border-[#111111]/40 hover:bg-[#f0ede8]"
+                    }`}
+                  >
                     <button
-                      key={`${t.name}|${t.language}`}
-                      onClick={() => setSelected(isSelected ? null : t)}
-                      className={`w-full text-left px-3 py-2.5 rounded-[6px] border transition-colors ${
-                        isSelected
-                          ? "border-[#111111] bg-[#111111]/5"
-                          : "border-[#dedbd6] hover:border-[#111111]/40 hover:bg-[#f0ede8]"
-                      }`}
+                      onClick={() => handleSelect(t)}
+                      className="w-full text-left px-3 py-2.5"
                     >
                       <span className="text-[13px] text-[#111111] font-medium">{t.name}</span>
                       {t.category && (
@@ -122,26 +185,48 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
                       )}
                       <span className="ml-1 text-[11px] text-[#7b7b78]">· {t.language}</span>
                     </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
 
-          {/* Preview */}
-          {selected && (
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.8px] text-[#7b7b78] mb-2">
-                Pré-visualização
-              </p>
-              <div className="bg-[#f0ede8] border border-[#dedbd6] rounded-[8px] p-3">
-                <div className="bg-white border border-[#dedbd6] rounded-[8px] rounded-tl-none px-3 py-2.5 max-w-[88%]">
-                  <p className="text-[13px] text-[#111111] whitespace-pre-wrap leading-relaxed">
-                    {selected.body || "(sem corpo de template)"}
-                  </p>
-                  <p className="text-[10px] text-[#7b7b78] text-right mt-1">agora</p>
-                </div>
-              </div>
+                    {/* Inline preview — appears right below the selected item */}
+                    {isSelected && (
+                      <div className="px-3 pb-3 space-y-2.5 border-t border-[#dedbd6]/60 pt-2.5">
+                        {/* Inputs for variables that can't be auto-resolved from the lead */}
+                        {manualParams.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] text-[#7b7b78]">Preencha as variáveis:</p>
+                            {manualParams.map((p) => (
+                              <div key={p.paramName} className="flex items-center gap-2">
+                                <span className="text-[12px] text-[#7b7b78] w-28 shrink-0">{p.paramName}</span>
+                                <input
+                                  type="text"
+                                  value={inputs[p.paramName] ?? ""}
+                                  onChange={(e) =>
+                                    setInputs((prev) => ({ ...prev, [p.paramName]: e.target.value }))
+                                  }
+                                  placeholder={p.example || "..."}
+                                  className="flex-1 bg-white border border-[#dedbd6] rounded-[4px] px-2.5 py-1 text-[12px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* WhatsApp-style bubble preview */}
+                        <div className="bg-[#f0ede8] rounded-[6px] p-2.5">
+                          <p className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1.5">
+                            Como vai ficar
+                          </p>
+                          <div className="bg-white border border-[#dedbd6] rounded-[8px] rounded-tl-none px-3 py-2 max-w-[88%]">
+                            <p className="text-[13px] text-[#111111] whitespace-pre-wrap leading-relaxed">
+                              {previewText || "(sem corpo de template)"}
+                            </p>
+                            <p className="text-[10px] text-[#7b7b78] text-right mt-1">agora</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

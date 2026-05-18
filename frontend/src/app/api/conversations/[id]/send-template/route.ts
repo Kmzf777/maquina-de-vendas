@@ -161,12 +161,23 @@ async function sendTemplateViaMeta(
     language: { code: languageCode },
   };
 
-  if (variables && Object.keys(variables).length > 0) {
-    const parameters = Object.entries(variables).map(([k, v]) => ({
-      type: "text",
-      parameter_name: k,
-      text: String(v),
-    }));
+  const bodyVars = variables
+    ? Object.entries(variables).filter(([k]) => !k.startsWith("__"))
+    : [];
+  if (bodyVars.length > 0) {
+    const paramsType = variables?.["__params_type__"] ?? "named";
+    let parameters: Record<string, unknown>[];
+    if (paramsType === "positional") {
+      parameters = bodyVars
+        .sort(([a], [b]) => (parseInt(a) || 999) - (parseInt(b) || 999))
+        .map(([, v]) => ({ type: "text", text: String(v) }));
+    } else {
+      parameters = bodyVars.map(([k, v]) => ({
+        type: "text",
+        parameter_name: k,
+        text: String(v),
+      }));
+    }
     template.components = [{ type: "body", parameters }];
   }
 

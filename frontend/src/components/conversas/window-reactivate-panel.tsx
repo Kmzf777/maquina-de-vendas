@@ -10,6 +10,36 @@ interface MetaTemplate {
   category: string;
   body: string;
   params: { index: number; paramName: string; example: string }[];
+  paramsType: "positional" | "named" | "none";
+}
+
+// Mirrors _LEAD_FIELD_TOKENS in backend/app/broadcast/worker.py
+const LEAD_RESOLVERS: Record<string, (l: { name?: string | null; phone?: string; company?: string | null }) => string> = {
+  primeiro_nome: (l) => (l.name ?? "").split(" ")[0],
+  nome_completo: (l) => l.name ?? "",
+  telefone: (l) => l.phone ?? "",
+  empresa: (l) => l.company ?? "",
+  first_name: (l) => (l.name ?? "").split(" ")[0],
+  lead_name: (l) => l.name ?? "",
+  phone: (l) => l.phone ?? "",
+};
+
+function resolveBody(
+  body: string,
+  params: MetaTemplate["params"],
+  lead: { name?: string | null; phone?: string; company?: string | null },
+  inputs: Record<string, string>
+): string {
+  let text = body;
+  for (const param of params) {
+    const value =
+      LEAD_RESOLVERS[param.paramName]?.(lead) ||
+      inputs[param.paramName] ||
+      (param.example ? `[${param.example}]` : `{{${param.paramName}}}`);
+    text = text.replaceAll(`{{${param.paramName}}}`, value);
+    text = text.replaceAll(`{{${param.index}}}`, value);
+  }
+  return text;
 }
 
 interface CadenceEnrollment {
@@ -44,6 +74,7 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplate | null>(null);
+  const [templateInputs, setTemplateInputs] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [sendSuccess, setSendSuccess] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -93,6 +124,22 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
     if (!selectedTemplate || !conversation.id) return;
     setSending(true);
     setSendError(null);
+
+    const leadData = lead ?? {};
+    const previewText = resolveBody(selectedTemplate.body, selectedTemplate.params, leadData, templateInputs);
+
+    let templateVariables: Record<string, string> | null = null;
+    if (selectedTemplate.params.length > 0) {
+      templateVariables = {};
+      if (selectedTemplate.paramsType === "positional") {
+        templateVariables["__params_type__"] = "positional";
+      }
+      for (const p of selectedTemplate.params) {
+        templateVariables[p.paramName] =
+          LEAD_RESOLVERS[p.paramName]?.(leadData) || templateInputs[p.paramName] || p.example || "";
+      }
+    }
+
     try {
       const res = await fetch(`/api/conversations/${conversation.id}/send-template`, {
         method: "POST",
@@ -100,8 +147,8 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
         body: JSON.stringify({
           template_name: selectedTemplate.name,
           template_language_code: selectedTemplate.language,
-          template_variables: null,
-          template_body: selectedTemplate.body,
+          template_variables: templateVariables,
+          template_body: previewText,
         }),
       });
       if (!res.ok) {
@@ -222,7 +269,7 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-[12px] uppercase tracking-[0.6px] text-[#7b7b78]">Template</p>
-            <button onClick={() => { setShowTemplatePicker(false); setSelectedTemplate(null); }} className="text-[#7b7b78] hover:text-[#111111] text-xs">← Voltar</button>
+            <button onClick={() => { setShowTemplatePicker(false); setSelectedTemplate(null); setTemplateInputs({}); }} className="text-[#7b7b78] hover:text-[#111111] text-xs">← Voltar</button>
           </div>
           {loadingTemplates ? (
             <p className="text-[13px] text-[#7b7b78]">Buscando templates...</p>
@@ -233,7 +280,9 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
               value={selectedTemplate ? `${selectedTemplate.name}|${selectedTemplate.language}` : ""}
               onChange={(e) => {
                 const [name, lang] = e.target.value.split("|");
-                setSelectedTemplate(templates.find((t) => t.name === name && t.language === lang) ?? null);
+                const t = templates.find((t) => t.name === name && t.language === lang) ?? null;
+                setSelectedTemplate(t);
+                setTemplateInputs({});
               }}
               className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[13px] text-[#111111] focus:border-[#111111] focus:outline-none"
             >
@@ -245,6 +294,42 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
               ))}
             </select>
           )}
+          {selectedTemplate && (() => {
+            const leadData = lead ?? {};
+            const manualParams = selectedTemplate.params.filter((p) => !LEAD_RESOLVERS[p.paramName]);
+            const previewText = resolveBody(selectedTemplate.body, selectedTemplate.params, leadData, templateInputs);
+            return (
+              <div className="space-y-2">
+                {manualParams.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-[#7b7b78]">Preencha as variáveis:</p>
+                    {manualParams.map((p) => (
+                      <div key={p.paramName} className="flex items-center gap-2">
+                        <span className="text-[12px] text-[#7b7b78] w-24 shrink-0">{p.paramName}</span>
+                        <input
+                          type="text"
+                          value={templateInputs[p.paramName] ?? ""}
+                          onChange={(e) => setTemplateInputs((prev) => ({ ...prev, [p.paramName]: e.target.value }))}
+                          placeholder={p.example || "..."}
+                          className="flex-1 bg-white border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[12px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {previewText && (
+                  <div className="bg-[#f0ede8] rounded-[6px] p-2">
+                    <p className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Como vai ficar</p>
+                    <div className="bg-white border border-[#dedbd6] rounded-[8px] rounded-tl-none px-2.5 py-1.5 max-w-[90%]">
+                      <p className="text-[12px] text-[#111111] whitespace-pre-wrap leading-relaxed">
+                        {previewText}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {sendError && <p className="text-[12px] text-[#c41c1c]">{sendError}</p>}
           {selectedTemplate && (
             <button
