@@ -7,7 +7,7 @@ export async function POST(
 ) {
   const { id: conversationId } = await params;
   const body = await request.json();
-  const { template_name, template_language_code = "pt_BR", template_variables } = body;
+  const { template_name, template_language_code = "pt_BR", template_variables, template_body: providedBody } = body;
 
   if (!template_name) {
     return NextResponse.json({ error: "template_name is required" }, { status: 400 });
@@ -56,24 +56,74 @@ export async function POST(
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 
-  // Resolve template body text from local DB for the message record
+  // Resolve template body text for the message record.
+  // Priority: (1) body passed by client (already fetched by modal), (2) local DB, (3) Meta API.
   let content = `[Template: ${template_name}]`;
-  try {
-    const { data: tplRow } = await supabase
-      .from("message_templates")
-      .select("components")
-      .eq("name", template_name)
-      .limit(1)
-      .maybeSingle();
 
-    if (tplRow?.components) {
-      const bodyComp = (tplRow.components as { type: string; text?: string }[]).find(
-        (c) => c.type === "BODY"
-      );
-      if (bodyComp?.text) content = bodyComp.text;
+  if (providedBody && typeof providedBody === "string" && providedBody.trim()) {
+    content = providedBody;
+  } else {
+    // 1. Local message_templates table
+    try {
+      const { data: tplRow } = await supabase
+        .from("message_templates")
+        .select("components")
+        .eq("name", template_name)
+        .limit(1)
+        .maybeSingle();
+
+      if (tplRow?.components) {
+        const bodyComp = (tplRow.components as { type: string; text?: string }[]).find(
+          (c) => c.type === "BODY"
+        );
+        if (bodyComp?.text) content = bodyComp.text;
+      }
+    } catch {
+      // continue to Meta API fallback
     }
-  } catch {
-    // fallback to placeholder — non-fatal
+
+    // 2. Meta API fallback — mirrors _render_template_body in the broadcast worker
+    if (content === `[Template: ${template_name}]`) {
+      const cfg = channel.provider_config;
+      const wabaId = cfg.waba_id;
+      const accessToken = cfg.access_token;
+      const apiVersion = cfg.api_version ?? "v21.0";
+
+      if (wabaId && accessToken) {
+        try {
+          const metaRes = await fetch(
+            `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates?name=${encodeURIComponent(template_name)}`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (metaRes.ok) {
+            const metaData = await metaRes.json();
+            const tplData = (metaData.data ?? [])[0] as {
+              id?: string; language?: string; category?: string;
+              components?: { type: string; text?: string }[];
+            } | undefined;
+            if (tplData?.components) {
+              const bodyComp = tplData.components.find((c) => c.type === "BODY");
+              if (bodyComp?.text) {
+                content = bodyComp.text;
+                // Auto-sync to local DB so next call hits the fast path
+                supabase.from("message_templates").insert({
+                  channel_id: channel.id,
+                  name: template_name,
+                  language: tplData.language ?? template_language_code,
+                  requested_category: tplData.category ?? "UTILITY",
+                  category: tplData.category ?? "UTILITY",
+                  components: tplData.components,
+                  meta_template_id: tplData.id,
+                  status: "approved",
+                }).then(() => {}).catch(() => {});
+              }
+            }
+          }
+        } catch {
+          // Meta API fallback failed — keep placeholder
+        }
+      }
+    }
   }
 
   await supabase.from("messages").insert({

@@ -101,6 +101,7 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
           template_name: selectedTemplate.name,
           template_language_code: selectedTemplate.language,
           template_variables: null,
+          template_body: selectedTemplate.body,
         }),
       });
       if (!res.ok) {

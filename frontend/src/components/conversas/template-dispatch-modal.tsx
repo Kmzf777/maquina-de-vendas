@@ -47,6 +47,7 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
           template_name: selected.name,
           template_language_code: selected.language,
           template_variables: null,
+          template_body: selected.body,
         }),
       });
       if (!res.ok) {
