@@ -148,7 +148,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     : leads.filter((l) => l.status === activeFilter);
 
   const formatSeconds = (secs: number | null): string => {
-    if (secs == null) return "—";
+    if (secs == null || secs < 0) return "—";
     if (secs < 60) return "< 1 min";
     if (secs < 3600) return `${Math.round(secs / 60)} min`;
     if (secs < 86400) {
@@ -268,7 +268,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                 className="text-[36px] font-normal leading-none"
                 style={{ color: "#111111", letterSpacing: "-0.5px" }}
               >
-                {replyMetrics.reply_rate > 0 ? `${replyMetrics.reply_rate}%` : "—"}
+                {replyMetrics.reply_rate > 0 ? `${Math.round(replyMetrics.reply_rate)}%` : "—"}
               </span>
               <span className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] mt-2">
                 Taxa de Resposta
@@ -410,6 +410,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                           ? new Date(lead.first_replied_at).toLocaleString("pt-BR", {
                               day: "2-digit",
                               month: "2-digit",
+                              year: "numeric",
                               hour: "2-digit",
                               minute: "2-digit",
                             })
