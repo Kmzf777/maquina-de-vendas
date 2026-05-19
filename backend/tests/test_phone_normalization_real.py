@@ -174,3 +174,95 @@ def test_get_or_create_lead_returned_lead_has_canonical_phone_after_backfill():
 
     # The service patches the in-memory row so callers always see canonical
     assert lead["phone"] == REAL_PHONE_13
+
+
+# ═══════════════════════════════════════════════════════════════
+# get_or_create_lead — 11-digit (no country code, has 9th digit)
+# ═══════════════════════════════════════════════════════════════
+
+REAL_PHONE_11 = "34988861441"   # DDD 34 + 9th digit + 8 digits, no "55" prefix
+
+def _sb_11digit_in_db():
+    """Supabase mock: lead stored as 11-digit (no country code)."""
+    def eq_factory(col, val):
+        chain = MagicMock()
+        chain.execute.return_value.data = (
+            [{"id": "uuid-11", "phone": REAL_PHONE_11, "name": "Onze Digits", "stage": "pending"}]
+            if val == REAL_PHONE_11 else []
+        )
+        return chain
+
+    mock = MagicMock()
+    mock.table.return_value.select.return_value.eq.side_effect = eq_factory
+    mock.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+    return mock
+
+
+def test_get_or_create_lead_finds_11digit_no_country_code():
+    """Meta returns 5534988861441 but lead is stored as 34988861441 — must not create duplicate."""
+    mock_sb = _sb_11digit_in_db()
+    with patch("app.leads.service.get_supabase", return_value=mock_sb):
+        from app.leads.service import get_or_create_lead
+        lead = get_or_create_lead(REAL_PHONE_13)
+
+    assert lead["id"] == "uuid-11"
+    mock_sb.table.return_value.insert.assert_not_called()
+
+
+def test_get_or_create_lead_backfills_11digit_to_canonical():
+    """The 11-digit lead must be backfilled to the canonical 13-digit form."""
+    mock_sb = _sb_11digit_in_db()
+    with patch("app.leads.service.get_supabase", return_value=mock_sb):
+        from app.leads.service import get_or_create_lead
+        lead = get_or_create_lead(REAL_PHONE_13)
+
+    update_call = mock_sb.table.return_value.update.call_args
+    assert update_call is not None
+    assert update_call[0][0].get("phone") == REAL_PHONE_13
+    assert lead["phone"] == REAL_PHONE_13
+
+
+# ═══════════════════════════════════════════════════════════════
+# get_or_create_lead — 10-digit (no country code, no 9th digit)
+# ═══════════════════════════════════════════════════════════════
+
+REAL_PHONE_10 = "3488861441"    # DDD 34 + 8 digits, no country code, no 9th digit
+
+def _sb_10digit_in_db():
+    """Supabase mock: lead stored as 10-digit (no country code, no 9th digit)."""
+    def eq_factory(col, val):
+        chain = MagicMock()
+        chain.execute.return_value.data = (
+            [{"id": "uuid-10", "phone": REAL_PHONE_10, "name": "Dez Digits", "stage": "pending"}]
+            if val == REAL_PHONE_10 else []
+        )
+        return chain
+
+    mock = MagicMock()
+    mock.table.return_value.select.return_value.eq.side_effect = eq_factory
+    mock.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+    return mock
+
+
+def test_get_or_create_lead_finds_10digit_no_country_code_no_ninth():
+    """Meta returns 5534988861441 but lead is stored as 3488861441 — must not create duplicate."""
+    mock_sb = _sb_10digit_in_db()
+    with patch("app.leads.service.get_supabase", return_value=mock_sb):
+        from app.leads.service import get_or_create_lead
+        lead = get_or_create_lead(REAL_PHONE_13)
+
+    assert lead["id"] == "uuid-10"
+    mock_sb.table.return_value.insert.assert_not_called()
+
+
+def test_get_or_create_lead_backfills_10digit_to_canonical():
+    """The 10-digit lead must be backfilled to the canonical 13-digit form."""
+    mock_sb = _sb_10digit_in_db()
+    with patch("app.leads.service.get_supabase", return_value=mock_sb):
+        from app.leads.service import get_or_create_lead
+        lead = get_or_create_lead(REAL_PHONE_13)
+
+    update_call = mock_sb.table.return_value.update.call_args
+    assert update_call is not None
+    assert update_call[0][0].get("phone") == REAL_PHONE_13
+    assert lead["phone"] == REAL_PHONE_13

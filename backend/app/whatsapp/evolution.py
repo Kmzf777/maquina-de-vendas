@@ -1,5 +1,7 @@
+import json
 import httpx
 from app.whatsapp.base import WhatsAppProvider
+from app.meta_audit import log_outbound
 
 
 class EvolutionClient(WhatsAppProvider):
@@ -13,10 +15,40 @@ class EvolutionClient(WhatsAppProvider):
 
     async def _post(self, path: str, payload: dict) -> dict:
         url = f"{self.base_url}{path}/{self.instance}"
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, headers=self._headers())
-            resp.raise_for_status()
-            return resp.json()
+        response_data: dict | None = None
+        status_code: int | None = None
+        success = False
+        error_msg: str | None = None
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=payload, headers=self._headers())
+                status_code = resp.status_code
+                try:
+                    response_data = resp.json()
+                except Exception:
+                    response_data = {"raw": resp.text}
+                if not resp.is_success:
+                    error_msg = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+                else:
+                    success = True
+                resp.raise_for_status()
+                return response_data
+        except Exception:
+            raise
+        finally:
+            log_outbound(
+                endpoint=url,
+                http_method="POST",
+                request_type=path.split("/")[-1] if "/" in path else path,
+                payload=payload,
+                response=response_data,
+                status_code=status_code,
+                success=success,
+                to_number=payload.get("number"),
+                phone_number_id=None,
+                error_message=error_msg,
+            )
 
     async def send_text(self, to: str, body: str) -> dict:
         return await self._post("/message/sendText", {

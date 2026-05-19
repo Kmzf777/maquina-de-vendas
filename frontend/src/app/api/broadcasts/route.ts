@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       name: body.name,
       channel_id: body.channel_id || null,
       template_name: body.template_name,
+      template_language_code: body.template_language_code || "pt_BR",
       template_preset_id: body.template_preset_id || null,
       template_variables: body.template_variables || {},
       send_interval_min: body.send_interval_min || 3,

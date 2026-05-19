@@ -10,6 +10,7 @@ from app.leads.service import get_or_create_lead, reset_lead
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route
 from app.dev_router.forwarder import forward_to_dev
+from app.meta_audit import log_inbound
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,15 @@ async def receive_evolution_webhook(request: Request, background_tasks: Backgrou
 
     messages = parse_webhook_payload(payload)
     redis = request.app.state.redis
+
+    background_tasks.add_task(
+        log_inbound,
+        channel_id=channel["id"],
+        phone_number_id=None,
+        from_number=messages[0].from_number if messages else None,
+        payload=payload,
+        message_count=len(messages),
+    )
 
     for msg in messages:
         logger.info(f"Message from {msg.from_number} ({msg.push_name}): type={msg.type}")
