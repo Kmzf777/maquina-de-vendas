@@ -5,6 +5,7 @@ import { AGENT_STAGES } from "@/lib/constants";
 import { EditableField } from "./editable-field";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
+import { LeadBroadcastHistory } from "@/components/leads/lead-broadcast-history";
 import type { Lead, Tag, Conversation, Pipeline, PipelineStage } from "@/lib/types";
 
 interface LeadDeal {
@@ -224,6 +225,12 @@ export function ContactDetail({
                 })}
               </div>
             )}
+          </div>
+
+          {/* Disparos recebidos */}
+          <div className="border-t border-[#dedbd6] pt-4">
+            <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Disparos Recebidos</span>
+            <LeadBroadcastHistory leadId={lead.id} />
           </div>
 
           {/* B2B Fields */}

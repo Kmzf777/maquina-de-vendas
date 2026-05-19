@@ -69,11 +69,19 @@ def find_broadcast_lead_by_wamid(wamid: str) -> dict | None:
     return result.data[0] if result.data else None
 
 
-def mark_broadcast_lead_delivered(bl_id: str) -> None:
+def mark_broadcast_lead_delivered(bl_id: str) -> bool:
+    """Atomically mark bl as delivered only if not already marked.
+
+    Returns True if the row was updated (first delivery), False if already
+    delivered (duplicate webhook). Caller must only increment the counter
+    when this returns True.
+    """
     sb = get_supabase()
-    sb.table("broadcast_leads").update({
+    result = sb.table("broadcast_leads").update({
+        "status": "delivered",
         "delivered_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", bl_id).execute()
+    }).eq("id", bl_id).is_("delivered_at", "null").execute()
+    return bool(result.data)
 
 
 def increment_broadcast_delivered(broadcast_id: str) -> None:
