@@ -209,6 +209,58 @@ def _broadcast_ai_enabled(broadcast: dict, channel: dict | None = None) -> bool:
     return bool(broadcast.get("agent_profile_id"))
 
 
+def reconcile_broadcast_replies() -> None:
+    """Catch-up job: fills first_replied_at for leads that replied but webhook failed.
+
+    Scans broadcast_leads sent in the last 48h (minus the last 2min to avoid
+    racing with the webhook). Limit 200 leads per tick.
+    """
+    sb = get_supabase()
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(hours=48)).isoformat()
+    window_end = (now - timedelta(minutes=2)).isoformat()
+
+    pending = (
+        sb.table("broadcast_leads")
+        .select("id, lead_id, sent_at")
+        .in_("status", ["sent", "delivered"])
+        .is_("first_replied_at", "null")
+        .gte("sent_at", window_start)
+        .lte("sent_at", window_end)
+        .limit(200)
+        .execute()
+    )
+    if not pending.data:
+        return
+
+    reconciled = 0
+    for bl in pending.data:
+        sent_at_dt = datetime.fromisoformat(bl["sent_at"].replace("Z", "+00:00"))
+        reply_window_end = (sent_at_dt + timedelta(hours=48)).isoformat()
+        reply = (
+            sb.table("messages")
+            .select("id, created_at")
+            .eq("lead_id", bl["lead_id"])
+            .eq("role", "user")
+            .gt("created_at", bl["sent_at"])
+            .lte("created_at", reply_window_end)
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        if reply.data:
+            sb.table("broadcast_leads").update({
+                "first_replied_at": reply.data[0]["created_at"],
+            }).eq("id", bl["id"]).execute()
+            reconciled += 1
+
+    if reconciled:
+        logger.info(
+            "[BROADCAST] reconcile_broadcast_replies: %d leads atualizados",
+            reconciled,
+        )
+
+
 async def run_worker():
     """Main worker loop: processes broadcasts, cadences, and stagnation triggers."""
     logger.info("Broadcast + Cadence worker started")
@@ -220,6 +272,7 @@ async def run_worker():
             await process_reengagements()
             await process_stagnation_triggers()
             await process_due_followups()
+            reconcile_broadcast_replies()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
 

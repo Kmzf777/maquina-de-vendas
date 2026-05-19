@@ -1,5 +1,10 @@
+import logging
+from datetime import datetime, timezone, timedelta
 from typing import Any
+
 from app.db.supabase import get_supabase
+
+logger = logging.getLogger(__name__)
 
 
 def get_broadcast(broadcast_id: str) -> dict[str, Any] | None:
@@ -22,7 +27,6 @@ def get_pending_broadcast_leads(broadcast_id: str, limit: int = 10) -> list[dict
 
 
 def mark_broadcast_lead_sent(bl_id: str) -> None:
-    from datetime import datetime, timezone
     sb = get_supabase()
     sb.table("broadcast_leads").update({
         "status": "sent",
@@ -66,7 +70,6 @@ def find_broadcast_lead_by_wamid(wamid: str) -> dict | None:
 
 
 def mark_broadcast_lead_delivered(bl_id: str) -> None:
-    from datetime import datetime, timezone
     sb = get_supabase()
     sb.table("broadcast_leads").update({
         "delivered_at": datetime.now(timezone.utc).isoformat(),
@@ -76,3 +79,38 @@ def mark_broadcast_lead_delivered(bl_id: str) -> None:
 def increment_broadcast_delivered(broadcast_id: str) -> None:
     sb = get_supabase()
     sb.rpc("increment_broadcast_delivered", {"broadcast_id_param": broadcast_id}).execute()
+
+
+def record_broadcast_reply(lead_id: str) -> None:
+    """Marks the most recent active broadcast_lead for this lead as replied (48h window).
+
+    Idempotent: if first_replied_at is already set, the query returns no rows
+    and no update is made.
+    """
+    sb = get_supabase()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    result = (
+        sb.table("broadcast_leads")
+        .select("id")
+        .eq("lead_id", lead_id)
+        .in_("status", ["sent", "delivered"])
+        .is_("first_replied_at", "null")
+        .gte("sent_at", cutoff)
+        .order("sent_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if result.data:
+        bl_id = result.data[0]["id"]
+        sb.table("broadcast_leads").update({
+            "first_replied_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", bl_id).execute()
+        logger.info(
+            "[BROADCAST] Resposta registrada: lead=%s broadcast_lead=%s",
+            lead_id, bl_id,
+        )
+    else:
+        logger.debug(
+            "[BROADCAST] Nenhum broadcast_lead ativo encontrado para resposta do lead=%s",
+            lead_id,
+        )
