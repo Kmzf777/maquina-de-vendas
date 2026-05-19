@@ -49,10 +49,14 @@ export async function POST(
       return NextResponse.json({ error: deleteErr.message }, { status: 500 });
     }
 
-    const { count } = await supabase
+    const { count, error: countErr } = await supabase
       .from("broadcast_leads")
       .select("id", { count: "exact", head: true })
       .eq("broadcast_id", id);
+
+    if (countErr) {
+      return NextResponse.json({ error: countErr.message }, { status: 500 });
+    }
 
     const { error: updateErr } = await supabase
       .from("broadcasts")
@@ -64,7 +68,7 @@ export async function POST(
     }
 
     return NextResponse.json({
-      removed_count: deletedCount ?? lead_ids.length,
+      removed_count: deletedCount ?? 0,
       new_total: count ?? 0,
     });
   } catch (err: unknown) {
