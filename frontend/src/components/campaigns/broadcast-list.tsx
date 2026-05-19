@@ -32,6 +32,8 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
     if (action === "start") {
       const spamRes = await fetch(`/api/broadcasts/${id}/spam-check`);
       if (!spamRes.ok) {
+        const errBody = await spamRes.text();
+        console.error("[spam-check] HTTP", spamRes.status, errBody);
         alert("Erro ao verificar spam. Tente novamente.");
         return;
       }
