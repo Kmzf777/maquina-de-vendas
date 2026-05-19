@@ -16,13 +16,13 @@ LANGUAGE sql STABLE AS $$
     ) AS reply_rate,
     ROUND(
       AVG(EXTRACT(EPOCH FROM (first_replied_at - sent_at)))
-        FILTER (WHERE first_replied_at IS NOT NULL),
+        FILTER (WHERE first_replied_at IS NOT NULL)::numeric,
       0
     ) AS avg_reply_secs,
     ROUND(
       PERCENTILE_CONT(0.5) WITHIN GROUP (
         ORDER BY EXTRACT(EPOCH FROM (first_replied_at - sent_at))
-      ) FILTER (WHERE first_replied_at IS NOT NULL),
+      ) FILTER (WHERE first_replied_at IS NOT NULL)::numeric,
       0
     ) AS median_reply_secs
   FROM broadcast_leads
