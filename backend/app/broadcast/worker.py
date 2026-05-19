@@ -235,24 +235,27 @@ def reconcile_broadcast_replies() -> None:
 
     reconciled = 0
     for bl in pending.data:
-        sent_at_dt = datetime.fromisoformat(bl["sent_at"].replace("Z", "+00:00"))
-        reply_window_end = (sent_at_dt + timedelta(hours=48)).isoformat()
-        reply = (
-            sb.table("messages")
-            .select("id, created_at")
-            .eq("lead_id", bl["lead_id"])
-            .eq("role", "user")
-            .gt("created_at", bl["sent_at"])
-            .lte("created_at", reply_window_end)
-            .order("created_at")
-            .limit(1)
-            .execute()
-        )
-        if reply.data:
-            sb.table("broadcast_leads").update({
-                "first_replied_at": reply.data[0]["created_at"],
-            }).eq("id", bl["id"]).execute()
-            reconciled += 1
+        try:
+            sent_at_dt = datetime.fromisoformat(bl["sent_at"].replace("Z", "+00:00"))
+            reply_window_end = (sent_at_dt + timedelta(hours=48)).isoformat()
+            reply = (
+                sb.table("messages")
+                .select("id, created_at")
+                .eq("lead_id", bl["lead_id"])
+                .eq("role", "user")
+                .gt("created_at", bl["sent_at"])
+                .lte("created_at", reply_window_end)
+                .order("created_at")
+                .limit(1)
+                .execute()
+            )
+            if reply.data:
+                sb.table("broadcast_leads").update({
+                    "first_replied_at": reply.data[0]["created_at"],
+                }).eq("id", bl["id"]).execute()
+                reconciled += 1
+        except Exception as e:
+            logger.warning("[BROADCAST] reconcile error for bl=%s: %s", bl.get("id"), e)
 
     if reconciled:
         logger.info(
