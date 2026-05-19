@@ -191,6 +191,13 @@ async def process_buffered_messages(
         # Abort: do not run agent without persistence — avoids unlogged AI responses
         return
 
+    # Registrar resposta ao disparo se o lead tiver um broadcast_lead ativo
+    try:
+        from app.broadcast.service import record_broadcast_reply
+        record_broadcast_reply(lead["id"])
+    except Exception as e:
+        logger.warning("Failed to record broadcast reply for %s: %s", phone, e)
+
     # Track last inbound message time for WhatsApp 24h window enforcement
     try:
         sb = get_supabase()
