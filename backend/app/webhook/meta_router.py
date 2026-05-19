@@ -77,21 +77,28 @@ def _extract_statuses(payload: dict) -> list[dict]:
 
 
 def _handle_delivery_status(wamid: str, status: str) -> None:
-    """Increment broadcast delivered counter when Meta confirms delivery."""
-    if status != "delivered":
+    """Handle Meta delivery status events: updates messages.delivery_status and broadcast counters."""
+    if status not in ("sent", "delivered", "read"):
         return
     try:
-        from app.broadcast.service import find_broadcast_lead_by_wamid, mark_broadcast_lead_delivered, increment_broadcast_delivered
-        bl = find_broadcast_lead_by_wamid(wamid)
-        if not bl:
-            return
-        if bl.get("delivered_at"):
-            return  # Already counted — idempotent guard
-        mark_broadcast_lead_delivered(bl["id"])
-        increment_broadcast_delivered(bl["broadcast_id"])
-        logger.info("[DELIVERY] wamid=%s broadcast_lead=%s delivered", wamid, bl["id"])
+        sb = get_supabase()
+        sb.table("messages").update({"delivery_status": status}).eq("wamid", wamid).execute()
     except Exception as e:
-        logger.warning("[DELIVERY] Failed to process delivery for wamid=%s: %s", wamid, e)
+        logger.warning("[DELIVERY] Failed to update message delivery_status for wamid=%s: %s", wamid, e)
+
+    if status == "delivered":
+        try:
+            from app.broadcast.service import find_broadcast_lead_by_wamid, mark_broadcast_lead_delivered, increment_broadcast_delivered
+            bl = find_broadcast_lead_by_wamid(wamid)
+            if not bl:
+                return
+            if bl.get("delivered_at"):
+                return  # Already counted — idempotent guard
+            mark_broadcast_lead_delivered(bl["id"])
+            increment_broadcast_delivered(bl["broadcast_id"])
+            logger.info("[DELIVERY] wamid=%s broadcast_lead=%s delivered", wamid, bl["id"])
+        except Exception as e:
+            logger.warning("[DELIVERY] Failed to process broadcast delivery for wamid=%s: %s", wamid, e)
 
 
 def _verify_signature(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:

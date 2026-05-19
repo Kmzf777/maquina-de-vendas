@@ -2,6 +2,26 @@ import { useState } from "react";
 import type { Message } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 
+function DeliveryTick({ status }: { status?: "sent" | "delivered" | "read" | null }) {
+  const isDouble = status === "delivered" || status === "read";
+  const isRead = status === "read";
+  const color = isRead ? "text-[#53bdeb]" : "text-white/50";
+
+  if (!isDouble) {
+    return (
+      <svg className={`inline-block flex-shrink-0 ${color}`} width="12" height="9" viewBox="0 0 12 9" fill="none">
+        <path d="M1 4.5L4.5 8L11 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  return (
+    <svg className={`inline-block flex-shrink-0 ${color}`} width="16" height="9" viewBox="0 0 16 9" fill="none">
+      <path d="M1 4.5L4.5 8L11 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M5 4.5L8.5 8L15 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
 interface MessageBubbleProps {
   message: Message;
   isGrouped: boolean;
@@ -139,6 +159,9 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
             >
               · {senderBadge}
             </span>
+          )}
+          {isFromMe && !isTemp && (
+            <DeliveryTick status={message.delivery_status} />
           )}
         </div>
       </div>

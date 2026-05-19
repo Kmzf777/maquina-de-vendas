@@ -82,6 +82,8 @@ export interface Message {
   created_at: string;
   message_type?: string;
   media_url?: string;
+  wamid?: string | null;
+  delivery_status?: "sent" | "delivered" | "read" | null;
 }
 
 export interface Tag {

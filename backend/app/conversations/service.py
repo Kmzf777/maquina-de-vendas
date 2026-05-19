@@ -119,6 +119,7 @@ def save_message(
     sent_by: str = "agent",
     media_url: str | None = None,
     message_type: str | None = None,
+    wamid: str | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
@@ -133,6 +134,9 @@ def save_message(
         msg["media_url"] = media_url
     if message_type is not None:
         msg["message_type"] = message_type
+    if wamid is not None:
+        msg["wamid"] = wamid
+        msg["delivery_status"] = "sent"
     logger.info(f"[DEBUG-SAVE_MESSAGE] enter payload={msg}")
     try:
         result = sb.table("messages").insert(msg).execute()

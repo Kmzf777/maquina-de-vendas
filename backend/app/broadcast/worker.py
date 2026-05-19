@@ -335,6 +335,7 @@ async def process_single_broadcast(broadcast: dict):
             )
             # Save wamid BEFORE marking as sent so the crash-recovery window can detect
             # that the message already reached Meta and avoid a duplicate send.
+            wamid = None
             try:
                 wamid = (send_response.get("messages") or [{}])[0].get("id")
                 if wamid:
@@ -434,6 +435,7 @@ async def process_single_broadcast(broadcast: dict):
                         "assistant",
                         rendered_content,
                         sent_by="broadcast",
+                        wamid=wamid,
                     )
                     logger.info(f"[DEBUG-BROADCAST] save_message OK returned={saved}")
                 else:
