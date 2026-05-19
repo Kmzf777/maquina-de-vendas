@@ -29,10 +29,25 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
   ];
 
   const handleAction = async (id: string, action: "start" | "pause") => {
-    const url = action === "start" ? `/api/broadcasts/${id}/start` : `/api/broadcasts/${id}`;
-    const method = action === "start" ? "POST" : "PATCH";
-    const body = action === "pause" ? JSON.stringify({ status: "paused" }) : undefined;
-    await fetch(url, { method, headers: { "Content-Type": "application/json" }, body });
+    if (action === "start") {
+      const spamRes = await fetch(`/api/broadcasts/${id}/spam-check`);
+      if (spamRes.ok) {
+        const spamData = await spamRes.json();
+        if ((spamData.conflicts ?? []).length > 0) {
+          // Conflicts found — navigate to detail page where the full spam modal is shown
+          router.push(`/campanhas/disparos/${id}`);
+          return;
+        }
+      }
+      await fetch(`/api/broadcasts/${id}/start`, { method: "POST" });
+      onRefresh();
+      return;
+    }
+    await fetch(`/api/broadcasts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "paused" }),
+    });
     onRefresh();
   };
 
