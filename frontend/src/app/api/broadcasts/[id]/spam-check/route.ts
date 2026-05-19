@@ -85,7 +85,7 @@ export async function GET(
     // Step 4: recent sends in OTHER broadcasts for any of these lead_ids (no joins)
     const { data: recentSends, error: rsErr } = await supabase
       .from("broadcast_leads")
-      .select("lead_id, broadcast_id, sent_at, created_at")
+      .select("lead_id, broadcast_id, sent_at")
       .in("lead_id", allLeadIds)
       .neq("broadcast_id", id)
       .in("status", ["sent", "delivered"])
@@ -96,10 +96,9 @@ export async function GET(
     }
 
     // Filter by 48h window in JS
-    type BlRow = { lead_id: string; broadcast_id: string; sent_at: string | null; created_at: string | null };
+    type BlRow = { lead_id: string; broadcast_id: string; sent_at: string | null };
     const withinWindow = (recentSends ?? []).filter((row: BlRow) => {
-      const ts = row.sent_at ?? row.created_at;
-      return ts ? new Date(ts).getTime() >= cutoffMs : false;
+      return row.sent_at ? new Date(row.sent_at).getTime() >= cutoffMs : false;
     });
 
     if (!withinWindow.length) {
@@ -132,7 +131,7 @@ export async function GET(
         lead_phone: phone,
         last_broadcast_id: row.broadcast_id,
         last_broadcast_name: broadcastNameById[row.broadcast_id] ?? "—",
-        last_sent_at: row.sent_at ?? row.created_at ?? "",
+        last_sent_at: row.sent_at ?? "",
       });
     }
 
