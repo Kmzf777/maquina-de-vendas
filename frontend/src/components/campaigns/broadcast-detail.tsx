@@ -73,6 +73,10 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     setActionLoading(true);
     try {
       const spamRes = await fetch(`/api/broadcasts/${broadcastId}/spam-check`);
+      if (!spamRes.ok) {
+        alert("Erro ao verificar spam. Tente novamente.");
+        return;
+      }
       const spamData = await spamRes.json();
       const conflicts: SpamConflict[] = spamData.conflicts ?? [];
 

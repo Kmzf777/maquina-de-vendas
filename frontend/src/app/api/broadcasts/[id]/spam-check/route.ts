@@ -8,7 +8,7 @@ export async function GET(
   const { id } = await params;
   const supabase = await getServiceSupabase();
 
-  // Fetch pending leads in this broadcast
+  // Step 1: pending leads in this broadcast
   const { data: pendingLeads, error: plErr } = await supabase
     .from("broadcast_leads")
     .select("lead_id")
@@ -25,10 +25,14 @@ export async function GET(
 
   const leadIds = pendingLeads.map((r: { lead_id: string }) => r.lead_id);
 
-  // Fetch all sent/delivered broadcast_leads for these leads in OTHER broadcasts.
-  // We do time-filtering in JS using sent_at ?? broadcast.created_at as fallback,
-  // so that leads whose sent_at is NULL (broadcasts before the sent_at column was
-  // populated) are still caught.
+  // 48 h window — pushed to the DB so it filters on BOTH sent_at and created_at.
+  // This handles broadcast_leads where sent_at is NULL (dispatched before the
+  // sent_at column was populated) by falling back to the row's own created_at.
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  // Step 2: OTHER broadcast_leads for these leads sent within the last 48 h.
+  // Use outer join for broadcasts (just for display name — don't let a broken
+  // FK resolution kill the whole query the way !inner would).
   const { data: recentSends, error: rsErr } = await supabase
     .from("broadcast_leads")
     .select(`
@@ -36,40 +40,35 @@ export async function GET(
       broadcast_id,
       sent_at,
       leads!inner(name, phone),
-      broadcasts!inner(name, created_at)
+      broadcasts(name)
     `)
     .in("lead_id", leadIds)
     .neq("broadcast_id", id)
     .in("status", ["sent", "delivered"])
+    .or(`sent_at.gte.${cutoff},created_at.gte.${cutoff}`)
     .order("sent_at", { ascending: false, nullsFirst: false });
 
   if (rsErr) {
     return NextResponse.json({ error: rsErr.message }, { status: 500 });
   }
 
-  const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
-
-  // Deduplicate: keep most recent conflict per lead_id
+  // Deduplicate: keep the most recent conflict per lead_id
   const seen = new Set<string>();
   const conflicts = [];
   for (const row of (recentSends ?? [])) {
-    const broadcastData = (row.broadcasts as unknown) as { name: string; created_at: string } | null;
-    // Use sent_at if set; fall back to broadcast created_at for older rows
-    const effectiveTime = row.sent_at ?? broadcastData?.created_at;
-    if (!effectiveTime) continue;
-    if (new Date(effectiveTime).getTime() < cutoffMs) continue; // outside 48h window
-
     if (seen.has(row.lead_id)) continue;
     seen.add(row.lead_id);
 
     const lead = (row.leads as unknown) as { name: string | null; phone: string } | null;
+    const broadcast = (row.broadcasts as unknown) as { name: string } | null;
+
     conflicts.push({
       lead_id: row.lead_id,
       lead_name: lead?.name ?? null,
       lead_phone: lead?.phone ?? "",
       last_broadcast_id: row.broadcast_id,
-      last_broadcast_name: broadcastData?.name ?? "—",
-      last_sent_at: row.sent_at ?? broadcastData?.created_at ?? "",
+      last_broadcast_name: broadcast?.name ?? "—",
+      last_sent_at: row.sent_at ?? "",
     });
   }
 
