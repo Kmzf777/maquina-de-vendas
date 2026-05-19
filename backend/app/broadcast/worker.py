@@ -262,6 +262,23 @@ async def process_single_broadcast(broadcast: dict):
         "broadcast_id", broadcast_id
     ).eq("status", "processing").lt("claimed_at", cutoff).filter("wamid", "is", "null").execute()
 
+    # Pre-fetch pipeline_id for stage move once per batch — move_to_stage_id is the same for
+    # every lead, so querying pipeline_stages inside the per-lead loop is wasteful.
+    move_to_stage_id: str | None = broadcast.get("move_to_stage_id")
+    target_pipeline_id: str | None = None
+    if move_to_stage_id:
+        try:
+            stage_row = sb.table("pipeline_stages").select("pipeline_id").eq("id", move_to_stage_id).limit(1).execute()
+            if stage_row.data:
+                target_pipeline_id = stage_row.data[0]["pipeline_id"]
+            else:
+                logger.warning(
+                    "[BROADCAST] move_to_stage_id %s not found in pipeline_stages — stage move skipped for broadcast %s",
+                    move_to_stage_id, broadcast_id,
+                )
+        except Exception as stage_err:
+            logger.warning("[BROADCAST] Failed to fetch pipeline for move_to_stage_id %s: %s", move_to_stage_id, stage_err)
+
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
 
@@ -346,42 +363,35 @@ async def process_single_broadcast(broadcast: dict):
             increment_broadcast_sent(broadcast_id)
 
             # Move lead's deal to configured Kanban stage if set
-            move_to_stage_id = broadcast.get("move_to_stage_id")
-            if move_to_stage_id:
+            if move_to_stage_id and target_pipeline_id:
                 try:
-                    stage_row = (
-                        sb.table("pipeline_stages")
-                        .select("pipeline_id")
-                        .eq("id", move_to_stage_id)
+                    existing = (
+                        sb.table("deals")
+                        .select("id")
+                        .eq("lead_id", lead["id"])
+                        .eq("pipeline_id", target_pipeline_id)
+                        .order("created_at", desc=True)
                         .limit(1)
                         .execute()
                     )
-                    if stage_row.data:
-                        target_pipeline_id = stage_row.data[0]["pipeline_id"]
-                        # Check if lead already has a deal in the target pipeline
-                        existing = (
-                            sb.table("deals")
-                            .select("id")
-                            .eq("lead_id", lead["id"])
-                            .eq("pipeline_id", target_pipeline_id)
-                            .limit(1)
-                            .execute()
-                        )
-                        if existing.data:
-                            sb.table("deals").update({"stage_id": move_to_stage_id}).eq("id", existing.data[0]["id"]).execute()
-                        else:
-                            title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
-                            sb.table("deals").insert({
-                                "lead_id": lead["id"],
-                                "title": title,
-                                "stage": "novo",
-                                "pipeline_id": target_pipeline_id,
-                                "stage_id": move_to_stage_id,
-                            }).execute()
-                        logger.info(
-                            "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s",
-                            lead["id"], target_pipeline_id, move_to_stage_id,
-                        )
+                    if existing.data:
+                        sb.table("deals").update({
+                            "stage_id": move_to_stage_id,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", existing.data[0]["id"]).execute()
+                    else:
+                        title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
+                        sb.table("deals").insert({
+                            "lead_id": lead["id"],
+                            "title": title,
+                            "stage": "novo",
+                            "pipeline_id": target_pipeline_id,
+                            "stage_id": move_to_stage_id,
+                        }).execute()
+                    logger.info(
+                        "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s",
+                        lead["id"], target_pipeline_id, move_to_stage_id,
+                    )
                 except Exception as move_err:
                     logger.warning(
                         "[BROADCAST] Failed to move deal for lead %s: %s",
