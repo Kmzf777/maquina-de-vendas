@@ -8,114 +8,126 @@ export async function GET(
   const { id } = await params;
   const supabase = await getServiceSupabase();
 
-  // Step 1: pending leads in this broadcast + their phone numbers
-  const { data: pendingLeads, error: plErr } = await supabase
+  // Step 1: pending lead_ids in this broadcast (simple query, no joins)
+  const { data: pendingRows, error: plErr } = await supabase
     .from("broadcast_leads")
-    .select("lead_id, leads!inner(id, phone, name)")
+    .select("lead_id")
     .eq("broadcast_id", id)
     .eq("status", "pending");
 
   if (plErr) {
-    console.error("[spam-check] Step1 error:", plErr.message);
     return NextResponse.json({ error: plErr.message }, { status: 500 });
   }
-
-  console.log(`[spam-check] broadcast=${id} pendingLeads=${pendingLeads?.length ?? 0}`);
-
-  if (!pendingLeads || pendingLeads.length === 0) {
+  if (!pendingRows?.length) {
     return NextResponse.json({ conflicts: [] });
   }
 
-  // Extract unique phones and build a map phone → pending lead info
-  type LeadInfo = { id: string; phone: string; name: string | null };
+  const pendingLeadIds = pendingRows.map((r: { lead_id: string }) => r.lead_id);
 
-  const phoneToLeadId: Record<string, string> = {};
-  const phones: string[] = [];
-  for (const row of pendingLeads) {
-    const lead = row.leads as unknown as LeadInfo;
-    if (!lead?.phone) continue;
-    if (!phoneToLeadId[lead.phone]) {
-      phoneToLeadId[lead.phone] = row.lead_id;
-      phones.push(lead.phone);
-    }
+  // Step 2: get phone numbers for these leads
+  const { data: pendingLeadData, error: pldErr } = await supabase
+    .from("leads")
+    .select("id, phone, name")
+    .in("id", pendingLeadIds);
+
+  if (pldErr) {
+    return NextResponse.json({ error: pldErr.message }, { status: 500 });
   }
 
-  console.log("[spam-check] phones:", phones);
+  const phones = [
+    ...new Set(
+      (pendingLeadData ?? [])
+        .map((l: { id: string; phone: string; name: string | null }) => l.phone)
+        .filter(Boolean)
+    ),
+  ] as string[];
 
-  if (phones.length === 0) {
+  if (!phones.length) {
     return NextResponse.json({ conflicts: [] });
   }
 
-  // Step 2: find ALL lead_ids that share these phone numbers (handles duplicate leads)
+  // Step 3: find ALL lead_ids that share these phones (handles duplicate lead records)
   const { data: leadsWithPhones, error: lwErr } = await supabase
     .from("leads")
     .select("id, phone, name")
     .in("phone", phones);
 
   if (lwErr) {
-    console.error("[spam-check] Step2 error:", lwErr.message);
     return NextResponse.json({ error: lwErr.message }, { status: 500 });
   }
 
-  const allLeadIds = (leadsWithPhones ?? []).map((l: { id: string }) => l.id);
+  type LeadRow = { id: string; phone: string; name: string | null };
+  const allLeadIds = (leadsWithPhones ?? []).map((l: LeadRow) => l.id);
   const phoneByLeadId: Record<string, string> = {};
   const nameByPhone: Record<string, string | null> = {};
-  for (const l of (leadsWithPhones ?? []) as { id: string; phone: string; name: string | null }[]) {
+  for (const l of (leadsWithPhones ?? []) as LeadRow[]) {
     phoneByLeadId[l.id] = l.phone;
-    if (!nameByPhone[l.phone]) nameByPhone[l.phone] = l.name;
+    if (!(l.phone in nameByPhone)) nameByPhone[l.phone] = l.name;
   }
 
-  console.log("[spam-check] allLeadIds:", allLeadIds);
+  // Build map: phone → pending lead_id (for the conflict result)
+  const phoneToLeadId: Record<string, string> = {};
+  for (const l of (pendingLeadData ?? []) as LeadRow[]) {
+    if (l.phone && !(l.phone in phoneToLeadId)) {
+      phoneToLeadId[l.phone] = l.id;
+    }
+  }
 
-  // Step 3: find recent sends to any of these lead_ids in OTHER broadcasts
   const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
+
+  // Step 4: recent sends in OTHER broadcasts for any of these lead_ids (no joins)
   const { data: recentSends, error: rsErr } = await supabase
     .from("broadcast_leads")
-    .select("lead_id, broadcast_id, sent_at, created_at, broadcasts(name)")
+    .select("lead_id, broadcast_id, sent_at, created_at")
     .in("lead_id", allLeadIds)
     .neq("broadcast_id", id)
     .in("status", ["sent", "delivered"])
     .order("sent_at", { ascending: false, nullsFirst: false });
 
   if (rsErr) {
-    console.error("[spam-check] Step3 error:", rsErr.message);
     return NextResponse.json({ error: rsErr.message }, { status: 500 });
   }
 
-  console.log(`[spam-check] recentSends (pre-filter) count=${recentSends?.length ?? 0}`, recentSends);
-
-  // Filter by 48h window in JS — avoids PostgREST .or() edge cases with NULL sent_at
-  const withinWindow = (recentSends ?? []).filter((row) => {
+  // Filter by 48h window in JS
+  type BlRow = { lead_id: string; broadcast_id: string; sent_at: string | null; created_at: string | null };
+  const withinWindow = (recentSends ?? []).filter((row: BlRow) => {
     const ts = row.sent_at ?? row.created_at;
     return ts ? new Date(ts).getTime() >= cutoffMs : false;
   });
 
-  console.log(`[spam-check] withinWindow count=${withinWindow.length}`);
+  if (!withinWindow.length) {
+    return NextResponse.json({ conflicts: [] });
+  }
 
-  // Deduplicate by phone — one conflict entry per phone number
+  // Step 5: fetch broadcast names for display (separate query)
+  const conflictBroadcastIds = [...new Set(withinWindow.map((r: BlRow) => r.broadcast_id))];
+  const { data: broadcastNames } = await supabase
+    .from("broadcasts")
+    .select("id, name")
+    .in("id", conflictBroadcastIds);
+
+  const broadcastNameById: Record<string, string> = {};
+  for (const b of (broadcastNames ?? []) as { id: string; name: string }[]) {
+    broadcastNameById[b.id] = b.name;
+  }
+
+  // Deduplicate by phone — one conflict entry per phone
   const seenPhones = new Set<string>();
   const conflicts = [];
-
-  for (const row of withinWindow) {
+  for (const row of withinWindow as BlRow[]) {
     const phone = phoneByLeadId[row.lead_id];
     if (!phone || seenPhones.has(phone)) continue;
     seenPhones.add(phone);
 
-    const broadcast = (row.broadcasts as unknown) as { name: string } | null;
-    // Use the lead_id from the PENDING broadcast (current) for display
-    const pendingLeadId = phoneToLeadId[phone] ?? row.lead_id;
-
     conflicts.push({
-      lead_id: pendingLeadId,
+      lead_id: phoneToLeadId[phone] ?? row.lead_id,
       lead_name: nameByPhone[phone] ?? null,
       lead_phone: phone,
       last_broadcast_id: row.broadcast_id,
-      last_broadcast_name: broadcast?.name ?? "—",
+      last_broadcast_name: broadcastNameById[row.broadcast_id] ?? "—",
       last_sent_at: row.sent_at ?? row.created_at ?? "",
     });
   }
-
-  console.log(`[spam-check] conflicts=${conflicts.length}`);
 
   return NextResponse.json({ conflicts });
 }

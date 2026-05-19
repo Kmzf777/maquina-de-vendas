@@ -31,13 +31,15 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
   const handleAction = async (id: string, action: "start" | "pause") => {
     if (action === "start") {
       const spamRes = await fetch(`/api/broadcasts/${id}/spam-check`);
-      if (spamRes.ok) {
-        const spamData = await spamRes.json();
-        if ((spamData.conflicts ?? []).length > 0) {
-          // Conflicts found — navigate to detail page where the full spam modal is shown
-          router.push(`/campanhas/disparos/${id}`);
-          return;
-        }
+      if (!spamRes.ok) {
+        alert("Erro ao verificar spam. Tente novamente.");
+        return;
+      }
+      const spamData = await spamRes.json();
+      if ((spamData.conflicts ?? []).length > 0) {
+        // Conflicts found — navigate to detail page where the full spam modal is shown
+        router.push(`/campanhas/disparos/${id}`);
+        return;
       }
       await fetch(`/api/broadcasts/${id}/start`, { method: "POST" });
       onRefresh();
