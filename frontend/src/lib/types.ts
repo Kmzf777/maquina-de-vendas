@@ -297,3 +297,22 @@ export interface Conversation {
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null } | null;
   agent_profiles?: { id: string; name: string } | null;
 }
+
+export interface LeadBroadcastEntry {
+  id: string;
+  broadcast_id: string;
+  broadcast_name: string;
+  broadcast_status: string;
+  message_status: string; // pending | sent | delivered | failed
+  sent_at: string | null;
+  first_replied_at: string | null;
+}
+
+export interface SpamConflict {
+  lead_id: string;
+  lead_name: string | null;
+  lead_phone: string;
+  last_broadcast_id: string;
+  last_broadcast_name: string;
+  last_sent_at: string;
+}
