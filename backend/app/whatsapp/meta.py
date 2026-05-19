@@ -60,7 +60,9 @@ class MetaCloudClient(WhatsAppProvider):
 
                 resp.raise_for_status()
                 return response_data
-        except Exception:
+        except Exception as exc:
+            if error_msg is None:
+                error_msg = str(exc)
             raise
         finally:
             log_outbound(
@@ -127,7 +129,9 @@ class MetaCloudClient(WhatsAppProvider):
 
                 resp.raise_for_status()
                 return response_data["id"]
-        except Exception:
+        except Exception as exc:
+            if error_msg is None:
+                error_msg = str(exc)
             raise
         finally:
             log_outbound(
