@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Broadcast, BroadcastLead, BroadcastMetrics } from "@/lib/types";
+import type { Broadcast, BroadcastLead, BroadcastMetrics, SpamConflict } from "@/lib/types";
 
 interface BroadcastDetailProps {
   broadcastId: string;
@@ -51,6 +51,9 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   const [actionLoading, setActionLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<LeadStatusFilter>("all");
   const [replyMetrics, setReplyMetrics] = useState<BroadcastMetrics | null>(null);
+  const [spamConflicts, setSpamConflicts] = useState<SpamConflict[]>([]);
+  const [showSpamModal, setShowSpamModal] = useState(false);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -69,9 +72,44 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     if (!broadcast || actionLoading) return;
     setActionLoading(true);
     try {
+      const spamRes = await fetch(`/api/broadcasts/${broadcastId}/spam-check`);
+      const spamData = await spamRes.json();
+      const conflicts: SpamConflict[] = spamData.conflicts ?? [];
+
+      if (conflicts.length > 0) {
+        setSpamConflicts(conflicts);
+        setShowSpamModal(true);
+        setActionLoading(false);
+        return;
+      }
+
       await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
       setBroadcast({ ...broadcast, status: "running" });
     } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResolveSpam = async () => {
+    if (!broadcast || confirmLoading) return;
+    setConfirmLoading(true);
+    try {
+      const conflictLeadIds = [...new Set(spamConflicts.map((c) => c.lead_id))];
+      const resolveRes = await fetch(`/api/broadcasts/${broadcastId}/resolve-spam`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conflict_lead_ids: conflictLeadIds }),
+      });
+      const resolveData = await resolveRes.json();
+
+      await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
+
+      setShowSpamModal(false);
+      setSpamConflicts([]);
+      setBroadcast({ ...broadcast, status: "running" });
+      alert(`${resolveData.removed_count} lead(s) movidos para rascunho "${resolveData.new_broadcast_name}"`);
+    } finally {
+      setConfirmLoading(false);
       setActionLoading(false);
     }
   };
@@ -458,6 +496,73 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
           )}
         </div>
       </div>
+
+      {/* Spam Warning Modal */}
+      {showSpamModal && (
+        <div
+          className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4"
+          onClick={() => { setShowSpamModal(false); setSpamConflicts([]); }}
+        >
+          <div
+            className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-[600px] max-h-[80vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-5 border-b border-[#dedbd6]">
+              <h2 className="text-[20px] font-normal text-[#111111]" style={{ letterSpacing: "-0.4px" }}>
+                Leads disparados recentemente
+              </h2>
+              <p className="text-[13px] text-[#7b7b78] mt-1">
+                {spamConflicts.length} lead(s) abaixo receberam um disparo nas últimas 48h.
+                Eles serão removidos deste disparo e adicionados a um novo rascunho.
+              </p>
+            </div>
+
+            <div className="overflow-auto flex-1 px-6 py-4">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] border-b border-[#dedbd6]">
+                    <th className="text-left pb-2 font-normal">Nome</th>
+                    <th className="text-left pb-2 font-normal">Telefone</th>
+                    <th className="text-left pb-2 font-normal">Último Disparo</th>
+                    <th className="text-left pb-2 font-normal">Enviado em</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spamConflicts.map((c) => (
+                    <tr key={c.lead_id} className="border-b border-[#f0ede8]">
+                      <td className="py-2 pr-3 text-[#111111]">{c.lead_name ?? "—"}</td>
+                      <td className="py-2 pr-3 text-[#7b7b78]">{c.lead_phone}</td>
+                      <td className="py-2 pr-3 text-[#111111] max-w-[160px] truncate">{c.last_broadcast_name}</td>
+                      <td className="py-2 text-[#7b7b78] whitespace-nowrap">
+                        {new Date(c.last_sent_at).toLocaleString("pt-BR", {
+                          day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+                        })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-6 py-4 border-t border-[#dedbd6] flex justify-end gap-2">
+              <button
+                onClick={() => { setShowSpamModal(false); setSpamConflicts([]); }}
+                disabled={confirmLoading}
+                className="border border-[#dedbd6] text-[#313130] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleResolveSpam}
+                disabled={confirmLoading}
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
+              >
+                {confirmLoading ? "Processando..." : "Remover e Disparar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
