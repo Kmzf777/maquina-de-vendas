@@ -162,7 +162,15 @@ export interface BroadcastLead {
   sent_at: string | null;
   error_message: string | null;
   deal_moved_at: string | null;
+  first_replied_at: string | null;
   leads?: { id: string; name: string | null; phone: string };
+}
+
+export interface BroadcastMetrics {
+  replied_count: number;
+  reply_rate: number;        // 0–100
+  avg_reply_secs: number | null;
+  median_reply_secs: number | null;
 }
 
 export interface Cadence {

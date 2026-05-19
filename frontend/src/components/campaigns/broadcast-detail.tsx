@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Broadcast, BroadcastLead } from "@/lib/types";
+import type { Broadcast, BroadcastLead, BroadcastMetrics } from "@/lib/types";
 
 interface BroadcastDetailProps {
   broadcastId: string;
@@ -50,14 +50,17 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<LeadStatusFilter>("all");
+  const [replyMetrics, setReplyMetrics] = useState<BroadcastMetrics | null>(null);
 
   useEffect(() => {
     Promise.all([
       fetch(`/api/broadcasts/${broadcastId}`).then((r) => r.json()),
       fetch(`/api/broadcasts/${broadcastId}/leads`).then((r) => r.json()),
-    ]).then(([broadcastData, leadsData]) => {
+      fetch(`/api/broadcasts/${broadcastId}/metrics`).then((r) => r.json()),
+    ]).then(([broadcastData, leadsData, metricsData]) => {
       setBroadcast(broadcastData as Broadcast);
       setLeads(Array.isArray(leadsData) ? (leadsData as BroadcastLead[]) : []);
+      setReplyMetrics(metricsData as BroadcastMetrics);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [broadcastId]);
@@ -143,6 +146,20 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   const filteredLeads = activeFilter === "all"
     ? leads
     : leads.filter((l) => l.status === activeFilter);
+
+  const formatSeconds = (secs: number | null): string => {
+    if (secs == null) return "—";
+    if (secs < 60) return "< 1 min";
+    if (secs < 3600) return `${Math.round(secs / 60)} min`;
+    if (secs < 86400) {
+      const h = Math.floor(secs / 3600);
+      const m = Math.round((secs % 3600) / 60);
+      return m > 0 ? `${h}h ${m}min` : `${h}h`;
+    }
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -243,6 +260,44 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
           ))}
         </div>
 
+        {/* Reply metrics — only visible after dispatch started */}
+        {broadcast.status !== "draft" && replyMetrics && (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 flex flex-col items-center justify-center text-center">
+              <span
+                className="text-[36px] font-normal leading-none"
+                style={{ color: "#111111", letterSpacing: "-0.5px" }}
+              >
+                {replyMetrics.reply_rate > 0 ? `${replyMetrics.reply_rate}%` : "—"}
+              </span>
+              <span className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] mt-2">
+                Taxa de Resposta
+              </span>
+              {replyMetrics.replied_count > 0 && (
+                <span className="text-[11px] text-[#7b7b78] mt-1">
+                  {replyMetrics.replied_count} lead{replyMetrics.replied_count !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 flex flex-col items-center justify-center text-center">
+              <span
+                className="text-[36px] font-normal leading-none"
+                style={{ color: "#111111", letterSpacing: "-0.5px" }}
+              >
+                {formatSeconds(replyMetrics.avg_reply_secs)}
+              </span>
+              <span className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] mt-2">
+                Tempo Médio de Resposta
+              </span>
+              {replyMetrics.median_reply_secs != null && (
+                <span className="text-[11px] text-[#7b7b78] mt-1">
+                  mediana {formatSeconds(replyMetrics.median_reply_secs)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Post-dispatch action info */}
         {moveStageLabel && (
           <div className="bg-white border border-[#dedbd6] rounded-[8px] px-5 py-3 flex items-center gap-3">
@@ -301,7 +356,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#dedbd6] bg-[#faf9f6]">
-                  {["Nome", "Telefone", "Status", "Enviado em", ...(moveStageLabel ? ["Kanban"] : []), "Erro"].map((col) => (
+                  {["Nome", "Telefone", "Status", "Enviado em", "Respondeu em", ...(moveStageLabel ? ["Kanban"] : []), "Erro"].map((col) => (
                     <th
                       key={col}
                       className="text-left px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium"
@@ -314,7 +369,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
               <tbody>
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={moveStageLabel ? 6 : 5} className="px-5 py-10 text-center text-[14px] text-[#7b7b78]">
+                    <td colSpan={moveStageLabel ? 7 : 6} className="px-5 py-10 text-center text-[14px] text-[#7b7b78]">
                       Nenhum lead encontrado
                     </td>
                   </tr>
@@ -345,6 +400,16 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                               day: "2-digit",
                               month: "2-digit",
                               year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : <span className="text-[#dedbd6]">—</span>}
+                      </td>
+                      <td className="px-5 py-3 text-[13px] text-[#7b7b78]">
+                        {lead.first_replied_at
+                          ? new Date(lead.first_replied_at).toLocaleString("pt-BR", {
+                              day: "2-digit",
+                              month: "2-digit",
                               hour: "2-digit",
                               minute: "2-digit",
                             })
