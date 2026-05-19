@@ -3,6 +3,7 @@ import json
 import logging
 import httpx
 from app.whatsapp.base import WhatsAppProvider
+from app.meta_audit import log_outbound
 
 META_API_BASE = "https://graph.facebook.com"
 
@@ -30,23 +31,50 @@ class MetaCloudClient(WhatsAppProvider):
             "Content-Type": "application/json",
         }
 
-    async def _post(self, payload: dict) -> dict:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(self._url(), json=payload, headers=self._headers())
-            if not resp.is_success:
+    async def _post(self, payload: dict, request_type: str = "api_call") -> dict:
+        response_data: dict | None = None
+        status_code: int | None = None
+        success = False
+        error_msg: str | None = None
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(self._url(), json=payload, headers=self._headers())
+                status_code = resp.status_code
                 try:
-                    error_body = resp.json()
+                    response_data = resp.json()
                 except Exception:
-                    error_body = resp.text
-                logger.error(
-                    "[Meta API] %s %s — payload: %s — response: %s",
-                    resp.status_code,
-                    resp.reason_phrase,
-                    json.dumps(payload),
-                    json.dumps(error_body) if isinstance(error_body, dict) else error_body,
-                )
-            resp.raise_for_status()
-            return resp.json()
+                    response_data = {"raw": resp.text}
+
+                if not resp.is_success:
+                    error_msg = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+                    logger.error(
+                        "[Meta API] %s %s — payload: %s — response: %s",
+                        resp.status_code,
+                        resp.reason_phrase,
+                        json.dumps(payload),
+                        error_msg,
+                    )
+                else:
+                    success = True
+
+                resp.raise_for_status()
+                return response_data
+        except Exception:
+            raise
+        finally:
+            log_outbound(
+                endpoint=self._url(),
+                http_method="POST",
+                request_type=request_type,
+                payload=payload,
+                response=response_data,
+                status_code=status_code,
+                success=success,
+                to_number=payload.get("to"),
+                phone_number_id=self.phone_number_id,
+                error_message=error_msg,
+            )
 
     async def send_text(self, to: str, body: str) -> dict:
         return await self._post({
@@ -54,7 +82,7 @@ class MetaCloudClient(WhatsAppProvider):
             "to": to,
             "type": "text",
             "text": {"body": body},
-        })
+        }, request_type="send_text")
 
     async def send_image(self, to: str, image_url: str, caption: str | None = None) -> dict:
         payload: dict = {
@@ -65,31 +93,54 @@ class MetaCloudClient(WhatsAppProvider):
         }
         if caption:
             payload["image"]["caption"] = caption
-        return await self._post(payload)
+        return await self._post(payload, request_type="send_image")
 
     async def upload_media(self, image_bytes: bytes, mimetype: str) -> str:
         """Upload image bytes to Meta Media API and return the media_id."""
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                self._media_url,
-                headers={"Authorization": f"Bearer {self.access_token}"},
-                files={"file": ("image", image_bytes, mimetype)},
-                data={"messaging_product": "whatsapp", "type": mimetype},
-            )
-            if not resp.is_success:
-                try:
-                    error_body = resp.json()
-                except Exception:
-                    error_body = resp.text
-                logger.error(
-                    "[Meta API] Media upload failed %s %s — mimetype: %s — response: %s",
-                    resp.status_code,
-                    resp.reason_phrase,
-                    mimetype,
-                    json.dumps(error_body) if isinstance(error_body, dict) else error_body,
+        response_data: dict | None = None
+        status_code: int | None = None
+        success = False
+        error_msg: str | None = None
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    self._media_url,
+                    headers={"Authorization": f"Bearer {self.access_token}"},
+                    files={"file": ("image", image_bytes, mimetype)},
+                    data={"messaging_product": "whatsapp", "type": mimetype},
                 )
-            resp.raise_for_status()
-            return resp.json()["id"]
+                status_code = resp.status_code
+                try:
+                    response_data = resp.json()
+                except Exception:
+                    response_data = {"raw": resp.text}
+
+                if not resp.is_success:
+                    error_msg = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+                    logger.error(
+                        "[Meta API] Media upload failed %s %s — mimetype: %s — response: %s",
+                        resp.status_code, resp.reason_phrase, mimetype, error_msg,
+                    )
+                else:
+                    success = True
+
+                resp.raise_for_status()
+                return response_data["id"]
+        except Exception:
+            raise
+        finally:
+            log_outbound(
+                endpoint=self._media_url,
+                http_method="POST",
+                request_type="upload_media",
+                payload={"messaging_product": "whatsapp", "type": mimetype},
+                response=response_data,
+                status_code=status_code,
+                success=success,
+                phone_number_id=self.phone_number_id,
+                error_message=error_msg,
+            )
 
     async def send_image_bytes(self, to: str, image_bytes: bytes, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
         """Upload image to Meta and send via media_id (required — Meta rejects data: URIs)."""
@@ -102,7 +153,7 @@ class MetaCloudClient(WhatsAppProvider):
         }
         if caption:
             payload["image"]["caption"] = caption
-        return await self._post(payload)
+        return await self._post(payload, request_type="send_image_bytes")
 
     async def send_image_base64(self, to: str, base64_data: str, mimetype: str = "image/jpeg", caption: str | None = None) -> dict:
         image_bytes = base64.b64decode(base64_data)
@@ -114,7 +165,7 @@ class MetaCloudClient(WhatsAppProvider):
             "to": to,
             "type": "audio",
             "audio": {"link": audio_url},
-        })
+        }, request_type="send_audio")
 
     async def send_template(self, to: str, template_name: str, components: list | None = None, language_code: str = "pt_BR") -> dict:
         payload = {
@@ -128,32 +179,61 @@ class MetaCloudClient(WhatsAppProvider):
         }
         if components:
             payload["template"]["components"] = components
-        return await self._post(payload)
+        return await self._post(payload, request_type="send_template")
 
     async def download_media(self, media_id: str) -> tuple[bytes, str]:
         """Download media from Meta using media_id. Returns (bytes, content_type)."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Step 1: resolve media_id → temporary download URL
-            info_resp = await client.get(
-                f"{META_API_BASE}/{self.api_version}/{media_id}",
-                headers={"Authorization": f"Bearer {self.access_token}"},
-            )
-            info_resp.raise_for_status()
-            info = info_resp.json()
-            download_url = info["url"]
-            mime_type = info.get("mime_type", "audio/ogg")
+        info_endpoint = f"{META_API_BASE}/{self.api_version}/{media_id}"
+        info_status: int | None = None
+        info_success = False
+        info_response: dict | None = None
+        info_error: str | None = None
 
-            # Step 2: download bytes with Bearer token
-            audio_resp = await client.get(
-                download_url,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Step 1: resolve media_id → temporary download URL
+                info_resp = await client.get(
+                    info_endpoint,
+                    headers={"Authorization": f"Bearer {self.access_token}"},
+                )
+                info_status = info_resp.status_code
+                try:
+                    info_response = info_resp.json()
+                except Exception:
+                    info_response = {"raw": info_resp.text}
+                info_resp.raise_for_status()
+                info_success = True
+
+                download_url = info_response["url"]
+                mime_type = info_response.get("mime_type", "audio/ogg")
+
+                # Step 2: download bytes with Bearer token
+                audio_resp = await client.get(
+                    download_url,
+                    headers={"Authorization": f"Bearer {self.access_token}"},
+                )
+                audio_resp.raise_for_status()
+                return audio_resp.content, mime_type
+        except Exception as exc:
+            if not info_success:
+                info_error = str(exc)
+            raise
+        finally:
+            log_outbound(
+                endpoint=info_endpoint,
+                http_method="GET",
+                request_type="download_media",
+                payload={"media_id": media_id},
+                response=info_response,
+                status_code=info_status,
+                success=info_success,
+                phone_number_id=self.phone_number_id,
+                error_message=info_error,
             )
-            audio_resp.raise_for_status()
-            return audio_resp.content, mime_type
 
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         return await self._post({
             "messaging_product": "whatsapp",
             "status": "read",
             "message_id": message_id,
-        })
+        }, request_type="mark_read")
