@@ -53,7 +53,8 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   const [replyMetrics, setReplyMetrics] = useState<BroadcastMetrics | null>(null);
   const [spamConflicts, setSpamConflicts] = useState<SpamConflict[]>([]);
   const [showSpamModal, setShowSpamModal] = useState(false);
-  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [selectedConflictIds, setSelectedConflictIds] = useState<Set<string>>(new Set());
+  const [modalActionLoading, setModalActionLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -84,6 +85,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
 
       if (conflicts.length > 0) {
         setSpamConflicts(conflicts);
+        setSelectedConflictIds(new Set(conflicts.map((c) => c.lead_id)));
         setShowSpamModal(true);
         setActionLoading(false);
         return;
@@ -96,26 +98,73 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     }
   };
 
-  const handleResolveSpam = async () => {
-    if (!broadcast || confirmLoading) return;
-    setConfirmLoading(true);
+  const handleRemoveSelected = async () => {
+    if (!broadcast || modalActionLoading || selectedConflictIds.size === 0) return;
+    setModalActionLoading(true);
     try {
-      const conflictLeadIds = [...new Set(spamConflicts.map((c) => c.lead_id))];
+      const res = await fetch(`/api/broadcasts/${broadcastId}/remove-leads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lead_ids: [...selectedConflictIds] }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Erro ao remover leads: ${data.error}`);
+        return;
+      }
+      const startRes = await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
+      setShowSpamModal(false);
+      setSpamConflicts([]);
+      setSelectedConflictIds(new Set());
+      if (startRes.ok) {
+        setBroadcast({ ...broadcast, status: "running" });
+      }
+    } finally {
+      setModalActionLoading(false);
+      setActionLoading(false);
+    }
+  };
+
+  const handleCreateDraftWithSelected = async () => {
+    if (!broadcast || modalActionLoading || selectedConflictIds.size === 0) return;
+    setModalActionLoading(true);
+    try {
       const resolveRes = await fetch(`/api/broadcasts/${broadcastId}/resolve-spam`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conflict_lead_ids: conflictLeadIds }),
+        body: JSON.stringify({ conflict_lead_ids: [...selectedConflictIds] }),
       });
+      if (!resolveRes.ok) {
+        const data = await resolveRes.json();
+        alert(`Erro: ${data.error}`);
+        return;
+      }
       const resolveData = await resolveRes.json();
-
-      await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
-
+      const startRes = await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
       setShowSpamModal(false);
       setSpamConflicts([]);
-      setBroadcast({ ...broadcast, status: "running" });
-      alert(`${resolveData.removed_count} lead(s) movidos para rascunho "${resolveData.new_broadcast_name}"`);
+      setSelectedConflictIds(new Set());
+      if (startRes.ok) {
+        setBroadcast({ ...broadcast, status: "running" });
+      }
+      alert(`${resolveData.removed_count} lead(s) movidos para o rascunho "${resolveData.new_broadcast_name}"`);
     } finally {
-      setConfirmLoading(false);
+      setModalActionLoading(false);
+      setActionLoading(false);
+    }
+  };
+
+  const handleDispatchAnyway = async () => {
+    if (!broadcast || modalActionLoading) return;
+    setModalActionLoading(true);
+    try {
+      await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
+      setShowSpamModal(false);
+      setSpamConflicts([]);
+      setSelectedConflictIds(new Set());
+      setBroadcast({ ...broadcast, status: "running" });
+    } finally {
+      setModalActionLoading(false);
       setActionLoading(false);
     }
   };
@@ -507,41 +556,116 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       {showSpamModal && (
         <div
           className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4"
-          onClick={() => { setShowSpamModal(false); setSpamConflicts([]); }}
+          onClick={() => {
+            setShowSpamModal(false);
+            setSpamConflicts([]);
+            setSelectedConflictIds(new Set());
+          }}
         >
           <div
-            className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-[600px] max-h-[80vh] overflow-hidden flex flex-col"
+            className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-[640px] max-h-[80vh] overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Header */}
             <div className="px-6 py-5 border-b border-[#dedbd6]">
-              <h2 className="text-[20px] font-normal text-[#111111]" style={{ letterSpacing: "-0.4px" }}>
+              <h2
+                className="text-[20px] font-normal text-[#111111]"
+                style={{ letterSpacing: "-0.4px" }}
+              >
                 Leads disparados recentemente
               </h2>
               <p className="text-[13px] text-[#7b7b78] mt-1">
                 {spamConflicts.length} lead(s) abaixo receberam um disparo nas últimas 48h.
-                Eles serão removidos deste disparo e adicionados a um novo rascunho.
               </p>
             </div>
 
-            <div className="overflow-auto flex-1 px-6 py-4">
+            {/* Contextual toolbar — visible only when ≥1 lead selected */}
+            {selectedConflictIds.size > 0 && (
+              <div className="px-6 py-3 border-b border-[#dedbd6] bg-[#faf9f6] flex items-center gap-3">
+                <span className="text-[13px] text-[#7b7b78] flex-1">
+                  {selectedConflictIds.size} selecionado(s)
+                </span>
+                <button
+                  onClick={handleRemoveSelected}
+                  disabled={modalActionLoading}
+                  className="border border-[#c41c1c]/40 text-[#c41c1c] px-[12px] py-1.5 rounded-[4px] text-[13px] hover:bg-[#c41c1c]/5 disabled:opacity-50 transition-colors"
+                >
+                  {modalActionLoading ? "Processando..." : "Remover selecionados"}
+                </button>
+                <button
+                  onClick={handleCreateDraftWithSelected}
+                  disabled={modalActionLoading}
+                  className="bg-[#111111] text-white px-[12px] py-1.5 rounded-[4px] text-[13px] hover:bg-[#333333] disabled:opacity-50 transition-colors"
+                >
+                  {modalActionLoading ? "Processando..." : "Criar novo disparo com selecionados"}
+                </button>
+              </div>
+            )}
+
+            {/* Table */}
+            <div className="overflow-auto flex-1">
               <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] border-b border-[#dedbd6]">
-                    <th className="text-left pb-2 font-normal">Nome</th>
-                    <th className="text-left pb-2 font-normal">Telefone</th>
-                    <th className="text-left pb-2 font-normal">Último Disparo</th>
-                    <th className="text-left pb-2 font-normal">Enviado em</th>
+                <thead className="sticky top-0 bg-white border-b border-[#dedbd6]">
+                  <tr className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
+                    <th className="text-left pl-6 pr-3 py-3 font-normal w-10">
+                      <input
+                        type="checkbox"
+                        checked={
+                          spamConflicts.length > 0 &&
+                          selectedConflictIds.size === spamConflicts.length
+                        }
+                        onChange={() => {
+                          if (selectedConflictIds.size === spamConflicts.length) {
+                            setSelectedConflictIds(new Set());
+                          } else {
+                            setSelectedConflictIds(
+                              new Set(spamConflicts.map((c) => c.lead_id))
+                            );
+                          }
+                        }}
+                        className="cursor-pointer"
+                      />
+                    </th>
+                    <th className="text-left pr-3 py-3 font-normal">Nome</th>
+                    <th className="text-left pr-3 py-3 font-normal">Telefone</th>
+                    <th className="text-left pr-3 py-3 font-normal">Último Disparo</th>
+                    <th className="text-left pr-6 py-3 font-normal">Enviado em</th>
                   </tr>
                 </thead>
                 <tbody>
                   {spamConflicts.map((c) => (
-                    <tr key={c.lead_id} className="border-b border-[#f0ede8]">
-                      <td className="py-2 pr-3 text-[#111111]">{c.lead_name ?? "—"}</td>
-                      <td className="py-2 pr-3 text-[#7b7b78]">{c.lead_phone}</td>
-                      <td className="py-2 pr-3 text-[#111111] max-w-[160px] truncate">{c.last_broadcast_name}</td>
-                      <td className="py-2 text-[#7b7b78] whitespace-nowrap">
+                    <tr
+                      key={c.lead_id}
+                      className="border-b border-[#f0ede8] last:border-0 hover:bg-[#faf9f6] transition-colors"
+                    >
+                      <td className="pl-6 pr-3 py-2.5">
+                        <input
+                          type="checkbox"
+                          checked={selectedConflictIds.has(c.lead_id)}
+                          onChange={() => {
+                            setSelectedConflictIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(c.lead_id)) next.delete(c.lead_id);
+                              else next.add(c.lead_id);
+                              return next;
+                            });
+                          }}
+                          className="cursor-pointer"
+                        />
+                      </td>
+                      <td className="pr-3 py-2.5 text-[#111111]">{c.lead_name ?? "—"}</td>
+                      <td className="pr-3 py-2.5 text-[#7b7b78] font-mono text-[12px]">
+                        {c.lead_phone}
+                      </td>
+                      <td className="pr-3 py-2.5 text-[#111111] max-w-[160px] truncate">
+                        {c.last_broadcast_name}
+                      </td>
+                      <td className="pr-6 py-2.5 text-[#7b7b78] whitespace-nowrap">
                         {new Date(c.last_sent_at).toLocaleString("pt-BR", {
-                          day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+                          day: "2-digit",
+                          month: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
                         })}
                       </td>
                     </tr>
@@ -550,20 +674,25 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
               </table>
             </div>
 
+            {/* Footer */}
             <div className="px-6 py-4 border-t border-[#dedbd6] flex justify-end gap-2">
               <button
-                onClick={() => { setShowSpamModal(false); setSpamConflicts([]); }}
-                disabled={confirmLoading}
-                className="border border-[#dedbd6] text-[#313130] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+                onClick={() => {
+                  setShowSpamModal(false);
+                  setSpamConflicts([]);
+                  setSelectedConflictIds(new Set());
+                }}
+                disabled={modalActionLoading}
+                className="border border-[#dedbd6] text-[#313130] px-[14px] py-2 rounded-[4px] text-[14px] hover:border-[#111111] transition-colors disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleResolveSpam}
-                disabled={confirmLoading}
-                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
+                onClick={handleDispatchAnyway}
+                disabled={modalActionLoading}
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] hover:bg-[#333333] disabled:opacity-50 transition-colors"
               >
-                {confirmLoading ? "Processando..." : "Remover e Disparar"}
+                {modalActionLoading ? "Processando..." : "Disparar mesmo assim"}
               </button>
             </div>
           </div>
