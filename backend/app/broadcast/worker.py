@@ -365,21 +365,22 @@ async def process_single_broadcast(broadcast: dict):
             # Move lead's deal to configured Kanban stage if set
             if move_to_stage_id and target_pipeline_id:
                 try:
-                    existing = (
+                    # Update ALL deals for this lead in the pipeline at once.
+                    # Using limit(1) on the previous SELECT+UPDATE left older deals in
+                    # the original stage, causing leads to reappear in stage filters.
+                    update_result = (
                         sb.table("deals")
-                        .select("id")
-                        .eq("lead_id", lead["id"])
-                        .eq("pipeline_id", target_pipeline_id)
-                        .order("created_at", desc=True)
-                        .limit(1)
-                        .execute()
-                    )
-                    if existing.data:
-                        sb.table("deals").update({
+                        .update({
                             "stage_id": move_to_stage_id,
                             "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", existing.data[0]["id"]).execute()
-                    else:
+                        })
+                        .eq("lead_id", lead["id"])
+                        .eq("pipeline_id", target_pipeline_id)
+                        .select("id")
+                        .execute()
+                    )
+                    if not update_result.data:
+                        # No deal found in this pipeline — create one so the lead is tracked
                         title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
                         sb.table("deals").insert({
                             "lead_id": lead["id"],
@@ -389,9 +390,16 @@ async def process_single_broadcast(broadcast: dict):
                             "stage_id": move_to_stage_id,
                         }).execute()
                     logger.info(
-                        "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s",
-                        lead["id"], target_pipeline_id, move_to_stage_id,
+                        "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s (deals_updated=%d)",
+                        lead["id"], target_pipeline_id, move_to_stage_id, len(update_result.data),
                     )
+                    # Track the move timestamp on the broadcast_lead row
+                    try:
+                        sb.table("broadcast_leads").update({
+                            "deal_moved_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", bl["id"]).execute()
+                    except Exception as track_err:
+                        logger.debug("[BROADCAST] deal_moved_at not tracked (run migration): %s", track_err)
                 except Exception as move_err:
                     logger.warning(
                         "[BROADCAST] Failed to move deal for lead %s: %s",

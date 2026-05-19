@@ -141,10 +141,17 @@ export interface Broadcast {
   send_interval_max: number;
   cadence_id: string | null;
   agent_profile_id: string | null;
+  move_to_stage_id: string | null;
   created_at: string;
   updated_at: string;
   // Joined
   cadences?: { id: string; name: string } | null;
+  move_to_stage?: {
+    id: string;
+    label: string;
+    pipeline_id: string;
+    pipelines: { name: string } | null;
+  } | null;
 }
 
 export interface BroadcastLead {
@@ -154,6 +161,7 @@ export interface BroadcastLead {
   status: "pending" | "sent" | "failed" | "delivered";
   sent_at: string | null;
   error_message: string | null;
+  deal_moved_at: string | null;
   leads?: { id: string; name: string | null; phone: string };
 }
 

@@ -128,6 +128,10 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     { label: "Pendente", value: pendingCount, color: "#7b7b78" },
   ];
 
+  const moveStageLabel = broadcast.move_to_stage
+    ? `${broadcast.move_to_stage.pipelines?.name ?? "—"} › ${broadcast.move_to_stage.label}`
+    : null;
+
   const filters: { key: LeadStatusFilter; label: string }[] = [
     { key: "all", label: "Todos" },
     { key: "sent", label: "Enviado" },
@@ -239,6 +243,17 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
           ))}
         </div>
 
+        {/* Post-dispatch action info */}
+        {moveStageLabel && (
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] px-5 py-3 flex items-center gap-3">
+            <span className="text-[#7b7b78] text-[13px]">Ação pós-disparo:</span>
+            <span className="text-[13px] text-[#111111] font-medium">{moveStageLabel}</span>
+            <span className="text-[11px] text-[#7b7b78] uppercase tracking-[0.5px] border border-[#dedbd6] rounded-[4px] px-2 py-0.5">
+              Mover Kanban
+            </span>
+          </div>
+        )}
+
         {/* Retry failures banner */}
         {broadcast.failed > 0 && (
           <div className="bg-[#c41c1c]/8 border border-[#c41c1c]/25 rounded-[8px] px-5 py-4 flex items-center justify-between">
@@ -286,7 +301,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#dedbd6] bg-[#faf9f6]">
-                  {["Nome", "Telefone", "Status", "Enviado em", "Erro"].map((col) => (
+                  {["Nome", "Telefone", "Status", "Enviado em", ...(moveStageLabel ? ["Kanban"] : []), "Erro"].map((col) => (
                     <th
                       key={col}
                       className="text-left px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium"
@@ -299,7 +314,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
               <tbody>
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-10 text-center text-[14px] text-[#7b7b78]">
+                    <td colSpan={moveStageLabel ? 6 : 5} className="px-5 py-10 text-center text-[14px] text-[#7b7b78]">
                       Nenhum lead encontrado
                     </td>
                   </tr>
@@ -335,6 +350,22 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                             })
                           : <span className="text-[#dedbd6]">—</span>}
                       </td>
+                      {moveStageLabel && (
+                        <td className="px-5 py-3 text-[13px]">
+                          {lead.deal_moved_at ? (
+                            <span
+                              className="text-[#0bdf50]"
+                              title={new Date(lead.deal_moved_at).toLocaleString("pt-BR")}
+                            >
+                              ✓ Movido
+                            </span>
+                          ) : lead.status === "sent" || lead.status === "delivered" ? (
+                            <span className="text-[#c41c1c]">Não movido</span>
+                          ) : (
+                            <span className="text-[#dedbd6]">—</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-5 py-3 text-[13px] text-[#c41c1c] max-w-[280px]">
                         {lead.error_message ? (
                           <span className="truncate block" title={lead.error_message}>
