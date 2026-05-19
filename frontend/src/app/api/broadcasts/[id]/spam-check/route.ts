@@ -54,8 +54,8 @@ export async function GET(
   for (const row of (recentSends ?? [])) {
     if (seen.has(row.lead_id)) continue;
     seen.add(row.lead_id);
-    const lead = row.leads as { name: string | null; phone: string } | null;
-    const broadcast = row.broadcasts as { name: string } | null;
+    const lead = (row.leads as unknown) as { name: string | null; phone: string } | null;
+    const broadcast = (row.broadcasts as unknown) as { name: string } | null;
     conflicts.push({
       lead_id: row.lead_id,
       lead_name: lead?.name ?? null,
