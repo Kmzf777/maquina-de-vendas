@@ -39,9 +39,9 @@ export async function POST(
       return NextResponse.json({ error: "Broadcast não encontrado" }, { status: 404 });
     }
 
-    const { error: deleteErr } = await supabase
+    const { count: deletedCount, error: deleteErr } = await supabase
       .from("broadcast_leads")
-      .delete()
+      .delete({ count: "exact" })
       .eq("broadcast_id", id)
       .in("lead_id", lead_ids as string[]);
 
@@ -60,11 +60,11 @@ export async function POST(
       .eq("id", id);
 
     if (updateErr) {
-      console.error("[remove-leads] Failed to update total_leads:", updateErr.message);
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
 
     return NextResponse.json({
-      removed_count: lead_ids.length,
+      removed_count: deletedCount ?? lead_ids.length,
       new_total: count ?? 0,
     });
   } catch (err: unknown) {
