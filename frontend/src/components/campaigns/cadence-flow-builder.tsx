@@ -181,6 +181,7 @@ function DeletableEdge({
     sourceX, sourceY, sourcePosition,
     targetX, targetY, targetPosition,
   });
+  const labelColor = String(label) === "SIM" ? "#1A9B6C" : String(label) === "NÃO" ? "#ef4444" : "#555";
 
   return (
     <>
@@ -193,6 +194,7 @@ function DeletableEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: "none",
               fontSize: 9, fontWeight: 700,
+              color: labelColor,
             }}
             className="nodrag nopan"
           >
