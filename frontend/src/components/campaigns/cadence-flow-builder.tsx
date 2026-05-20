@@ -185,7 +185,7 @@ function DeletableEdge({
 
   return (
     <>
-      <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd as string} />
+      <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} />
       <EdgeLabelRenderer>
         {label && (
           <div
@@ -667,6 +667,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
+  const edgeContextMenuRef = useRef<HTMLDivElement>(null);
 
   // Load campaign + nodes
   useEffect(() => {
@@ -774,6 +775,18 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     e.stopPropagation();
     setEdgeContextMenu({ x: e.clientX, y: e.clientY, edgeId: edge.id });
   }, []);
+
+  // Close edge context menu on outside click
+  useEffect(() => {
+    if (!edgeContextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (edgeContextMenuRef.current && !edgeContextMenuRef.current.contains(e.target as unknown as globalThis.Node)) {
+        setEdgeContextMenu(null);
+      }
+    };
+    window.addEventListener("mousedown", handler);
+    return () => window.removeEventListener("mousedown", handler);
+  }, [edgeContextMenu]);
 
   // ── Node click → select → show inspector ──────────────────────────────────
   const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
@@ -1056,6 +1069,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         {/* Edge context menu */}
         {edgeContextMenu && (
           <div
+            ref={edgeContextMenuRef}
             style={{
               position: "fixed",
               top: edgeContextMenu.y,
@@ -1068,7 +1082,6 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
               padding: "4px",
               minWidth: 160,
             }}
-            onMouseLeave={() => setEdgeContextMenu(null)}
           >
             <button
               onClick={() => deleteEdge(edgeContextMenu.edgeId)}
