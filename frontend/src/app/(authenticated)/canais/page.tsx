@@ -16,6 +16,7 @@ interface Channel {
   agent_profile_id: string | null;
   agent_profiles: AgentProfile | null;
   is_active: boolean;
+  mode: "ai" | "human";
   created_at: string;
 }
 
@@ -25,6 +26,7 @@ interface FormData {
   phone: string;
   agent_profile_id: string;
   is_active: boolean;
+  mode: "ai" | "human";
   // Evolution fields
   evo_api_url: string;
   evo_api_key: string;
@@ -42,6 +44,7 @@ const EMPTY_FORM: FormData = {
   phone: "",
   agent_profile_id: "",
   is_active: true,
+  mode: "ai",
   evo_api_url: "",
   evo_api_key: "",
   evo_instance: "",
@@ -120,6 +123,7 @@ export default function CanaisPage() {
       provider_config: providerConfig,
       agent_profile_id: form.agent_profile_id || null,
       is_active: form.is_active,
+      mode: form.mode,
     };
 
     if (editingId) {
@@ -151,6 +155,7 @@ export default function CanaisPage() {
       phone: ch.phone || "",
       agent_profile_id: ch.agent_profile_id || "",
       is_active: ch.is_active,
+      mode: ch.mode ?? "ai",
       evo_api_url: config.api_url || "",
       evo_api_key: config.api_key || "",
       evo_instance: config.instance || "",
@@ -280,6 +285,7 @@ export default function CanaisPage() {
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Telefone</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Provider</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Agente</th>
+              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Modo</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Conexao</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Ativo</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Acoes</th>
@@ -299,6 +305,17 @@ export default function CanaisPage() {
                   </td>
                   <td className="px-4 py-3 text-[14px] text-[#7b7b78]">
                     {ch.agent_profiles?.name || <span className="text-[#7b7b78]">Sem agente</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {ch.mode === "human" ? (
+                      <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
+                        Humano
+                      </span>
+                    ) : (
+                      <span className="bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20">
+                        IA
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {ch.provider === "evolution" ? (
@@ -351,7 +368,7 @@ export default function CanaisPage() {
             })}
             {channels.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-[14px] text-[#7b7b78]">
+                <td colSpan={8} className="px-4 py-12 text-center text-[14px] text-[#7b7b78]">
                   Nenhum canal configurado. Clique em &quot;+ Novo Canal&quot; para comecar.
                 </td>
               </tr>
@@ -492,6 +509,35 @@ export default function CanaisPage() {
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Channel Mode */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Modo do Canal</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, mode: "ai" })}
+                    className={`flex-1 px-3 py-2 rounded-[6px] text-[14px] border transition-colors ${
+                      form.mode === "ai"
+                        ? "bg-[#111111] text-white border-[#111111]"
+                        : "bg-white text-[#7b7b78] border-[#dedbd6] hover:border-[#111111]"
+                    }`}
+                  >
+                    IA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, mode: "human" })}
+                    className={`flex-1 px-3 py-2 rounded-[6px] text-[14px] border transition-colors ${
+                      form.mode === "human"
+                        ? "bg-[#111111] text-white border-[#111111]"
+                        : "bg-white text-[#7b7b78] border-[#dedbd6] hover:border-[#111111]"
+                    }`}
+                  >
+                    Humano
+                  </button>
+                </div>
               </div>
 
               {/* Active toggle */}
