@@ -270,11 +270,14 @@ async def run_worker():
 
     while True:
         try:
+            from app.campaigns.worker import check_campaign_triggers, process_campaign_enrollments
             await process_broadcasts()
             await process_due_cadences()
             await process_reengagements()
             await process_stagnation_triggers()
             await process_due_followups()
+            await check_campaign_triggers()
+            await process_campaign_enrollments()
             reconcile_broadcast_replies()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
@@ -550,6 +553,27 @@ async def process_single_broadcast(broadcast: dict):
                         )
                 except Exception as ce:
                     logger.warning(f"Could not enroll {lead['phone']} in cadence: {ce}")
+
+            # Enroll in campaign if configured
+            if broadcast.get("campaign_id"):
+                try:
+                    from app.campaigns.service import (
+                        get_campaign, list_nodes, create_enrollment as create_campaign_enrollment,
+                        is_already_enrolled,
+                    )
+                    campaign = get_campaign(broadcast["campaign_id"])
+                    if campaign and campaign["status"] == "active":
+                        nodes = list_nodes(campaign["id"])
+                        trigger = next((n for n in nodes if n["type"] == "trigger"), None)
+                        if trigger and trigger.get("next_node_id") and not is_already_enrolled(campaign["id"], lead["id"]):
+                            create_campaign_enrollment(
+                                campaign_id=campaign["id"],
+                                lead_id=lead["id"],
+                                current_node_id=trigger["next_node_id"],
+                                next_execute_at=datetime.now(timezone.utc),
+                            )
+                except Exception as ce:
+                    logger.warning("[CAMPAIGNS] Could not enroll lead %s from broadcast: %s", lead.get("phone", lead["id"]), ce)
 
             logger.info(f"Template sent to {lead['phone']}")
 

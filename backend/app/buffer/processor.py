@@ -204,6 +204,13 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning("Failed to record broadcast reply for %s: %s", phone, e)
 
+    # Notify campaign worker of reply
+    try:
+        from app.campaigns.worker import handle_campaign_reply
+        handle_campaign_reply(lead["id"])
+    except Exception as ce:
+        logger.debug("[CAMPAIGNS] handle_campaign_reply error: %s", ce)
+
     # Track last inbound message time for WhatsApp 24h window enforcement
     try:
         sb = get_supabase()
