@@ -350,7 +350,9 @@ async def _resolve_media(
     """
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
     audio_url_pattern = r"\[audio: media_url=(\S+)\]"
+    image_id_pattern = r"\[image: media_id=(\S+)\]"
     image_url_pattern = r"\[image: media_url=(\S+)\]"
+    video_id_pattern = r"\[video: media_id=(\S+)\]"
     video_url_pattern = r"\[video: media_url=(\S+)\]"
     doc_url_pattern = r"\[document: media_url=(\S+?)(?:\s+filename_b64=([A-Za-z0-9+/=]+))?\]"
     sticker_url_pattern = r"\[sticker: media_url=(\S+)\]"
@@ -389,19 +391,21 @@ async def _resolve_media(
                 logger.warning(f"Failed to transcribe audio {media_ref}: {e}")
                 text = text.replace(match.group(0), "[audio: nao foi possivel transcrever]")
 
-    for match in re.finditer(image_url_pattern, text):
-        media_ref = match.group(1)
-        if message_type is None:
-            message_type = "image"
-            storage_url = media_ref
-        text = text.replace(match.group(0), "")
+    for pattern in [image_id_pattern, image_url_pattern]:
+        for match in re.finditer(pattern, text):
+            media_ref = match.group(1)
+            if message_type is None:
+                message_type = "image"
+                storage_url = media_ref
+            text = text.replace(match.group(0), "")
 
-    for match in re.finditer(video_url_pattern, text):
-        media_ref = match.group(1)
-        if message_type is None:
-            message_type = "video"
-            storage_url = media_ref
-        text = text.replace(match.group(0), "")
+    for pattern in [video_id_pattern, video_url_pattern]:
+        for match in re.finditer(pattern, text):
+            media_ref = match.group(1)
+            if message_type is None:
+                message_type = "video"
+                storage_url = media_ref
+            text = text.replace(match.group(0), "")
 
     for match in re.finditer(doc_url_pattern, text):
         media_ref = match.group(1)
