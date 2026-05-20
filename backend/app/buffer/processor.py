@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 import os
 import logging
 import re
@@ -157,8 +159,10 @@ async def process_buffered_messages(
     # Resolve media placeholders (also uploads audio to Supabase Storage)
     _media_url: str | None = None
     _message_type: str | None = None
+    _document_name: str | None = None
+    _metadata: dict | None = None
     try:
-        resolved_text, _media_url, _message_type = await _resolve_media(combined_text, provider)
+        resolved_text, _media_url, _message_type, _document_name, _metadata = await _resolve_media(combined_text, provider)
     except Exception as e:
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
@@ -185,6 +189,8 @@ async def process_buffered_messages(
             sent_by="user",
             media_url=_media_url,
             message_type=_message_type,
+            document_name=_document_name,
+            metadata=_metadata,
         )
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
@@ -332,33 +338,32 @@ def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: s
         return None
 
 
-async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | None]:
+async def _resolve_media(
+    text: str, provider
+) -> tuple[str, str | None, str | None, str | None, dict | None]:
     """Replace media placeholders with type/url metadata.
 
-    Returns (resolved_text, media_ref, message_type).
-    media_ref is the Meta media_id or direct URL, used as media_url in the DB.
-    Audio is downloaded, transcribed, and uploaded to Supabase Storage.
-    Images and videos: only media_ref is extracted — no download, no AI processing.
+    Returns (resolved_text, media_url, message_type, document_name, metadata).
+    Audio: downloaded, transcribed, uploaded to Supabase Storage.
+    Image/video/document/sticker: media_id extracted only, no download.
+    Location/contact/reaction: metadata dict extracted from base64 JSON.
     """
-    # Meta-style: [type: media_id=xxx]
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
-    image_id_pattern = r"\[image: media_id=(\S+)\]"
-    video_id_pattern = r"\[video: media_id=(\S+)\]"
-
-    # Evolution-style or captioned media: [type: media_url=xxx]
     audio_url_pattern = r"\[audio: media_url=(\S+)\]"
     image_url_pattern = r"\[image: media_url=(\S+)\]"
     video_url_pattern = r"\[video: media_url=(\S+)\]"
+    doc_url_pattern = r"\[document: media_url=(\S+?)(?:\s+filename_b64=([A-Za-z0-9+/=]+))?\]"
+    sticker_url_pattern = r"\[sticker: media_url=(\S+)\]"
+    meta_b64_pattern = r"\[(\w+): meta_b64=([A-Za-z0-9+/=]+)\]"
 
     storage_url: str | None = None
     message_type: str | None = None
+    document_name: str | None = None
+    metadata: dict | None = None
 
     for pattern in [audio_id_pattern, audio_url_pattern]:
         for match in re.finditer(pattern, text):
             media_ref = match.group(1)
-
-            # Always mark as audio and store media_ref as fallback for proxy,
-            # regardless of whether download/upload/transcription succeeds.
             message_type = "audio"
             storage_url = media_ref
 
@@ -370,13 +375,10 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
                 continue
 
             ext = "ogg" if "ogg" in content_type else "mp4"
-
-            # Try Supabase Storage for permanent URL; keep media_id fallback if it fails
             uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
             if uploaded_url:
                 storage_url = uploaded_url
 
-            # Transcribe for AI agent context
             try:
                 transcript = await _get_openai().audio.transcriptions.create(
                     model="gemini-3-flash-preview",
@@ -387,20 +389,48 @@ async def _resolve_media(text: str, provider) -> tuple[str, str | None, str | No
                 logger.warning(f"Failed to transcribe audio {media_ref}: {e}")
                 text = text.replace(match.group(0), "[audio: nao foi possivel transcrever]")
 
-    for pattern in [image_id_pattern, image_url_pattern]:
-        for match in re.finditer(pattern, text):
-            media_ref = match.group(1)
-            if message_type is None:
-                message_type = "image"
-                storage_url = media_ref
-            text = text.replace(match.group(0), "[imagem recebida]")
+    for match in re.finditer(image_url_pattern, text):
+        media_ref = match.group(1)
+        if message_type is None:
+            message_type = "image"
+            storage_url = media_ref
+        text = text.replace(match.group(0), "")
 
-    for pattern in [video_id_pattern, video_url_pattern]:
-        for match in re.finditer(pattern, text):
-            media_ref = match.group(1)
-            if message_type is None:
-                message_type = "video"
-                storage_url = media_ref
-            text = text.replace(match.group(0), "[vídeo recebido]")
+    for match in re.finditer(video_url_pattern, text):
+        media_ref = match.group(1)
+        if message_type is None:
+            message_type = "video"
+            storage_url = media_ref
+        text = text.replace(match.group(0), "")
 
-    return text.strip(), storage_url, message_type
+    for match in re.finditer(doc_url_pattern, text):
+        media_ref = match.group(1)
+        fname_b64 = match.group(2)
+        if message_type is None:
+            message_type = "document"
+            storage_url = media_ref
+            if fname_b64:
+                try:
+                    document_name = base64.b64decode(fname_b64).decode()
+                except Exception:
+                    pass
+        text = text.replace(match.group(0), "")
+
+    for match in re.finditer(sticker_url_pattern, text):
+        media_ref = match.group(1)
+        if message_type is None:
+            message_type = "sticker"
+            storage_url = media_ref
+        text = text.replace(match.group(0), "")
+
+    for match in re.finditer(meta_b64_pattern, text):
+        meta_type = match.group(1)
+        if meta_type in ("location", "contact", "reaction") and message_type is None:
+            try:
+                metadata = json.loads(base64.b64decode(match.group(2)).decode())
+                message_type = meta_type
+            except Exception as e:
+                logger.warning(f"Failed to decode metadata for {meta_type}: {e}")
+        text = text.replace(match.group(0), "")
+
+    return text.strip(), storage_url, message_type, document_name, metadata
