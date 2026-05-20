@@ -6,6 +6,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   useNodesState,
   useEdgesState,
   addEdge,
@@ -23,8 +24,11 @@ import {
   MarkerType,
   NodeMouseHandler,
   OnNodeDrag,
+  PanOnScrollMode,
+  ConnectionLineType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { motion, AnimatePresence } from "framer-motion";
 import type { Campaign, CampaignNode, CampaignNodeType } from "@/lib/types";
 
 // ─── Fonts ────────────────────────────────────────────────────────────────────
@@ -465,7 +469,7 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
 // ─── Inner builder (needs useReactFlow, so must be inside ReactFlowProvider) ───
 function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const router = useRouter();
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -487,6 +491,19 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         setRFEdges(toRFEdges(nodes));
       });
   }, [campaignId, setRFNodes, setRFEdges]);
+
+  // Keyboard zoom: =|+ zoom in, - zoom out, 0 fit view
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); zoomIn({ duration: 200 }); }
+      else if (e.key === "-")             { e.preventDefault(); zoomOut({ duration: 200 }); }
+      else if (e.key === "0")             { e.preventDefault(); fitView({ padding: 0.3, duration: 400 }); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomIn, zoomOut, fitView]);
 
   // ── Node click → select → show inspector ──────────────────────────────────
   const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
@@ -714,8 +731,16 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             fitView={rfNodes.length > 0}
             fitViewOptions={{ padding: 0.3 }}
             deleteKeyCode={null}
-            minZoom={0.3}
-            maxZoom={2}
+            minZoom={0.2}
+            maxZoom={2.5}
+            panOnScroll={true}
+            panOnScrollMode={PanOnScrollMode.Free}
+            zoomOnScroll={true}
+            snapToGrid={true}
+            snapGrid={[20, 20]}
+            nodeDragThreshold={8}
+            connectionLineStyle={{ stroke: "#E85D26", strokeWidth: 1.5, strokeDasharray: "5,4" }}
+            connectionLineType={ConnectionLineType.SmoothStep}
             style={{ background: "#f5f2ed" }}
             proOptions={{ hideAttribution: true }}
           >
@@ -725,7 +750,30 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
               size={1}
               color="rgba(0,0,0,.12)"
             />
-            <Controls position="bottom-right" />
+            <MiniMap
+              position="bottom-right"
+              style={{
+                bottom: 90,
+                border: "1px solid #e8e4df",
+                borderRadius: 8,
+                overflow: "hidden",
+                background: "#f5f2ed",
+              }}
+              nodeColor={(n) => {
+                const t = ((n.data as Record<string, unknown>).type as string);
+                const meta: Record<string, { color: string }> = {
+                  trigger: { color: "#E85D26" },
+                  send: { color: "#3B82F6" },
+                  wait: { color: "#8B5CF6" },
+                  condition: { color: "#F59E0B" },
+                  action: { color: "#10B981" },
+                  end: { color: "#6B7280" },
+                };
+                return meta[t]?.color ?? "#888";
+              }}
+              maskColor="rgba(245,242,237,0.75)"
+            />
+            <Controls position="bottom-right" showInteractive={false} />
 
             {/* Empty state */}
             {rfNodes.length === 0 && (
