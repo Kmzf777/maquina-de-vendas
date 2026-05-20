@@ -22,7 +22,6 @@ import {
   OnConnect,
   Panel,
   MarkerType,
-  NodeMouseHandler,
   OnNodeDrag,
   PanOnScrollMode,
   ConnectionLineType,
@@ -796,11 +795,6 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     return () => window.removeEventListener("mousedown", handler);
   }, [edgeContextMenu]);
 
-  // ── Node click → select → show inspector ──────────────────────────────────
-  const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
-    setSelectedNodeId(node.id);
-  }, []);
-
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
     setEdgeContextMenu(null);
@@ -1017,7 +1011,6 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             onNodeDragStop={onNodeDragStop}
             nodeTypes={NODE_TYPES}
