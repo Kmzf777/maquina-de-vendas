@@ -363,3 +363,24 @@ export interface CampaignEnrollment {
   env_tag: string;
   leads?: { id: string; name: string | null; phone: string; stage: string };
 }
+
+export interface Sale {
+  id: string;
+  lead_id: string;
+  sold_at: string;
+  value: number;
+  product: string;
+  sold_by: string | null;
+  deal_id: string | null;
+  conversation_id: string | null;
+  notes: string | null;
+  created_at: string;
+  leads?: { id: string; name: string | null; phone: string; company: string | null } | null;
+  deals?: { id: string; title: string } | null;
+}
+
+export interface TeamUser {
+  id: string;
+  email: string;
+  name: string;
+}
