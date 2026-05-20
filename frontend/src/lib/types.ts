@@ -319,3 +319,47 @@ export interface SpamConflict {
   last_broadcast_name: string;
   last_sent_at: string;
 }
+
+// ─── Campaigns ────────────────────────────────────────────────────────────────
+
+export type CampaignNodeType = "trigger" | "send" | "wait" | "condition" | "action" | "end";
+
+export interface CampaignNode {
+  id: string;
+  campaign_id: string;
+  type: CampaignNodeType;
+  config: Record<string, unknown>;
+  position_x: number;
+  position_y: number;
+  next_node_id: string | null;
+  yes_node_id: string | null;
+  no_node_id: string | null;
+  created_at: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "active" | "paused" | "archived";
+  env_tag: string;
+  start_date: string | null;
+  created_at: string;
+  updated_at: string;
+  nodes?: CampaignNode[];
+}
+
+export interface CampaignEnrollment {
+  id: string;
+  campaign_id: string;
+  lead_id: string;
+  deal_id: string | null;
+  status: "active" | "paused" | "completed" | "cancelled";
+  current_node_id: string | null;
+  next_execute_at: string | null;
+  enrolled_at: string;
+  completed_at: string | null;
+  paused_at: string | null;
+  env_tag: string;
+  leads?: { id: string; name: string | null; phone: string; stage: string };
+}
