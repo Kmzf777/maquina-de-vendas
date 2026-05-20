@@ -45,11 +45,6 @@ jobs:
           NEXT_PUBLIC_FASTAPI_URL: http://placeholder.api.local
         run: npm run build
 
-      - name: Frontend build
-        if: steps.crm_changed.outputs.changed == 'true'
-        working-directory: frontend
-        run: npm run build
-
       - name: Deploy CRM via SSH
         if: steps.crm_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
