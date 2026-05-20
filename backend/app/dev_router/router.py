@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.dev_router.service import set_dev_route, list_dev_routes, remove_dev_route
+from app.leads.service import purge_dev_lead
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -54,3 +55,17 @@ async def remove_from_whitelist(
     normalized = await remove_dev_route(request.app.state.redis, phone)
     logger.info(f"Dev mapping: removed {normalized}")
     return {"removed": normalized}
+
+@router.delete("/api/dev/purge/{phone}")
+async def purge_dev_lead_endpoint(
+    phone: str,
+    x_dev_key: Annotated[str | None, Header()] = None,
+):
+    if err := _auth(x_dev_key):
+        return err
+    try:
+        result = purge_dev_lead(phone)
+        logger.info("[DEV-PURGE] %s → %s", phone, result)
+        return result
+    except ValueError as e:
+        return Response(status_code=403, content=str(e))

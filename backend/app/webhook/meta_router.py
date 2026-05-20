@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response
 from app.webhook.meta_parser import parse_meta_webhook_payload, extract_phone_number_id
 from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
-from app.leads.service import get_or_create_lead, normalize_phone, reset_lead
+from app.leads.service import get_or_create_lead, normalize_phone, reset_lead, purge_dev_lead
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route
 from app.dev_router.forwarder import forward_to_dev
@@ -101,6 +101,73 @@ def _handle_delivery_status(wamid: str, status: str) -> None:
             logger.warning("[DELIVERY] Failed to process broadcast delivery for wamid=%s: %s", wamid, e)
 
 
+def _extract_template_events(payload: dict) -> list[dict]:
+    """Extract Meta template status update events (field: message_template_status_update)."""
+    events = []
+    for entry in payload.get("entry", []):
+        waba_id = entry.get("id", "")
+        for change in entry.get("changes", []):
+            if change.get("field") == "message_template_status_update":
+                value = change.get("value", {})
+                events.append({
+                    "waba_id": waba_id,
+                    "event": value.get("event", ""),
+                    "template_id": str(value.get("message_template_id", "")),
+                    "template_name": value.get("message_template_name"),
+                    "reason": value.get("reason"),
+                })
+    return events
+
+
+def _handle_template_status_events(events: list[dict], raw_payload: dict, channel_id: str | None) -> None:
+    """Update message_templates.status and log the event to meta_webhook_logs."""
+    STATUS_MAP = {
+        "APPROVED": "approved",
+        "REJECTED": "rejected",
+        "DISABLED": "rejected",
+        "FLAGGED": "rejected",
+        "PENDING_DELETION": "cancelled",
+    }
+    sb = get_supabase()
+    for event in events:
+        event_type = event.get("event", "")
+        new_status = STATUS_MAP.get(event_type)
+        if not new_status:
+            logger.info("[TEMPLATE] Unhandled event type: %s", event_type)
+            continue
+
+        template_id = event.get("template_id")
+        template_name = event.get("template_name")
+        try:
+            updated = False
+            if template_id:
+                res = (
+                    sb.table("message_templates")
+                    .update({"status": new_status})
+                    .eq("meta_template_id", template_id)
+                    .execute()
+                )
+                if res.data:
+                    updated = True
+            if not updated and template_name:
+                sb.table("message_templates").update({"status": new_status}).eq("name", template_name).execute()
+
+            logger.info(
+                "[TEMPLATE] %s → status=%s (id=%s name=%s reason=%s)",
+                event_type, new_status, template_id, template_name, event.get("reason"),
+            )
+        except Exception as exc:
+            logger.error("[TEMPLATE] Failed to update status for id=%s: %s", template_id, exc)
+
+    log_inbound(
+        channel_id=channel_id,
+        phone_number_id=None,
+        from_number=None,
+        payload=raw_payload,
+        message_count=0,
+    )
+
+
 def _verify_signature(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False
@@ -131,7 +198,33 @@ async def verify_meta_webhook(request: Request):
 @router.post("/webhook/meta")
 async def receive_meta_webhook(request: Request, background_tasks: BackgroundTasks):
     payload_bytes = await request.body()
+    is_dev_routed = request.headers.get("x-dev-routed") == "1"
+    logger.info(
+        "[WEBHOOK] POST /webhook/meta received — size=%d bytes, x-dev-routed=%s",
+        len(payload_bytes),
+        is_dev_routed,
+    )
     payload = json.loads(payload_bytes)
+
+    # Template status events use a different payload structure (no phone_number_id).
+    # Intercept them before the early-return that would silently discard them.
+    template_events = _extract_template_events(payload)
+    if template_events:
+        waba_id = template_events[0].get("waba_id") if template_events else None
+        channel = get_channel_by_provider_config("waba_id", waba_id, "meta_cloud") if waba_id else None
+        if channel:
+            app_secret = channel.get("provider_config", {}).get("app_secret", "")
+            signature = request.headers.get("x-hub-signature-256", "")
+            if app_secret and not _verify_signature(payload_bytes, signature, app_secret):
+                logger.warning("[TEMPLATE] Invalid signature for waba_id=%s", waba_id)
+                return Response(status_code=403)
+        background_tasks.add_task(
+            _handle_template_status_events,
+            template_events,
+            payload,
+            channel["id"] if channel else None,
+        )
+        return {"status": "ok"}
 
     phone_number_id = extract_phone_number_id(payload)
     if not phone_number_id:
@@ -161,6 +254,11 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         from_number = _extract_from_number(payload)
         if from_number:
             dev_url = await get_dev_route(redis, from_number)
+            logger.info(
+                "[DEV-ROUTER] from_number=%s → dev_url=%s",
+                from_number,
+                dev_url or "NOT_IN_WHITELIST",
+            )
             if dev_url:
                 logger.info(f"Dev routing: forwarding Meta {from_number} to {dev_url}")
                 background_tasks.add_task(
@@ -205,12 +303,16 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
 
         if msg.text and msg.text.strip().lower() == "!resetar":
             try:
-                lead = get_or_create_lead(msg.from_number)
-                reset_lead(lead["id"])
+                result = purge_dev_lead(msg.from_number)
                 provider = get_provider(channel)
-                await provider.send_text(msg.from_number, "Memoria resetada! Pode comecar uma nova conversa do zero.")
+                if result.get("purged"):
+                    await provider.send_text(msg.from_number, "Lead removido completamente do CRM. Pode comecar do zero.")
+                else:
+                    await provider.send_text(msg.from_number, f"Nada a remover: {result.get('reason', 'lead nao encontrado')}.")
+            except ValueError:
+                logger.warning("[RESET] !resetar ignorado: numero %s nao esta na whitelist de dev", msg.from_number)
             except Exception as e:
-                logger.error(f"Failed to reset lead: {e}", exc_info=True)
+                logger.error(f"Failed to purge lead: {e}", exc_info=True)
             continue
 
         background_tasks.add_task(_track_inbound_message_time, msg.from_number)

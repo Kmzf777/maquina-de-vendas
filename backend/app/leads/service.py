@@ -175,6 +175,38 @@ def reset_lead(lead_id: str) -> None:
     }).eq("lead_id", lead_id).execute()
 
 
+_DEV_PURGE_WHITELIST = {"553496652412", "5534996652412"}
+
+
+def purge_dev_lead(phone: str) -> dict:
+    """Hard purge: deletes ALL CRM data for a dev phone number in correct FK order.
+
+    Only allowed for phones in _DEV_PURGE_WHITELIST. Raises ValueError for any other number.
+    meta_webhook_logs is intentionally preserved for audit history.
+    """
+    normalized = normalize_phone(phone)
+    if normalized not in _DEV_PURGE_WHITELIST:
+        raise ValueError(f"purge_dev_lead: phone {normalized!r} not in dev whitelist")
+
+    sb = get_supabase()
+    lead_res = sb.table("leads").select("id").eq("phone", normalized).execute()
+    if not lead_res.data:
+        return {"purged": False, "reason": "lead not found"}
+
+    lead_id = lead_res.data[0]["id"]
+
+    sb.table("follow_up_jobs").delete().eq("lead_id", lead_id).execute()
+    sb.table("cadence_enrollments").delete().eq("lead_id", lead_id).execute()
+    sb.table("broadcast_leads").delete().eq("lead_id", lead_id).execute()
+    sb.table("deals").delete().eq("lead_id", lead_id).execute()
+    sb.table("lead_tags").delete().eq("lead_id", lead_id).execute()
+    sb.table("messages").delete().eq("lead_id", lead_id).execute()
+    sb.table("conversations").delete().eq("lead_id", lead_id).execute()
+    sb.table("leads").delete().eq("id", lead_id).execute()
+
+    return {"purged": True, "lead_id": lead_id, "phone": normalized}
+
+
 def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent", conversation_id: str | None = None) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
