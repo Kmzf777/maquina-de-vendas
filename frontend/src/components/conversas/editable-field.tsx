@@ -16,6 +16,10 @@ export function EditableField({ label, value, onSave, placeholder, mask }: Edita
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (!editing) setDraft(value || "");
+  }, [value, editing]);
+
+  useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
 

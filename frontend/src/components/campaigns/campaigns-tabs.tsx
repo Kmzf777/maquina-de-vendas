@@ -1,19 +1,20 @@
 "use client";
 
-import type { Broadcast, Cadence } from "@/lib/types";
+import type { Broadcast, Campaign } from "@/lib/types";
 import { BroadcastList } from "./broadcast-list";
 import { CadenceList } from "./cadence-list";
 
 interface CampaignsTabsProps {
   broadcasts: Broadcast[];
-  cadences: Cadence[];
+  campaigns: Campaign[];
   onRefreshBroadcasts: () => void;
+  onRefreshCampaigns: () => void;
   activeTab: "disparos" | "cadencias";
 }
 
-export function CampaignsTabs({ broadcasts, cadences, onRefreshBroadcasts, activeTab }: CampaignsTabsProps) {
+export function CampaignsTabs({ broadcasts, campaigns, onRefreshBroadcasts, onRefreshCampaigns, activeTab }: CampaignsTabsProps) {
   if (activeTab === "cadencias") {
-    return <CadenceList cadences={cadences} />;
+    return <CadenceList campaigns={campaigns} onRefresh={onRefreshCampaigns} />;
   }
   return <BroadcastList broadcasts={broadcasts} onRefresh={onRefreshBroadcasts} />;
 }

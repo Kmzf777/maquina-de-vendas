@@ -33,6 +33,8 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                 text = None
                 media_url = None
                 media_mime = None
+                document_name = None
+                metadata_dict = None
                 parsed_type = "text"
 
                 if msg_type == "text":
@@ -64,6 +66,44 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     media_url = doc.get("id")
                     media_mime = doc.get("mime_type")
                     text = doc.get("caption")
+                    document_name = doc.get("filename")
+
+                elif msg_type == "sticker":
+                    parsed_type = "sticker"
+                    sticker = msg.get("sticker", {})
+                    media_url = sticker.get("id")
+                    media_mime = sticker.get("mime_type")
+
+                elif msg_type == "location":
+                    parsed_type = "location"
+                    loc = msg.get("location", {})
+                    metadata_dict = {
+                        "lat": loc.get("latitude"),
+                        "lng": loc.get("longitude"),
+                        "name": loc.get("name", ""),
+                        "address": loc.get("address", ""),
+                    }
+
+                elif msg_type == "contacts":
+                    parsed_type = "contact"
+                    contacts_list = msg.get("contacts", [])
+                    if contacts_list:
+                        c = contacts_list[0]
+                        name_obj = c.get("name", {})
+                        phones = c.get("phones", [])
+                        metadata_dict = {
+                            "name": name_obj.get("formatted_name", ""),
+                            "phone": phones[0].get("phone", "") if phones else "",
+                            "vcard": c.get("vcard", ""),
+                        }
+
+                elif msg_type == "reaction":
+                    parsed_type = "reaction"
+                    reaction = msg.get("reaction", {})
+                    metadata_dict = {
+                        "emoji": reaction.get("emoji", ""),
+                        "target_wamid": reaction.get("message_id", ""),
+                    }
 
                 elif msg_type == "button":
                     # Quick reply clicked on a template message
@@ -97,6 +137,8 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     media_url=media_url,
                     media_mime=media_mime,
                     push_name=push_name,
+                    document_name=document_name,
+                    metadata=metadata_dict,
                 ))
 
     return messages

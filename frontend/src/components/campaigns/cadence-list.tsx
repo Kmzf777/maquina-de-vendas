@@ -1,79 +1,46 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import type { Cadence } from "@/lib/types";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import type { Campaign } from "@/lib/types";
 import { CadenceCard } from "./cadence-card";
-import { createClient } from "@/lib/supabase/client";
 
 interface CadenceListProps {
-  cadences: Cadence[];
+  campaigns: Campaign[];
+  onRefresh: () => void;
 }
 
-export function CadenceList({ cadences }: CadenceListProps) {
+const FILTERS = [
+  { key: "all", label: "Todas" },
+  { key: "active", label: "Ativas" },
+  { key: "draft", label: "Rascunho" },
+  { key: "paused", label: "Pausadas" },
+  { key: "archived", label: "Arquivadas" },
+];
+
+export function CadenceList({ campaigns, onRefresh }: CadenceListProps) {
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [enrollmentData, setEnrollmentData] = useState<Record<string, { active: number; responded: number; exhausted: number; completed: number }>>({});
-  const [stepsData, setStepsData] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    const supabase = createClient();
-
-    async function loadCounts() {
-      const { data: enrollments } = await supabase
-        .from("cadence_enrollments")
-        .select("cadence_id, status");
-
-      const { data: steps } = await supabase
-        .from("cadence_steps")
-        .select("cadence_id");
-
-      if (enrollments) {
-        const counts: typeof enrollmentData = {};
-        for (const e of enrollments) {
-          if (!counts[e.cadence_id]) counts[e.cadence_id] = { active: 0, responded: 0, exhausted: 0, completed: 0 };
-          const s = e.status as keyof typeof counts[string];
-          if (s in counts[e.cadence_id]) counts[e.cadence_id][s]++;
-        }
-        setEnrollmentData(counts);
-      }
-
-      if (steps) {
-        const sc: Record<string, number> = {};
-        for (const s of steps) {
-          sc[s.cadence_id] = (sc[s.cadence_id] || 0) + 1;
-        }
-        setStepsData(sc);
-      }
-    }
-
-    loadCounts();
-  }, [cadences]);
-
-  const filtered = cadences.filter((c) => {
+  const filtered = campaigns.filter((c) => {
     if (filter !== "all" && c.status !== filter) return false;
     if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
-
-  const filters = [
-    { key: "all", label: "Todas" },
-    { key: "active", label: "Ativas" },
-    { key: "paused", label: "Pausadas" },
-    { key: "archived", label: "Arquivadas" },
-  ];
 
   return (
     <div className="bg-[#faf9f6]">
       <div className="flex items-center gap-3 mb-4">
         <input
           type="text"
-          placeholder="Buscar cadencia..."
+          placeholder="Buscar cadência..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-64"
         />
         <div className="flex gap-1">
-          {filters.map((f) => (
+          {FILTERS.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
@@ -88,15 +55,15 @@ export function CadenceList({ cadences }: CadenceListProps) {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-[#7b7b78] text-center py-8">Nenhuma cadencia encontrada</p>
+        <p className="text-[#7b7b78] text-center py-8">Nenhuma cadência encontrada</p>
       ) : (
         <div className="grid grid-cols-2 gap-4">
           {filtered.map((c) => (
             <CadenceCard
               key={c.id}
-              cadence={c}
-              enrollmentCounts={enrollmentData[c.id]}
-              stepsCount={stepsData[c.id]}
+              campaign={c}
+              onClick={() => router.push(`/campanhas/cadencias/${c.id}`)}
+              onRefresh={onRefresh}
             />
           ))}
         </div>

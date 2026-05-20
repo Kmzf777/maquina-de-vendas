@@ -320,6 +320,15 @@ export default function ConversasPage() {
     ? tags.filter((t) => leadTagsMap[selectedLead.id]?.includes(t.id))
     : [];
 
+  function handleLeadUpdate(leadId: string, patch: Partial<Lead>) {
+    const updateConv = (c: Conversation): Conversation =>
+      (c.leads as Lead)?.id === leadId
+        ? { ...c, leads: { ...(c.leads as Lead), ...patch } }
+        : c;
+    setConversations(prev => prev.map(updateConv));
+    setSelectedConversation(prev => prev ? updateConv(prev) : prev);
+  }
+
   async function handleTagToggle(tagId: string, add: boolean) {
     if (!selectedLead) return;
 
@@ -400,6 +409,7 @@ export default function ConversasPage() {
             followupEnabled={selectedConversation.followup_enabled ?? true}
             togglingFollowup={togglingFollowup}
             onToggleFollowup={handleToggleFollowup}
+            onLeadUpdate={handleLeadUpdate}
           />
         )}
       </div>
@@ -435,6 +445,7 @@ export default function ConversasPage() {
               tags={tags}
               leadTags={selectedLeadTags}
               onTagToggle={handleTagToggle}
+              onLeadUpdate={handleLeadUpdate}
             />
           </>
         ) : (

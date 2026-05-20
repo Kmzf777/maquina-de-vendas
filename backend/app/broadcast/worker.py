@@ -209,17 +209,76 @@ def _broadcast_ai_enabled(broadcast: dict, channel: dict | None = None) -> bool:
     return bool(broadcast.get("agent_profile_id"))
 
 
+def reconcile_broadcast_replies() -> None:
+    """Catch-up job: fills first_replied_at for leads that replied but webhook failed.
+
+    Scans broadcast_leads sent in the last 48h (minus the last 2min to avoid
+    racing with the webhook). Limit 200 leads per tick.
+    """
+    sb = get_supabase()
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(hours=48)).isoformat()
+    window_end = (now - timedelta(minutes=2)).isoformat()
+
+    pending = (
+        sb.table("broadcast_leads")
+        .select("id, lead_id, sent_at")
+        .in_("status", ["sent", "delivered"])
+        .is_("first_replied_at", "null")
+        .gte("sent_at", window_start)
+        .lte("sent_at", window_end)
+        .limit(200)
+        .execute()
+    )
+    if not pending.data:
+        return
+
+    reconciled = 0
+    for bl in pending.data:
+        try:
+            sent_at_dt = datetime.fromisoformat(bl["sent_at"].replace("Z", "+00:00"))
+            reply_window_end = (sent_at_dt + timedelta(hours=48)).isoformat()
+            reply = (
+                sb.table("messages")
+                .select("id, created_at")
+                .eq("lead_id", bl["lead_id"])
+                .eq("role", "user")
+                .gt("created_at", bl["sent_at"])
+                .lte("created_at", reply_window_end)
+                .order("created_at")
+                .limit(1)
+                .execute()
+            )
+            if reply.data:
+                sb.table("broadcast_leads").update({
+                    "first_replied_at": reply.data[0]["created_at"],
+                }).eq("id", bl["id"]).execute()
+                reconciled += 1
+        except Exception as e:
+            logger.warning("[BROADCAST] reconcile error for bl=%s: %s", bl.get("id"), e)
+
+    if reconciled:
+        logger.info(
+            "[BROADCAST] reconcile_broadcast_replies: %d leads atualizados",
+            reconciled,
+        )
+
+
 async def run_worker():
     """Main worker loop: processes broadcasts, cadences, and stagnation triggers."""
     logger.info("Broadcast + Cadence worker started")
 
     while True:
         try:
+            from app.campaigns.worker import check_campaign_triggers, process_campaign_enrollments
             await process_broadcasts()
             await process_due_cadences()
             await process_reengagements()
             await process_stagnation_triggers()
             await process_due_followups()
+            await check_campaign_triggers()
+            await process_campaign_enrollments()
+            reconcile_broadcast_replies()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
 
@@ -365,21 +424,22 @@ async def process_single_broadcast(broadcast: dict):
             # Move lead's deal to configured Kanban stage if set
             if move_to_stage_id and target_pipeline_id:
                 try:
-                    existing = (
+                    # Update ALL deals for this lead in the pipeline at once.
+                    # Using limit(1) on the previous SELECT+UPDATE left older deals in
+                    # the original stage, causing leads to reappear in stage filters.
+                    update_result = (
                         sb.table("deals")
-                        .select("id")
-                        .eq("lead_id", lead["id"])
-                        .eq("pipeline_id", target_pipeline_id)
-                        .order("created_at", desc=True)
-                        .limit(1)
-                        .execute()
-                    )
-                    if existing.data:
-                        sb.table("deals").update({
+                        .update({
                             "stage_id": move_to_stage_id,
                             "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", existing.data[0]["id"]).execute()
-                    else:
+                        })
+                        .eq("lead_id", lead["id"])
+                        .eq("pipeline_id", target_pipeline_id)
+                        .select("id")
+                        .execute()
+                    )
+                    if not update_result.data:
+                        # No deal found in this pipeline — create one so the lead is tracked
                         title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
                         sb.table("deals").insert({
                             "lead_id": lead["id"],
@@ -389,9 +449,16 @@ async def process_single_broadcast(broadcast: dict):
                             "stage_id": move_to_stage_id,
                         }).execute()
                     logger.info(
-                        "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s",
-                        lead["id"], target_pipeline_id, move_to_stage_id,
+                        "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s (deals_updated=%d)",
+                        lead["id"], target_pipeline_id, move_to_stage_id, len(update_result.data),
                     )
+                    # Track the move timestamp on the broadcast_lead row
+                    try:
+                        sb.table("broadcast_leads").update({
+                            "deal_moved_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", bl["id"]).execute()
+                    except Exception as track_err:
+                        logger.debug("[BROADCAST] deal_moved_at not tracked (run migration): %s", track_err)
                 except Exception as move_err:
                     logger.warning(
                         "[BROADCAST] Failed to move deal for lead %s: %s",
@@ -486,6 +553,27 @@ async def process_single_broadcast(broadcast: dict):
                         )
                 except Exception as ce:
                     logger.warning(f"Could not enroll {lead['phone']} in cadence: {ce}")
+
+            # Enroll in campaign if configured
+            if broadcast.get("campaign_id"):
+                try:
+                    from app.campaigns.service import (
+                        get_campaign, list_nodes, create_enrollment as create_campaign_enrollment,
+                        is_already_enrolled,
+                    )
+                    campaign = get_campaign(broadcast["campaign_id"])
+                    if campaign and campaign["status"] == "active":
+                        nodes = list_nodes(campaign["id"])
+                        trigger = next((n for n in nodes if n["type"] == "trigger"), None)
+                        if trigger and trigger.get("next_node_id") and not is_already_enrolled(campaign["id"], lead["id"]):
+                            create_campaign_enrollment(
+                                campaign_id=campaign["id"],
+                                lead_id=lead["id"],
+                                current_node_id=trigger["next_node_id"],
+                                next_execute_at=datetime.now(timezone.utc),
+                            )
+                except Exception as ce:
+                    logger.warning("[CAMPAIGNS] Could not enroll lead %s from broadcast: %s", lead.get("phone", lead["id"]), ce)
 
             logger.info(f"Template sent to {lead['phone']}")
 

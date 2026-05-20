@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import type { Lead } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import { LeadBroadcastHistory } from "./leads/lead-broadcast-history";
 
 interface LeadDetailSidebarProps {
   lead: Lead;
@@ -123,6 +124,14 @@ export function LeadDetailSidebar({ lead, onClose }: LeadDetailSidebarProps) {
             ))}
           </div>
         )}
+
+        {/* Disparos recebidos */}
+        <div className="px-4 py-3 border-t border-[#dedbd6]">
+          <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">
+            Disparos Recebidos
+          </p>
+          <LeadBroadcastHistory leadId={lead.id} />
+        </div>
       </div>
 
       {/* Actions */}

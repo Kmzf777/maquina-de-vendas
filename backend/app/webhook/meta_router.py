@@ -92,11 +92,13 @@ def _handle_delivery_status(wamid: str, status: str) -> None:
             bl = find_broadcast_lead_by_wamid(wamid)
             if not bl:
                 return
-            if bl.get("delivered_at"):
-                return  # Already counted — idempotent guard
-            mark_broadcast_lead_delivered(bl["id"])
-            increment_broadcast_delivered(bl["broadcast_id"])
-            logger.info("[DELIVERY] wamid=%s broadcast_lead=%s delivered", wamid, bl["id"])
+            # mark_broadcast_lead_delivered is atomic: updates only when delivered_at IS NULL.
+            # Returns True if the row was actually updated (first delivery), False if duplicate.
+            if mark_broadcast_lead_delivered(bl["id"]):
+                increment_broadcast_delivered(bl["broadcast_id"])
+                logger.info("[DELIVERY] wamid=%s broadcast_lead=%s delivered", wamid, bl["id"])
+            else:
+                logger.info("[DELIVERY] wamid=%s duplicate webhook — already counted", wamid)
         except Exception as e:
             logger.warning("[DELIVERY] Failed to process broadcast delivery for wamid=%s: %s", wamid, e)
 
