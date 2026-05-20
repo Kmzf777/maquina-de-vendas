@@ -140,6 +140,9 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
             const docName = message.document_name || message.content || "Documento";
             const downloadHref = mediaSrc
               ? (() => {
+                  if (mediaSrc.startsWith("http") || mediaSrc.startsWith("blob:")) {
+                    return mediaSrc;
+                  }
                   const url = new URL(mediaSrc, "http://x");
                   url.searchParams.set("download", "1");
                   url.searchParams.set("filename", docName);
@@ -243,7 +246,7 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
           (() => {
             const meta = message.metadata as { emoji?: string } | undefined;
             return (
-              <span className="text-[13px] opacity-80">
+              <span className="text-[12px] opacity-60 italic">
                 Reagiu: {meta?.emoji ?? "?"}
               </span>
             );
