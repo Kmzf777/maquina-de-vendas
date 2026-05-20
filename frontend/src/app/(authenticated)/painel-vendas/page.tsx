@@ -13,6 +13,7 @@ interface SalesMetrics {
   avg_repurchase_cycle_days: number | null;
 }
 
+// helpers
 function startOfMonth(): string {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
