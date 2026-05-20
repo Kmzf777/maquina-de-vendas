@@ -26,12 +26,24 @@ jobs:
           fi
 
 
+      - name: Install dependencies
+        if: steps.crm_changed.outputs.changed == 'true'
+        working-directory: frontend
+        run: npm ci
+
       - name: TypeScript type-check
         if: steps.crm_changed.outputs.changed == 'true'
         working-directory: frontend
-        run: |
-          npm ci || npm install
-          npm run type-check
+        run: npm run type-check
+
+      - name: Next.js build validation
+        if: steps.crm_changed.outputs.changed == 'true'
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          NEXT_PUBLIC_FASTAPI_URL: http://placeholder.api.local
+        run: npm run build
 
       - name: Frontend build
         if: steps.crm_changed.outputs.changed == 'true'
