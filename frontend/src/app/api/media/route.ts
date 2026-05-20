@@ -5,6 +5,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const mediaId = searchParams.get("media_id");
   const conversationId = searchParams.get("conversation_id");
+  const download = searchParams.get("download") === "1";
+  const filename = searchParams.get("filename");
 
   if (!mediaId || !conversationId) {
     return NextResponse.json({ error: "Missing media_id or conversation_id" }, { status: 400 });
@@ -70,10 +72,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Media download failed" }, { status: 502 });
   }
 
-  return new Response(audioRes.body, {
-    headers: {
-      "Content-Type": mimeType,
-      "Cache-Control": "private, max-age=86400",
-    },
-  });
+  const responseHeaders: Record<string, string> = {
+    "Content-Type": mimeType,
+    "Cache-Control": "private, max-age=86400",
+  };
+  if (download && filename) {
+    responseHeaders["Content-Disposition"] = `attachment; filename="${filename}"`;
+  }
+
+  return new Response(audioRes.body, { headers: responseHeaders });
 }
