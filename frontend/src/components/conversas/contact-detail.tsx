@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
+import { SaleCreateModal } from "@/components/sales/sale-create-modal";
+import { useLeadSales } from "@/hooks/use-lead-sales";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
@@ -60,7 +62,10 @@ export function ContactDetail({
   const [deals, setDeals] = useState<LeadDeal[]>([]);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [showCreateDeal, setShowCreateDeal] = useState(false);
+  const [showCreateSale, setShowCreateSale] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>("");
   const lead = conversation.leads as Lead | undefined | null;
+  const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
 
@@ -81,6 +86,14 @@ export function ContactDetail({
     fetch("/api/pipelines")
       .then((r) => r.json())
       .then((data) => setPipelines(Array.isArray(data) ? data : []));
+  }, []);
+
+  useEffect(() => {
+    import("@/lib/supabase/client").then(({ createClient }) => {
+      createClient().auth.getSession().then(({ data: { session } }) => {
+        setCurrentUserEmail(session?.user?.email ?? "");
+      });
+    });
   }, []);
 
   async function updateLeadField(field: string, value: string) {
@@ -209,6 +222,8 @@ export function ContactDetail({
                 leadTags={leadTags}
                 onTagToggle={onTagToggle}
                 onCreateDeal={() => setShowCreateDeal(true)}
+                sales={sales}
+                onCreateSale={() => setShowCreateSale(true)}
               />
             )}
             {activeTab === "notas" && (
@@ -238,6 +253,15 @@ export function ContactDetail({
           preselectedLead={lead}
           onClose={() => setShowCreateDeal(false)}
           onCreate={handleCreateDeal}
+        />
+      )}
+      {showCreateSale && lead && (
+        <SaleCreateModal
+          leadId={lead.id}
+          conversationId={conversation.id}
+          currentUserEmail={currentUserEmail}
+          onClose={() => setShowCreateSale(false)}
+          onCreated={refetchSales}
         />
       )}
     </div>
