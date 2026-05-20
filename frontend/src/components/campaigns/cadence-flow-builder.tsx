@@ -357,6 +357,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
       initial={{ opacity: 0, scale: 0.86 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
+      onClick={(e) => { e.stopPropagation(); _selectNode?.(node.id); }}
       onMouseEnter={() => setShowAdd(true)}
       onMouseLeave={() => setShowAdd(false)}
       style={{
@@ -441,6 +442,7 @@ type PaletteItem = { type: CampaignNodeType; subtype: string; icon: string; labe
 let _dragPayload: PaletteItem | null = null;
 let _addNodeBelow: ((sourceId: string, type: CampaignNodeType, subtype: string) => void) | null = null;
 let _deleteEdge: ((edgeId: string) => void) | null = null;
+let _selectNode: ((nodeId: string) => void) | null = null;
 
 const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; label: string }[] = [
   { type: "send",      subtype: "",                 icon: "📨", label: "Enviar template" },
@@ -769,6 +771,12 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     return () => { _deleteEdge = null; };
   }, [deleteEdge]);
 
+  // Manter _selectNode atualizado para CampaignFlowNode acessar sem closure stale
+  useEffect(() => {
+    _selectNode = (nodeId: string) => setSelectedNodeId(nodeId);
+    return () => { _selectNode = null; };
+  }, []);
+
   // ── Edge right-click → context menu ──────────────────────────────────────────
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
     e.preventDefault();
@@ -1001,6 +1009,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
           style={{ flex: 1, position: "relative" }}
           onDrop={onDrop}
           onDragOver={onDragOver}
+          onContextMenu={(e) => e.preventDefault()}
         >
           <ReactFlow
             nodes={rfNodes}
