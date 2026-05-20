@@ -77,7 +77,8 @@ export async function GET(request: NextRequest) {
     "Cache-Control": "private, max-age=86400",
   };
   if (download && filename) {
-    responseHeaders["Content-Disposition"] = `attachment; filename="${filename}"`;
+    const safeFilename = filename.replace(/[\r\n"]/g, "");
+    responseHeaders["Content-Disposition"] = `attachment; filename="${safeFilename}"`;
   }
 
   return new Response(audioRes.body, { headers: responseHeaders });
