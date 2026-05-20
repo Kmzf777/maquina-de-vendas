@@ -82,6 +82,9 @@ export interface Message {
   created_at: string;
   message_type?: string;
   media_url?: string;
+  document_name?: string | null;
+  media_mime?: string | null;
+  metadata?: Record<string, unknown> | null;
   wamid?: string | null;
   delivery_status?: "sent" | "delivered" | "read" | null;
 }
