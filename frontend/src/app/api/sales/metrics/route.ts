@@ -8,8 +8,8 @@ export async function GET(request: NextRequest) {
   const supabase = await getServiceSupabase();
 
   let periodQuery = supabase.from("sales").select("value");
-  if (from) periodQuery = periodQuery.gte("sold_at", from);
-  if (to) periodQuery = periodQuery.lte("sold_at", to);
+  if (from) periodQuery = periodQuery.gte("sold_at", from.length === 10 ? `${from}T00:00:00.000Z` : from);
+  if (to) periodQuery = periodQuery.lte("sold_at", to.length === 10 ? `${to}T23:59:59.999Z` : to);
 
   const { data: periodSales, error } = await periodQuery;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
