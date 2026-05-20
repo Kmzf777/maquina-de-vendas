@@ -238,8 +238,9 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
 // Register ONCE at module scope so React Flow doesn't re-register on every render
 const NODE_TYPES = { campaignNode: CampaignFlowNode };
 
-// ─── Palette items ─────────────────────────────────────────────────────────────
+// ─── Drag payload (module-level, bypasses unreliable dataTransfer in React Flow) ─
 type PaletteItem = { type: CampaignNodeType; subtype: string; icon: string; label: string; desc: string };
+let _dragPayload: PaletteItem | null = null;
 
 const PALETTE_TRIGGERS: PaletteItem[] = [
   { type: "trigger", subtype: "stage_enter",      icon: "⚡", label: "Entrada em stage", desc: "Lead entra em stage" },
@@ -261,8 +262,7 @@ function PaletteItemComp({ item }: { item: PaletteItem }) {
   const iconBg = meta.iconBg;
 
   const onDragStart = (e: DragEvent) => {
-    e.dataTransfer.setData("application/reactflow-type", item.type);
-    e.dataTransfer.setData("application/reactflow-subtype", item.subtype);
+    _dragPayload = item;
     e.dataTransfer.effectAllowed = "move";
   };
 
@@ -520,9 +520,10 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
 
   const onDrop = useCallback(async (e: DragEvent) => {
     e.preventDefault();
-    const type = e.dataTransfer.getData("application/reactflow-type") as CampaignNodeType;
-    const subtype = e.dataTransfer.getData("application/reactflow-subtype");
-    if (!type) return;
+    const payload = _dragPayload;
+    _dragPayload = null;
+    if (!payload) return;
+    const { type, subtype } = payload;
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const res = await fetch(`/api/campaigns/${campaignId}/nodes`, {
       method: "POST",
@@ -654,7 +655,12 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         </div>
 
         {/* ── Canvas (React Flow) ───────────────────────────────────── */}
-        <div ref={reactFlowWrapper} style={{ flex: 1, position: "relative" }}>
+        <div
+          ref={reactFlowWrapper}
+          style={{ flex: 1, position: "relative" }}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+        >
           <ReactFlow
             nodes={rfNodes}
             edges={rfEdges}
@@ -664,8 +670,6 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             onNodeDragStop={onNodeDragStop}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
             nodeTypes={NODE_TYPES}
             fitView={rfNodes.length > 0}
             fitViewOptions={{ padding: 0.3 }}
