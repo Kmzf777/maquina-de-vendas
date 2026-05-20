@@ -157,11 +157,13 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     if (!broadcast || modalActionLoading) return;
     setModalActionLoading(true);
     try {
-      await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
+      const startRes = await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
       setShowSpamModal(false);
       setSpamConflicts([]);
       setSelectedConflictIds(new Set());
-      setBroadcast({ ...broadcast, status: "running" });
+      if (startRes.ok) {
+        setBroadcast({ ...broadcast, status: "running" });
+      }
     } finally {
       setModalActionLoading(false);
       setActionLoading(false);
