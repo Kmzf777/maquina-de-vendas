@@ -8,9 +8,15 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json();
   const supabase = await getServiceSupabase();
+
+  const ALLOWED = ["product", "value", "sold_at", "sold_by", "notes", "deal_id", "conversation_id"];
+  const updates = Object.fromEntries(
+    Object.entries(body).filter(([k]) => ALLOWED.includes(k))
+  );
+
   const { data, error } = await supabase
     .from("sales")
-    .update(body)
+    .update(updates)
     .eq("id", id)
     .select("*, leads(id, name, phone, company), deals(id, title)")
     .single();

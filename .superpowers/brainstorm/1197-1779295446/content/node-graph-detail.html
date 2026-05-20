@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Campaign Flow Builder</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0ede8; color: #111; }
+
+.page { display: flex; flex-direction: column; height: 100vh; }
+
+/* Top bar */
+.topbar {
+  background: #fff;
+  border-bottom: 1px solid #dedbd6;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.topbar-title { font-size: 15px; font-weight: 600; }
+.topbar-badge { background: #f0ede8; border: 1px solid #dedbd6; border-radius: 4px; padding: 3px 8px; font-size: 12px; color: #7b7b78; }
+.topbar-spacer { flex: 1; }
+.btn { padding: 7px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; }
+.btn-ghost { background: transparent; border: 1px solid #dedbd6; color: #313130; }
+.btn-primary { background: #111; color: #fff; }
+
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* Left palette */
+.palette {
+  width: 220px;
+  background: #fff;
+  border-right: 1px solid #dedbd6;
+  padding: 16px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.palette-section { margin-bottom: 20px; }
+.palette-label { font-size: 10px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #7b7b78; margin-bottom: 8px; }
+.palette-node {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1.5px solid #dedbd6; background: #faf9f6;
+  margin-bottom: 6px; cursor: grab; font-size: 12px;
+  transition: border-color .15s;
+}
+.palette-node:hover { border-color: #aaa; }
+.palette-node .icon { font-size: 16px; flex-shrink: 0; }
+.palette-node .label { font-weight: 500; color: #111; }
+.palette-node .desc { font-size: 10px; color: #7b7b78; }
+
+/* Canvas */
+.canvas {
+  flex: 1;
+  background: #f0ede8;
+  background-image: radial-gradient(circle, #c8c5c0 1px, transparent 1px);
+  background-size: 24px 24px;
+  position: relative;
+  overflow: auto;
+}
+
+.canvas-inner {
+  position: relative;
+  width: 1200px;
+  height: 700px;
+}
+
+/* SVG connectors */
+.connectors {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+
+/* Nodes */
+.node {
+  position: absolute;
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  min-width: 160px;
+}
+.node-header {
+  padding: 10px 14px 8px;
+  border-radius: 12px 12px 0 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.node-body {
+  background: #fff;
+  border-radius: 0 0 12px 12px;
+  padding: 10px 14px;
+  border: 1.5px solid transparent;
+  border-top: none;
+}
+.node-type { font-size: 9px; font-weight: 700; letter-spacing: .6px; opacity: .75; }
+.node-name { font-size: 13px; font-weight: 600; margin-top: 1px; }
+.node-detail { font-size: 11px; color: #7b7b78; margin-top: 4px; }
+.node-port-out {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; border: 2px solid #aaa;
+  position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+}
+.node-port-in {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; border: 2px solid #aaa;
+  position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+}
+
+/* Trigger */
+.node-trigger .node-header { background: #111; color: #fff; }
+.node-trigger .node-body { border-color: #333; }
+.node-trigger .node-port-out { border-color: #333; }
+
+/* Send */
+.node-send .node-header { background: #fe4c02; color: #fff; }
+.node-send .node-body { border-color: #fe4c02; }
+.node-send .node-port-out { border-color: #fe4c02; }
+.node-send .node-port-in { border-color: #fe4c02; }
+
+/* Wait */
+.node-wait .node-header { background: #4a90e2; color: #fff; }
+.node-wait .node-body { border-color: #4a90e2; }
+.node-wait .node-port-out { border-color: #4a90e2; }
+.node-wait .node-port-in { border-color: #4a90e2; }
+
+/* Condition */
+.node-condition .node-header { background: #f59e0b; color: #fff; }
+.node-condition .node-body { border-color: #f59e0b; }
+.node-condition .node-port-in { border-color: #f59e0b; }
+.port-yes { width: 12px; height: 12px; border-radius: 50%; background: #d4edda; border: 2px solid #28a745; position: absolute; bottom: -6px; left: 30%; transform: translateX(-50%); }
+.port-no  { width: 12px; height: 12px; border-radius: 50%; background: #f8d7da; border: 2px solid #dc3545; position: absolute; bottom: -6px; left: 70%; transform: translateX(-50%); }
+.port-label { position: absolute; bottom: -20px; font-size: 9px; font-weight: 700; }
+.port-label-yes { left: calc(30% - 6px); transform: translateX(-50%); color: #28a745; }
+.port-label-no  { left: calc(70% - 6px); transform: translateX(-50%); color: #dc3545; }
+
+/* Action */
+.node-action .node-header { background: #6f42c1; color: #fff; }
+.node-action .node-body { border-color: #6f42c1; }
+.node-action .node-port-in { border-color: #6f42c1; }
+
+/* End */
+.node-end .node-header { background: #28a745; color: #fff; }
+.node-end .node-body { border-color: #28a745; }
+.node-end .node-port-in { border-color: #28a745; }
+
+/* Selected glow */
+.node.selected { outline: 3px solid #fe4c02; outline-offset: 3px; }
+
+/* Right panel */
+.inspector {
+  width: 240px;
+  background: #fff;
+  border-left: 1px solid #dedbd6;
+  padding: 16px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.inspector h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: #7b7b78; margin-bottom: 4px; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 7px 10px;
+  border: 1px solid #dedbd6; border-radius: 6px;
+  font-size: 13px; color: #111; background: #faf9f6;
+  font-family: inherit;
+}
+.field textarea { height: 60px; resize: none; }
+.divider { height: 1px; background: #f0ede8; margin: 14px 0; }
+.badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+.badge-orange { background: #fff3ee; color: #fe4c02; }
+.badge-blue { background: #e8f0fe; color: #1a73e8; }
+.badge-green { background: #e6f4ea; color: #137333; }
+
+/* Selected node overlay */
+.inspector-hint { font-size: 12px; color: #7b7b78; text-align: center; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <span style="font-size:18px;">←</span>
+    <div class="topbar-title">Campanha: Reativação 30 dias</div>
+    <div class="topbar-badge">Rascunho</div>
+    <div class="topbar-spacer"></div>
+    <button class="btn btn-ghost">Testar</button>
+    <button class="btn btn-primary">Ativar campanha</button>
+  </div>
+
+  <div class="main">
+
+    <!-- Palette -->
+    <div class="palette">
+      <div class="palette-section">
+        <div class="palette-label">Gatilhos</div>
+        <div class="palette-node">
+          <div class="icon">⚡</div>
+          <div><div class="label">Stage move</div><div class="desc">Lead entra em stage</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">🕐</div>
+          <div><div class="label">Estagnação</div><div class="desc">Parado X dias</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">💤</div>
+          <div><div class="label">Sem mensagem</div><div class="desc">Silêncio X dias</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">📡</div>
+          <div><div class="label">Pós-disparo</div><div class="desc">Broadcast concluído</div></div>
+        </div>
+      </div>
+
+      <div class="palette-section">
+        <div class="palette-label">Ações</div>
+        <div class="palette-node">
+          <div class="icon">📨</div>
+          <div><div class="label">Enviar template</div><div class="desc">Mensagem HSM Meta</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">⏱</div>
+          <div><div class="label">Aguardar</div><div class="desc">Delay em dias</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">🔀</div>
+          <div><div class="label">Condição</div><div class="desc">Ramificação lógica</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">📋</div>
+          <div><div class="label">Mover stage</div><div class="desc">Kanban move</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">🤖</div>
+          <div><div class="label">Ativar agente</div><div class="desc">Assign ValerIA</div></div>
+        </div>
+        <div class="palette-node">
+          <div class="icon">🏁</div>
+          <div><div class="label">Encerrar</div><div class="desc">Fim da campanha</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <div class="canvas">
+      <div class="canvas-inner">
+
+        <svg class="connectors" xmlns="http://www.w3.org/2000/svg">
+          <!-- Trigger → Send 1 -->
+          <path d="M 230 140 C 230 170 230 170 230 200" stroke="#555" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+          <!-- Send 1 → Wait -->
+          <path d="M 230 282 C 230 310 230 310 230 330" stroke="#fe4c02" stroke-width="1.5" fill="none"/>
+          <!-- Wait → Condition -->
+          <path d="M 230 410 C 230 440 230 440 230 460" stroke="#4a90e2" stroke-width="1.5" fill="none"/>
+          <!-- Condition YES → Action -->
+          <path d="M 195 548 C 120 548 120 580 120 600" stroke="#28a745" stroke-width="1.5" fill="none"/>
+          <!-- Condition NO → Send 2 -->
+          <path d="M 270 548 C 370 548 370 580 370 600" stroke="#dc3545" stroke-width="1.5" fill="none"/>
+          <!-- Send 2 → End -->
+          <path d="M 370 682 C 370 710 370 710 370 730" stroke="#fe4c02" stroke-width="1.5" fill="none"/>
+
+          <!-- Labels on condition branches -->
+          <text x="130" y="562" font-size="9" font-weight="700" fill="#28a745">SIM</text>
+          <text x="276" y="562" font-size="9" font-weight="700" fill="#dc3545">NÃO</text>
+        </svg>
+
+        <!-- TRIGGER NODE -->
+        <div class="node node-trigger" style="left:148px;top:60px;width:164px;">
+          <div class="node-header">
+            <span style="font-size:18px;">⚡</span>
+            <div>
+              <div class="node-type">GATILHO</div>
+              <div class="node-name" style="color:#fff;">Sem mensagem</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail">Lead inativo há <strong>30 dias</strong></div>
+            <div class="node-detail" style="margin-top:2px;">Stage: qualquer</div>
+          </div>
+          <div class="node-port-out"></div>
+        </div>
+
+        <!-- SEND 1 NODE -->
+        <div class="node node-send selected" style="left:148px;top:200px;width:164px;">
+          <div class="node-port-in"></div>
+          <div class="node-header">
+            <span style="font-size:18px;">📨</span>
+            <div>
+              <div class="node-type">STEP 1 · AGORA</div>
+              <div class="node-name" style="color:#fff;">Reativação</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail"><strong>reativacao_30dias</strong></div>
+            <div class="node-detail" style="margin-top:2px;">"Oi {{primeiro_nome}}, tudo bem?"</div>
+          </div>
+          <div class="node-port-out" style="border-color:#fe4c02;"></div>
+        </div>
+
+        <!-- WAIT NODE -->
+        <div class="node node-wait" style="left:148px;top:330px;width:164px;">
+          <div class="node-port-in"></div>
+          <div class="node-header">
+            <span style="font-size:18px;">⏱</span>
+            <div>
+              <div class="node-type">AGUARDAR</div>
+              <div class="node-name" style="color:#fff;">5 dias</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail">Sem resposta → próximo step</div>
+          </div>
+          <div class="node-port-out" style="border-color:#4a90e2;"></div>
+        </div>
+
+        <!-- CONDITION NODE -->
+        <div class="node node-condition" style="left:148px;top:460px;width:164px;">
+          <div class="node-port-in"></div>
+          <div class="node-header">
+            <span style="font-size:18px;">🔀</span>
+            <div>
+              <div class="node-type">CONDIÇÃO</div>
+              <div class="node-name" style="color:#fff;">Respondeu?</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail">Verificar resposta<br>nos últimos 5 dias</div>
+          </div>
+          <div class="port-yes"></div>
+          <div class="port-no"></div>
+        </div>
+
+        <!-- ACTION: CONCLUÍDO (YES branch) -->
+        <div class="node node-end" style="left:38px;top:600px;width:164px;">
+          <div class="node-port-in"></div>
+          <div class="node-header">
+            <span style="font-size:18px;">🏁</span>
+            <div>
+              <div class="node-type">ENCERRAR</div>
+              <div class="node-name" style="color:#fff;">Convertido</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail">Mover → "Interessado"<br>Ativar ValerIA</div>
+          </div>
+        </div>
+
+        <!-- SEND 2 (NO branch) -->
+        <div class="node node-send" style="left:288px;top:600px;width:164px;">
+          <div class="node-port-in"></div>
+          <div class="node-header">
+            <span style="font-size:18px;">📨</span>
+            <div>
+              <div class="node-type">STEP 2 · D+5</div>
+              <div class="node-name" style="color:#fff;">Última oferta</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail"><strong>oferta_final</strong></div>
+            <div class="node-detail" style="margin-top:2px;">"Preparei algo especial pra você..."</div>
+          </div>
+          <div class="node-port-out" style="border-color:#fe4c02;"></div>
+        </div>
+
+        <!-- END (after send 2) -->
+        <div class="node node-action" style="left:288px;top:730px;width:164px;">
+          <div class="node-port-in"></div>
+          <div class="node-header">
+            <span style="font-size:18px;">📋</span>
+            <div>
+              <div class="node-type">AÇÃO FINAL</div>
+              <div class="node-name" style="color:#fff;">Mover stage</div>
+            </div>
+          </div>
+          <div class="node-body">
+            <div class="node-detail">→ "Sem resposta"<br>Encerrar campanha</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Inspector (right panel) -->
+    <div class="inspector">
+      <h3>✎ Step 1 — Enviar template</h3>
+
+      <div class="field">
+        <label>Template Meta</label>
+        <select>
+          <option>reativacao_30dias</option>
+          <option>seguimento_02</option>
+          <option>oferta_final</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Idioma</label>
+        <select><option>pt_BR</option></select>
+      </div>
+
+      <div class="field">
+        <label>Variáveis</label>
+        <div style="background:#f0ede8;border-radius:6px;padding:8px;font-size:11px;font-family:monospace;color:#555;">
+          primeiro_nome → <span style="color:#fe4c02;">{{primeiro_nome}}</span><br>
+          empresa → <span style="color:#fe4c02;">{{empresa}}</span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="field">
+        <label>Delay desde trigger</label>
+        <input type="text" value="Imediato (D+0)" />
+      </div>
+
+      <div class="field">
+        <label>Janela de envio</label>
+        <div style="display:flex;gap:6px;">
+          <input type="text" value="07:00" style="width:50%;" />
+          <input type="text" value="18:00" style="width:50%;" />
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="field">
+        <label>Se lead responder</label>
+        <select>
+          <option>Ir para condição "Respondeu?"</option>
+          <option>Encerrar campanha</option>
+          <option>Continuar normalmente</option>
+        </select>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="badge-row">
+        <span class="badge badge-orange">Template ativo</span>
+        <span class="badge badge-green">pt_BR</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.node').forEach(node => {
+  node.addEventListener('click', function(e) {
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('selected'));
+    this.classList.add('selected');
+  });
+});
+</script>
+</body>
+</html>

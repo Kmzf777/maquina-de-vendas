@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campaign Flow Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --canvas-bg: #131110;
+  --node-radius: 10px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  --shadow-lg: 0 2px 6px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --shadow-selected: 0 0 0 2px #fff, 0 0 0 4px #E85D26, 0 8px 32px rgba(0,0,0,.5);
+
+  --c-trigger:   #1a1a1a;
+  --c-send:      #E85D26;
+  --c-wait:      #3B7DD8;
+  --c-condition: #C4920C;
+  --c-action:    #7C4DB8;
+  --c-end:       #1A9B6C;
+
+  --font: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+html, body { height: 100%; overflow: hidden; }
+body { font-family: var(--font); background: var(--canvas-bg); color: #111; }
+
+/* ─── LAYOUT ─────────────────────────────────────────────────────── */
+.layout { display: flex; flex-direction: column; height: 100vh; }
+
+/* ─── TOPBAR ─────────────────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; gap: 14px;
+  background: #fff;
+  border-bottom: 1px solid #e8e4df;
+  padding: 0 20px;
+  height: 52px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+.topbar-back {
+  width: 30px; height: 30px; border-radius: 7px;
+  border: 1px solid #e8e4df;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: #555; font-size: 14px;
+  transition: background .12s;
+}
+.topbar-back:hover { background: #f5f2ed; }
+.topbar-title { font-size: 14px; font-weight: 600; color: #111; letter-spacing: -.2px; }
+.topbar-chip {
+  padding: 3px 9px; border-radius: 5px;
+  background: #f5f2ed; border: 1px solid #e0dbd4;
+  font-size: 11px; font-weight: 500; color: #888;
+  letter-spacing: .2px; text-transform: uppercase;
+}
+.topbar-chip.active { background: #edfaf5; border-color: #a3e4cc; color: #1A9B6C; }
+.topbar-spacer { flex: 1; }
+.topbar-stats {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: #888;
+  border: 1px solid #e8e4df; border-radius: 7px;
+  padding: 5px 12px; gap: 8px;
+}
+.stat-dot { width: 6px; height: 6px; border-radius: 50%; background: #1A9B6C; }
+.btn {
+  height: 34px; padding: 0 16px; border-radius: 7px;
+  font-family: var(--font); font-size: 13px; font-weight: 500;
+  border: none; cursor: pointer; transition: all .12s;
+  display: flex; align-items: center; gap: 6px;
+}
+.btn-ghost { background: transparent; border: 1px solid #e0dbd4; color: #555; }
+.btn-ghost:hover { background: #f5f2ed; border-color: #c8c2bb; }
+.btn-primary { background: #111; color: #fff; }
+.btn-primary:hover { background: #2a2a2a; }
+
+/* ─── WORKSPACE ───────────────────────────────────────────────────── */
+.workspace { display: flex; flex: 1; overflow: hidden; }
+
+/* ─── PALETTE ─────────────────────────────────────────────────────── */
+.palette {
+  width: 196px; flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #e8e4df;
+  padding: 16px 12px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.pal-section {}
+.pal-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: #b8b2aa;
+  padding: 0 4px; margin-bottom: 8px;
+}
+.pal-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid #ede9e3;
+  margin-bottom: 5px; cursor: grab;
+  transition: all .14s; background: #faf9f6;
+}
+.pal-item:hover { border-color: #c0b9b0; background: #f3f0ea; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.pal-item:active { cursor: grabbing; transform: scale(.97); }
+.pal-icon {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; flex-shrink: 0;
+}
+.pal-text {}
+.pal-name { font-size: 12px; font-weight: 600; color: #1a1a1a; line-height: 1.2; }
+.pal-desc { font-size: 10px; color: #9b9590; margin-top: 1px; }
+
+/* Icon bg tints */
+.ic-trigger  { background: rgba(26,26,26,.08); }
+.ic-send     { background: rgba(232,93,38,.1); }
+.ic-wait     { background: rgba(59,125,216,.1); }
+.ic-cond     { background: rgba(196,146,12,.1); }
+.ic-action   { background: rgba(124,77,184,.1); }
+.ic-end      { background: rgba(26,155,108,.1); }
+
+/* ─── CANVAS ──────────────────────────────────────────────────────── */
+.canvas-wrap {
+  flex: 1; overflow: auto; position: relative;
+  background: var(--canvas-bg);
+  background-image: radial-gradient(circle, rgba(255,255,255,.055) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.canvas-inner {
+  position: relative;
+  width: 1280px; height: 960px;
+}
+
+/* Canvas chrome */
+.canvas-zoom {
+  position: fixed; bottom: 20px; right: 276px;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(30,28,24,.85); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px; padding: 6px 12px;
+  font-size: 11px; color: rgba(255,255,255,.5);
+  font-family: var(--font-mono);
+}
+.zoom-btn {
+  width: 22px; height: 22px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.6); font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+
+/* ─── SVG CONNECTORS ──────────────────────────────────────────────── */
+.edges {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none; overflow: visible;
+}
+.edge {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke: rgba(255,255,255,.18);
+  transition: stroke .2s;
+}
+.edge-yes { stroke: rgba(26,155,108,.7); }
+.edge-no  { stroke: rgba(239,68,68,.65); }
+.edge-hot { stroke: rgba(232,93,38,.7); }
+
+/* ─── NODES ───────────────────────────────────────────────────────── */
+.node {
+  position: absolute;
+  width: 210px;
+  background: #ffffff;
+  border-radius: var(--node-radius);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: transform .15s cubic-bezier(.2,0,.2,1), box-shadow .15s ease;
+  user-select: none;
+}
+.node:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+.node.selected {
+  box-shadow: var(--shadow-selected);
+  transform: translateY(-2px);
+}
+
+/* Type stripe at top */
+.node-stripe {
+  height: 3px;
+  border-radius: var(--node-radius) var(--node-radius) 0 0;
+}
+.node-trigger  .node-stripe { background: var(--c-trigger); }
+.node-send     .node-stripe { background: var(--c-send); }
+.node-wait     .node-stripe { background: var(--c-wait); }
+.node-condition .node-stripe { background: var(--c-condition); }
+.node-action   .node-stripe { background: var(--c-action); }
+.node-end      .node-stripe { background: var(--c-end); }
+
+/* Node body */
+.node-body {
+  padding: 12px 14px 14px;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.node-icon {
+  width: 34px; height: 34px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; flex-shrink: 0; margin-top: 1px;
+}
+.node-trigger  .node-icon { background: rgba(26,26,26,.07); }
+.node-send     .node-icon { background: rgba(232,93,38,.1); }
+.node-wait     .node-icon { background: rgba(59,125,216,.1); }
+.node-condition .node-icon { background: rgba(196,146,12,.1); }
+.node-action   .node-icon { background: rgba(124,77,184,.1); }
+.node-end      .node-icon { background: rgba(26,155,108,.1); }
+
+.node-text { flex: 1; min-width: 0; }
+.node-kicker {
+  font-size: 9px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; margin-bottom: 2px;
+}
+.node-trigger  .node-kicker { color: var(--c-trigger); opacity: .5; }
+.node-send     .node-kicker { color: var(--c-send); }
+.node-wait     .node-kicker { color: var(--c-wait); }
+.node-condition .node-kicker { color: var(--c-condition); }
+.node-action   .node-kicker { color: var(--c-action); }
+.node-end      .node-kicker { color: var(--c-end); }
+
+.node-title {
+  font-size: 13px; font-weight: 600; color: #111;
+  letter-spacing: -.2px; line-height: 1.3;
+}
+.node-detail {
+  font-family: var(--font-mono); font-size: 10px;
+  color: #9b9590; margin-top: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.node-sub {
+  font-size: 11px; color: #aaa;
+  margin-top: 3px; line-height: 1.4;
+}
+
+/* ─── PORTS ───────────────────────────────────────────────────────── */
+.port {
+  position: absolute;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #fff; border: 2px solid;
+  transition: transform .15s ease, box-shadow .15s ease;
+  z-index: 10;
+}
+.port:hover { transform: scale(1.4); }
+.port-out { bottom: -5px; left: 50%; margin-left: -5px; }
+.port-yes { bottom: -5px; left: 27%; margin-left: -5px; }
+.port-no  { bottom: -5px; left: 73%; margin-left: -5px; }
+.port-in  { top: -5px; left: 50%; margin-left: -5px; }
+
+.node-trigger   .port { border-color: var(--c-trigger); }
+.node-send      .port { border-color: var(--c-send); }
+.node-wait      .port { border-color: var(--c-wait); }
+.node-condition .port-in  { border-color: var(--c-condition); }
+.node-condition .port-yes { border-color: var(--c-end); }
+.node-condition .port-no  { border-color: #ef4444; }
+.node-action    .port { border-color: var(--c-action); }
+.node-end       .port { border-color: var(--c-end); }
+
+/* Branch labels on condition */
+.port-label {
+  position: absolute; bottom: -20px;
+  font-size: 9px; font-weight: 700; letter-spacing: .4px;
+  text-transform: uppercase; pointer-events: none;
+}
+.label-yes { left: 27%; transform: translateX(-50%); color: var(--c-end); }
+.label-no  { left: 73%; transform: translateX(-50%); color: #ef4444; }
+
+/* Hover glow on ports */
+.node-send .port:hover     { box-shadow: 0 0 0 4px rgba(232,93,38,.25); }
+.node-wait .port:hover     { box-shadow: 0 0 0 4px rgba(59,125,216,.25); }
+.node-condition .port-yes:hover { box-shadow: 0 0 0 4px rgba(26,155,108,.25); }
+.node-condition .port-no:hover  { box-shadow: 0 0 0 4px rgba(239,68,68,.25); }
+
+/* ─── INSPECTOR ───────────────────────────────────────────────────── */
+.inspector {
+  width: 256px; flex-shrink: 0;
+  background: #fff;
+  border-left: 1px solid #e8e4df;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.insp-header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #ede9e3;
+  display: flex; align-items: center; gap: 8px;
+}
+.insp-icon {
+  width: 30px; height: 30px; border-radius: 7px;
+  background: rgba(232,93,38,.1);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+}
+.insp-title { font-size: 13px; font-weight: 600; color: #111; }
+.insp-subtitle { font-size: 11px; color: #9b9590; margin-top: 1px; }
+.insp-body {
+  flex: 1; overflow-y: auto;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.insp-body::-webkit-scrollbar { width: 4px; }
+.insp-body::-webkit-scrollbar-track { background: transparent; }
+.insp-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+.field {}
+.field-label {
+  font-size: 10px; font-weight: 700; letter-spacing: .5px;
+  text-transform: uppercase; color: #b0a8a0;
+  margin-bottom: 5px;
+}
+.field input, .field select, .field textarea {
+  width: 100%; padding: 8px 11px;
+  border: 1px solid #e0dbd4; border-radius: 7px;
+  font-family: var(--font); font-size: 13px; color: #111;
+  background: #faf9f6; outline: none;
+  transition: border-color .12s;
+  appearance: none;
+}
+.field input:focus, .field select:focus { border-color: #E85D26; }
+.field textarea { height: 64px; resize: none; font-family: var(--font-mono); font-size: 11px; }
+.field-row { display: flex; gap: 6px; }
+.field-row .field { flex: 1; }
+
+.insp-divider { height: 1px; background: #ede9e3; margin: 2px 0; }
+
+.code-pill {
+  background: #f5f2ed; border: 1px solid #e0dbd4; border-radius: 7px;
+  padding: 9px 11px; font-family: var(--font-mono); font-size: 10.5px;
+  color: #555; line-height: 1.6;
+}
+.code-token { color: #E85D26; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 5px;
+  font-size: 11px; font-weight: 500;
+}
+.badge-green { background: #edfaf5; color: #1A9B6C; }
+.badge-gray  { background: #f5f2ed; color: #888; }
+.badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.insp-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #ede9e3;
+  display: flex; gap: 6px;
+}
+.insp-footer .btn { flex: 1; justify-content: center; height: 34px; font-size: 12px; }
+.btn-danger { background: #fff5f5; border: 1px solid #fecaca; color: #dc2626; }
+.btn-danger:hover { background: #fee2e2; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- ── TOPBAR ── -->
+  <div class="topbar">
+    <div class="topbar-back">←</div>
+    <div class="topbar-title">Reativação 30 dias</div>
+    <div class="topbar-chip">Rascunho</div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-stats">
+      <div class="stat-dot"></div>
+      <span>3 leads ativos</span>
+    </div>
+    <button class="btn btn-ghost">Testar</button>
+    <button class="btn btn-primary">
+      <span>▶</span> Ativar campanha
+    </button>
+  </div>
+
+  <div class="workspace">
+
+    <!-- ── PALETTE ── -->
+    <div class="palette">
+
+      <div class="pal-section">
+        <div class="pal-label">Gatilhos</div>
+
+        <div class="pal-item">
+          <div class="pal-icon ic-trigger">⚡</div>
+          <div class="pal-text">
+            <div class="pal-name">Stage move</div>
+            <div class="pal-desc">Lead entra em stage</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-trigger">🕐</div>
+          <div class="pal-text">
+            <div class="pal-name">Estagnação</div>
+            <div class="pal-desc">Parado X dias</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-trigger">💤</div>
+          <div class="pal-text">
+            <div class="pal-name">Sem mensagem</div>
+            <div class="pal-desc">Silêncio X dias</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-trigger">📡</div>
+          <div class="pal-text">
+            <div class="pal-name">Pós-disparo</div>
+            <div class="pal-desc">Após broadcast</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pal-section">
+        <div class="pal-label">Ações</div>
+
+        <div class="pal-item">
+          <div class="pal-icon ic-send">📨</div>
+          <div class="pal-text">
+            <div class="pal-name">Enviar template</div>
+            <div class="pal-desc">Mensagem HSM Meta</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-wait">⏱</div>
+          <div class="pal-text">
+            <div class="pal-name">Aguardar</div>
+            <div class="pal-desc">Delay em dias</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-cond">🔀</div>
+          <div class="pal-text">
+            <div class="pal-name">Condição</div>
+            <div class="pal-desc">Ramificação lógica</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-action">📋</div>
+          <div class="pal-text">
+            <div class="pal-name">Mover stage</div>
+            <div class="pal-desc">Kanban move</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-action">🤖</div>
+          <div class="pal-text">
+            <div class="pal-name">Ativar agente</div>
+            <div class="pal-desc">Assign ValerIA</div>
+          </div>
+        </div>
+        <div class="pal-item">
+          <div class="pal-icon ic-end">🏁</div>
+          <div class="pal-text">
+            <div class="pal-name">Encerrar</div>
+            <div class="pal-desc">Fim da campanha</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── CANVAS ── -->
+    <div class="canvas-wrap">
+      <div class="canvas-inner">
+
+        <!-- SVG CONNECTORS -->
+        <svg class="edges" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,.2)"/>
+            </marker>
+            <marker id="arr-yes" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="rgba(26,155,108,.7)"/>
+            </marker>
+            <marker id="arr-no" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="rgba(239,68,68,.65)"/>
+            </marker>
+            <marker id="arr-hot" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="rgba(232,93,38,.7)"/>
+            </marker>
+          </defs>
+
+          <!-- Trigger → Send1 -->
+          <path class="edge" d="M 340 152 C 340 176 340 176 340 202" marker-end="url(#arr)"/>
+          <!-- Send1 → Wait -->
+          <path class="edge" d="M 340 300 C 340 324 340 324 340 350" marker-end="url(#arr)"/>
+          <!-- Wait → Condition -->
+          <path class="edge" d="M 340 430 C 340 454 340 454 340 480" marker-end="url(#arr)"/>
+          <!-- Condition YES → End -->
+          <path class="edge edge-yes" d="M 283 574 C 283 618 155 618 155 658" marker-end="url(#arr-yes)"/>
+          <!-- Condition NO → Send2 -->
+          <path class="edge edge-no"  d="M 397 574 C 397 618 520 618 520 658" marker-end="url(#arr-no)"/>
+          <!-- Send2 → ActionEnd -->
+          <path class="edge edge-hot" d="M 520 762 C 520 788 520 788 520 816" marker-end="url(#arr-hot)"/>
+        </svg>
+
+        <!-- ── TRIGGER NODE ── -->
+        <div class="node node-trigger selected" style="left:235px; top:60px;">
+          <div class="node-stripe"></div>
+          <div class="node-body">
+            <div class="node-icon">💤</div>
+            <div class="node-text">
+              <div class="node-kicker">Gatilho</div>
+              <div class="node-title">Sem mensagem</div>
+              <div class="node-sub">Lead inativo há 30 dias</div>
+            </div>
+          </div>
+          <div class="port port-out"></div>
+        </div>
+
+        <!-- ── SEND 1 NODE ── -->
+        <div class="node node-send" style="left:235px; top:202px;">
+          <div class="node-stripe"></div>
+          <div class="node-port port-in"></div>
+          <div class="node-body">
+            <div class="node-icon">📨</div>
+            <div class="node-text">
+              <div class="node-kicker">Step 1 · Imediato</div>
+              <div class="node-title">Primeira mensagem</div>
+              <div class="node-detail">reativacao_30dias</div>
+            </div>
+          </div>
+          <div class="port port-out"></div>
+        </div>
+
+        <!-- ── WAIT NODE ── -->
+        <div class="node node-wait" style="left:235px; top:350px;">
+          <div class="node-stripe"></div>
+          <div class="port port-in"></div>
+          <div class="node-body">
+            <div class="node-icon">⏱</div>
+            <div class="node-text">
+              <div class="node-kicker">Aguardar</div>
+              <div class="node-title">5 dias</div>
+              <div class="node-sub">Sem resposta → continua</div>
+            </div>
+          </div>
+          <div class="port port-out"></div>
+        </div>
+
+        <!-- ── CONDITION NODE ── -->
+        <div class="node node-condition" style="left:235px; top:480px;">
+          <div class="node-stripe"></div>
+          <div class="port port-in"></div>
+          <div class="node-body">
+            <div class="node-icon">🔀</div>
+            <div class="node-text">
+              <div class="node-kicker">Condição</div>
+              <div class="node-title">Lead respondeu?</div>
+              <div class="node-sub">Janela dos últimos 5 dias</div>
+            </div>
+          </div>
+          <div class="port port-yes"></div>
+          <div class="port port-no"></div>
+          <div class="port-label label-yes">Sim</div>
+          <div class="port-label label-no">Não</div>
+        </div>
+
+        <!-- ── END NODE (YES branch) ── -->
+        <div class="node node-end" style="left:50px; top:658px;">
+          <div class="node-stripe"></div>
+          <div class="port port-in"></div>
+          <div class="node-body">
+            <div class="node-icon">🏁</div>
+            <div class="node-text">
+              <div class="node-kicker">Encerrar</div>
+              <div class="node-title">Lead convertido</div>
+              <div class="node-sub">Mover → Interessado<br>Ativar ValerIA</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── SEND 2 NODE (NO branch) ── -->
+        <div class="node node-send" style="left:415px; top:658px;">
+          <div class="node-stripe"></div>
+          <div class="port port-in"></div>
+          <div class="node-body">
+            <div class="node-icon">📨</div>
+            <div class="node-text">
+              <div class="node-kicker">Step 2 · D+5</div>
+              <div class="node-title">Oferta final</div>
+              <div class="node-detail">oferta_especial_v2</div>
+            </div>
+          </div>
+          <div class="port port-out"></div>
+        </div>
+
+        <!-- ── ACTION END NODE ── -->
+        <div class="node node-action" style="left:415px; top:816px;">
+          <div class="node-stripe"></div>
+          <div class="port port-in"></div>
+          <div class="node-body">
+            <div class="node-icon">📋</div>
+            <div class="node-text">
+              <div class="node-kicker">Ação final</div>
+              <div class="node-title">Mover stage</div>
+              <div class="node-sub">→ Sem resposta<br>Encerrar campanha</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- canvas-inner -->
+
+      <!-- Zoom controls -->
+      <div class="canvas-zoom">
+        <div class="zoom-btn">−</div>
+        <span>100%</span>
+        <div class="zoom-btn">+</div>
+      </div>
+
+    </div><!-- canvas-wrap -->
+
+    <!-- ── INSPECTOR ── -->
+    <div class="inspector">
+      <div class="insp-header">
+        <div class="insp-icon">💤</div>
+        <div>
+          <div class="insp-title">Sem mensagem</div>
+          <div class="insp-subtitle">Gatilho de entrada</div>
+        </div>
+      </div>
+
+      <div class="insp-body">
+
+        <div class="field">
+          <div class="field-label">Condição</div>
+          <select>
+            <option>Lead sem mensagem por…</option>
+            <option>Lead parado em stage por…</option>
+            <option>Lead entrou em stage</option>
+            <option>Após broadcast</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Período (dias)</div>
+          <input type="number" value="30" />
+        </div>
+
+        <div class="field">
+          <div class="field-label">Stage filtro (opcional)</div>
+          <select>
+            <option value="">Qualquer stage</option>
+            <option>Novo</option>
+            <option>Em negociação</option>
+            <option>Proposta enviada</option>
+          </select>
+        </div>
+
+        <div class="insp-divider"></div>
+
+        <div class="field">
+          <div class="field-label">Janela de envio</div>
+          <div class="field-row">
+            <div class="field">
+              <input type="text" value="07:00" placeholder="Início" />
+            </div>
+            <div class="field">
+              <input type="text" value="18:00" placeholder="Fim" />
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Ao responder</div>
+          <select>
+            <option>Ir para condição "Respondeu?"</option>
+            <option>Encerrar campanha</option>
+            <option>Continuar normalmente</option>
+          </select>
+        </div>
+
+        <div class="insp-divider"></div>
+
+        <div class="field">
+          <div class="field-label">Variáveis disponíveis</div>
+          <div class="code-pill">
+            <span class="code-token">{{primeiro_nome}}</span><br>
+            <span class="code-token">{{empresa}}</span><br>
+            <span class="code-token">{{telefone}}</span>
+          </div>
+        </div>
+
+        <div class="badge-row">
+          <span class="badge badge-green">● Ativo</span>
+          <span class="badge badge-gray">3 leads hoje</span>
+        </div>
+
+      </div>
+
+      <div class="insp-footer">
+        <button class="btn btn-danger">Excluir</button>
+        <button class="btn btn-primary" style="flex:2;">Salvar</button>
+      </div>
+    </div>
+
+  </div><!-- workspace -->
+</div><!-- layout -->
+
+<script>
+// Node click → selected + inspector header update
+const nodes = document.querySelectorAll('.node');
+const inspIcon = document.querySelector('.insp-icon');
+const inspTitle = document.querySelector('.insp-title');
+const inspSub = document.querySelector('.insp-subtitle');
+
+const nodeInfo = {
+  'node-trigger': { icon: '💤', title: 'Sem mensagem', sub: 'Gatilho de entrada', iconBg: 'rgba(26,26,26,.07)' },
+  'node-send':    { icon: '📨', title: 'Enviar template', sub: 'Ação de envio HSM', iconBg: 'rgba(232,93,38,.1)' },
+  'node-wait':    { icon: '⏱', title: 'Aguardar', sub: 'Delay entre steps', iconBg: 'rgba(59,125,216,.1)' },
+  'node-condition':{ icon: '🔀', title: 'Condição', sub: 'Ramificação lógica', iconBg: 'rgba(196,146,12,.1)' },
+  'node-action':  { icon: '📋', title: 'Mover stage', sub: 'Ação no Kanban', iconBg: 'rgba(124,77,184,.1)' },
+  'node-end':     { icon: '🏁', title: 'Encerrar', sub: 'Fim da campanha', iconBg: 'rgba(26,155,108,.1)' },
+};
+
+nodes.forEach(node => {
+  node.addEventListener('click', function(e) {
+    nodes.forEach(n => n.classList.remove('selected'));
+    this.classList.add('selected');
+
+    const type = Array.from(this.classList).find(c => c.startsWith('node-') && c !== 'node');
+    if (type && nodeInfo[type]) {
+      const info = nodeInfo[type];
+      inspIcon.textContent = info.icon;
+      inspIcon.style.background = info.iconBg;
+      inspTitle.textContent = info.title;
+      inspSub.textContent = info.sub;
+    }
+    e.stopPropagation();
+  });
+});
+
+// Click canvas → deselect
+document.querySelector('.canvas-wrap').addEventListener('click', () => {
+  nodes.forEach(n => n.classList.remove('selected'));
+});
+</script>
+</body>
+</html>

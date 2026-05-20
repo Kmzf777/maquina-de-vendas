@@ -1,0 +1,126 @@
+<h2>Qual abordagem de Flow Builder para Campanhas?</h2>
+<p class="subtitle">Como o usuário monta a sequência de steps da campanha</p>
+
+<div class="cards">
+
+  <!-- OPÇÃO A: Timeline horizontal -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#faf9f6;padding:16px;font-family:monospace;font-size:11px;">
+      <div style="display:flex;align-items:center;gap:0;overflow:hidden;">
+        <!-- Step 0: Trigger -->
+        <div style="background:#111;color:#fff;border-radius:8px;padding:10px 12px;min-width:100px;text-align:center;flex-shrink:0;">
+          <div style="font-size:9px;opacity:.6;margin-bottom:3px;">GATILHO</div>
+          <div style="font-size:11px;font-weight:600;">Lead entra<br>em Kanban</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding:0 4px;">
+          <div style="font-size:9px;color:#888;white-space:nowrap;">D+2</div>
+          <div style="height:2px;width:32px;background:#dedbd6;"></div>
+          <div style="width:6px;height:6px;background:#dedbd6;border-radius:50%;margin-top:-4px;"></div>
+        </div>
+        <!-- Step 1 -->
+        <div style="background:#fff;border:1.5px solid #fe4c02;border-radius:8px;padding:10px 12px;min-width:100px;text-align:center;flex-shrink:0;">
+          <div style="font-size:9px;color:#fe4c02;margin-bottom:3px;">STEP 1</div>
+          <div style="font-size:11px;font-weight:600;">seguimento<br>_dia2</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding:0 4px;">
+          <div style="font-size:9px;color:#888;white-space:nowrap;">D+5</div>
+          <div style="height:2px;width:32px;background:#dedbd6;"></div>
+          <div style="width:6px;height:6px;background:#dedbd6;border-radius:50%;margin-top:-4px;"></div>
+        </div>
+        <!-- Step 2 -->
+        <div style="background:#fff;border:1.5px solid #dedbd6;border-radius:8px;padding:10px 12px;min-width:100px;text-align:center;flex-shrink:0;">
+          <div style="font-size:9px;color:#7b7b78;margin-bottom:3px;">STEP 2</div>
+          <div style="font-size:11px;font-weight:600;">oferta<br>_especial</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding:0 4px;">
+          <div style="height:2px;width:20px;background:#dedbd6;"></div>
+        </div>
+        <!-- Add button -->
+        <div style="width:36px;height:36px;border:2px dashed #dedbd6;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#dedbd6;font-size:18px;flex-shrink:0;">+</div>
+      </div>
+      <div style="margin-top:12px;font-size:10px;color:#7b7b78;">Clique num step para editar template, delay e condições</div>
+    </div>
+    <div class="card-body">
+      <h3>A — Timeline Horizontal</h3>
+      <p>Steps em linha do tempo. Simples, visual, ideal para sequências lineares. Sem ramificações. Parecido com o modal de broadcast em etapas.</p>
+    </div>
+  </div>
+
+  <!-- OPÇÃO B: Node graph (n8n style) -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f4f0;padding:16px;position:relative;min-height:160px;font-family:monospace;">
+      <!-- Trigger node -->
+      <div style="position:absolute;top:16px;left:24px;background:#111;color:#fff;border-radius:8px;padding:8px 10px;font-size:10px;width:80px;text-align:center;">
+        <div style="opacity:.6;font-size:8px;margin-bottom:2px;">GATILHO</div>
+        <div style="font-weight:600;">Stage move</div>
+      </div>
+      <!-- Arrow right from trigger -->
+      <div style="position:absolute;top:36px;left:110px;width:24px;height:2px;background:#aaa;"></div>
+      <div style="position:absolute;top:31px;left:130px;font-size:14px;color:#aaa;">→</div>
+      <!-- Step 1 node -->
+      <div style="position:absolute;top:16px;left:148px;background:#fff;border:1.5px solid #fe4c02;border-radius:8px;padding:8px 10px;font-size:10px;width:80px;text-align:center;">
+        <div style="color:#fe4c02;font-size:8px;margin-bottom:2px;">ENVIAR</div>
+        <div style="font-weight:600;">template_A</div>
+      </div>
+      <!-- Arrow down from step 1 -->
+      <div style="position:absolute;top:62px;left:185px;width:2px;height:20px;background:#aaa;"></div>
+      <!-- Condition diamond -->
+      <div style="position:absolute;top:82px;left:163px;width:44px;height:28px;background:#fff3cd;border:1.5px solid #ffc107;transform:rotate(0deg);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#856404;">Respondeu?</div>
+      <!-- Yes branch -->
+      <div style="position:absolute;top:96px;left:208px;width:30px;height:2px;background:#aaa;"></div>
+      <div style="position:absolute;top:85px;left:238px;background:#d4edda;border:1.5px solid #28a745;border-radius:8px;padding:6px 8px;font-size:9px;color:#155724;font-weight:600;">✓ Concluído</div>
+      <!-- No branch -->
+      <div style="position:absolute;top:111px;left:183px;width:2px;height:24px;background:#aaa;"></div>
+      <div style="position:absolute;top:136px;left:161px;background:#fff;border:1.5px solid #dedbd6;border-radius:8px;padding:8px 10px;font-size:10px;width:80px;text-align:center;">
+        <div style="color:#7b7b78;font-size:8px;margin-bottom:2px;">D+7 ENVIAR</div>
+        <div style="font-weight:600;">template_B</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Node Graph (n8n/Zapier style)</h3>
+      <p>Canvas livre com nós conectados. Suporta ramificações condicionais (respondeu? sim/não). Máximo poder, mas complexidade alta de implementar e usar.</p>
+    </div>
+  </div>
+
+  <!-- OPÇÃO C: Card vertical (Notion/Airtable style) -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#faf9f6;padding:12px 16px;font-family:monospace;font-size:11px;">
+      <!-- Trigger block -->
+      <div style="background:#111;color:#fff;border-radius:8px;padding:8px 12px;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:14px;">⚡</span>
+        <div><div style="font-size:8px;opacity:.6;">GATILHO</div><div style="font-weight:600;font-size:11px;">Lead para em stage "Novo" por 3 dias</div></div>
+      </div>
+      <div style="text-align:center;color:#dedbd6;font-size:16px;margin:2px 0;">↓</div>
+      <!-- Step 1 block -->
+      <div style="background:#fff;border:1.5px solid #fe4c02;border-radius:8px;padding:8px 12px;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:14px;">📨</span>
+        <div style="flex:1;">
+          <div style="font-size:8px;color:#fe4c02;">ENVIAR AGORA · template: reativacao_01</div>
+          <div style="font-size:11px;font-weight:600;">"Oi {{primeiro_nome}}, ainda há interesse?"</div>
+        </div>
+        <span style="color:#dedbd6;font-size:14px;">✎</span>
+      </div>
+      <div style="text-align:center;color:#dedbd6;font-size:16px;margin:2px 0;">↓</div>
+      <!-- Wait block -->
+      <div style="background:#fff;border:1.5px solid #dedbd6;border-radius:8px;padding:8px 12px;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:14px;">⏱</span>
+        <div><div style="font-size:8px;color:#7b7b78;">AGUARDAR</div><div style="font-size:11px;font-weight:600;">5 dias sem resposta</div></div>
+      </div>
+      <div style="text-align:center;color:#dedbd6;font-size:16px;margin:2px 0;">↓</div>
+      <!-- Step 2 -->
+      <div style="background:#fff;border:1.5px solid #dedbd6;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:14px;">📨</span>
+        <div style="flex:1;"><div style="font-size:8px;color:#7b7b78;">ENVIAR · template: oferta_final</div><div style="font-size:11px;font-weight:600;">"Última chance..."</div></div>
+        <span style="color:#dedbd6;font-size:14px;">✎</span>
+      </div>
+      <div style="margin-top:6px;border:1.5px dashed #dedbd6;border-radius:8px;padding:6px;text-align:center;color:#7b7b78;font-size:10px;">+ Adicionar step</div>
+    </div>
+    <div class="card-body">
+      <h3>C — Cards Verticais (Notion/Airtable style)</h3>
+      <p>Blocos empilhados: Gatilho → Enviar → Aguardar → Enviar. Clique para editar cada bloco. Simples de implementar, fácil de usar, muito parecido com Notion automations.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px;">Clique na abordagem que mais combina com o que você imagina — ou diga o que pensa no terminal.</p>
