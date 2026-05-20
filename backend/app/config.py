@@ -1,58 +1,91 @@
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+    PYDANTIC_V2 = True
+except Exception:
+    from pydantic import BaseSettings
+    PYDANTIC_V2 = False
+
+from typing import Optional
+import os
+from pathlib import Path
 
 
-class Settings(BaseSettings):
-    # LLM
-    gemini_api_key: str = ""  # used for media transcription (audio/image) via Gemini
-    openai_api_key: str
+# Load .env.local first (if present) to override defaults for local development
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        # don't overwrite existing environment variables
+        if k not in os.environ:
+            os.environ[k] = v
 
-    # Supabase
-    supabase_url: str
-    supabase_service_key: str
-    supabase_jwt_secret: str
-
-    # Redis
-    redis_url: str = "redis://redis:6379"
-
-    # App
-    api_base_url: str = "http://localhost:8000"
-    frontend_url: str = "http://localhost:5173"
-
-    # Buffer
-    buffer_base_timeout: int = 15
-    buffer_extend_timeout: int = 10
-    buffer_max_timeout: int = 45
-
-    # Evolution API (global fallback — per-channel config takes precedence)
-    evolution_api_url: str = ""
-    evolution_api_key: str = ""
-    evolution_instance: str = ""
-
-    # Meta Cloud API — used by outbound dispatcher
-    meta_access_token: str = ""
-    meta_phone_number_id: str = ""
-
-    # Dev routing
-    dev_server_url: str = "http://172.17.0.1:8001"
-    dev_api_key: str = ""
-    is_dev_env: bool = False
-
-    model_config = {"env_file": (".env", ".env.local"), "env_file_encoding": "utf-8", "extra": "ignore"}
+# load local env then default .env
+_load_env_file(Path(__file__).resolve().parent.parent / '.env.local')
+_load_env_file(Path(__file__).resolve().parent.parent / '.env')
 
 
-_settings: Settings | None = None
+if PYDANTIC_V2:
+    class Settings(BaseSettings):
+        openai_api_key: Optional[str] = None
+        gemini_api_key: Optional[str] = None
+        supabase_url: str = ""
+        supabase_service_key: str = ""
+        supabase_jwt_secret: str = ""
+        redis_url: str = "redis://localhost:6379"
+        api_base_url: str = "http://localhost:8000"
+        frontend_url: str = "http://localhost:5173"
+        dev_api_key: Optional[str] = None
+        dev_server_url: Optional[str] = None
+        buffer_base_timeout: int = 3
+        buffer_extend_timeout: int = 3
+        buffer_max_timeout: int = 30
+        rehearsal_mode: bool = False
+
+        model_config = {
+            "extra": "allow",
+            "env_file": ".env",
+            "env_file_encoding": "utf-8",
+        }
+        @property
+        def is_dev_env(self) -> bool:
+            return any(x in (self.api_base_url or "") for x in ("localhost", "127.0.0.1"))
+
+else:
+    class Settings(BaseSettings):
+        openai_api_key: Optional[str] = None
+        gemini_api_key: Optional[str] = None
+        supabase_url: str = ""
+        supabase_service_key: str = ""
+        supabase_jwt_secret: str = ""
+        redis_url: str = "redis://localhost:6379"
+        api_base_url: str = "http://localhost:8000"
+        frontend_url: str = "http://localhost:5173"
+        dev_api_key: Optional[str] = None
+        dev_server_url: Optional[str] = None
+        buffer_base_timeout: int = 3
+        buffer_extend_timeout: int = 3
+        buffer_max_timeout: int = 30
+        rehearsal_mode: bool = False
+
+        class Config:
+            env_file = ".env"
+            env_file_encoding = "utf-8"
+            extra = "allow"
+        @property
+        def is_dev_env(self) -> bool:
+            return any(x in (self.api_base_url or "") for x in ("localhost", "127.0.0.1"))
+
+
+settings = Settings()
 
 
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
-
-
-class _SettingsProxy:
-    def __getattr__(self, name: str):
-        return getattr(get_settings(), name)
-
-
-settings = _SettingsProxy()  # type: ignore
+    return settings
