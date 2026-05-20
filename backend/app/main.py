@@ -43,7 +43,9 @@ def _setup_file_logging() -> None:
     )
     fh.setFormatter(_LOG_FMT)
 
-    for name in ("", "uvicorn", "uvicorn.access", "uvicorn.error"):
+    # uvicorn.error propagates to uvicorn (propagate=False), so "uvicorn"
+    # already covers it — adding to both would double-write those entries.
+    for name in ("", "uvicorn", "uvicorn.access"):
         lg = logging.getLogger(name)
         if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in lg.handlers):
             lg.addHandler(fh)
