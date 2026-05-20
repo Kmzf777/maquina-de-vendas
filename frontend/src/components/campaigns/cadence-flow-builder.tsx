@@ -45,8 +45,6 @@ const FONT_STYLE = `@import url('https://fonts.googleapis.com/css2?family=Outfit
 .react-flow__controls { box-shadow: 0 2px 8px rgba(0,0,0,.1); border-radius: 8px; border: 1px solid #e8e4df; overflow: hidden; }
 .react-flow__controls-button { background: #fff; border-bottom: 1px solid #e8e4df; color: #555; }
 .react-flow__controls-button:hover { background: #f5f2ed; }
-.react-flow__edge:hover .edge-delete-btn { opacity: 1 !important; }
-.react-flow__edge .edge-delete-btn { opacity: 0; transition: opacity .15s; }
 `;
 
 // ─── Design constants ──────────────────────────────────────────────────────────
@@ -181,9 +179,19 @@ function DeletableEdge({
     targetX, targetY, targetPosition,
   });
   const labelColor = String(label) === "SIM" ? "#1A9B6C" : String(label) === "NÃO" ? "#ef4444" : "#555";
+  const [hovered, setHovered] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showBtn = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setHovered(true);
+  };
+  const hideBtn = () => {
+    hideTimer.current = setTimeout(() => setHovered(false), 120);
+  };
 
   return (
-    <>
+    <g onMouseEnter={showBtn} onMouseLeave={hideBtn}>
       <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} />
       <EdgeLabelRenderer>
         {label && (
@@ -204,9 +212,13 @@ function DeletableEdge({
           style={{
             position: "absolute",
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY + (label ? 14 : 0)}px)`,
-            pointerEvents: "all",
+            pointerEvents: hovered ? "all" : "none",
+            opacity: hovered ? 1 : 0,
+            transition: "opacity .15s",
           }}
-          className="nodrag nopan edge-delete-btn"
+          className="nodrag nopan"
+          onMouseEnter={showBtn}
+          onMouseLeave={hideBtn}
         >
           <button
             onClick={(e) => { e.stopPropagation(); _deleteEdge?.(id); }}
@@ -225,7 +237,7 @@ function DeletableEdge({
           </button>
         </div>
       </EdgeLabelRenderer>
-    </>
+    </g>
   );
 }
 
@@ -245,15 +257,14 @@ function QuickAddButton({ nodeId }: { nodeId: string }) {
     <div
       style={{
         position: "absolute",
-        top: "100%",
-        left: "50%",
-        transform: "translateX(-50%)",
-        paddingTop: 8,
+        left: "100%",
+        top: "50%",
+        transform: "translateY(-50%)",
+        paddingLeft: 8,
         zIndex: 20,
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        gap: 4,
+        alignItems: "flex-start",
       }}
       onMouseLeave={() => setOpen(false)}
     >
@@ -293,9 +304,8 @@ function QuickAddButton({ nodeId }: { nodeId: string }) {
             transition={{ duration: 0.13, ease: "easeOut" }}
             style={{
               position: "absolute",
-              top: 32,
-              left: "50%",
-              transform: "translateX(-50%)",
+              top: 34,
+              left: 8,
               background: "#fff",
               border: "1px solid #e8e4df",
               borderRadius: 10,
