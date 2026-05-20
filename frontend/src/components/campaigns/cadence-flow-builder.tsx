@@ -760,16 +760,8 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
                 background: "#f5f2ed",
               }}
               nodeColor={(n) => {
-                const t = ((n.data as Record<string, unknown>).type as string);
-                const meta: Record<string, { color: string }> = {
-                  trigger: { color: "#E85D26" },
-                  send: { color: "#3B82F6" },
-                  wait: { color: "#8B5CF6" },
-                  condition: { color: "#F59E0B" },
-                  action: { color: "#10B981" },
-                  end: { color: "#6B7280" },
-                };
-                return meta[t]?.color ?? "#888";
+                const t = (n.data as Record<string, unknown>).type as string;
+                return (NODE_META as Record<string, { color: string }>)[t]?.color ?? "#888";
               }}
               maskColor="rgba(245,242,237,0.75)"
             />
