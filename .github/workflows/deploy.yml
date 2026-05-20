@@ -33,6 +33,11 @@ jobs:
           npm ci || npm install
           npm run type-check
 
+      - name: Frontend build
+        if: steps.crm_changed.outputs.changed == 'true'
+        working-directory: frontend
+        run: npm run build
+
       - name: Deploy CRM via SSH
         if: steps.crm_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
@@ -82,6 +87,30 @@ jobs:
           else
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Set up Python
+        if: steps.backend_changed.outputs.changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        if: steps.backend_changed.outputs.changed == 'true'
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run backend smoke checks
+        if: steps.backend_changed.outputs.changed == 'true'
+        working-directory: backend
+        env:
+          OPENAI_API_KEY: ci-dummy-openai-key
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_KEY: ci-dummy-supabase-service-key
+        run: |
+          python -m compileall app
+          python -c "from app.config import Settings; Settings(); print('settings-ok')"
 
       - name: Deploy Backend via SSH
         if: steps.backend_changed.outputs.changed == 'true'

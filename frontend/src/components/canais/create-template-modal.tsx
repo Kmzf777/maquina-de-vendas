@@ -194,7 +194,14 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
         return;
       }
 
-      setError(data?.detail || data?.error || "Erro ao criar template.");
+      const raw = data?.detail ?? data?.error;
+      setError(
+        !raw
+          ? "Erro ao criar template."
+          : typeof raw === "string"
+          ? raw
+          : raw?.error?.message ?? JSON.stringify(raw)
+      );
     } catch {
       setError("Erro de conexão. Tente novamente.");
     } finally {
@@ -219,7 +226,14 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
       }
 
       const data = await res.json();
-      setError(data?.detail || data?.error || "Erro ao confirmar template.");
+      const raw = data?.detail ?? data?.error;
+      setError(
+        !raw
+          ? "Erro ao confirmar template."
+          : typeof raw === "string"
+          ? raw
+          : raw?.error?.message ?? JSON.stringify(raw)
+      );
     } catch {
       setError("Erro de conexão. Tente novamente.");
     } finally {
@@ -293,7 +307,15 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
               </label>
               <input
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value.toLowerCase().replace(/\s/g, "_") })}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    name: e.target.value
+                      .toLowerCase()
+                      .replace(/\s+/g, "_")
+                      .replace(/[^a-z0-9_]/g, ""),
+                  })
+                }
                 className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
                 placeholder="ex: order_update_v1"
               />

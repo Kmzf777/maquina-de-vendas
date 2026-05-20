@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Switch } from "@/components/ui/switch";
 
 interface Channel {
   id: string;
@@ -23,11 +24,8 @@ interface FormData {
   evo_api_url: string;
   evo_api_key: string;
   evo_instance: string;
-  // Meta fields
+  // Meta fields (credentials are global env vars injected by backend)
   meta_phone_number_id: string;
-  meta_access_token: string;
-  meta_app_secret: string;
-  meta_verify_token: string;
 }
 
 const EMPTY_FORM: FormData = {
@@ -40,9 +38,6 @@ const EMPTY_FORM: FormData = {
   evo_api_key: "",
   evo_instance: "",
   meta_phone_number_id: "",
-  meta_access_token: "",
-  meta_app_secret: "",
-  meta_verify_token: "",
 };
 
 export default function CanaisPage() {
@@ -92,16 +87,11 @@ export default function CanaisPage() {
     const providerConfig =
       form.provider === "evolution"
         ? { api_url: form.evo_api_url, api_key: form.evo_api_key, instance: form.evo_instance }
-        : {
-            phone_number_id: form.meta_phone_number_id,
-            access_token: form.meta_access_token,
-            app_secret: form.meta_app_secret,
-            verify_token: form.meta_verify_token,
-          };
+        : { phone_number_id: form.meta_phone_number_id };
 
     const body = {
       name: form.name,
-      phone: form.provider === "meta_cloud" ? form.phone : "",
+      phone: form.phone,
       provider: form.provider,
       provider_config: providerConfig,
       is_active: form.is_active,
@@ -141,9 +131,6 @@ export default function CanaisPage() {
       evo_api_key: config.api_key || "",
       evo_instance: config.instance || "",
       meta_phone_number_id: config.phone_number_id || "",
-      meta_access_token: config.access_token || "",
-      meta_app_secret: config.app_secret || "",
-      meta_verify_token: config.verify_token || "",
     });
     setEditingId(ch.id);
     setShowForm(true);
@@ -229,8 +216,6 @@ export default function CanaisPage() {
     setQrCode(null);
     setQrStatus("idle");
   };
-
-  const backendUrl = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000";
 
   if (loading) {
     return (
@@ -349,18 +334,7 @@ export default function CanaisPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Name */}
-              <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome</label>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                  placeholder="Ex: Atendimento Principal"
-                />
-              </div>
-
-              {/* Provider */}
+              {/* Provider \u2014 sempre vis\u00edvel */}
               <div>
                 <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Provider</label>
                 <select
@@ -373,9 +347,42 @@ export default function CanaisPage() {
                 </select>
               </div>
 
-              {/* Evolution-specific fields */}
+              {/* Nome \u2014 sempre vis\u00edvel */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome</label>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                  placeholder="Ex: Atendimento Principal"
+                />
+              </div>
+
+              {/* Telefone \u2014 sempre vis\u00edvel */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Telefone</label>
+                <input
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                  placeholder="5534999999999"
+                />
+              </div>
+
+              {/* Phone Number ID \u2014 sempre vis\u00edvel */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Phone Number ID</label>
+                <input
+                  value={form.meta_phone_number_id}
+                  onChange={(e) => setForm({ ...form, meta_phone_number_id: e.target.value })}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                  placeholder="ID do n\u00famero na Meta"
+                />
+              </div>
+
+              {/* Campos espec\u00edficos do Evolution \u2014 vis\u00edveis apenas para Evolution */}
               {form.provider === "evolution" && (
-                <>
+                <div className="space-y-4 animate-in fade-in-0 duration-150">
                   <div>
                     <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">API URL</label>
                     <input
@@ -395,7 +402,7 @@ export default function CanaisPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome da Instancia</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome da Inst\u00e2ncia</label>
                     <input
                       value={form.evo_instance}
                       onChange={(e) => setForm({ ...form, evo_instance: e.target.value })}
@@ -403,59 +410,10 @@ export default function CanaisPage() {
                       placeholder="minha-instancia"
                     />
                   </div>
-                </>
+                </div>
               )}
 
-              {/* Meta-specific fields */}
-              {form.provider === "meta_cloud" && (
-                <>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Telefone</label>
-                    <input
-                      value={form.phone}
-                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                      placeholder="5534999999999"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Phone Number ID</label>
-                    <input
-                      value={form.meta_phone_number_id}
-                      onChange={(e) => setForm({ ...form, meta_phone_number_id: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Access Token</label>
-                    <input
-                      value={form.meta_access_token}
-                      onChange={(e) => setForm({ ...form, meta_access_token: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                      type="password"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">App Secret</label>
-                    <input
-                      value={form.meta_app_secret}
-                      onChange={(e) => setForm({ ...form, meta_app_secret: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                      type="password"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Verify Token</label>
-                    <input
-                      value={form.meta_verify_token}
-                      onChange={(e) => setForm({ ...form, meta_verify_token: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* Channel Mode */}
+              {/* Modo do Canal \u2014 sempre vis\u00edvel */}
               <div>
                 <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Modo do Canal</label>
                 <div className="flex gap-2">
@@ -484,39 +442,16 @@ export default function CanaisPage() {
                 </div>
               </div>
 
-              {/* Active toggle */}
-              <div className="flex items-center justify-between">
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Ativo</label>
-                <button
-                  type="button"
-                  onClick={() => setForm({ ...form, is_active: !form.is_active })}
-                  className={`relative w-10 h-5 rounded-full transition-colors ${form.is_active ? "bg-[#0bdf50]" : "bg-[#dedbd6]"}`}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${form.is_active ? "translate-x-5" : ""}`} />
-                </button>
+              {/* Status Ativo \u2014 sempre vis\u00edvel, usando Switch shadcn */}
+              <div className="flex items-center justify-between py-1">
+                <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Ativo</label>
+                <Switch
+                  checked={form.is_active}
+                  onCheckedChange={(checked) => setForm({ ...form, is_active: checked })}
+                  className="data-checked:bg-[#0bdf50]"
+                />
               </div>
             </div>
-
-            {/* Webhook info for Meta (only when editing) */}
-            {editingId && form.provider === "meta_cloud" && (
-              <div className="mt-5 p-4 bg-[#faf9f6] border border-[#dedbd6] rounded-[8px]">
-                <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">Configuracao do Webhook no Meta</p>
-                <div className="space-y-2">
-                  <div>
-                    <span className="text-[11px] text-[#7b7b78]">URL do Webhook:</span>
-                    <code className="block text-[12px] bg-white border border-[#dedbd6] px-3 py-1.5 rounded-[6px] mt-1 text-[#111111] select-all">
-                      {backendUrl}/webhook/meta
-                    </code>
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-[#7b7b78]">Verify Token:</span>
-                    <code className="block text-[12px] bg-white border border-[#dedbd6] px-3 py-1.5 rounded-[6px] mt-1 text-[#111111] select-all">
-                      {form.meta_verify_token || "\u2014"}
-                    </code>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="flex justify-end gap-3 mt-6">
               <button

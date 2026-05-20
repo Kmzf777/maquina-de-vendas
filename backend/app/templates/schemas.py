@@ -28,7 +28,7 @@ class TemplateComponent(BaseModel):
 
 
 class TemplateCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=512, pattern=r"^[a-z][a-z0-9_]*$")
     language: str = "pt_BR"
     category: Literal["UTILITY", "MARKETING"]
     components: list[TemplateComponent]

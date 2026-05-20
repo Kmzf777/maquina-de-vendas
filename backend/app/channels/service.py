@@ -1,8 +1,25 @@
 import logging
+import os
 from fastapi import HTTPException
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+def _inject_meta_credentials(config: dict) -> dict:
+    """Fill missing Meta Cloud API credentials from global env vars.
+
+    access_token, verify_token and app_secret are project-wide constants
+    and must never be left empty for meta_cloud channels.
+    """
+    config = dict(config)
+    if not config.get("access_token"):
+        config["access_token"] = os.environ.get("META_ACCESS_TOKEN", "")
+    if not config.get("verify_token"):
+        config["verify_token"] = os.environ.get("META_VERIFY_TOKEN", "")
+    if not config.get("app_secret"):
+        config["app_secret"] = os.environ.get("META_APP_SECRET", "")
+    return config
 
 
 def list_channels() -> list:
@@ -29,6 +46,8 @@ def get_channel(channel_id: str) -> dict:
 
 def create_channel(data: dict) -> dict:
     """Create a new channel."""
+    if data.get("provider") == "meta_cloud":
+        data = {**data, "provider_config": _inject_meta_credentials(data.get("provider_config") or {})}
     sb = get_supabase()
     res = sb.table("channels").insert(data).execute()
     return res.data[0]
@@ -36,6 +55,11 @@ def create_channel(data: dict) -> dict:
 
 def update_channel(channel_id: str, data: dict) -> dict:
     """Update an existing channel."""
+    if "provider_config" in data:
+        sb = get_supabase()
+        existing = sb.table("channels").select("provider").eq("id", channel_id).limit(1).execute()
+        if existing.data and existing.data[0].get("provider") == "meta_cloud":
+            data = {**data, "provider_config": _inject_meta_credentials(data["provider_config"])}
     sb = get_supabase()
     res = sb.table("channels").update(data).eq("id", channel_id).execute()
     if not res.data:

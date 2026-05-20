@@ -34,3 +34,23 @@ async def list_dev_routes(redis) -> dict[str, str]:
         k.decode("utf-8") if isinstance(k, bytes) else k: getattr(v, "decode", lambda: v)("utf-8") if isinstance(v, bytes) else v
         for k, v in routes.items()
     }
+
+
+async def is_dev_number(redis, phone: str) -> bool:
+    return bool(await redis.hexists(DEV_ROUTES_KEY, _normalize(phone)))
+
+
+async def add_dev_number(redis, phone: str, dev_url: str | None = None) -> str:
+    normalized = _normalize(phone)
+    route = dev_url or os.environ.get("DEV_SERVER_URL") or "http://127.0.0.1:8001"
+    await redis.hset(DEV_ROUTES_KEY, normalized, route)
+    return normalized
+
+
+async def remove_dev_number(redis, phone: str) -> str:
+    return await remove_dev_route(redis, phone)
+
+
+async def list_dev_numbers(redis) -> list[str]:
+    numbers = await redis.hkeys(DEV_ROUTES_KEY)
+    return [n.decode("utf-8") if isinstance(n, bytes) else n for n in numbers]
