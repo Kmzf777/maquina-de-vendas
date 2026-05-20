@@ -80,14 +80,12 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         return;
       }
       const spamData = await spamRes.json();
-      console.log("[handleStart] spam-check result:", spamData);
       const conflicts: SpamConflict[] = spamData.conflicts ?? [];
 
       if (conflicts.length > 0) {
         setSpamConflicts(conflicts);
         setSelectedConflictIds(new Set(conflicts.map((c) => c.lead_id)));
         setShowSpamModal(true);
-        setActionLoading(false);
         return;
       }
 
@@ -118,6 +116,8 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       setSelectedConflictIds(new Set());
       if (startRes.ok) {
         setBroadcast({ ...broadcast, status: "running" });
+      } else {
+        alert("Leads removidos, mas erro ao iniciar o disparo. Tente iniciar manualmente.");
       }
     } finally {
       setModalActionLoading(false);
@@ -134,12 +134,11 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conflict_lead_ids: [...selectedConflictIds] }),
       });
+      const resolveData = await resolveRes.json();
       if (!resolveRes.ok) {
-        const data = await resolveRes.json();
-        alert(`Erro: ${data.error}`);
+        alert(`Erro: ${resolveData.error}`);
         return;
       }
-      const resolveData = await resolveRes.json();
       const startRes = await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
       setShowSpamModal(false);
       setSpamConflicts([]);
@@ -557,6 +556,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         <div
           className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4"
           onClick={() => {
+            if (modalActionLoading) return;
             setShowSpamModal(false);
             setSpamConflicts([]);
             setSelectedConflictIds(new Set());
