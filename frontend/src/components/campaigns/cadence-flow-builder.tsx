@@ -1,17 +1,47 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef, DragEvent, memo } from "react";
 import { useRouter } from "next/navigation";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Connection,
+  Edge,
+  Node,
+  Handle,
+  Position,
+  BackgroundVariant,
+  NodeProps,
+  useReactFlow,
+  ReactFlowProvider,
+  OnConnect,
+  Panel,
+  MarkerType,
+  NodeMouseHandler,
+  OnNodeDrag,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import type { Campaign, CampaignNode, CampaignNodeType } from "@/lib/types";
 
-// ─── Fonts via style tag ───────────────────────────────────────────────────────
-const FONT_STYLE = `
-  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+// ─── Fonts ────────────────────────────────────────────────────────────────────
+const FONT_STYLE = `@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+.react-flow__handle { transition: transform .15s, box-shadow .15s; }
+.react-flow__handle:hover { transform: scale(1.5) !important; }
+.react-flow__node { cursor: grab; }
+.react-flow__node:active { cursor: grabbing; }
+.react-flow__node.selected > div { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #E85D26, 0 8px 28px rgba(0,0,0,.14) !important; border-color: transparent !important; }
+.react-flow__edge-path { transition: stroke .15s; }
+.react-flow__controls { box-shadow: 0 2px 8px rgba(0,0,0,.1); border-radius: 8px; border: 1px solid #e8e4df; overflow: hidden; }
+.react-flow__controls-button { background: #fff; border-bottom: 1px solid #e8e4df; color: #555; }
+.react-flow__controls-button:hover { background: #f5f2ed; }
 `;
 
 // ─── Design constants ──────────────────────────────────────────────────────────
-const NODE_W = 210;
-const NODE_H = 90;
+const NODE_W = 220;
 
 const NODE_META: Record<CampaignNodeType, { label: string; kicker: string; icon: string; color: string; iconBg: string }> = {
   trigger:   { label: "Gatilho",         kicker: "GATILHO",  icon: "⚡", color: "#1a1a1a", iconBg: "rgba(26,26,26,.07)" },
@@ -26,10 +56,10 @@ const STATUS_LABELS: Record<string, string> = {
   draft: "Rascunho", active: "Ativa", paused: "Pausada", archived: "Arquivada",
 };
 const STATUS_COLORS: Record<string, { bg: string; color: string; border: string }> = {
-  draft:    { bg: "#f5f2ed", color: "#888",     border: "#e0dbd4" },
-  active:   { bg: "#edfaf5", color: "#1A9B6C",  border: "#a7f0d4" },
-  paused:   { bg: "#fff7ed", color: "#C4920C",  border: "#fde68a" },
-  archived: { bg: "#f5f2ed", color: "#888",     border: "#e0dbd4" },
+  draft:    { bg: "#f5f2ed", color: "#888",    border: "#e0dbd4" },
+  active:   { bg: "#edfaf5", color: "#1A9B6C", border: "#a7f0d4" },
+  paused:   { bg: "#fff7ed", color: "#C4920C", border: "#fde68a" },
+  archived: { bg: "#f5f2ed", color: "#888",    border: "#e0dbd4" },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,82 +75,112 @@ function getDefaultConfig(type: CampaignNodeType): Record<string, unknown> {
   }
 }
 
-function nodeDetail(node: CampaignNode): string {
-  const c = node.config as Record<string, unknown>;
-  switch (node.type) {
-    case "trigger":   return (c.trigger_type as string) ?? "";
-    case "send":      return (c.template_name as string) || "template não definido";
-    case "wait":      return `${c.days ?? 1} dia(s)`;
-    case "condition": return (c.condition_type as string) ?? "";
-    case "action":    return (c.action_type as string) ?? "";
-    case "end":       return (c.label as string) || "Encerrar";
+function nodeDetail(type: CampaignNodeType, config: Record<string, unknown>): string {
+  switch (type) {
+    case "trigger":   return (config.trigger_type as string) ?? "";
+    case "send":      return (config.template_name as string) || "template não definido";
+    case "wait":      return `${config.days ?? 1} dia(s)`;
+    case "condition": return (config.condition_type as string) ?? "";
+    case "action":    return (config.action_type as string) ?? "";
+    case "end":       return (config.label as string) || "Encerrar";
     default:          return "";
   }
 }
 
-function buildEdges(nodes: CampaignNode[]) {
-  const edges: { from: CampaignNode; to: CampaignNode; branch?: "yes" | "no" }[] = [];
+// Convert DB node → React Flow node
+function toRFNode(node: CampaignNode): Node {
+  return {
+    id: node.id,
+    type: "campaignNode",
+    position: { x: node.position_x, y: node.position_y },
+    data: { ...node } as Record<string, unknown>,
+    draggable: true,
+    selectable: true,
+  };
+}
+
+// Convert DB nodes → React Flow edges
+function toRFEdges(nodes: CampaignNode[]): Edge[] {
+  const edges: Edge[] = [];
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
   for (const n of nodes) {
-    if (n.next_node_id && byId[n.next_node_id]) edges.push({ from: n, to: byId[n.next_node_id] });
-    if (n.yes_node_id  && byId[n.yes_node_id])  edges.push({ from: n, to: byId[n.yes_node_id],  branch: "yes" });
-    if (n.no_node_id   && byId[n.no_node_id])   edges.push({ from: n, to: byId[n.no_node_id],   branch: "no" });
+    if (n.next_node_id && byId[n.next_node_id]) {
+      edges.push({
+        id: `${n.id}→${n.next_node_id}`,
+        source: n.id, sourceHandle: "out",
+        target: n.next_node_id, targetHandle: "in",
+        style: { stroke: "#c8c2bb", strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#c8c2bb", width: 14, height: 14 },
+        type: "smoothstep",
+      });
+    }
+    if (n.yes_node_id && byId[n.yes_node_id]) {
+      edges.push({
+        id: `${n.id}→yes→${n.yes_node_id}`,
+        source: n.id, sourceHandle: "yes",
+        target: n.yes_node_id, targetHandle: "in",
+        style: { stroke: "#1A9B6C", strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#1A9B6C", width: 14, height: 14 },
+        label: "SIM", labelStyle: { fill: "#1A9B6C", fontSize: 9, fontWeight: 700 },
+        type: "smoothstep",
+      });
+    }
+    if (n.no_node_id && byId[n.no_node_id]) {
+      edges.push({
+        id: `${n.id}→no→${n.no_node_id}`,
+        source: n.id, sourceHandle: "no",
+        target: n.no_node_id, targetHandle: "in",
+        style: { stroke: "#ef4444", strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#ef4444", width: 14, height: 14 },
+        label: "NÃO", labelStyle: { fill: "#ef4444", fontSize: 9, fontWeight: 700 },
+        type: "smoothstep",
+      });
+    }
   }
   return edges;
 }
 
-function bezierPath(from: CampaignNode, to: CampaignNode, branch?: "yes" | "no"): string {
-  let x1 = from.position_x + NODE_W / 2;
-  if (branch === "yes") x1 = from.position_x + NODE_W * 0.27;
-  if (branch === "no")  x1 = from.position_x + NODE_W * 0.73;
-  const y1 = from.position_y + NODE_H;
-  const x2 = to.position_x + NODE_W / 2;
-  const y2 = to.position_y;
-  const cy = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${cy} ${x2} ${cy} ${x2} ${y2}`;
-}
-
-// ─── FlowNode sub-component ────────────────────────────────────────────────────
-interface FlowNodeProps {
-  node: CampaignNode;
-  selected: boolean;
-  onClick: (e: React.MouseEvent) => void;
-  onAddClick: (e: React.MouseEvent, branch?: "yes" | "no") => void;
-}
-
-function FlowNode({ node, selected, onClick, onAddClick }: FlowNodeProps) {
-  const meta = NODE_META[node.type];
+// ─── Custom Node component (registered at module level — MUST stay outside render) ──
+const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
+  const node = data as unknown as CampaignNode;
+  const meta = NODE_META[node.type] ?? NODE_META.trigger;
   const isCondition = node.type === "condition";
   const isEnd = node.type === "end";
+  const isTrigger = node.type === "trigger";
+  const color = meta.color === "#1a1a1a" ? "#aaa" : meta.color;
 
-  const shadow = selected
-    ? "0 0 0 2px #fff, 0 0 0 4px #E85D26, 0 8px 28px rgba(0,0,0,.14)"
-    : "0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.08)";
+  const handleStyle: React.CSSProperties = {
+    width: 10, height: 10,
+    background: "#fff",
+    border: `2px solid ${color}`,
+  };
 
   return (
-    <div
-      onClick={onClick}
-      style={{
-        position: "absolute",
-        left: node.position_x,
-        top: node.position_y,
-        width: NODE_W,
-        background: "#fff",
-        borderRadius: 10,
-        boxShadow: shadow,
-        cursor: "pointer",
-        border: selected ? "1px solid transparent" : "1px solid rgba(0,0,0,.06)",
-        userSelect: "none",
-        transition: "box-shadow .15s ease, transform .15s cubic-bezier(.2,0,.2,1)",
-        fontFamily: "'Outfit', sans-serif",
-      }}
-    >
+    <div style={{
+      width: NODE_W,
+      background: "#ffffff",
+      borderRadius: 10,
+      boxShadow: "0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.08)",
+      border: "1px solid rgba(0,0,0,.06)",
+      fontFamily: "'Outfit', sans-serif",
+      overflow: "visible",
+      position: "relative",
+    }}>
       {/* Top stripe */}
       <div style={{ height: 3, background: meta.color, borderRadius: "10px 10px 0 0" }} />
 
+      {/* Input handle (top) — not on trigger */}
+      {!isTrigger && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          id="in"
+          style={{ ...handleStyle, top: -5, borderColor: color }}
+        />
+      )}
+
       {/* Body */}
-      <div style={{ padding: "12px 14px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
-        {/* Icon */}
+      <div style={{ padding: "12px 14px 16px", display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div style={{
           width: 34, height: 34, borderRadius: 8,
           background: meta.iconBg,
@@ -129,8 +189,6 @@ function FlowNode({ node, selected, onClick, onAddClick }: FlowNodeProps) {
         }}>
           {meta.icon}
         </div>
-
-        {/* Text */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             fontSize: 9, fontWeight: 700, letterSpacing: ".8px",
@@ -146,155 +204,90 @@ function FlowNode({ node, selected, onClick, onAddClick }: FlowNodeProps) {
             fontFamily: "'JetBrains Mono', monospace",
             fontSize: 10, color: "#9b9590", marginTop: 4,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            maxWidth: NODE_W - 80,
           }}>
-            {nodeDetail(node)}
+            {nodeDetail(node.type, node.config as Record<string, unknown>)}
           </div>
         </div>
       </div>
 
-      {/* Port-in dot */}
-      <div style={{
-        position: "absolute", top: -5, left: "50%", marginLeft: -5,
-        width: 10, height: 10, borderRadius: "50%",
-        background: "#fff", border: `2px solid ${meta.color === "#1a1a1a" ? "#aaa" : meta.color}`,
-      }} />
-
-      {/* Port-out / YES / NO */}
+      {/* Output handle(s) (bottom) — not on end */}
       {!isEnd && (
-        <>
-          {isCondition ? (
-            <>
-              {/* YES port */}
-              <button
-                onClick={e => onAddClick(e, "yes")}
-                title="Adicionar nó (SIM)"
-                style={{
-                  position: "absolute", bottom: -5, left: "27%", marginLeft: -5,
-                  width: 10, height: 10, borderRadius: "50%",
-                  background: "#fff", border: "2px solid #1A9B6C",
-                  cursor: "pointer", padding: 0,
-                }}
-              />
-              <div style={{
-                position: "absolute", bottom: -20, left: "27%",
-                transform: "translateX(-50%)",
-                fontSize: 9, fontWeight: 700, letterSpacing: ".4px",
-                textTransform: "uppercase", color: "#1A9B6C", pointerEvents: "none",
-              }}>SIM</div>
-              {/* NO port */}
-              <button
-                onClick={e => onAddClick(e, "no")}
-                title="Adicionar nó (NÃO)"
-                style={{
-                  position: "absolute", bottom: -5, left: "73%", marginLeft: -5,
-                  width: 10, height: 10, borderRadius: "50%",
-                  background: "#fff", border: "2px solid #ef4444",
-                  cursor: "pointer", padding: 0,
-                }}
-              />
-              <div style={{
-                position: "absolute", bottom: -20, left: "73%",
-                transform: "translateX(-50%)",
-                fontSize: 9, fontWeight: 700, letterSpacing: ".4px",
-                textTransform: "uppercase", color: "#ef4444", pointerEvents: "none",
-              }}>NÃO</div>
-            </>
-          ) : (
-            /* Default port-out */
-            <button
-              onClick={onAddClick}
-              title="Adicionar próximo nó"
-              style={{
-                position: "absolute", bottom: -5, left: "50%", marginLeft: -5,
-                width: 10, height: 10, borderRadius: "50%",
-                background: "#fff", border: `2px solid ${meta.color === "#1a1a1a" ? "#aaa" : meta.color}`,
-                cursor: "pointer", padding: 0,
-              }}
-            />
-          )}
-        </>
+        isCondition ? (
+          <>
+            <Handle type="source" position={Position.Bottom} id="yes" style={{ ...handleStyle, left: "27%", borderColor: "#1A9B6C", bottom: -5 }} />
+            <div style={{ position: "absolute", bottom: -22, left: "27%", transform: "translateX(-50%)", fontSize: 9, fontWeight: 700, color: "#1A9B6C", letterSpacing: ".4px", textTransform: "uppercase", pointerEvents: "none" }}>SIM</div>
+            <Handle type="source" position={Position.Bottom} id="no" style={{ ...handleStyle, left: "73%", borderColor: "#ef4444", bottom: -5 }} />
+            <div style={{ position: "absolute", bottom: -22, left: "73%", transform: "translateX(-50%)", fontSize: 9, fontWeight: 700, color: "#ef4444", letterSpacing: ".4px", textTransform: "uppercase", pointerEvents: "none" }}>NÃO</div>
+          </>
+        ) : (
+          <Handle type="source" position={Position.Bottom} id="out" style={{ ...handleStyle, bottom: -5, borderColor: color }} />
+        )
       )}
     </div>
   );
-}
+});
 
-// ─── AddNodeMenu sub-component ─────────────────────────────────────────────────
-interface AddNodeMenuProps {
-  x: number;
-  y: number;
-  onSelect: (type: CampaignNodeType) => void;
-}
+// Register ONCE at module scope so React Flow doesn't re-register on every render
+const NODE_TYPES = { campaignNode: CampaignFlowNode };
 
-const ADD_NODE_OPTIONS: { type: CampaignNodeType; icon: string; label: string; desc: string }[] = [
+// ─── Palette items ─────────────────────────────────────────────────────────────
+const PALETTE_TRIGGERS: { type: CampaignNodeType; icon: string; label: string; desc: string }[] = [
+  { type: "trigger", icon: "⚡", label: "Stage move",    desc: "Lead entra em stage" },
+  { type: "trigger", icon: "🕐", label: "Estagnação",    desc: "Parado X dias" },
+  { type: "trigger", icon: "💤", label: "Sem mensagem",  desc: "Silêncio X dias" },
+  { type: "trigger", icon: "📡", label: "Pós-disparo",   desc: "Após broadcast" },
+];
+const PALETTE_ACTIONS: { type: CampaignNodeType; icon: string; label: string; desc: string }[] = [
   { type: "send",      icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
   { type: "wait",      icon: "⏱", label: "Aguardar",        desc: "Delay em dias" },
   { type: "condition", icon: "🔀", label: "Condição",        desc: "Ramificação lógica" },
-  { type: "action",    icon: "📋", label: "Ação",            desc: "Mover stage / agente" },
+  { type: "action",    icon: "📋", label: "Mover stage",     desc: "Kanban move" },
+  { type: "action",    icon: "🤖", label: "Ativar agente",   desc: "Assign ValerIA" },
   { type: "end",       icon: "🏁", label: "Encerrar",        desc: "Fim da campanha" },
 ];
 
-function AddNodeMenu({ x, y, onSelect }: AddNodeMenuProps) {
+function PaletteItem({ item }: { item: typeof PALETTE_TRIGGERS[number] }) {
+  const meta = NODE_META[item.type];
+  const iconBg = meta.iconBg;
+
+  const onDragStart = (e: DragEvent) => {
+    e.dataTransfer.setData("application/reactflow-type", item.type);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
   return (
     <div
-      onClick={e => e.stopPropagation()}
+      draggable
+      onDragStart={onDragStart}
       style={{
-        position: "absolute",
-        left: x,
-        top: y + 20,
-        width: 200,
-        background: "#fff",
-        borderRadius: 10,
-        boxShadow: "0 4px 24px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.08)",
-        border: "1px solid #e8e4df",
-        overflow: "hidden",
-        zIndex: 50,
-        fontFamily: "'Outfit', sans-serif",
+        display: "flex", alignItems: "center", gap: 9,
+        padding: "8px 10px", borderRadius: 8,
+        border: "1px solid #ede9e3", marginBottom: 5,
+        cursor: "grab", background: "#faf9f6",
+        transition: "all .14s",
+        userSelect: "none",
       }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = "#c0b9b0"; e.currentTarget.style.background = "#f0ede8"; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "#ede9e3"; e.currentTarget.style.background = "#faf9f6"; }}
     >
-      <div style={{ padding: "8px 12px 4px", fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa" }}>
-        Adicionar nó
+      <div style={{
+        width: 28, height: 28, borderRadius: 7,
+        background: iconBg,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 14, flexShrink: 0,
+      }}>
+        {item.icon}
       </div>
-      {ADD_NODE_OPTIONS.map(opt => {
-        const color = NODE_META[opt.type].color;
-        const iconBg = NODE_META[opt.type].iconBg;
-        return (
-          <button
-            key={opt.type}
-            onClick={() => onSelect(opt.type)}
-            style={{
-              display: "flex", alignItems: "center", gap: 9,
-              width: "100%", padding: "7px 12px",
-              background: "transparent", border: "none", cursor: "pointer",
-              textAlign: "left", transition: "background .1s",
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = "#f5f2ed")}
-            onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-          >
-            <div style={{
-              width: 26, height: 26, borderRadius: 6,
-              background: iconBg,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 13, flexShrink: 0,
-            }}>
-              {opt.icon}
-            </div>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: color === "#1a1a1a" ? "#111" : color, lineHeight: 1.2 }}>
-                {opt.label}
-              </div>
-              <div style={{ fontSize: 10, color: "#9b9590", marginTop: 1 }}>
-                {opt.desc}
-              </div>
-            </div>
-          </button>
-        );
-      })}
-      <div style={{ height: 6 }} />
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.2 }}>{item.label}</div>
+        <div style={{ fontSize: 10, color: "#9b9590", marginTop: 1 }}>{item.desc}</div>
+      </div>
     </div>
   );
 }
 
-// ─── Inspector sub-component ───────────────────────────────────────────────────
+// ─── Inspector ─────────────────────────────────────────────────────────────────
 interface InspectorProps {
   node: CampaignNode;
   saving: boolean;
@@ -304,85 +297,54 @@ interface InspectorProps {
 }
 
 function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) {
-  const [draftConfig, setDraftConfig] = useState<Record<string, unknown>>(node.config);
+  const [draft, setDraft] = useState<Record<string, unknown>>(node.config as Record<string, unknown>);
   const meta = NODE_META[node.type];
 
-  // Reset draft when node changes
   useEffect(() => {
-    setDraftConfig(node.config);
+    setDraft(node.config as Record<string, unknown>);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id]);
 
-  const set = (key: string, value: unknown) =>
-    setDraftConfig(prev => ({ ...prev, [key]: value }));
+  const set = (key: string, value: unknown) => setDraft(prev => ({ ...prev, [key]: value }));
+  const c = draft;
 
-  const fieldStyle: React.CSSProperties = {
-    marginBottom: 14,
-  };
-  const labelStyle: React.CSSProperties = {
-    display: "block",
-    fontSize: 10, fontWeight: 700, letterSpacing: ".5px",
-    textTransform: "uppercase", color: "#b0a8a0", marginBottom: 5,
-  };
-  const inputStyle: React.CSSProperties = {
+  const input: React.CSSProperties = {
     width: "100%", padding: "8px 11px",
     border: "1px solid #e0dbd4", borderRadius: 7,
     fontFamily: "'Outfit', sans-serif", fontSize: 13, color: "#111",
     background: "#faf9f6", outline: "none",
   };
-  const selectStyle: React.CSSProperties = { ...inputStyle, appearance: "none" as const };
-
-  const c = draftConfig as Record<string, unknown>;
+  const label: React.CSSProperties = {
+    display: "block", fontSize: 10, fontWeight: 700, letterSpacing: ".5px",
+    textTransform: "uppercase", color: "#b0a8a0", marginBottom: 5,
+  };
+  const field: React.CSSProperties = { marginBottom: 14 };
 
   return (
     <div style={{
       width: 256, flexShrink: 0,
-      background: "#fff",
-      borderLeft: "1px solid #e8e4df",
+      background: "#fff", borderLeft: "1px solid #e8e4df",
       display: "flex", flexDirection: "column",
-      overflow: "hidden",
       fontFamily: "'Outfit', sans-serif",
+      overflow: "hidden",
     }}>
       {/* Header */}
-      <div style={{
-        padding: "14px 16px 12px",
-        borderBottom: "1px solid #ede9e3",
-        display: "flex", alignItems: "center", gap: 8,
-      }}>
-        <div style={{
-          width: 30, height: 30, borderRadius: 7,
-          background: meta.iconBg,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 15,
-        }}>
-          {meta.icon}
-        </div>
+      <div style={{ padding: "14px 16px 12px", borderBottom: "1px solid #ede9e3", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 7, background: meta.iconBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>{meta.icon}</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#111" }}>{meta.label}</div>
           <div style={{ fontSize: 11, color: "#9b9590", marginTop: 1 }}>{meta.kicker}</div>
         </div>
-        <button
-          onClick={onClose}
-          style={{
-            width: 24, height: 24, borderRadius: 6,
-            border: "1px solid #e0dbd4", background: "#faf9f6",
-            cursor: "pointer", fontSize: 13, color: "#888",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          ✕
-        </button>
+        <button onClick={onClose} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #e0dbd4", background: "#faf9f6", cursor: "pointer", fontSize: 13, color: "#888" }}>✕</button>
       </div>
 
       {/* Body */}
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-
-        {/* TRIGGER */}
         {node.type === "trigger" && (
           <>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Tipo de gatilho</label>
-              <select style={selectStyle} value={(c.trigger_type as string) ?? ""} onChange={e => set("trigger_type", e.target.value)}>
+            <div style={field}>
+              <label style={label}>Tipo de gatilho</label>
+              <select style={{ ...input, appearance: "none" }} value={(c.trigger_type as string) ?? ""} onChange={e => set("trigger_type", e.target.value)}>
                 <option value="no_message">Sem mensagem</option>
                 <option value="stage_stagnation">Estagnação de stage</option>
                 <option value="stage_enter">Entrou em stage</option>
@@ -390,30 +352,19 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
               </select>
             </div>
             {(c.trigger_type === "no_message" || c.trigger_type === "stage_stagnation") && (
-              <div style={fieldStyle}>
-                <label style={labelStyle}>Dias</label>
-                <input type="number" style={inputStyle} value={(c.days as number) ?? 0} onChange={e => set("days", Number(e.target.value))} min={1} />
-              </div>
+              <div style={field}><label style={label}>Dias</label><input type="number" style={input} value={(c.days as number) ?? 0} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
             {(c.trigger_type === "stage_stagnation" || c.trigger_type === "stage_enter") && (
-              <div style={fieldStyle}>
-                <label style={labelStyle}>Filtro de stage</label>
-                <input type="text" style={inputStyle} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)} placeholder="ex: Negociação" />
-              </div>
+              <div style={field}><label style={label}>Filtro de stage</label><input type="text" style={input} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)} placeholder="ex: Negociação" /></div>
             )}
           </>
         )}
-
-        {/* SEND */}
         {node.type === "send" && (
           <>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Nome do template</label>
-              <input type="text" style={inputStyle} value={(c.template_name as string) ?? ""} onChange={e => set("template_name", e.target.value)} placeholder="ex: reativacao_30d" />
-            </div>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Ao responder</label>
-              <select style={selectStyle} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
+            <div style={field}><label style={label}>Nome do template</label><input type="text" style={input} value={(c.template_name as string) ?? ""} onChange={e => set("template_name", e.target.value)} placeholder="ex: reativacao_30d" /></div>
+            <div style={field}>
+              <label style={label}>Ao responder</label>
+              <select style={{ ...input, appearance: "none" }} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
                 <option value="pause">Pausar campanha</option>
                 <option value="cancel">Cancelar campanha</option>
                 <option value="continue">Continuar campanha</option>
@@ -421,79 +372,60 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
             </div>
           </>
         )}
-
-        {/* WAIT */}
         {node.type === "wait" && (
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Dias de espera</label>
-            <input type="number" style={inputStyle} value={(c.days as number) ?? 1} onChange={e => set("days", Number(e.target.value))} min={1} />
-          </div>
+          <div style={field}><label style={label}>Dias de espera</label><input type="number" style={input} value={(c.days as number) ?? 1} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
         )}
-
-        {/* CONDITION */}
         {node.type === "condition" && (
           <>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Condição</label>
-              <select style={selectStyle} value={(c.condition_type as string) ?? ""} onChange={e => set("condition_type", e.target.value)}>
+            <div style={field}>
+              <label style={label}>Condição</label>
+              <select style={{ ...input, appearance: "none" }} value={(c.condition_type as string) ?? ""} onChange={e => set("condition_type", e.target.value)}>
                 <option value="replied_recently">Respondeu recentemente</option>
                 <option value="in_stage">Está em stage</option>
                 <option value="has_deal">Tem deal ativo</option>
               </select>
             </div>
             {c.condition_type === "replied_recently" && (
-              <div style={fieldStyle}>
-                <label style={labelStyle}>Dias</label>
-                <input type="number" style={inputStyle} value={(c.days as number) ?? 5} onChange={e => set("days", Number(e.target.value))} min={1} />
-              </div>
+              <div style={field}><label style={label}>Dias</label><input type="number" style={input} value={(c.days as number) ?? 5} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
           </>
         )}
-
-        {/* ACTION */}
         {node.type === "action" && (
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Tipo de ação</label>
-            <select style={selectStyle} value={(c.action_type as string) ?? ""} onChange={e => set("action_type", e.target.value)}>
+          <div style={field}>
+            <label style={label}>Tipo de ação</label>
+            <select style={{ ...input, appearance: "none" }} value={(c.action_type as string) ?? ""} onChange={e => set("action_type", e.target.value)}>
               <option value="move_stage">Mover stage</option>
               <option value="activate_agent">Ativar agente</option>
               <option value="deactivate_agent">Desativar agente</option>
             </select>
           </div>
         )}
-
-        {/* END */}
         {node.type === "end" && (
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Rótulo final</label>
-            <input type="text" style={inputStyle} value={(c.label as string) ?? ""} onChange={e => set("label", e.target.value)} placeholder="ex: Concluído" />
-          </div>
+          <div style={field}><label style={label}>Rótulo final</label><input type="text" style={input} value={(c.label as string) ?? ""} onChange={e => set("label", e.target.value)} placeholder="ex: Concluído" /></div>
         )}
-
       </div>
 
       {/* Footer */}
       <div style={{ padding: "12px 16px", borderTop: "1px solid #ede9e3", display: "flex", gap: 6 }}>
         <button
-          onClick={() => onSave(node.id, draftConfig)}
+          onClick={() => onSave(node.id, draft)}
           disabled={saving}
           style={{
-            flex: 1, height: 34, borderRadius: 7,
-            background: "#111", color: "#fff",
-            border: "none", cursor: saving ? "not-allowed" : "pointer",
+            flex: 1, height: 34, borderRadius: 7, border: "none",
+            background: saving ? "#ccc" : "#111", color: "#fff",
             fontFamily: "'Outfit', sans-serif", fontSize: 12, fontWeight: 500,
-            opacity: saving ? 0.7 : 1,
+            cursor: saving ? "default" : "pointer",
           }}
         >
-          {saving ? "Salvando…" : "Salvar"}
+          {saving ? "Salvando..." : "Salvar"}
         </button>
         <button
           onClick={() => onDelete(node.id)}
           style={{
-            flex: 1, height: 34, borderRadius: 7,
-            background: "#fff5f5", border: "1px solid #fecaca", color: "#dc2626",
-            cursor: "pointer",
-            fontFamily: "'Outfit', sans-serif", fontSize: 12, fontWeight: 500,
+            height: 34, padding: "0 12px", borderRadius: 7,
+            border: "1px solid #fecaca", background: "#fff5f5",
+            color: "#dc2626", fontFamily: "'Outfit', sans-serif",
+            fontSize: 12, cursor: "pointer",
           }}
         >
           Remover
@@ -503,19 +435,18 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────────
-interface CadenceFlowBuilderProps {
-  campaignId: string;
-}
-
-export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
+// ─── Inner builder (needs useReactFlow, so must be inside ReactFlowProvider) ───
+function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const router = useRouter();
+  const { screenToFlowPosition } = useReactFlow();
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [nodes, setNodes] = useState<CampaignNode[]>([]);
+  const [dbNodes, setDbNodes] = useState<CampaignNode[]>([]);
+  const [rfNodes, setRFNodes, onNodesChange] = useNodesState<Node>([]);
+  const [rfEdges, setRFEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [addNodeMenu, setAddNodeMenu] = useState<{ afterNodeId: string; x: number; y: number; branch?: "yes" | "no" } | null>(null);
 
   // Load campaign + nodes
   useEffect(() => {
@@ -523,281 +454,258 @@ export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
       .then(r => r.json())
       .then(data => {
         setCampaign(data);
-        setNodes(data.nodes ?? []);
+        const nodes: CampaignNode[] = data.nodes ?? [];
+        setDbNodes(nodes);
+        setRFNodes(nodes.map(toRFNode));
+        setRFEdges(toRFEdges(nodes));
       });
+  }, [campaignId, setRFNodes, setRFEdges]);
+
+  // ── Node click → select → show inspector ──────────────────────────────────
+  const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
+    setSelectedNodeId(node.id);
+  }, []);
+
+  const onPaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+  }, []);
+
+  // ── Save position after drag ───────────────────────────────────────────────
+  const onNodeDragStop: OnNodeDrag = useCallback((_e, node) => {
+    fetch(`/api/campaigns/${campaignId}/nodes/${node.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ position_x: Math.round(node.position.x), position_y: Math.round(node.position.y) }),
+    });
+    setDbNodes(prev => prev.map(n => n.id === node.id ? { ...n, position_x: node.position.x, position_y: node.position.y } : n));
   }, [campaignId]);
 
-  // ── API actions ──────────────────────────────────────────────────────────────
-  const addNode = async (afterNodeId: string, type: CampaignNodeType, posX: number, posY: number, branch?: "yes" | "no") => {
+  // ── Connect two handles → PATCH source node ───────────────────────────────
+  const onConnect: OnConnect = useCallback(async (connection: Connection) => {
+    const { source, target, sourceHandle } = connection;
+    if (!source || !target) return;
+    const linkField = sourceHandle === "yes" ? "yes_node_id" : sourceHandle === "no" ? "no_node_id" : "next_node_id";
+    await fetch(`/api/campaigns/${campaignId}/nodes/${source}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [linkField]: target }),
+    });
+    setDbNodes(prev => prev.map(n => n.id === source ? { ...n, [linkField]: target } : n));
+    const edgeColor = sourceHandle === "yes" ? "#1A9B6C" : sourceHandle === "no" ? "#ef4444" : "#c8c2bb";
+    setRFEdges(eds => addEdge({
+      ...connection,
+      style: { stroke: edgeColor, strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 14, height: 14 },
+      type: "smoothstep",
+      label: sourceHandle === "yes" ? "SIM" : sourceHandle === "no" ? "NÃO" : undefined,
+      labelStyle: sourceHandle === "yes" ? { fill: "#1A9B6C", fontSize: 9, fontWeight: 700 } : sourceHandle === "no" ? { fill: "#ef4444", fontSize: 9, fontWeight: 700 } : undefined,
+    } as Edge, eds));
+  }, [campaignId, setRFEdges]);
+
+  // ── Drag from palette → drop on canvas ────────────────────────────────────
+  const onDragOver = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const onDrop = useCallback(async (e: DragEvent) => {
+    e.preventDefault();
+    const type = e.dataTransfer.getData("application/reactflow-type") as CampaignNodeType;
+    if (!type) return;
+    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const res = await fetch(`/api/campaigns/${campaignId}/nodes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, config: getDefaultConfig(type), position_x: posX, position_y: posY }),
+      body: JSON.stringify({ type, config: getDefaultConfig(type), position_x: Math.round(position.x), position_y: Math.round(position.y) }),
     });
     if (!res.ok) return;
     const newNode: CampaignNode = await res.json();
-    const linkField = branch === "yes" ? "yes_node_id" : branch === "no" ? "no_node_id" : "next_node_id";
-    // Link afterNode.[linkField] → newNode.id
-    await fetch(`/api/campaigns/${campaignId}/nodes/${afterNodeId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [linkField]: newNode.id }),
-    });
-    setNodes(prev => [
-      ...prev.map(n => n.id === afterNodeId ? { ...n, [linkField]: newNode.id } : n),
-      newNode,
-    ]);
-    setAddNodeMenu(null);
-  };
+    setDbNodes(prev => [...prev, newNode]);
+    setRFNodes(prev => [...prev, toRFNode(newNode)]);
+  }, [campaignId, screenToFlowPosition, setRFNodes]);
 
-  const saveNode = async (nodeId: string, config: Record<string, unknown>) => {
+  // ── Save inspector config ─────────────────────────────────────────────────
+  const saveNode = useCallback(async (nodeId: string, config: Record<string, unknown>) => {
     setSaving(true);
     await fetch(`/api/campaigns/${campaignId}/nodes/${nodeId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ config }),
     });
-    setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, config } : n));
+    setDbNodes(prev => prev.map(n => n.id === nodeId ? { ...n, config } : n));
+    setRFNodes(prev => prev.map(n => n.id === nodeId ? { ...n, data: { ...n.data, config } } : n));
     setSaving(false);
-  };
+  }, [campaignId, setRFNodes]);
 
-  const deleteNode = async (nodeId: string) => {
+  // ── Delete node ───────────────────────────────────────────────────────────
+  const deleteNode = useCallback(async (nodeId: string) => {
     await fetch(`/api/campaigns/${campaignId}/nodes/${nodeId}`, { method: "DELETE" });
-    setNodes(prev =>
-      prev.filter(n => n.id !== nodeId).map(n => ({
-        ...n,
-        next_node_id: n.next_node_id === nodeId ? null : n.next_node_id,
-        yes_node_id:  n.yes_node_id  === nodeId ? null : n.yes_node_id,
-        no_node_id:   n.no_node_id   === nodeId ? null : n.no_node_id,
-      }))
-    );
-    if (selectedNodeId === nodeId) setSelectedNodeId(null);
-  };
+    setDbNodes(prev => prev.filter(n => n.id !== nodeId).map(n => ({
+      ...n,
+      next_node_id: n.next_node_id === nodeId ? null : n.next_node_id,
+      yes_node_id:  n.yes_node_id  === nodeId ? null : n.yes_node_id,
+      no_node_id:   n.no_node_id   === nodeId ? null : n.no_node_id,
+    })));
+    setRFNodes(prev => prev.filter(n => n.id !== nodeId));
+    setRFEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
+    setSelectedNodeId(null);
+  }, [campaignId, setRFNodes, setRFEdges]);
 
-  const toggleActivation = async () => {
+  // ── Activate / pause campaign ─────────────────────────────────────────────
+  const toggleActivation = useCallback(async () => {
     if (!campaign) return;
     const endpoint = campaign.status === "active" ? "pause" : "activate";
     const res = await fetch(`/api/campaigns/${campaignId}/${endpoint}`, { method: "POST" });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
     setCampaign(prev => prev ? { ...prev, status: data.status } : prev);
-  };
+  }, [campaign, campaignId]);
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
-  const selectedNode = selectedNodeId ? nodes.find(n => n.id === selectedNodeId) ?? null : null;
-  const edges = buildEdges(nodes);
-
-  const statusStyle = STATUS_COLORS[campaign?.status ?? "draft"];
-
-  // ── Palette items ────────────────────────────────────────────────────────────
-  const paletteItems = [
-    { section: "Gatilhos", items: [
-      { icon: "⚡", name: "Stage move",    desc: "Lead entra em stage" },
-      { icon: "🕐", name: "Estagnação",    desc: "Parado X dias" },
-      { icon: "💤", name: "Sem mensagem",  desc: "Silêncio X dias" },
-      { icon: "📡", name: "Pós-disparo",   desc: "Após broadcast" },
-    ]},
-    { section: "Ações", items: [
-      { icon: "📨", name: "Enviar template", desc: "Mensagem HSM Meta",  bg: "rgba(232,93,38,.1)" },
-      { icon: "⏱", name: "Aguardar",        desc: "Delay em dias",       bg: "rgba(59,125,216,.1)" },
-      { icon: "🔀", name: "Condição",        desc: "Ramificação lógica",  bg: "rgba(196,146,12,.1)" },
-      { icon: "📋", name: "Mover stage",     desc: "Kanban move",         bg: "rgba(124,77,184,.1)" },
-      { icon: "🤖", name: "Ativar agente",   desc: "Assign ValerIA",      bg: "rgba(124,77,184,.1)" },
-      { icon: "🏁", name: "Encerrar",        desc: "Fim da campanha",     bg: "rgba(26,155,108,.1)" },
-    ]},
-  ];
+  const selectedDbNode = selectedNodeId ? dbNodes.find(n => n.id === selectedNodeId) ?? null : null;
+  const st = campaign ? (STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft) : STATUS_COLORS.draft;
 
   return (
-    <>
-      {/* Google Fonts */}
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'Outfit', sans-serif" }}>
       <style>{FONT_STYLE}</style>
 
-      <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'Outfit', sans-serif" }}>
+      {/* ── Topbar ──────────────────────────────────────────────────── */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 14,
+        background: "#fff", borderBottom: "1px solid #e8e4df",
+        padding: "0 20px", height: 52, flexShrink: 0, zIndex: 10,
+      }}>
+        <button
+          onClick={() => router.push("/campanhas?tab=cadencias")}
+          style={{
+            width: 30, height: 30, borderRadius: 7,
+            border: "1px solid #e8e4df", background: "transparent",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", color: "#555", fontSize: 14,
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = "#f5f2ed")}
+          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+        >←</button>
 
-        {/* ── TOPBAR ─────────────────────────────────────────────────────────── */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 14,
-          background: "#fff", borderBottom: "1px solid #e8e4df",
-          padding: "0 20px", height: 52, flexShrink: 0, zIndex: 100,
-        }}>
-          <button
-            onClick={() => router.push("/campanhas?tab=cadencias")}
-            style={{
-              width: 30, height: 30, borderRadius: 7,
-              border: "1px solid #e8e4df", background: "transparent",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", color: "#555", fontSize: 14,
-            }}
-          >
-            ←
-          </button>
+        <span style={{ fontSize: 14, fontWeight: 600, color: "#111", letterSpacing: "-.2px" }}>
+          {campaign?.name ?? "…"}
+        </span>
 
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#111", letterSpacing: "-.2px" }}>
-            {campaign?.name ?? "…"}
-          </span>
-
-          {campaign && (
-            <span style={{
-              padding: "3px 9px", borderRadius: 5,
-              background: statusStyle.bg, border: `1px solid ${statusStyle.border}`,
-              fontSize: 11, fontWeight: 500, color: statusStyle.color,
-              letterSpacing: ".2px", textTransform: "uppercase",
-            }}>
-              {STATUS_LABELS[campaign.status] ?? campaign.status}
-            </span>
-          )}
-
-          <div style={{ flex: 1 }} />
-
-          <button
-            onClick={toggleActivation}
-            style={{
-              height: 34, padding: "0 16px", borderRadius: 7,
-              background: campaign?.status === "active" ? "#fff7ed" : "#111",
-              color: campaign?.status === "active" ? "#C4920C" : "#fff",
-              border: campaign?.status === "active" ? "1px solid #fde68a" : "none",
-              cursor: "pointer",
-              fontFamily: "'Outfit', sans-serif", fontSize: 13, fontWeight: 500,
-              display: "flex", alignItems: "center", gap: 6,
-            }}
-          >
-            {campaign?.status === "active" ? "⏸ Pausar" : "▶ Ativar campanha"}
-          </button>
-        </div>
-
-        {/* ── WORKSPACE ──────────────────────────────────────────────────────── */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-
-          {/* ── PALETTE ──────────────────────────────────────────────────────── */}
-          <div style={{
-            width: 196, flexShrink: 0,
-            background: "#fff", borderRight: "1px solid #e8e4df",
-            padding: "16px 12px", overflowY: "auto",
-            display: "flex", flexDirection: "column", gap: 18,
+        {campaign && (
+          <span style={{
+            padding: "3px 9px", borderRadius: 5,
+            background: st.bg, border: `1px solid ${st.border}`,
+            fontSize: 11, fontWeight: 500, color: st.color,
+            letterSpacing: ".2px", textTransform: "uppercase",
           }}>
-            {paletteItems.map(section => (
-              <div key={section.section}>
-                <div style={{
-                  fontSize: 9, fontWeight: 700, letterSpacing: "1px",
-                  textTransform: "uppercase", color: "#b8b2aa",
-                  padding: "0 4px", marginBottom: 8,
-                }}>
-                  {section.section}
-                </div>
-                {section.items.map(item => (
-                  <div
-                    key={item.name}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 9,
-                      padding: "8px 10px", borderRadius: 8,
-                      border: "1px solid #ede9e3", marginBottom: 5,
-                      cursor: "default", background: "#faf9f6",
-                    }}
-                  >
-                    <div style={{
-                      width: 28, height: 28, borderRadius: 7,
-                      background: (item as { bg?: string }).bg ?? "rgba(26,26,26,.07)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 14, flexShrink: 0,
-                    }}>
-                      {item.icon}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.2 }}>{item.name}</div>
-                      <div style={{ fontSize: 10, color: "#9b9590", marginTop: 1 }}>{item.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
+            {STATUS_LABELS[campaign.status] ?? campaign.status}
+          </span>
+        )}
 
-          {/* ── CANVAS ───────────────────────────────────────────────────────── */}
-          <div
-            style={{
-              flex: 1, overflow: "auto",
-              background: "#f5f2ed",
-              backgroundImage: "radial-gradient(circle, rgba(0,0,0,.1) 1px, transparent 1px)",
-              backgroundSize: "22px 22px",
-              position: "relative",
-            }}
-            onClick={() => { setSelectedNodeId(null); setAddNodeMenu(null); }}
-          >
-            <div style={{ position: "relative", width: 1280, height: 960 }}>
+        <div style={{ flex: 1 }} />
 
-              {/* SVG edges */}
-              <svg style={{
-                position: "absolute", top: 0, left: 0,
-                width: "100%", height: "100%",
-                pointerEvents: "none", overflow: "visible",
-              }}>
-                {edges.map((edge, i) => (
-                  <path
-                    key={i}
-                    d={bezierPath(edge.from, edge.to, edge.branch)}
-                    stroke={edge.branch === "yes" ? "#1A9B6C" : edge.branch === "no" ? "#ef4444" : "#c8c2bb"}
-                    strokeWidth={1.5}
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-                ))}
-              </svg>
-
-              {/* Nodes */}
-              {nodes.map(node => (
-                <FlowNode
-                  key={node.id}
-                  node={node}
-                  selected={selectedNodeId === node.id}
-                  onClick={e => { e.stopPropagation(); setSelectedNodeId(node.id); setAddNodeMenu(null); }}
-                  onAddClick={(e, branch) => {
-                    e.stopPropagation();
-                    setAddNodeMenu({ afterNodeId: node.id, x: node.position_x, y: node.position_y + 120, branch });
-                  }}
-                />
-              ))}
-
-              {/* Add node dropdown */}
-              {addNodeMenu && (
-                <AddNodeMenu
-                  x={addNodeMenu.x}
-                  y={addNodeMenu.y}
-                  onSelect={type => addNode(addNodeMenu.afterNodeId, type, addNodeMenu.x, addNodeMenu.y + 140, addNodeMenu.branch)}
-                />
-              )}
-
-              {/* Empty state */}
-              {nodes.length === 0 && (
-                <div style={{
-                  position: "absolute", top: "50%", left: "50%",
-                  transform: "translate(-50%, -50%)",
-                  textAlign: "center", pointerEvents: "none",
-                }}>
-                  <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#555", marginBottom: 4 }}>
-                    Nenhum nó no fluxo
-                  </div>
-                  <div style={{ fontSize: 13, color: "#9b9590" }}>
-                    Os nós aparecerão aqui quando criados via API
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ── INSPECTOR ────────────────────────────────────────────────────── */}
-          {selectedNode && (
-            <Inspector
-              key={selectedNode.id}
-              node={selectedNode}
-              saving={saving}
-              onSave={saveNode}
-              onDelete={deleteNode}
-              onClose={() => setSelectedNodeId(null)}
-            />
-          )}
-        </div>
+        <button
+          onClick={toggleActivation}
+          style={{
+            height: 34, padding: "0 16px", borderRadius: 7,
+            background: campaign?.status === "active" ? "#f5f2ed" : "#111",
+            color: campaign?.status === "active" ? "#555" : "#fff",
+            border: campaign?.status === "active" ? "1px solid #e0dbd4" : "none",
+            fontFamily: "'Outfit', sans-serif", fontSize: 13, fontWeight: 500,
+            cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+          }}
+        >
+          {campaign?.status === "active" ? "⏸ Pausar" : "▶ Ativar campanha"}
+        </button>
       </div>
-    </>
+
+      {/* ── Workspace ────────────────────────────────────────────────── */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+
+        {/* ── Palette ──────────────────────────────────────────────── */}
+        <div style={{
+          width: 196, flexShrink: 0,
+          background: "#fff", borderRight: "1px solid #e8e4df",
+          padding: "16px 12px", overflowY: "auto",
+          display: "flex", flexDirection: "column", gap: 18,
+        }}>
+          <div>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa", padding: "0 4px", marginBottom: 8 }}>
+              Gatilhos
+            </div>
+            {PALETTE_TRIGGERS.map((item, i) => <PaletteItem key={i} item={item} />)}
+          </div>
+          <div>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa", padding: "0 4px", marginBottom: 8 }}>
+              Ações
+            </div>
+            {PALETTE_ACTIONS.map((item, i) => <PaletteItem key={i} item={item} />)}
+          </div>
+        </div>
+
+        {/* ── Canvas (React Flow) ───────────────────────────────────── */}
+        <div ref={reactFlowWrapper} style={{ flex: 1, position: "relative" }}>
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            onNodeDragStop={onNodeDragStop}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            nodeTypes={NODE_TYPES}
+            fitView={rfNodes.length > 0}
+            fitViewOptions={{ padding: 0.3 }}
+            deleteKeyCode={null}
+            minZoom={0.3}
+            maxZoom={2}
+            style={{ background: "#f5f2ed" }}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={22}
+              size={1}
+              color="rgba(0,0,0,.12)"
+            />
+            <Controls position="bottom-right" />
+
+            {/* Empty state */}
+            {rfNodes.length === 0 && (
+              <Panel position="top-center" style={{ marginTop: "30vh" }}>
+                <div style={{ textAlign: "center", fontFamily: "'Outfit', sans-serif" }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: "#333", marginBottom: 6 }}>Nenhum nó no fluxo</p>
+                  <p style={{ fontSize: 13, color: "#9b9590" }}>Arraste um item da paleta esquerda para o canvas</p>
+                </div>
+              </Panel>
+            )}
+          </ReactFlow>
+        </div>
+
+        {/* ── Inspector ─────────────────────────────────────────────── */}
+        {selectedDbNode && (
+          <Inspector
+            key={selectedDbNode.id}
+            node={selectedDbNode}
+            saving={saving}
+            onSave={saveNode}
+            onDelete={deleteNode}
+            onClose={() => setSelectedNodeId(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Public export (wraps with ReactFlowProvider) ─────────────────────────────
+export function CadenceFlowBuilder({ campaignId }: { campaignId: string }) {
+  return (
+    <ReactFlowProvider>
+      <FlowBuilderInner campaignId={campaignId} />
+    </ReactFlowProvider>
   );
 }
