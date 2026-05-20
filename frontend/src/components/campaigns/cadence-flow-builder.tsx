@@ -63,25 +63,32 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; border: string 
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function getDefaultConfig(type: CampaignNodeType): Record<string, unknown> {
+function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<string, unknown> {
   switch (type) {
-    case "trigger":   return { trigger_type: "no_message", days: 30 };
+    case "trigger":   return { trigger_type: subtype || "no_message", days: 30 };
     case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
     case "wait":      return { days: 3, send_start_hour: 7, send_end_hour: 18 };
-    case "condition": return { condition_type: "replied_recently", days: 5 };
-    case "action":    return { action_type: "move_stage", stage_id: "" };
+    case "condition": return { condition_type: subtype || "replied_recently", days: 5 };
+    case "action":    return { action_type: subtype || "move_stage", stage_id: "" };
     case "end":       return { label: "Concluído", final_actions: [] };
     default:          return {};
   }
 }
 
+const TRIGGER_LABELS: Record<string, string> = {
+  no_message: "Sem mensagem", stage_stagnation: "Estagnação", stage_enter: "Entrada em stage", post_broadcast: "Pós-disparo",
+};
+const ACTION_LABELS: Record<string, string> = {
+  move_stage: "Mover stage", activate_agent: "Ativar agente", deactivate_agent: "Desativar agente", add_tag: "Adicionar tag",
+};
+
 function nodeDetail(type: CampaignNodeType, config: Record<string, unknown>): string {
   switch (type) {
-    case "trigger":   return (config.trigger_type as string) ?? "";
+    case "trigger":   return TRIGGER_LABELS[config.trigger_type as string] ?? (config.trigger_type as string) ?? "";
     case "send":      return (config.template_name as string) || "template não definido";
     case "wait":      return `${config.days ?? 1} dia(s)`;
     case "condition": return (config.condition_type as string) ?? "";
-    case "action":    return (config.action_type as string) ?? "";
+    case "action":    return ACTION_LABELS[config.action_type as string] ?? (config.action_type as string) ?? "";
     case "end":       return (config.label as string) || "Encerrar";
     default:          return "";
   }
@@ -232,27 +239,30 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
 const NODE_TYPES = { campaignNode: CampaignFlowNode };
 
 // ─── Palette items ─────────────────────────────────────────────────────────────
-const PALETTE_TRIGGERS: { type: CampaignNodeType; icon: string; label: string; desc: string }[] = [
-  { type: "trigger", icon: "⚡", label: "Stage move",    desc: "Lead entra em stage" },
-  { type: "trigger", icon: "🕐", label: "Estagnação",    desc: "Parado X dias" },
-  { type: "trigger", icon: "💤", label: "Sem mensagem",  desc: "Silêncio X dias" },
-  { type: "trigger", icon: "📡", label: "Pós-disparo",   desc: "Após broadcast" },
+type PaletteItem = { type: CampaignNodeType; subtype: string; icon: string; label: string; desc: string };
+
+const PALETTE_TRIGGERS: PaletteItem[] = [
+  { type: "trigger", subtype: "stage_enter",      icon: "⚡", label: "Entrada em stage", desc: "Lead entra em stage" },
+  { type: "trigger", subtype: "stage_stagnation", icon: "🕐", label: "Estagnação",        desc: "Parado X dias" },
+  { type: "trigger", subtype: "no_message",       icon: "💤", label: "Sem mensagem",      desc: "Silêncio X dias" },
+  { type: "trigger", subtype: "post_broadcast",   icon: "📡", label: "Pós-disparo",       desc: "Após broadcast" },
 ];
-const PALETTE_ACTIONS: { type: CampaignNodeType; icon: string; label: string; desc: string }[] = [
-  { type: "send",      icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
-  { type: "wait",      icon: "⏱", label: "Aguardar",        desc: "Delay em dias" },
-  { type: "condition", icon: "🔀", label: "Condição",        desc: "Ramificação lógica" },
-  { type: "action",    icon: "📋", label: "Mover stage",     desc: "Kanban move" },
-  { type: "action",    icon: "🤖", label: "Ativar agente",   desc: "Assign ValerIA" },
-  { type: "end",       icon: "🏁", label: "Encerrar",        desc: "Fim da campanha" },
+const PALETTE_ACTIONS: PaletteItem[] = [
+  { type: "send",      subtype: "",                icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
+  { type: "wait",      subtype: "",                icon: "⏱", label: "Aguardar",        desc: "Delay em dias" },
+  { type: "condition", subtype: "replied_recently", icon: "🔀", label: "Condição",       desc: "Ramificação lógica" },
+  { type: "action",    subtype: "move_stage",      icon: "📋", label: "Mover stage",     desc: "Kanban move" },
+  { type: "action",    subtype: "activate_agent",  icon: "🤖", label: "Ativar agente",   desc: "Assign ValerIA" },
+  { type: "end",       subtype: "",                icon: "🏁", label: "Encerrar",        desc: "Fim da campanha" },
 ];
 
-function PaletteItem({ item }: { item: typeof PALETTE_TRIGGERS[number] }) {
+function PaletteItemComp({ item }: { item: PaletteItem }) {
   const meta = NODE_META[item.type];
   const iconBg = meta.iconBg;
 
   const onDragStart = (e: DragEvent) => {
     e.dataTransfer.setData("application/reactflow-type", item.type);
+    e.dataTransfer.setData("application/reactflow-subtype", item.subtype);
     e.dataTransfer.effectAllowed = "move";
   };
 
@@ -511,12 +521,13 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const onDrop = useCallback(async (e: DragEvent) => {
     e.preventDefault();
     const type = e.dataTransfer.getData("application/reactflow-type") as CampaignNodeType;
+    const subtype = e.dataTransfer.getData("application/reactflow-subtype");
     if (!type) return;
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const res = await fetch(`/api/campaigns/${campaignId}/nodes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, config: getDefaultConfig(type), position_x: Math.round(position.x), position_y: Math.round(position.y) }),
+      body: JSON.stringify({ type, config: getDefaultConfig(type, subtype), position_x: Math.round(position.x), position_y: Math.round(position.y) }),
     });
     if (!res.ok) return;
     const newNode: CampaignNode = await res.json();
@@ -632,13 +643,13 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa", padding: "0 4px", marginBottom: 8 }}>
               Gatilhos
             </div>
-            {PALETTE_TRIGGERS.map((item, i) => <PaletteItem key={i} item={item} />)}
+            {PALETTE_TRIGGERS.map((item, i) => <PaletteItemComp key={i} item={item} />)}
           </div>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa", padding: "0 4px", marginBottom: 8 }}>
               Ações
             </div>
-            {PALETTE_ACTIONS.map((item, i) => <PaletteItem key={i} item={item} />)}
+            {PALETTE_ACTIONS.map((item, i) => <PaletteItemComp key={i} item={item} />)}
           </div>
         </div>
 
