@@ -2,19 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-interface AgentProfile {
-  id: string;
-  name: string;
-}
-
 interface Channel {
   id: string;
   name: string;
   phone: string;
   provider: "meta_cloud" | "evolution";
   provider_config: Record<string, string>;
-  agent_profile_id: string | null;
-  agent_profiles: AgentProfile | null;
   is_active: boolean;
   mode: "ai" | "human";
   created_at: string;
@@ -24,7 +17,6 @@ interface FormData {
   name: string;
   provider: "meta_cloud" | "evolution";
   phone: string;
-  agent_profile_id: string;
   is_active: boolean;
   mode: "ai" | "human";
   // Evolution fields
@@ -42,7 +34,6 @@ const EMPTY_FORM: FormData = {
   name: "",
   provider: "evolution",
   phone: "",
-  agent_profile_id: "",
   is_active: true,
   mode: "ai",
   evo_api_url: "",
@@ -56,7 +47,6 @@ const EMPTY_FORM: FormData = {
 
 export default function CanaisPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
-  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -79,16 +69,9 @@ export default function CanaisPage() {
     setLoading(false);
   }, []);
 
-  const fetchProfiles = useCallback(async () => {
-    const res = await fetch("/api/agent-profiles");
-    const data = await res.json();
-    setProfiles(data);
-  }, []);
-
   useEffect(() => {
     fetchChannels();
-    fetchProfiles();
-  }, [fetchChannels, fetchProfiles]);
+  }, [fetchChannels]);
 
   // Check connection status for Evolution channels
   useEffect(() => {
@@ -121,7 +104,6 @@ export default function CanaisPage() {
       phone: form.provider === "meta_cloud" ? form.phone : "",
       provider: form.provider,
       provider_config: providerConfig,
-      agent_profile_id: form.agent_profile_id || null,
       is_active: form.is_active,
       mode: form.mode,
     };
@@ -153,7 +135,6 @@ export default function CanaisPage() {
       name: ch.name,
       provider: ch.provider,
       phone: ch.phone || "",
-      agent_profile_id: ch.agent_profile_id || "",
       is_active: ch.is_active,
       mode: ch.mode ?? "ai",
       evo_api_url: config.api_url || "",
@@ -284,9 +265,7 @@ export default function CanaisPage() {
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Nome</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Telefone</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Provider</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Agente</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Modo</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Conexao</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Ativo</th>
               <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Acoes</th>
             </tr>
@@ -303,9 +282,6 @@ export default function CanaisPage() {
                       {ch.provider === "meta_cloud" ? "Meta" : "Evolution"}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-[14px] text-[#7b7b78]">
-                    {ch.agent_profiles?.name || <span className="text-[#7b7b78]">Sem agente</span>}
-                  </td>
                   <td className="px-4 py-3">
                     {ch.mode === "human" ? (
                       <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
@@ -314,23 +290,6 @@ export default function CanaisPage() {
                     ) : (
                       <span className="bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20">
                         IA
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {ch.provider === "evolution" ? (
-                      connStatus?.connected ? (
-                        <span className="bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20">
-                          Conectado
-                        </span>
-                      ) : (
-                        <span className="bg-[#c41c1c]/10 text-[#c41c1c] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#c41c1c]/20">
-                          Desconectado
-                        </span>
-                      )
-                    ) : (
-                      <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
-                        Webhook
                       </span>
                     )}
                   </td>
@@ -368,7 +327,7 @@ export default function CanaisPage() {
             })}
             {channels.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-[14px] text-[#7b7b78]">
+                <td colSpan={6} className="px-4 py-12 text-center text-[14px] text-[#7b7b78]">
                   Nenhum canal configurado. Clique em &quot;+ Novo Canal&quot; para comecar.
                 </td>
               </tr>
@@ -495,21 +454,6 @@ export default function CanaisPage() {
                   </div>
                 </>
               )}
-
-              {/* Agent Profile */}
-              <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Agente IA</label>
-                <select
-                  value={form.agent_profile_id}
-                  onChange={(e) => setForm({ ...form, agent_profile_id: e.target.value })}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
-                >
-                  <option value="">Nenhum (100% humano)</option>
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
 
               {/* Channel Mode */}
               <div>
