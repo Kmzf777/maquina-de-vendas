@@ -78,7 +78,7 @@ async def check_campaign_triggers(now: datetime | None = None) -> None:
         if not stage:
             continue
         cutoff = (now - timedelta(days=days)).isoformat()
-        leads = sb.table("leads").select("id, phone").eq("stage", stage).lte("entered_stage_at", cutoff).limit(20).execute().data
+        leads = sb.table("leads").select("id, phone").eq("env_tag", _ENV_TAG).eq("stage", stage).lte("entered_stage_at", cutoff).limit(20).execute().data
         for lead in leads:
             campaign_id = trigger_node["campaign_id"]
             if is_already_enrolled(campaign_id, lead["id"]) or not trigger_node.get("next_node_id"):
@@ -95,7 +95,7 @@ async def check_campaign_triggers(now: datetime | None = None) -> None:
         stage = cfg.get("stage_filter")
         if not stage:
             continue
-        leads = sb.table("leads").select("id, phone").eq("stage", stage).limit(20).execute().data
+        leads = sb.table("leads").select("id, phone").eq("env_tag", _ENV_TAG).eq("stage", stage).limit(20).execute().data
         for lead in leads:
             campaign_id = trigger_node["campaign_id"]
             if is_already_enrolled(campaign_id, lead["id"]) or not trigger_node.get("next_node_id"):
@@ -144,6 +144,7 @@ async def process_campaign_enrollments(now: datetime | None = None) -> None:
 
             elif node_type == "end":
                 _execute_end_node(enrollment, node, lead)
+                complete_enrollment(enrollment["id"])
                 continue
 
             # Advance to next_node_id
@@ -278,7 +279,6 @@ def _execute_end_node(enrollment: dict, node: dict, lead: dict) -> None:
     for action in cfg.get("final_actions", []):
         fake_node = {"config": action, "type": "action"}
         _execute_action_node(enrollment, fake_node, lead)
-    complete_enrollment(enrollment["id"])
     logger.info("[CAMPAIGNS] Enrollment %s completed (end node)", enrollment["id"])
 
 
