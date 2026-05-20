@@ -120,6 +120,9 @@ def save_message(
     media_url: str | None = None,
     message_type: str | None = None,
     wamid: str | None = None,
+    document_name: str | None = None,
+    media_mime: str | None = None,
+    metadata: dict | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
@@ -137,6 +140,12 @@ def save_message(
     if wamid is not None:
         msg["wamid"] = wamid
         msg["delivery_status"] = "sent"
+    if document_name is not None:
+        msg["document_name"] = document_name
+    if media_mime is not None:
+        msg["media_mime"] = media_mime
+    if metadata is not None:
+        msg["metadata"] = metadata
     logger.info(f"[DEBUG-SAVE_MESSAGE] enter payload={msg}")
     try:
         result = sb.table("messages").insert(msg).execute()
