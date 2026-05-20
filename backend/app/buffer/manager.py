@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -25,18 +26,17 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     channel_id = msg.channel_id or ""
 
     # Determine text content (will be resolved later for media)
-    import base64 as _b64
     _MEDIA_TYPES = ("image", "video", "audio", "document", "sticker")
     _META_TYPES = ("location", "contact", "reaction")
     if msg.media_url and msg.type in _MEDIA_TYPES:
         if msg.type == "document" and msg.document_name:
-            fname_b64 = _b64.b64encode(msg.document_name.encode()).decode()
+            fname_b64 = base64.b64encode(msg.document_name.encode()).decode()
             placeholder = f"[{msg.type}: media_url={msg.media_url} filename_b64={fname_b64}]"
         else:
             placeholder = f"[{msg.type}: media_url={msg.media_url}]"
         text = f"{msg.text}\n{placeholder}" if msg.text else placeholder
     elif msg.metadata and msg.type in _META_TYPES:
-        meta_b64 = _b64.b64encode(json.dumps(msg.metadata).encode()).decode()
+        meta_b64 = base64.b64encode(json.dumps(msg.metadata).encode()).decode()
         text = f"[{msg.type}: meta_b64={meta_b64}]"
     elif msg.text:
         text = msg.text
