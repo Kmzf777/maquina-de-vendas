@@ -655,16 +655,19 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
       newNode,
     ]);
     setRFNodes(prev => [...prev, toRFNode(newNode)]);
-    setRFEdges(prev => [...prev, {
-      id: `${sourceId}→${newNode.id}`,
-      source: sourceId,
-      sourceHandle: "out",
-      target: newNode.id,
-      targetHandle: "in",
-      style: { stroke: "#c8c2bb", strokeWidth: 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: "#c8c2bb", width: 14, height: 14 },
-      type: "smoothstep",
-    } as Edge]);
+    setRFEdges(prev => [
+      ...prev.filter(e => !(e.source === sourceId && e.sourceHandle === "out")),
+      {
+        id: `${sourceId}→${newNode.id}`,
+        source: sourceId,
+        sourceHandle: "out",
+        target: newNode.id,
+        targetHandle: "in",
+        style: { stroke: "#c8c2bb", strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#c8c2bb", width: 14, height: 14 },
+        type: "smoothstep",
+      } as Edge,
+    ]);
   }, [campaignId, rfNodes, setRFNodes, setRFEdges, setDbNodes]);
 
   // Keep module-level ref updated so QuickAddButton can call it
