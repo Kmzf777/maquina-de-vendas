@@ -257,7 +257,7 @@ const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "end",       subtype: "",                icon: "🏁", label: "Encerrar",        desc: "Fim da campanha" },
 ];
 
-function PaletteItemComp({ item }: { item: PaletteItem }) {
+function PaletteItemComp({ item, onAdd }: { item: PaletteItem; onAdd: (item: PaletteItem) => void }) {
   const meta = NODE_META[item.type];
   const iconBg = meta.iconBg;
 
@@ -270,11 +270,12 @@ function PaletteItemComp({ item }: { item: PaletteItem }) {
     <div
       draggable
       onDragStart={onDragStart}
+      onClick={() => onAdd(item)}
       style={{
         display: "flex", alignItems: "center", gap: 9,
         padding: "8px 10px", borderRadius: 8,
         border: "1px solid #ede9e3", marginBottom: 5,
-        cursor: "grab", background: "#faf9f6",
+        cursor: "pointer", background: "#faf9f6",
         transition: "all .14s",
         userSelect: "none",
       }}
@@ -518,23 +519,46 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     e.dataTransfer.dropEffect = "move";
   }, []);
 
-  const onDrop = useCallback(async (e: DragEvent) => {
-    e.preventDefault();
-    const payload = _dragPayload;
-    _dragPayload = null;
-    if (!payload) return;
-    const { type, subtype } = payload;
-    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+  // ── Add a node to canvas (shared by click and drop) ───────────────────────
+  const addNodeToCanvas = useCallback(async (item: PaletteItem, clientPos?: { x: number; y: number }) => {
+    const { type, subtype } = item;
+
+    // Position: use dropped position if provided, otherwise auto-stack
+    let position: { x: number; y: number };
+    if (clientPos && reactFlowWrapper.current) {
+      position = screenToFlowPosition({ x: clientPos.x, y: clientPos.y });
+    } else {
+      // Stack nodes: find lowest Y among existing nodes, place below with offset
+      const baseX = 300;
+      const baseY = rfNodes.length > 0
+        ? Math.max(...rfNodes.map(n => n.position.y)) + 160
+        : 100;
+      position = { x: baseX, y: baseY };
+    }
+
     const res = await fetch(`/api/campaigns/${campaignId}/nodes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, config: getDefaultConfig(type, subtype), position_x: Math.round(position.x), position_y: Math.round(position.y) }),
+      body: JSON.stringify({
+        type,
+        config: getDefaultConfig(type, subtype),
+        position_x: Math.round(position.x),
+        position_y: Math.round(position.y),
+      }),
     });
     if (!res.ok) return;
     const newNode: CampaignNode = await res.json();
     setDbNodes(prev => [...prev, newNode]);
     setRFNodes(prev => [...prev, toRFNode(newNode)]);
-  }, [campaignId, screenToFlowPosition, setRFNodes]);
+  }, [campaignId, screenToFlowPosition, setRFNodes, rfNodes]);
+
+  const onDrop = useCallback(async (e: DragEvent) => {
+    e.preventDefault();
+    const payload = _dragPayload;
+    _dragPayload = null;
+    if (!payload) return;
+    await addNodeToCanvas(payload, { x: e.clientX, y: e.clientY });
+  }, [addNodeToCanvas]);
 
   // ── Save inspector config ─────────────────────────────────────────────────
   const saveNode = useCallback(async (nodeId: string, config: Record<string, unknown>) => {
@@ -644,13 +668,13 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa", padding: "0 4px", marginBottom: 8 }}>
               Gatilhos
             </div>
-            {PALETTE_TRIGGERS.map((item, i) => <PaletteItemComp key={i} item={item} />)}
+            {PALETTE_TRIGGERS.map((item, i) => <PaletteItemComp key={i} item={item} onAdd={addNodeToCanvas} />)}
           </div>
           <div>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#b8b2aa", padding: "0 4px", marginBottom: 8 }}>
               Ações
             </div>
-            {PALETTE_ACTIONS.map((item, i) => <PaletteItemComp key={i} item={item} />)}
+            {PALETTE_ACTIONS.map((item, i) => <PaletteItemComp key={i} item={item} onAdd={addNodeToCanvas} />)}
           </div>
         </div>
 
@@ -693,7 +717,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
                 <div style={{ textAlign: "center", fontFamily: "'Outfit', sans-serif" }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
                   <p style={{ fontSize: 15, fontWeight: 600, color: "#333", marginBottom: 6 }}>Nenhum nó no fluxo</p>
-                  <p style={{ fontSize: 13, color: "#9b9590" }}>Arraste um item da paleta esquerda para o canvas</p>
+                  <p style={{ fontSize: 13, color: "#9b9590" }}>Clique em um item da paleta esquerda para adicionar</p>
                 </div>
               </Panel>
             )}
