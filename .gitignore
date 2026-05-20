@@ -29,3 +29,6 @@ dist/
 #DB
 .conversasreais
 .rags.claude/
+
+# Logs (keep directory, ignore log files)
+logs/*.log

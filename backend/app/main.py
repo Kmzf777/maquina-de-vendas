@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import logging.handlers
+import os
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
@@ -15,9 +17,41 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 
+_LOG_FMT = logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+
+
+def _setup_file_logging() -> None:
+    """Add a RotatingFileHandler to all loggers when LOG_FILE env var is set.
+
+    Called inside lifespan so it runs after uvicorn has configured its own
+    handlers (uvicorn.access has propagate=False and needs its own handler).
+    """
+    log_file = os.environ.get("LOG_FILE")
+    if not log_file:
+        return
+
+    log_dir = os.path.dirname(os.path.abspath(log_file))
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
+    fh = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+        delay=False,
+    )
+    fh.setFormatter(_LOG_FMT)
+
+    for name in ("", "uvicorn", "uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in lg.handlers):
+            lg.addHandler(fh)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _setup_file_logging()
     app.state.redis = aioredis.from_url(
         settings.redis_url, decode_responses=True,
         socket_connect_timeout=5, socket_timeout=5,
