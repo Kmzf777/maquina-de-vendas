@@ -33,15 +33,16 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const filteredLeads = leads.filter((l) => {
-    if (!leadSearch) return true;
-    const q = leadSearch.toLowerCase();
-    return (
-      (l.name || "").toLowerCase().includes(q) ||
-      l.phone.includes(q) ||
-      (l.company || "").toLowerCase().includes(q)
-    );
-  }).slice(0, 8);
+  const filteredLeads = !leadSearch.trim()
+    ? []
+    : leads.filter((l) => {
+        const q = leadSearch.toLowerCase();
+        return (
+          (l.name || "").toLowerCase().includes(q) ||
+          l.phone.includes(q) ||
+          (l.company || "").toLowerCase().includes(q)
+        );
+      }).slice(0, 30);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -79,24 +80,30 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
               className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
               readOnly={!!preselectedLead}
             />
-            {showDropdown && !selectedLeadId && !preselectedLead && filteredLeads.length > 0 && (
+            {showDropdown && !selectedLeadId && !preselectedLead && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-[#dedbd6] rounded-[6px] z-10 max-h-48 overflow-y-auto">
-                {filteredLeads.map((l) => (
-                  <button
-                    key={l.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedLeadId(l.id);
-                      setLeadSearch(l.name || l.phone);
-                      setShowDropdown(false);
-                      if (!title) setTitle(`${l.name || l.phone} - Oportunidade`);
-                    }}
-                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-[#faf9f6] flex justify-between transition-colors"
-                  >
-                    <span className="text-[#111111]">{l.name || l.phone}</span>
-                    <span className="text-[#7b7b78]">{l.phone}</span>
-                  </button>
-                ))}
+                {!leadSearch.trim() ? (
+                  <p className="px-3 py-2 text-[13px] text-[#7b7b78]">Digite nome, telefone ou empresa para buscar...</p>
+                ) : filteredLeads.length === 0 ? (
+                  <p className="px-3 py-2 text-[13px] text-[#7b7b78]">Nenhum lead encontrado.</p>
+                ) : (
+                  filteredLeads.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedLeadId(l.id);
+                        setLeadSearch(l.name || l.phone);
+                        setShowDropdown(false);
+                        if (!title) setTitle(`${l.name || l.phone} - Oportunidade`);
+                      }}
+                      className="w-full text-left px-3 py-2 text-[13px] hover:bg-[#faf9f6] flex justify-between transition-colors"
+                    >
+                      <span className="text-[#111111]">{l.name || l.phone}</span>
+                      <span className="text-[#7b7b78]">{l.phone}</span>
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>
