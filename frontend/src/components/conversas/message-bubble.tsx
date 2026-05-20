@@ -46,6 +46,10 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
   const isImage = message.message_type === "image";
   const isDocument = message.message_type === "document";
   const isVideo = message.message_type === "video";
+  const isSticker = message.message_type === "sticker";
+  const isLocation = message.message_type === "location";
+  const isContact = message.message_type === "contact";
+  const isReaction = message.message_type === "reaction";
 
   // New messages: media_url is a Supabase Storage URL (https://...) or object URL (blob:...)
   // Legacy messages: media_url is a Meta media_id (numeric string) — use proxy fallback
@@ -132,14 +136,118 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
             </div>
           )
         ) : isDocument ? (
-          <div className="flex items-center gap-2 py-1">
-            <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
-            </svg>
-            <span className="text-[13px] truncate max-w-[180px]">
-              {message.content || "Documento"}
-            </span>
-          </div>
+          (() => {
+            const docName = message.document_name || message.content || "Documento";
+            const downloadHref = mediaSrc
+              ? (() => {
+                  const url = new URL(mediaSrc, "http://x");
+                  url.searchParams.set("download", "1");
+                  url.searchParams.set("filename", docName);
+                  return url.pathname + url.search;
+                })()
+              : null;
+            return (
+              <div className="flex items-center gap-2 py-1">
+                <svg className="w-5 h-5 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
+                </svg>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[13px] truncate max-w-[180px]">{docName}</span>
+                  {downloadHref && (
+                    <a
+                      href={downloadHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5"
+                    >
+                      Baixar
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })()
+        ) : isSticker ? (
+          mediaSrc ? (
+            <img
+              src={mediaSrc}
+              alt="Sticker"
+              className="max-w-[160px] max-h-[160px] object-contain block"
+            />
+          ) : (
+            <span className="text-[13px] opacity-60">Sticker</span>
+          )
+        ) : isLocation ? (
+          (() => {
+            const meta = message.metadata as { lat?: number; lng?: number; name?: string; address?: string } | undefined;
+            const mapsUrl = meta?.lat !== undefined && meta?.lng !== undefined
+              ? `https://maps.google.com/?q=${meta.lat},${meta.lng}`
+              : null;
+            return (
+              <div className="flex items-start gap-2 py-1">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                </svg>
+                <div className="flex flex-col min-w-0">
+                  {(meta?.name || meta?.address) && (
+                    <span className="text-[13px]">{meta.name || meta.address}</span>
+                  )}
+                  {mapsUrl && (
+                    <a
+                      href={mapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5"
+                    >
+                      Ver no mapa
+                    </a>
+                  )}
+                  {!meta?.name && !meta?.address && !mapsUrl && (
+                    <span className="text-[13px] opacity-60">Localização</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()
+        ) : isContact ? (
+          (() => {
+            const meta = message.metadata as { name?: string; phone?: string; vcard?: string } | undefined;
+            const vcardUrl = meta?.vcard
+              ? `data:text/vcard;charset=utf-8,${encodeURIComponent(meta.vcard)}`
+              : null;
+            return (
+              <div className="flex items-start gap-2 py-1">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z"/>
+                </svg>
+                <div className="flex flex-col min-w-0">
+                  {meta?.name && <span className="text-[13px] font-medium">{meta.name}</span>}
+                  {meta?.phone && <span className="text-[12px] opacity-70">{meta.phone}</span>}
+                  {vcardUrl && (
+                    <a
+                      href={vcardUrl}
+                      download={`${meta?.name || "contato"}.vcf`}
+                      className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5"
+                    >
+                      Baixar contato
+                    </a>
+                  )}
+                  {!meta?.name && !meta?.phone && (
+                    <span className="text-[13px] opacity-60">Contato</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()
+        ) : isReaction ? (
+          (() => {
+            const meta = message.metadata as { emoji?: string } | undefined;
+            return (
+              <span className="text-[13px] opacity-80">
+                Reagiu: {meta?.emoji ?? "?"}
+              </span>
+            );
+          })()
         ) : (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
