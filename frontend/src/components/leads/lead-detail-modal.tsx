@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { LeadBroadcastHistory } from "./lead-broadcast-history";
 import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { AGENT_STAGES, LEAD_CHANNELS, DEAL_STAGES } from "@/lib/constants";
@@ -443,6 +444,14 @@ export function LeadDetailModal({
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Disparos */}
+              <div className="mt-6">
+                <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">
+                  Disparos Recebidos
+                </p>
+                <LeadBroadcastHistory leadId={lead.id} />
               </div>
             </div>
           )}

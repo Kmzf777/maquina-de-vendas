@@ -82,6 +82,9 @@ export interface Message {
   created_at: string;
   message_type?: string;
   media_url?: string;
+  document_name?: string | null;
+  media_mime?: string | null;
+  metadata?: Record<string, unknown> | null;
   wamid?: string | null;
   delivery_status?: "sent" | "delivered" | "read" | null;
 }
@@ -141,10 +144,17 @@ export interface Broadcast {
   send_interval_max: number;
   cadence_id: string | null;
   agent_profile_id: string | null;
+  move_to_stage_id: string | null;
   created_at: string;
   updated_at: string;
   // Joined
   cadences?: { id: string; name: string } | null;
+  move_to_stage?: {
+    id: string;
+    label: string;
+    pipeline_id: string;
+    pipelines: { name: string } | null;
+  } | null;
 }
 
 export interface BroadcastLead {
@@ -154,7 +164,16 @@ export interface BroadcastLead {
   status: "pending" | "sent" | "failed" | "delivered";
   sent_at: string | null;
   error_message: string | null;
+  deal_moved_at: string | null;
+  first_replied_at: string | null;
   leads?: { id: string; name: string | null; phone: string };
+}
+
+export interface BroadcastMetrics {
+  replied_count: number;
+  reply_rate: number;        // 0–100
+  avg_reply_secs: number | null;
+  median_reply_secs: number | null;
 }
 
 export interface Cadence {
@@ -280,4 +299,23 @@ export interface Conversation {
   leads?: Lead;
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null } | null;
   agent_profiles?: { id: string; name: string } | null;
+}
+
+export interface LeadBroadcastEntry {
+  id: string;
+  broadcast_id: string;
+  broadcast_name: string;
+  broadcast_status: string;
+  message_status: string; // pending | sent | delivered | failed
+  sent_at: string | null;
+  first_replied_at: string | null;
+}
+
+export interface SpamConflict {
+  lead_id: string;
+  lead_name: string | null;
+  lead_phone: string;
+  last_broadcast_id: string;
+  last_broadcast_name: string;
+  last_sent_at: string;
 }

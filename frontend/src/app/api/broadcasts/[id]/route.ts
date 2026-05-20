@@ -9,7 +9,7 @@ export async function GET(
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("broadcasts")
-    .select("*, cadences(id, name)")
+    .select("*, cadences(id, name), move_to_stage:pipeline_stages!move_to_stage_id(id, label, pipeline_id, pipelines(name))")
     .eq("id", id)
     .single();
 
