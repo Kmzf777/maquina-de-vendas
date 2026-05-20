@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useRealtimeBroadcasts } from "@/hooks/use-realtime-broadcasts";
-import { useRealtimeCadences } from "@/hooks/use-realtime-cadences";
+import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
@@ -40,7 +40,7 @@ function CampanhasPageInner() {
   const searchParams = useSearchParams();
 
   const { broadcasts, loading: bLoading } = useRealtimeBroadcasts();
-  const { cadences, loading: cLoading } = useRealtimeCadences();
+  const { campaigns, loading: cLoading, refresh: refreshCampaigns } = useRealtimeCampaigns();
   const [period, setPeriod] = useState("30d");
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
@@ -96,18 +96,20 @@ function CampanhasPageInner() {
     if (!cadenceName.trim()) return;
     setCreatingSaving(true);
     try {
-      const res = await fetch("/api/cadences", {
+      const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: cadenceName.trim() }),
       });
       if (!res.ok) {
         const err = await res.json();
-        alert(`Erro ao criar cadencia: ${err.error || res.statusText}`);
+        alert(`Erro ao criar cadência: ${err.error || res.statusText}`);
         return;
       }
+      const camp = await res.json();
       setCadenceName("");
       setShowCadenceModal(false);
+      router.push(`/campanhas/cadencias/${camp.id}`);
     } catch (e) {
       alert(`Erro de rede: ${e}`);
     } finally {
@@ -237,14 +239,14 @@ function CampanhasPageInner() {
                 </button>
               </div>
               <div className="space-y-3">
-                {cadences.slice(0, 3).map((c) => (
+                {campaigns.slice(0, 3).map((c) => (
                   <div key={c.id} className="flex items-center justify-between">
                     <StatusBadge status={c.status} />
                     <span className="text-[14px] text-[#111111] flex-1 mx-3 truncate">{c.name}</span>
-                    <span className="text-[12px] text-[#7b7b78]">{c.target_type}</span>
+                    <span className="text-[12px] text-[#7b7b78]">{c.nodes?.length ?? 0} nós</span>
                   </div>
                 ))}
-                {cadences.length === 0 && (
+                {campaigns.length === 0 && (
                   <p className="text-[14px] text-[#7b7b78] py-4 text-center">Nenhuma cadência ainda</p>
                 )}
               </div>
@@ -253,7 +255,7 @@ function CampanhasPageInner() {
         )}
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
-        {activeTab === "cadencias" && <CadenceList cadences={cadences} />}
+        {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={refreshCampaigns} />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>
 
