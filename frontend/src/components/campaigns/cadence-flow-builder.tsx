@@ -85,7 +85,7 @@ interface FlowNodeProps {
   node: CampaignNode;
   selected: boolean;
   onClick: (e: React.MouseEvent) => void;
-  onAddClick: (e: React.MouseEvent) => void;
+  onAddClick: (e: React.MouseEvent, branch?: "yes" | "no") => void;
 }
 
 function FlowNode({ node, selected, onClick, onAddClick }: FlowNodeProps) {
@@ -166,7 +166,7 @@ function FlowNode({ node, selected, onClick, onAddClick }: FlowNodeProps) {
             <>
               {/* YES port */}
               <button
-                onClick={onAddClick}
+                onClick={e => onAddClick(e, "yes")}
                 title="Adicionar nó (SIM)"
                 style={{
                   position: "absolute", bottom: -5, left: "27%", marginLeft: -5,
@@ -183,7 +183,7 @@ function FlowNode({ node, selected, onClick, onAddClick }: FlowNodeProps) {
               }}>SIM</div>
               {/* NO port */}
               <button
-                onClick={onAddClick}
+                onClick={e => onAddClick(e, "no")}
                 title="Adicionar nó (NÃO)"
                 style={{
                   position: "absolute", bottom: -5, left: "73%", marginLeft: -5,
@@ -310,7 +310,8 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
   // Reset draft when node changes
   useEffect(() => {
     setDraftConfig(node.config);
-  }, [node.id, node.config]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id]);
 
   const set = (key: string, value: unknown) =>
     setDraftConfig(prev => ({ ...prev, [key]: value }));
@@ -514,7 +515,7 @@ export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
   const [nodes, setNodes] = useState<CampaignNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [addNodeMenu, setAddNodeMenu] = useState<{ afterNodeId: string; x: number; y: number } | null>(null);
+  const [addNodeMenu, setAddNodeMenu] = useState<{ afterNodeId: string; x: number; y: number; branch?: "yes" | "no" } | null>(null);
 
   // Load campaign + nodes
   useEffect(() => {
@@ -527,7 +528,7 @@ export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
   }, [campaignId]);
 
   // ── API actions ──────────────────────────────────────────────────────────────
-  const addNode = async (afterNodeId: string, type: CampaignNodeType, posX: number, posY: number) => {
+  const addNode = async (afterNodeId: string, type: CampaignNodeType, posX: number, posY: number, branch?: "yes" | "no") => {
     const res = await fetch(`/api/campaigns/${campaignId}/nodes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -535,14 +536,15 @@ export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
     });
     if (!res.ok) return;
     const newNode: CampaignNode = await res.json();
-    // Link afterNode.next_node_id → newNode.id
+    const linkField = branch === "yes" ? "yes_node_id" : branch === "no" ? "no_node_id" : "next_node_id";
+    // Link afterNode.[linkField] → newNode.id
     await fetch(`/api/campaigns/${campaignId}/nodes/${afterNodeId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ next_node_id: newNode.id }),
+      body: JSON.stringify({ [linkField]: newNode.id }),
     });
     setNodes(prev => [
-      ...prev.map(n => n.id === afterNodeId ? { ...n, next_node_id: newNode.id } : n),
+      ...prev.map(n => n.id === afterNodeId ? { ...n, [linkField]: newNode.id } : n),
       newNode,
     ]);
     setAddNodeMenu(null);
@@ -748,9 +750,9 @@ export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
                   node={node}
                   selected={selectedNodeId === node.id}
                   onClick={e => { e.stopPropagation(); setSelectedNodeId(node.id); setAddNodeMenu(null); }}
-                  onAddClick={e => {
+                  onAddClick={(e, branch) => {
                     e.stopPropagation();
-                    setAddNodeMenu({ afterNodeId: node.id, x: node.position_x, y: node.position_y + 120 });
+                    setAddNodeMenu({ afterNodeId: node.id, x: node.position_x, y: node.position_y + 120, branch });
                   }}
                 />
               ))}
@@ -760,7 +762,7 @@ export function CadenceFlowBuilder({ campaignId }: CadenceFlowBuilderProps) {
                 <AddNodeMenu
                   x={addNodeMenu.x}
                   y={addNodeMenu.y}
-                  onSelect={type => addNode(addNodeMenu.afterNodeId, type, addNodeMenu.x, addNodeMenu.y + 140)}
+                  onSelect={type => addNode(addNodeMenu.afterNodeId, type, addNodeMenu.x, addNodeMenu.y + 140, addNodeMenu.branch)}
                 />
               )}
 
