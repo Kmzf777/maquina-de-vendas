@@ -179,9 +179,10 @@ function QuickAddButton({ nodeId }: { nodeId: string }) {
     <div
       style={{
         position: "absolute",
-        bottom: -38,
+        top: "100%",
         left: "50%",
         transform: "translateX(-50%)",
+        paddingTop: 8,
         zIndex: 20,
         display: "flex",
         flexDirection: "column",
