@@ -216,45 +216,52 @@ function QuickAddButton({ nodeId }: { nodeId: string }) {
         +
       </button>
 
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: 32,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "#fff",
-            border: "1px solid #e8e4df",
-            borderRadius: 10,
-            boxShadow: "0 8px 24px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06)",
-            padding: "5px 4px",
-            minWidth: 152,
-            zIndex: 30,
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          {QUICK_ADD_ITEMS.map(item => (
-            <button
-              key={`${item.type}-${item.subtype}`}
-              onClick={e => handleAdd(e, item.type, item.subtype)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                width: "100%", padding: "7px 10px",
-                border: "none", background: "transparent",
-                cursor: "pointer", borderRadius: 7,
-                fontFamily: "'Outfit', sans-serif",
-                fontSize: 12, color: "#222", textAlign: "left",
-                transition: "background .1s",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = "#f5f2ed"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-            >
-              <span style={{ fontSize: 14 }}>{item.icon}</span>
-              <span style={{ fontWeight: 500 }}>{item.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            key="quick-add-picker"
+            initial={{ opacity: 0, y: -8, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.95 }}
+            transition={{ duration: 0.13, ease: "easeOut" }}
+            style={{
+              position: "absolute",
+              top: 32,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#fff",
+              border: "1px solid #e8e4df",
+              borderRadius: 10,
+              boxShadow: "0 8px 24px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06)",
+              padding: "5px 4px",
+              minWidth: 152,
+              zIndex: 30,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {QUICK_ADD_ITEMS.map(item => (
+              <button
+                key={`${item.type}-${item.subtype}`}
+                onClick={e => handleAdd(e, item.type, item.subtype)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  width: "100%", padding: "7px 10px",
+                  border: "none", background: "transparent",
+                  cursor: "pointer", borderRadius: 7,
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: 12, color: "#222", textAlign: "left",
+                  transition: "background .1s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#f5f2ed"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <span style={{ fontSize: 14 }}>{item.icon}</span>
+                <span style={{ fontWeight: 500 }}>{item.label}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -278,7 +285,10 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
   };
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, scale: 0.86 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
       onMouseEnter={() => setShowAdd(true)}
       onMouseLeave={() => setShowAdd(false)}
       style={{
@@ -351,7 +361,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
         )
       )}
       {!isEnd && showAdd && <QuickAddButton nodeId={node.id} />}
-    </div>
+    </motion.div>
   );
 });
 
