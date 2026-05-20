@@ -165,6 +165,100 @@ function toRFEdges(nodes: CampaignNode[]): Edge[] {
   return edges;
 }
 
+// ─── QuickAddButton — appears on hover below each non-end node ────────────────
+function QuickAddButton({ nodeId }: { nodeId: string }) {
+  const [open, setOpen] = useState(false);
+
+  const handleAdd = (e: React.MouseEvent<HTMLButtonElement>, type: CampaignNodeType, subtype: string) => {
+    e.stopPropagation();
+    _addNodeBelow?.(nodeId, type, subtype);
+    setOpen(false);
+  };
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: -38,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 20,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 4,
+      }}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        style={{
+          width: 26, height: 26, borderRadius: "50%",
+          background: "#fff",
+          border: "1.5px solid #c8c2bb",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", fontSize: 16, color: "#888",
+          boxShadow: "0 1px 4px rgba(0,0,0,.12)",
+          lineHeight: 1, padding: 0,
+          transition: "border-color .12s, color .12s, box-shadow .12s",
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.borderColor = "#E85D26";
+          e.currentTarget.style.color = "#E85D26";
+          e.currentTarget.style.boxShadow = "0 2px 8px rgba(232,93,38,.25)";
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.borderColor = "#c8c2bb";
+          e.currentTarget.style.color = "#888";
+          e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,.12)";
+        }}
+      >
+        +
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: 32,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#fff",
+            border: "1px solid #e8e4df",
+            borderRadius: 10,
+            boxShadow: "0 8px 24px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06)",
+            padding: "5px 4px",
+            minWidth: 152,
+            zIndex: 30,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          {QUICK_ADD_ITEMS.map(item => (
+            <button
+              key={`${item.type}-${item.subtype}`}
+              onClick={e => handleAdd(e, item.type, item.subtype)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                width: "100%", padding: "7px 10px",
+                border: "none", background: "transparent",
+                cursor: "pointer", borderRadius: 7,
+                fontFamily: "'Outfit', sans-serif",
+                fontSize: 12, color: "#222", textAlign: "left",
+                transition: "background .1s",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#f5f2ed"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+            >
+              <span style={{ fontSize: 14 }}>{item.icon}</span>
+              <span style={{ fontWeight: 500 }}>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Custom Node component (registered at module level — MUST stay outside render) ──
 const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
   const node = data as unknown as CampaignNode;
@@ -173,6 +267,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
   const isCondition = node.type === "condition";
   const isEnd = node.type === "end";
   const isTrigger = node.type === "trigger";
+  const [showAdd, setShowAdd] = useState(false);
   const color = meta.color === "#1a1a1a" ? "#aaa" : meta.color;
   const displayIcon = resolveNodeIcon(node.type, cfg);
 
@@ -183,16 +278,20 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
   };
 
   return (
-    <div style={{
-      width: NODE_W,
-      background: "#ffffff",
-      borderRadius: 10,
-      boxShadow: "0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.08)",
-      border: "1px solid rgba(0,0,0,.06)",
-      fontFamily: "'Outfit', sans-serif",
-      overflow: "visible",
-      position: "relative",
-    }}>
+    <div
+      onMouseEnter={() => setShowAdd(true)}
+      onMouseLeave={() => setShowAdd(false)}
+      style={{
+        width: NODE_W,
+        background: "#ffffff",
+        borderRadius: 10,
+        boxShadow: "0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.08)",
+        border: "1px solid rgba(0,0,0,.06)",
+        fontFamily: "'Outfit', sans-serif",
+        overflow: "visible",
+        position: "relative",
+      }}
+    >
       {/* Top stripe */}
       <div style={{ height: 3, background: meta.color, borderRadius: "10px 10px 0 0" }} />
 
@@ -251,6 +350,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
           <Handle type="source" position={Position.Bottom} id="out" style={{ ...handleStyle, bottom: -5, borderColor: color }} />
         )
       )}
+      {!isEnd && showAdd && <QuickAddButton nodeId={node.id} />}
     </div>
   );
 });
@@ -261,6 +361,15 @@ const NODE_TYPES = { campaignNode: CampaignFlowNode };
 // ─── Drag payload (module-level, bypasses unreliable dataTransfer in React Flow) ─
 type PaletteItem = { type: CampaignNodeType; subtype: string; icon: string; label: string; desc: string };
 let _dragPayload: PaletteItem | null = null;
+let _addNodeBelow: ((sourceId: string, type: CampaignNodeType, subtype: string) => void) | null = null;
+
+const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; label: string }[] = [
+  { type: "send",      subtype: "",                 icon: "📨", label: "Enviar template" },
+  { type: "wait",      subtype: "",                 icon: "⏱",  label: "Aguardar" },
+  { type: "condition", subtype: "replied_recently", icon: "🔀", label: "Condição" },
+  { type: "action",    subtype: "move_stage",       icon: "📋", label: "Ação CRM" },
+  { type: "end",       subtype: "",                 icon: "🏁", label: "Encerrar" },
+];
 
 const PALETTE_TRIGGERS: PaletteItem[] = [
   { type: "trigger", subtype: "stage_enter",      icon: "⚡", label: "Entrada em stage", desc: "Lead entra em stage" },
@@ -504,6 +613,55 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomIn, zoomOut, fitView]);
+
+  // Add node below + auto-connect (Quick-Add button)
+  const addNodeBelow = useCallback(async (sourceId: string, type: CampaignNodeType, subtype: string) => {
+    const sourceRF = rfNodes.find(n => n.id === sourceId);
+    if (!sourceRF) return;
+
+    const res = await fetch(`/api/campaigns/${campaignId}/nodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        config: getDefaultConfig(type, subtype),
+        position_x: Math.round(sourceRF.position.x),
+        position_y: Math.round(sourceRF.position.y + 200),
+      }),
+    });
+    if (!res.ok) return;
+    const newNode: CampaignNode = await res.json();
+
+    // Persist edge: PATCH source node next_node_id
+    await fetch(`/api/campaigns/${campaignId}/nodes/${sourceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ next_node_id: newNode.id }),
+    });
+
+    // Update local state
+    setDbNodes(prev => [
+      ...prev.map(n => n.id === sourceId ? { ...n, next_node_id: newNode.id } : n),
+      newNode,
+    ]);
+    setRFNodes(prev => [...prev, toRFNode(newNode)]);
+    setRFEdges(prev => [...prev, {
+      id: `${sourceId}→${newNode.id}`,
+      source: sourceId,
+      sourceHandle: "out",
+      target: newNode.id,
+      targetHandle: "in",
+      style: { stroke: "#c8c2bb", strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#c8c2bb", width: 14, height: 14 },
+      type: "smoothstep",
+    } as Edge]);
+  }, [campaignId, rfNodes, setRFNodes, setRFEdges, setDbNodes]);
+
+  // Keep module-level ref updated so QuickAddButton can call it
+  useEffect(() => {
+    _addNodeBelow = addNodeBelow;
+    return () => { _addNodeBelow = null; };
+  }, [addNodeBelow]);
 
   // ── Node click → select → show inspector ──────────────────────────────────
   const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
