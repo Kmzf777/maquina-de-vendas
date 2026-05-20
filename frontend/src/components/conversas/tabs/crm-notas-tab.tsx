@@ -32,6 +32,7 @@ export function CrmNotasTab({ leadId }: CrmNotasTabProps) {
   const [newNote, setNewNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -48,17 +49,25 @@ export function CrmNotasTab({ leadId }: CrmNotasTabProps) {
   async function handleAddNote() {
     if (!newNote.trim()) return;
     setSaving(true);
-    const res = await fetch(`/api/leads/${leadId}/notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ author: "Rafael", content: newNote.trim() }),
-    });
-    if (res.ok) {
-      const note = await res.json();
-      setNotes((prev) => [note, ...prev]);
-      setNewNote("");
+    setError(null);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author: "Vendedor", content: newNote.trim() }),
+      });
+      if (res.ok) {
+        const note = await res.json();
+        setNotes((prev) => [note, ...prev]);
+        setNewNote("");
+      } else {
+        setError("Erro ao salvar nota. Tente novamente.");
+      }
+    } catch {
+      setError("Erro ao salvar nota. Tente novamente.");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   const timeline = [
@@ -84,6 +93,10 @@ export function CrmNotasTab({ leadId }: CrmNotasTabProps) {
           Salvar
         </button>
       </div>
+
+      {error && (
+        <p className="text-[12px] text-[#c41c1c]">{error}</p>
+      )}
 
       {loading ? (
         <div className="space-y-2">

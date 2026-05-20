@@ -158,23 +158,25 @@ export function ContactDetail({
         </div>
       )}
 
-      <div className="flex flex-col items-center pt-6 pb-4 px-4 border-b border-[#dedbd6] flex-shrink-0">
-        <div className="w-16 h-16 rounded-full bg-[#8a8a80] flex items-center justify-center text-white text-xl font-medium mb-3">
+      <div className="flex items-center gap-3 px-4 py-4 border-b border-[#dedbd6] flex-shrink-0">
+        <div className="w-10 h-10 rounded-full bg-[#8a8a80] flex-shrink-0 flex items-center justify-center text-white text-sm font-medium">
           {displayName.charAt(0).toUpperCase()}
         </div>
-        <h3 className="text-[15px] font-medium text-[#111111]">{displayName}</h3>
-        <p className="text-[13px] text-[#7b7b78] mt-0.5">{lead?.phone || ""}</p>
-        <div className="flex items-center gap-1.5 mt-2 flex-wrap justify-center">
-          {channel && (
-            <span className="text-[11px] px-2 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78]">
-              {channel.name}
-            </span>
-          )}
-          {lead?.on_hold && (
-            <span className="px-2.5 py-0.5 rounded-[4px] text-[11px] bg-[#dedbd6]/60 text-[#7b7b78]">
-              Em espera
-            </span>
-          )}
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[14px] font-medium text-[#111111] truncate">{displayName}</h3>
+          <p className="text-[12px] text-[#7b7b78] truncate">{lead?.phone || ""}</p>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {channel && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78]">
+                {channel.name}
+              </span>
+            )}
+            {lead?.on_hold && (
+              <span className="px-1.5 py-0.5 rounded-[4px] text-[11px] bg-[#dedbd6]/60 text-[#7b7b78]">
+                Em espera
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -183,7 +185,7 @@ export function ContactDetail({
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`flex-1 py-2.5 text-[11px] font-medium border-b-2 transition-colors ${
+            className={`flex-1 py-2 text-[12px] font-medium border-b-2 transition-colors ${
               activeTab === tab.key
                 ? "text-[#111111] border-[#111111]"
                 : "text-[#7b7b78] border-transparent hover:text-[#111111]"

@@ -101,12 +101,6 @@ export function CrmPerfilTab({
             ))}
           </select>
         </div>
-        {stageInfo && (
-          <div className="flex items-center gap-1.5 text-[13px] text-[#7b7b78]">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: stageInfo.dotColor }} />
-            {stageInfo.label}
-          </div>
-        )}
         <EditableField label="Atribuido a" value={lead.assigned_to} onSave={(v) => onSaveField("assigned_to", v)} placeholder="Ninguem" />
       </div>
 

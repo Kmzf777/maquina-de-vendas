@@ -44,7 +44,7 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
 
       <div>
         <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Engajamento</p>
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-2 gap-2.5">
           <div className="border border-[#dedbd6] rounded-[8px] p-3 text-center">
             <p className="text-[20px] font-semibold text-[#111111]">{daysInCrm}d</p>
             <p className="text-[11px] text-[#7b7b78] mt-1">No CRM</p>
@@ -55,17 +55,15 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
             </p>
             <p className="text-[11px] text-[#7b7b78] mt-1">No stage atual</p>
           </div>
-          <div className="border border-[#dedbd6] rounded-[8px] p-3 text-center">
-            <p className="text-[20px] font-semibold text-[#111111]">
-              {lead.channel || "—"}
-            </p>
-            <p className="text-[11px] text-[#7b7b78] mt-1">Fonte</p>
-          </div>
         </div>
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-2">
         <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Detalhes</p>
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] text-[#7b7b78]">Fonte</span>
+          <span className="text-[13px] text-[#111111]">{lead.channel || "—"}</span>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-[12px] text-[#7b7b78]">Criado em</span>
           <span className="text-[13px] text-[#111111]">
