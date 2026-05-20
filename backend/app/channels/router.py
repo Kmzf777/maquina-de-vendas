@@ -19,6 +19,7 @@ class ChannelCreate(BaseModel):
     provider: str  # "meta_cloud" | "evolution"
     provider_config: dict
     agent_profile_id: str | None = None
+    mode: str = "ai"
 
 
 class ChannelUpdate(BaseModel):
@@ -26,6 +27,7 @@ class ChannelUpdate(BaseModel):
     provider_config: dict | None = None
     agent_profile_id: str | None = None
     is_active: bool | None = None
+    mode: str | None = None
 
 
 @router.get("")
@@ -42,6 +44,8 @@ async def api_get_channel(channel_id: str):
 async def api_create_channel(body: ChannelCreate):
     if body.provider not in ("meta_cloud", "evolution"):
         raise HTTPException(400, "Provider must be 'meta_cloud' or 'evolution'")
+    if body.mode not in ("ai", "human"):
+        raise HTTPException(400, "mode must be 'ai' or 'human'")
     return create_channel(body.model_dump(exclude_none=True))
 
 
@@ -50,6 +54,8 @@ async def api_update_channel(channel_id: str, body: ChannelUpdate):
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(400, "No fields to update")
+    if "mode" in data and data["mode"] not in ("ai", "human"):
+        raise HTTPException(400, "mode must be 'ai' or 'human'")
     return update_channel(channel_id, data)
 
 
