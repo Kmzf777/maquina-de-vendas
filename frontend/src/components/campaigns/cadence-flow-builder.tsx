@@ -82,6 +82,20 @@ const ACTION_LABELS: Record<string, string> = {
   move_stage: "Mover stage", activate_agent: "Ativar agente", deactivate_agent: "Desativar agente", add_tag: "Adicionar tag",
 };
 
+// Ícones por subtype — os nós no canvas mostram o ícone do subtipo, não o genérico
+const TRIGGER_ICONS: Record<string, string> = {
+  stage_enter: "⚡", stage_stagnation: "🕐", no_message: "💤", post_broadcast: "📡",
+};
+const ACTION_ICONS: Record<string, string> = {
+  move_stage: "📋", activate_agent: "🤖", deactivate_agent: "🤖", add_tag: "🏷️",
+};
+
+function resolveNodeIcon(type: CampaignNodeType, config: Record<string, unknown>): string {
+  if (type === "trigger") return TRIGGER_ICONS[(config.trigger_type as string) ?? ""] ?? NODE_META.trigger.icon;
+  if (type === "action")  return ACTION_ICONS[(config.action_type as string) ?? ""]   ?? NODE_META.action.icon;
+  return NODE_META[type]?.icon ?? "⚡";
+}
+
 function nodeDetail(type: CampaignNodeType, config: Record<string, unknown>): string {
   switch (type) {
     case "trigger":   return TRIGGER_LABELS[config.trigger_type as string] ?? (config.trigger_type as string) ?? "";
@@ -150,11 +164,13 @@ function toRFEdges(nodes: CampaignNode[]): Edge[] {
 // ─── Custom Node component (registered at module level — MUST stay outside render) ──
 const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
   const node = data as unknown as CampaignNode;
+  const cfg = (node.config ?? {}) as Record<string, unknown>;
   const meta = NODE_META[node.type] ?? NODE_META.trigger;
   const isCondition = node.type === "condition";
   const isEnd = node.type === "end";
   const isTrigger = node.type === "trigger";
   const color = meta.color === "#1a1a1a" ? "#aaa" : meta.color;
+  const displayIcon = resolveNodeIcon(node.type, cfg);
 
   const handleStyle: React.CSSProperties = {
     width: 10, height: 10,
@@ -194,7 +210,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 16, flexShrink: 0, marginTop: 1,
         }}>
-          {meta.icon}
+          {displayIcon}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
