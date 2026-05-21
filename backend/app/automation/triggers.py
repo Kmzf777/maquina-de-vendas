@@ -75,7 +75,7 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         cfg = tn.get("config") or {}
         days, stage_filter = cfg.get("days", 30), cfg.get("stage_filter")
         cutoff = (now - timedelta(days=days)).isoformat()
-        q = sb.table("leads").select("id, phone").eq("env_tag", env_tag).eq("ai_enabled", True).lte("last_msg_at", cutoff)
+        q = sb.table("leads").select("id, phone").eq("ai_enabled", True).lte("last_msg_at", cutoff)
         if stage_filter:
             q = q.eq("stage", stage_filter)
         for lead in q.limit(20).execute().data:
@@ -91,7 +91,7 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         cutoff = (now - timedelta(days=days)).isoformat()
         leads = (
             sb.table("leads").select("id, phone")
-            .eq("env_tag", env_tag).eq("ai_enabled", True).eq("stage", stage)
+            .eq("ai_enabled", True).eq("stage", stage)
             .not_.is_("entered_stage_at", "null").lte("entered_stage_at", cutoff)
             .limit(20).execute().data
         )

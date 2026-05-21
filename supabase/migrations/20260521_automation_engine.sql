@@ -33,12 +33,12 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 5. Função para repurchase_window trigger (GROUP BY não disponível via PostgREST)
+-- Nota: leads não tem coluna env_tag; isolamento de ambiente é garantido pelo filtro nas campaigns
 CREATE OR REPLACE FUNCTION get_leads_for_repurchase(cutoff_date TIMESTAMPTZ, p_env_tag TEXT)
 RETURNS TABLE(id UUID, phone TEXT) AS $$
   SELECT l.id, l.phone
   FROM leads l
-  WHERE l.env_tag = p_env_tag
-    AND l.ai_enabled = TRUE
+  WHERE l.ai_enabled = TRUE
   AND EXISTS (SELECT 1 FROM sales s WHERE s.lead_id = l.id)
   AND (
     SELECT MAX(s2.sold_at) FROM sales s2 WHERE s2.lead_id = l.id
@@ -54,8 +54,7 @@ CREATE OR REPLACE FUNCTION get_leads_no_sale_in_stage(
 RETURNS TABLE(id UUID, phone TEXT) AS $$
   SELECT l.id, l.phone
   FROM leads l
-  WHERE l.env_tag = p_env_tag
-    AND l.stage = p_stage
+  WHERE l.stage = p_stage
     AND l.ai_enabled = TRUE
     AND l.entered_stage_at IS NOT NULL
     AND l.entered_stage_at <= cutoff_date
