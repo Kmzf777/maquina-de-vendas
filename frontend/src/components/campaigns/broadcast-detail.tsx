@@ -55,6 +55,10 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   const [showSpamModal, setShowSpamModal] = useState(false);
   const [selectedConflictIds, setSelectedConflictIds] = useState<Set<string>>(new Set());
   const [modalActionLoading, setModalActionLoading] = useState(false);
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [scheduleLoading, setScheduleLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -197,6 +201,71 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     }
   };
 
+  const brtToUtcIso = (date: string, time: string): string => {
+    const [year, month, day] = date.split("-").map(Number);
+    const [hour, minute] = time.split(":").map(Number);
+    return new Date(Date.UTC(year, month - 1, day, hour + 3, minute)).toISOString();
+  };
+
+  const formatScheduledAtBrt = (isoStr: string): string =>
+    new Date(isoStr).toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+
+  const schedulePickerValid = (): boolean => {
+    if (!scheduleDate || !scheduleTime) return false;
+    return new Date(brtToUtcIso(scheduleDate, scheduleTime)) > new Date();
+  };
+
+  const handleScheduleApply = async () => {
+    if (!broadcast || !schedulePickerValid() || scheduleLoading) return;
+    setScheduleLoading(true);
+    try {
+      const res = await fetch(`/api/broadcasts/${broadcastId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduled_at: brtToUtcIso(scheduleDate, scheduleTime) }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Erro ao agendar: ${data.error ?? data.detail ?? "Tente novamente."}`);
+        return;
+      }
+      const updated = await res.json();
+      setBroadcast({ ...broadcast, status: updated.status, scheduled_at: updated.scheduled_at });
+      setShowSchedulePicker(false);
+      setScheduleDate("");
+      setScheduleTime("");
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleCancelSchedule = async () => {
+    if (!broadcast || scheduleLoading) return;
+    if (!confirm("Cancelar o agendamento? O disparo voltará para rascunho.")) return;
+    setScheduleLoading(true);
+    try {
+      const res = await fetch(`/api/broadcasts/${broadcastId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduled_at: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Erro ao cancelar agendamento: ${data.error ?? data.detail ?? "Tente novamente."}`);
+        return;
+      }
+      const updated = await res.json();
+      setBroadcast({ ...broadcast, status: updated.status, scheduled_at: null });
+      setShowSchedulePicker(false);
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
   if (loading || !broadcast) {
     return (
       <div className="flex flex-col h-full">
@@ -294,11 +363,46 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                 ▶ Iniciar
               </button>
               <button
+                onClick={() => { setShowSchedulePicker(true); setScheduleDate(""); setScheduleTime(""); }}
+                disabled={actionLoading}
+                className="border border-[#dedbd6] text-[#313130] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+              >
+                🕐 Agendar
+              </button>
+              <button
                 onClick={handleDelete}
                 disabled={actionLoading}
                 className="bg-transparent text-[#c41c1c] border border-[#c41c1c]/40 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
               >
                 Excluir
+              </button>
+            </>
+          )}
+          {broadcast.status === "scheduled" && broadcast.scheduled_at && (
+            <>
+              <span className="text-[13px] text-[#7b7b78] flex items-center gap-1">
+                🕐 {formatScheduledAtBrt(broadcast.scheduled_at)}{" "}
+                <span className="text-[11px]">(Horário de Brasília)</span>
+              </span>
+              <button
+                onClick={() => {
+                  const d = new Date(broadcast.scheduled_at!);
+                  const brt = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                  setScheduleDate(brt.toISOString().slice(0, 10));
+                  setScheduleTime(brt.toISOString().slice(11, 16));
+                  setShowSchedulePicker(true);
+                }}
+                disabled={scheduleLoading}
+                className="border border-[#dedbd6] text-[#313130] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+              >
+                Reagendar
+              </button>
+              <button
+                onClick={handleCancelSchedule}
+                disabled={scheduleLoading}
+                className="bg-transparent text-[#c41c1c] border border-[#c41c1c]/40 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+              >
+                Cancelar agendamento
               </button>
             </>
           )}
@@ -331,6 +435,53 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
           )}
         </div>
       </div>
+
+      {/* Schedule picker inline panel */}
+      {showSchedulePicker && (
+        <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-8 py-4 flex-shrink-0">
+          <div className="flex items-end gap-4 flex-wrap">
+            <div>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                Data
+              </label>
+              <input
+                type="date"
+                value={scheduleDate}
+                min={new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)}
+                onChange={(e) => setScheduleDate(e.target.value)}
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                Horário (Horário de Brasília)
+              </label>
+              <input
+                type="time"
+                value={scheduleTime}
+                onChange={(e) => setScheduleTime(e.target.value)}
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+              />
+            </div>
+            <button
+              onClick={handleScheduleApply}
+              disabled={!schedulePickerValid() || scheduleLoading}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-40"
+            >
+              {scheduleLoading ? "Salvando..." : "Confirmar"}
+            </button>
+            <button
+              onClick={() => setShowSchedulePicker(false)}
+              className="border border-[#dedbd6] text-[#313130] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+            >
+              Cancelar
+            </button>
+            {scheduleDate && scheduleTime && !schedulePickerValid() && (
+              <span className="text-[12px] text-[#c41c1c]">Data/hora deve ser no futuro.</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex-1 overflow-auto px-8 py-6 bg-[#faf9f6] space-y-6">

@@ -146,7 +146,7 @@ def get_or_create_lead(
                 )
             return row
 
-    new_lead: dict[str, Any] = {"phone": normalized, "stage": "pending", "status": "imported"}
+    new_lead: dict[str, Any] = {"phone": normalized, "stage": "pending", "status": "imported", "ai_enabled": True}
     if name:
         new_lead["name"] = name
     if channel:
@@ -200,6 +200,7 @@ def purge_dev_lead(phone: str) -> dict:
     sb.table("broadcast_leads").delete().eq("lead_id", lead_id).execute()
     sb.table("deals").delete().eq("lead_id", lead_id).execute()
     sb.table("lead_tags").delete().eq("lead_id", lead_id).execute()
+    sb.table("token_usage").delete().eq("lead_id", lead_id).execute()
     sb.table("messages").delete().eq("lead_id", lead_id).execute()
     sb.table("conversations").delete().eq("lead_id", lead_id).execute()
     sb.table("leads").delete().eq("id", lead_id).execute()
