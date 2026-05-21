@@ -1164,7 +1164,7 @@ export function CreateBroadcastModal({
                     <span className="text-[#7b7b78]">Agendamento:</span>{" "}
                     <span className="text-[#111111]">
                       {scheduleMode === "immediate"
-                        ? "Iniciar imediatamente"
+                        ? "Imediato (iniciar manualmente)"
                         : scheduleDate && scheduleTime
                         ? new Date(brtToUtcIso(scheduleDate, scheduleTime)).toLocaleString("pt-BR", {
                             timeZone: "America/Sao_Paulo",
@@ -1177,7 +1177,7 @@ export function CreateBroadcastModal({
                 </div>
                 <p className="text-[12px] text-[#7b7b78]">
                   {scheduleMode === "immediate"
-                    ? "O disparo será criado e iniciado imediatamente."
+                    ? "O disparo será criado como rascunho. Clique em \"Iniciar\" na página de detalhes para comenzar o envio."
                     : "O disparo será criado e iniciado automaticamente no horário agendado."}
                 </p>
               </div>
