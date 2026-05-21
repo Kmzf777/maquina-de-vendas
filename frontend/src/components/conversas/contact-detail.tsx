@@ -147,7 +147,7 @@ export function ContactDetail({
             <span className="text-[14px] font-medium text-[#111111]">Informações do Lead</span>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {onToggleAi && (
+            {onToggleAi && conversation.channels?.mode !== "human" && (
               <button
                 type="button"
                 onClick={() => onToggleAi()}

@@ -98,24 +98,26 @@ export function ChatHeader({
         <h2 className="text-[#111111] font-medium text-[14px] truncate">{displayName}</h2>
       </div>
 
-      {/* Valéria IA button */}
-      <button
-        type="button"
-        onClick={() => onToggleAi()}
-        disabled={togglingAi}
-        className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors flex-shrink-0 ${
-          aiEnabled
-            ? "bg-[#ff5600] text-white hover:bg-[#e64e00]"
-            : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
-        } ${togglingAi ? "opacity-60 cursor-not-allowed" : ""}`}
-        aria-pressed={aiEnabled}
-      >
-        <span
-          className={`inline-block h-1.5 w-1.5 rounded-full ${aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`}
-          aria-hidden
-        />
-        Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
-      </button>
+      {/* Valéria IA button — hidden for human-only channels */}
+      {conversation.channels?.mode !== "human" && (
+        <button
+          type="button"
+          onClick={() => onToggleAi()}
+          disabled={togglingAi}
+          className={`inline-flex items-center gap-2 rounded-[4px] px-3 py-1 text-xs font-medium transition-colors flex-shrink-0 ${
+            aiEnabled
+              ? "bg-[#ff5600] text-white hover:bg-[#e64e00]"
+              : "bg-[#dedbd6] text-[#111111] hover:bg-[#cbc7c0]"
+          } ${togglingAi ? "opacity-60 cursor-not-allowed" : ""}`}
+          aria-pressed={aiEnabled}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${aiEnabled ? "bg-white animate-pulse" : "bg-[#7b7b78]"}`}
+            aria-hidden
+          />
+          Valéria IA · {aiEnabled ? "Ativa" : "Pausada"}
+        </button>
+      )}
 
       {/* ... dropdown */}
       <div className="relative flex-shrink-0" ref={menuRef}>

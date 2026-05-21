@@ -43,6 +43,7 @@ async function fetchEvolutionConversations(channel: {
   phone: string;
   provider: string;
   provider_config: Record<string, string>;
+  mode?: string;
 }) {
   const config = channel.provider_config;
   const baseUrl = (config.api_url || "").replace(/\/+$/, "");
@@ -108,6 +109,7 @@ async function fetchEvolutionConversations(channel: {
           name: channel.name,
           phone: channel.phone,
           provider: channel.provider,
+          mode: channel.mode,
         },
         // Extra field for Evolution-specific data
         _evo_remote_jid: chat.remoteJid,
@@ -131,7 +133,7 @@ export async function GET(request: NextRequest) {
   let dbQuery = supabase
     .from("conversations")
     .select(
-      "*, leads(id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, telefone_comercial, email, instagram), channels(id, name, phone, provider, agent_profile_id), agent_profiles(id,name)"
+      "*, leads(id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, telefone_comercial, email, instagram), channels(id, name, phone, provider, agent_profile_id, mode), agent_profiles(id,name)"
     );
 
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
@@ -159,7 +161,7 @@ export async function GET(request: NextRequest) {
   // 2. Get Evolution channels and fetch their chats
   let channelsQuery = supabase
     .from("channels")
-    .select("id, name, phone, provider, provider_config")
+    .select("id, name, phone, provider, provider_config, mode")
     .eq("provider", "evolution")
     .eq("is_active", true);
 
@@ -177,6 +179,7 @@ export async function GET(request: NextRequest) {
           phone: string;
           provider: string;
           provider_config: Record<string, string>;
+          mode?: string;
         }
       )
     )
