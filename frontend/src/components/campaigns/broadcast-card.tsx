@@ -40,6 +40,17 @@ export function BroadcastCard({ broadcast, onStart, onPause, onClick }: Broadcas
           </span>
           <h3 className="text-[15px] font-medium text-[#111111] truncate">{broadcast.name}</h3>
           <p className="text-[13px] text-[#7b7b78] mt-0.5 truncate">{broadcast.template_name}</p>
+          {broadcast.status === "scheduled" && broadcast.scheduled_at && (
+            <p className="text-[12px] text-[#65b5ff] mt-0.5">
+              🕐{" "}
+              {new Date(broadcast.scheduled_at).toLocaleString("pt-BR", {
+                timeZone: "America/Sao_Paulo",
+                dateStyle: "short",
+                timeStyle: "short",
+              })}{" "}
+              <span className="text-[#7b7b78]">(BRT)</span>
+            </p>
+          )}
         </div>
       </div>
 
