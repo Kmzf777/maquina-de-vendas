@@ -53,7 +53,7 @@ const NODE_W = 220;
 const NODE_META: Record<CampaignNodeType, { label: string; kicker: string; icon: string; color: string; iconBg: string }> = {
   trigger:   { label: "Gatilho",         kicker: "GATILHO",  icon: "⚡", color: "#1a1a1a", iconBg: "rgba(26,26,26,.07)" },
   send:      { label: "Enviar template", kicker: "ENVIAR",   icon: "📨", color: "#E85D26", iconBg: "rgba(232,93,38,.1)" },
-  send_text: { label: "Enviar texto",    kicker: "TEXTO",    icon: "💬", color: "#E85D26", iconBg: "rgba(232,93,38,.1)" },
+  send_text: { label: "Enviar texto",    kicker: "TEXTO LIVRE", icon: "💬", color: "#0F766E", iconBg: "rgba(15,118,110,.1)" },
   wait:      { label: "Aguardar",        kicker: "ESPERA",   icon: "⏱", color: "#3B7DD8", iconBg: "rgba(59,125,216,.1)" },
   condition: { label: "Condição",        kicker: "CONDIÇÃO", icon: "🔀", color: "#C4920C", iconBg: "rgba(196,146,12,.1)" },
   action:    { label: "Ação",            kicker: "AÇÃO",     icon: "📋", color: "#7C4DB8", iconBg: "rgba(124,77,184,.1)" },
@@ -109,6 +109,7 @@ function nodeDetail(type: CampaignNodeType, config: Record<string, unknown>): st
   switch (type) {
     case "trigger":   return TRIGGER_LABELS[config.trigger_type as string] ?? (config.trigger_type as string) ?? "";
     case "send":      return (config.template_name as string) || "template não definido";
+    case "send_text": return (config.message_text as string)?.slice(0, 40) || "texto não definido";
     case "wait":      return `${config.days ?? 1} dia(s)`;
     case "condition": return (config.condition_type as string) ?? "";
     case "action":    return ACTION_LABELS[config.action_type as string] ?? (config.action_type as string) ?? "";
@@ -457,6 +458,7 @@ let _selectNode: ((nodeId: string) => void) | null = null;
 
 const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; label: string }[] = [
   { type: "send",      subtype: "",                 icon: "📨", label: "Enviar template" },
+  { type: "send_text", subtype: "",                 icon: "💬", label: "Enviar texto" },
   { type: "wait",      subtype: "",                 icon: "⏱",  label: "Aguardar" },
   { type: "condition", subtype: "replied_recently", icon: "🔀", label: "Condição" },
   { type: "action",    subtype: "move_stage",       icon: "📋", label: "Ação CRM" },
@@ -471,6 +473,7 @@ const PALETTE_TRIGGERS: PaletteItem[] = [
 ];
 const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "send",      subtype: "",                icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
+  { type: "send_text", subtype: "",                icon: "💬", label: "Enviar texto",    desc: "Texto livre (24h)" },
   { type: "wait",      subtype: "",                icon: "⏱", label: "Aguardar",        desc: "Delay em dias" },
   { type: "condition", subtype: "replied_recently", icon: "🔀", label: "Condição",       desc: "Ramificação lógica" },
   { type: "action",    subtype: "move_stage",      icon: "📋", label: "Mover stage",     desc: "Kanban move" },
@@ -576,11 +579,17 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
           <>
             <div style={field}>
               <label style={label}>Tipo de gatilho</label>
-              <select style={{ ...input, appearance: "none" }} value={(c.trigger_type as string) ?? ""} onChange={e => set("trigger_type", e.target.value)}>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.trigger_type as string) ?? ""} onChange={e => set("trigger_type", e.target.value)}>
                 <option value="no_message">Sem mensagem</option>
                 <option value="stage_stagnation">Estagnação de stage</option>
                 <option value="stage_enter">Entrou em stage</option>
                 <option value="post_broadcast">Pós-disparo</option>
+                <option value="sale_created">Venda criada</option>
+                <option value="repurchase_window">Janela de recompra</option>
+                <option value="no_sale_in_stage">Sem venda no stage</option>
+                <option value="tag_added">Tag adicionada</option>
+                <option value="deal_stage_enter">Entrou em stage (deal)</option>
+                <option value="deal_closed_lost">Deal perdido</option>
               </select>
             </div>
             {(c.trigger_type === "no_message" || c.trigger_type === "stage_stagnation") && (
@@ -589,6 +598,35 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
             {(c.trigger_type === "stage_stagnation" || c.trigger_type === "stage_enter") && (
               <div style={field}><label style={label}>Filtro de stage</label><input type="text" style={input} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)} placeholder="ex: Negociação" /></div>
             )}
+            {c.trigger_type === "sale_created" && (
+              <>
+                <div style={field}><label style={label}>Valor mínimo (R$, opcional)</label>
+                  <input type="number" style={input} value={(c.min_value as number) ?? ""} onChange={e => set("min_value", e.target.value ? Number(e.target.value) : null)} placeholder="Ex: 500" /></div>
+                <div style={field}><label style={label}>Filtro de produto (opcional)</label>
+                  <input type="text" style={input} value={(c.product_filter as string) ?? ""} onChange={e => set("product_filter", e.target.value || null)} placeholder="Ex: café" /></div>
+              </>
+            )}
+            {(c.trigger_type === "repurchase_window" || c.trigger_type === "no_sale_in_stage") && (
+              <div style={field}><label style={label}>Dias</label>
+                <input type="number" style={input} value={(c.days as number) ?? 30} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
+            )}
+            {(c.trigger_type === "no_sale_in_stage" || c.trigger_type === "deal_stage_enter") && (
+              <div style={field}><label style={label}>Filtro de stage</label>
+                <input type="text" style={input} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)} placeholder="Ex: negociacao" /></div>
+            )}
+            {c.trigger_type === "tag_added" && (
+              <div style={field}><label style={label}>Nome da tag</label>
+                <input type="text" style={input} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)} placeholder="Ex: VIP" /></div>
+            )}
+            {c.trigger_type === "post_broadcast" && (
+              <div style={field}>
+                <label style={label}>Apenas quem respondeu?</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.replied_only as boolean) ? "true" : "false"} onChange={e => set("replied_only", e.target.value === "true")}>
+                  <option value="false">Todos os leads do disparo</option>
+                  <option value="true">Apenas quem respondeu</option>
+                </select>
+              </div>
+            )}
           </>
         )}
         {node.type === "send" && (
@@ -596,11 +634,37 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
             <div style={field}><label style={label}>Nome do template</label><input type="text" style={input} value={(c.template_name as string) ?? ""} onChange={e => set("template_name", e.target.value)} placeholder="ex: reativacao_30d" /></div>
             <div style={field}>
               <label style={label}>Ao responder</label>
-              <select style={{ ...input, appearance: "none" }} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
                 <option value="pause">Pausar campanha</option>
                 <option value="cancel">Cancelar campanha</option>
                 <option value="continue">Continuar campanha</option>
               </select>
+            </div>
+          </>
+        )}
+        {node.type === "send_text" && (
+          <>
+            <div style={field}>
+              <label style={label}>Mensagem (vars: {"{{nome}}, {{empresa}}, {{produto}}"})</label>
+              <textarea
+                style={{ ...input, minHeight: 80, resize: "vertical" }}
+                value={(c.message_text as string) ?? ""}
+                onChange={e => set("message_text", e.target.value)}
+                placeholder="Olá {{nome}}, tudo bem?"
+              />
+            </div>
+            <div style={field}>
+              <label style={label}>Ao responder</label>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
+                <option value="pause">Pausar campanha</option>
+                <option value="cancel">Cancelar campanha</option>
+                <option value="continue">Continuar campanha</option>
+              </select>
+            </div>
+            <div style={{ ...field, padding: "8px 10px", background: "#fef9ed", borderRadius: 6, border: "1px solid #fde68a" }}>
+              <p style={{ fontSize: 11, color: "#92400e", lineHeight: 1.5 }}>
+                ⚠️ Texto livre — só enviado dentro da janela de 24h após o cliente responder. Se a janela estiver expirada, o nó é pulado automaticamente.
+              </p>
             </div>
           </>
         )}
@@ -611,26 +675,70 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
           <>
             <div style={field}>
               <label style={label}>Condição</label>
-              <select style={{ ...input, appearance: "none" }} value={(c.condition_type as string) ?? ""} onChange={e => set("condition_type", e.target.value)}>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.condition_type as string) ?? ""} onChange={e => set("condition_type", e.target.value)}>
                 <option value="replied_recently">Respondeu recentemente</option>
                 <option value="in_stage">Está em stage</option>
                 <option value="has_deal">Tem deal ativo</option>
+                <option value="sale_count">Número de vendas</option>
+                <option value="total_spend">Gasto total (R$)</option>
+                <option value="last_sale_value">Valor da última venda</option>
+                <option value="deal_value">Valor do deal</option>
+                <option value="has_tag">Possui tag</option>
+                <option value="repurchase_days">Dias desde última compra</option>
               </select>
             </div>
             {c.condition_type === "replied_recently" && (
               <div style={field}><label style={label}>Dias</label><input type="number" style={input} value={(c.days as number) ?? 5} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
+            {["sale_count","total_spend","last_sale_value","deal_value","repurchase_days"].includes(c.condition_type as string) && (
+              <>
+                <div style={field}>
+                  <label style={label}>Operador</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.operator as string) ?? "gte"} onChange={e => set("operator", e.target.value)}>
+                    <option value="gte">≥ (maior ou igual)</option>
+                    <option value="lte">≤ (menor ou igual)</option>
+                    <option value="gt">&gt; (maior)</option>
+                    <option value="lt">&lt; (menor)</option>
+                    <option value="eq">= (igual)</option>
+                  </select>
+                </div>
+                <div style={field}><label style={label}>Valor</label>
+                  <input type="number" style={input} value={(c.value as number) ?? 0} onChange={e => set("value", Number(e.target.value))} min={0} /></div>
+              </>
+            )}
+            {c.condition_type === "has_tag" && (
+              <div style={field}><label style={label}>Nome da tag</label>
+                <input type="text" style={input} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)} placeholder="Ex: VIP" /></div>
+            )}
           </>
         )}
         {node.type === "action" && (
-          <div style={field}>
-            <label style={label}>Tipo de ação</label>
-            <select style={{ ...input, appearance: "none" }} value={(c.action_type as string) ?? ""} onChange={e => set("action_type", e.target.value)}>
-              <option value="move_stage">Mover stage</option>
-              <option value="activate_agent">Ativar agente</option>
-              <option value="deactivate_agent">Desativar agente</option>
-            </select>
-          </div>
+          <>
+            <div style={field}>
+              <label style={label}>Tipo de ação</label>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.action_type as string) ?? ""} onChange={e => set("action_type", e.target.value)}>
+                <option value="move_stage">Mover stage</option>
+                <option value="activate_agent">Ativar agente</option>
+                <option value="deactivate_agent">Desativar agente</option>
+                <option value="add_tag">Adicionar tag</option>
+                <option value="remove_tag">Remover tag</option>
+                <option value="create_deal">Criar deal</option>
+                <option value="assign_to">Atribuir a vendedor</option>
+              </select>
+            </div>
+            {["add_tag","remove_tag"].includes(c.action_type as string) && (
+              <div style={field}><label style={label}>Nome da tag</label>
+                <input type="text" style={input} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)} placeholder="Ex: VIP" /></div>
+            )}
+            {c.action_type === "create_deal" && (
+              <div style={field}><label style={label}>Título do deal (suporta {"{{nome}}"})</label>
+                <input type="text" style={input} value={(c.title_template as string) ?? ""} onChange={e => set("title_template", e.target.value)} placeholder="Deal automático — {{empresa}}" /></div>
+            )}
+            {c.action_type === "assign_to" && (
+              <div style={field}><label style={label}>ID do usuário</label>
+                <input type="text" style={input} value={(c.user_id as string) ?? ""} onChange={e => set("user_id", e.target.value)} placeholder="UUID do vendedor" /></div>
+            )}
+          </>
         )}
         {node.type === "end" && (
           <div style={field}><label style={label}>Rótulo final</label><input type="text" style={input} value={(c.label as string) ?? ""} onChange={e => set("label", e.target.value)} placeholder="ex: Concluído" /></div>
