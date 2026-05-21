@@ -70,6 +70,24 @@ async def get_broadcast(broadcast_id: str):
 async def update_broadcast(broadcast_id: str, body: dict):
     sb = get_supabase()
     from datetime import datetime, timezone
+
+    if "scheduled_at" in body:
+        current = (
+            sb.table("broadcasts")
+            .select("status")
+            .eq("id", broadcast_id)
+            .single()
+            .execute()
+            .data
+        )
+        current_status = current["status"]
+        if body["scheduled_at"] is None:
+            if current_status == "scheduled":
+                body["status"] = "draft"
+        else:
+            if current_status in ("draft", "scheduled"):
+                body["status"] = "scheduled"
+
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = sb.table("broadcasts").update(body).eq("id", broadcast_id).execute()
     return result.data[0]
@@ -79,8 +97,8 @@ async def update_broadcast(broadcast_id: str, body: dict):
 async def delete_broadcast(broadcast_id: str):
     sb = get_supabase()
     broadcast = sb.table("broadcasts").select("status").eq("id", broadcast_id).single().execute().data
-    if broadcast["status"] not in ("draft", "completed"):
-        raise HTTPException(400, "Apenas disparos em rascunho ou completos podem ser excluidos")
+    if broadcast["status"] not in ("draft", "scheduled", "completed"):
+        raise HTTPException(400, "Apenas disparos em rascunho, agendados ou completos podem ser excluidos")
     sb.table("broadcasts").delete().eq("id", broadcast_id).execute()
     return {"ok": True}
 
