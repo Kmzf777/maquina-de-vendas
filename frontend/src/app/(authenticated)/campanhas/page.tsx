@@ -47,6 +47,8 @@ function CampanhasPageInner() {
   const [showQuickSendModal, setShowQuickSendModal] = useState(false);
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
+  const [priority, setPriority] = useState(5);
+  const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
   const [prefill, setPrefill] = useState<BroadcastPrefill | undefined>(undefined);
@@ -99,7 +101,7 @@ function CampanhasPageInner() {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: cadenceName.trim() }),
+        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -290,7 +292,7 @@ function CampanhasPageInner() {
           <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[14px] font-normal text-[#111111]">Nova Cadencia</h2>
-              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setPriority(5); setFrequencyCap(1); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
             </div>
             <div className="space-y-4">
               <div>
@@ -304,13 +306,43 @@ function CampanhasPageInner() {
                   autoFocus
                 />
               </div>
+              {/* Priority */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Prioridade (1 = baixa · 10 = alta)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={priority}
+                  onChange={(e) => setPriority(Number(e.target.value))}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                />
+              </div>
+
+              {/* Frequency cap */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Máx. mensagens por lead por dia
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={frequencyCap}
+                  onChange={(e) => setFrequencyCap(Number(e.target.value))}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                />
+              </div>
+
               <p className="text-[12px] text-[#7b7b78]">
                 Apos criar, voce podera configurar steps, triggers e demais opcoes na pagina de detalhe.
               </p>
             </div>
             <div className="pt-4 border-t border-[#dedbd6] mt-4 flex justify-end gap-2">
               <button
-                onClick={() => { setShowCadenceModal(false); setCadenceName(""); }}
+                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setPriority(5); setFrequencyCap(1); }}
                 className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar
