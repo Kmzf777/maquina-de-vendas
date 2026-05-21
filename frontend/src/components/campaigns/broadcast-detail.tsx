@@ -228,6 +228,11 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scheduled_at: brtToUtcIso(scheduleDate, scheduleTime) }),
       });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Erro ao agendar: ${data.error ?? data.detail ?? "Tente novamente."}`);
+        return;
+      }
       const updated = await res.json();
       setBroadcast({ ...broadcast, status: updated.status, scheduled_at: updated.scheduled_at });
       setShowSchedulePicker(false);
@@ -248,6 +253,11 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scheduled_at: null }),
       });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Erro ao cancelar agendamento: ${data.error ?? data.detail ?? "Tente novamente."}`);
+        return;
+      }
       const updated = await res.json();
       setBroadcast({ ...broadcast, status: updated.status, scheduled_at: null });
       setShowSchedulePicker(false);
