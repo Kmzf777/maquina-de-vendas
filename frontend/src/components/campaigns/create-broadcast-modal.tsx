@@ -38,7 +38,7 @@ export interface BroadcastPrefill {
 
 // ─── Step labels ──────────────────────────────────────────────────────────────
 
-const STEPS = ["Configuração", "Template", "Leads", "Ação", "Revisão"] as const;
+const STEPS = ["Configuração", "Template", "Leads", "Ação", "Agendamento", "Revisão"] as const;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -103,8 +103,27 @@ export function CreateBroadcastModal({
   const [loadingMovePipelines, setLoadingMovePipelines] = useState(false);
   const [loadingMoveStages, setLoadingMoveStages] = useState(false);
 
+  // ── Step 5: Scheduling ────────────────────────────────────────────────────
+  const [scheduleMode, setScheduleMode] = useState<"immediate" | "scheduled">("immediate");
+  const [scheduleDate, setScheduleDate] = useState(""); // YYYY-MM-DD
+  const [scheduleTime, setScheduleTime] = useState(""); // HH:MM
+
   // ── Saving ────────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
+
+  const brtToUtcIso = (date: string, time: string): string => {
+    const [year, month, day] = date.split("-").map(Number);
+    const [hour, minute] = time.split(":").map(Number);
+    // BRT = UTC-3, adiciona 3h para obter UTC
+    return new Date(Date.UTC(year, month - 1, day, hour + 3, minute)).toISOString();
+  };
+
+  const scheduleIsValid = (): boolean => {
+    if (scheduleMode === "immediate") return true;
+    if (!scheduleDate || !scheduleTime) return false;
+    const utcIso = brtToUtcIso(scheduleDate, scheduleTime);
+    return new Date(utcIso) > new Date();
+  };
 
   // ─── Load channels + agent profiles on open ─────────────────────────────
   useEffect(() => {
@@ -358,8 +377,11 @@ export function CreateBroadcastModal({
           agent_profile_id: agentProfileId || null,
           send_interval_min: intervalMin,
           send_interval_max: intervalMax,
-          status: "draft",
           move_to_stage_id: moveAction === "move" && moveStageId ? moveStageId : null,
+          scheduled_at:
+            scheduleMode === "scheduled" && scheduleDate && scheduleTime
+              ? brtToUtcIso(scheduleDate, scheduleTime)
+              : null,
         }),
       });
       const broadcast = await res.json();
@@ -410,6 +432,9 @@ export function CreateBroadcastModal({
     setMoveStageId("");
     setMovePipelines([]);
     setMoveStages([]);
+    setScheduleMode("immediate");
+    setScheduleDate("");
+    setScheduleTime("");
   };
 
   // ─── Step advancement guards ──────────────────────────────────────────────
@@ -427,12 +452,14 @@ export function CreateBroadcastModal({
   const canGoToStep4 = leadTab === "crm" ? selectedLeadIds.size > 0 : csvFile !== null;
   const canGoToStep5 =
     moveAction === "none" || (moveAction === "move" && moveStageId !== "");
+  const canGoToStep6 = scheduleIsValid();
 
   const canAdvance =
     step === 1 ? canGoToStep2 :
     step === 2 ? canGoToStep3 :
     step === 3 ? canGoToStep4 :
     step === 4 ? canGoToStep5 :
+    step === 5 ? canGoToStep6 :
     true;
 
   // ─── Filtered templates ───────────────────────────────────────────────────
@@ -964,9 +991,91 @@ export function CreateBroadcastModal({
             )}
 
             {/* ════════════════════════════════════════════════════════════════
-                STEP 5 — Revisão
+                STEP 5 — Agendamento
             ════════════════════════════════════════════════════════════════ */}
             {step === 5 && (
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">
+                    Quando disparar?
+                  </label>
+                  <div className="space-y-2">
+                    {(
+                      [
+                        { value: "immediate" as const, label: "Iniciar imediatamente" },
+                        { value: "scheduled" as const, label: "Agendar para depois" },
+                      ]
+                    ).map(({ value, label }) => (
+                      <label key={value} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="schedule-mode"
+                          value={value}
+                          checked={scheduleMode === value}
+                          onChange={() => setScheduleMode(value)}
+                          className="accent-[#111111]"
+                        />
+                        <span className="text-[14px] text-[#111111]">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {scheduleMode === "scheduled" && (
+                  <div className="bg-[#f0ede8] border border-[#dedbd6] rounded-[8px] p-4 space-y-4">
+                    <p className="text-[12px] text-[#7b7b78] flex items-center gap-1">
+                      🕐 <span>Horário de Brasília (UTC−3)</span>
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                          Data
+                        </label>
+                        <input
+                          type="date"
+                          value={scheduleDate}
+                          min={new Date().toISOString().slice(0, 10)}
+                          onChange={(e) => setScheduleDate(e.target.value)}
+                          className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                          Horário (BRT)
+                        </label>
+                        <input
+                          type="time"
+                          value={scheduleTime}
+                          onChange={(e) => setScheduleTime(e.target.value)}
+                          className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    {scheduleDate && scheduleTime && !scheduleIsValid() && (
+                      <p className="text-[12px] text-[#c41c1c]">
+                        A data/hora deve ser no futuro.
+                      </p>
+                    )}
+                    {scheduleDate && scheduleTime && scheduleIsValid() && (
+                      <p className="text-[12px] text-[#0bdf50]">
+                        Disparo agendado para{" "}
+                        {new Date(brtToUtcIso(scheduleDate, scheduleTime)).toLocaleString("pt-BR", {
+                          timeZone: "America/Sao_Paulo",
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}{" "}
+                        (Horário de Brasília)
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ════════════════════════════════════════════════════════════════
+                STEP 6 — Revisão
+            ════════════════════════════════════════════════════════════════ */}
+            {step === 6 && (
               <div className="space-y-3">
                 <h3 className="text-[14px] font-normal text-[#111111]">Revisão do disparo</h3>
                 <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 space-y-2 text-[14px]">
@@ -1046,9 +1155,25 @@ export function CreateBroadcastModal({
                         : "—"}
                     </span>
                   </p>
+                  <p>
+                    <span className="text-[#7b7b78]">Agendamento:</span>{" "}
+                    <span className="text-[#111111]">
+                      {scheduleMode === "immediate"
+                        ? "Iniciar imediatamente"
+                        : scheduleDate && scheduleTime
+                        ? new Date(brtToUtcIso(scheduleDate, scheduleTime)).toLocaleString("pt-BR", {
+                            timeZone: "America/Sao_Paulo",
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          }) + " (BRT)"
+                        : "—"}
+                    </span>
+                  </p>
                 </div>
                 <p className="text-[12px] text-[#7b7b78]">
-                  O disparo será criado como rascunho. Você poderá agendá-lo ou iniciá-lo manualmente.
+                  {scheduleMode === "immediate"
+                    ? "O disparo será criado e iniciado imediatamente."
+                    : "O disparo será criado e iniciado automaticamente no horário agendado."}
                 </p>
               </div>
             )}
@@ -1067,7 +1192,7 @@ export function CreateBroadcastModal({
               <div />
             )}
 
-            {step < 5 ? (
+            {step < 6 ? (
               <button
                 onClick={() => setStep(step + 1)}
                 disabled={!canAdvance}
