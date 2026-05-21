@@ -260,6 +260,18 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
+    # Channel gate: if AI_PHONE_NUMBER_ID is configured, only that channel runs AI
+    allowed_phone_number_id = settings.ai_phone_number_id
+    if allowed_phone_number_id:
+        channel_phone_number_id = (channel.get("provider_config") or {}).get("phone_number_id")
+        if channel_phone_number_id != allowed_phone_number_id:
+            logger.info(
+                f"[AI DISABLED] channel phone_number_id={channel_phone_number_id!r} not in allowlist "
+                f"— conv={conversation['id']} phone={phone}"
+            )
+            _update_last_msg(conversation["id"])
+            return
+
     # Resolve agent profile: conversation takes priority over channel default
     # None means no explicit profile — orchestrator defaults to valeria_inbound
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
