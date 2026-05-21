@@ -86,6 +86,8 @@ function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<string, 
 
 const TRIGGER_LABELS: Record<string, string> = {
   no_message: "Sem mensagem", stage_stagnation: "Estagnação", stage_enter: "Entrada em stage", post_broadcast: "Pós-disparo",
+  sale_created: "Venda criada", repurchase_window: "Janela de recompra", no_sale_in_stage: "Sem venda no stage",
+  tag_added: "Tag adicionada", deal_stage_enter: "Entrou em stage (deal)", deal_closed_lost: "Deal perdido",
 };
 const ACTION_LABELS: Record<string, string> = {
   move_stage: "Mover stage", activate_agent: "Ativar agente", deactivate_agent: "Desativar agente", add_tag: "Adicionar tag",
@@ -466,10 +468,16 @@ const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; 
 ];
 
 const PALETTE_TRIGGERS: PaletteItem[] = [
-  { type: "trigger", subtype: "stage_enter",      icon: "⚡", label: "Entrada em stage", desc: "Lead entra em stage" },
-  { type: "trigger", subtype: "stage_stagnation", icon: "🕐", label: "Estagnação",        desc: "Parado X dias" },
-  { type: "trigger", subtype: "no_message",       icon: "💤", label: "Sem mensagem",      desc: "Silêncio X dias" },
-  { type: "trigger", subtype: "post_broadcast",   icon: "📡", label: "Pós-disparo",       desc: "Após broadcast" },
+  { type: "trigger", subtype: "stage_enter",       icon: "⚡", label: "Entrada em stage",       desc: "Lead entra em stage" },
+  { type: "trigger", subtype: "stage_stagnation",  icon: "🕐", label: "Estagnação",              desc: "Parado X dias" },
+  { type: "trigger", subtype: "no_message",        icon: "💤", label: "Sem mensagem",            desc: "Silêncio X dias" },
+  { type: "trigger", subtype: "post_broadcast",    icon: "📡", label: "Pós-disparo",             desc: "Após broadcast" },
+  { type: "trigger", subtype: "sale_created",      icon: "💰", label: "Venda criada",            desc: "Nova venda registrada" },
+  { type: "trigger", subtype: "repurchase_window", icon: "🔄", label: "Janela de recompra",      desc: "X dias desde última compra" },
+  { type: "trigger", subtype: "no_sale_in_stage",  icon: "📉", label: "Sem venda no stage",      desc: "Stage avançado sem venda" },
+  { type: "trigger", subtype: "tag_added",         icon: "🏷️", label: "Tag adicionada",          desc: "Lead recebeu uma tag" },
+  { type: "trigger", subtype: "deal_stage_enter",  icon: "🤝", label: "Entrou em stage (deal)",  desc: "Deal mudou de stage" },
+  { type: "trigger", subtype: "deal_closed_lost",  icon: "❌", label: "Deal perdido",             desc: "Deal marcado como perdido" },
 ];
 const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "send",      subtype: "",                icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
