@@ -39,6 +39,24 @@ export async function PATCH(
     if (events.length > 0) {
       await supabase.from("lead_events").insert(events);
     }
+
+    // Fire automation trigger for stage_enter
+    if (body.stage && body.stage !== currentLead.stage) {
+      try {
+        const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
+        await fetch(`${backendUrl}/api/automation/trigger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event_type: "stage_enter",
+            lead_id: id,
+            data: { stage: body.stage },
+          }),
+        });
+      } catch {
+        // Hook failed — do not interrupt the lead update response
+      }
+    }
   }
 
   return NextResponse.json(data);
