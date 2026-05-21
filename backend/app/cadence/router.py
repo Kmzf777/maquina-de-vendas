@@ -37,10 +37,11 @@ async def list_cadences():
 
 
 @router.post("")
-async def create_cadence(cadence: CadenceCreate):
-    sb = get_supabase()
-    result = sb.table("cadences").insert(cadence.model_dump(exclude_none=True)).execute()
-    return result.data[0]
+async def create_cadence_deprecated():
+    raise HTTPException(
+        status_code=410,
+        detail="Cadências simples foram unificadas ao motor de automação. Use /api/campaigns."
+    )
 
 
 @router.get("/{cadence_id}")
@@ -92,13 +93,11 @@ async def list_steps(cadence_id: str):
 
 
 @router.post("/{cadence_id}/steps")
-async def create_step(cadence_id: str, step: StepCreate):
-    sb = get_supabase()
-    result = sb.table("cadence_steps").insert({
-        "cadence_id": cadence_id,
-        **step.model_dump(),
-    }).execute()
-    return result.data[0]
+async def create_step_deprecated(cadence_id: str):
+    raise HTTPException(
+        status_code=410,
+        detail="Cadências simples foram unificadas ao motor de automação. Use /api/campaigns."
+    )
 
 
 @router.put("/{cadence_id}/steps/{step_id}")
@@ -133,37 +132,11 @@ async def list_enrollments(cadence_id: str, status: str | None = None):
 
 
 @router.post("/{cadence_id}/enrollments")
-async def enroll_lead(cadence_id: str, req: EnrollRequest):
-    from app.cadence.service import create_enrollment, is_enrolled
-    from app.cadence.scheduler import calculate_next_send_at
-    from datetime import datetime, timezone
-
-    if is_enrolled(cadence_id, req.lead_id):
-        raise HTTPException(400, "Lead ja esta nesta cadencia")
-
-    sb = get_supabase()
-    cadence = sb.table("cadences").select("*").eq("id", cadence_id).single().execute().data
-
-    first_step = (
-        sb.table("cadence_steps")
-        .select("delay_days")
-        .eq("cadence_id", cadence_id)
-        .eq("step_order", 1)
-        .execute()
-        .data
+async def enroll_deprecated(cadence_id: str):
+    raise HTTPException(
+        status_code=410,
+        detail="Cadências simples foram unificadas ao motor de automação. Use /api/campaigns."
     )
-    delay = first_step[0]["delay_days"] if first_step else 0
-
-    now = datetime.now(timezone.utc)
-    next_send = calculate_next_send_at(now, delay, cadence["send_start_hour"], cadence["send_end_hour"])
-
-    enrollment = create_enrollment(
-        cadence_id=cadence_id,
-        lead_id=req.lead_id,
-        deal_id=req.deal_id,
-        next_send_at=next_send,
-    )
-    return enrollment
 
 
 @router.patch("/{cadence_id}/enrollments/{enroll_id}")
