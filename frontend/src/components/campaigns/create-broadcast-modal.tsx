@@ -358,6 +358,11 @@ export function CreateBroadcastModal({
   // ─── Create broadcast ─────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!selectedTemplate) return;
+    // Guard: se agendado, verificar que ainda está no futuro
+    if (scheduleMode === "scheduled" && !scheduleIsValid()) {
+      setStep(5);
+      return;
+    }
     setSaving(true);
     try {
       const agentProfileId =
@@ -1034,7 +1039,7 @@ export function CreateBroadcastModal({
                         <input
                           type="date"
                           value={scheduleDate}
-                          min={new Date().toISOString().slice(0, 10)}
+                          min={new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)}
                           onChange={(e) => setScheduleDate(e.target.value)}
                           className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
                         />
