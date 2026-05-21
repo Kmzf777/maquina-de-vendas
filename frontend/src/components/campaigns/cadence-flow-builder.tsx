@@ -22,10 +22,13 @@ import {
   OnConnect,
   Panel,
   MarkerType,
-  NodeMouseHandler,
   OnNodeDrag,
   PanOnScrollMode,
   ConnectionLineType,
+  EdgeProps,
+  BaseEdge,
+  getSmoothStepPath,
+  EdgeLabelRenderer,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { motion, AnimatePresence } from "framer-motion";
@@ -136,7 +139,7 @@ function toRFEdges(nodes: CampaignNode[]): Edge[] {
         target: n.next_node_id, targetHandle: "in",
         style: { stroke: "#c8c2bb", strokeWidth: 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#c8c2bb", width: 14, height: 14 },
-        type: "smoothstep",
+        type: "deletable",
       });
     }
     if (n.yes_node_id && byId[n.yes_node_id]) {
@@ -147,7 +150,7 @@ function toRFEdges(nodes: CampaignNode[]): Edge[] {
         style: { stroke: "#1A9B6C", strokeWidth: 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#1A9B6C", width: 14, height: 14 },
         label: "SIM", labelStyle: { fill: "#1A9B6C", fontSize: 9, fontWeight: 700 },
-        type: "smoothstep",
+        type: "deletable",
       });
     }
     if (n.no_node_id && byId[n.no_node_id]) {
@@ -158,12 +161,87 @@ function toRFEdges(nodes: CampaignNode[]): Edge[] {
         style: { stroke: "#ef4444", strokeWidth: 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#ef4444", width: 14, height: 14 },
         label: "NÃO", labelStyle: { fill: "#ef4444", fontSize: 9, fontWeight: 700 },
-        type: "smoothstep",
+        type: "deletable",
       });
     }
   }
   return edges;
 }
+
+// ─── DeletableEdge — custom edge with hover delete button ───────────────────
+function DeletableEdge({
+  id, sourceX, sourceY, targetX, targetY,
+  sourcePosition, targetPosition,
+  style, markerEnd, label,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition,
+    targetX, targetY, targetPosition,
+  });
+  const labelColor = String(label) === "SIM" ? "#1A9B6C" : String(label) === "NÃO" ? "#ef4444" : "#555";
+  const [hovered, setHovered] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showBtn = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setHovered(true);
+  };
+  const hideBtn = () => {
+    hideTimer.current = setTimeout(() => setHovered(false), 120);
+  };
+
+  return (
+    <g onMouseEnter={showBtn} onMouseLeave={hideBtn}>
+      <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} />
+      <EdgeLabelRenderer>
+        {label && (
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              pointerEvents: "none",
+              fontSize: 9, fontWeight: 700,
+              color: labelColor,
+            }}
+            className="nodrag nopan"
+          >
+            {String(label)}
+          </div>
+        )}
+        <div
+          style={{
+            position: "absolute",
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY + (label ? 14 : 0)}px)`,
+            pointerEvents: hovered ? "all" : "none",
+            opacity: hovered ? 1 : 0,
+            transition: "opacity .15s",
+          }}
+          className="nodrag nopan"
+          onMouseEnter={showBtn}
+          onMouseLeave={hideBtn}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); _deleteEdge?.(id); }}
+            title="Deletar conexão"
+            style={{
+              width: 22, height: 22, borderRadius: "50%",
+              background: "#fff",
+              border: "1.5px solid #fca5a5",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", fontSize: 11, color: "#ef4444",
+              boxShadow: "0 1px 4px rgba(0,0,0,.15)",
+              padding: 0, lineHeight: 1,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </g>
+  );
+}
+
+const EDGE_TYPES = { deletable: DeletableEdge };
 
 // ─── QuickAddButton — appears on hover below each non-end node ────────────────
 function QuickAddButton({ nodeId }: { nodeId: string }) {
@@ -179,14 +257,14 @@ function QuickAddButton({ nodeId }: { nodeId: string }) {
     <div
       style={{
         position: "absolute",
-        bottom: -38,
-        left: "50%",
-        transform: "translateX(-50%)",
+        left: "100%",
+        top: "50%",
+        transform: "translateY(-50%)",
+        paddingLeft: 8,
         zIndex: 20,
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        gap: 4,
+        alignItems: "flex-start",
       }}
       onMouseLeave={() => setOpen(false)}
     >
@@ -226,9 +304,8 @@ function QuickAddButton({ nodeId }: { nodeId: string }) {
             transition={{ duration: 0.13, ease: "easeOut" }}
             style={{
               position: "absolute",
-              top: 32,
-              left: "50%",
-              transform: "translateX(-50%)",
+              top: 34,
+              left: 8,
               background: "#fff",
               border: "1px solid #e8e4df",
               borderRadius: 10,
@@ -289,6 +366,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
       initial={{ opacity: 0, scale: 0.86 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
+      onClick={(e) => { e.stopPropagation(); _selectNode?.(node.id); }}
       onMouseEnter={() => setShowAdd(true)}
       onMouseLeave={() => setShowAdd(false)}
       style={{
@@ -372,6 +450,8 @@ const NODE_TYPES = { campaignNode: CampaignFlowNode };
 type PaletteItem = { type: CampaignNodeType; subtype: string; icon: string; label: string; desc: string };
 let _dragPayload: PaletteItem | null = null;
 let _addNodeBelow: ((sourceId: string, type: CampaignNodeType, subtype: string) => void) | null = null;
+let _deleteEdge: ((edgeId: string) => void) | null = null;
+let _selectNode: ((nodeId: string) => void) | null = null;
 
 const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; label: string }[] = [
   { type: "send",      subtype: "",                 icon: "📨", label: "Enviar template" },
@@ -597,6 +677,8 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const [rfEdges, setRFEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
+  const edgeContextMenuRef = useRef<HTMLDivElement>(null);
 
   // Load campaign + nodes
   useEffect(() => {
@@ -665,7 +747,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         targetHandle: "in",
         style: { stroke: "#c8c2bb", strokeWidth: 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#c8c2bb", width: 14, height: 14 },
-        type: "smoothstep",
+        type: "deletable",
       } as Edge,
     ]);
   }, [campaignId, rfNodes, setRFNodes, setRFEdges, setDbNodes]);
@@ -676,13 +758,56 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     return () => { _addNodeBelow = null; };
   }, [addNodeBelow]);
 
-  // ── Node click → select → show inspector ──────────────────────────────────
-  const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
-    setSelectedNodeId(node.id);
+  // ── deleteEdge callback ───────────────────────────────────────────────────────
+  const deleteEdge = useCallback(async (edgeId: string) => {
+    const edge = rfEdges.find(e => e.id === edgeId);
+    if (!edge) return;
+    const linkField = edge.sourceHandle === "yes" ? "yes_node_id"
+      : edge.sourceHandle === "no" ? "no_node_id"
+      : "next_node_id";
+    await fetch(`/api/campaigns/${campaignId}/nodes/${edge.source}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [linkField]: null }),
+    });
+    setDbNodes(prev => prev.map(n => n.id === edge.source ? { ...n, [linkField]: null } : n));
+    setRFEdges(prev => prev.filter(e => e.id !== edgeId));
+    setEdgeContextMenu(null);
+  }, [campaignId, rfEdges, setRFEdges, setDbNodes]);
+
+  useEffect(() => {
+    _deleteEdge = deleteEdge;
+    return () => { _deleteEdge = null; };
+  }, [deleteEdge]);
+
+  // Manter _selectNode atualizado para CampaignFlowNode acessar sem closure stale
+  useEffect(() => {
+    _selectNode = (nodeId: string) => setSelectedNodeId(nodeId);
+    return () => { _selectNode = null; };
   }, []);
+
+  // ── Edge right-click → context menu ──────────────────────────────────────────
+  const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEdgeContextMenu({ x: e.clientX, y: e.clientY, edgeId: edge.id });
+  }, []);
+
+  // Close edge context menu on outside click
+  useEffect(() => {
+    if (!edgeContextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (edgeContextMenuRef.current && !edgeContextMenuRef.current.contains(e.target as unknown as globalThis.Node)) {
+        setEdgeContextMenu(null);
+      }
+    };
+    window.addEventListener("mousedown", handler);
+    return () => window.removeEventListener("mousedown", handler);
+  }, [edgeContextMenu]);
 
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
+    setEdgeContextMenu(null);
   }, []);
 
   // ── Save position after drag ───────────────────────────────────────────────
@@ -711,7 +836,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
       ...connection,
       style: { stroke: edgeColor, strokeWidth: 1.5 },
       markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 14, height: 14 },
-      type: "smoothstep",
+      type: "deletable",
       label: sourceHandle === "yes" ? "SIM" : sourceHandle === "no" ? "NÃO" : undefined,
       labelStyle: sourceHandle === "yes" ? { fill: "#1A9B6C", fontSize: 9, fontWeight: 700 } : sourceHandle === "no" ? { fill: "#ef4444", fontSize: 9, fontWeight: 700 } : undefined,
     } as Edge, eds));
@@ -888,6 +1013,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
           style={{ flex: 1, position: "relative" }}
           onDrop={onDrop}
           onDragOver={onDragOver}
+          onContextMenu={(e) => e.preventDefault()}
         >
           <ReactFlow
             nodes={rfNodes}
@@ -895,10 +1021,11 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             onNodeDragStop={onNodeDragStop}
             nodeTypes={NODE_TYPES}
+            edgeTypes={EDGE_TYPES}
+            onEdgeContextMenu={onEdgeContextMenu}
             fitView={rfNodes.length > 0}
             fitViewOptions={{ padding: 0.3 }}
             deleteKeyCode={null}
@@ -950,6 +1077,42 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             )}
           </ReactFlow>
         </div>
+
+        {/* Edge context menu */}
+        {edgeContextMenu && (
+          <div
+            ref={edgeContextMenuRef}
+            style={{
+              position: "fixed",
+              top: edgeContextMenu.y,
+              left: edgeContextMenu.x,
+              zIndex: 9999,
+              background: "#fff",
+              border: "1px solid #e8e4df",
+              borderRadius: 8,
+              boxShadow: "0 8px 24px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08)",
+              padding: "4px",
+              minWidth: 160,
+            }}
+          >
+            <button
+              onClick={() => deleteEdge(edgeContextMenu.edgeId)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                width: "100%", padding: "8px 12px",
+                border: "none", background: "transparent",
+                cursor: "pointer", borderRadius: 6,
+                fontFamily: "'Outfit', sans-serif",
+                fontSize: 13, color: "#dc2626", textAlign: "left",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#fff5f5"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+            >
+              <span>✕</span>
+              <span>Deletar conexão</span>
+            </button>
+          </div>
+        )}
 
         {/* ── Inspector ─────────────────────────────────────────────── */}
         {selectedDbNode && (

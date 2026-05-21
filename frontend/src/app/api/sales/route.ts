@@ -22,8 +22,8 @@ export async function GET(request: NextRequest) {
 
   if (leadId) query = query.eq("lead_id", leadId);
   if (soldBy) query = query.eq("sold_by", soldBy);
-  if (from) query = query.gte("sold_at", from);
-  if (to) query = query.lte("sold_at", to);
+  if (from) query = query.gte("sold_at", from.length === 10 ? `${from}T00:00:00.000Z` : from);
+  if (to) query = query.lte("sold_at", to.length === 10 ? `${to}T23:59:59.999Z` : to);
   if (search) query = query.ilike("product", `%${search}%`);
 
   const { data, error, count } = await query;

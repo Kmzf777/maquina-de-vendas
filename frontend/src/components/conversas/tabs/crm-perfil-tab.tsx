@@ -57,7 +57,45 @@ export function CrmPerfilTab({
 
   return (
     <div className="p-4 space-y-4 text-sm">
-      <div className="space-y-3">
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</span>
+          <button
+            onClick={onCreateSale}
+            className="w-6 h-6 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors"
+            title="Registrar venda"
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
+            </svg>
+          </button>
+        </div>
+        {sales.length === 0 ? (
+          <p className="text-[12px] text-[#7b7b78]">Nenhuma venda registrada</p>
+        ) : (
+          <div className="space-y-2">
+            {sales.slice(0, 3).map((sale) => (
+              <div key={sale.id} className="flex items-start gap-2 p-2 rounded-[6px] border border-[#dedbd6] bg-white">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] text-[#111111] truncate">{sale.product}</p>
+                  <p className="text-[11px] text-[#7b7b78]">
+                    {new Date(sale.sold_at).toLocaleDateString("pt-BR")}
+                    {sale.sold_by ? ` · ${sale.sold_by}` : ""}
+                  </p>
+                  <p className="text-[12px] text-[#111111]">
+                    R$ {Number(sale.value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {sales.length > 3 && (
+              <p className="text-[11px] text-[#7b7b78]">+{sales.length - 3} mais vendas</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-[#dedbd6] pt-4 space-y-3">
         <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Identificacao</h4>
         <EditableField
           label="Nome"
@@ -159,44 +197,6 @@ export function CrmPerfilTab({
                 </div>
               );
             })}
-          </div>
-        )}
-      </div>
-
-      <div className="border-t border-[#dedbd6] pt-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</span>
-          <button
-            onClick={onCreateSale}
-            className="w-6 h-6 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors"
-            title="Registrar venda"
-          >
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
-            </svg>
-          </button>
-        </div>
-        {sales.length === 0 ? (
-          <p className="text-[12px] text-[#7b7b78]">Nenhuma venda registrada</p>
-        ) : (
-          <div className="space-y-2">
-            {sales.slice(0, 3).map((sale) => (
-              <div key={sale.id} className="flex items-start gap-2 p-2 rounded-[6px] border border-[#dedbd6] bg-white">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] text-[#111111] truncate">{sale.product}</p>
-                  <p className="text-[11px] text-[#7b7b78]">
-                    {new Date(sale.sold_at).toLocaleDateString("pt-BR")}
-                    {sale.sold_by ? ` · ${sale.sold_by}` : ""}
-                  </p>
-                  <p className="text-[12px] text-[#111111]">
-                    R$ {Number(sale.value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                  </p>
-                </div>
-              </div>
-            ))}
-            {sales.length > 3 && (
-              <p className="text-[11px] text-[#7b7b78]">+{sales.length - 3} mais vendas</p>
-            )}
           </div>
         )}
       </div>
