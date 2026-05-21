@@ -295,30 +295,11 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # Save assistant response
-    try:
-        save_message(
-            conversation["id"], lead["id"], "assistant",
-            response, conversation.get("stage"),
-        )
-    except Exception as e:
-        logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
-
-    # Agenda follow-up se habilitado para a conversa
-    if conversation.get("followup_enabled", True) and channel:
-        try:
-            _schedule_followup(
-                conversation_id=conversation["id"],
-                lead_id=lead["id"],
-                channel_id=channel["id"],
-            )
-        except Exception as e:
-            logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
-
-    # Send bubbles
+    # Send bubbles — persist only after all bubbles are delivered
     is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
     bubbles = split_into_bubbles(response)
     delays = _bubble_delays(len(bubbles), is_rehearsal)
+    send_ok = True
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:
             await asyncio.sleep(delay)
@@ -326,7 +307,28 @@ async def process_buffered_messages(
             await provider.send_text(phone, bubble)
         except Exception as e:
             logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
+            send_ok = False
             break
+
+    if send_ok:
+        try:
+            save_message(
+                conversation["id"], lead["id"], "assistant",
+                response, conversation.get("stage"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
+
+        # Agenda follow-up se habilitado para a conversa
+        if conversation.get("followup_enabled", True) and channel:
+            try:
+                _schedule_followup(
+                    conversation_id=conversation["id"],
+                    lead_id=lead["id"],
+                    channel_id=channel["id"],
+                )
+            except Exception as e:
+                logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
 
     _update_last_msg(conversation["id"])
 
