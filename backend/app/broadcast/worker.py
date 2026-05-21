@@ -451,6 +451,16 @@ async def process_single_broadcast(broadcast: dict):
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
 
+            # Fire post_broadcast automation trigger (fire-and-forget)
+            try:
+                from app.automation.triggers import fire_trigger as _fire_trigger
+                asyncio.create_task(_fire_trigger("post_broadcast", str(lead["id"]), {
+                    "broadcast_id": str(broadcast_id),
+                    "replied_only": False,
+                }))
+            except Exception as trig_err:
+                logger.warning("[BROADCAST] post_broadcast trigger error: %s", trig_err)
+
             # Move lead's deal to configured Kanban stage if set
             if move_to_stage_id and target_pipeline_id:
                 try:
