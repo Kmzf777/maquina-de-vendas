@@ -42,40 +42,36 @@ export async function PATCH(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Fire automation triggers if stage changed
+  // Fire automation triggers if stage changed (fire-and-forget)
   if (body.stage_id && body.stage_id !== oldStageId && newStageKey) {
     const leadId = currentDeal?.lead_id ?? data?.lead_id;
     if (leadId) {
-      try {
-        const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
-        const triggerPromises: Promise<Response>[] = [
+      const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
+      const triggerPromises: Promise<Response>[] = [
+        fetch(`${backendUrl}/api/automation/trigger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event_type: "deal_stage_enter",
+            lead_id: leadId,
+            data: { stage: newStageKey, deal_id: id },
+          }),
+        }),
+      ];
+      if (newStageKey === "fechado_perdido") {
+        triggerPromises.push(
           fetch(`${backendUrl}/api/automation/trigger`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              event_type: "deal_stage_enter",
+              event_type: "deal_closed_lost",
               lead_id: leadId,
-              data: { stage: newStageKey, deal_id: id },
+              data: { deal_id: id },
             }),
-          }),
-        ];
-        if (newStageKey === "fechado_perdido") {
-          triggerPromises.push(
-            fetch(`${backendUrl}/api/automation/trigger`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                event_type: "deal_closed_lost",
-                lead_id: leadId,
-                data: { deal_id: id },
-              }),
-            })
-          );
-        }
-        await Promise.allSettled(triggerPromises);
-      } catch {
-        // Hook failed — do not interrupt the deal update response
+          })
+        );
       }
+      void Promise.allSettled(triggerPromises);
     }
   }
 
