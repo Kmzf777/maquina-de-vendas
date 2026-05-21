@@ -53,6 +53,7 @@ const NODE_W = 220;
 const NODE_META: Record<CampaignNodeType, { label: string; kicker: string; icon: string; color: string; iconBg: string }> = {
   trigger:   { label: "Gatilho",         kicker: "GATILHO",  icon: "⚡", color: "#1a1a1a", iconBg: "rgba(26,26,26,.07)" },
   send:      { label: "Enviar template", kicker: "ENVIAR",   icon: "📨", color: "#E85D26", iconBg: "rgba(232,93,38,.1)" },
+  send_text: { label: "Enviar texto",    kicker: "TEXTO",    icon: "💬", color: "#E85D26", iconBg: "rgba(232,93,38,.1)" },
   wait:      { label: "Aguardar",        kicker: "ESPERA",   icon: "⏱", color: "#3B7DD8", iconBg: "rgba(59,125,216,.1)" },
   condition: { label: "Condição",        kicker: "CONDIÇÃO", icon: "🔀", color: "#C4920C", iconBg: "rgba(196,146,12,.1)" },
   action:    { label: "Ação",            kicker: "AÇÃO",     icon: "📋", color: "#7C4DB8", iconBg: "rgba(124,77,184,.1)" },
@@ -74,6 +75,7 @@ function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<string, 
   switch (type) {
     case "trigger":   return { trigger_type: subtype || "no_message", days: 30 };
     case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
+    case "send_text": return { message_text: "", on_reply: "pause" };
     case "wait":      return { days: 3, send_start_hour: 7, send_end_hour: 18 };
     case "condition": return { condition_type: subtype || "replied_recently", days: 5 };
     case "action":    return { action_type: subtype || "move_stage", stage_id: "" };
