@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
+from datetime import datetime, timezone, timedelta
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
@@ -69,7 +70,6 @@ async def get_broadcast(broadcast_id: str):
 @router.patch("/{broadcast_id}")
 async def update_broadcast(broadcast_id: str, body: dict):
     sb = get_supabase()
-    from datetime import datetime, timezone
 
     if "scheduled_at" in body:
         current = (
@@ -85,8 +85,12 @@ async def update_broadcast(broadcast_id: str, body: dict):
             if current_status == "scheduled":
                 body["status"] = "draft"
         else:
-            if current_status in ("draft", "scheduled"):
-                body["status"] = "scheduled"
+            if current_status not in ("draft", "scheduled"):
+                raise HTTPException(
+                    400,
+                    "Apenas disparos em rascunho ou agendados podem ser agendados"
+                )
+            body["status"] = "scheduled"
 
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = sb.table("broadcasts").update(body).eq("id", broadcast_id).execute()
