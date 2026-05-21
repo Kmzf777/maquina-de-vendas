@@ -96,6 +96,8 @@ const ACTION_LABELS: Record<string, string> = {
 // Ícones por subtype — os nós no canvas mostram o ícone do subtipo, não o genérico
 const TRIGGER_ICONS: Record<string, string> = {
   stage_enter: "⚡", stage_stagnation: "🕐", no_message: "💤", post_broadcast: "📡",
+  sale_created: "💰", repurchase_window: "🔄", no_sale_in_stage: "📉",
+  tag_added: "🏷️", deal_stage_enter: "🤝", deal_closed_lost: "❌",
 };
 const ACTION_ICONS: Record<string, string> = {
   move_stage: "📋", activate_agent: "🤖", deactivate_agent: "🤖", add_tag: "🏷️",
