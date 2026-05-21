@@ -20,12 +20,7 @@ from app.broadcast.service import (
 from app.cadence.service import create_enrollment
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.leads.service import update_lead
-from app.cadence.scheduler import (
-    process_due_cadences,
-    process_reengagements,
-    process_stagnation_triggers,
-    calculate_next_send_at,
-)
+from app.cadence.scheduler import calculate_next_send_at
 from app.follow_up.scheduler import process_due_followups
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -265,20 +260,18 @@ def reconcile_broadcast_replies() -> None:
 
 
 async def run_worker():
-    """Main worker loop: processes broadcasts, cadences, and stagnation triggers."""
-    logger.info("Broadcast + Cadence worker started")
+    """Main worker loop: broadcasts, automation engine, follow-ups."""
+    logger.info("Worker started")
 
     while True:
         try:
-            from app.campaigns.worker import check_campaign_triggers, process_campaign_enrollments
+            from app.automation.engine import process_due_enrollments
+            from app.automation.triggers import check_polling_triggers
             await process_scheduled_broadcasts()
             await process_broadcasts()
-            await process_due_cadences()
-            await process_reengagements()
-            await process_stagnation_triggers()
+            await check_polling_triggers()
+            await process_due_enrollments()
             await process_due_followups()
-            await check_campaign_triggers()
-            await process_campaign_enrollments()
             reconcile_broadcast_replies()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
@@ -457,6 +450,16 @@ async def process_single_broadcast(broadcast: dict):
                 logger.warning("[BROADCAST] Could not save wamid for lead %s: %s", lead["phone"], wamid_err)
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
+
+            # Fire post_broadcast automation trigger (fire-and-forget)
+            try:
+                from app.automation.triggers import fire_trigger as _fire_trigger
+                asyncio.create_task(_fire_trigger("post_broadcast", str(lead["id"]), {
+                    "broadcast_id": str(broadcast_id),
+                    "replied_only": False,
+                }))
+            except Exception as trig_err:
+                logger.warning("[BROADCAST] post_broadcast trigger error: %s", trig_err)
 
             # Move lead's deal to configured Kanban stage if set
             if move_to_stage_id and target_pipeline_id:

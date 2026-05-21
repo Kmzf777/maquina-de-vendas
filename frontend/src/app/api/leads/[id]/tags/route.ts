@@ -27,6 +27,31 @@ export async function POST(
     if (insertError) {
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
+
+    // Fire tag_added automation trigger for each newly added tag (fire-and-forget)
+    try {
+      const { data: tagRows } = await supabase
+        .from("tags")
+        .select("id, name")
+        .in("id", tagIds);
+
+      if (tagRows && tagRows.length > 0) {
+        const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
+        for (const tag of tagRows) {
+          void fetch(`${backendUrl}/api/automation/trigger`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              event_type: "tag_added",
+              lead_id: id,
+              data: { tag_name: tag.name },
+            }),
+          }).catch(() => {});
+        }
+      }
+    } catch {
+      // Trigger dispatch is non-critical — do not fail the request
+    }
   }
 
   return NextResponse.json({ ok: true });

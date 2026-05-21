@@ -6,7 +6,6 @@ import { useRealtimeBroadcasts } from "@/hooks/use-realtime-broadcasts";
 import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
-import { CadenceList } from "@/components/campaigns/cadence-list";
 import { CreateBroadcastModal, type BroadcastPrefill } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
@@ -32,7 +31,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-const VALID_TABS = ["visao-geral", "disparos", "cadencias", "templates"] as const;
+const VALID_TABS = ["visao-geral", "disparos", "templates"] as const;
 type TabId = typeof VALID_TABS[number];
 
 function CampanhasPageInner() {
@@ -40,13 +39,15 @@ function CampanhasPageInner() {
   const searchParams = useSearchParams();
 
   const { broadcasts, loading: bLoading } = useRealtimeBroadcasts();
-  const { campaigns, loading: cLoading, refresh: refreshCampaigns } = useRealtimeCampaigns();
+  const { campaigns, loading: cLoading } = useRealtimeCampaigns();
   const [period, setPeriod] = useState("30d");
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
   const [showQuickSendModal, setShowQuickSendModal] = useState(false);
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
+  const [priority, setPriority] = useState(5);
+  const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
   const [prefill, setPrefill] = useState<BroadcastPrefill | undefined>(undefined);
@@ -99,7 +100,7 @@ function CampanhasPageInner() {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: cadenceName.trim() }),
+        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -182,7 +183,6 @@ function CampanhasPageInner() {
             >
               {tab === "visao-geral" ? "Visão Geral"
                 : tab === "disparos" ? "Disparos"
-                : tab === "cadencias" ? "Cadências"
                 : "Templates"}
             </button>
           ))}
@@ -234,9 +234,6 @@ function CampanhasPageInner() {
             <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 style={{ letterSpacing: '-0.3px' }} className="text-[18px] font-medium text-[#111111]">Cadências Ativas</h3>
-                <button onClick={() => setActiveTab("cadencias")} className="text-[13px] text-[#7b7b78] hover:text-[#111111] transition-colors">
-                  Ver todas →
-                </button>
               </div>
               <div className="space-y-3">
                 {campaigns.slice(0, 3).map((c) => (
@@ -255,7 +252,6 @@ function CampanhasPageInner() {
         )}
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
-        {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={refreshCampaigns} />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>
 
@@ -290,7 +286,7 @@ function CampanhasPageInner() {
           <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[14px] font-normal text-[#111111]">Nova Cadencia</h2>
-              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setPriority(5); setFrequencyCap(1); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
             </div>
             <div className="space-y-4">
               <div>
@@ -304,13 +300,43 @@ function CampanhasPageInner() {
                   autoFocus
                 />
               </div>
+              {/* Priority */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Prioridade (1 = baixa · 10 = alta)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={priority}
+                  onChange={(e) => setPriority(Number(e.target.value))}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                />
+              </div>
+
+              {/* Frequency cap */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Máx. mensagens por lead por dia
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={frequencyCap}
+                  onChange={(e) => setFrequencyCap(Number(e.target.value))}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                />
+              </div>
+
               <p className="text-[12px] text-[#7b7b78]">
                 Apos criar, voce podera configurar steps, triggers e demais opcoes na pagina de detalhe.
               </p>
             </div>
             <div className="pt-4 border-t border-[#dedbd6] mt-4 flex justify-end gap-2">
               <button
-                onClick={() => { setShowCadenceModal(false); setCadenceName(""); }}
+                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setPriority(5); setFrequencyCap(1); }}
                 className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar

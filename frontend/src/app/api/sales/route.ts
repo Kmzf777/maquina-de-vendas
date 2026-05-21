@@ -58,6 +58,23 @@ export async function POST(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Fire-and-forget: notify automation engine of the new sale
+  const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
+  void fetch(`${backendUrl}/api/automation/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      event_type: "sale_created",
+      lead_id: data.lead_id,
+      data: {
+        sale_id: data.id,
+        value: data.value,
+        product: data.product,
+        deal_id: data.deal_id,
+      },
+    }),
+  }).catch(() => {});
+
   if (body.deal_id) {
     const { data: wonStage } = await supabase
       .from("pipeline_stages")

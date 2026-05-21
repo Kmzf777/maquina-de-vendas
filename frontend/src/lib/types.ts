@@ -322,7 +322,7 @@ export interface SpamConflict {
 
 // ─── Campaigns ────────────────────────────────────────────────────────────────
 
-export type CampaignNodeType = "trigger" | "send" | "wait" | "condition" | "action" | "end";
+export type CampaignNodeType = "trigger" | "send" | "send_text" | "wait" | "condition" | "action" | "end";
 
 export interface CampaignNode {
   id: string;
@@ -342,6 +342,10 @@ export interface Campaign {
   name: string;
   description: string | null;
   status: "draft" | "active" | "paused" | "archived";
+  priority?: number;
+  frequency_cap?: number;
+  send_start_hour?: number;
+  send_end_hour?: number;
   env_tag: string;
   start_date: string | null;
   created_at: string;
