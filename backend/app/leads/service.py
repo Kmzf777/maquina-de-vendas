@@ -146,7 +146,7 @@ def get_or_create_lead(
                 )
             return row
 
-    new_lead: dict[str, Any] = {"phone": normalized, "stage": "pending", "status": "imported"}
+    new_lead: dict[str, Any] = {"phone": normalized, "stage": "pending", "status": "imported", "ai_enabled": True}
     if name:
         new_lead["name"] = name
     if channel:
