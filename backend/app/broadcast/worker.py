@@ -271,6 +271,7 @@ async def run_worker():
     while True:
         try:
             from app.campaigns.worker import check_campaign_triggers, process_campaign_enrollments
+            await process_scheduled_broadcasts()
             await process_broadcasts()
             await process_due_cadences()
             await process_reengagements()
@@ -301,6 +302,42 @@ async def process_broadcasts():
     for broadcast in broadcasts:
         logger.info(f"[DEBUG-BROADCAST] picked broadcast id={broadcast['id']} name={broadcast.get('name')} env_tag={broadcast.get('env_tag')}")
         await process_single_broadcast(broadcast)
+
+
+async def process_scheduled_broadcasts():
+    """Auto-inicia broadcasts cujo scheduled_at já passou."""
+    sb = get_supabase()
+    now = datetime.now(timezone.utc).isoformat()
+    broadcasts = (
+        sb.table("broadcasts")
+        .select("id, name")
+        .eq("status", "scheduled")
+        .eq("env_tag", _ENV_TAG)
+        .lte("scheduled_at", now)
+        .execute()
+        .data
+    )
+    for broadcast in broadcasts:
+        broadcast_id = broadcast["id"]
+        pending_count = (
+            sb.table("broadcast_leads")
+            .select("id", count="exact")
+            .eq("broadcast_id", broadcast_id)
+            .eq("status", "pending")
+            .execute()
+            .count
+        ) or 0
+        if not pending_count:
+            logger.error(
+                f"[SCHEDULER] broadcast {broadcast_id} sem leads pendentes — marcando como failed"
+            )
+            sb.table("broadcasts").update({"status": "failed"}).eq("id", broadcast_id).execute()
+            continue
+        sb.table("broadcasts").update({"status": "running"}).eq("id", broadcast_id).execute()
+        logger.info(
+            f"[SCHEDULER] broadcast {broadcast_id} ({broadcast.get('name')}) "
+            f"iniciado automaticamente — {pending_count} leads"
+        )
 
 
 async def process_single_broadcast(broadcast: dict):
