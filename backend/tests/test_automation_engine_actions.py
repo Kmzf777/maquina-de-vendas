@@ -48,3 +48,19 @@ class TestMarkDealNoDeal:
             _execute_action(enrollment, node, lead)
         # Não deve chamar update se não houver deal
         sb.table.return_value.update.assert_not_called()
+
+
+class TestAddNote:
+    def test_inserts_note_with_substituted_text(self):
+        sb = MagicMock()
+        with patch("app.automation.engine.get_supabase", return_value=sb):
+            enrollment = {"id": "e1", "lead_id": "lead1"}
+            node = {"config": {"action_type": "add_note", "note_template": "Cliente {{lead.name}} respondeu"}}
+            lead = {"id": "lead1", "name": "João", "phone": "5511999"}
+            _execute_action(enrollment, node, lead)
+        sb.table.assert_any_call("lead_notes")
+        insert_call = sb.table.return_value.insert.call_args
+        assert insert_call is not None
+        payload = insert_call[0][0]
+        assert payload["lead_id"] == "lead1"
+        assert "João" in payload["content"]

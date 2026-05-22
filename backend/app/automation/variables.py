@@ -7,9 +7,14 @@ from app.db.supabase import get_supabase
 def substitute_variables(text: str, lead: dict, enrollment: dict | None = None) -> str:
     """Replace {{var}} placeholders with CRM data. Missing data → empty string."""
     replacements: dict[str, str] = {
-        "{{nome}}":     lead.get("name") or "",
-        "{{empresa}}":  lead.get("company") or "",
-        "{{telefone}}": lead.get("phone") or "",
+        "{{nome}}":       lead.get("name") or "",
+        "{{empresa}}":    lead.get("company") or "",
+        "{{telefone}}":   lead.get("phone") or "",
+        # dot-notation aliases
+        "{{lead.name}}":  lead.get("name") or "",
+        "{{lead.phone}}": lead.get("phone") or "",
+        "{{lead.company}}": lead.get("company") or "",
+        "{{lead.stage}}": lead.get("stage") or "",
     }
 
     _fill_sale_vars(text, lead, replacements)
