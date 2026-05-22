@@ -85,7 +85,6 @@ export const config = {
     "/api/admin/:path*",
     "/api/broadcasts/:path*",
     "/api/automation/:path*",
-    "/api/cadences/:path*",
     "/api/campaigns/:path*",
     "/api/leads/:path*",
     "/api/conversations/:path*",
