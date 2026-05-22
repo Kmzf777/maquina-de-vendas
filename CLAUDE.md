@@ -60,7 +60,32 @@ O **código** deve funcionar em ambos os ambientes sem modificação. Os arquivo
 
 ---
 
-## ⚛️ 4. Frontend — Next.js
+## 🌐 4. Ambiente de Desenvolvimento — URL Pública Oficial
+
+O backend dev está exposto via **Cloudflare Tunnel permanente**. A URL pública oficial é:
+
+```
+https://dev.canastrainteligencia.com
+```
+
+**Regras críticas:**
+
+- **NUNCA use `172.18.0.1:8001`** como `DEV_SERVER_URL` em código, scripts ou registros Redis. Esse IP é o gateway Docker do servidor Linux de produção — não tem relação com a máquina de desenvolvimento.
+- **NUNCA use `127.0.0.1:8001`** para referências externas ao dev backend. Esse endereço só é válido dentro do próprio processo local.
+- Ao registrar o número de dev na whitelist Redis de produção (`POST /api/dev/whitelist/{phone}`), o campo `dev_url` deve ser sempre `https://dev.canastrainteligencia.com`.
+- O arquivo `.env` (produção) contém `DEV_SERVER_URL=http://172.18.0.1:8001` por razões históricas — esse valor é ignorado em tempo de execução porque o `dev_url` real vem do Redis, não do env. Não altere o `.env` para corrigir isso; o Redis é a fonte de verdade.
+
+**Mapeamento de ambientes:**
+
+| Ambiente | URL | Onde usar |
+|---|---|---|
+| Produção | `https://api.canastrainteligencia.com` | Webhooks Meta, integrações externas |
+| Dev (público) | `https://dev.canastrainteligencia.com` | `dev_url` no Redis, testes de roteamento |
+| Dev (local) | `http://127.0.0.1:8001` | Apenas `.env.local` e health checks locais |
+
+---
+
+## ⚛️ 5. Frontend — Next.js
 
 - Esta versão usa **App Router e Server Components**. Convenções, APIs e estrutura de pastas podem diferir dos seus dados de treinamento.
 - **Consulte os padrões existentes em `frontend/src/app` antes de criar lógica nova.** Não confie em memória para APIs e estrutura de rotas.
