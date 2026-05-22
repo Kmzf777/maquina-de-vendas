@@ -17,10 +17,8 @@ from app.broadcast.service import (
     increment_broadcast_failed,
     save_broadcast_lead_wamid,
 )
-from app.cadence.service import create_enrollment
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.leads.service import update_lead
-from app.cadence.scheduler import calculate_next_send_at
 from app.follow_up.scheduler import process_due_followups
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -564,35 +562,6 @@ async def process_single_broadcast(broadcast: dict):
                     f"[BROADCAST] Could not save message for {lead['phone']}: {ce}",
                     exc_info=True,
                 )
-
-            # Enroll in cadence if configured
-            if broadcast.get("cadence_id"):
-                try:
-                    cadence = sb.table("cadences").select("*").eq("id", broadcast["cadence_id"]).single().execute().data
-                    if cadence:
-                        first_step = (
-                            sb.table("cadence_steps")
-                            .select("delay_days")
-                            .eq("cadence_id", cadence["id"])
-                            .eq("step_order", 1)
-                            .execute()
-                            .data
-                        )
-                        delay = first_step[0]["delay_days"] if first_step else 1
-                        next_send = calculate_next_send_at(
-                            datetime.now(timezone.utc),
-                            delay,
-                            cadence.get("send_start_hour", 7),
-                            cadence.get("send_end_hour", 18),
-                        )
-                        create_enrollment(
-                            cadence_id=cadence["id"],
-                            lead_id=lead["id"],
-                            broadcast_id=broadcast_id,
-                            next_send_at=next_send,
-                        )
-                except Exception as ce:
-                    logger.warning(f"Could not enroll {lead['phone']} in cadence: {ce}")
 
             # Enroll in campaign if configured
             if broadcast.get("campaign_id"):

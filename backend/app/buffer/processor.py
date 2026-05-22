@@ -18,7 +18,6 @@ from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
-from app.cadence.service import get_active_enrollment, pause_enrollment
 from app.follow_up.service import schedule_followup as _schedule_followup
 
 # Kill switch global — mude para True para reativar a Valéria
@@ -171,15 +170,6 @@ async def process_buffered_messages(
     if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
         logger.warning(f"Duplicate user message detected for {phone}, skipping")
         return
-
-    # Pause cadence if lead is enrolled in one
-    try:
-        enrollment = get_active_enrollment(lead["id"])
-        if enrollment:
-            pause_enrollment(enrollment["id"])
-            logger.info(f"[CADENCE] Lead {phone} responded — pausing enrollment")
-    except Exception as e:
-        logger.warning(f"Failed to pause cadence for {phone}: {e}")
 
     # Always save the incoming user message
     try:
