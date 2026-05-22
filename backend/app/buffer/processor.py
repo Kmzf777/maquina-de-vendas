@@ -211,6 +211,18 @@ async def process_buffered_messages(
     except Exception as ce:
         logger.debug("[CAMPAIGNS] handle_campaign_reply error: %s", ce)
 
+    # Fire keyword_received trigger for automation campaigns
+    try:
+        import asyncio as _asyncio
+        from app.automation.triggers import fire_trigger
+        _asyncio.create_task(fire_trigger(
+            "message_received",
+            lead_id=lead["id"],
+            data={"body": resolved_text},
+        ))
+    except Exception as ke:
+        logger.debug("[AUTOMATION] keyword fire_trigger error: %s", ke)
+
     # Track last inbound message time for WhatsApp 24h window enforcement
     try:
         sb = get_supabase()

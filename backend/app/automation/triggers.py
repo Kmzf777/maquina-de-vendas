@@ -24,6 +24,25 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
     data = data or {}
     now = datetime.now(timezone.utc)
 
+    if event_type == "message_received":
+        message_body = data.get("body") or ""
+        campaign_ids = _match_keyword_campaigns(message_body)
+        for cid in campaign_ids:
+            try:
+                trigger_nodes = get_campaigns_with_trigger_type("keyword_received")
+                for tn in trigger_nodes:
+                    if tn["campaign_id"] == cid and not is_already_enrolled(cid, lead_id) and tn.get("next_node_id"):
+                        create_enrollment(
+                            campaign_id=cid,
+                            lead_id=lead_id,
+                            current_node_id=tn["next_node_id"],
+                            next_execute_at=now,
+                        )
+                        logger.info("[AUTOMATION] Enrolled %s via keyword_received", lead_id)
+            except Exception as e:
+                logger.warning("[AUTOMATION] Failed to enroll %s via keyword_received: %s", lead_id, e)
+        return
+
     for trigger_node in get_campaigns_with_trigger_type(event_type):
         if not _passes_filter(event_type, trigger_node.get("config") or {}, data):
             continue
@@ -128,3 +147,25 @@ def _safe_enroll(trigger_node: dict, lead_id: str, now: datetime) -> None:
         logger.info("[AUTOMATION] polling enrolled %s via %s", lead_id, trigger_node.get("type"))
     except Exception as e:
         logger.warning("[AUTOMATION] polling enroll failed: %s", e)
+
+
+def _match_keyword_campaigns(message_body: str) -> list[str]:
+    """Retorna campaign_ids cujo nó trigger keyword_received bate com a mensagem."""
+    sb = get_supabase()
+    rows = (
+        sb.table("campaign_nodes")
+        .select("campaign_id, config")
+        .eq("type", "trigger")
+        .execute()
+        .data
+    ) or []
+    body_lower = message_body.lower()
+    matches = []
+    for row in rows:
+        cfg = row.get("config") or {}
+        if cfg.get("trigger_type") != "keyword_received":
+            continue
+        keywords = cfg.get("keywords") or []
+        if any(k.lower() in body_lower for k in keywords if k):
+            matches.append(row["campaign_id"])
+    return matches
