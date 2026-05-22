@@ -45,6 +45,7 @@ const FONT_STYLE = `@import url('https://fonts.googleapis.com/css2?family=Outfit
 .react-flow__controls { box-shadow: 0 2px 8px rgba(0,0,0,.1); border-radius: 8px; border: 1px solid #e8e4df; overflow: hidden; }
 .react-flow__controls-button { background: #fff; border-bottom: 1px solid #e8e4df; color: #555; }
 .react-flow__controls-button:hover { background: #f5f2ed; }
+@keyframes cfb-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 `;
 
 // ─── Design constants ──────────────────────────────────────────────────────────
@@ -361,6 +362,7 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
   const [showAdd, setShowAdd] = useState(false);
   const color = meta.color === "#1a1a1a" ? "#aaa" : meta.color;
   const displayIcon = resolveNodeIcon(node.type, cfg);
+  const testState = ((data as Record<string, unknown>).testState as TestNodeState | null) ?? null;
 
   const handleStyle: React.CSSProperties = {
     width: 10, height: 10,
@@ -380,11 +382,18 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
         width: NODE_W,
         background: "#ffffff",
         borderRadius: 10,
-        boxShadow: "0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.08)",
+        boxShadow: testState === "running"
+          ? "0 0 0 2px #E85D26, 0 4px 14px rgba(232,93,38,.3)"
+          : testState === "done"
+          ? "0 0 0 2px #1A9B6C, 0 4px 14px rgba(26,155,108,.2)"
+          : testState === "failed"
+          ? "0 0 0 2px #ef4444, 0 4px 14px rgba(239,68,68,.2)"
+          : "0 1px 3px rgba(0,0,0,.07), 0 4px 14px rgba(0,0,0,.08)",
         border: "1px solid rgba(0,0,0,.06)",
         fontFamily: "'Outfit', sans-serif",
         overflow: "visible",
         position: "relative",
+        transition: "box-shadow .2s",
       }}
     >
       {/* Top stripe */}
@@ -431,6 +440,22 @@ const CampaignFlowNode = memo(function CampaignFlowNode({ data }: NodeProps) {
           </div>
         </div>
       </div>
+
+      {/* Test state badge */}
+      {testState && (
+        <div style={{
+          position: "absolute", top: -8, right: -8,
+          width: 22, height: 22, borderRadius: "50%",
+          background: testState === "running" ? "#E85D26" : testState === "done" ? "#1A9B6C" : "#ef4444",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 11, color: "#fff",
+          boxShadow: "0 2px 6px rgba(0,0,0,.2)",
+          animation: testState === "running" ? "cfb-pulse 1s infinite" : "none",
+          zIndex: 10,
+        }}>
+          {testState === "running" ? "⟳" : testState === "done" ? "✓" : "✗"}
+        </div>
+      )}
 
       {/* Output handle(s) (bottom) — not on end */}
       {!isEnd && (
@@ -543,6 +568,21 @@ interface FlowBuilderData {
   allStages: FlowStage[];
   tags: FlowTag[];
   users: FlowUser[];
+  channels: { id: string; name: string; status: string }[];
+}
+
+// ─── Test mode types ───────────────────────────────────────────────────────────
+type TestNodeState = "running" | "done" | "failed";
+
+interface TestEvent {
+  node_id: string | null;
+  status: "running" | "done" | "failed" | "finished";
+  log?: string;
+  duration_ms?: number;
+}
+
+interface TestLogEntry extends TestEvent {
+  node_label: string;
 }
 
 // ─── Inspector ─────────────────────────────────────────────────────────────────
@@ -697,6 +737,17 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
                 <option value="continue">Continuar campanha</option>
               </select>
             </div>
+            <div style={field}>
+              <label style={label}>Canal (override)</label>
+              <select
+                style={{ ...input, appearance: "none" } as React.CSSProperties}
+                value={(c.channel_id as string) ?? ""}
+                onChange={e => set("channel_id", e.target.value || null)}
+              >
+                <option value="">— Usar padrão da cadência —</option>
+                {data.channels.map(ch => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
+              </select>
+            </div>
           </>
         )}
         {node.type === "send_text" && (
@@ -716,6 +767,17 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
                 <option value="pause">Pausar campanha</option>
                 <option value="cancel">Cancelar campanha</option>
                 <option value="continue">Continuar campanha</option>
+              </select>
+            </div>
+            <div style={field}>
+              <label style={label}>Canal (override)</label>
+              <select
+                style={{ ...input, appearance: "none" } as React.CSSProperties}
+                value={(c.channel_id as string) ?? ""}
+                onChange={e => set("channel_id", e.target.value || null)}
+              >
+                <option value="">— Usar padrão da cadência —</option>
+                {data.channels.map(ch => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
               </select>
             </div>
             <div style={{ ...field, padding: "8px 10px", background: "#fef9ed", borderRadius: 6, border: "1px solid #fde68a" }}>
@@ -880,7 +942,17 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const edgeContextMenuRef = useRef<HTMLDivElement>(null);
 
-  const [flowData, setFlowData] = useState<FlowBuilderData>({ templates: [], allStages: [], tags: [], users: [] });
+  const [flowData, setFlowData] = useState<FlowBuilderData>({ templates: [], allStages: [], tags: [], users: [], channels: [] });
+
+  // ── Test mode state ───────────────────────────────────────────────────────
+  const [testNodeStates, setTestNodeStates] = useState<Record<string, TestNodeState>>({});
+  const [testLog, setTestLog] = useState<TestLogEntry[]>([]);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testFinished, setTestFinished] = useState(false);
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [testPhone, setTestPhone] = useState("");
+  const [testSkipDelays, setTestSkipDelays] = useState(true);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Load campaign + nodes
   useEffect(() => {
@@ -898,17 +970,19 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   // Load auxiliary data for Inspector dropdowns
   useEffect(() => {
     async function loadFlowData() {
-      const [templatesRes, pipelinesRes, tagsRes, usersRes] = await Promise.all([
+      const [templatesRes, pipelinesRes, tagsRes, usersRes, channelsRes] = await Promise.all([
         fetch("/api/templates"),
         fetch("/api/pipelines"),
         fetch("/api/tags"),
         fetch("/api/users"),
+        fetch("/api/channels"),
       ]);
-      const [templatesData, pipelinesData, tagsData, usersData] = await Promise.all([
+      const [templatesData, pipelinesData, tagsData, usersData, channelsData] = await Promise.all([
         templatesRes.ok ? templatesRes.json() : [],
         pipelinesRes.ok ? pipelinesRes.json() : [],
         tagsRes.ok ? tagsRes.json() : [],
         usersRes.ok ? usersRes.json() : [],
+        channelsRes.ok ? channelsRes.json() : [],
       ]);
 
       // Fetch stages for every pipeline in parallel
@@ -925,11 +999,16 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         })
       );
 
+      const connectedChannels = (channelsData as { id: string; name: string; status: string }[]).filter(
+        ch => ch.status === "connected"
+      );
+
       setFlowData({
         templates: templatesData as FlowTemplate[],
         allStages: stageResults.flat(),
         tags: tagsData as FlowTag[],
         users: usersData as FlowUser[],
+        channels: connectedChannels,
       });
     }
     loadFlowData();
@@ -1168,6 +1247,63 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
     setCampaign(prev => prev ? { ...prev, status: data.status } : prev);
   }, [campaign, campaignId]);
 
+  // ── Test mode: start SSE test run ────────────────────────────────────────
+  const startTest = useCallback(() => {
+    if (!testPhone.trim()) return;
+    setShowTestModal(false);
+    setTestNodeStates({});
+    setTestLog([]);
+    setTestRunning(true);
+    setTestFinished(false);
+    setSelectedNodeId(null);
+
+    const url = `/api/campaigns/${campaignId}/test?phone=${encodeURIComponent(testPhone)}&skip_delays=${testSkipDelays}`;
+    const es = new EventSource(url);
+    eventSourceRef.current = es;
+
+    es.onmessage = (e) => {
+      const evt: TestEvent = JSON.parse(e.data);
+      if (evt.status === "finished") {
+        setTestRunning(false);
+        setTestFinished(true);
+        es.close();
+        return;
+      }
+      if (!evt.node_id) return;
+      setTestNodeStates(prev => ({ ...prev, [evt.node_id!]: evt.status as TestNodeState }));
+      if (evt.status !== "running") {
+        const node = dbNodes.find(n => n.id === evt.node_id);
+        const meta = node ? NODE_META[node.type] : null;
+        setTestLog(prev => [...prev, {
+          ...evt,
+          node_label: meta ? `${meta.icon} ${meta.label}` : (evt.node_id ?? ""),
+        }]);
+      }
+    };
+    es.onerror = () => {
+      setTestRunning(false);
+      setTestFinished(true);
+      es.close();
+    };
+  }, [testPhone, testSkipDelays, campaignId, dbNodes]);
+
+  const closeTest = useCallback(() => {
+    eventSourceRef.current?.close();
+    setTestNodeStates({});
+    setTestLog([]);
+    setTestRunning(false);
+    setTestFinished(false);
+  }, []);
+
+  // ── Propagate test states to RF nodes ────────────────────────────────────
+  useEffect(() => {
+    setRFNodes(prev => prev.map(n => ({
+      ...n,
+      data: { ...n.data, testState: testNodeStates[n.id] ?? null },
+    })));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [testNodeStates, setRFNodes]);
+
   const selectedDbNode = selectedNodeId ? dbNodes.find(n => n.id === selectedNodeId) ?? null : null;
   const st = campaign ? (STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft) : STATUS_COLORS.draft;
 
@@ -1209,6 +1345,19 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         )}
 
         <div style={{ flex: 1 }} />
+
+        <button
+          onClick={() => setShowTestModal(true)}
+          style={{
+            height: 34, padding: "0 16px", borderRadius: 7,
+            background: "#fff", border: "1px solid #e0dbd4",
+            color: "#555", fontFamily: "'Outfit', sans-serif",
+            fontSize: 13, fontWeight: 500, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6,
+          }}
+        >
+          ⚡ Testar
+        </button>
 
         <button
           onClick={toggleActivation}
@@ -1356,8 +1505,46 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
           </div>
         )}
 
-        {/* ── Inspector ─────────────────────────────────────────────── */}
-        {selectedDbNode && (
+        {/* ── Inspector / Execution Panel ───────────────────────────── */}
+        {(testRunning || testFinished) ? (
+          <div style={{ width: 256, flexShrink: 0, background: "#fff", borderLeft: "1px solid #e8e4df", display: "flex", flexDirection: "column", fontFamily: "'Outfit', sans-serif" }}>
+            <div style={{ padding: "14px 16px 12px", borderBottom: "1px solid #ede9e3", display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#111", flex: 1 }}>⚡ Execução de Teste</div>
+              <button onClick={closeTest} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #e0dbd4", background: "#faf9f6", cursor: "pointer", fontSize: 13, color: "#888" }}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+              {testLog.length === 0 && testRunning && (
+                <div style={{ fontSize: 13, color: "#9b9590", textAlign: "center", paddingTop: 24 }}>Iniciando execução...</div>
+              )}
+              {testLog.map((entry, i) => (
+                <div key={i} style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 7, background: entry.status === "failed" ? "#fff5f5" : "#f5faf7", border: `1px solid ${entry.status === "failed" ? "#fecaca" : "#d1fae5"}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                    <span style={{ fontSize: 12 }}>{entry.status === "done" ? "✅" : "❌"}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{entry.node_label}</span>
+                    {entry.duration_ms !== undefined && (
+                      <span style={{ fontSize: 10, color: "#9b9590", marginLeft: "auto" }}>{entry.duration_ms}ms</span>
+                    )}
+                  </div>
+                  {entry.log && (
+                    <div style={{ fontSize: 11, color: entry.status === "failed" ? "#dc2626" : "#555", lineHeight: 1.5, wordBreak: "break-word" }}>
+                      {entry.log}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {testFinished && (
+                <div style={{ textAlign: "center", paddingTop: 8 }}>
+                  <button
+                    onClick={() => { setShowTestModal(true); setTestFinished(false); setTestNodeStates({}); setTestLog([]); }}
+                    style={{ height: 30, padding: "0 14px", borderRadius: 7, border: "1px solid #e0dbd4", background: "#fff", color: "#555", fontFamily: "'Outfit', sans-serif", fontSize: 12, cursor: "pointer" }}
+                  >
+                    ↺ Testar novamente
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : selectedDbNode ? (
           <Inspector
             key={selectedDbNode.id}
             node={selectedDbNode}
@@ -1367,8 +1554,52 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             onDelete={deleteNode}
             onClose={() => setSelectedNodeId(null)}
           />
-        )}
+        ) : null}
       </div>
+
+      {/* ── Test Modal ──────────────────────────────────────────────── */}
+      {showTestModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(17,17,17,.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, width: 380, boxShadow: "0 8px 32px rgba(0,0,0,.2)" }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 18, color: "#111", fontFamily: "'Outfit', sans-serif" }}>⚡ Testar cadência</div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#b0a8a0", marginBottom: 5, fontFamily: "'Outfit', sans-serif" }}>
+                Número de teste (com DDI, ex: 5511999990000)
+              </label>
+              <input
+                type="text"
+                value={testPhone}
+                onChange={e => setTestPhone(e.target.value)}
+                placeholder="5511999990000"
+                style={{ width: "100%", padding: "8px 11px", border: "1px solid #e0dbd4", borderRadius: 7, fontFamily: "'Outfit', sans-serif", fontSize: 13, color: "#111", background: "#faf9f6", outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 20, fontFamily: "'Outfit', sans-serif" }}>
+              <input
+                type="checkbox"
+                checked={testSkipDelays}
+                onChange={e => setTestSkipDelays(e.target.checked)}
+              />
+              <span style={{ fontSize: 13, color: "#444" }}>Pular delays ⏱ (recomendado)</span>
+            </label>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowTestModal(false)}
+                style={{ height: 34, padding: "0 14px", borderRadius: 7, border: "1px solid #e0dbd4", background: "#fff", color: "#555", fontFamily: "'Outfit', sans-serif", fontSize: 13, cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={startTest}
+                disabled={!testPhone.trim()}
+                style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "none", background: testPhone.trim() ? "#111" : "#ccc", color: "#fff", fontFamily: "'Outfit', sans-serif", fontSize: 13, cursor: testPhone.trim() ? "pointer" : "default" }}
+              >
+                ▶ Executar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
