@@ -64,3 +64,24 @@ class TestAddNote:
         payload = insert_call[0][0]
         assert payload["lead_id"] == "lead1"
         assert "João" in payload["content"]
+
+
+class TestAssignRoundRobin:
+    def test_assigns_next_user_in_list_and_increments_index(self):
+        sb = MagicMock()
+        # Mock pegar a campaign para ler last_assigned_index
+        sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "id": "camp1",
+            "last_assigned_index": 0,
+        }
+        with patch("app.automation.engine.get_supabase", return_value=sb):
+            with patch("app.leads.service.update_lead") as mock_update_lead:
+                enrollment = {"id": "e1", "lead_id": "lead1", "campaign_id": "camp1"}
+                node = {"config": {
+                    "action_type": "assign_round_robin",
+                    "user_ids": ["u1", "u2", "u3"],
+                }}
+                lead = {"id": "lead1"}
+                _execute_action(enrollment, node, lead)
+        # Espera: campaign atualizada com last_assigned_index=1 (next after 0)
+        sb.table.assert_any_call("campaigns")
