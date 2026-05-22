@@ -42,15 +42,15 @@ function resolveBody(
   return text;
 }
 
-interface CadenceEnrollment {
+interface CampaignEnrollmentLocal {
   id: string;
-  cadence_id: string;
+  campaign_id: string;
   status: string;
-  next_send_at: string | null;
-  cadences?: { id: string; name: string } | null;
+  next_execute_at: string | null;
+  campaigns?: { id: string; name: string } | null;
 }
 
-interface Cadence {
+interface Campaign {
   id: string;
   name: string;
   status: string;
@@ -67,7 +67,7 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
   const provider = conversation.channels?.provider;
 
   const [loading, setLoading] = useState(true);
-  const [activeEnrollment, setActiveEnrollment] = useState<CadenceEnrollment | null>(null);
+  const [activeEnrollment, setActiveEnrollment] = useState<CampaignEnrollmentLocal | null>(null);
 
   // Template send state
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
@@ -79,9 +79,9 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
   const [sendSuccess, setSendSuccess] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  // Cadence enroll state
+  // Campaign enroll state
   const [showCadencePicker, setShowCadencePicker] = useState(false);
-  const [cadences, setCadences] = useState<Cadence[]>([]);
+  const [cadences, setCadences] = useState<Campaign[]>([]);
   const [loadingCadences, setLoadingCadences] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [enrollSuccess, setEnrollSuccess] = useState(false);
@@ -90,9 +90,12 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
   // Load active enrollment on mount
   useEffect(() => {
     if (!lead?.id) return;
-    fetch(`/api/leads/${lead.id}/cadence-enrollments?status=active&limit=1`)
+    fetch(`/api/leads/${lead.id}/campaign-enrollments`)
       .then((r) => r.json())
-      .then((data: CadenceEnrollment[]) => setActiveEnrollment(data[0] ?? null))
+      .then((data: CampaignEnrollmentLocal[]) => {
+        const active = Array.isArray(data) ? data.find((e) => e.status === "active") : null;
+        setActiveEnrollment(active ?? null);
+      })
       .catch(() => setActiveEnrollment(null))
       .finally(() => setLoading(false));
   }, [lead?.id]);
@@ -108,14 +111,13 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
       .finally(() => setLoadingTemplates(false));
   }, [showTemplatePicker, channelId, provider]);
 
-  // Load active cadences when picker opens
-  // /api/cadences returns all cadences — filter active ones client-side
+  // Load active campaigns when picker opens
   useEffect(() => {
     if (!showCadencePicker) return;
     setLoadingCadences(true);
-    fetch("/api/cadences")
+    fetch("/api/campaigns")
       .then((r) => r.json())
-      .then((data: Cadence[]) => setCadences((Array.isArray(data) ? data : []).filter((c) => c.status === "active")))
+      .then((data: Campaign[]) => setCadences((Array.isArray(data) ? data : []).filter((c) => c.status === "active")))
       .catch(() => setCadences([]))
       .finally(() => setLoadingCadences(false));
   }, [showCadencePicker]);
@@ -163,22 +165,22 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
     }
   }
 
-  async function handleEnrollCadence(cadenceId: string) {
+  async function handleEnrollCadence(campaignId: string) {
     if (!lead?.id) return;
     setEnrolling(true);
     try {
-      const res = await fetch(`/api/cadences/${cadenceId}/enrollments`, {
+      const res = await fetch(`/api/campaigns/${campaignId}/enrollments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lead_id: lead.id }),
       });
-      if (!res.ok) throw new Error("Erro ao enrolar lead na cadência");
-      const enrollment: CadenceEnrollment = await res.json();
+      if (!res.ok) throw new Error("Erro ao inscrever lead na campanha");
+      const enrollment: CampaignEnrollmentLocal = await res.json();
       setActiveEnrollment(enrollment);
       setEnrollSuccess(true);
       setShowCadencePicker(false);
     } catch (e) {
-      setEnrollError(e instanceof Error ? e.message : "Erro ao adicionar à cadência");
+      setEnrollError(e instanceof Error ? e.message : "Erro ao adicionar à campanha");
     } finally {
       setEnrolling(false);
     }
@@ -205,10 +207,10 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-[13px] text-[#111111] font-medium">
-              Em cadência: {activeEnrollment.cadences?.name ?? "—"}
+              Em campanha: {activeEnrollment.campaigns?.name ?? "—"}
             </p>
             <p className="text-[12px] text-[#7b7b78] mt-0.5">
-              Próximo envio: {formatNextSend(activeEnrollment.next_send_at)}
+              Próxima execução: {formatNextSend(activeEnrollment.next_execute_at)}
             </p>
           </div>
           <button
@@ -259,7 +261,7 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
             onClick={() => setShowCadencePicker(true)}
             className="flex-1 border border-[#dedbd6] text-[#111111] text-[13px] px-3 py-2 rounded-[4px] hover:bg-[#dedbd6]/30 transition-colors"
           >
-            Adicionar à cadência
+            Adicionar à campanha
           </button>
         </div>
       )}
@@ -347,13 +349,13 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
       {showCadencePicker && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-[12px] uppercase tracking-[0.6px] text-[#7b7b78]">Cadência</p>
+            <p className="text-[12px] uppercase tracking-[0.6px] text-[#7b7b78]">Campanha</p>
             <button onClick={() => setShowCadencePicker(false)} className="text-[#7b7b78] hover:text-[#111111] text-xs">← Voltar</button>
           </div>
           {loadingCadences ? (
-            <p className="text-[13px] text-[#7b7b78]">Buscando cadências...</p>
+            <p className="text-[13px] text-[#7b7b78]">Buscando campanhas...</p>
           ) : cadences.length === 0 ? (
-            <p className="text-[13px] text-[#7b7b78]">Nenhuma cadência ativa encontrada.</p>
+            <p className="text-[13px] text-[#7b7b78]">Nenhuma campanha ativa encontrada.</p>
           ) : (
             <div className="space-y-1">
               {cadences.map((c) => (
