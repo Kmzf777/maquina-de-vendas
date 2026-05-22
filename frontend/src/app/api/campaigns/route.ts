@@ -18,7 +18,15 @@ export async function POST(request: NextRequest) {
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("campaigns")
-    .insert({ name: body.name, description: body.description ?? null, status: "draft", env_tag: APP_ENV })
+    .insert({
+      name: body.name,
+      description: body.description ?? null,
+      status: "draft",
+      channel_id: body.channel_id ?? null,
+      priority: body.priority ?? null,
+      frequency_cap: body.frequency_cap ?? null,
+      env_tag: APP_ENV,
+    })
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

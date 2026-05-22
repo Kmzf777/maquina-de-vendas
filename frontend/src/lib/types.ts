@@ -344,6 +344,7 @@ export interface Campaign {
   status: "draft" | "active" | "paused" | "archived";
   priority?: number;
   frequency_cap?: number;
+  channel_id: string | null;
   send_start_hour?: number;
   send_end_hour?: number;
   env_tag: string;
