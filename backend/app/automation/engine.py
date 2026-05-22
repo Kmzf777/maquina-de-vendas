@@ -347,6 +347,51 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             from app.leads.service import update_lead
             update_lead(enrollment["lead_id"], assigned_to=user_id)
 
+    elif action_type in ("mark_deal_won", "mark_deal_lost", "move_deal_stage"):
+        stage_id = cfg.get("stage_id")
+        if not stage_id:
+            return
+        rows = (
+            sb.table("deals")
+            .select("id")
+            .eq("lead_id", enrollment["lead_id"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        if rows:
+            sb.table("deals").update({"stage_id": stage_id}).eq("id", rows[0]["id"]).execute()
+
+    elif action_type == "add_note":
+        template = cfg.get("note_template") or ""
+        if template:
+            content = substitute_variables(template, lead, enrollment)
+            sb.table("lead_notes").insert({
+                "lead_id": enrollment["lead_id"],
+                "content": content,
+            }).execute()
+
+    elif action_type == "assign_round_robin":
+        user_ids = cfg.get("user_ids") or []
+        campaign_id = enrollment.get("campaign_id")
+        if not user_ids or not campaign_id:
+            return
+        camp = (
+            sb.table("campaigns")
+            .select("last_assigned_index")
+            .eq("id", campaign_id)
+            .single()
+            .execute()
+            .data
+        ) or {}
+        last_idx = camp.get("last_assigned_index", -1)
+        next_idx = (last_idx + 1) % len(user_ids)
+        next_user = user_ids[next_idx]
+        from app.leads.service import update_lead
+        update_lead(enrollment["lead_id"], assigned_to=next_user)
+        sb.table("campaigns").update({"last_assigned_index": next_idx}).eq("id", campaign_id).execute()
+
     logger.info("[AUTOMATION] action '%s' for %s", action_type, lead.get("phone"))
 
 
