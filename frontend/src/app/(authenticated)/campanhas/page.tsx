@@ -47,11 +47,23 @@ function CampanhasPageInner() {
   const [showQuickSendModal, setShowQuickSendModal] = useState(false);
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
+  const [channelId, setChannelId] = useState("");
+  const [channels, setChannels] = useState<{ id: string; name: string; status: string }[]>([]);
   const [priority, setPriority] = useState(5);
   const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
   const [prefill, setPrefill] = useState<BroadcastPrefill | undefined>(undefined);
+
+  // Load connected channels once on mount
+  useEffect(() => {
+    fetch("/api/channels")
+      .then(r => r.json())
+      .then((data: { id: string; name: string; status: string }[]) => {
+        setChannels(Array.isArray(data) ? data.filter(c => c.status === "connected") : []);
+      })
+      .catch(() => {});
+  }, []);
 
   // Read ?tab= query param on mount / change
   useEffect(() => {
@@ -95,13 +107,13 @@ function CampanhasPageInner() {
   }, [searchParams, router]);
 
   const handleCreateCadence = async () => {
-    if (!cadenceName.trim()) return;
+    if (!cadenceName.trim() || !channelId) return;
     setCreatingSaving(true);
     try {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap }),
+        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap, channel_id: channelId || null }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -110,6 +122,7 @@ function CampanhasPageInner() {
       }
       const camp = await res.json();
       setCadenceName("");
+      setChannelId("");
       setShowCadenceModal(false);
       router.push(`/campanhas/cadencias/${camp.id}`);
     } catch (e) {
@@ -296,7 +309,7 @@ function CampanhasPageInner() {
           <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[14px] font-normal text-[#111111]">Nova Cadencia</h2>
-              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setPriority(5); setFrequencyCap(1); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
             </div>
             <div className="space-y-4">
               <div>
@@ -310,6 +323,26 @@ function CampanhasPageInner() {
                   autoFocus
                 />
               </div>
+              {/* Canal padrão */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Canal padrão <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={channelId}
+                  onChange={(e) => setChannelId(e.target.value)}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                >
+                  <option value="">— Selecione um canal —</option>
+                  {channels.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {channels.length === 0 && (
+                  <p className="text-[11px] text-[#7b7b78] mt-1">Nenhum canal conectado encontrado</p>
+                )}
+              </div>
+
               {/* Priority */}
               <div>
                 <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
@@ -346,14 +379,14 @@ function CampanhasPageInner() {
             </div>
             <div className="pt-4 border-t border-[#dedbd6] mt-4 flex justify-end gap-2">
               <button
-                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setPriority(5); setFrequencyCap(1); }}
+                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); }}
                 className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleCreateCadence}
-                disabled={!cadenceName.trim() || creatingSaving}
+                disabled={!cadenceName.trim() || !channelId || creatingSaving}
                 className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
               >
                 {creatingSaving ? "Criando..." : "Criar Cadencia"}
