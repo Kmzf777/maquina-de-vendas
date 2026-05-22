@@ -210,7 +210,22 @@ async def _execute_test_node(
 
     if node_type == "action":
         action_type = cfg.get("action_type", "")
-        return f"Ação '{action_type}' executada (modo teste — sem efeito real)", None
+        action_labels = {
+            "move_stage": "Mover estágio do lead",
+            "mark_deal_won": "Marcar deal como ganho",
+            "mark_deal_lost": "Marcar deal como perdido",
+            "move_deal_stage": "Mover deal de estágio",
+            "activate_agent": "Ativar agente AI",
+            "deactivate_agent": "Desativar agente AI",
+            "add_tag": "Adicionar tag",
+            "remove_tag": "Remover tag",
+            "create_deal": "Criar deal",
+            "assign_to": "Atribuir vendedor",
+            "assign_round_robin": "Atribuir via round-robin",
+            "add_note": "Adicionar nota",
+        }
+        label = action_labels.get(action_type, action_type or "ação")
+        return f"[Simulado] {label} — sem efeito real no modo teste", None
 
     if node_type == "end":
         return "Fluxo encerrado", None
