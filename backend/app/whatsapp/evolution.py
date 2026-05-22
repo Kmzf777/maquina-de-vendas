@@ -51,10 +51,17 @@ class EvolutionClient(WhatsAppProvider):
             )
 
     async def send_text(self, to: str, body: str) -> dict:
-        return await self._post("/message/sendText", {
+        result = await self._post("/message/sendText", {
             "number": to,
             "text": body,
         })
+        # Evolution can return HTTP 200 with an error body (e.g. instance disconnected).
+        # A real acceptance always contains "key.id" (the WhatsApp message ID).
+        if not isinstance(result, dict) or "key" not in result:
+            raise RuntimeError(
+                f"Evolution sendText rejected (missing key in response): {result!r}"
+            )
+        return result
 
     async def send_image(self, to: str, image_url: str, caption: str | None = None) -> dict:
         return await self._post("/message/sendMedia", {

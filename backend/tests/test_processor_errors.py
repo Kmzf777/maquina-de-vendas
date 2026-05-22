@@ -60,8 +60,15 @@ async def test_mensagem_do_usuario_sempre_salva_mesmo_quando_agente_falha():
     assert user_msgs[0]["content"] == "oi"
 
 
-async def test_falha_no_send_nao_cancela_save_da_resposta():
-    """Falha no provider.send_text não deve impedir save da resposta do agente."""
+def _mock_settings():
+    """Settings mock that disables the ai_phone_number_id channel gate."""
+    s = MagicMock()
+    s.ai_phone_number_id = None
+    return s
+
+
+async def test_falha_no_send_impede_save_da_resposta():
+    """Falha no provider.send_text deve impedir save da resposta do agente no banco."""
     from app.buffer.processor import process_buffered_messages
 
     saved_messages = []
@@ -76,7 +83,7 @@ async def test_falha_no_send_nao_cancela_save_da_resposta():
     with patch("app.buffer.processor.get_channel_by_id", return_value=_make_channel()), \
          patch("app.buffer.processor.get_provider", return_value=mock_provider), \
          patch("app.buffer.processor._resolve_media", return_value="oi"), \
-         patch("app.buffer.processor.get_or_create_lead", return_value={"id": "lead-1", "phone": "5511999999999"}), \
+         patch("app.buffer.processor.get_or_create_lead", return_value={"id": "lead-1", "phone": "5511999999999", "ai_enabled": True}), \
          patch("app.buffer.processor.get_or_create_conversation", return_value={
              "id": "conv-1", "status": "active", "stage": "secretaria"
          }), \
@@ -87,12 +94,50 @@ async def test_falha_no_send_nao_cancela_save_da_resposta():
          patch("app.buffer.processor.update_conversation", return_value={}), \
          patch("app.buffer.processor.get_active_enrollment", return_value=None), \
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.settings", _mock_settings()), \
          patch("app.buffer.processor.get_supabase"), \
          patch("app.buffer.processor._update_last_msg"):
         await process_buffered_messages("5511999999999", "oi", "chan-uuid")
 
     assistant_msgs = [m for m in saved_messages if m["role"] == "assistant"]
-    assert len(assistant_msgs) == 1
+    assert len(assistant_msgs) == 0, "Mensagem não deve ser salva quando o envio falha"
+
+
+async def test_send_bem_sucedido_salva_resposta():
+    """Provider.send_text com sucesso deve resultar em save da resposta do agente."""
+    from app.buffer.processor import process_buffered_messages
+
+    saved_messages = []
+
+    def mock_save(conv_id, lead_id, role, content, stage=None, **kwargs):
+        saved_messages.append({"role": role, "content": content})
+        return {}
+
+    mock_provider = AsyncMock()
+    mock_provider.send_text = AsyncMock(return_value={"key": {"id": "BAEF123"}, "status": "PENDING"})
+
+    with patch("app.buffer.processor.get_channel_by_id", return_value=_make_channel()), \
+         patch("app.buffer.processor.get_provider", return_value=mock_provider), \
+         patch("app.buffer.processor._resolve_media", return_value="oi"), \
+         patch("app.buffer.processor.get_or_create_lead", return_value={"id": "lead-1", "phone": "5511999999999", "ai_enabled": True}), \
+         patch("app.buffer.processor.get_or_create_conversation", return_value={
+             "id": "conv-1", "status": "active", "stage": "secretaria"
+         }), \
+         patch("app.buffer.processor.save_message", side_effect=mock_save), \
+         patch("app.buffer.processor.run_agent", return_value="Olá! Como posso ajudar?"), \
+         patch("app.buffer.processor.split_into_bubbles", return_value=["Olá! Como posso ajudar?"]), \
+         patch("app.buffer.processor._bubble_delays", return_value=[0.0]), \
+         patch("app.buffer.processor.update_conversation", return_value={}), \
+         patch("app.buffer.processor.get_active_enrollment", return_value=None), \
+         patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.settings", _mock_settings()), \
+         patch("app.buffer.processor.get_supabase"), \
+         patch("app.buffer.processor._update_last_msg"), \
+         patch("app.buffer.processor._schedule_followup"):
+        await process_buffered_messages("5511999999999", "oi", "chan-uuid")
+
+    assistant_msgs = [m for m in saved_messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1, "Mensagem deve ser salva após envio bem-sucedido"
 
 
 async def test_canal_sem_agent_profile_salva_mensagem_usuario():

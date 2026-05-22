@@ -79,12 +79,19 @@ class MetaCloudClient(WhatsAppProvider):
             )
 
     async def send_text(self, to: str, body: str) -> dict:
-        return await self._post({
+        result = await self._post({
             "messaging_product": "whatsapp",
             "to": to,
             "type": "text",
             "text": {"body": body},
         }, request_type="send_text")
+        # Meta Graph API can return HTTP 200 with an embedded error object.
+        # A real acceptance always contains "messages" with at least one wamid.
+        if not isinstance(result, dict) or "messages" not in result:
+            raise RuntimeError(
+                f"Meta send_text rejected (missing messages in response): {result!r}"
+            )
+        return result
 
     async def send_image(self, to: str, image_url: str, caption: str | None = None) -> dict:
         payload: dict = {
