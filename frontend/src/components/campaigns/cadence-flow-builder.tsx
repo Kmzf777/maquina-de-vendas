@@ -33,6 +33,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Campaign, CampaignNode, CampaignNodeType } from "@/lib/types";
+import { AGENT_STAGES } from "@/lib/constants";
 
 // ─── Fonts ────────────────────────────────────────────────────────────────────
 const FONT_STYLE = `@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -81,7 +82,18 @@ function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<string, 
     case "send_text": return { message_text: "", on_reply: "pause" };
     case "wait":      return { days: 3, send_start_hour: 7, send_end_hour: 18 };
     case "condition": return { condition_type: subtype || "replied_recently", days: 5 };
-    case "action":    return { action_type: subtype || "move_stage", stage_id: "" };
+    case "action": {
+      const at = subtype || "move_stage";
+      const base: Record<string, unknown> = { action_type: at };
+      if (at === "move_stage") base.stage = "";
+      if (at === "mark_deal_won" || at === "mark_deal_lost" || at === "move_deal_stage") base.stage_id = "";
+      if (at === "add_tag" || at === "remove_tag") base.tag_name = "";
+      if (at === "add_note") base.note_template = "";
+      if (at === "create_deal") base.title_template = "";
+      if (at === "assign_to") base.user_id = "";
+      if (at === "assign_round_robin") base.user_ids = [];
+      return base;
+    }
     case "end":       return { label: "Concluído", final_actions: [] };
     default:          return {};
   }
@@ -516,12 +528,18 @@ const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; 
   { type: "send_text", subtype: "",                  icon: "💬", label: "Enviar texto" },
   { type: "wait",      subtype: "",                  icon: "⏱",  label: "Aguardar" },
   { type: "condition", subtype: "replied_recently",  icon: "🔀", label: "Condição" },
-  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Ação CRM" },
+  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Mover stage do lead" },
+  { type: "action",    subtype: "move_deal_stage",   icon: "🔀", label: "Mover deal de estágio" },
   { type: "action",    subtype: "mark_deal_won",     icon: "🏆", label: "Marcar deal ganho" },
   { type: "action",    subtype: "mark_deal_lost",    icon: "💔", label: "Marcar deal perdido" },
   { type: "action",    subtype: "add_note",          icon: "📝", label: "Adicionar nota" },
-  { type: "action",    subtype: "assign_round_robin",  icon: "🎯", label: "Atribuir round-robin" },
-  { type: "trigger",   subtype: "keyword_received",   icon: "🔍", label: "Palavra-chave" },
+  { type: "action",    subtype: "add_tag",           icon: "🏷️", label: "Adicionar tag" },
+  { type: "action",    subtype: "remove_tag",        icon: "🏷️", label: "Remover tag" },
+  { type: "action",    subtype: "create_deal",       icon: "💼", label: "Criar deal" },
+  { type: "action",    subtype: "activate_agent",    icon: "🤖", label: "Ativar agente" },
+  { type: "action",    subtype: "deactivate_agent",  icon: "🤖", label: "Desativar agente" },
+  { type: "action",    subtype: "assign_to",         icon: "👤", label: "Atribuir vendedor" },
+  { type: "action",    subtype: "assign_round_robin", icon: "🎯", label: "Atribuir round-robin" },
   { type: "end",       subtype: "",                   icon: "🏁", label: "Encerrar" },
 ];
 
@@ -539,13 +557,23 @@ const PALETTE_TRIGGERS: PaletteItem[] = [
   { type: "trigger", subtype: "keyword_received",  icon: "🔍", label: "Palavra-chave",            desc: "Lead enviou palavra-chave" },
 ];
 const PALETTE_ACTIONS: PaletteItem[] = [
-  { type: "send",      subtype: "",                icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
-  { type: "send_text", subtype: "",                icon: "💬", label: "Enviar texto",    desc: "Texto livre (24h)" },
-  { type: "wait",      subtype: "",                icon: "⏱", label: "Aguardar",        desc: "Delay em dias" },
-  { type: "condition", subtype: "replied_recently", icon: "🔀", label: "Condição",       desc: "Ramificação lógica" },
-  { type: "action",    subtype: "move_stage",      icon: "📋", label: "Mover stage",     desc: "Kanban move" },
-  { type: "action",    subtype: "activate_agent",  icon: "🤖", label: "Ativar agente",   desc: "Assign ValerIA" },
-  { type: "end",       subtype: "",                icon: "🏁", label: "Encerrar",        desc: "Fim da campanha" },
+  { type: "send",      subtype: "",                  icon: "📨", label: "Enviar template",       desc: "Mensagem HSM Meta" },
+  { type: "send_text", subtype: "",                  icon: "💬", label: "Enviar texto",          desc: "Texto livre (24h)" },
+  { type: "wait",      subtype: "",                  icon: "⏱",  label: "Aguardar",              desc: "Delay em dias" },
+  { type: "condition", subtype: "replied_recently",  icon: "🔀", label: "Condição",              desc: "Ramificação lógica" },
+  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Mover stage do lead",   desc: "Atualiza leads.stage" },
+  { type: "action",    subtype: "move_deal_stage",   icon: "🔀", label: "Mover deal estágio",    desc: "Pipeline de deals" },
+  { type: "action",    subtype: "mark_deal_won",     icon: "🏆", label: "Marcar deal ganho",     desc: "Stage de ganho" },
+  { type: "action",    subtype: "mark_deal_lost",    icon: "💔", label: "Marcar deal perdido",   desc: "Stage de perdido" },
+  { type: "action",    subtype: "add_tag",           icon: "🏷️", label: "Adicionar tag",         desc: "Marca o lead" },
+  { type: "action",    subtype: "remove_tag",        icon: "🏷️", label: "Remover tag",           desc: "Desmarca o lead" },
+  { type: "action",    subtype: "add_note",          icon: "📝", label: "Adicionar nota",        desc: "Texto na timeline" },
+  { type: "action",    subtype: "create_deal",       icon: "💼", label: "Criar deal",            desc: "Novo deal no lead" },
+  { type: "action",    subtype: "activate_agent",    icon: "🤖", label: "Ativar agente",         desc: "Liga ValerIA" },
+  { type: "action",    subtype: "deactivate_agent",  icon: "🤖", label: "Desativar agente",      desc: "Desliga ValerIA" },
+  { type: "action",    subtype: "assign_to",         icon: "👤", label: "Atribuir vendedor",     desc: "Lead → vendedor fixo" },
+  { type: "action",    subtype: "assign_round_robin", icon: "🎯", label: "Round-robin",          desc: "Rodízio entre vendedores" },
+  { type: "end",       subtype: "",                  icon: "🏁", label: "Encerrar",              desc: "Fim da campanha" },
 ];
 
 function PaletteItemComp({ item, onAdd }: { item: PaletteItem; onAdd: (item: PaletteItem) => void }) {
@@ -917,9 +945,9 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
               {at === "move_stage" && (
                 <div style={field}>
                   <label style={label}>Stage de destino (lead)</label>
-                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_id as string) ?? ""} onChange={e => set("stage_id", e.target.value)}>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage as string) ?? ""} onChange={e => set("stage", e.target.value)}>
                     <option value="">— selecione —</option>
-                    {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
+                    {AGENT_STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
                 </div>
               )}
@@ -946,12 +974,12 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
 
               {at === "add_note" && (
                 <div style={field}>
-                  <label style={label}>Texto da nota (suporta {`{{lead.name}}`})</label>
+                  <label style={label}>Texto da nota (suporta {`{{nome}}`}, {`{{empresa}}`})</label>
                   <textarea
                     style={{ ...input, minHeight: 70, resize: "vertical" } as React.CSSProperties}
                     value={(c.note_template as string) ?? ""}
                     onChange={e => set("note_template", e.target.value)}
-                    placeholder="Ex: Lead {{lead.name}} chegou no nó X"
+                    placeholder="Ex: Lead {{nome}} chegou no nó X"
                   />
                 </div>
               )}

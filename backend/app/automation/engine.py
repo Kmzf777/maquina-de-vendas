@@ -307,9 +307,11 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
     action_type = cfg.get("action_type")
 
     if action_type == "move_stage":
-        stage_id = cfg.get("stage_id")
-        if stage_id:
-            sb.table("deals").update({"stage_id": stage_id}).eq("lead_id", enrollment["lead_id"]).execute()
+        # Move the LEAD in the lead-Kanban (leads.stage is a TEXT name, not a UUID).
+        stage_name = cfg.get("stage") or cfg.get("stage_name")
+        if stage_name:
+            from app.leads.service import update_lead
+            update_lead(enrollment["lead_id"], stage=stage_name)
 
     elif action_type == "activate_agent":
         from app.leads.service import update_lead
