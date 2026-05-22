@@ -65,6 +65,18 @@ def _compare(actual: float, op: str, target: float) -> bool:
     }.get(op, False)
 
 
+def _resolve_channel(node_cfg: dict, campaign: dict) -> dict:
+    """Resolve channel: node override → campaign default → raise."""
+    channel_id = node_cfg.get("channel_id") or campaign.get("channel_id")
+    if not channel_id:
+        raise ValueError("Nenhum canal configurado para este nó nem para a campanha")
+    sb = get_supabase()
+    rows = sb.table("channels").select("*").eq("id", channel_id).limit(1).execute().data
+    if not rows:
+        raise ValueError(f"Canal {channel_id} não encontrado")
+    return rows[0]
+
+
 def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
     sb = get_supabase()
     env_tag = _get_env_tag()
@@ -74,7 +86,7 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
             "*, "
             "leads!inner(id, phone, name, company, stage, ai_enabled, last_customer_message_at, assigned_to), "
             "campaign_nodes!campaign_enrollments_current_node_id_fkey(*), "
-            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour)"
+            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, channel_id)"
         )
         .eq("status", "active")
         .eq("env_tag", env_tag)
@@ -143,9 +155,9 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                 _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat())
                 return
             if node_type == "send":
-                await _execute_send(enrollment, node, lead, now)
+                await _execute_send(enrollment, node, lead, now, campaign)
             else:
-                await _execute_send_text(enrollment, node, lead, now)
+                await _execute_send_text(enrollment, node, lead, now, campaign)
             record_daily_send(lead["id"])
 
         elif node_type == "wait":
@@ -186,17 +198,23 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
         _fail_enrollment(enrollment["id"], enrollment.get("retry_count", 0), str(e), now)
 
 
-async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
+async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
     from app.campaigns.worker import _execute_send_node
-    await _execute_send_node(enrollment, node, lead, now)
+    campaign = campaign or {}
+    node_with_channel = dict(node)
+    cfg = dict(node_with_channel.get("config") or {})
+    if not cfg.get("channel_id") and campaign.get("channel_id"):
+        cfg["channel_id"] = campaign["channel_id"]
+    node_with_channel["config"] = cfg
+    await _execute_send_node(enrollment, node_with_channel, lead, now)
 
 
-async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
+async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
     from app.whatsapp.registry import get_provider
-    from app.channels.service import get_channel_for_lead
     from app.leads.service import save_message
 
     cfg = node.get("config") or {}
+    campaign = campaign or {}
 
     last_msg = lead.get("last_customer_message_at")
     if last_msg:
@@ -208,9 +226,7 @@ async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: date
             return
 
     message = substitute_variables(cfg.get("message_text", ""), lead, enrollment)
-    channel = get_channel_for_lead(enrollment["lead_id"])
-    if not channel:
-        raise ValueError(f"No channel for lead {lead['phone']}")
+    channel = _resolve_channel(cfg, campaign)
 
     provider = get_provider(channel)
     await provider.send_text(lead["phone"], message)
