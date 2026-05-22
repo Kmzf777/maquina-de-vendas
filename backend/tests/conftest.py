@@ -23,6 +23,7 @@ class FakeRedis:
         self._sorted: dict = {}
         self._strings: dict = {}
         self._sets: dict = {}
+        self._hashes: dict = {}
 
     async def rpush(self, key, *values):
         self._lists.setdefault(key, []).extend(values)
@@ -56,6 +57,7 @@ class FakeRedis:
             self._sorted.pop(k, None)
             self._strings.pop(k, None)
             self._sets.pop(k, None)
+            self._hashes.pop(k, None)
 
     async def exists(self, *keys):
         return sum(1 for k in keys if k in self._strings or k in self._lists or k in self._sorted)
@@ -85,6 +87,28 @@ class FakeRedis:
 
     async def ttl(self, key):
         return -1  # No TTL tracking in stub
+
+    async def hset(self, key, field, value):
+        self._hashes.setdefault(key, {})[field] = value
+
+    async def hget(self, key, field):
+        return self._hashes.get(key, {}).get(field)
+
+    async def hdel(self, key, *fields):
+        h = self._hashes.get(key, {})
+        removed = sum(1 for f in fields if f in h)
+        for f in fields:
+            h.pop(f, None)
+        return removed
+
+    async def hexists(self, key, field):
+        return field in self._hashes.get(key, {})
+
+    async def hgetall(self, key):
+        return dict(self._hashes.get(key, {}))
+
+    async def hkeys(self, key):
+        return list(self._hashes.get(key, {}).keys())
 
 
 @pytest.fixture

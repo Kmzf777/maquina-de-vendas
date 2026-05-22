@@ -1,4 +1,5 @@
 import json
+import os
 import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
@@ -40,8 +41,10 @@ def evo_client(fake_redis):
 
 def test_evolution_dev_number_skips_buffer_and_forwards(evo_client, fake_redis):
     """Dev-whitelisted sender: forward called, push_to_buffer not called."""
-    with patch("app.webhook.router.get_channel_by_provider_config", return_value=FAKE_CHANNEL), \
+    with patch.dict(os.environ, {"IS_DEV_ENV": "false"}), \
+         patch("app.webhook.router.get_channel_by_provider_config", return_value=FAKE_CHANNEL), \
          patch("app.webhook.router.get_provider") as mock_provider, \
+         patch("app.webhook.router.get_dev_route", new_callable=AsyncMock, return_value="http://localhost:8001"), \
          patch("app.webhook.router.push_to_buffer", new_callable=AsyncMock) as mock_push, \
          patch("app.webhook.router.is_dev_number", new_callable=AsyncMock, return_value=True), \
          patch("app.webhook.router.forward_to_dev", new_callable=AsyncMock) as mock_forward:
@@ -128,8 +131,10 @@ def meta_client(fake_redis):
 
 
 def test_meta_dev_number_skips_buffer_and_forwards(meta_client):
-    with patch("app.webhook.meta_router.get_channel_by_provider_config", return_value=FAKE_META_CHANNEL), \
+    with patch.dict(os.environ, {"IS_DEV_ENV": "false"}), \
+         patch("app.webhook.meta_router.get_channel_by_provider_config", return_value=FAKE_META_CHANNEL), \
          patch("app.webhook.meta_router.get_provider") as mock_provider, \
+         patch("app.webhook.meta_router.get_dev_route", new_callable=AsyncMock, return_value="http://localhost:8001"), \
          patch("app.webhook.meta_router.push_to_buffer", new_callable=AsyncMock) as mock_push, \
          patch("app.webhook.meta_router.is_dev_number", new_callable=AsyncMock, return_value=True), \
          patch("app.webhook.meta_router.forward_to_dev", new_callable=AsyncMock) as mock_forward:

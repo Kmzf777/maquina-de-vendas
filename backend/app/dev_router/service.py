@@ -5,7 +5,16 @@ DEV_ROUTES_KEY = "dev:phone_routes"
 
 
 def _normalize(phone: str) -> str:
-    return re.sub(r"[\s+\-()\[\]]", "", phone)
+    """Canonical normalizer for dev-whitelist Redis keys.
+    Strips all non-digits and injects the Brazilian 9th digit for 12-digit BR
+    numbers (553496652412 → 5534996652412). Must produce the same output as
+    leads.service.normalize_phone for any given input.
+    """
+    digits = re.sub(r"[^\d]", "", phone)
+    # Brazilian mobiles: CC55 + DDD(2) + 8 digits = 12 total → inject 9th digit
+    if len(digits) == 12 and digits.startswith("55"):
+        digits = digits[:4] + "9" + digits[4:]
+    return digits
 
 
 async def get_dev_route(redis, phone: str) -> str | None:
