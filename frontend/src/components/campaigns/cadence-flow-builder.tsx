@@ -74,7 +74,9 @@ const STATUS_COLORS: Record<string, { bg: string; color: string; border: string 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<string, unknown> {
   switch (type) {
-    case "trigger":   return { trigger_type: subtype || "no_message", days: 30 };
+    case "trigger":
+      if (subtype === "keyword_received") return { trigger_type: "keyword_received", keywords: [] };
+      return { trigger_type: subtype || "no_message", days: 30 };
     case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
     case "send_text": return { message_text: "", on_reply: "pause" };
     case "wait":      return { days: 3, send_start_hour: 7, send_end_hour: 18 };
@@ -89,9 +91,21 @@ const TRIGGER_LABELS: Record<string, string> = {
   no_message: "Sem mensagem", stage_stagnation: "Estagnação", stage_enter: "Entrada em stage", post_broadcast: "Pós-disparo",
   sale_created: "Venda criada", repurchase_window: "Janela de recompra", no_sale_in_stage: "Sem venda no stage",
   tag_added: "Tag adicionada", deal_stage_enter: "Entrou em stage (deal)", deal_closed_lost: "Deal perdido",
+  keyword_received: "Palavra-chave recebida",
 };
 const ACTION_LABELS: Record<string, string> = {
-  move_stage: "Mover stage", activate_agent: "Ativar agente", deactivate_agent: "Desativar agente", add_tag: "Adicionar tag",
+  move_stage: "Mover stage do lead",
+  activate_agent: "Ativar agente",
+  deactivate_agent: "Desativar agente",
+  add_tag: "Adicionar tag",
+  remove_tag: "Remover tag",
+  mark_deal_won: "Marcar deal como ganho",
+  mark_deal_lost: "Marcar deal como perdido",
+  move_deal_stage: "Mover deal de estágio",
+  add_note: "Adicionar nota",
+  assign_round_robin: "Atribuir (round-robin)",
+  create_deal: "Criar deal",
+  assign_to: "Atribuir a vendedor",
 };
 
 // Ícones por subtype — os nós no canvas mostram o ícone do subtipo, não o genérico
@@ -99,9 +113,21 @@ const TRIGGER_ICONS: Record<string, string> = {
   stage_enter: "⚡", stage_stagnation: "🕐", no_message: "💤", post_broadcast: "📡",
   sale_created: "💰", repurchase_window: "🔄", no_sale_in_stage: "📉",
   tag_added: "🏷️", deal_stage_enter: "🤝", deal_closed_lost: "❌",
+  keyword_received: "🔍",
 };
 const ACTION_ICONS: Record<string, string> = {
-  move_stage: "📋", activate_agent: "🤖", deactivate_agent: "🤖", add_tag: "🏷️",
+  move_stage: "📋",
+  activate_agent: "🤖",
+  deactivate_agent: "🤖",
+  add_tag: "🏷️",
+  remove_tag: "🏷️",
+  mark_deal_won: "🏆",
+  mark_deal_lost: "💔",
+  move_deal_stage: "🔀",
+  add_note: "📝",
+  assign_round_robin: "🎯",
+  create_deal: "💼",
+  assign_to: "👤",
 };
 
 function resolveNodeIcon(type: CampaignNodeType, config: Record<string, unknown>): string {
@@ -486,12 +512,17 @@ let _deleteEdge: ((edgeId: string) => void) | null = null;
 let _selectNode: ((nodeId: string) => void) | null = null;
 
 const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; label: string }[] = [
-  { type: "send",      subtype: "",                 icon: "📨", label: "Enviar template" },
-  { type: "send_text", subtype: "",                 icon: "💬", label: "Enviar texto" },
-  { type: "wait",      subtype: "",                 icon: "⏱",  label: "Aguardar" },
-  { type: "condition", subtype: "replied_recently", icon: "🔀", label: "Condição" },
-  { type: "action",    subtype: "move_stage",       icon: "📋", label: "Ação CRM" },
-  { type: "end",       subtype: "",                 icon: "🏁", label: "Encerrar" },
+  { type: "send",      subtype: "",                  icon: "📨", label: "Enviar template" },
+  { type: "send_text", subtype: "",                  icon: "💬", label: "Enviar texto" },
+  { type: "wait",      subtype: "",                  icon: "⏱",  label: "Aguardar" },
+  { type: "condition", subtype: "replied_recently",  icon: "🔀", label: "Condição" },
+  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Ação CRM" },
+  { type: "action",    subtype: "mark_deal_won",     icon: "🏆", label: "Marcar deal ganho" },
+  { type: "action",    subtype: "mark_deal_lost",    icon: "💔", label: "Marcar deal perdido" },
+  { type: "action",    subtype: "add_note",          icon: "📝", label: "Adicionar nota" },
+  { type: "action",    subtype: "assign_round_robin",  icon: "🎯", label: "Atribuir round-robin" },
+  { type: "trigger",   subtype: "keyword_received",   icon: "🔍", label: "Palavra-chave" },
+  { type: "end",       subtype: "",                   icon: "🏁", label: "Encerrar" },
 ];
 
 const PALETTE_TRIGGERS: PaletteItem[] = [
@@ -505,6 +536,7 @@ const PALETTE_TRIGGERS: PaletteItem[] = [
   { type: "trigger", subtype: "tag_added",         icon: "🏷️", label: "Tag adicionada",          desc: "Lead recebeu uma tag" },
   { type: "trigger", subtype: "deal_stage_enter",  icon: "🤝", label: "Entrou em stage (deal)",  desc: "Deal mudou de stage" },
   { type: "trigger", subtype: "deal_closed_lost",  icon: "❌", label: "Deal perdido",             desc: "Deal marcado como perdido" },
+  { type: "trigger", subtype: "keyword_received",  icon: "🔍", label: "Palavra-chave",            desc: "Lead enviou palavra-chave" },
 ];
 const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "send",      subtype: "",                icon: "📨", label: "Enviar template", desc: "Mensagem HSM Meta" },
@@ -655,6 +687,7 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
                 <option value="tag_added">Tag adicionada</option>
                 <option value="deal_stage_enter">Entrou em stage (deal)</option>
                 <option value="deal_closed_lost">Deal perdido</option>
+                <option value="keyword_received">Palavra-chave recebida</option>
               </select>
             </div>
             {(c.trigger_type === "no_message" || c.trigger_type === "stage_stagnation") && (
@@ -706,6 +739,29 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
                   <option value="false">Todos os leads do disparo</option>
                   <option value="true">Apenas quem respondeu</option>
                 </select>
+              </div>
+            )}
+            {(c.trigger_type as string) === "keyword_received" && (
+              <div style={field}>
+                <label style={label}>Palavras-chave (separadas por vírgula)</label>
+                <input
+                  style={input as React.CSSProperties}
+                  type="text"
+                  value={((c.keywords as string[]) ?? []).join(", ")}
+                  onChange={e =>
+                    set(
+                      "keywords",
+                      e.target.value
+                        .split(",")
+                        .map(s => s.trim())
+                        .filter(Boolean)
+                    )
+                  }
+                  placeholder="Ex: preço, valor, quanto custa"
+                />
+                <p style={{ fontSize: 11, color: "#9b9590", marginTop: 4 }}>
+                  Quando o lead enviar uma mensagem contendo qualquer uma destas palavras (case-insensitive), a cadência será disparada.
+                </p>
               </div>
             )}
           </>
@@ -845,53 +901,115 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
             )}
           </>
         )}
-        {node.type === "action" && (
-          <>
-            <div style={field}>
-              <label style={label}>Tipo de ação</label>
-              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.action_type as string) ?? ""} onChange={e => set("action_type", e.target.value)}>
-                <option value="move_stage">Mover stage</option>
-                <option value="activate_agent">Ativar agente</option>
-                <option value="deactivate_agent">Desativar agente</option>
-                <option value="add_tag">Adicionar tag</option>
-                <option value="remove_tag">Remover tag</option>
-                <option value="create_deal">Criar deal</option>
-                <option value="assign_to">Atribuir a vendedor</option>
-              </select>
-            </div>
-            {c.action_type === "move_stage" && (
+        {node.type === "action" && (() => {
+          const at = c.action_type as string;
+          return (
+            <>
               <div style={field}>
-                <label style={label}>Stage de destino</label>
-                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_id as string) ?? ""} onChange={e => set("stage_id", e.target.value)}>
-                  <option value="">— Selecione um stage —</option>
-                  {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
+                <label style={label}>Tipo de ação</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={at ?? ""} onChange={e => set("action_type", e.target.value)}>
+                  {Object.entries(ACTION_LABELS).map(([key, val]) => (
+                    <option key={key} value={key}>{val}</option>
+                  ))}
                 </select>
               </div>
-            )}
-            {["add_tag","remove_tag"].includes(c.action_type as string) && (
-              <div style={field}>
-                <label style={label}>Tag</label>
-                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)}>
-                  <option value="">— Selecione uma tag —</option>
-                  {tags.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                </select>
-              </div>
-            )}
-            {c.action_type === "create_deal" && (
-              <div style={field}><label style={label}>Título do deal (suporta {"{{nome}}"})</label>
-                <input type="text" style={input} value={(c.title_template as string) ?? ""} onChange={e => set("title_template", e.target.value)} placeholder="Deal automático — {{empresa}}" /></div>
-            )}
-            {c.action_type === "assign_to" && (
-              <div style={field}>
-                <label style={label}>Vendedor</label>
-                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.user_id as string) ?? ""} onChange={e => set("user_id", e.target.value)}>
-                  <option value="">— Selecione um vendedor —</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
-                </select>
-              </div>
-            )}
-          </>
-        )}
+
+              {at === "move_stage" && (
+                <div style={field}>
+                  <label style={label}>Stage de destino (lead)</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_id as string) ?? ""} onChange={e => set("stage_id", e.target.value)}>
+                    <option value="">— selecione —</option>
+                    {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {(at === "mark_deal_won" || at === "mark_deal_lost" || at === "move_deal_stage") && (
+                <div style={field}>
+                  <label style={label}>Estágio do deal (pipeline)</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_id as string) ?? ""} onChange={e => set("stage_id", e.target.value)}>
+                    <option value="">— selecione —</option>
+                    {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {(at === "add_tag" || at === "remove_tag") && (
+                <div style={field}>
+                  <label style={label}>Nome da tag</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)}>
+                    <option value="">— selecione —</option>
+                    {tags.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {at === "add_note" && (
+                <div style={field}>
+                  <label style={label}>Texto da nota (suporta {`{{lead.name}}`})</label>
+                  <textarea
+                    style={{ ...input, minHeight: 70, resize: "vertical" } as React.CSSProperties}
+                    value={(c.note_template as string) ?? ""}
+                    onChange={e => set("note_template", e.target.value)}
+                    placeholder="Ex: Lead {{lead.name}} chegou no nó X"
+                  />
+                </div>
+              )}
+
+              {at === "create_deal" && (
+                <div style={field}>
+                  <label style={label}>Título do deal (suporta {`{{nome}}`})</label>
+                  <input type="text" style={input} value={(c.title_template as string) ?? ""} onChange={e => set("title_template", e.target.value)} placeholder="Deal automático — {{empresa}}" />
+                </div>
+              )}
+
+              {at === "assign_to" && (
+                <div style={field}>
+                  <label style={label}>Vendedor</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.user_id as string) ?? ""} onChange={e => set("user_id", e.target.value)}>
+                    <option value="">— selecione —</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {at === "assign_round_robin" && (
+                <div style={field}>
+                  <label style={label}>Vendedores no rodízio</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {users.map(u => {
+                      const selected = ((c.user_ids as string[]) ?? []).includes(u.id);
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            const arr = ((c.user_ids as string[]) ?? []).slice();
+                            const idx = arr.indexOf(u.id);
+                            if (idx >= 0) arr.splice(idx, 1); else arr.push(u.id);
+                            set("user_ids", arr);
+                          }}
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 6,
+                            border: `1px solid ${selected ? "#E85D26" : "#e0dbd4"}`,
+                            background: selected ? "rgba(232,93,38,.08)" : "#fff",
+                            color: selected ? "#E85D26" : "#555",
+                            fontSize: 12,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {u.name || u.email}
+                        </button>
+                      );
+                    })}
+                    {users.length === 0 && <p style={{ fontSize: 11, color: "#9b9590" }}>Nenhum usuário disponível</p>}
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
         {node.type === "end" && (
           <div style={field}><label style={label}>Rótulo final</label><input type="text" style={input} value={(c.label as string) ?? ""} onChange={e => set("label", e.target.value)} placeholder="ex: Concluído" /></div>
         )}
