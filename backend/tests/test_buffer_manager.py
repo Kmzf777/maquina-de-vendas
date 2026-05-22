@@ -30,7 +30,7 @@ async def test_push_adiciona_texto_ao_buffer(fake_redis):
          patch.object(fake_redis, "rpush", wraps=fake_redis.rpush):
         await push_to_buffer(fake_redis, msg)
 
-    items = await fake_redis.lrange("buffer:5511999999999", 0, -1)
+    items = await fake_redis.lrange("buffer:5511999999999:chan-uuid", 0, -1)
     assert items == ["hello"]
 
 
@@ -91,7 +91,7 @@ async def test_primeira_mensagem_registra_deadline_absoluto(fake_redis, monkeypa
          patch.object(fake_redis, "exists", AsyncMock(return_value=0)):
         await push_to_buffer(fake_redis, msg)
 
-    deadline_raw = await fake_redis.get("buffer:5511999999999:deadline")
+    deadline_raw = await fake_redis.get("buffer:5511999999999:chan-uuid:deadline")
     assert deadline_raw is not None, "deadline absoluto deve ser salvo no Redis"
     deadline = float(deadline_raw)
     assert before + 44 <= deadline <= before + 46, \
@@ -107,7 +107,7 @@ async def test_extensao_limitada_pelo_deadline_absoluto(fake_redis, monkeypatch)
 
     # Simula: primeira mensagem chegou há 40s, deadline expira daqui 5s
     deadline = time.time() + 5
-    await fake_redis.set("buffer:5511999999999:deadline", str(deadline))
+    await fake_redis.set("buffer:5511999999999:chan-uuid:deadline", str(deadline))
 
     msg = _make_msg("mensagem tardia", "wamid.late")
     expire_calls = []
@@ -143,7 +143,7 @@ async def test_media_url_gera_placeholder_no_buffer(fake_redis):
          patch.object(fake_redis, "exists", AsyncMock(return_value=0)):
         await push_to_buffer(fake_redis, msg)
 
-    items = await fake_redis.lrange("buffer:5511999999999", 0, -1)
+    items = await fake_redis.lrange("buffer:5511999999999:chan-uuid", 0, -1)
     assert len(items) == 1
     assert "audio" in items[0]
     assert "media_url" in items[0]
