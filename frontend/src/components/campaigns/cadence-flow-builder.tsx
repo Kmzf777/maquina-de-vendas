@@ -532,16 +532,31 @@ function PaletteItemComp({ item, onAdd }: { item: PaletteItem; onAdd: (item: Pal
   );
 }
 
+// ─── API data types for Inspector dropdowns ────────────────────────────────────
+interface FlowTemplate { id: string; name: string; status: string; language: string }
+interface FlowStage    { id: string; label: string; pipeline_name: string; key: string | null }
+interface FlowTag      { id: string; name: string }
+interface FlowUser     { id: string; name: string; email: string }
+
+interface FlowBuilderData {
+  templates: FlowTemplate[];
+  allStages: FlowStage[];
+  tags: FlowTag[];
+  users: FlowUser[];
+}
+
 // ─── Inspector ─────────────────────────────────────────────────────────────────
 interface InspectorProps {
   node: CampaignNode;
   saving: boolean;
+  data: FlowBuilderData;
   onSave: (nodeId: string, config: Record<string, unknown>) => Promise<void>;
   onDelete: (nodeId: string) => Promise<void>;
   onClose: () => void;
 }
 
-function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) {
+function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorProps) {
+  const { templates, allStages, tags, users } = data;
   const [draft, setDraft] = useState<Record<string, unknown>>(node.config as Record<string, unknown>);
   const meta = NODE_META[node.type];
 
@@ -606,7 +621,13 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
               <div style={field}><label style={label}>Dias</label><input type="number" style={input} value={(c.days as number) ?? 0} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
             {(c.trigger_type === "stage_stagnation" || c.trigger_type === "stage_enter") && (
-              <div style={field}><label style={label}>Filtro de stage</label><input type="text" style={input} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)} placeholder="ex: Negociação" /></div>
+              <div style={field}>
+                <label style={label}>Filtro de stage</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)}>
+                  <option value="">— Qualquer stage —</option>
+                  {allStages.map(s => <option key={s.id} value={s.label}>{s.pipeline_name} › {s.label}</option>)}
+                </select>
+              </div>
             )}
             {c.trigger_type === "sale_created" && (
               <>
@@ -621,12 +642,22 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
                 <input type="number" style={input} value={(c.days as number) ?? 30} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
             {(c.trigger_type === "no_sale_in_stage" || c.trigger_type === "deal_stage_enter") && (
-              <div style={field}><label style={label}>Filtro de stage</label>
-                <input type="text" style={input} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)} placeholder="Ex: negociacao" /></div>
+              <div style={field}>
+                <label style={label}>Filtro de stage</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_filter as string) ?? ""} onChange={e => set("stage_filter", e.target.value)}>
+                  <option value="">— Qualquer stage —</option>
+                  {allStages.map(s => <option key={s.id} value={s.label}>{s.pipeline_name} › {s.label}</option>)}
+                </select>
+              </div>
             )}
             {c.trigger_type === "tag_added" && (
-              <div style={field}><label style={label}>Nome da tag</label>
-                <input type="text" style={input} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)} placeholder="Ex: VIP" /></div>
+              <div style={field}>
+                <label style={label}>Tag</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)}>
+                  <option value="">— Selecione uma tag —</option>
+                  {tags.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                </select>
+              </div>
             )}
             {c.trigger_type === "post_broadcast" && (
               <div style={field}>
@@ -641,7 +672,23 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
         )}
         {node.type === "send" && (
           <>
-            <div style={field}><label style={label}>Nome do template</label><input type="text" style={input} value={(c.template_name as string) ?? ""} onChange={e => set("template_name", e.target.value)} placeholder="ex: reativacao_30d" /></div>
+            <div style={field}>
+              <label style={label}>Template</label>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.template_name as string) ?? ""} onChange={e => set("template_name", e.target.value)}>
+                <option value="">— Selecione um template —</option>
+                {templates.filter(t => t.status === "approved" || t.status === "APPROVED").map(t => (
+                  <option key={t.id} value={t.name}>{t.name} ({t.language})</option>
+                ))}
+                {templates.filter(t => t.status !== "approved" && t.status !== "APPROVED").length > 0 && (
+                  <optgroup label="Aguardando aprovação">
+                    {templates.filter(t => t.status !== "approved" && t.status !== "APPROVED").map(t => (
+                      <option key={t.id} value={t.name} disabled>{t.name} ({t.status})</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              {templates.length === 0 && <p style={{ fontSize: 11, color: "#9b9590", marginTop: 4 }}>Nenhum template cadastrado</p>}
+            </div>
             <div style={field}>
               <label style={label}>Ao responder</label>
               <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
@@ -700,6 +747,15 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
             {c.condition_type === "replied_recently" && (
               <div style={field}><label style={label}>Dias</label><input type="number" style={input} value={(c.days as number) ?? 5} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
+            {c.condition_type === "in_stage" && (
+              <div style={field}>
+                <label style={label}>Stage</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage as string) ?? ""} onChange={e => set("stage", e.target.value)}>
+                  <option value="">— Selecione um stage —</option>
+                  {allStages.map(s => <option key={s.id} value={s.label}>{s.pipeline_name} › {s.label}</option>)}
+                </select>
+              </div>
+            )}
             {["sale_count","total_spend","last_sale_value","deal_value","repurchase_days"].includes(c.condition_type as string) && (
               <>
                 <div style={field}>
@@ -717,8 +773,13 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
               </>
             )}
             {c.condition_type === "has_tag" && (
-              <div style={field}><label style={label}>Nome da tag</label>
-                <input type="text" style={input} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)} placeholder="Ex: VIP" /></div>
+              <div style={field}>
+                <label style={label}>Tag</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)}>
+                  <option value="">— Selecione uma tag —</option>
+                  {tags.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                </select>
+              </div>
             )}
           </>
         )}
@@ -736,17 +797,36 @@ function Inspector({ node, saving, onSave, onDelete, onClose }: InspectorProps) 
                 <option value="assign_to">Atribuir a vendedor</option>
               </select>
             </div>
+            {c.action_type === "move_stage" && (
+              <div style={field}>
+                <label style={label}>Stage de destino</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_id as string) ?? ""} onChange={e => set("stage_id", e.target.value)}>
+                  <option value="">— Selecione um stage —</option>
+                  {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
+                </select>
+              </div>
+            )}
             {["add_tag","remove_tag"].includes(c.action_type as string) && (
-              <div style={field}><label style={label}>Nome da tag</label>
-                <input type="text" style={input} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)} placeholder="Ex: VIP" /></div>
+              <div style={field}>
+                <label style={label}>Tag</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.tag_name as string) ?? ""} onChange={e => set("tag_name", e.target.value)}>
+                  <option value="">— Selecione uma tag —</option>
+                  {tags.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                </select>
+              </div>
             )}
             {c.action_type === "create_deal" && (
               <div style={field}><label style={label}>Título do deal (suporta {"{{nome}}"})</label>
                 <input type="text" style={input} value={(c.title_template as string) ?? ""} onChange={e => set("title_template", e.target.value)} placeholder="Deal automático — {{empresa}}" /></div>
             )}
             {c.action_type === "assign_to" && (
-              <div style={field}><label style={label}>ID do usuário</label>
-                <input type="text" style={input} value={(c.user_id as string) ?? ""} onChange={e => set("user_id", e.target.value)} placeholder="UUID do vendedor" /></div>
+              <div style={field}>
+                <label style={label}>Vendedor</label>
+                <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.user_id as string) ?? ""} onChange={e => set("user_id", e.target.value)}>
+                  <option value="">— Selecione um vendedor —</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                </select>
+              </div>
             )}
           </>
         )}
@@ -800,6 +880,8 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const [edgeContextMenu, setEdgeContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
   const edgeContextMenuRef = useRef<HTMLDivElement>(null);
 
+  const [flowData, setFlowData] = useState<FlowBuilderData>({ templates: [], allStages: [], tags: [], users: [] });
+
   // Load campaign + nodes
   useEffect(() => {
     fetch(`/api/campaigns/${campaignId}`)
@@ -812,6 +894,46 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         setRFEdges(toRFEdges(nodes));
       });
   }, [campaignId, setRFNodes, setRFEdges]);
+
+  // Load auxiliary data for Inspector dropdowns
+  useEffect(() => {
+    async function loadFlowData() {
+      const [templatesRes, pipelinesRes, tagsRes, usersRes] = await Promise.all([
+        fetch("/api/templates"),
+        fetch("/api/pipelines"),
+        fetch("/api/tags"),
+        fetch("/api/users"),
+      ]);
+      const [templatesData, pipelinesData, tagsData, usersData] = await Promise.all([
+        templatesRes.ok ? templatesRes.json() : [],
+        pipelinesRes.ok ? pipelinesRes.json() : [],
+        tagsRes.ok ? tagsRes.json() : [],
+        usersRes.ok ? usersRes.json() : [],
+      ]);
+
+      // Fetch stages for every pipeline in parallel
+      const stageResults = await Promise.all(
+        (pipelinesData as { id: string; name: string }[]).map(async (p) => {
+          const res = await fetch(`/api/pipelines/${p.id}/stages`);
+          const stages = res.ok ? await res.json() : [];
+          return (stages as { id: string; label: string; key: string | null }[]).map(s => ({
+            id: s.id,
+            label: s.label,
+            pipeline_name: p.name,
+            key: s.key,
+          }));
+        })
+      );
+
+      setFlowData({
+        templates: templatesData as FlowTemplate[],
+        allStages: stageResults.flat(),
+        tags: tagsData as FlowTag[],
+        users: usersData as FlowUser[],
+      });
+    }
+    loadFlowData();
+  }, []);
 
   // Keyboard zoom: =|+ zoom in, - zoom out, 0 fit view
   useEffect(() => {
@@ -1240,6 +1362,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             key={selectedDbNode.id}
             node={selectedDbNode}
             saving={saving}
+            data={flowData}
             onSave={saveNode}
             onDelete={deleteNode}
             onClose={() => setSelectedNodeId(null)}
