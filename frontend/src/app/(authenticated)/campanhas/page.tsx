@@ -48,7 +48,7 @@ function CampanhasPageInner() {
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
   const [channelId, setChannelId] = useState("");
-  const [channels, setChannels] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [channels, setChannels] = useState<{ id: string; name: string; is_active: boolean; provider: string }[]>([]);
   const [priority, setPriority] = useState(5);
   const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
@@ -59,8 +59,8 @@ function CampanhasPageInner() {
   useEffect(() => {
     fetch("/api/channels")
       .then(r => r.json())
-      .then((data: { id: string; name: string; status: string }[]) => {
-        setChannels(Array.isArray(data) ? data.filter(c => c.status === "connected") : []);
+      .then((data: { id: string; name: string; is_active: boolean; provider: string }[]) => {
+        setChannels(Array.isArray(data) ? data.filter(c => c.is_active) : []);
       })
       .catch(() => {});
   }, []);

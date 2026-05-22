@@ -568,7 +568,7 @@ interface FlowBuilderData {
   allStages: FlowStage[];
   tags: FlowTag[];
   users: FlowUser[];
-  channels: { id: string; name: string; status: string }[];
+  channels: { id: string; name: string; is_active: boolean; provider: string }[];
 }
 
 // ─── Test mode types ───────────────────────────────────────────────────────────
@@ -1006,8 +1006,8 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
         })
       );
 
-      const connectedChannels = (channelsData as { id: string; name: string; status: string }[]).filter(
-        ch => ch.status === "connected"
+      const connectedChannels = (channelsData as { id: string; name: string; is_active: boolean; provider: string }[]).filter(
+        ch => ch.is_active
       );
 
       setFlowData({
