@@ -176,48 +176,6 @@ export interface BroadcastMetrics {
   median_reply_secs: number | null;
 }
 
-export interface Cadence {
-  id: string;
-  name: string;
-  description: string | null;
-  target_type: "manual" | "lead_stage" | "deal_stage";
-  target_stage: string | null;
-  stagnation_days: number | null;
-  send_start_hour: number;
-  send_end_hour: number;
-  cooldown_hours: number;
-  max_messages: number;
-  status: "active" | "paused" | "archived";
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CadenceStep {
-  id: string;
-  cadence_id: string;
-  step_order: number;
-  message_text: string;
-  delay_days: number;
-  created_at: string;
-}
-
-export interface CadenceEnrollment {
-  id: string;
-  cadence_id: string;
-  lead_id: string;
-  deal_id: string | null;
-  broadcast_id: string | null;
-  current_step: number;
-  status: "active" | "paused" | "responded" | "exhausted" | "completed";
-  total_messages_sent: number;
-  next_send_at: string | null;
-  cooldown_until: string | null;
-  responded_at: string | null;
-  enrolled_at: string;
-  completed_at: string | null;
-  leads?: { id: string; name: string | null; phone: string; company: string | null; stage: string };
-  deals?: { id: string; title: string; stage: string } | null;
-}
 
 export interface MessageTemplate {
   id: string;
@@ -359,14 +317,28 @@ export interface CampaignEnrollment {
   campaign_id: string;
   lead_id: string;
   deal_id: string | null;
-  status: "active" | "paused" | "completed" | "cancelled";
+  status: "active" | "paused" | "completed" | "failed" | "removed" | "cancelled";
   current_node_id: string | null;
   next_execute_at: string | null;
   enrolled_at: string;
   completed_at: string | null;
   paused_at: string | null;
   env_tag: string;
-  leads?: { id: string; name: string | null; phone: string; stage: string };
+  retry_count?: number;
+  last_error?: string | null;
+  leads?: {
+    id: string;
+    name: string | null;
+    phone: string;
+    company: string | null;
+    stage: string | null;
+  } | null;
+  current_node?: {
+    id: string;
+    type: string;
+    config: Record<string, unknown>;
+  } | null;
+  campaigns?: { id: string; name: string; status: string; created_at: string } | null;
 }
 
 export interface Sale {
