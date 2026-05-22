@@ -23,6 +23,13 @@ export async function GET(request: NextRequest, { params }: Params) {
     );
   }
 
+  if (!response.body) {
+    return new Response(JSON.stringify({ error: "Backend SSE stream unavailable" }), {
+      status: 502,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   return new Response(response.body, {
     headers: {
       "Content-Type": "text/event-stream",

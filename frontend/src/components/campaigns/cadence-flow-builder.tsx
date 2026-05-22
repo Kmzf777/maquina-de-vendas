@@ -954,6 +954,13 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const [testSkipDelays, setTestSkipDelays] = useState(true);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // Cleanup EventSource on unmount
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+    };
+  }, []);
+
   // Load campaign + nodes
   useEffect(() => {
     fetch(`/api/campaigns/${campaignId}`)
