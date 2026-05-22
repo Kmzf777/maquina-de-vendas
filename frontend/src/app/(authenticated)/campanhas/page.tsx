@@ -6,6 +6,7 @@ import { useRealtimeBroadcasts } from "@/hooks/use-realtime-broadcasts";
 import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
+import { CadenceList } from "@/components/campaigns/cadence-list";
 import { CreateBroadcastModal, type BroadcastPrefill } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
@@ -31,7 +32,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-const VALID_TABS = ["visao-geral", "disparos", "templates"] as const;
+const VALID_TABS = ["visao-geral", "disparos", "cadencias", "templates"] as const;
 type TabId = typeof VALID_TABS[number];
 
 function CampanhasPageInner() {
@@ -183,6 +184,7 @@ function CampanhasPageInner() {
             >
               {tab === "visao-geral" ? "Visão Geral"
                 : tab === "disparos" ? "Disparos"
+                : tab === "cadencias" ? "Cadências"
                 : "Templates"}
             </button>
           ))}
@@ -234,10 +236,17 @@ function CampanhasPageInner() {
             <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 style={{ letterSpacing: '-0.3px' }} className="text-[18px] font-medium text-[#111111]">Cadências Ativas</h3>
+                <button onClick={() => setActiveTab("cadencias")} className="text-[13px] text-[#7b7b78] hover:text-[#111111] transition-colors">
+                  Ver todas →
+                </button>
               </div>
               <div className="space-y-3">
                 {campaigns.slice(0, 3).map((c) => (
-                  <div key={c.id} className="flex items-center justify-between">
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => router.push(`/campanhas/cadencias/${c.id}`)}
+                  >
                     <StatusBadge status={c.status} />
                     <span className="text-[14px] text-[#111111] flex-1 mx-3 truncate">{c.name}</span>
                     <span className="text-[12px] text-[#7b7b78]">{c.nodes?.length ?? 0} nós</span>
@@ -252,6 +261,7 @@ function CampanhasPageInner() {
         )}
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
+        {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={() => {}} />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>
 
