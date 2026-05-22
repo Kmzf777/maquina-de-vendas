@@ -196,7 +196,7 @@ def purge_dev_lead(phone: str) -> dict:
     lead_id = lead_res.data[0]["id"]
 
     sb.table("follow_up_jobs").delete().eq("lead_id", lead_id).execute()
-    sb.table("cadence_enrollments").delete().eq("lead_id", lead_id).execute()
+    sb.table("campaign_enrollments").delete().eq("lead_id", lead_id).execute()
     sb.table("broadcast_leads").delete().eq("lead_id", lead_id).execute()
     sb.table("deals").delete().eq("lead_id", lead_id).execute()
     sb.table("lead_tags").delete().eq("lead_id", lead_id).execute()

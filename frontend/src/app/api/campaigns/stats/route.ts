@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const [broadcasts, cadences, enrollments, recentMessages] = await Promise.all([
     supabase.from("broadcasts").select("id, status").in("status", ["running", "scheduled"]),
     supabase.from("cadences").select("id, status").eq("status", "active"),
-    supabase.from("cadence_enrollments").select("id, status, responded_at, enrolled_at"),
+    supabase.from("campaign_enrollments").select("id, status, responded_at, enrolled_at"),
     supabase
       .from("messages")
       .select("created_at")

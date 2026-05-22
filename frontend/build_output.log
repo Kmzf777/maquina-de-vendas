@@ -1,0 +1,119 @@
+
+> crm@0.1.0 build
+> next build
+
+▲ Next.js 16.2.1 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 13.0s
+  Skipping validation of types
+  Finished TypeScript config validation in 76ms ...
+  Collecting page data using 11 workers ...
+  Generating static pages using 11 workers (0/35) ...
+  Generating static pages using 11 workers (8/35) 
+  Generating static pages using 11 workers (17/35) 
+  Generating static pages using 11 workers (26/35) 
+✓ Generating static pages using 11 workers (35/35) in 669ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/admin/users/set-role
+├ ƒ /api/agent-profiles
+├ ƒ /api/automation/[...path]
+├ ƒ /api/broadcasts
+├ ƒ /api/broadcasts/[id]
+├ ƒ /api/broadcasts/[id]/leads
+├ ƒ /api/broadcasts/[id]/metrics
+├ ƒ /api/broadcasts/[id]/remove-leads
+├ ƒ /api/broadcasts/[id]/resolve-spam
+├ ƒ /api/broadcasts/[id]/spam-check
+├ ƒ /api/broadcasts/[id]/start
+├ ƒ /api/campaigns
+├ ƒ /api/campaigns/[id]
+├ ƒ /api/campaigns/[id]/activate
+├ ƒ /api/campaigns/[id]/enrollments
+├ ƒ /api/campaigns/[id]/enrollments/[enrollId]
+├ ƒ /api/campaigns/[id]/nodes
+├ ƒ /api/campaigns/[id]/nodes/[nodeId]
+├ ƒ /api/campaigns/[id]/pause
+├ ƒ /api/campaigns/[id]/test
+├ ƒ /api/campaigns/stats
+├ ƒ /api/channels
+├ ƒ /api/channels/[id]
+├ ƒ /api/channels/[id]/connect
+├ ƒ /api/channels/[id]/disconnect
+├ ƒ /api/channels/[id]/status
+├ ƒ /api/channels/[id]/templates
+├ ƒ /api/channels/[id]/templates/[templateId]
+├ ƒ /api/channels/[id]/templates/[templateId]/confirm
+├ ƒ /api/chat/send
+├ ƒ /api/conversations
+├ ƒ /api/conversations/[id]/agent
+├ ƒ /api/conversations/[id]/followup
+├ ƒ /api/conversations/[id]/mark-read
+├ ƒ /api/conversations/[id]/messages
+├ ƒ /api/conversations/[id]/send
+├ ƒ /api/conversations/[id]/send-media
+├ ƒ /api/conversations/[id]/send-template
+├ ƒ /api/deals
+├ ƒ /api/deals/[id]
+├ ƒ /api/evolution/chats
+├ ƒ /api/evolution/messages/[phone]
+├ ƒ /api/evolution/send
+├ ƒ /api/leads
+├ ƒ /api/leads/[id]
+├ ƒ /api/leads/[id]/broadcasts
+├ ƒ /api/leads/[id]/campaign-enrollments
+├ ƒ /api/leads/[id]/deals
+├ ƒ /api/leads/[id]/events
+├ ƒ /api/leads/[id]/notes
+├ ƒ /api/leads/[id]/sales
+├ ƒ /api/leads/[id]/tags
+├ ƒ /api/leads/export
+├ ƒ /api/leads/import
+├ ƒ /api/leads/resolve
+├ ƒ /api/media
+├ ƒ /api/model-pricing
+├ ƒ /api/model-pricing/[model]
+├ ƒ /api/pipelines
+├ ƒ /api/pipelines/[id]
+├ ƒ /api/pipelines/[id]/stages
+├ ƒ /api/pipelines/[id]/stages/[stageId]
+├ ƒ /api/quick-send-phones
+├ ƒ /api/quick-send-phones/[phone]
+├ ƒ /api/sales
+├ ƒ /api/sales/[id]
+├ ƒ /api/sales/metrics
+├ ƒ /api/stats/costs
+├ ƒ /api/stats/costs/breakdown
+├ ƒ /api/stats/costs/daily
+├ ƒ /api/stats/costs/top-leads
+├ ƒ /api/tags
+├ ƒ /api/tags/[id]
+├ ƒ /api/template-presets
+├ ƒ /api/template-presets/[id]
+├ ƒ /api/templates
+├ ƒ /api/users
+├ ƒ /campanhas
+├ ƒ /campanhas/cadencias/[id]
+├ ƒ /campanhas/disparos/[id]
+├ ƒ /canais
+├ ƒ /config
+├ ƒ /conversas
+├ ƒ /dashboard
+├ ƒ /estatisticas
+├ ○ /icon.png
+├ ƒ /leads
+├ ○ /login
+├ ƒ /painel-vendas
+├ ƒ /qualificacao
+└ ƒ /vendas
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
