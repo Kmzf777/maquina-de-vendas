@@ -1,6 +1,5 @@
 # backend/tests/test_automation_test_runner.py
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 from app.automation.test_runner import _build_node_sequence, _format_sse
 
 
