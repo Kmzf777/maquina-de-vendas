@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
@@ -11,7 +12,7 @@ from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
 from app.leads.service import get_or_create_lead, normalize_phone, reset_lead, purge_dev_lead
 from app.channels.service import get_channel_by_provider_config
-from app.dev_router.service import get_dev_route
+from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
 from app.db.supabase import get_supabase
 from app.meta_audit import log_inbound
@@ -250,9 +251,11 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
 
     redis = request.app.state.redis
 
-    # Dev routing happens on the raw payload before parsing so that ALL message
-    # types (including 'button', future types) are forwarded to dev correctly.
-    if request.headers.get("x-dev-routed") != "1":
+    # Dev routing on raw payload — before parsing so ALL message types are caught.
+    # On production (IS_DEV_ENV != "true"): if from_number is in dev whitelist → forward
+    # to dev backend (best effort) and drop immediately with 200.
+    # On dev server (IS_DEV_ENV=true): skip entirely — we ARE the dev server.
+    if request.headers.get("x-dev-routed") != "1" and os.environ.get("IS_DEV_ENV") != "true":
         from_number = _extract_from_number(payload)
         if from_number:
             dev_url = await get_dev_route(redis, from_number)
@@ -269,6 +272,13 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
                     path="/webhook/meta",
                     headers=dict(request.headers),
                     body=payload_bytes,
+                )
+                return {"status": "ok"}
+            elif await is_dev_number(redis, from_number):
+                # Number is in whitelist but URL is empty — still drop in production.
+                logger.warning(
+                    "[DEV-ROUTER] %s in dev whitelist but no URL configured — dropping in production",
+                    from_number,
                 )
                 return {"status": "ok"}
 

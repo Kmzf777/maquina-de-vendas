@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 
 from fastapi import APIRouter, BackgroundTasks, Request
 
@@ -8,7 +9,7 @@ from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
 from app.leads.service import get_or_create_lead, reset_lead
 from app.channels.service import get_channel_by_provider_config
-from app.dev_router.service import get_dev_route
+from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
 from app.meta_audit import log_inbound
 from app.config import settings
@@ -29,6 +30,18 @@ def _register_lead(from_number: str, push_name: str | None) -> None:
         get_or_create_lead(from_number, name=push_name, channel="whatsapp")
     except Exception as exc:
         logger.warning("Failed to register lead for %s: %s", from_number, exc)
+
+
+def _extract_from_number_evolution(payload: dict) -> str | None:
+    """Extract sender phone number from raw Evolution payload without parsing the full message."""
+    data = payload.get("data", {})
+    key = data.get("key", {})
+    if key.get("fromMe", False):
+        return None
+    remote_jid = key.get("remoteJid", "")
+    if not remote_jid:
+        return None
+    return remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
 
 
 def _find_evolution_channel(payload: dict) -> dict | None:
@@ -65,8 +78,39 @@ async def receive_evolution_webhook(request: Request, background_tasks: Backgrou
         logger.info(f"Channel {channel['id']} is inactive, skipping")
         return {"status": "ok"}
 
-    messages = parse_webhook_payload(payload)
     redis = request.app.state.redis
+
+    # Dev routing on raw payload — BEFORE parsing so ALL message types are caught.
+    # On production (IS_DEV_ENV != "true"): if from_number is in dev whitelist → forward
+    # to dev backend (best effort) and drop immediately with 200.
+    # On dev server (IS_DEV_ENV=true): skip entirely — we ARE the dev server.
+    if request.headers.get("x-dev-routed") != "1" and os.environ.get("IS_DEV_ENV") != "true":
+        from_number_raw = _extract_from_number_evolution(payload)
+        if from_number_raw:
+            dev_url = await get_dev_route(redis, from_number_raw)
+            logger.info(
+                "[DEV-ROUTER-EVO] from_number=%s → dev_url=%s",
+                from_number_raw, dev_url or "NOT_IN_WHITELIST",
+            )
+            if dev_url:
+                logger.info("[DEV-ROUTER-EVO] forwarding %s to %s", from_number_raw, dev_url)
+                background_tasks.add_task(
+                    forward_to_dev,
+                    dev_url=dev_url,
+                    path="/webhook/evolution",
+                    headers=dict(request.headers),
+                    body=payload_bytes,
+                )
+                return {"status": "ok"}
+            elif await is_dev_number(redis, from_number_raw):
+                # Number is in whitelist but URL is empty — still drop in production.
+                logger.warning(
+                    "[DEV-ROUTER-EVO] %s in dev whitelist but no URL configured — dropping in production",
+                    from_number_raw,
+                )
+                return {"status": "ok"}
+
+    messages = parse_webhook_payload(payload)
 
     background_tasks.add_task(
         log_inbound,
@@ -83,18 +127,6 @@ async def receive_evolution_webhook(request: Request, background_tasks: Backgrou
 
         # Register lead immediately — guarantees CRM entry before buffer flushes
         background_tasks.add_task(_register_lead, msg.from_number, msg.push_name)
-
-        dev_url = await get_dev_route(redis, msg.from_number)
-        if dev_url and request.headers.get("x-dev-routed") != "1":
-            logger.info(f"Dev routing: forwarding {msg.from_number} to {dev_url}")
-            background_tasks.add_task(
-                forward_to_dev,
-                dev_url=dev_url,
-                path="/webhook/evolution",
-                headers=dict(request.headers),
-                body=payload_bytes,
-            )
-            continue
 
         try:
             provider = get_provider(channel)
