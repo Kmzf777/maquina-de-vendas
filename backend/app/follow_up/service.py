@@ -95,7 +95,7 @@ def cancel_followups(conversation_id: str, reason: str) -> None:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": reason,
-        }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+        }).eq("conversation_id", conversation_id).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar follow-ups da conversa {conversation_id}: {exc}"
@@ -152,7 +152,7 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": reason,
-        }).in_("conversation_id", conv_ids).eq("status", "pending").execute()
+        }).in_("conversation_id", conv_ids).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar follow-ups pelo phone {phone}: {exc}"
