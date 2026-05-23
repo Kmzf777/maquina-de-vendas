@@ -254,6 +254,9 @@ export interface Conversation {
   unread_count: number;
   whatsapp_window_expires_at: string | null;
   followup_enabled: boolean;
+  deal_pipeline_name?: string | null;
+  deal_stage_label?: string | null;
+  deal_stage_dot_color?: string | null;
   leads?: Lead;
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null; mode?: "ai" | "human" } | null;
   agent_profiles?: { id: string; name: string } | null;

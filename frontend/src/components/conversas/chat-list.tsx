@@ -6,6 +6,7 @@ import type { Conversation, Channel } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/datetime";
 import { getWindowStatus } from "@/lib/window-status";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
+import { Badge } from "@/components/ui/badge";
 
 interface ChatListProps {
   conversations: Conversation[];
@@ -295,16 +296,26 @@ export function ChatList({
                   </p>
                 )}
 
-                {/* L3 — Meta row: timestamp · stage · window indicator */}
-                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                {/* L3 — Meta row: timestamp · funnel badge · window indicator */}
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   <span className="text-xs text-[#7b7b78]">
                     {formatRelativeTime(conv.last_msg_at)}
                   </span>
-                  {stage && (
-                    <span
-                      className={`text-[10px] px-1.5 py-0.5 rounded-[4px] flex-shrink-0 font-medium ${getStagePillColor(stage)}`}
+                  {conv.deal_stage_label && (
+                    <Badge
+                      variant="outline"
+                      className="h-[18px] px-1.5 text-[10px] font-normal border-[#dedbd6] text-[#7b7b78] gap-1"
                     >
-                      {stage}
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: conv.deal_stage_dot_color ?? "#9ca3af" }}
+                      />
+                      {conv.deal_stage_label}
+                    </Badge>
+                  )}
+                  {conv.deal_pipeline_name && (
+                    <span className="text-[10px] text-[#9b9b98] truncate max-w-[100px]">
+                      {conv.deal_pipeline_name}
                     </span>
                   )}
                   <WhatsappWindowIndicator
