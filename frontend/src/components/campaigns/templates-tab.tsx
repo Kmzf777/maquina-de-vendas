@@ -49,7 +49,11 @@ export function TemplatesTab() {
       if (!channelsRes.ok) throw new Error("Falha ao carregar canais");
       const channelsData: Channel[] = await channelsRes.json();
       const metaChannels = (Array.isArray(channelsData) ? channelsData : []).filter(
-        (c) => c.provider === "meta_cloud" && c.is_active
+        (c) =>
+          c.provider === "meta_cloud" &&
+          c.is_active &&
+          c.provider_config?.waba_id &&
+          c.provider_config?.access_token
       );
 
       let errors = 0;
