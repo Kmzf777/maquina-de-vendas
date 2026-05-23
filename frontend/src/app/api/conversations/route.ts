@@ -155,6 +155,7 @@ export async function GET(request: NextRequest) {
     for (const row of lastMsgs || []) {
       let prefix = "";
       if (row.sent_by === "seller") prefix = "Vendedor: ";
+      else if (["broadcast", "campaign", "automation", "followup", "cadence"].includes(row.sent_by)) prefix = "Disparo: ";
       else if (row.role === "assistant") prefix = "IA: ";
       lastMsgMap.set(row.conversation_id, prefix + row.content);
     }
