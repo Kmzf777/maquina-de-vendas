@@ -7,7 +7,7 @@ import pytest
 # ─── schedule_handoff_rescue ────────────────────────────────────────────────
 
 def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
-    """Insere job com job_type='handoff_rescue', sequence=0, fire_at=now+15min."""
+    """Insere job com job_type='handoff_rescue', sequence=1, fire_at=now+15min."""
     from app.follow_up.service import schedule_handoff_rescue
 
     inserted = []
@@ -36,7 +36,7 @@ def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
     assert len(inserted) == 1
     job = inserted[0]
     assert job["job_type"] == "handoff_rescue"
-    assert job["sequence"] == 0
+    assert job["sequence"] == 1
     assert job["status"] == "pending"
     assert job["lead_id"] == "lead-1"
     assert job["conversation_id"] == "conv-1"
@@ -75,7 +75,7 @@ def _make_rescue_job():
         "conversation_id": "conv-ai-1",
         "lead_id": "lead-1",
         "channel_id": "ch-ai-1",
-        "sequence": 0,
+        "sequence": 1,
         "job_type": "handoff_rescue",
         "leads": {
             "id": "lead-1",

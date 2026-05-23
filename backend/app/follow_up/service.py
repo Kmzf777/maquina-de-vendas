@@ -178,7 +178,7 @@ def schedule_handoff_rescue(
         "conversation_id": conversation_id,
         "lead_id": lead_id,
         "channel_id": channel_id,
-        "sequence": 0,
+        "sequence": 1,
         "fire_at": (now + timedelta(minutes=delay_minutes)).isoformat(),
         "status": "pending",
         "env_tag": _ENV_TAG,
