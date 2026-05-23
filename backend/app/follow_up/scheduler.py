@@ -9,6 +9,8 @@ from app.follow_up.service import get_due_followups
 from app.leads.service import save_message
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
+from app.channels.service import get_channel_by_provider_config
+from app.whatsapp.meta import MetaCloudClient
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,11 @@ async def process_due_followups(now: datetime | None = None) -> None:
     jobs = get_due_followups(now)
 
     for job in jobs:
+        # Rota jobs de resgate de handoff para handler dedicado (antes de qualquer guard padrão)
+        if job.get("job_type") == "handoff_rescue":
+            await _process_handoff_rescue(job, now)
+            continue
+
         conversation_id = job["conversation_id"]
         lead = job["leads"]
         channel = job["channels"]
@@ -153,6 +160,75 @@ async def process_due_followups(now: datetime | None = None) -> None:
 
         _mark_sent(job["id"])
         logger.info(f"[FOLLOWUP] Enviado seq={sequence} lead={lead['phone']}")
+
+
+async def _process_handoff_rescue(job: dict, now: datetime) -> None:
+    """Verifica se lead contatou João nos últimos 15 min. Se não, dispara template de resgate."""
+    metadata = job.get("metadata") or {}
+    lead_phone = metadata.get("lead_phone")
+    joao_phone_number_id = metadata.get("joao_phone_number_id", "1049315514934778")
+    template_name = metadata.get("template_name", "rabubens")
+
+    if not lead_phone:
+        _cancel_job(job["id"], "missing_lead_phone")
+        logger.error(f"[HANDOFF_RESCUE] Job {job['id']} sem lead_phone no metadata")
+        return
+
+    joao_channel = get_channel_by_provider_config("phone_number_id", joao_phone_number_id, "meta_cloud")
+    if not joao_channel:
+        _cancel_job(job["id"], "joao_channel_not_found")
+        logger.error(
+            f"[HANDOFF_RESCUE] Canal do João (phone_number_id={joao_phone_number_id}) não encontrado"
+        )
+        return
+
+    sb = get_supabase()
+    cutoff = (now - timedelta(minutes=15)).isoformat()
+
+    try:
+        conv_result = (
+            sb.table("conversations")
+            .select("id")
+            .eq("lead_id", job["lead_id"])
+            .eq("channel_id", joao_channel["id"])
+            .execute()
+        )
+        if conv_result.data:
+            conv_ids = [c["id"] for c in conv_result.data]
+            msg_result = (
+                sb.table("messages")
+                .select("id")
+                .in_("conversation_id", conv_ids)
+                .eq("role", "user")
+                .gte("created_at", cutoff)
+                .limit(1)
+                .execute()
+            )
+            if msg_result.data:
+                logger.info(
+                    f"[HANDOFF_RESCUE] Lead {job['lead_id']} já contatou João — resgate desnecessário"
+                )
+                _mark_sent(job["id"])
+                return
+    except Exception as exc:
+        logger.error(
+            f"[HANDOFF_RESCUE] Erro ao verificar contato do lead {job['lead_id']}: {exc}",
+            exc_info=True,
+        )
+        # Segurança: se falhou a verificação, envia o template (falso negativo > falso positivo)
+
+    try:
+        provider = MetaCloudClient(joao_channel["provider_config"])
+        await provider.send_template(lead_phone, template_name)
+        logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' enviado para {lead_phone}")
+    except Exception as exc:
+        logger.error(
+            f"[HANDOFF_RESCUE] Falha ao enviar template para {lead_phone}: {exc}",
+            exc_info=True,
+        )
+        return  # Não marca sent → job será retentado no próximo tick do worker
+
+    _mark_sent(job["id"])
 
 
 def _cancel_job(job_id: str, reason: str) -> None:
