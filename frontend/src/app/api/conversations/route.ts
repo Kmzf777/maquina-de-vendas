@@ -161,6 +161,26 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Fetch active deal (pipeline + stage) for all DB conversation leads
+  const allLeadIds = (dbConversations || [])
+    .map((c) => (c.leads as { id?: string } | null)?.id)
+    .filter(Boolean) as string[];
+
+  type DealInfo = { pipeline_name: string; stage_label: string; stage_dot_color: string };
+  const dealMap = new Map<string, DealInfo>();
+  if (allLeadIds.length > 0) {
+    const { data: dealRows } = await supabase.rpc("get_lead_deals", {
+      lead_ids: allLeadIds,
+    });
+    for (const row of dealRows || []) {
+      dealMap.set(row.lead_id, {
+        pipeline_name: row.pipeline_name,
+        stage_label: row.stage_label,
+        stage_dot_color: row.stage_dot_color,
+      });
+    }
+  }
+
   // 2. Get Evolution channels and fetch their chats
   let channelsQuery = supabase
     .from("channels")
@@ -201,11 +221,18 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  // Add last_message_text to DB conversations
-  const dbWithLastMsg = (dbConversations || []).map((c) => ({
-    ...c,
-    last_message_text: lastMsgMap.get(c.id as string) ?? null,
-  }));
+  // Add last_message_text + deal info to DB conversations
+  const dbWithLastMsg = (dbConversations || []).map((c) => {
+    const leadId = (c.leads as { id?: string } | null)?.id ?? "";
+    const deal = dealMap.get(leadId);
+    return {
+      ...c,
+      last_message_text: lastMsgMap.get(c.id as string) ?? null,
+      deal_pipeline_name: deal?.pipeline_name ?? null,
+      deal_stage_label: deal?.stage_label ?? null,
+      deal_stage_dot_color: deal?.stage_dot_color ?? null,
+    };
+  });
 
   // Add Evolution conversations that don't already exist in DB
   const merged = [...dbWithLastMsg];
