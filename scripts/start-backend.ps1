@@ -12,5 +12,7 @@ New-Item -ItemType Directory -Force $logsDir | Out-Null
 
 $env:PYTHONUNBUFFERED = "1"
 Set-Location "$PSScriptRoot\..\backend"
-& "$PSScriptRoot\..\.venv\Scripts\python" -m uvicorn app.main:app --host 0.0.0.0 --port 8001 2>&1 |
-    Tee-Object -FilePath "$logsDir\backend.log"
+. "$PSScriptRoot\stream-log.ps1"
+Invoke-StreamLog -LogFilePath "$logsDir\backend.log" -Command {
+    & "$PSScriptRoot\..\.venv\Scripts\python" -m uvicorn app.main:app --host 0.0.0.0 --port 8001
+}
