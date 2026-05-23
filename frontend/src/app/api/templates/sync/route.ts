@@ -147,8 +147,17 @@ export async function POST(request: NextRequest) {
   }
 
   // 6. Update existing templates (preserves requested_category)
+  let updatedCount = 0;
   for (const { id, data } of toUpdate) {
-    await supabase.from("message_templates").update(data).eq("id", id);
+    const { error: updateError } = await supabase
+      .from("message_templates")
+      .update(data)
+      .eq("id", id);
+    if (updateError) {
+      console.error(`[templates/sync] Failed to update template ${id}:`, updateError.message);
+    } else {
+      updatedCount++;
+    }
   }
 
   // 7. Ghost cleanup: mark as cancelled any local template not returned by Meta
@@ -159,11 +168,14 @@ export async function POST(request: NextRequest) {
     .map((r) => r.id);
 
   if (ghostIds.length > 0) {
-    await supabase
+    const { error: ghostError } = await supabase
       .from("message_templates")
       .update({ status: "cancelled" })
       .in("id", ghostIds);
+    if (ghostError) {
+      console.error("[templates/sync] Ghost cleanup failed:", ghostError.message);
+    }
   }
 
-  return NextResponse.json({ synced: metaTemplates.length });
+  return NextResponse.json({ synced: toInsert.length + updatedCount });
 }
