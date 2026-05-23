@@ -1,59 +1,38 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { KpiCard } from "@/components/kpi-card";
+import type { ReactNode } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
 } from "recharts";
 
 const API_BASE = "";
+const MARKETING_PRICE = 0.0617;
+const UTILITY_PRICE = 0.0067;
 
 const PERIOD_OPTIONS = [
   { label: "Hoje", days: 1 },
   { label: "7 dias", days: 7 },
   { label: "30 dias", days: 30 },
 ];
-
-const STAGE_COLORS: Record<string, string> = {
-  secretaria: "#dedbd6",
-  atacado: "#111111",
-  private_label: "#7b7b78",
-  exportacao: "#0bdf50",
-  consumo: "#ff5600",
-};
-
-const MODEL_COLORS: Record<string, string> = {
-  "gpt-4.1": "#111111",
-  "gpt-4.1-mini": "#7b7b78",
-  "gpt-4o": "#dedbd6",
-  "whisper-1": "#0bdf50",
-};
-
-const DollarIcon = (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M10 2v16M14 5.5H8.5a2.5 2.5 0 000 5h3a2.5 2.5 0 010 5H6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const CallsIcon = (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const TokensIcon = (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.8" />
-    <path d="M8 8h4M8 12h4M10 6v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-const AvgIcon = (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="7.5" cy="7" r="2.5" stroke="currentColor" strokeWidth="1.8" />
-    <path d="M2.5 16c0-2.5 2-4.5 5-4.5s5 2 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    <path d="M15 6v6M12 9h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-  </svg>
-);
 
 function formatUSD(value: number): string {
   if (value < 0.01) return `$${value.toFixed(4)}`;
@@ -65,51 +44,57 @@ function formatDate(dateStr: string): string {
   return `${d.getDate()}/${d.getMonth() + 1}`;
 }
 
-interface CostSummary {
+interface WhatsappSummary {
+  marketing_count: number;
+  marketing_cost: number;
+  utility_count: number;
+  utility_cost: number;
+  total_whatsapp_cost: number;
+  truncated?: boolean;
+}
+
+interface AISummary {
   total_cost: number;
   total_calls: number;
   total_tokens: number;
-  avg_cost_per_lead: number;
-  unique_leads: number;
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
 }
 
-interface DailyData {
+interface DailyAI {
   date: string;
   cost: number;
 }
 
-interface BreakdownItem {
-  key: string;
-  cost: number;
-  calls: number;
-  tokens: number;
+interface DailyWA {
+  date: string;
+  marketing_cost: number;
+  utility_cost: number;
+  total: number;
 }
 
-interface TopLead {
-  lead_id: string;
-  name: string;
-  phone: string;
-  stage: string;
-  cost: number;
-  calls: number;
-  tokens: number;
+interface CombinedDaily {
+  date: string;
+  marketing: number;
+  utility: number;
+  ia: number;
 }
 
 export default function EstatisticasPage() {
   const [selectedPeriod, setSelectedPeriod] = useState(30);
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
+  const [appliedCustomStart, setAppliedCustomStart] = useState("");
+  const [appliedCustomEnd, setAppliedCustomEnd] = useState("");
 
-  const [summary, setSummary] = useState<CostSummary | null>(null);
-  const [daily, setDaily] = useState<DailyData[]>([]);
-  const [byStage, setByStage] = useState<BreakdownItem[]>([]);
-  const [byModel, setByModel] = useState<BreakdownItem[]>([]);
-  const [topLeads, setTopLeads] = useState<TopLead[]>([]);
+  const [whatsapp, setWhatsapp] = useState<WhatsappSummary | null>(null);
+  const [ai, setAi] = useState<AISummary | null>(null);
+  const [dailyData, setDailyData] = useState<CombinedDaily[]>([]);
   const [loading, setLoading] = useState(true);
 
   const getDateRange = useCallback(() => {
-    if (customStart && customEnd) {
-      return { start_date: customStart, end_date: customEnd };
+    if (appliedCustomStart && appliedCustomEnd) {
+      return { start_date: appliedCustomStart, end_date: appliedCustomEnd };
     }
     const end = new Date();
     end.setDate(end.getDate() + 1);
@@ -119,7 +104,7 @@ export default function EstatisticasPage() {
       start_date: start.toISOString().slice(0, 10),
       end_date: end.toISOString().slice(0, 10),
     };
-  }, [selectedPeriod, customStart, customEnd]);
+  }, [selectedPeriod, appliedCustomStart, appliedCustomEnd]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -127,27 +112,52 @@ export default function EstatisticasPage() {
     const params = `start_date=${start_date}&end_date=${end_date}`;
 
     try {
-      const [summaryRes, dailyRes, stageRes, modelRes, leadsRes] = await Promise.all([
+      const [aiRes, waRes, aiDailyRes, waDailyRes] = await Promise.all([
         fetch(`${API_BASE}/api/stats/costs?${params}`),
+        fetch(`${API_BASE}/api/stats/whatsapp?${params}`),
         fetch(`${API_BASE}/api/stats/costs/daily?${params}`),
-        fetch(`${API_BASE}/api/stats/costs/breakdown?${params}&group_by=stage`),
-        fetch(`${API_BASE}/api/stats/costs/breakdown?${params}&group_by=model`),
-        fetch(`${API_BASE}/api/stats/costs/top-leads?${params}&limit=20`),
+        fetch(`${API_BASE}/api/stats/whatsapp/daily?${params}`),
       ]);
 
-      const [summaryData, dailyData, stageData, modelData, leadsData] = await Promise.all([
-        summaryRes.json(),
-        dailyRes.json(),
-        stageRes.json(),
-        modelRes.json(),
-        leadsRes.json(),
+      if (!aiRes.ok || !waRes.ok || !aiDailyRes.ok || !waDailyRes.ok) {
+        throw new Error("stats fetch failed");
+      }
+      const [aiData, waData, aiDailyData, waDailyData] = await Promise.all([
+        aiRes.json(),
+        waRes.json(),
+        aiDailyRes.json(),
+        waDailyRes.json(),
       ]);
 
-      setSummary(summaryData);
-      setDaily(dailyData.data);
-      setByStage(stageData.data);
-      setByModel(modelData.data);
-      setTopLeads(leadsData.data);
+      setAi(aiData);
+      setWhatsapp(waData);
+
+      const aiByDate: Record<string, number> = {};
+      for (const d of (aiDailyData?.data ?? []) as DailyAI[]) {
+        aiByDate[d.date] = d.cost;
+      }
+
+      const waByDate: Record<string, DailyWA> = {};
+      for (const d of (waDailyData?.data ?? []) as DailyWA[]) {
+        waByDate[d.date] = d;
+      }
+
+      // Union of all dates from both series
+      const allDates = Array.from(
+        new Set([
+          ...Object.keys(waByDate),
+          ...Object.keys(aiByDate),
+        ])
+      ).sort();
+
+      const combined: CombinedDaily[] = allDates.map((date) => ({
+        date,
+        marketing: waByDate[date]?.marketing_cost ?? 0,
+        utility: waByDate[date]?.utility_cost ?? 0,
+        ia: aiByDate[date] ?? 0,
+      }));
+
+      setDailyData(combined);
     } catch (e) {
       console.error("Failed to fetch stats:", e);
     } finally {
@@ -159,19 +169,24 @@ export default function EstatisticasPage() {
     fetchData();
   }, [fetchData]);
 
+  const totalCost =
+    (whatsapp?.total_whatsapp_cost ?? 0) + (ai?.total_cost ?? 0);
+
   if (loading) {
     return (
       <div className="flex flex-col h-full">
         <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0">
-          <div className="h-8 w-48 rounded-[4px] animate-pulse bg-[#dedbd6]" />
-          <div className="h-4 w-72 rounded-[4px] animate-pulse mt-2 bg-[#dedbd6]" />
+          <Skeleton className="h-8 w-48 rounded-[4px]" />
+          <Skeleton className="h-4 w-72 rounded-[4px] mt-2" />
         </div>
-        <div className="p-8 flex-1 bg-[#faf9f6]">
-          <div className="grid grid-cols-4 gap-5">
+        <div className="p-8 flex-1 bg-[#faf9f6] space-y-6">
+          <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="bg-white border border-[#dedbd6] rounded-[8px] p-5 h-28 animate-pulse" />
+              <Skeleton key={i} className="h-28 rounded-[8px]" />
             ))}
           </div>
+          <Skeleton className="h-72 rounded-[8px]" />
+          <Skeleton className="h-48 rounded-[8px]" />
         </div>
       </div>
     );
@@ -179,171 +194,294 @@ export default function EstatisticasPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Page Header */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0 flex items-end justify-between">
+      <Alert className="rounded-none border-x-0 border-t-0 border-b border-amber-200 bg-amber-50 py-2.5 px-8 text-amber-800">
+        <AlertDescription className="text-xs">
+          Todos os valores estão em dólar americano (USD) — moeda de cobrança da Meta e dos modelos de IA.
+        </AlertDescription>
+      </Alert>
+
+      {/* Header */}
+      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">
-            Tokens AI
+          <h1
+            style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
+            className="text-[32px] font-normal text-[#111111]"
+          >
+            Custos Operacionais
           </h1>
-          <p className="text-[14px] text-[#7b7b78] mt-0.5">
-            Uso de tokens por modelo
-          </p>
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">WhatsApp + IA</p>
         </div>
 
-        {/* Period Filter */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex gap-1">
             {PERIOD_OPTIONS.map((opt) => (
               <button
                 key={opt.days}
-                onClick={() => { setSelectedPeriod(opt.days); setCustomStart(""); setCustomEnd(""); }}
-                className={selectedPeriod === opt.days && !customStart
-                  ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
-                  : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"}
+                onClick={() => {
+                  setSelectedPeriod(opt.days);
+                  setCustomStart("");
+                  setCustomEnd("");
+                  setAppliedCustomStart("");
+                  setAppliedCustomEnd("");
+                }}
+                className={
+                  selectedPeriod === opt.days && !customStart
+                    ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+                    : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+                }
               >
                 {opt.label}
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1.5 ml-2">
+          <div className="flex items-center gap-1.5">
             <input
               type="date"
               value={customStart}
-              onChange={(e) => setCustomStart(e.target.value)}
+              onChange={(e) => {
+                setCustomStart(e.target.value);
+                if (e.target.value.length === 10 && customEnd.length === 10) {
+                  setAppliedCustomStart(e.target.value);
+                  setAppliedCustomEnd(customEnd);
+                }
+              }}
               className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
             />
             <span className="text-[14px] text-[#7b7b78]">a</span>
             <input
               type="date"
               value={customEnd}
-              onChange={(e) => setCustomEnd(e.target.value)}
+              onChange={(e) => {
+                setCustomEnd(e.target.value);
+                if (customStart.length === 10 && e.target.value.length === 10) {
+                  setAppliedCustomStart(customStart);
+                  setAppliedCustomEnd(e.target.value);
+                }
+              }}
               className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
             />
           </div>
         </div>
       </div>
 
-      <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
-        {/* KPI Cards */}
-        <div className="grid grid-cols-4 gap-5 mb-8">
-          <KpiCard label="Custo Total" value={formatUSD(summary?.total_cost ?? 0)} icon={DollarIcon} />
-          <KpiCard label="Chamadas API" value={summary?.total_calls ?? 0} icon={CallsIcon} />
-          <KpiCard label="Tokens Consumidos" value={(summary?.total_tokens ?? 0).toLocaleString()} icon={TokensIcon} />
-          <KpiCard
-            label="Custo Medio/Lead"
-            value={formatUSD(summary?.avg_cost_per_lead ?? 0)}
-            subtitle={`${summary?.unique_leads ?? 0} leads`}
-            icon={AvgIcon}
-          />
+      <div className="p-6 md:p-8 overflow-auto flex-1 bg-[#faf9f6] space-y-6">
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
+          <Card className="border-[#dedbd6] rounded-[8px] ring-0 shadow-none">
+            <CardHeader className="pb-1 pt-4 px-5">
+              <CardTitle className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal">
+                Marketing WPP
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-4">
+              <p className="text-[24px] font-normal text-[#111111] leading-none">
+                {formatUSD(whatsapp?.marketing_cost ?? 0)}
+              </p>
+              <p className="text-[12px] text-[#7b7b78] mt-1">
+                {whatsapp?.marketing_count ?? 0} msgs · ${MARKETING_PRICE}/msg
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-[#dedbd6] rounded-[8px] ring-0 shadow-none">
+            <CardHeader className="pb-1 pt-4 px-5">
+              <CardTitle className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal">
+                Utilidade WPP
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-4">
+              <p className="text-[24px] font-normal text-[#111111] leading-none">
+                {formatUSD(whatsapp?.utility_cost ?? 0)}
+              </p>
+              <p className="text-[12px] text-[#7b7b78] mt-1">
+                {whatsapp?.utility_count ?? 0} msgs · ${UTILITY_PRICE}/msg
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-[#dedbd6] rounded-[8px] ring-0 shadow-none">
+            <CardHeader className="pb-1 pt-4 px-5">
+              <CardTitle className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal">
+                LLM / IA
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-4">
+              <p className="text-[24px] font-normal text-[#111111] leading-none">
+                {formatUSD(ai?.total_cost ?? 0)}
+              </p>
+              <p className="text-[12px] text-[#7b7b78] mt-1">
+                {ai?.total_calls ?? 0} chamadas ·{" "}
+                {(ai?.total_tokens ?? 0).toLocaleString()} tokens
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-transparent rounded-[8px] bg-[#111111] ring-0 shadow-none">
+            <CardHeader className="pb-1 pt-4 px-5">
+              <CardTitle className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal">
+                Total Operacional
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-4">
+              <p className="text-[24px] font-normal text-white leading-none">
+                {formatUSD(totalCost)}
+              </p>
+              <p className="text-[12px] text-[#7b7b78] mt-1">WPP + IA</p>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Daily Cost Line Chart */}
-        <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5 mb-8">
+        {whatsapp?.truncated && (
+          <p className="text-[12px] text-[#ff5600]">
+            ⚠ Período com mais de 10.000 disparos — valores exibidos são um limite inferior.
+          </p>
+        )}
+
+        {/* Daily Cost Chart */}
+        <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
           <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-            Custo Diario (USD)
+            Custo Diário (USD)
           </h2>
           <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={daily}>
+            <LineChart data={dailyData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
-              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fontSize: 12, fill: "#7b7b78" }} />
-              <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-              <Tooltip
-                formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]}
-                labelFormatter={(label) => formatDate(String(label))}
+              <XAxis
+                dataKey="date"
+                tickFormatter={formatDate}
+                tick={{ fontSize: 12, fill: "#7b7b78" }}
               />
-              <Line type="monotone" dataKey="cost" stroke="#111111" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              <YAxis
+                tick={{ fontSize: 12, fill: "#7b7b78" }}
+                tickFormatter={(v: number) => `$${v.toFixed(2)}`}
+              />
+              <Tooltip
+                formatter={(value: number | string | ReadonlyArray<number | string> | undefined, name: number | string | undefined) => [
+                  `$${Number(value ?? 0).toFixed(4)}`,
+                  name === "marketing"
+                    ? "Marketing WPP"
+                    : name === "utility"
+                    ? "Utilidade WPP"
+                    : "IA",
+                ]}
+                labelFormatter={(label: ReactNode) => formatDate(String(label ?? ""))}
+              />
+              <Legend
+                formatter={(value: string) =>
+                  value === "marketing"
+                    ? "Marketing WPP"
+                    : value === "utility"
+                    ? "Utilidade WPP"
+                    : "IA"
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="marketing"
+                stroke="#111111"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="utility"
+                stroke="#0bdf50"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="ia"
+                stroke="#7b7b78"
+                strokeWidth={2}
+                dot={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Breakdown Charts */}
-        <div className="grid grid-cols-2 gap-5 mb-8">
-          {/* By Stage */}
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
-            <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-              Custo por Stage
-            </h2>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={byStage}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
-                <XAxis dataKey="key" tick={{ fontSize: 12, fill: "#7b7b78" }} />
-                <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-                <Tooltip formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]} />
-                <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
-                  {byStage.map((entry) => (
-                    <Cell key={entry.key} fill={STAGE_COLORS[entry.key] || "#7b7b78"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        {/* Details Table */}
+        <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-[#dedbd6] hover:bg-transparent">
+                <TableHead className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal h-10">
+                  Categoria
+                </TableHead>
+                <TableHead className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal text-right h-10">
+                  Qtd.
+                </TableHead>
+                <TableHead className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal text-right h-10">
+                  Tokens / Chamadas
+                </TableHead>
+                <TableHead className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-normal text-right h-10">
+                  Custo
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow className="border-[#dedbd6] hover:bg-[#faf9f6]">
+                <TableCell className="text-[14px] text-[#111111] py-3">
+                  Marketing WhatsApp
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] py-3">
+                  {whatsapp?.marketing_count ?? 0} msgs
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] py-3">
+                  —
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] py-3">
+                  {formatUSD(whatsapp?.marketing_cost ?? 0)}
+                </TableCell>
+              </TableRow>
 
-          {/* By Model */}
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
-            <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-              Custo por Modelo
-            </h2>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={byModel}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#dedbd6" />
-                <XAxis dataKey="key" tick={{ fontSize: 12, fill: "#7b7b78" }} />
-                <YAxis tick={{ fontSize: 12, fill: "#7b7b78" }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-                <Tooltip formatter={(value) => [`$${Number(value).toFixed(4)}`, "Custo"]} />
-                <Bar dataKey="cost" radius={[4, 4, 0, 0]}>
-                  {byModel.map((entry) => (
-                    <Cell key={entry.key} fill={MODEL_COLORS[entry.key] || "#7b7b78"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+              <TableRow className="border-[#dedbd6] hover:bg-[#faf9f6]">
+                <TableCell className="text-[14px] text-[#111111] py-3">
+                  Utilidade WhatsApp
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] py-3">
+                  {whatsapp?.utility_count ?? 0} msgs
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] py-3">
+                  —
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] py-3">
+                  {formatUSD(whatsapp?.utility_cost ?? 0)}
+                </TableCell>
+              </TableRow>
 
-        {/* Top Leads Table */}
-        <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
-          <h2 className="text-[14px] font-normal text-[#111111] mb-4">
-            Top Leads por Custo
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[#dedbd6]">
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Lead</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Stage</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Chamadas</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Tokens</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Custo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topLeads.map((lead) => (
-                  <tr key={lead.lead_id} className="border-b border-[#dedbd6] hover:bg-[#faf9f6] transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="text-[14px] text-[#111111]">{lead.name}</div>
-                      {lead.phone && (
-                        <div className="text-[12px] text-[#7b7b78]">{lead.phone}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
-                        {lead.stage}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-[14px] text-[#7b7b78]">{lead.calls}</td>
-                    <td className="px-4 py-3 text-right text-[14px] text-[#7b7b78]">{lead.tokens.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right text-[14px] font-normal text-[#111111]">{formatUSD(lead.cost)}</td>
-                  </tr>
-                ))}
-                {topLeads.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-[14px] text-[#7b7b78]">
-                      Nenhum dado de custo encontrado para o periodo selecionado
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+              <TableRow className="border-[#dedbd6] hover:bg-[#faf9f6]">
+                <TableCell className="text-[14px] text-[#111111] py-3">
+                  LLM / IA
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] py-3">
+                  {ai?.total_calls ?? 0} chamadas
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] py-3">
+                  {(ai?.total_tokens ?? 0).toLocaleString()}
+                  {ai && (
+                    <span className="text-[11px] ml-1">
+                      ({ai.total_prompt_tokens.toLocaleString()} in /{" "}
+                      {ai.total_completion_tokens.toLocaleString()} out)
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] py-3">
+                  {formatUSD(ai?.total_cost ?? 0)}
+                </TableCell>
+              </TableRow>
+
+              <TableRow className="bg-[#faf9f6] hover:bg-[#faf9f6] border-0">
+                <TableCell className="text-[14px] font-medium text-[#111111] py-3">
+                  Total
+                </TableCell>
+                <TableCell />
+                <TableCell />
+                <TableCell className="text-right text-[14px] font-medium text-[#111111] py-3">
+                  {formatUSD(totalCost)}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </div>
       </div>
     </div>
