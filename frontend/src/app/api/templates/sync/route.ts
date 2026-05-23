@@ -17,6 +17,20 @@ interface MetaPageResponse {
   paging?: { next?: string };
 }
 
+// ─── Status mapping ───────────────────────────────────────────────────────────
+
+const STATUS_MAP: Record<string, string> = {
+  APPROVED: "approved",
+  REJECTED: "rejected",
+  PENDING: "pending",
+  IN_APPEAL: "pending",
+  PAUSED: "rejected",
+  DISABLED: "rejected",
+  FLAGGED: "rejected",
+  PENDING_DELETION: "cancelled",
+  LIMIT_EXCEEDED: "rejected",
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchAllMetaTemplates(
@@ -117,7 +131,7 @@ export async function POST(request: NextRequest) {
   for (const t of metaTemplates) {
     const key = `${t.name}::${t.language}`;
     const sharedFields = {
-      status: t.status.toLowerCase(),
+      status: STATUS_MAP[t.status.toUpperCase()] ?? "pending",
       category: (t.category || "utility").toLowerCase(),
       language: t.language,
       components: t.components ?? [],
