@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
-import type { MessageTemplate } from "@/lib/types";
+import type { MessageTemplate, Channel } from "@/lib/types";
 import { CreateTemplateModal } from "@/components/canais/create-template-modal";
 
 const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -19,12 +19,6 @@ const STATUS_CONFIG: Record<string, { label: string; colorClass: string }> = {
   rejected:                { label: "Rejeitado",      colorClass: "bg-[#fef0f0] text-[#c41c1c]" },
 };
 
-interface Channel {
-  id: string;
-  provider: string;
-  is_active: boolean;
-}
-
 export function TemplatesTab() {
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +29,7 @@ export function TemplatesTab() {
     message: string;
   } | null>(null);
   const hasSyncedOnMount = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -51,7 +46,8 @@ export function TemplatesTab() {
     setSyncing(true);
     try {
       const channelsRes = await fetch("/api/channels");
-      const channelsData: Channel[] = channelsRes.ok ? await channelsRes.json() : [];
+      if (!channelsRes.ok) throw new Error("Falha ao carregar canais");
+      const channelsData: Channel[] = await channelsRes.json();
       const metaChannels = (Array.isArray(channelsData) ? channelsData : []).filter(
         (c) => c.provider === "meta_cloud" && c.is_active
       );
@@ -74,7 +70,8 @@ export function TemplatesTab() {
       setSyncToast({ type: "error", message: "Erro ao sincronizar templates." });
     } finally {
       setSyncing(false);
-      setTimeout(() => setSyncToast(null), 5000);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setSyncToast(null), 5000);
     }
   }, [loadTemplates]);
 
@@ -85,9 +82,15 @@ export function TemplatesTab() {
     syncTemplates();
   }, [syncTemplates]);
 
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
   const cat = (c: string | null) =>
     CATEGORY_CONFIG[(c ?? "").toLowerCase()] ?? CATEGORY_CONFIG.utility;
-  const st = (s: string) => STATUS_CONFIG[s] ?? STATUS_CONFIG.pending;
+  const st = (s: string) => STATUS_CONFIG[s] ?? STATUS_CONFIG.cancelled;
 
   return (
     <div className="space-y-4">
