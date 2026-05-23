@@ -46,7 +46,7 @@ def schedule_followup(
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": "rescheduled",
-        }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+        }).eq("conversation_id", conversation_id).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar jobs anteriores da conversa {conversation_id}: {exc}"
