@@ -46,7 +46,7 @@ def schedule_followup(
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": "rescheduled",
-        }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+        }).eq("conversation_id", conversation_id).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar jobs anteriores da conversa {conversation_id}: {exc}"
@@ -95,7 +95,7 @@ def cancel_followups(conversation_id: str, reason: str) -> None:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": reason,
-        }).eq("conversation_id", conversation_id).eq("status", "pending").execute()
+        }).eq("conversation_id", conversation_id).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar follow-ups da conversa {conversation_id}: {exc}"
@@ -152,7 +152,7 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": reason,
-        }).in_("conversation_id", conv_ids).eq("status", "pending").execute()
+        }).in_("conversation_id", conv_ids).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar follow-ups pelo phone {phone}: {exc}"
@@ -162,6 +162,45 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
         ) from exc
 
     logger.info(f"[FOLLOWUP] Cancelado reason={reason} phone={phone}")
+
+
+def schedule_handoff_rescue(
+    lead_id: str,
+    lead_phone: str,
+    conversation_id: str,
+    channel_id: str,
+    delay_minutes: int = 15,
+) -> None:
+    """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes."""
+    sb = get_supabase()
+    now = datetime.now(timezone.utc)
+    job = {
+        "conversation_id": conversation_id,
+        "lead_id": lead_id,
+        "channel_id": channel_id,
+        "sequence": 1,
+        "fire_at": (now + timedelta(minutes=delay_minutes)).isoformat(),
+        "status": "pending",
+        "env_tag": _ENV_TAG,
+        "job_type": "handoff_rescue",
+        "metadata": {
+            "lead_phone": lead_phone,
+            "joao_phone_number_id": "1049315514934778",
+            "template_name": "rabubens",
+        },
+    }
+    try:
+        sb.table("follow_up_jobs").insert(job).execute()
+    except Exception as exc:
+        logger.error(
+            f"[HANDOFF_RESCUE] Erro ao inserir rescue job para lead {lead_id}: {exc}"
+        )
+        raise RuntimeError(
+            f"Falha ao agendar job de resgate para lead {lead_id}"
+        ) from exc
+    logger.info(
+        f"[HANDOFF_RESCUE] Agendado em {delay_minutes}min lead={lead_id} conversation={conversation_id}"
+    )
 
 
 def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
