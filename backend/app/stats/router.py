@@ -208,3 +208,136 @@ async def get_top_leads(
             item["cost"] = round(item["cost"], 6)
 
     return {"data": sorted_leads}
+
+
+WHATSAPP_MARKETING_PRICE = 0.0617
+WHATSAPP_UTILITY_PRICE = 0.0067
+
+
+def _fetch_whatsapp_rows(
+    sb, start_date: date, end_date: date
+) -> tuple[list, dict[str, str], bool]:
+    """Fetch successful outbound send_template logs and resolve template categories.
+
+    Returns (rows, category_map, truncated).
+    category_map values are pre-normalized to uppercase with whitespace stripped.
+    truncated is True when the 10 000-row cap was hit (cost figure is a lower bound).
+    """
+    result = (
+        sb.table("meta_webhook_logs")
+        .select("payload, received_at")
+        .eq("direction", "outbound")
+        .eq("request_type", "send_template")
+        .eq("success", True)
+        .gte("received_at", start_date.isoformat())
+        .lt("received_at", end_date.isoformat())
+        .limit(10000)
+        .execute()
+    )
+    rows = result.data
+    truncated = len(rows) == 10000
+
+    template_names = {
+        row["payload"]["template"]["name"]
+        for row in rows
+        if row.get("payload") and row["payload"].get("template") and row["payload"]["template"].get("name")
+    }
+
+    category_map: dict[str, str] = {}
+    if template_names:
+        tr = (
+            sb.table("message_templates")
+            .select("name, category")
+            .in_("name", list(template_names))
+            .execute()
+        )
+        category_map = {t["name"]: t["category"].strip().upper() for t in tr.data}
+
+    return rows, category_map, truncated
+
+
+@router.get("/whatsapp")
+async def get_whatsapp_costs(
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    """Get WhatsApp template costs split by Marketing vs Utility."""
+    sb = get_supabase()
+
+    if not start_date:
+        start_date = date.today() - timedelta(days=30)
+    if not end_date:
+        end_date = date.today() + timedelta(days=1)
+
+    rows, category_map, truncated = _fetch_whatsapp_rows(sb, start_date, end_date)
+
+    marketing_count = 0
+    utility_count = 0
+    for row in rows:
+        payload = row.get("payload") or {}
+        template = payload.get("template") or {}
+        name = template.get("name")
+        category = category_map.get(name, "MARKETING")
+        if category == "UTILITY":
+            utility_count += 1
+        else:
+            marketing_count += 1
+
+    marketing_cost = round(marketing_count * WHATSAPP_MARKETING_PRICE, 4)
+    utility_cost = round(utility_count * WHATSAPP_UTILITY_PRICE, 4)
+
+    return {
+        "marketing_count": marketing_count,
+        "marketing_cost": marketing_cost,
+        "utility_count": utility_count,
+        "utility_cost": utility_cost,
+        "total_whatsapp_cost": round(
+            marketing_count * WHATSAPP_MARKETING_PRICE + utility_count * WHATSAPP_UTILITY_PRICE, 4
+        ),
+        "truncated": truncated,
+    }
+
+
+@router.get("/whatsapp/daily")
+async def get_whatsapp_daily_costs(
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    """Get daily WhatsApp template costs split by Marketing and Utility."""
+    sb = get_supabase()
+
+    if not start_date:
+        start_date = date.today() - timedelta(days=30)
+    if not end_date:
+        end_date = date.today() + timedelta(days=1)
+
+    rows, category_map, truncated = _fetch_whatsapp_rows(sb, start_date, end_date)
+
+    daily: dict[str, dict[str, float]] = {}
+    for row in rows:
+        day = row["received_at"][:10]
+        payload = row.get("payload") or {}
+        template = payload.get("template") or {}
+        name = template.get("name")
+        category = category_map.get(name, "MARKETING")
+        if day not in daily:
+            daily[day] = {"marketing_cost": 0.0, "utility_cost": 0.0}
+        if category == "UTILITY":
+            daily[day]["utility_cost"] += WHATSAPP_UTILITY_PRICE
+        else:
+            daily[day]["marketing_cost"] += WHATSAPP_MARKETING_PRICE
+
+    data = []
+    current = start_date
+    while current < end_date:
+        day_str = current.isoformat()
+        d = daily.get(day_str, {"marketing_cost": 0.0, "utility_cost": 0.0})
+        data.append({
+            "date": day_str,
+            "marketing_cost": round(d["marketing_cost"], 4),
+            "utility_cost": round(d["utility_cost"], 4),
+            "total": round(d["marketing_cost"] + d["utility_cost"], 4),
+        })
+        current += timedelta(days=1)
+
+    return {"data": data, "truncated": truncated}
