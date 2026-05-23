@@ -12,4 +12,4 @@ New-Item -ItemType Directory -Force $logsDir | Out-Null
 
 Set-Location "$PSScriptRoot\..\frontend"
 npm run dev -- --hostname 127.0.0.1 --port 3000 2>&1 |
-    Tee-Object -FilePath "$logsDir\frontend.log" -Encoding UTF8
+    Tee-Object -FilePath "$logsDir\frontend.log"
