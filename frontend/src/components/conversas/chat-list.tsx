@@ -300,11 +300,11 @@ export function ChatList({
                   <span className="text-xs text-[#7b7b78]">
                     {formatRelativeTime(conv.last_msg_at)}
                   </span>
-                  {stage && (
+                  {stage && AGENT_STAGES.some((s) => s.key === stage) && (
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded-[4px] flex-shrink-0 font-medium ${getStagePillColor(stage)}`}
                     >
-                      {stage}
+                      {AGENT_STAGES.find((s) => s.key === stage)?.label ?? stage}
                     </span>
                   )}
                   <WhatsappWindowIndicator
