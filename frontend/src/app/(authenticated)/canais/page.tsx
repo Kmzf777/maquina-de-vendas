@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 
 interface Channel {
   id: string;
   name: string;
   phone: string;
-  provider: "meta_cloud" | "evolution";
+  provider: "meta_cloud";
   provider_config: Record<string, string>;
   is_active: boolean;
   mode: "ai" | "human";
@@ -16,29 +17,35 @@ interface Channel {
 
 interface FormData {
   name: string;
-  provider: "meta_cloud" | "evolution";
   phone: string;
   is_active: boolean;
   mode: "ai" | "human";
-  // Evolution fields
-  evo_api_url: string;
-  evo_api_key: string;
-  evo_instance: string;
-  // Meta fields (credentials are global env vars injected by backend)
   meta_phone_number_id: string;
 }
 
 const EMPTY_FORM: FormData = {
   name: "",
-  provider: "evolution",
   phone: "",
   is_active: true,
   mode: "ai",
-  evo_api_url: "",
-  evo_api_key: "",
-  evo_instance: "",
   meta_phone_number_id: "",
 };
+
+function IconPencil({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+    </svg>
+  );
+}
+
+function IconTrash({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+    </svg>
+  );
+}
 
 export default function CanaisPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -47,15 +54,6 @@ export default function CanaisPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-
-  // QR Code modal state
-  const [qrChannelId, setQrChannelId] = useState<string | null>(null);
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  const [qrStatus, setQrStatus] = useState<"idle" | "loading" | "scanning" | "connected">("idle");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Connection status cache
-  const [connectionStatus, setConnectionStatus] = useState<Record<string, { connected: boolean; number?: string }>>({});
 
   const fetchChannels = useCallback(async () => {
     const res = await fetch("/api/channels");
@@ -68,32 +66,13 @@ export default function CanaisPage() {
     fetchChannels();
   }, [fetchChannels]);
 
-  // Check connection status for Evolution channels
-  useEffect(() => {
-    const evoChannels = channels.filter((c) => c.provider === "evolution");
-    evoChannels.forEach(async (ch) => {
-      try {
-        const res = await fetch(`/api/channels/${ch.id}/status`);
-        const data = await res.json();
-        setConnectionStatus((prev) => ({ ...prev, [ch.id]: data }));
-      } catch {
-        setConnectionStatus((prev) => ({ ...prev, [ch.id]: { connected: false } }));
-      }
-    });
-  }, [channels]);
-
   const handleSave = async () => {
     setSaving(true);
-    const providerConfig =
-      form.provider === "evolution"
-        ? { api_url: form.evo_api_url, api_key: form.evo_api_key, instance: form.evo_instance }
-        : { phone_number_id: form.meta_phone_number_id };
-
     const body = {
       name: form.name,
       phone: form.phone,
-      provider: form.provider,
-      provider_config: providerConfig,
+      provider: "meta_cloud",
+      provider_config: { phone_number_id: form.meta_phone_number_id },
       is_active: form.is_active,
       mode: form.mode,
     };
@@ -123,13 +102,9 @@ export default function CanaisPage() {
     const config = ch.provider_config || {};
     setForm({
       name: ch.name,
-      provider: ch.provider,
       phone: ch.phone || "",
       is_active: ch.is_active,
       mode: ch.mode ?? "ai",
-      evo_api_url: config.api_url || "",
-      evo_api_key: config.api_key || "",
-      evo_instance: config.instance || "",
       meta_phone_number_id: config.phone_number_id || "",
     });
     setEditingId(ch.id);
@@ -142,79 +117,18 @@ export default function CanaisPage() {
     fetchChannels();
   };
 
-  const handleToggleActive = async (ch: Channel) => {
+  const handleToggleActive = async (ch: Channel, newValue: boolean) => {
     await fetch(`/api/channels/${ch.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_active: !ch.is_active }),
+      body: JSON.stringify({ is_active: newValue }),
     });
     fetchChannels();
   };
 
-  // QR Code connection flow
-  const handleConnect = async (channelId: string) => {
-    setQrChannelId(channelId);
-    setQrStatus("loading");
-    setQrCode(null);
-
-    try {
-      const res = await fetch(`/api/channels/${channelId}/connect`, { method: "POST" });
-      const data = await res.json();
-
-      if (data.connected) {
-        setQrStatus("connected");
-        fetchChannels();
-        return;
-      }
-
-      if (data.qrcode) {
-        setQrCode(data.qrcode);
-        setQrStatus("scanning");
-
-        // Start polling for connection
-        pollRef.current = setInterval(async () => {
-          try {
-            const statusRes = await fetch(`/api/channels/${channelId}/status`);
-            const statusData = await statusRes.json();
-            if (statusData.connected) {
-              clearInterval(pollRef.current!);
-              pollRef.current = null;
-              setQrStatus("connected");
-              setConnectionStatus((prev) => ({ ...prev, [channelId]: statusData }));
-              fetchChannels();
-            }
-          } catch { /* ignore polling errors */ }
-        }, 3000);
-
-        // Timeout after 60s
-        setTimeout(() => {
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            setQrStatus("idle");
-            setQrChannelId(null);
-          }
-        }, 60000);
-      }
-    } catch {
-      setQrStatus("idle");
-    }
-  };
-
-  const handleDisconnect = async (channelId: string) => {
-    await fetch(`/api/channels/${channelId}/disconnect`, { method: "POST" });
-    setConnectionStatus((prev) => ({ ...prev, [channelId]: { connected: false } }));
-    fetchChannels();
-  };
-
-  const closeQrModal = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    setQrChannelId(null);
-    setQrCode(null);
-    setQrStatus("idle");
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingId(null);
   };
 
   if (loading) {
@@ -230,8 +144,15 @@ export default function CanaisPage() {
       {/* Page Header */}
       <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0 flex items-end justify-between">
         <div>
-          <h1 style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }} className="text-[32px] font-normal text-[#111111]">Instâncias</h1>
-          <p className="text-[14px] text-[#7b7b78] mt-0.5">Canais de WhatsApp conectados</p>
+          <h1
+            style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
+            className="text-[32px] font-normal text-[#111111]"
+          >
+            Canais
+          </h1>
+          <p className="text-[14px] text-[#7b7b78] mt-0.5">
+            Canais de WhatsApp conectados via Meta Cloud API
+          </p>
         </div>
         <button
           onClick={() => { setForm(EMPTY_FORM); setEditingId(null); setShowForm(true); }}
@@ -241,181 +162,192 @@ export default function CanaisPage() {
         </button>
       </div>
 
+      {/* Content */}
       <div className="p-8 overflow-auto flex-1 bg-[#faf9f6]">
-      {/* Table */}
-      <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-[#dedbd6]">
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Nome</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Telefone</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Provider</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Modo</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Ativo</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-right font-normal">Acoes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {channels.map((ch) => {
-              const connStatus = connectionStatus[ch.id];
-              return (
-                <tr key={ch.id} className="border-b border-[#dedbd6] hover:bg-[#faf9f6] transition-colors">
-                  <td className="px-4 py-3 text-[14px] text-[#111111]">{ch.name}</td>
-                  <td className="px-4 py-3 text-[14px] text-[#7b7b78]">{ch.phone || "\u2014"}</td>
-                  <td className="px-4 py-3">
-                    <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
-                      {ch.provider === "meta_cloud" ? "Meta" : "Evolution"}
+        <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-x-auto">
+          <table className="w-full min-w-[760px]">
+            <thead>
+              <tr className="border-b border-[#dedbd6]">
+                <th className="px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Nome</th>
+                <th className="px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Telefone</th>
+                <th className="px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Phone ID</th>
+                <th className="px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Provider</th>
+                <th className="px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Modo</th>
+                <th className="px-5 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">Ativo</th>
+                <th className="px-5 py-3 w-[1%]" />
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((ch) => (
+                <tr
+                  key={ch.id}
+                  className="border-b border-[#dedbd6] last:border-b-0 hover:bg-[#faf9f6] transition-colors group"
+                >
+                  {/* Nome */}
+                  <td className="px-5 py-3.5 text-[14px] font-medium text-[#111111] whitespace-nowrap">
+                    {ch.name}
+                  </td>
+
+                  {/* Telefone */}
+                  <td className="px-5 py-3.5 text-[13px] font-mono text-[#7b7b78] whitespace-nowrap">
+                    {ch.phone || "—"}
+                  </td>
+
+                  {/* Phone ID */}
+                  <td className="px-5 py-3.5 text-[12px] font-mono text-[#7b7b78] max-w-[180px]">
+                    <span
+                      className="block truncate"
+                      title={ch.provider_config?.phone_number_id || "—"}
+                    >
+                      {ch.provider_config?.phone_number_id || "—"}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    {ch.mode === "human" ? (
-                      <span className="bg-[#faf9f6] border border-[#dedbd6] text-[#7b7b78] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]">
-                        Humano
-                      </span>
-                    ) : (
-                      <span className="bg-[#0bdf50]/10 text-[#0bdf50] text-[11px] uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border border-[#0bdf50]/20">
+
+                  {/* Provider */}
+                  <td className="px-5 py-3.5 whitespace-nowrap">
+                    <Badge className="bg-[#1877F2]/10 text-[#1877F2] border border-[#1877F2]/20 text-[10px] uppercase tracking-[0.5px] font-semibold rounded-[4px] px-2 py-0.5 h-auto">
+                      Meta
+                    </Badge>
+                  </td>
+
+                  {/* Modo */}
+                  <td className="px-5 py-3.5 whitespace-nowrap">
+                    {ch.mode === "ai" ? (
+                      <Badge className="bg-[#0bdf50]/10 text-[#0bdf50] border border-[#0bdf50]/20 text-[10px] uppercase tracking-[0.5px] font-semibold rounded-[4px] px-2 py-0.5 h-auto">
                         IA
-                      </span>
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="text-[#7b7b78] border-[#dedbd6] text-[10px] uppercase tracking-[0.5px] font-semibold rounded-[4px] px-2 py-0.5 h-auto"
+                      >
+                        Humano
+                      </Badge>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleToggleActive(ch)}
-                      className={`relative w-10 h-5 rounded-full transition-colors ${ch.is_active ? "bg-[#0bdf50]" : "bg-[#dedbd6]"}`}
-                    >
-                      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${ch.is_active ? "translate-x-5" : ""}`} />
-                    </button>
+
+                  {/* Ativo */}
+                  <td className="px-5 py-3.5 whitespace-nowrap">
+                    <Switch
+                      checked={ch.is_active}
+                      onCheckedChange={(checked) => handleToggleActive(ch, checked)}
+                      className="data-checked:bg-[#0bdf50]"
+                    />
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {ch.provider === "evolution" && (
-                        connStatus?.connected ? (
-                          <button onClick={() => handleDisconnect(ch.id)} className="bg-[#c41c1c]/10 text-[#c41c1c] border border-[#c41c1c]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
-                            Desconectar
-                          </button>
-                        ) : (
-                          <button onClick={() => handleConnect(ch.id)} className="bg-[#0bdf50]/10 text-[#0bdf50] border border-[#0bdf50]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
-                            Conectar
-                          </button>
-                        )
-                      )}
-                      <button onClick={() => handleEdit(ch)} className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
-                        Editar
+
+                  {/* Ações (sem cabeçalho) */}
+                  <td className="px-5 py-3.5 whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleEdit(ch)}
+                        title="Editar"
+                        className="p-1.5 rounded-[4px] text-[#7b7b78] hover:text-[#111111] hover:bg-[#f0ede8] transition-colors"
+                      >
+                        <IconPencil className="w-4 h-4" />
                       </button>
-                      <button onClick={() => handleDelete(ch.id)} className="bg-[#c41c1c]/10 text-[#c41c1c] border border-[#c41c1c]/20 px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]">
-                        Excluir
+                      <button
+                        onClick={() => handleDelete(ch.id)}
+                        title="Excluir"
+                        className="p-1.5 rounded-[4px] text-[#7b7b78] hover:text-[#c41c1c] hover:bg-[#c41c1c]/8 transition-colors"
+                      >
+                        <IconTrash className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
                 </tr>
-              );
-            })}
-            {channels.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-[14px] text-[#7b7b78]">
-                  Nenhum canal configurado. Clique em &quot;+ Novo Canal&quot; para comecar.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              ))}
+
+              {channels.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-14 text-center">
+                    <p className="text-[14px] text-[#7b7b78]">Nenhum canal configurado.</p>
+                    <p className="text-[13px] text-[#b5b2ad] mt-1">
+                      Clique em &quot;+ Novo Canal&quot; para começar.
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Create/Edit Modal */}
+      {/* Create / Edit Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-[14px] font-normal text-[#111111]">
-                {editingId ? "Editar Canal" : "Novo Canal"}
-              </h2>
-              <button onClick={() => { setShowForm(false); setEditingId(null); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+        <div
+          className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4"
+          onClick={closeForm}
+        >
+          <div
+            className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg max-h-[90vh] overflow-y-auto p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-start justify-between mb-5">
+              <div>
+                <h2 className="text-[18px] font-normal text-[#111111]">
+                  {editingId ? "Editar Canal" : "Novo Canal"}
+                </h2>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <Badge className="bg-[#1877F2]/10 text-[#1877F2] border border-[#1877F2]/20 text-[10px] uppercase tracking-[0.5px] font-semibold rounded-[4px] px-2 py-0.5 h-auto">
+                    Meta
+                  </Badge>
+                  <span className="text-[12px] text-[#7b7b78]">Cloud API Oficial</span>
+                </div>
+              </div>
+              <button
+                onClick={closeForm}
+                className="text-[#7b7b78] hover:text-[#111111] text-xl leading-none transition-colors mt-0.5"
+              >
+                &times;
+              </button>
             </div>
 
             <div className="space-y-4">
-              {/* Provider \u2014 sempre vis\u00edvel */}
+              {/* Nome */}
               <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Provider</label>
-                <select
-                  value={form.provider}
-                  onChange={(e) => setForm({ ...form, provider: e.target.value as "meta_cloud" | "evolution" })}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
-                >
-                  <option value="evolution">Evolution API</option>
-                  <option value="meta_cloud">Meta Cloud API (Oficial)</option>
-                </select>
-              </div>
-
-              {/* Nome \u2014 sempre vis\u00edvel */}
-              <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Nome
+                </label>
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#b5b2ad] focus:border-[#111111] focus:outline-none w-full"
                   placeholder="Ex: Atendimento Principal"
                 />
               </div>
 
-              {/* Telefone \u2014 sempre vis\u00edvel */}
+              {/* Telefone */}
               <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Telefone</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Telefone
+                </label>
                 <input
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] font-mono text-[#111111] placeholder:text-[#b5b2ad] placeholder:font-sans focus:border-[#111111] focus:outline-none w-full"
                   placeholder="5534999999999"
                 />
               </div>
 
-              {/* Phone Number ID \u2014 sempre vis\u00edvel */}
+              {/* Phone Number ID */}
               <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Phone Number ID</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Phone Number ID
+                </label>
                 <input
                   value={form.meta_phone_number_id}
                   onChange={(e) => setForm({ ...form, meta_phone_number_id: e.target.value })}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                  placeholder="ID do n\u00famero na Meta"
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] font-mono text-[#111111] placeholder:text-[#b5b2ad] placeholder:font-sans focus:border-[#111111] focus:outline-none w-full"
+                  placeholder="ID do número na Meta"
                 />
               </div>
 
-              {/* Campos espec\u00edficos do Evolution \u2014 vis\u00edveis apenas para Evolution */}
-              {form.provider === "evolution" && (
-                <div className="space-y-4 animate-in fade-in-0 duration-150">
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">API URL</label>
-                    <input
-                      value={form.evo_api_url}
-                      onChange={(e) => setForm({ ...form, evo_api_url: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                      placeholder="https://evolution.seudominio.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">API Key</label>
-                    <input
-                      value={form.evo_api_key}
-                      onChange={(e) => setForm({ ...form, evo_api_key: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                      type="password"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Nome da Inst\u00e2ncia</label>
-                    <input
-                      value={form.evo_instance}
-                      onChange={(e) => setForm({ ...form, evo_instance: e.target.value })}
-                      className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                      placeholder="minha-instancia"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Modo do Canal \u2014 sempre vis\u00edvel */}
+              {/* Modo do Canal */}
               <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Modo do Canal</label>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1.5">
+                  Modo do Canal
+                </label>
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -442,7 +374,7 @@ export default function CanaisPage() {
                 </div>
               </div>
 
-              {/* Status Ativo \u2014 sempre vis\u00edvel, usando Switch shadcn */}
+              {/* Ativo */}
               <div className="flex items-center justify-between py-1">
                 <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Ativo</label>
                 <Switch
@@ -453,17 +385,18 @@ export default function CanaisPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-6">
+            {/* Modal Footer */}
+            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-[#dedbd6]">
               <button
-                onClick={() => { setShowForm(false); setEditingId(null); }}
-                className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+                onClick={closeForm}
+                className="bg-transparent text-[#111111] border border-[#dedbd6] px-[14px] py-2 rounded-[4px] text-[14px] hover:border-[#111111] transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving || !form.name}
-                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-40 disabled:pointer-events-none"
               >
                 {saving ? "Salvando..." : editingId ? "Salvar" : "Criar"}
               </button>
@@ -471,49 +404,6 @@ export default function CanaisPage() {
           </div>
         </div>
       )}
-
-      {/* QR Code Modal */}
-      {qrChannelId && (
-        <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={closeQrModal}>
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[14px] font-normal text-[#111111] mb-4">Conectar WhatsApp</h2>
-
-            {qrStatus === "loading" && (
-              <p className="text-[14px] text-[#7b7b78] py-8">Gerando QR Code...</p>
-            )}
-
-            {qrStatus === "scanning" && qrCode && (
-              <div>
-                <img
-                  src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
-                  alt="QR Code"
-                  className="mx-auto w-64 h-64 rounded-[8px]"
-                />
-                <p className="text-[12px] text-[#7b7b78] mt-3">Escaneie o QR Code com o WhatsApp</p>
-              </div>
-            )}
-
-            {qrStatus === "connected" && (
-              <div className="py-8">
-                <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-[#0bdf50]/10 border border-[#0bdf50]/20 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-[#0bdf50]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <p className="text-[14px] text-[#0bdf50]">Conectado com sucesso!</p>
-              </div>
-            )}
-
-            <button
-              onClick={closeQrModal}
-              className="mt-4 bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
-            >
-              Fechar
-            </button>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
