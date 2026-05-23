@@ -4,9 +4,9 @@ import { useState, useEffect } from "react";
 
 interface Channel {
   id: string;
-  name: string;
   provider: string;
   is_active: boolean;
+  provider_config: Record<string, string>;
 }
 
 interface CreateTemplateModalProps {
@@ -39,8 +39,6 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const [suggestedCategory, setSuggestedCategory] = useState<string | null>(null);
 
-  // Channel selection (used when no channelId prop is provided)
-  const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState("");
   const [buttons, setButtons] = useState<ButtonItem[]>([]);
   const [variableSamples, setVariableSamples] = useState<Record<string, string>>({});
@@ -50,13 +48,16 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
     fetch("/api/channels")
       .then((r) => r.json())
       .then((d) => {
-        const meta = (Array.isArray(d) ? d : d.data || []).filter(
-          (c: Channel) => c.provider === "meta_cloud" && c.is_active
+        const first = (Array.isArray(d) ? d : []).find(
+          (c: Channel) =>
+            c.provider === "meta_cloud" &&
+            c.is_active &&
+            c.provider_config?.waba_id &&
+            c.provider_config?.access_token
         );
-        setChannels(meta);
-        if (meta.length === 1) setSelectedChannelId(meta[0].id);
+        if (first) setSelectedChannelId(first.id);
       })
-      .catch(() => setChannels([]));
+      .catch(() => {});
   }, [open, channelId]);
 
   if (!open) return null;
@@ -118,7 +119,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
 
   const handleSubmit = async () => {
     if (!activeChannelId) {
-      setError("Selecione um canal.");
+      setError("Nenhum canal Meta Cloud com credenciais encontrado.");
       return;
     }
     if (!form.name.trim() || !form.bodyText.trim()) {
@@ -279,28 +280,6 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
 
         {step === "form" && (
           <div className="space-y-4">
-            {/* Canal selector — only shown when no channelId prop */}
-            {!channelId && (
-              <div>
-                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
-                  Canal (Meta Cloud)
-                </label>
-                <select
-                  value={selectedChannelId}
-                  onChange={(e) => setSelectedChannelId(e.target.value)}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
-                >
-                  <option value="">Selecione um canal</option>
-                  {channels.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-                {channels.length === 0 && (
-                  <p className="text-[11px] text-[#7b7b78] mt-1">Nenhum canal Meta Cloud ativo encontrado.</p>
-                )}
-              </div>
-            )}
-
             <div>
               <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
                 Nome do Template
@@ -445,7 +424,7 @@ export function CreateTemplateModal({ channelId, open, onClose, onCreated }: Cre
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={saving || !form.name.trim() || !form.bodyText.trim() || !activeChannelId}
+                disabled={saving || !form.name.trim() || !form.bodyText.trim()}
                 className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
               >
                 {saving ? "Enviando..." : "Criar Template"}
