@@ -178,12 +178,16 @@ def schedule_handoff_rescue(
         "conversation_id": conversation_id,
         "lead_id": lead_id,
         "channel_id": channel_id,
-        "sequence": 1,
+        "sequence": 0,
         "fire_at": (now + timedelta(minutes=delay_minutes)).isoformat(),
         "status": "pending",
         "env_tag": _ENV_TAG,
         "job_type": "handoff_rescue",
-        "metadata": {"lead_phone": lead_phone},
+        "metadata": {
+            "lead_phone": lead_phone,
+            "joao_phone_number_id": "1049315514934778",
+            "template_name": "rabubens",
+        },
     }
     try:
         sb.table("follow_up_jobs").insert(job).execute()
@@ -192,7 +196,7 @@ def schedule_handoff_rescue(
             f"[HANDOFF_RESCUE] Erro ao inserir rescue job para lead {lead_id}: {exc}"
         )
         raise RuntimeError(
-            f"Falha ao criar handoff_rescue job para lead {lead_id}"
+            f"Falha ao agendar job de resgate para lead {lead_id}"
         ) from exc
     logger.info(
         f"[HANDOFF_RESCUE] Agendado em {delay_minutes}min lead={lead_id} conversation={conversation_id}"
