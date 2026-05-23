@@ -7,7 +7,8 @@ from typing import Any
 from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history
 from app.conversations.service import update_conversation
 from app.whatsapp.registry import get_provider
-from app.channels.service import get_active_channel
+from app.channels.service import get_active_channel, get_channel_for_lead
+from app.follow_up.service import schedule_handoff_rescue
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,14 @@ PRODUTO_PHOTO_MAP: dict[str, dict[str, dict[str, str]]] = {
         "final": {"file": "foto_4.jpg", "caption": "Produto final pronto para comercializacao"},
     },
 }
+
+_HANDOFF_MSG = (
+    "Perfeito! Seu atendimento agora será continuado pelo João, um dos nossos especialistas.\n\n"
+    "👉 Clique no link abaixo e envie uma mensagem para ele agora mesmo para dar continuidade "
+    "no seu atendimento com prioridade:\n"
+    "http://wa.me/553491461669\n\n"
+    "Assim que você chamar, ele já receberá seu contato e continuará seu atendimento."
+)
 
 TOOLS_SCHEMA = [
     {
@@ -212,6 +221,33 @@ async def execute_tool(
                 lead_id, exc, exc_info=True,
             )
         save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
+        channel = get_channel_for_lead(lead_id)
+        if channel:
+            try:
+                await get_provider(channel).send_text(phone, _HANDOFF_MSG)
+                save_message(lead_id, "assistant", _HANDOFF_MSG, sent_by="handoff", conversation_id=conversation_id)
+            except Exception as exc:
+                logger.error(
+                    "encaminhar_humano: falha ao enviar mensagem de handoff para lead %s: %s",
+                    lead_id, exc, exc_info=True,
+                )
+            try:
+                schedule_handoff_rescue(
+                    lead_id=lead_id,
+                    lead_phone=phone,
+                    conversation_id=conversation_id,
+                    channel_id=channel["id"],
+                )
+            except Exception as exc:
+                logger.error(
+                    "encaminhar_humano: falha ao agendar rescue job para lead %s: %s",
+                    lead_id, exc, exc_info=True,
+                )
+        else:
+            logger.warning(
+                "encaminhar_humano: nenhum canal ativo para lead %s — mensagem de handoff e rescue job ignorados",
+                lead_id,
+            )
         return f"Lead encaminhado para {vendedor}"
 
     elif tool_name == "enviar_fotos":
