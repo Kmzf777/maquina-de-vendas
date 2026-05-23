@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -193,6 +194,12 @@ export default function EstatisticasPage() {
 
   return (
     <div className="flex flex-col h-full">
+      <Alert className="rounded-none border-x-0 border-t-0 border-b border-amber-200 bg-amber-50 py-2.5 px-8 text-amber-800">
+        <AlertDescription className="text-xs">
+          Todos os valores estão em dólar americano (USD) — moeda de cobrança da Meta e dos modelos de IA.
+        </AlertDescription>
+      </Alert>
+
       {/* Header */}
       <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex-shrink-0 flex flex-wrap items-end justify-between gap-4">
         <div>
