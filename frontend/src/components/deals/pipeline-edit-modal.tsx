@@ -21,6 +21,11 @@ interface EditableStage extends PipelineStage {
   _dirty?: boolean;
 }
 
+const TERMINAL_KEYS = ["fechado_ganho", "fechado_perdido", "perdido"] as const;
+function isTerminalStage(stage: PipelineStage): boolean {
+  return stage.is_protected || TERMINAL_KEYS.includes(stage.key as typeof TERMINAL_KEYS[number]);
+}
+
 interface PipelineEditModalProps {
   pipelineId: string;
   pipelineName: string;
@@ -36,7 +41,8 @@ function SortableStageRow({
   onChange: (id: string, field: keyof EditableStage, value: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id, disabled: stage.is_protected });
+  const protected_ = isTerminalStage(stage);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id, disabled: protected_ });
 
   return (
     <div
@@ -46,8 +52,8 @@ function SortableStageRow({
     >
       {/* Drag handle */}
       <div
-        {...(stage.is_protected ? {} : { ...listeners, ...attributes })}
-        className={`flex-shrink-0 ${stage.is_protected ? "opacity-20 cursor-not-allowed" : "cursor-grab active:cursor-grabbing"}`}
+        {...(protected_ ? {} : { ...listeners, ...attributes })}
+        className={`flex-shrink-0 ${protected_ ? "opacity-20 cursor-not-allowed" : "cursor-grab active:cursor-grabbing"}`}
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="#7b7b78">
           <circle cx="5" cy="4" r="1.2" /><circle cx="11" cy="4" r="1.2" />
@@ -58,8 +64,8 @@ function SortableStageRow({
 
       {/* Color picker */}
       <div className="relative flex-shrink-0 group">
-        <div className={`w-4 h-4 rounded-full border border-[#dedbd6] ${stage.is_protected ? "cursor-default" : "cursor-pointer"}`} style={{ backgroundColor: stage.dot_color }} />
-        {!stage.is_protected && (
+        <div className={`w-4 h-4 rounded-full border border-[#dedbd6] ${protected_ ? "cursor-default" : "cursor-pointer"}`} style={{ backgroundColor: stage.dot_color }} />
+        {!protected_ && (
           <div className="absolute left-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] p-2 z-10 hidden group-hover:grid grid-cols-4 gap-1 w-[88px] shadow-sm">
             {COLOR_PALETTE.map((c) => (
               <button key={c} type="button" onClick={() => onChange(stage.id, "dot_color", c)}
@@ -75,12 +81,12 @@ function SortableStageRow({
       <input
         value={stage.label}
         onChange={(e) => onChange(stage.id, "label", e.target.value)}
-        disabled={stage.is_protected}
+        disabled={protected_}
         className="flex-1 text-[13px] text-[#111111] bg-transparent focus:outline-none disabled:text-[#7b7b78] min-w-0"
       />
 
       {/* Protected badge or delete */}
-      {stage.is_protected ? (
+      {protected_ ? (
         <span className="text-[10px] uppercase tracking-[0.4px] text-[#7b7b78] border border-[#dedbd6] px-2 py-0.5 rounded-full flex-shrink-0">
           Protegido
         </span>
@@ -138,7 +144,7 @@ export function PipelineEditModal({
     if (data?.id) {
       setStages((prev) => {
         // Inserir antes dos stages protegidos (que ficam sempre no final)
-        const firstProtected = prev.findIndex((s) => s.is_protected);
+        const firstProtected = prev.findIndex((s) => isTerminalStage(s));
         const insertAt = firstProtected === -1 ? prev.length : firstProtected;
         const next = [...prev];
         next.splice(insertAt, 0, { ...data, _dirty: false });
@@ -179,7 +185,7 @@ export function PipelineEditModal({
       }
 
       // Salvar apenas stages não-protegidos marcados como dirty
-      const dirty = stages.filter((s) => s._dirty && !s.is_protected);
+      const dirty = stages.filter((s) => s._dirty && !isTerminalStage(s));
       ops.push(
         ...dirty.map((s) =>
           fetch(`/api/pipelines/${pipelineId}/stages/${s.id}`, {

@@ -11,11 +11,12 @@ export async function PATCH(
 
   const { data: existing, error: fetchError } = await supabase
     .from("pipeline_stages")
-    .select("is_protected")
+    .select("is_protected, key")
     .eq("id", stageId)
     .single();
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
-  if (existing?.is_protected) {
+  const TERMINAL_KEYS = ["fechado_ganho", "fechado_perdido", "perdido"];
+  if (existing?.is_protected || TERMINAL_KEYS.includes(existing?.key ?? "")) {
     return NextResponse.json({ error: "Stages protegidos não podem ser editados." }, { status: 409 });
   }
 
@@ -45,11 +46,12 @@ export async function DELETE(
 
   const { data: stage, error: stageError } = await supabase
     .from("pipeline_stages")
-    .select("is_protected")
+    .select("is_protected, key")
     .eq("id", stageId)
     .single();
   if (stageError) return NextResponse.json({ error: stageError.message }, { status: 500 });
-  if (stage?.is_protected) {
+  const TERMINAL_KEYS = ["fechado_ganho", "fechado_perdido", "perdido"];
+  if (stage?.is_protected || TERMINAL_KEYS.includes(stage?.key ?? "")) {
     return NextResponse.json({ error: "Stages protegidos não podem ser removidos." }, { status: 409 });
   }
 
