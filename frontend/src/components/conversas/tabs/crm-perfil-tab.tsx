@@ -38,6 +38,8 @@ interface CrmPerfilTabProps {
   onCreateSale: () => void;
 }
 
+const CLOSED_KEYS = ["fechado_ganho", "fechado_perdido"];
+
 export function CrmPerfilTab({
   lead,
   onSaveField,
@@ -52,8 +54,6 @@ export function CrmPerfilTab({
   onCreateSale,
 }: CrmPerfilTabProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
-
-  const CLOSED_KEYS = ["fechado_ganho", "fechado_perdido"];
   const activeDeal = deals.find((d) => !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")) ?? null;
 
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>(activeDeal?.pipeline_id ?? "");
@@ -66,9 +66,16 @@ export function CrmPerfilTab({
   ) ?? null;
 
   useEffect(() => {
+    setSelectedPipelineId(activeDeal?.pipeline_id ?? "");
+    setSelectedStageId(activeDeal?.stage_id ?? "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDeal?.id]);
+
+  useEffect(() => {
     if (!selectedPipelineId) { setStageOptions([]); return; }
+    const controller = new AbortController();
     setStageLoading(true);
-    fetch(`/api/pipelines/${selectedPipelineId}/stages`)
+    fetch(`/api/pipelines/${selectedPipelineId}/stages`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         const active = Array.isArray(data) ? data.filter((s: { is_protected: boolean }) => !s.is_protected) : [];
@@ -78,8 +85,9 @@ export function CrmPerfilTab({
         )?.stage_id;
         setSelectedStageId(dealStage ?? active[0]?.id ?? "");
       })
-      .catch(() => setStageOptions([]))
+      .catch((e) => { if (e?.name !== "AbortError") setStageOptions([]); })
       .finally(() => setStageLoading(false));
+    return () => controller.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPipelineId]);
 
