@@ -28,11 +28,13 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
   const [stageOptions, setStageOptions] = useState<PipelineStage[]>([]);
   const [notes, setNotes] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
+  const [stagesLoading, setStagesLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedPipelineId) { setStageOptions([]); setSelectedStageId(""); return; }
+    setStagesLoading(true);
     fetch(`/api/pipelines/${selectedPipelineId}/stages`)
       .then((r) => r.json())
       .then((data: PipelineStage[]) => {
@@ -40,7 +42,8 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
         setStageOptions(active);
         setSelectedStageId(active[0]?.id || "");
       })
-      .catch(() => { setStageOptions([]); setSelectedStageId(""); });
+      .catch(() => { setStageOptions([]); setSelectedStageId(""); })
+      .finally(() => setStagesLoading(false));
   }, [selectedPipelineId]);
 
   const filteredLeads = leadSearch.trim()
@@ -95,8 +98,9 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
 
       onClose();
     } catch (err) {
-      setSaving(false);
       setError(err instanceof Error ? err.message : "Erro ao criar card.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -178,8 +182,10 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
           {selectedPipelineId && (
             <div>
               <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Stage *</label>
-              {stageOptions.length === 0 ? (
+              {stagesLoading ? (
                 <p className="text-[12px] text-[#7b7b78] py-1">Carregando stages...</p>
+              ) : stageOptions.length === 0 ? (
+                <p className="text-[12px] text-[#7b7b78] py-1">Nenhum stage disponível.</p>
               ) : (
                 <select
                   value={selectedStageId}
