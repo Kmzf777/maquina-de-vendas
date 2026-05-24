@@ -13,7 +13,7 @@ function Invoke-StreamLog {
     try {
         & $Command 2>&1 | ForEach-Object {
             $line = $_.ToString()
-            Write-Output $_
+            Write-Host $line
             $writer.WriteLine($line)
             $writer.Flush()
         }

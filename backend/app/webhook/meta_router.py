@@ -257,6 +257,11 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
     # On dev server (IS_DEV_ENV=true): skip entirely — we ARE the dev server.
     if request.headers.get("x-dev-routed") != "1" and os.environ.get("IS_DEV_ENV") != "true":
         from_number = _extract_from_number(payload)
+        if not from_number:
+            # Delivery/read receipts have no messages[].from — check recipient_id in statuses
+            statuses = _extract_statuses(payload)
+            if statuses:
+                from_number = statuses[0].get("recipient_id")
         if from_number:
             dev_url = await get_dev_route(redis, from_number)
             logger.info(
