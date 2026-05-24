@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { CampaignTrendChart } from "./campaign-trend-chart";
 
 interface Stats {
-  activeBroadcasts: number;
+  disparosFeitos: number;
   activeCadences: number;
   leadsInFollowUp: number;
   responseRate: number;
@@ -40,9 +40,9 @@ export function CampaignsDashboard({ period, onPeriodChange }: CampaignsDashboar
     <div className="space-y-5 mb-6">
       <div className="grid grid-cols-5 gap-4">
         <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
-          <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Disparos Ativos</p>
-          <p style={{ letterSpacing: '-1.5px' }} className="text-[48px] font-normal text-[#111111] leading-none">{stats.activeBroadcasts ?? 0}</p>
-          <p className="text-[13px] text-[#7b7b78] mt-2">rodando agora</p>
+          <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Disparos Feitos</p>
+          <p style={{ letterSpacing: '-1.5px' }} className="text-[48px] font-normal text-[#111111] leading-none">{stats.disparosFeitos ?? 0}</p>
+          <p className="text-[13px] text-[#7b7b78] mt-2">no período</p>
         </div>
         <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
           <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Taxa de Resposta</p>

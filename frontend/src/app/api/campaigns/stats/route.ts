@@ -10,12 +10,7 @@ export async function GET(request: NextRequest) {
   const days = daysMap[period] || 30;
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-  const [broadcasts, activeCampaigns, enrollments, recentMessages, broadcastLeads] = await Promise.all([
-    supabase
-      .from("broadcasts")
-      .select("id, status")
-      .eq("env_tag", APP_ENV)
-      .in("status", ["running", "scheduled"]),
+  const [activeCampaigns, enrollments, recentMessages, broadcastLeads] = await Promise.all([
     supabase
       .from("campaigns")
       .select("id, status")
@@ -33,7 +28,7 @@ export async function GET(request: NextRequest) {
       .order("created_at"),
     supabase
       .from("broadcast_leads")
-      .select("sent_at, first_replied_at")
+      .select("sent_at, first_replied_at, status")
       .gte("sent_at", since),
   ]);
 
@@ -41,8 +36,9 @@ export async function GET(request: NextRequest) {
   const activeCount = allEnrollments.filter((e) => e.status === "active").length;
 
   const bLeads = broadcastLeads.data || [];
+  const disparosFeitos = bLeads.filter((l) => l.status === "sent" || l.status === "delivered").length;
   const respondedCount = bLeads.filter((l) => l.first_replied_at !== null).length;
-  const totalSent = bLeads.filter((l) => l.sent_at !== null).length;
+  const totalSent = disparosFeitos;
   const responseRate = totalSent > 0 ? Math.round((respondedCount / totalSent) * 100) : 0;
 
   // Build daily trend data
@@ -70,7 +66,7 @@ export async function GET(request: NextRequest) {
     .map(([date, data]) => ({ date, ...data }));
 
   return NextResponse.json({
-    activeBroadcasts: (broadcasts.data || []).length,
+    disparosFeitos,
     activeCadences: (activeCampaigns.data || []).length,
     leadsInFollowUp: activeCount,
     responseRate,
