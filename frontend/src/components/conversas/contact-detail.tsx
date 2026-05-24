@@ -45,6 +45,7 @@ interface ContactDetailProps {
   togglingFollowup?: boolean;
   onToggleFollowup?: () => void | Promise<void>;
   onLeadUpdate?: (leadId: string, patch: Partial<Lead>) => void;
+  onDealStageChange?: (dealId: string, stageId: string) => Promise<void>;
 }
 
 export function ContactDetail({
@@ -57,6 +58,7 @@ export function ContactDetail({
   togglingAi,
   onToggleAi,
   onLeadUpdate,
+  onDealStageChange,
 }: ContactDetailProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("perfil");
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -128,6 +130,15 @@ export function ContactDetail({
     if (res.ok) {
       await fetchDeals();
     }
+  }
+
+  async function handleDealStageChange(dealId: string, stageId: string) {
+    const res = await fetch(`/api/deals/${dealId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage_id: stageId }),
+    });
+    if (res.ok) await fetchDeals();
   }
 
   return (
@@ -222,6 +233,8 @@ export function ContactDetail({
                 leadTags={leadTags}
                 onTagToggle={onTagToggle}
                 onCreateDeal={() => setShowCreateDeal(true)}
+                // @ts-expect-error Task 5 will add this prop
+                onDealStageChange={onDealStageChange ?? handleDealStageChange}
                 sales={sales}
                 onCreateSale={() => setShowCreateSale(true)}
               />
