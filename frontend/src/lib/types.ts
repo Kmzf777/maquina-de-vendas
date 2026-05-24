@@ -187,6 +187,13 @@ export interface MessageTemplate {
   requested_category: string | null;
   status: string;
   created_at: string;
+  // Campos enriquecidos (parseados de components — presentes quando retornados por /api/templates)
+  body?: string;
+  header?: { type: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT"; text?: string; example?: string } | null;
+  footer?: string | null;
+  buttons?: { type: string; text: string }[];
+  params?: { index: number; paramName: string; example: string }[];
+  paramsType?: "positional" | "named" | "none";
 }
 
 export interface TemplatePreset {
