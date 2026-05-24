@@ -14,7 +14,7 @@ export function useRealtimeDeals(pipelineId?: string | null) {
     const generation = ++generationRef.current;
     let query = supabase
       .from("deals")
-      .select("*, leads(id, name, company, phone, nome_fantasia), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
+      .select("*, leads(id, name, company, phone, nome_fantasia, notes), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
       .order("updated_at", { ascending: false });
     if (pipelineId) query = query.eq("pipeline_id", pipelineId);
     const { data } = await query;

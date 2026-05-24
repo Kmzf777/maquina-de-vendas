@@ -30,6 +30,10 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
     assigned_to: deal.assigned_to || "",
     expected_close_date: deal.expected_close_date || "",
   });
+  const [notesDraft, setNotesDraft] = useState(deal.leads?.notes || "");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [notesSaved, setNotesSaved] = useState(false);
 
   // Sincronizar form quando o deal atualizar via realtime (sem modo edição ativo)
   useEffect(() => {
@@ -44,6 +48,11 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
     }
   }, [deal, editing]);
 
+  // Sincronizar notas quando o lead atualizar via realtime (sem edição ativa)
+  useEffect(() => {
+    setNotesDraft(deal.leads?.notes || "");
+  }, [deal.leads?.notes]);
+
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
   const stageInfo = deal.pipeline_stages ?? stages.find((s) => s.id === deal.stage_id) ?? null;
@@ -51,6 +60,27 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
   const daysActive = Math.floor(
     (Date.now() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24)
   );
+
+  async function handleSaveNotes() {
+    if (!deal.lead_id) return;
+    setSavingNotes(true);
+    setNotesError(null);
+    setNotesSaved(false);
+    try {
+      const res = await fetch(`/api/leads/${deal.lead_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: notesDraft || null }),
+      });
+      if (!res.ok) throw new Error();
+      setNotesSaved(true);
+      setTimeout(() => setNotesSaved(false), 2000);
+    } catch {
+      setNotesError("Erro ao salvar. Tente novamente.");
+    } finally {
+      setSavingNotes(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -195,6 +225,29 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
               <p className="text-[13px] text-[#111111]">{deal.lost_reason}</p>
             </div>
           )}
+        </div>
+
+        <div className="border-t border-[#dedbd6] pt-4">
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Observacoes</span>
+          <textarea
+            value={notesDraft}
+            onChange={(e) => setNotesDraft(e.target.value)}
+            placeholder="Anotacoes sobre este lead..."
+            rows={4}
+            className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full resize-none"
+          />
+          <div className="flex items-center justify-between mt-2">
+            {notesError && <p className="text-[12px] text-red-600">{notesError}</p>}
+            {notesSaved && <p className="text-[12px] text-green-700">Salvo!</p>}
+            {!notesError && !notesSaved && <span />}
+            <button
+              onClick={handleSaveNotes}
+              disabled={savingNotes}
+              className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-3 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors disabled:opacity-50"
+            >
+              {savingNotes ? "Salvando..." : "Salvar"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -37,7 +37,7 @@ export async function PATCH(
     .from("deals")
     .update(updates)
     .eq("id", id)
-    .select("*, leads(id, name, company, phone, nome_fantasia), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
+    .select("*, leads(id, name, company, phone, nome_fantasia, notes), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

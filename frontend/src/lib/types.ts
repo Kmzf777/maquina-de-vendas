@@ -25,6 +25,7 @@ export interface Lead {
   first_response_at: string | null;
   on_hold: boolean;
   ai_enabled: boolean;
+  notes: string | null;
 }
 
 export interface Pipeline {
@@ -68,6 +69,7 @@ export interface Deal {
     company: string | null;
     phone: string;
     nome_fantasia: string | null;
+    notes: string | null;
   };
   pipeline_stages?: PipelineStage | null;
 }
