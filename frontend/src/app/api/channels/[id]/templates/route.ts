@@ -1,46 +1,28 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { parseTemplateComponents, type TemplateParam, type TemplateHeader } from "@/lib/template-parser";
 
 // ─── Internal Meta API types ──────────────────────────────────────────────────
-
-interface MetaApiParam {
-  param_name: string;
-  example: string;
-}
-
-interface MetaApiComponent {
-  type: string;
-  text?: string;
-  format?: string;
-  example?: {
-    body_text?: string[][];
-    body_text_named_params?: MetaApiParam[];
-    header_url?: string[];
-  };
-  buttons?: Array<{ type: string; text: string }>;
-}
 
 interface MetaApiTemplate {
   name: string;
   status: string;
   language: string;
   category: string;
-  components: MetaApiComponent[];
+  components: Array<{
+    type: string;
+    text?: string;
+    format?: string;
+    example?: {
+      body_text?: string[][];
+      body_text_named_params?: Array<{ param_name: string; example: string }>;
+      header_url?: string[];
+    };
+    buttons?: Array<{ type: string; text: string }>;
+  }>;
 }
 
 // ─── Public types (consumed by frontend components) ───────────────────────────
-
-export interface TemplateParam {
-  index: number;      // 1-based
-  paramName: string;  // "first_name" (named) | "1" "2" "3" (positional)
-  example: string;
-}
-
-export interface TemplateHeader {
-  type: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
-  text?: string;
-  example?: string;
-}
 
 export interface MetaTemplate {
   name: string;
@@ -54,79 +36,7 @@ export interface MetaTemplate {
   buttons: { type: string; text: string }[];
 }
 
-// ─── Parsers ──────────────────────────────────────────────────────────────────
-
-function parseParamsAndType(components: MetaApiComponent[]): {
-  params: TemplateParam[];
-  paramsType: "positional" | "named" | "none";
-} {
-  const body = components.find((c) => c.type === "BODY");
-  if (!body) return { params: [], paramsType: "none" };
-
-  // Named params (newer Meta format)
-  if (body.example?.body_text_named_params?.length) {
-    return {
-      params: body.example.body_text_named_params.map((p, i) => ({
-        index: i + 1,
-        paramName: p.param_name,
-        example: p.example,
-      })),
-      paramsType: "named",
-    };
-  }
-
-  // Positional params via body_text examples
-  if (body.example?.body_text?.[0]?.length) {
-    return {
-      params: body.example.body_text[0].map((ex, i) => ({
-        index: i + 1,
-        paramName: String(i + 1),
-        example: ex,
-      })),
-      paramsType: "positional",
-    };
-  }
-
-  // Fallback: detect any {{param}} in body text — numeric = positional, named = named
-  const matches = [...(body.text ?? "").matchAll(/\{\{([\w]+)\}\}/g)];
-  if (matches.length) {
-    const unique = [...new Map(matches.map((m) => [m[1], m])).values()];
-    const allNumeric = unique.every((m) => /^\d+$/.test(m[1]));
-    return {
-      params: unique.map((m, i) => ({
-        index: i + 1,
-        paramName: m[1],
-        example: "",
-      })),
-      paramsType: allNumeric ? "positional" : "named",
-    };
-  }
-
-  return { params: [], paramsType: "none" };
-}
-
-function parseHeader(components: MetaApiComponent[]): TemplateHeader | null {
-  const header = components.find((c) => c.type === "HEADER");
-  if (!header) return null;
-  const fmt = header.format?.toUpperCase();
-  if (fmt === "TEXT") return { type: "TEXT", text: header.text ?? "" };
-  if (fmt === "IMAGE") return { type: "IMAGE", example: header.example?.header_url?.[0] };
-  if (fmt === "VIDEO") return { type: "VIDEO", example: header.example?.header_url?.[0] };
-  if (fmt === "DOCUMENT") return { type: "DOCUMENT", example: header.example?.header_url?.[0] };
-  return null;
-}
-
-function parseBody(components: MetaApiComponent[]): string {
-  return components.find((c) => c.type === "BODY")?.text ?? "";
-}
-
-function parseFooter(components: MetaApiComponent[]): string | null {
-  return components.find((c) => c.type === "FOOTER")?.text ?? null;
-}
-
-function parseButtons(components: MetaApiComponent[]): { type: string; text: string }[] {
-  return components.find((c) => c.type === "BUTTONS")?.buttons ?? [];
-}
+export type { TemplateParam, TemplateHeader };
 
 // ─── Route handlers ───────────────────────────────────────────────────────────
 
@@ -173,17 +83,17 @@ export async function GET(
   const templates: MetaTemplate[] = ((json.data ?? []) as MetaApiTemplate[])
     .filter((t) => t.status === "APPROVED")
     .map((t) => {
-      const { params, paramsType } = parseParamsAndType(t.components ?? []);
+      const parsed = parseTemplateComponents(t.components ?? []);
       return {
         name: t.name,
         language: t.language,
         category: (t.category ?? "").toLowerCase(),
-        body: parseBody(t.components ?? []),
-        params,
-        paramsType,
-        header: parseHeader(t.components ?? []),
-        footer: parseFooter(t.components ?? []),
-        buttons: parseButtons(t.components ?? []),
+        body: parsed.body,
+        params: parsed.params,
+        paramsType: parsed.paramsType,
+        header: parsed.header,
+        footer: parsed.footer,
+        buttons: parsed.buttons,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
