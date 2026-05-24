@@ -34,16 +34,18 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
 
   useEffect(() => {
     if (!selectedPipelineId) { setStageOptions([]); setSelectedStageId(""); return; }
+    const controller = new AbortController();
     setStagesLoading(true);
-    fetch(`/api/pipelines/${selectedPipelineId}/stages`)
+    fetch(`/api/pipelines/${selectedPipelineId}/stages`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data: PipelineStage[]) => {
         const active = Array.isArray(data) ? data.filter((s) => !s.is_protected) : [];
         setStageOptions(active);
         setSelectedStageId(active[0]?.id || "");
       })
-      .catch(() => { setStageOptions([]); setSelectedStageId(""); })
+      .catch((e) => { if (e?.name !== "AbortError") { setStageOptions([]); setSelectedStageId(""); } })
       .finally(() => setStagesLoading(false));
+    return () => controller.abort();
   }, [selectedPipelineId]);
 
   const filteredLeads = leadSearch.trim()
