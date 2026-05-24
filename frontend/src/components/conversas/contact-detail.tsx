@@ -233,7 +233,6 @@ export function ContactDetail({
                 leadTags={leadTags}
                 onTagToggle={onTagToggle}
                 onCreateDeal={() => setShowCreateDeal(true)}
-                // @ts-expect-error Task 5 will add this prop
                 onDealStageChange={onDealStageChange ?? handleDealStageChange}
                 sales={sales}
                 onCreateSale={() => setShowCreateSale(true)}

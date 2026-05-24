@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { AGENT_STAGES } from "@/lib/constants";
+import { useState, useEffect } from "react";
 import { EditableField } from "../editable-field";
 import type { Lead, Tag, Pipeline, PipelineStage } from "@/lib/types";
 
@@ -34,6 +33,7 @@ interface CrmPerfilTabProps {
   leadTags: Tag[];
   onTagToggle: (tagId: string, add: boolean) => void;
   onCreateDeal: () => void;
+  onDealStageChange?: (dealId: string, stageId: string) => Promise<void>;
   sales: LeadSale[];
   onCreateSale: () => void;
 }
@@ -42,18 +42,55 @@ export function CrmPerfilTab({
   lead,
   onSaveField,
   deals,
+  pipelines,
   tags,
   leadTags,
   onTagToggle,
   onCreateDeal,
+  onDealStageChange,
   sales,
   onCreateSale,
 }: CrmPerfilTabProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
 
+  const CLOSED_KEYS = ["fechado_ganho", "fechado_perdido"];
+  const activeDeal = deals.find((d) => !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")) ?? null;
+
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string>(activeDeal?.pipeline_id ?? "");
+  const [selectedStageId, setSelectedStageId] = useState<string>(activeDeal?.stage_id ?? "");
+  const [stageOptions, setStageOptions] = useState<Array<{ id: string; label: string; dot_color: string }>>([]);
+  const [stageLoading, setStageLoading] = useState(false);
+
+  const dealForSelectedPipeline = deals.find(
+    (d) => d.pipeline_id === selectedPipelineId && !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")
+  ) ?? null;
+
+  useEffect(() => {
+    if (!selectedPipelineId) { setStageOptions([]); return; }
+    setStageLoading(true);
+    fetch(`/api/pipelines/${selectedPipelineId}/stages`)
+      .then((r) => r.json())
+      .then((data) => {
+        const active = Array.isArray(data) ? data.filter((s: { is_protected: boolean }) => !s.is_protected) : [];
+        setStageOptions(active);
+        const dealStage = deals.find(
+          (d) => d.pipeline_id === selectedPipelineId && !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")
+        )?.stage_id;
+        setSelectedStageId(dealStage ?? active[0]?.id ?? "");
+      })
+      .catch(() => setStageOptions([]))
+      .finally(() => setStageLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPipelineId]);
+
+  async function handleStageChange(newStageId: string) {
+    setSelectedStageId(newStageId);
+    if (!dealForSelectedPipeline) return;
+    await onDealStageChange?.(dealForSelectedPipeline.id, newStageId);
+  }
+
   const leadTagIds = new Set(leadTags.map((t) => t.id));
   const availableTags = tags.filter((t) => !leadTagIds.has(t.id));
-  const stageInfo = AGENT_STAGES.find((s) => s.key === lead.stage);
 
   return (
     <div className="p-4 space-y-4 text-sm">
@@ -138,19 +175,67 @@ export function CrmPerfilTab({
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-3">
-        <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Status CRM</h4>
-        <div>
-          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Stage</span>
-          <select
-            value={lead.stage}
-            onChange={(e) => onSaveField("stage", e.target.value)}
-            className="bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
-          >
-            {AGENT_STAGES.map((s) => (
-              <option key={s.key} value={s.key}>{s.label}</option>
-            ))}
-          </select>
-        </div>
+        <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Estágio</h4>
+
+        {pipelines.length === 0 ? (
+          <p className="text-[12px] text-[#7b7b78]">Nenhum funil configurado.</p>
+        ) : activeDeal === null && selectedPipelineId === "" ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] text-[#7b7b78]">Sem oportunidade ativa.</p>
+            <button
+              onClick={onCreateDeal}
+              className="text-[12px] text-[#111111] border border-[#dedbd6] rounded-[4px] px-2.5 py-1 hover:border-[#111111] transition-colors w-fit"
+            >
+              + Criar Card
+            </button>
+          </div>
+        ) : (
+          <>
+            <div>
+              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Funil</span>
+              <select
+                value={selectedPipelineId}
+                onChange={(e) => setSelectedPipelineId(e.target.value)}
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+              >
+                <option value="">Selecionar funil...</option>
+                {pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Stage</span>
+              {stageLoading ? (
+                <p className="text-[12px] text-[#7b7b78] py-1">Carregando...</p>
+              ) : stageOptions.length === 0 ? (
+                <p className="text-[12px] text-[#7b7b78] py-1">Nenhum stage disponível.</p>
+              ) : dealForSelectedPipeline ? (
+                <select
+                  value={selectedStageId}
+                  onChange={(e) => handleStageChange(e.target.value)}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                >
+                  {stageOptions.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[12px] text-[#7b7b78]">Sem deal neste funil.</p>
+                  <button
+                    onClick={onCreateDeal}
+                    className="text-[12px] text-[#111111] border border-[#dedbd6] rounded-[4px] px-2.5 py-1 hover:border-[#111111] transition-colors w-fit"
+                  >
+                    + Criar Card
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
         <EditableField label="Atribuido a" value={lead.assigned_to} onSave={(v) => onSaveField("assigned_to", v)} placeholder="Ninguem" />
       </div>
 
