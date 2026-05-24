@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { DEAL_CATEGORIES } from "@/lib/constants";
-import type { Lead, Pipeline } from "@/lib/types";
+import { useState, useEffect } from "react";
+import type { Lead, Pipeline, PipelineStage } from "@/lib/types";
 
 interface DealCreateModalProps {
   leads: Lead[];
@@ -16,31 +15,38 @@ interface DealCreateModalProps {
     category: string;
     expected_close_date: string;
     pipeline_id?: string;
+    stage_id?: string;
   }) => Promise<void>;
 }
 
 export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, onCreate }: DealCreateModalProps) {
-  const [title, setTitle] = useState("");
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(preselectedLead ?? null);
   const [selectedLeadId, setSelectedLeadId] = useState(preselectedLead?.id || "");
   const [selectedPipelineId, setSelectedPipelineId] = useState(pipelines?.[0]?.id || "");
-  const [value, setValue] = useState("");
-  const [category, setCategory] = useState("");
-  const [expectedClose, setExpectedClose] = useState("");
+  const [selectedStageId, setSelectedStageId] = useState("");
+  const [stageOptions, setStageOptions] = useState<PipelineStage[]>([]);
+  const [notes, setNotes] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 20 recentes por padrão; filtra tudo quando há busca
+  useEffect(() => {
+    if (!selectedPipelineId) { setStageOptions([]); setSelectedStageId(""); return; }
+    fetch(`/api/pipelines/${selectedPipelineId}/stages`)
+      .then((r) => r.json())
+      .then((data: PipelineStage[]) => {
+        const active = Array.isArray(data) ? data.filter((s) => !s.is_protected) : [];
+        setStageOptions(active);
+        setSelectedStageId(active[0]?.id || "");
+      })
+      .catch(() => { setStageOptions([]); setSelectedStageId(""); });
+  }, [selectedPipelineId]);
+
   const filteredLeads = leadSearch.trim()
     ? leads.filter((l) => {
         const q = leadSearch.toLowerCase();
-        return (
-          (l.name || "").toLowerCase().includes(q) ||
-          l.phone.includes(q) ||
-          (l.company || "").toLowerCase().includes(q)
-        );
+        return (l.name || "").toLowerCase().includes(q) || l.phone.includes(q) || (l.company || "").toLowerCase().includes(q);
       }).slice(0, 30)
     : leads.slice(0, 20);
 
@@ -49,7 +55,6 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
     setSelectedLeadId(l.id);
     setLeadSearch("");
     setShowDropdown(false);
-    if (!title) setTitle(`${l.name || l.phone} - Oportunidade`);
   }
 
   function handleClearLead() {
@@ -61,59 +66,62 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedLeadId || !title.trim()) return;
+    if (!selectedLeadId || !selectedPipelineId || !selectedStageId) return;
     setSaving(true);
     setError(null);
+
+    const pipeline = pipelines?.find((p) => p.id === selectedPipelineId);
+    const leadName = selectedLead?.name || selectedLead?.phone || "Lead";
+    const autoTitle = `${leadName} - ${pipeline?.name || "Funil"}`;
+
     try {
       await onCreate({
         lead_id: selectedLeadId,
-        title: title.trim(),
-        value: Number(value) || 0,
-        category,
-        expected_close_date: expectedClose,
-        pipeline_id: selectedPipelineId || undefined,
+        title: autoTitle,
+        value: 0,
+        category: "",
+        expected_close_date: "",
+        pipeline_id: selectedPipelineId,
+        stage_id: selectedStageId,
       });
+
+      if (notes.trim()) {
+        await fetch(`/api/leads/${selectedLeadId}/notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ author: "Usuário", content: notes.trim() }),
+        });
+      }
+
       onClose();
     } catch (err) {
       setSaving(false);
-      setError(err instanceof Error ? err.message : "Erro ao criar oportunidade.");
+      setError(err instanceof Error ? err.message : "Erro ao criar card.");
     }
   }
 
   return (
     <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-[18px] font-normal text-[#111111] mb-4" style={{ letterSpacing: '-0.48px', lineHeight: '1.00' }}>Nova Oportunidade</h3>
+        <h3 className="text-[18px] font-normal text-[#111111] mb-4" style={{ letterSpacing: "-0.48px", lineHeight: "1.00" }}>
+          Novo Card
+        </h3>
         <form onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Campo Lead */}
+          {/* Lead */}
           <div className="relative">
             <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Lead *</label>
-
             {selectedLead ? (
-              /* Card do lead selecionado */
               <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] px-3 py-2.5 flex items-center justify-between">
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[14px] font-medium text-[#111111] leading-tight">
-                    {selectedLead.name || selectedLead.phone}
-                  </span>
-                  <span className="text-[12px] text-[#7b7b78] leading-tight">
-                    {selectedLead.phone}
-                  </span>
+                  <span className="text-[14px] font-medium text-[#111111] leading-tight">{selectedLead.name || selectedLead.phone}</span>
+                  <span className="text-[12px] text-[#7b7b78] leading-tight">{selectedLead.phone}</span>
                 </div>
                 {!preselectedLead && (
-                  <button
-                    type="button"
-                    onClick={handleClearLead}
-                    className="text-[#7b7b78] hover:text-[#111111] transition-colors text-[18px] leading-none pl-3 flex-shrink-0"
-                    title="Remover lead"
-                  >
-                    ×
-                  </button>
+                  <button type="button" onClick={handleClearLead} className="text-[#7b7b78] hover:text-[#111111] transition-colors text-[18px] leading-none pl-3 flex-shrink-0" title="Remover lead">×</button>
                 )}
               </div>
             ) : (
-              /* Input de busca */
               <>
                 <input
                   value={leadSearch}
@@ -122,10 +130,9 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
                   onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
                   placeholder="Buscar por nome, telefone ou empresa..."
                   className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
-                  readOnly={!!preselectedLead}
                   autoComplete="off"
                 />
-                {showDropdown && !preselectedLead && (
+                {showDropdown && (
                   <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-[#dedbd6] rounded-[6px] z-10 max-h-52 overflow-y-auto shadow-sm">
                     {filteredLeads.length === 0 ? (
                       <p className="px-3 py-2.5 text-[13px] text-[#7b7b78]">Nenhum lead encontrado.</p>
@@ -137,12 +144,8 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
                           </div>
                         )}
                         {filteredLeads.map((l) => (
-                          <button
-                            key={l.id}
-                            type="button"
-                            onMouseDown={() => handleSelectLead(l)}
-                            className="w-full text-left px-3 py-2 hover:bg-[#faf9f6] flex items-center justify-between gap-3 transition-colors"
-                          >
+                          <button key={l.id} type="button" onMouseDown={() => handleSelectLead(l)}
+                            className="w-full text-left px-3 py-2 hover:bg-[#faf9f6] flex items-center justify-between gap-3 transition-colors">
                             <span className="text-[13px] text-[#111111] font-medium truncate">{l.name || l.phone}</span>
                             <span className="text-[12px] text-[#7b7b78] flex-shrink-0">{l.phone}</span>
                           </button>
@@ -155,6 +158,7 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
             )}
           </div>
 
+          {/* Funil */}
           {pipelines && pipelines.length > 0 && (
             <div>
               <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Funil *</label>
@@ -165,35 +169,42 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
                 required
               >
                 <option value="">Selecionar funil...</option>
-                {pipelines.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
+                {pipelines.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
               </select>
             </div>
           )}
 
-          <div>
-            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Titulo *</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Atacado 50kg - Cafe Especial" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" required />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          {/* Stage (dependente do funil) */}
+          {selectedPipelineId && (
             <div>
-              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Valor (R$)</label>
-              <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" />
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Stage *</label>
+              {stageOptions.length === 0 ? (
+                <p className="text-[12px] text-[#7b7b78] py-1">Carregando stages...</p>
+              ) : (
+                <select
+                  value={selectedStageId}
+                  onChange={(e) => setSelectedStageId(e.target.value)}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                  required
+                >
+                  {stageOptions.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
+              )}
             </div>
-            <div>
-              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Categoria</label>
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full">
-                <option value="">Selecionar...</option>
-                {DEAL_CATEGORIES.map((c) => (<option key={c.key} value={c.key}>{c.label}</option>))}
-              </select>
-            </div>
-          </div>
+          )}
 
+          {/* Observações */}
           <div>
-            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Previsao de fechamento</label>
-            <input type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Observações</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Anotações sobre este lead ou oportunidade..."
+              rows={3}
+              className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full resize-none"
+            />
           </div>
 
           {error && (
@@ -202,8 +213,12 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
 
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" onClick={onClose} className="border border-[#dedbd6] text-[#313130] px-3 py-1.5 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors">Cancelar</button>
-            <button type="submit" disabled={saving || !selectedLeadId || !title.trim() || (!!pipelines?.length && !selectedPipelineId)} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50">
-              {saving ? "Criando..." : "Criar Oportunidade"}
+            <button
+              type="submit"
+              disabled={saving || !selectedLeadId || !selectedPipelineId || !selectedStageId}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-50"
+            >
+              {saving ? "Criando..." : "Criar Card"}
             </button>
           </div>
         </form>
