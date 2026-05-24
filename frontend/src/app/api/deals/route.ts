@@ -25,17 +25,34 @@ export async function POST(request: NextRequest) {
   if (!body.pipeline_id) return NextResponse.json({ error: "pipeline_id é obrigatório" }, { status: 400 });
   if (!body.lead_id || !body.title?.trim()) return NextResponse.json({ error: "lead_id e title são obrigatórios" }, { status: 400 });
 
-  // Buscar o primeiro stage não-protegido do pipeline
-  const { data: firstStage, error: stageError } = await supabase
-    .from("pipeline_stages")
-    .select("id")
-    .eq("pipeline_id", body.pipeline_id)
-    .eq("is_protected", false)
-    .order("order_index", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (stageError) return NextResponse.json({ error: stageError.message }, { status: 500 });
-  if (!firstStage) return NextResponse.json({ error: "Funil não tem stages disponíveis." }, { status: 422 });
+  let stageId: string | null = null;
+
+  if (body.stage_id) {
+    // Validar que o stage pertence ao pipeline informado e não é protegido
+    const { data: providedStage } = await supabase
+      .from("pipeline_stages")
+      .select("id")
+      .eq("id", body.stage_id)
+      .eq("pipeline_id", body.pipeline_id)
+      .eq("is_protected", false)
+      .maybeSingle();
+    if (providedStage) stageId = providedStage.id;
+  }
+
+  if (!stageId) {
+    // Fallback: usar o primeiro stage não-protegido do pipeline
+    const { data: firstStage, error: stageError } = await supabase
+      .from("pipeline_stages")
+      .select("id")
+      .eq("pipeline_id", body.pipeline_id)
+      .eq("is_protected", false)
+      .order("order_index", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (stageError) return NextResponse.json({ error: stageError.message }, { status: 500 });
+    if (!firstStage) return NextResponse.json({ error: "Funil não tem stages disponíveis." }, { status: 422 });
+    stageId = firstStage.id;
+  }
 
   const { data, error } = await supabase
     .from("deals")
@@ -44,8 +61,8 @@ export async function POST(request: NextRequest) {
       title: body.title,
       value: body.value || 0,
       pipeline_id: body.pipeline_id,
-      stage_id: firstStage?.id ?? null,
-      stage: "novo", // mantido por compatibilidade
+      stage_id: stageId,
+      stage: "novo",
       category: body.category || null,
       expected_close_date: body.expected_close_date || null,
       assigned_to: body.assigned_to || null,
