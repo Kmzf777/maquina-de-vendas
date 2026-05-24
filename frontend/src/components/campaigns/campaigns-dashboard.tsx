@@ -50,7 +50,7 @@ export function CampaignsDashboard({ period, onPeriodChange }: CampaignsDashboar
             (stats.responseRate ?? 0) >= 30 ? "text-[#0bdf50]" :
             (stats.responseRate ?? 0) >= 10 ? "text-[#fe4c02]" : "text-[#c41c1c]"
           }`}>{stats.responseRate ?? 0}%</p>
-          <p className="text-[13px] text-[#7b7b78] mt-2">de resposta</p>
+          <p className="text-[13px] text-[#7b7b78] mt-2">{stats.respondedCount ?? 0} respostas em disparos</p>
         </div>
         <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
           <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Em Follow-up</p>
