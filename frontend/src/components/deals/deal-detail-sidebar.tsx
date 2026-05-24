@@ -31,9 +31,6 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
     expected_close_date: deal.expected_close_date || "",
   });
   const [notesDraft, setNotesDraft] = useState(deal.leads?.notes || "");
-  const [savingNotes, setSavingNotes] = useState(false);
-  const [notesError, setNotesError] = useState<string | null>(null);
-  const [notesSaved, setNotesSaved] = useState(false);
 
   // Sincronizar form quando o deal atualizar via realtime (sem modo edição ativo)
   useEffect(() => {
@@ -50,8 +47,10 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
 
   // Sincronizar notas quando o lead atualizar via realtime (sem edição ativa)
   useEffect(() => {
-    setNotesDraft(deal.leads?.notes || "");
-  }, [deal.leads?.notes]);
+    if (!editing) {
+      setNotesDraft(deal.leads?.notes || "");
+    }
+  }, [deal.leads?.notes, editing]);
 
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
@@ -61,38 +60,29 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
     (Date.now() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24)
   );
 
-  async function handleSaveNotes() {
-    if (!deal.lead_id) return;
-    setSavingNotes(true);
-    setNotesError(null);
-    setNotesSaved(false);
-    try {
-      const res = await fetch(`/api/leads/${deal.lead_id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notesDraft || null }),
-      });
-      if (!res.ok) throw new Error();
-      setNotesSaved(true);
-      setTimeout(() => setNotesSaved(false), 2000);
-    } catch {
-      setNotesError("Erro ao salvar. Tente novamente.");
-    } finally {
-      setSavingNotes(false);
-    }
-  }
-
   async function handleSave() {
     setSaving(true);
     setSaveError(null);
     try {
-      await onUpdate(deal.id, {
-        title: form.title,
-        value: Number(form.value) || 0,
-        category: form.category || null,
-        assigned_to: form.assigned_to || null,
-        expected_close_date: form.expected_close_date || null,
-      });
+      const savePromises: Promise<unknown>[] = [
+        onUpdate(deal.id, {
+          title: form.title,
+          value: Number(form.value) || 0,
+          category: form.category || null,
+          assigned_to: form.assigned_to || null,
+          expected_close_date: form.expected_close_date || null,
+        }),
+      ];
+      if (deal.lead_id) {
+        savePromises.push(
+          fetch(`/api/leads/${deal.lead_id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ notes: notesDraft || null }),
+          }).then((r) => { if (!r.ok) throw new Error(); })
+        );
+      }
+      await Promise.all(savePromises);
       setEditing(false);
     } catch {
       setSaveError("Erro ao salvar. Tente novamente.");
@@ -144,6 +134,17 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {editing ? (
           <div className="space-y-3">
+            {/* Observações no topo do formulário de edição */}
+            <div>
+              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Observacoes do Lead</label>
+              <textarea
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                placeholder="Anotacoes sobre este lead..."
+                rows={4}
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full resize-none"
+              />
+            </div>
             <div>
               <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Titulo</label>
               <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
@@ -227,28 +228,17 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
           )}
         </div>
 
-        <div className="border-t border-[#dedbd6] pt-4">
-          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Observacoes</span>
-          <textarea
-            value={notesDraft}
-            onChange={(e) => setNotesDraft(e.target.value)}
-            placeholder="Anotacoes sobre este lead..."
-            rows={4}
-            className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full resize-none"
-          />
-          <div className="flex items-center justify-between mt-2">
-            {notesError && <p className="text-[12px] text-red-600">{notesError}</p>}
-            {notesSaved && <p className="text-[12px] text-green-700">Salvo!</p>}
-            {!notesError && !notesSaved && <span />}
-            <button
-              onClick={handleSaveNotes}
-              disabled={savingNotes}
-              className="text-[12px] text-[#7b7b78] hover:text-[#111111] px-3 py-1 rounded-[4px] border border-[#dedbd6] hover:border-[#111111] transition-colors disabled:opacity-50"
-            >
-              {savingNotes ? "Salvando..." : "Salvar"}
-            </button>
+        {/* Observações do lead — visíveis no modo de visualização */}
+        {!editing && (
+          <div className="border-t border-[#dedbd6] pt-4">
+            <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Observacoes</span>
+            {lead?.notes ? (
+              <p className="text-[13px] text-[#111111] whitespace-pre-wrap">{lead.notes}</p>
+            ) : (
+              <p className="text-[13px] text-[#7b7b78] italic">Nenhuma observacao. Clique em Editar para adicionar.</p>
+            )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
