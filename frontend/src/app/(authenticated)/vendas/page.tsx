@@ -308,7 +308,7 @@ export default function VendasPage() {
         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div
             ref={kanbanRef}
-            className={`flex gap-3 overflow-x-auto p-4 md:p-6 pt-2 touch-pan-x select-none ${isDraggingScroll ? "cursor-grabbing" : "cursor-grab"}`}
+            className={`flex gap-3 overflow-x-auto p-4 md:p-6 pt-2 touch-pan-x ${isDraggingScroll ? "cursor-grabbing select-none" : "cursor-grab"}`}
             onMouseDown={kanbanMouseDown}
             onMouseMove={kanbanMouseMove}
             onMouseUp={kanbanMouseUp}
