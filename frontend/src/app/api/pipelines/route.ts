@@ -6,8 +6,8 @@ const DEFAULT_STAGES = [
   { label: "Contato",      key: null,              dot_color: "#d4a04a", order_index: 1, is_protected: false },
   { label: "Proposta",     key: null,              dot_color: "#9b7abf", order_index: 2, is_protected: false },
   { label: "Negociação",   key: null,              dot_color: "#5b8aad", order_index: 3, is_protected: false },
-  { label: "Fechado Ganho",key: "fechado_ganho",   dot_color: "#5aad65", order_index: 4, is_protected: true  },
-  { label: "Perdido",      key: "fechado_perdido", dot_color: "#9ca3af", order_index: 5, is_protected: true  },
+  { label: "Fechado Ganho",key: "fechado_ganho",   dot_color: "#5aad65", order_index: 4, is_protected: false },
+  { label: "Perdido",      key: "fechado_perdido", dot_color: "#9ca3af", order_index: 5, is_protected: false },
 ];
 
 export async function GET() {

@@ -9,16 +9,12 @@ export async function PATCH(
   const body = await request.json();
   const supabase = await getServiceSupabase();
 
-  const { data: existing, error: fetchError } = await supabase
+  const { error: fetchError } = await supabase
     .from("pipeline_stages")
-    .select("is_protected, key")
+    .select("id")
     .eq("id", stageId)
     .single();
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
-  const TERMINAL_KEYS = ["fechado_ganho", "fechado_perdido", "perdido"];
-  if (existing?.is_protected || TERMINAL_KEYS.includes(existing?.key ?? "")) {
-    return NextResponse.json({ error: "Stages protegidos não podem ser editados." }, { status: 409 });
-  }
 
   const updates: Record<string, unknown> = {};
   if (body.label !== undefined) {
@@ -43,17 +39,6 @@ export async function DELETE(
 ) {
   const { stageId } = await params;
   const supabase = await getServiceSupabase();
-
-  const { data: stage, error: stageError } = await supabase
-    .from("pipeline_stages")
-    .select("is_protected, key")
-    .eq("id", stageId)
-    .single();
-  if (stageError) return NextResponse.json({ error: stageError.message }, { status: 500 });
-  const TERMINAL_KEYS = ["fechado_ganho", "fechado_perdido", "perdido"];
-  if (stage?.is_protected || TERMINAL_KEYS.includes(stage?.key ?? "")) {
-    return NextResponse.json({ error: "Stages protegidos não podem ser removidos." }, { status: 409 });
-  }
 
   const { count, error: countError } = await supabase
     .from("deals")

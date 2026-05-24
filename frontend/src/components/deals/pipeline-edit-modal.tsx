@@ -21,10 +21,6 @@ interface EditableStage extends PipelineStage {
   _dirty?: boolean;
 }
 
-const TERMINAL_KEYS = ["fechado_ganho", "fechado_perdido", "perdido"] as const;
-function isTerminalStage(stage: PipelineStage): boolean {
-  return stage.is_protected || TERMINAL_KEYS.includes(stage.key as typeof TERMINAL_KEYS[number]);
-}
 
 interface PipelineEditModalProps {
   pipelineId: string;
@@ -41,8 +37,7 @@ function SortableStageRow({
   onChange: (id: string, field: keyof EditableStage, value: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const protected_ = isTerminalStage(stage);
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id, disabled: protected_ });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id });
 
   return (
     <div
@@ -52,8 +47,8 @@ function SortableStageRow({
     >
       {/* Drag handle */}
       <div
-        {...(protected_ ? {} : { ...listeners, ...attributes })}
-        className={`flex-shrink-0 ${protected_ ? "opacity-20 cursor-not-allowed" : "cursor-grab active:cursor-grabbing"}`}
+        {...{ ...listeners, ...attributes }}
+        className="flex-shrink-0 cursor-grab active:cursor-grabbing"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="#7b7b78">
           <circle cx="5" cy="4" r="1.2" /><circle cx="11" cy="4" r="1.2" />
@@ -64,41 +59,32 @@ function SortableStageRow({
 
       {/* Color picker */}
       <div className="relative flex-shrink-0 group">
-        <div className={`w-4 h-4 rounded-full border border-[#dedbd6] ${protected_ ? "cursor-default" : "cursor-pointer"}`} style={{ backgroundColor: stage.dot_color }} />
-        {!protected_ && (
-          <div className="absolute left-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] p-2 z-10 hidden group-hover:grid grid-cols-4 gap-1 w-[88px] shadow-sm">
-            {COLOR_PALETTE.map((c) => (
-              <button key={c} type="button" onClick={() => onChange(stage.id, "dot_color", c)}
-                className={`w-4 h-4 rounded-full border ${stage.dot_color === c ? "border-[#111111]" : "border-transparent"}`}
-                style={{ backgroundColor: c }}
-              />
-            ))}
-          </div>
-        )}
+        <div className="w-4 h-4 rounded-full border border-[#dedbd6] cursor-pointer" style={{ backgroundColor: stage.dot_color }} />
+        <div className="absolute left-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] p-2 z-10 hidden group-hover:grid grid-cols-4 gap-1 w-[88px] shadow-sm">
+          {COLOR_PALETTE.map((c) => (
+            <button key={c} type="button" onClick={() => onChange(stage.id, "dot_color", c)}
+              className={`w-4 h-4 rounded-full border ${stage.dot_color === c ? "border-[#111111]" : "border-transparent"}`}
+              style={{ backgroundColor: c }}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Label input */}
       <input
         value={stage.label}
         onChange={(e) => onChange(stage.id, "label", e.target.value)}
-        disabled={protected_}
-        className="flex-1 text-[13px] text-[#111111] bg-transparent focus:outline-none disabled:text-[#7b7b78] min-w-0"
+        className="flex-1 text-[13px] text-[#111111] bg-transparent focus:outline-none min-w-0"
       />
 
-      {/* Protected badge or delete */}
-      {protected_ ? (
-        <span className="text-[10px] uppercase tracking-[0.4px] text-[#7b7b78] border border-[#dedbd6] px-2 py-0.5 rounded-full flex-shrink-0">
-          Protegido
-        </span>
-      ) : (
-        <button type="button" onClick={() => onDelete(stage.id)}
-          className="flex-shrink-0 text-[#7b7b78] hover:text-[#e07a7a] transition-colors"
-        >
-          <svg width="14" height="14" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
-      )}
+      {/* Delete button */}
+      <button type="button" onClick={() => onDelete(stage.id)}
+        className="flex-shrink-0 text-[#7b7b78] hover:text-[#e07a7a] transition-colors"
+      >
+        <svg width="14" height="14" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M4 4l8 8M12 4l-8 8" />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -143,8 +129,8 @@ export function PipelineEditModal({
     const data = await res.json();
     if (data?.id) {
       setStages((prev) => {
-        // Inserir antes dos stages protegidos (que ficam sempre no final)
-        const firstProtected = prev.findIndex((s) => isTerminalStage(s));
+        // Inserir antes do primeiro stage com is_protected (fica sempre no final)
+        const firstProtected = prev.findIndex((s) => s.is_protected);
         const insertAt = firstProtected === -1 ? prev.length : firstProtected;
         const next = [...prev];
         next.splice(insertAt, 0, { ...data, _dirty: false });
@@ -184,8 +170,8 @@ export function PipelineEditModal({
         );
       }
 
-      // Salvar apenas stages não-protegidos marcados como dirty
-      const dirty = stages.filter((s) => s._dirty && !isTerminalStage(s));
+      // Salvar apenas stages marcados como dirty
+      const dirty = stages.filter((s) => s._dirty);
       ops.push(
         ...dirty.map((s) =>
           fetch(`/api/pipelines/${pipelineId}/stages/${s.id}`, {
