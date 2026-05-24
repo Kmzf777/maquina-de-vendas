@@ -10,10 +10,11 @@ export function useRealtimeBroadcasts() {
   const supabase = createClient();
 
   const fetchBroadcasts = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("broadcasts")
-      .select("*, cadences(id, name)")
+      .select("*")
       .order("created_at", { ascending: false });
+    if (error) console.error("[useRealtimeBroadcasts]", error.message);
     if (data) setBroadcasts(data);
     setLoading(false);
   }, []);

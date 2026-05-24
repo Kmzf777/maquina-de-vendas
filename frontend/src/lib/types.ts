@@ -148,7 +148,6 @@ export interface Broadcast {
   created_at: string;
   updated_at: string;
   // Joined
-  cadences?: { id: string; name: string } | null;
   move_to_stage?: {
     id: string;
     label: string;

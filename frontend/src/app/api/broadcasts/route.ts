@@ -6,7 +6,7 @@ export async function GET() {
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("broadcasts")
-    .select("*, cadences(id, name)")
+    .select("*")
     .eq("env_tag", APP_ENV)
     .order("created_at", { ascending: false });
 
