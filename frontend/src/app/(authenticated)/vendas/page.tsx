@@ -131,7 +131,7 @@ export default function VendasPage() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const { ref: kanbanRef, onMouseDown: kanbanMouseDown, onMouseMove: kanbanMouseMove, onMouseUp: kanbanMouseUp, onMouseLeave: kanbanMouseLeave } = useDragScroll();
+  const { ref: kanbanRef, isDraggingScroll, onMouseDown: kanbanMouseDown, onMouseMove: kanbanMouseMove, onMouseUp: kanbanMouseUp, onMouseLeave: kanbanMouseLeave } = useDragScroll();
 
   function handleDragStart(event: DragStartEvent) { setActiveDrag(event.active.data.current as Deal); }
 
@@ -308,7 +308,7 @@ export default function VendasPage() {
         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div
             ref={kanbanRef}
-            className="flex gap-3 overflow-x-auto p-4 md:p-6 pt-2 touch-pan-x"
+            className={`flex gap-3 overflow-x-auto p-4 md:p-6 pt-2 touch-pan-x select-none ${isDraggingScroll ? "cursor-grabbing" : "cursor-grab"}`}
             onMouseDown={kanbanMouseDown}
             onMouseMove={kanbanMouseMove}
             onMouseUp={kanbanMouseUp}
