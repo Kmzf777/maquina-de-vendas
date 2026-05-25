@@ -1,7 +1,7 @@
 // frontend/src/components/campaigns/lead-filter-panel.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { DEAL_CATEGORIES } from "@/lib/constants";
 
 interface Pipeline { id: string; name: string; }
@@ -34,6 +34,7 @@ export function LeadFilterPanel({ onApply, loading }: LeadFilterPanelProps) {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     fetch("/api/pipelines").then((r) => r.json()).then((d) => setPipelines(Array.isArray(d) ? d : []));
@@ -46,6 +47,22 @@ export function LeadFilterPanel({ onApply, loading }: LeadFilterPanelProps) {
       .then((r) => r.json())
       .then((d) => setStages(Array.isArray(d) ? d : []));
   }, [filters.pipelineId]);
+
+  useEffect(() => {
+    onApply(filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.pipelineId, filters.stageId, filters.dealCategory, filters.noDeal, filters.tagIds]);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onApply(filters);
+    }, 400);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.search, filters.createdAfter, filters.createdBefore]);
 
   const set = (key: keyof LeadFilters, value: unknown) =>
     setFilters((f) => ({ ...f, [key]: value }));
@@ -144,21 +161,13 @@ export function LeadFilterPanel({ onApply, loading }: LeadFilterPanelProps) {
         </div>
       </div>
 
-      <div className="flex gap-2 pt-1">
+      <div className="pt-1">
         <button
           type="button"
           onClick={reset}
-          className="flex-1 bg-transparent text-[#111111] border border-[#dedbd6] px-3 py-2 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors"
+          className="w-full bg-transparent text-[#111111] border border-[#dedbd6] px-3 py-2 rounded-[4px] text-[13px] hover:border-[#111111] transition-colors"
         >
-          Limpar
-        </button>
-        <button
-          type="button"
-          onClick={() => onApply(filters)}
-          disabled={loading}
-          className="flex-1 bg-[#111111] text-white px-3 py-2 rounded-[4px] text-[13px] disabled:opacity-50 transition-transform hover:scale-105 active:scale-[0.95]"
-        >
-          {loading ? "Buscando..." : "Aplicar filtros"}
+          Limpar filtros
         </button>
       </div>
     </div>
