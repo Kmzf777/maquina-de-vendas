@@ -75,8 +75,6 @@ export function CreateBroadcastModal({
   const [channelId, setChannelId] = useState("");
   const [agentMode, setAgentMode] = useState<AgentMode>("none");
   const [specificAgentId, setSpecificAgentId] = useState("");
-  const [intervalMin, setIntervalMin] = useState(3);
-  const [intervalMax, setIntervalMax] = useState(8);
 
   // ── Step 2: Template ──────────────────────────────────────────────────────
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
@@ -124,6 +122,8 @@ export function CreateBroadcastModal({
     const utcIso = brtToUtcIso(scheduleDate, scheduleTime);
     return new Date(utcIso) > new Date();
   };
+
+  const selectedChannel = channels.find((c) => c.id === channelId);
 
   // ─── Load channels + agent profiles on open ─────────────────────────────
   useEffect(() => {
@@ -191,6 +191,24 @@ export function CreateBroadcastModal({
       setTemplateVarValues(defaults);
     }
   }, [prefill, templates]);
+
+  // ESC fecha o modal
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { onClose(); resetForm(); }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resetar agente quando canal muda para human
+  useEffect(() => {
+    if (selectedChannel?.mode === "human") {
+      setAgentMode("none");
+      setSpecificAgentId("");
+    }
+  }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Reload templates after creating a new one ───────────────────────────
   const handleTemplateCreated = useCallback(() => {
@@ -380,8 +398,6 @@ export function CreateBroadcastModal({
           template_language_code: selectedTemplate.language,
           template_variables: Object.keys(templateVarValues).length ? templateVarValues : null,
           agent_profile_id: agentProfileId || null,
-          send_interval_min: intervalMin,
-          send_interval_max: intervalMax,
           move_to_stage_id: moveAction === "move" && moveStageId ? moveStageId : null,
           scheduled_at:
             scheduleMode === "scheduled" && scheduleDate && scheduleTime
@@ -422,8 +438,6 @@ export function CreateBroadcastModal({
     setChannelId("");
     setAgentMode("none");
     setSpecificAgentId("");
-    setIntervalMin(3);
-    setIntervalMax(8);
     setTemplates([]);
     setTemplateSearch("");
     setSelectedTemplate(null);
@@ -585,75 +599,50 @@ export function CreateBroadcastModal({
                 </div>
 
                 {/* Agent */}
-                <div>
-                  <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">
-                    Agente
-                  </label>
-                  <div className="space-y-2">
-                    {(
-                      [
-                        { value: "none", label: "Sem agente" },
-                        { value: "channel_default", label: "Agente padrão do canal" },
-                        { value: "specific", label: "Escolher agente específico" },
-                      ] as { value: AgentMode; label: string }[]
-                    ).map(({ value, label }) => (
-                      <label key={value} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="agent-mode"
-                          value={value}
-                          checked={agentMode === value}
-                          onChange={() => setAgentMode(value)}
-                          className="accent-[#111111]"
-                        />
-                        <span className="text-[14px] text-[#111111]">{label}</span>
-                      </label>
-                    ))}
-                  </div>
-
-                  {agentMode === "specific" && (
-                    <select
-                      value={specificAgentId}
-                      onChange={(e) => setSpecificAgentId(e.target.value)}
-                      className="mt-2 w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-                    >
-                      <option value="">Selecionar agente...</option>
-                      {agentProfiles.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
+                {selectedChannel?.mode !== "human" && (
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">
+                      Agente
+                    </label>
+                    <div className="space-y-2">
+                      {(
+                        [
+                          { value: "none", label: "Sem agente" },
+                          { value: "channel_default", label: "Agente padrão do canal" },
+                          { value: "specific", label: "Escolher agente específico" },
+                        ] as { value: AgentMode; label: string }[]
+                      ).map(({ value, label }) => (
+                        <label key={value} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="agent-mode"
+                            value={value}
+                            checked={agentMode === value}
+                            onChange={() => setAgentMode(value)}
+                            className="accent-[#111111]"
+                          />
+                          <span className="text-[14px] text-[#111111]">{label}</span>
+                        </label>
                       ))}
-                    </select>
-                  )}
-                </div>
+                    </div>
 
-                {/* Interval */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
-                      Intervalo mín. (s)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={intervalMin}
-                      onChange={(e) => setIntervalMin(Number(e.target.value))}
-                      className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-                    />
+                    {agentMode === "specific" && (
+                      <select
+                        value={specificAgentId}
+                        onChange={(e) => setSpecificAgentId(e.target.value)}
+                        className="mt-2 w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                      >
+                        <option value="">Selecionar agente...</option>
+                        {agentProfiles.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
-                      Intervalo máx. (s)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={intervalMax}
-                      onChange={(e) => setIntervalMax(Number(e.target.value))}
-                      className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-                    />
-                  </div>
-                </div>
+                )}
+
               </>
             )}
 
@@ -1138,12 +1127,6 @@ export function CreateBroadcastModal({
                         : csvFile
                         ? `CSV: ${csvFile.name}`
                         : "—"}
-                    </span>
-                  </p>
-                  <p>
-                    <span className="text-[#7b7b78]">Intervalo:</span>{" "}
-                    <span className="text-[#111111]">
-                      {intervalMin}–{intervalMax}s
                     </span>
                   </p>
                   <p>
