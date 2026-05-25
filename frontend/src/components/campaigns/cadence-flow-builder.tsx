@@ -618,7 +618,15 @@ function PaletteItemComp({ item, onAdd }: { item: PaletteItem; onAdd: (item: Pal
 }
 
 // ─── API data types for Inspector dropdowns ────────────────────────────────────
-interface FlowTemplate { id: string; name: string; status: string; language: string }
+interface FlowTemplate {
+  id: string;
+  name: string;
+  status: string;
+  language: string;
+  body?: string;
+  params?: { index: number; paramName: string; example: string }[];
+  paramsType?: "positional" | "named" | "none";
+}
 interface FlowStage    { id: string; label: string; pipeline_name: string; key: string | null }
 interface FlowTag      { id: string; name: string }
 interface FlowUser     { id: string; name: string; email: string }
@@ -794,11 +802,34 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
             )}
           </>
         )}
-        {node.type === "send" && (
+        {node.type === "send" && (() => {
+          const selectedTemplate = templates.find(t => t.name === (c.template_name as string));
+          const params = selectedTemplate?.params ?? [];
+          const paramsType = selectedTemplate?.paramsType ?? "none";
+          const templateVars = (c.template_variables as Record<string, string>) ?? {};
+
+          const setVar = (paramName: string, value: string) => {
+            const next: Record<string, string> = { ...templateVars, [paramName]: value };
+            if (paramsType !== "none") next["__params_type__"] = paramsType;
+            set("template_variables", next);
+          };
+
+          // When template changes, reset template_variables to a fresh object
+          // (the select onChange already calls set("template_name", ...); we don't reset vars here
+          // — old vars are harmless if user re-picks the same template, and they get overwritten otherwise)
+
+          return (
           <>
             <div style={field}>
               <label style={label}>Template</label>
-              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.template_name as string) ?? ""} onChange={e => set("template_name", e.target.value)}>
+              <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.template_name as string) ?? ""} onChange={e => {
+                set("template_name", e.target.value);
+                // Reset variables when changing template to avoid stale params
+                set("template_variables", {});
+                // Also align language with the picked template
+                const picked = templates.find(t => t.name === e.target.value);
+                if (picked) set("template_language", picked.language);
+              }}>
                 <option value="">— Selecione um template —</option>
                 {templates.filter(t => t.status === "approved" || t.status === "APPROVED").map(t => (
                   <option key={t.id} value={t.name}>{t.name} ({t.language})</option>
@@ -813,6 +844,41 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
               </select>
               {templates.length === 0 && <p style={{ fontSize: 11, color: "#9b9590", marginTop: 4 }}>Nenhum template cadastrado</p>}
             </div>
+
+            {selectedTemplate && params.length > 0 && (
+              <div style={{ ...field, padding: "10px 12px", background: "#fafaf7", borderRadius: 6, border: "1px solid #e8e4df" }}>
+                <label style={{ ...label, marginBottom: 8 }}>
+                  Variáveis do template ({params.length})
+                </label>
+                {params.map(p => {
+                  const key = paramsType === "named" ? p.paramName : String(p.index);
+                  return (
+                    <div key={key} style={{ marginBottom: 8 }}>
+                      <label style={{ fontSize: 10, color: "#7b7b78", display: "block", marginBottom: 3 }}>
+                        {paramsType === "named" ? `{{${p.paramName}}}` : `{{${p.index}}}`}
+                        {p.example && <span style={{ color: "#bdb7b0", marginLeft: 6 }}>ex: {p.example}</span>}
+                      </label>
+                      <input
+                        type="text"
+                        style={{ ...input, padding: "6px 8px", fontSize: 13 } as React.CSSProperties}
+                        value={templateVars[key] ?? ""}
+                        onChange={e => setVar(key, e.target.value)}
+                        placeholder={p.example || "Valor ou {{nome}}"}
+                      />
+                    </div>
+                  );
+                })}
+                <p style={{ fontSize: 10, color: "#9b9590", marginTop: 6, lineHeight: 1.4 }}>
+                  Use texto fixo ou tokens dinâmicos: <code>{`{{nome}}`}</code>, <code>{`{{empresa}}`}</code>, <code>{`{{produto}}`}</code>
+                </p>
+              </div>
+            )}
+
+            {selectedTemplate && params.length === 0 && (
+              <div style={{ ...field, padding: "8px 10px", background: "#f0fdf4", borderRadius: 6, border: "1px solid #bbf7d0" }}>
+                <p style={{ fontSize: 11, color: "#166534" }}>✓ Template sem variáveis</p>
+              </div>
+            )}
             <div style={field}>
               <label style={label}>Ao responder</label>
               <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.on_reply as string) ?? "pause"} onChange={e => set("on_reply", e.target.value)}>
@@ -833,7 +899,8 @@ function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorP
               </select>
             </div>
           </>
-        )}
+          );
+        })()}
         {node.type === "send_text" && (
           <>
             <div style={field}>
