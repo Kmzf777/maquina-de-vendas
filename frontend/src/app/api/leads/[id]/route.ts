@@ -9,6 +9,18 @@ export async function PATCH(
   const supabase = await getServiceSupabase();
   const body = await request.json();
 
+  // Sanitize phone if being updated
+  if (body.phone !== undefined) {
+    const digits = (body.phone ?? "").replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) {
+      return NextResponse.json(
+        { error: `Telefone inválido: ${digits.length} dígito(s) (esperado: 8–15)` },
+        { status: 422 }
+      );
+    }
+    body.phone = digits;
+  }
+
   const { data: currentLead } = await supabase
     .from("leads")
     .select("stage")

@@ -21,6 +21,12 @@ from app.leads.service import normalize_phone
     ("551299990000", "5512999990000"),           # DDD 12 (SP interior) sem 9
     ("5521912345678", "5521912345678"),          # 13 dígitos RJ → inalterado
     ("541199990000", "541199990000"),            # 12 dígitos não-BR → sem injeção
+    # detecção de phone duplicado
+    ("1198115400211981154002", "11981154002"),        # 11 dígitos dobrados → strip (sem DDI)
+    ("55119815540025511981554002", "5511981554002"),  # 13 dígitos dobrados → strip
+    ("541199990000541199990000", "541199990000"),     # 12 dígitos não-BR dobrados → strip
+    ("553898422923553898422923", "5538998422923"),    # 12-digit BR doubled → fix + 9th digit injection
+    ("whatsapp:1198115400211981154002", "11981154002"),   # whatsapp-prefixed doubled phone
 ])
 def test_normalize_phone(raw, expected):
     assert normalize_phone(raw) == expected

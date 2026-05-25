@@ -17,6 +17,15 @@ def normalize_phone(phone: str | None) -> str:
     if phone.startswith("whatsapp:"):
         phone = phone[len("whatsapp:"):]
     digits = _PHONE_RE.sub("", phone)
+    # Detect and fix doubled phone (e.g., "1198115400211981154002" → "11981154002")
+    if len(digits) > 15 and len(digits) % 2 == 0:
+        half = len(digits) // 2
+        if digits[:half] == digits[half:]:
+            logger.warning(
+                "normalize_phone: doubled phone detected and fixed: %s → %s",
+                digits, digits[:half],
+            )
+            digits = digits[:half]
     # Brazilian mobiles stored without 9th digit: 55 + 2-digit DDD + 8 digits = 12 total
     if len(digits) == 12 and digits.startswith("55"):
         digits = digits[:4] + "9" + digits[4:]

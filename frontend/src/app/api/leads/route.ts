@@ -1,6 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 
+function sanitizePhone(raw: string | undefined | null): { digits: string; error?: string } {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  if (digits.length < 8 || digits.length > 15) {
+    return { digits, error: `Telefone inválido: ${digits.length} dígito(s) (esperado: 8–15)` };
+  }
+  return { digits };
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const pipelineId = searchParams.get("pipeline_id");
@@ -97,10 +105,15 @@ export async function POST(request: NextRequest) {
   const supabase = await getServiceSupabase();
   const body = await request.json();
 
+  const { digits: phoneDigits, error: phoneError } = sanitizePhone(body.phone);
+  if (phoneError) {
+    return NextResponse.json({ error: phoneError }, { status: 422 });
+  }
+
   const { data: existing } = await supabase
     .from("leads")
     .select("id")
-    .eq("phone", body.phone)
+    .eq("phone", phoneDigits)
     .maybeSingle();
 
   if (existing) {
@@ -113,7 +126,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await supabase
     .from("leads")
     .insert({
-      phone: body.phone,
+      phone: phoneDigits,
       name: body.name || null,
       email: body.email || null,
       instagram: body.instagram || null,
