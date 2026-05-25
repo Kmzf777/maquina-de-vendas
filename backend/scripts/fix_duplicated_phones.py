@@ -14,10 +14,13 @@ MODO DE USO:
 import os
 import sys
 
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() != "false"
 
 # ── carrega .env ─────────────────────────────────────────────────────────────
-_env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+_env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
 with open(_env_path, encoding="utf-8", errors="replace") as f:
     for line in f:
         line = line.strip()
