@@ -1,10 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import type { Channel, AgentProfile } from "@/lib/types";
 import { TemplatePreviewCard, autoSuggestToken, type MetaTemplate } from "@/components/campaigns/template-preview-card";
 import { LeadFilterPanel, type LeadFilters } from "@/components/campaigns/lead-filter-panel";
 import { CreateTemplateModal } from "@/components/canais/create-template-modal";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 interface Lead {
   id: string;
@@ -109,6 +120,10 @@ export function CreateBroadcastModal({
 
   // ── Saving ────────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
+  const [createdBroadcastId, setCreatedBroadcastId] = useState<string | null>(null);
+  const [showStartDialog, setShowStartDialog] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const router = useRouter();
 
   const brtToUtcIso = (date: string, time: string): string => {
     const [year, month, day] = date.split("-").map(Number);
@@ -438,12 +453,39 @@ export function CreateBroadcastModal({
         });
       }
 
-      onCreated();
-      onClose();
-      resetForm();
+      if (scheduleMode === "immediate") {
+        setCreatedBroadcastId(broadcast.id);
+        setShowStartDialog(true);
+      } else {
+        onCreated();
+        onClose();
+        resetForm();
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleStartNow = async () => {
+    if (!createdBroadcastId) return;
+    setStarting(true);
+    try {
+      await fetch(`/api/broadcasts/${createdBroadcastId}/start`, { method: "POST" });
+    } finally {
+      setStarting(false);
+      setShowStartDialog(false);
+      onCreated();
+      onClose();
+      resetForm();
+      router.push(`/campanhas/disparos/${createdBroadcastId}`);
+    }
+  };
+
+  const handleCancelStart = () => {
+    setShowStartDialog(false);
+    onCreated();
+    onClose();
+    resetForm();
   };
 
   // ─── Reset ────────────────────────────────────────────────────────────────
@@ -470,6 +512,9 @@ export function CreateBroadcastModal({
     setScheduleMode("immediate");
     setScheduleDate("");
     setScheduleTime("");
+    setCreatedBroadcastId(null);
+    setShowStartDialog(false);
+    setStarting(false);
   };
 
   // ─── Step advancement guards ──────────────────────────────────────────────
@@ -1226,6 +1271,26 @@ export function CreateBroadcastModal({
           onCreated={handleTemplateCreated}
         />
       )}
+
+      {/* ── AlertDialog pós-criação ── */}
+      <AlertDialog open={showStartDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disparo criado com sucesso</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deseja iniciar o disparo agora? Os leads selecionados serão contatados em sequência via Meta Cloud.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelStart}>
+              Agora não
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleStartNow} disabled={starting}>
+              {starting ? "Iniciando..." : "Iniciar agora"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
