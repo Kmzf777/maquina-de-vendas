@@ -29,7 +29,7 @@ interface LeadFilterPanelProps {
   loading?: boolean;
 }
 
-export function LeadFilterPanel({ onApply, loading }: LeadFilterPanelProps) {
+export function LeadFilterPanel({ onApply }: LeadFilterPanelProps) {
   const [filters, setFilters] = useState<LeadFilters>(EMPTY_FILTERS);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
