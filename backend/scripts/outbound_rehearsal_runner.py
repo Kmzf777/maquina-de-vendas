@@ -440,21 +440,11 @@ async def main():
     ) as client:
         await _health_check(client)
 
-        # ── Execução paralela dos 4 leads ──────────────────────────────────
-        # Para disparar os testes: descomentar o bloco abaixo e executar o script.
-        #
-        # tasks = [
-        #     _run_with_jitter(idx, archetype, client, redis, run_dir)
-        #     for idx, archetype in enumerate(archetypes)
-        # ]
-        # raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-        #
-        log.info(
-            f"Infraestrutura pronta. {len(archetypes)} archetype(s) configurados: "
-            + ", ".join(a.id for a in archetypes)
-        )
-        log.info("Para executar os testes: descomentar o bloco 'tasks' em main().")
-        raw_results = []
+        tasks = [
+            _run_with_jitter(idx, archetype, client, redis, run_dir)
+            for idx, archetype in enumerate(archetypes)
+        ]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     verifications: list[dict] = []
     for archetype, result in zip(archetypes, raw_results):
@@ -486,7 +476,7 @@ async def main():
         "phones": {a.id: f"5521{(90 + idx):08d}" for idx, a in enumerate(archetypes)},
         "gemini_model": gemini_actor.MODEL_NAME,
         "verifications": verifications,
-        "mode": "infrastructure_ready_not_executed",
+        "mode": "parallel_execution",
     }
     (run_dir / "run.json").write_text(
         json.dumps(run_json, ensure_ascii=False, indent=2, default=str)
