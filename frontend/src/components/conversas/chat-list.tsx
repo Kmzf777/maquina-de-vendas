@@ -5,6 +5,7 @@ import { CONVERSATION_TABS, AGENT_STAGES, UNREAD_TAB_KEY } from "@/lib/constants
 import type { Conversation, Channel } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/datetime";
 import { getWindowStatus } from "@/lib/window-status";
+import { businessMinutesElapsed } from "@/lib/business-hours";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { Badge } from "@/components/ui/badge";
 
@@ -61,6 +62,20 @@ function computeExpiresAt(lastCustomerMsgAt: string | null | undefined, provider
   return new Date(new Date(lastCustomerMsgAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * Retorna true se a conversa está em atraso de SLA (canal humano, sem resposta
+ * do vendedor há mais de 20 minutos comerciais).
+ */
+function isSlaBreached(conv: Conversation): boolean {
+  const channel = conv.channels;
+  if (channel?.mode !== "human") return false;
+  const lastCustomer = conv.leads?.last_customer_message_at;
+  if (!lastCustomer) return false;
+  const lastSeller = conv.last_seller_response_at;
+  if (lastSeller && lastSeller >= lastCustomer) return false;
+  return businessMinutesElapsed(new Date(lastCustomer)) > 20;
+}
+
 export function ChatList({
   conversations,
   channels,
@@ -73,6 +88,13 @@ export function ChatList({
   onChannelChange,
 }: ChatListProps) {
   const [search, setSearch] = useState("");
+
+  // Ticker de 1 minuto para reavaliação do SLA em tempo real
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const unreadTotal = conversations.filter((c) => (c.unread_count ?? 0) > 0).length;
 
@@ -249,6 +271,7 @@ export function ChatList({
           const lastCustomerMsgAt = lead?.last_customer_message_at;
           const windowBg = getWindowBgClass(lastCustomerMsgAt, provider);
           const windowExpiresAt = computeExpiresAt(lastCustomerMsgAt, provider);
+          const breached = isSlaBreached(conv);
 
           return (
             <button
@@ -257,6 +280,8 @@ export function ChatList({
               className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-[#ff5600] focus-visible:ring-offset-1 focus-visible:outline-none ${
                 isActive
                   ? "border-l-[3px] border-l-[#ff5600] bg-[#faf9f6] rounded-r-[6px] mx-2 cursor-pointer"
+                  : breached
+                  ? "border-l-[3px] border-l-[#dc2626] bg-[#fef2f2] hover:bg-[#fef2f2] rounded-[6px] mx-2 cursor-pointer"
                   : `hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent ${windowBg}`
               }`}
               style={{ width: "calc(100% - 16px)" }}

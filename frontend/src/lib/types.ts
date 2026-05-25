@@ -266,6 +266,8 @@ export interface Conversation {
   deal_pipeline_name?: string | null;
   deal_stage_label?: string | null;
   deal_stage_dot_color?: string | null;
+  first_seller_response_at: string | null;
+  last_seller_response_at: string | null;
   leads?: Lead;
   channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null; mode?: "ai" | "human" } | null;
   agent_profiles?: { id: string; name: string } | null;

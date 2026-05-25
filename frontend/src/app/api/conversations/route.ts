@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
   let dbQuery = supabase
     .from("conversations")
     .select(
-      "*, leads(id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, telefone_comercial, email, instagram), channels(id, name, phone, provider, agent_profile_id, mode), agent_profiles(id,name)"
+      "*, first_seller_response_at, last_seller_response_at, leads(id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, telefone_comercial, email, instagram), channels(id, name, phone, provider, agent_profile_id, mode), agent_profiles(id,name)"
     );
 
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
