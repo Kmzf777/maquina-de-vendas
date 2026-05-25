@@ -141,6 +141,35 @@ export function CreateBroadcastModal({
 
   const selectedChannel = channels.find((c) => c.id === channelId);
 
+  // ─── Reset ────────────────────────────────────────────────────────────────
+  const resetForm = useCallback(() => {
+    setStep(1);
+    setName("");
+    setChannelId("");
+    setAgentMode("none");
+    setSpecificAgentId("");
+    setTemplates([]);
+    setTemplateSearch("");
+    setSelectedTemplate(null);
+    setTemplateVarValues({});
+    setLeadTab("crm");
+    setLeads([]);
+    setSelectedLeadIds(new Set());
+    setLastCheckedIndex(null);
+    setCsvFile(null);
+    setMoveAction("none");
+    setMovePipelineId("");
+    setMoveStageId("");
+    setMovePipelines([]);
+    setMoveStages([]);
+    setScheduleMode("immediate");
+    setScheduleDate("");
+    setScheduleTime("");
+    setCreatedBroadcastId(null);
+    setShowStartDialog(false);
+    setStarting(false);
+  }, []);
+
   // ─── Load channels + agent profiles on open ─────────────────────────────
   useEffect(() => {
     if (!open) return;
@@ -216,7 +245,7 @@ export function CreateBroadcastModal({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, onClose, resetForm]);
 
   // Resetar agente quando canal muda para human
   useEffect(() => {
@@ -486,35 +515,6 @@ export function CreateBroadcastModal({
     onCreated();
     onClose();
     resetForm();
-  };
-
-  // ─── Reset ────────────────────────────────────────────────────────────────
-  const resetForm = () => {
-    setStep(1);
-    setName("");
-    setChannelId("");
-    setAgentMode("none");
-    setSpecificAgentId("");
-    setTemplates([]);
-    setTemplateSearch("");
-    setSelectedTemplate(null);
-    setTemplateVarValues({});
-    setLeadTab("crm");
-    setLeads([]);
-    setSelectedLeadIds(new Set());
-    setLastCheckedIndex(null);
-    setCsvFile(null);
-    setMoveAction("none");
-    setMovePipelineId("");
-    setMoveStageId("");
-    setMovePipelines([]);
-    setMoveStages([]);
-    setScheduleMode("immediate");
-    setScheduleDate("");
-    setScheduleTime("");
-    setCreatedBroadcastId(null);
-    setShowStartDialog(false);
-    setStarting(false);
   };
 
   // ─── Step advancement guards ──────────────────────────────────────────────
