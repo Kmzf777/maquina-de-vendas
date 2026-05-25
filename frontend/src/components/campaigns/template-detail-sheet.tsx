@@ -4,6 +4,7 @@
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -36,7 +37,7 @@ const HEADER_TYPE_LABEL: Record<string, string> = {
 // ─── Body renderer ──────────────────────────────────────────────────────────────
 
 function BodyWithVars({ body }: { body: string }) {
-  const segments = body.split(/(\{\{[\w]+\}\})/g);
+  const segments = body.split(/(\{\{[\w]+\}\})/g).filter((s) => s !== "");
   return (
     <p className="text-[14px] text-[#111111] leading-relaxed whitespace-pre-wrap">
       {segments.map((seg, i) =>
@@ -48,7 +49,7 @@ function BodyWithVars({ body }: { body: string }) {
             {seg}
           </span>
         ) : (
-          seg
+          <span key={i}>{seg}</span>
         )
       )}
     </p>
@@ -77,6 +78,9 @@ export function TemplateDetailSheet({ template, onClose }: TemplateDetailSheetPr
               <SheetTitle className="text-[16px] font-medium text-[#111111] leading-tight break-all">
                 {template.name}
               </SheetTitle>
+              <SheetDescription className="sr-only">
+                Detalhes do template {template.name}
+              </SheetDescription>
               <div className="flex flex-wrap gap-1.5 pt-1">
                 <Badge
                   className="rounded-[4px] border-0 h-auto text-[11px] font-medium px-2 py-0.5"

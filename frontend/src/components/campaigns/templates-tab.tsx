@@ -34,6 +34,14 @@ interface SortConfig {
   direction: SortDirection;
 }
 
+const SORT_COLUMNS: { label: string; key: SortKey }[] = [
+  { label: "Nome", key: "name" },
+  { label: "Categoria", key: "category" },
+  { label: "Status", key: "status" },
+  { label: "Idioma", key: "language" },
+  { label: "Criado em", key: "created_at" },
+];
+
 function sortTemplates(templates: MessageTemplate[], config: SortConfig | null): MessageTemplate[] {
   if (!config) return templates;
   return [...templates].sort((a, b) => {
@@ -162,14 +170,6 @@ export function TemplatesTab() {
   const st = (s: string) => STATUS_CONFIG[s] ?? STATUS_CONFIG.cancelled;
 
   const sorted = sortTemplates(templates, sortConfig);
-
-  const SORT_COLUMNS: { label: string; key: SortKey }[] = [
-    { label: "Nome", key: "name" },
-    { label: "Categoria", key: "category" },
-    { label: "Status", key: "status" },
-    { label: "Idioma", key: "language" },
-    { label: "Criado em", key: "created_at" },
-  ];
 
   return (
     <div className="space-y-4">
