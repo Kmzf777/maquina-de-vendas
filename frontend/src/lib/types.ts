@@ -231,6 +231,7 @@ export interface Channel {
   provider_config: Record<string, string>;
   agent_profile_id: string | null;
   agent_profiles?: { id: string; name: string } | null;
+  mode?: "ai" | "human";
   is_active: boolean;
   created_at: string;
 }
