@@ -11,25 +11,26 @@ const JOAO_CHANNEL_ID = "a3a607b1-6bff-4370-8609-b275eef270dd";
 
 export type DateFilter = "1d" | "7d" | "30d" | "all";
 
-interface ConversationRow {
+interface ConvRow {
   id: string;
   created_at: string;
-  first_seller_response_at: string | null;
   last_seller_response_at: string | null;
-  leads: {
-    last_customer_message_at: string | null;
-  } | null;
+  leads: { last_customer_message_at: string | null } | null;
+}
+
+interface MsgRow {
+  conversation_id: string;
+  sent_by: string;
+  created_at: string;
 }
 
 function getCutoff(filter: DateFilter): Date | null {
   if (filter === "all") return null;
-  const now = new Date();
   const days = filter === "1d" ? 1 : filter === "7d" ? 7 : 30;
-  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-/** Returns today's date string (YYYY-MM-DD) in America/Sao_Paulo */
-function todayInSaoPaulo(): string {
+function todayInSP(): string {
   return new Date().toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
     year: "numeric",
@@ -38,9 +39,8 @@ function todayInSaoPaulo(): string {
   });
 }
 
-/** Returns the date string (dd/mm/yyyy) for a given timestamp in America/Sao_Paulo */
-function dateInSaoPaulo(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("pt-BR", {
+function dateInSP(iso: string): string {
+  return new Date(iso).toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
     year: "numeric",
     month: "2-digit",
@@ -48,92 +48,181 @@ function dateInSaoPaulo(dateStr: string): string {
   });
 }
 
-async function fetchAllConversations(
+async function fetchConversations(
   supabase: ReturnType<typeof createClient>,
   cutoff: Date | null
-): Promise<ConversationRow[]> {
-  const PAGE_SIZE = 1000;
-  const allRows: ConversationRow[] = [];
+): Promise<ConvRow[]> {
+  const PAGE = 1000;
+  const all: ConvRow[] = [];
   let offset = 0;
 
   while (true) {
-    let query = supabase
+    let q = supabase
       .from("conversations")
-      .select(
-        `id, created_at, first_seller_response_at, last_seller_response_at,
-         leads(last_customer_message_at)`
-      )
+      .select("id, created_at, last_seller_response_at, leads(last_customer_message_at)")
       .eq("channel_id", JOAO_CHANNEL_ID)
       .order("created_at", { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
+      .range(offset, offset + PAGE - 1);
 
-    if (cutoff) {
-      query = query.gte("created_at", cutoff.toISOString());
-    }
+    if (cutoff) q = q.gte("created_at", cutoff.toISOString());
 
-    const { data, error } = await query;
-    if (error) {
-      console.error("[useJoaoSlaStats] fetch error:", error);
-      break;
-    }
-    if (!data || data.length === 0) break;
+    const { data, error } = await q;
+    if (error || !data || data.length === 0) break;
 
-    // Supabase returns `leads` as array from the join; normalise to single object
-    const normalised: ConversationRow[] = (data as unknown[]).map((row: unknown) => {
-      const r = row as Record<string, unknown>;
-      const leadsArr = r.leads as Array<{ last_customer_message_at: string | null }> | null;
+    const rows: ConvRow[] = (data as unknown[]).map((r) => {
+      const row = r as Record<string, unknown>;
+      const leadsArr = row.leads as Array<{ last_customer_message_at: string | null }> | null;
       return {
-        ...(r as Omit<ConversationRow, "leads">),
+        ...(row as Omit<ConvRow, "leads">),
         leads: Array.isArray(leadsArr) && leadsArr.length > 0 ? leadsArr[0] : null,
-      } as ConversationRow;
+      } as ConvRow;
     });
-    allRows.push(...normalised);
 
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    all.push(...rows);
+    if (data.length < PAGE) break;
+    offset += PAGE;
   }
 
-  return allRows;
+  return all;
 }
 
-function computeStats(rows: ConversationRow[]) {
-  const today = todayInSaoPaulo();
+async function fetchMessages(
+  supabase: ReturnType<typeof createClient>,
+  convIds: string[]
+): Promise<MsgRow[]> {
+  if (convIds.length === 0) return [];
 
-  // avgSlaMinutes: only rows with both created_at and first_seller_response_at
-  const withFirstResponse = rows.filter((r) => r.first_seller_response_at);
-  const slaValues = withFirstResponse.map((r) =>
-    businessMinutesBetween(
-      new Date(r.created_at),
-      new Date(r.first_seller_response_at!)
-    )
-  );
+  const PAGE = 1000;
+  const all: MsgRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("conversation_id, sent_by, created_at")
+      .in("conversation_id", convIds)
+      .in("sent_by", ["user", "seller"])
+      .order("created_at", { ascending: true })
+      .range(offset, offset + PAGE - 1);
+
+    if (error || !data || data.length === 0) break;
+    all.push(...(data as MsgRow[]));
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
+
+  return all;
+}
+
+/**
+ * Computa pares (última msg do cliente antes de resposta do vendedor → msg do vendedor).
+ * Retorna lista de businessMinutes por par.
+ * Também inclui conversas "finalizadas" via last_seller_response_at quando não há
+ * mensagem seller após a última msg do cliente.
+ */
+function computePairs(convs: ConvRow[], msgs: MsgRow[]): number[] {
+  // Agrupa mensagens por conversa
+  const byConv = new Map<string, MsgRow[]>();
+  for (const m of msgs) {
+    if (!byConv.has(m.conversation_id)) byConv.set(m.conversation_id, []);
+    byConv.get(m.conversation_id)!.push(m);
+  }
+
+  const pairs: number[] = [];
+
+  for (const conv of convs) {
+    const convMsgs = byConv.get(conv.id) ?? [];
+    // convMsgs já estão ordenados por created_at ASC
+
+    let lastUserAt: string | null = null;
+
+    for (const msg of convMsgs) {
+      if (msg.sent_by === "user") {
+        // Acumula — mantém a última msg do cliente antes da resposta do vendedor
+        lastUserAt = msg.created_at;
+      } else if (msg.sent_by === "seller" && lastUserAt) {
+        const mins = businessMinutesBetween(
+          new Date(lastUserAt),
+          new Date(msg.created_at)
+        );
+        if (mins >= 0) pairs.push(mins);
+        lastUserAt = null; // ciclo encerrado
+      }
+    }
+
+    // Se sobrou msg do cliente sem resposta textual, verifica se a conversa
+    // foi "finalizada" (last_seller_response_at atualizado via botão Finalizar)
+    if (lastUserAt && conv.last_seller_response_at) {
+      const lastSeller = conv.last_seller_response_at;
+      if (lastSeller > lastUserAt) {
+        const mins = businessMinutesBetween(
+          new Date(lastUserAt),
+          new Date(lastSeller)
+        );
+        if (mins >= 0) pairs.push(mins);
+      }
+    }
+  }
+
+  return pairs;
+}
+
+function computeStats(convs: ConvRow[], msgs: MsgRow[]) {
+  const pairs = computePairs(convs, msgs);
+
   const avgSlaMinutes =
-    slaValues.length > 0
-      ? Math.round(slaValues.reduce((a, b) => a + b, 0) / slaValues.length)
+    pairs.length > 0
+      ? pairs.reduce((a, b) => a + b, 0) / pairs.length
       : null;
 
-  // overdueCount: last message is from customer and elapsed > 20 business minutes
-  const overdueCount = rows.filter((r) => {
-    const lastCustomer = r.leads?.last_customer_message_at;
+  // Conversas em atraso: última msg do cliente sem resposta do vendedor há >20 min comerciais
+  const overdueCount = convs.filter((conv) => {
+    const lastCustomer = conv.leads?.last_customer_message_at;
     if (!lastCustomer) return false;
-    const lastSeller = r.last_seller_response_at;
-    // If seller responded after customer, not overdue
+    const lastSeller = conv.last_seller_response_at;
     if (lastSeller && lastSeller >= lastCustomer) return false;
     return businessMinutesElapsed(new Date(lastCustomer)) > 20;
   }).length;
 
-  // worstSlaTodayMinutes: max SLA among rows whose first_seller_response_at is today (SP)
-  const todayResponseRows = withFirstResponse.filter(
-    (r) => dateInSaoPaulo(r.first_seller_response_at!) === today
-  );
-  const todaySlaValues = todayResponseRows.map((r) =>
-    businessMinutesBetween(
-      new Date(r.created_at),
-      new Date(r.first_seller_response_at!)
-    )
-  );
-  const worstSlaTodayMinutes =
-    todaySlaValues.length > 0 ? Math.max(...todaySlaValues) : null;
+  // Pior SLA do dia: maior par cujo timestamp de resposta é hoje (SP)
+  const today = todayInSP();
+  const byConv = new Map<string, MsgRow[]>();
+  for (const m of msgs) {
+    if (!byConv.has(m.conversation_id)) byConv.set(m.conversation_id, []);
+    byConv.get(m.conversation_id)!.push(m);
+  }
+
+  let worstSlaTodayMinutes: number | null = null;
+  for (const conv of convs) {
+    const convMsgs = byConv.get(conv.id) ?? [];
+    let lastUserAt: string | null = null;
+    for (const msg of convMsgs) {
+      if (msg.sent_by === "user") {
+        lastUserAt = msg.created_at;
+      } else if (msg.sent_by === "seller" && lastUserAt) {
+        if (dateInSP(msg.created_at) === today) {
+          const mins = businessMinutesBetween(
+            new Date(lastUserAt),
+            new Date(msg.created_at)
+          );
+          if (worstSlaTodayMinutes === null || mins > worstSlaTodayMinutes) {
+            worstSlaTodayMinutes = mins;
+          }
+        }
+        lastUserAt = null;
+      }
+    }
+    // "Finalizar" hoje
+    if (lastUserAt && conv.last_seller_response_at) {
+      const ls = conv.last_seller_response_at;
+      if (ls > lastUserAt && dateInSP(ls) === today) {
+        const mins = businessMinutesBetween(new Date(lastUserAt), new Date(ls));
+        if (worstSlaTodayMinutes === null || mins > worstSlaTodayMinutes) {
+          worstSlaTodayMinutes = mins;
+        }
+      }
+    }
+  }
 
   return { avgSlaMinutes, overdueCount, worstSlaTodayMinutes };
 }
@@ -156,8 +245,10 @@ export function useJoaoSlaStats(filter: DateFilter = "7d"): JoaoSlaStats {
 
   const fetchAndCompute = useCallback(async () => {
     const cutoff = getCutoff(filter);
-    const rows = await fetchAllConversations(supabase, cutoff);
-    setStats(computeStats(rows));
+    const convs = await fetchConversations(supabase, cutoff);
+    const convIds = convs.map((c) => c.id);
+    const msgs = await fetchMessages(supabase, convIds);
+    setStats(computeStats(convs, msgs));
     setLoading(false);
   }, [filter]);
 
@@ -166,19 +257,12 @@ export function useJoaoSlaStats(filter: DateFilter = "7d"): JoaoSlaStats {
     fetchAndCompute();
 
     const channel = supabase
-      .channel("joao-sla-conversations")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
-        () => {
-          fetchAndCompute();
-        }
-      )
+      .channel("joao-sla-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, fetchAndCompute)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, fetchAndCompute)
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [fetchAndCompute]);
 
   return { ...stats, loading };

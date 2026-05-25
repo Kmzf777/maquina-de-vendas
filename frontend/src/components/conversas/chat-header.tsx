@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { Conversation, Tag } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
 
 interface ChatHeaderProps {
   conversation: Conversation;
@@ -63,6 +64,11 @@ export function ChatHeader({
 
   async function handleFinalize() {
     setMenuOpen(false);
+    const supabase = createClient();
+    await supabase
+      .from("conversations")
+      .update({ last_seller_response_at: new Date().toISOString() })
+      .eq("id", conversation.id);
     await onMarkRead?.();
   }
 
