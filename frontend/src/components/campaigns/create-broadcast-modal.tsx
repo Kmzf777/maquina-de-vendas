@@ -90,6 +90,7 @@ export function CreateBroadcastModal({
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [leadsError, setLeadsError] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
 
   // ── Step 4: Post-dispatch action ──────────────────────────────────────────
@@ -356,21 +357,35 @@ export function CreateBroadcastModal({
   }, [movePipelineId]);
 
   // ─── Select/deselect lead ─────────────────────────────────────────────────
-  const toggleLead = (id: string) => {
-    setSelectedLeadIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toggleLead = (id: string, idx: number, shiftKey: boolean) => {
+    if (shiftKey && lastCheckedIndex !== null) {
+      const from = Math.min(lastCheckedIndex, idx);
+      const to = Math.max(lastCheckedIndex, idx);
+      const rangeIds = leads.slice(from, to + 1).map((l) => l.id);
+      const selecting = !selectedLeadIds.has(id);
+      setSelectedLeadIds((prev) => {
+        const next = new Set(prev);
+        rangeIds.forEach((rid) => (selecting ? next.add(rid) : next.delete(rid)));
+        return next;
+      });
+    } else {
+      setSelectedLeadIds((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    }
+    setLastCheckedIndex(idx);
   };
 
   const selectAllLeads = () => {
     setSelectedLeadIds(new Set(leads.map((l) => l.id)));
+    setLastCheckedIndex(null);
   };
 
   const deselectAllLeads = () => {
     setSelectedLeadIds(new Set());
+    setLastCheckedIndex(null);
   };
 
   // ─── Create broadcast ─────────────────────────────────────────────────────
@@ -445,6 +460,7 @@ export function CreateBroadcastModal({
     setLeadTab("crm");
     setLeads([]);
     setSelectedLeadIds(new Set());
+    setLastCheckedIndex(null);
     setCsvFile(null);
     setMoveAction("none");
     setMovePipelineId("");
@@ -838,7 +854,7 @@ export function CreateBroadcastModal({
                               {leads.map((lead, idx) => (
                                 <tr
                                   key={lead.id}
-                                  onClick={() => toggleLead(lead.id)}
+                                  onClick={(e) => toggleLead(lead.id, idx, e.shiftKey)}
                                   className={`cursor-pointer border-b border-[#f0ede8] last:border-0 hover:bg-[#faf9f6] transition-colors ${
                                     idx % 2 === 0 ? "" : "bg-[#faf9f6]/50"
                                   } ${selectedLeadIds.has(lead.id) ? "bg-[#f0f0ee]" : ""}`}
@@ -847,8 +863,8 @@ export function CreateBroadcastModal({
                                     <input
                                       type="checkbox"
                                       checked={selectedLeadIds.has(lead.id)}
-                                      onChange={() => toggleLead(lead.id)}
-                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={() => {}}
+                                      onClick={(e) => { e.stopPropagation(); toggleLead(lead.id, idx, e.shiftKey); }}
                                       className="accent-[#111111]"
                                     />
                                   </td>
