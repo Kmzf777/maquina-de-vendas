@@ -14,6 +14,37 @@ def _format_sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _format_error(e: Exception) -> str:
+    """Extract a human-readable error message, particularly for Meta API HTTP errors.
+
+    Meta returns errors as JSON like:
+      {"error": {"message": "...", "code": 132001, "error_data": {"details": "..."}}}
+    We surface the most actionable string for the user.
+    """
+    # httpx.HTTPStatusError carries .response with the failing payload
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            data = resp.json()
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            err = data.get("error") if isinstance(data.get("error"), dict) else None
+            if err:
+                msg = err.get("message") or ""
+                details = (err.get("error_data") or {}).get("details") if isinstance(err.get("error_data"), dict) else ""
+                code = err.get("code")
+                parts = [p for p in (msg, details) if p]
+                base = " — ".join(parts) if parts else json.dumps(err, ensure_ascii=False)
+                return f"Meta API erro {code}: {base}" if code else base
+        try:
+            return f"HTTP {resp.status_code}: {resp.text[:300]}"
+        except Exception:
+            pass
+    text = str(e) or e.__class__.__name__
+    return text[:500]
+
+
 def _build_node_sequence(nodes: list[dict]) -> list[dict]:
     """Return nodes in execution order, skipping the trigger node."""
     by_id = {n["id"]: n for n in nodes}
@@ -34,29 +65,32 @@ def _build_node_sequence(nodes: list[dict]) -> list[dict]:
 
 
 def _get_or_create_test_lead(phone: str) -> tuple[dict, bool]:
-    """Return (lead, was_created). Creates a temporary lead if not found."""
+    """Return (lead, was_created). Creates a temporary lead if not found.
+
+    The phone is normalized via leads.service.normalize_phone (BR 12→13 digit fix),
+    matching the rest of the codebase. This avoids creating a phantom test lead
+    with a phone Meta will reject (e.g. 12-digit BR number missing the 9th digit).
+    """
     sb = get_supabase()
-    # Use the same env_tag logic as the engine
     from app.automation.engine import _get_env_tag
+    from app.leads.service import normalize_phone
     env_tag = _get_env_tag()
-    rows = sb.table("leads").select("*").eq("phone", phone).limit(1).execute().data
+    normalized = normalize_phone(phone)
+    if not normalized:
+        raise ValueError("Telefone vazio ou inválido")
+    rows = sb.table("leads").select("*").eq("phone", normalized).limit(1).execute().data
     if rows:
         return rows[0], False
-    created = (
-        sb.table("leads")
-        .insert({
-            "name": "Teste",
-            "phone": phone,
-            "env_tag": env_tag,
-            "ai_enabled": False,
-            "stage": "Novo",
-        })
-        .select()
-        .single()
-        .execute()
-        .data
-    )
-    return created, True
+    inserted = sb.table("leads").insert({
+        "name": "Teste",
+        "phone": normalized,
+        "env_tag": env_tag,
+        "ai_enabled": False,
+        "stage": "Novo",
+    }).execute().data
+    if not inserted:
+        raise RuntimeError("Falha ao criar lead de teste")
+    return inserted[0], True
 
 
 def _delete_test_lead(lead_id: str) -> None:
@@ -146,7 +180,7 @@ async def run_test_campaign(
                 yield _format_sse({
                     "node_id": node_id,
                     "status": "failed",
-                    "log": str(e),
+                    "log": _format_error(e),
                     "duration_ms": duration_ms,
                 })
                 break
@@ -174,9 +208,11 @@ async def _execute_test_node(
     if node_type == "send":
         from app.whatsapp.registry import get_provider
         from app.broadcast.worker import _build_template_components
+        template_name = (cfg.get("template_name") or "").strip()
+        if not template_name:
+            raise ValueError("Nó 'Enviar template' sem template selecionado. Abra o Inspector e escolha um template.")
         channel = _resolve_channel(cfg, campaign)
         provider = get_provider(channel)
-        template_name = cfg.get("template_name", "")
         components = _build_template_components(cfg.get("template_variables", {}), lead)
         await provider.send_template(
             to=lead["phone"],
@@ -189,9 +225,11 @@ async def _execute_test_node(
     if node_type == "send_text":
         from app.whatsapp.registry import get_provider
         from app.automation.variables import substitute_variables
+        message = substitute_variables(cfg.get("message_text", ""), lead, enrollment)
+        if not message.strip():
+            raise ValueError("Nó 'Enviar texto' sem mensagem configurada. Abra o Inspector e preencha o texto.")
         channel = _resolve_channel(cfg, campaign)
         provider = get_provider(channel)
-        message = substitute_variables(cfg.get("message_text", ""), lead, enrollment)
         await provider.send_text(lead["phone"], message)
         return f"Texto enviado: \"{message[:60]}{'...' if len(message) > 60 else ''}\"", None
 
