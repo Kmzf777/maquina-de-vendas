@@ -18,12 +18,13 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!phone.trim()) return;
+    const digits = phone.trim().replace(/\D/g, "");
+    if (!digits || digits.length < 8 || digits.length > 15) return;
     setSaving(true);
 
     await supabase.from("leads").insert({
       name: name.trim() || null,
-      phone: phone.trim(),
+      phone: digits,
       company: company.trim() || null,
       stage,
       human_control: humanControl,
