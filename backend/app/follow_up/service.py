@@ -186,7 +186,8 @@ def schedule_handoff_rescue(
         "metadata": {
             "lead_phone": lead_phone,
             "joao_phone_number_id": "1049315514934778",
-            "template_name": "rabubens",
+            "template_name": "automacao_valeria_to_joao",
+            "language_code": "en_US",
         },
     }
     try:

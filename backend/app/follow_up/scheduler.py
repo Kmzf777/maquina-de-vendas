@@ -167,7 +167,8 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
     metadata = job.get("metadata") or {}
     lead_phone = metadata.get("lead_phone")
     joao_phone_number_id = metadata.get("joao_phone_number_id", "1049315514934778")
-    template_name = metadata.get("template_name", "rabubens")
+    template_name = metadata.get("template_name", "automacao_valeria_to_joao")
+    language_code = metadata.get("language_code", "en_US")
 
     if not lead_phone:
         _cancel_job(job["id"], "missing_lead_phone")
@@ -219,8 +220,8 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
 
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
-        await provider.send_template(lead_phone, template_name)
-        logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' enviado para {lead_phone}")
+        await provider.send_template(lead_phone, template_name, language_code=language_code)
+        logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' ({language_code}) enviado para {lead_phone}")
     except Exception as exc:
         logger.error(
             f"[HANDOFF_RESCUE] Falha ao enviar template para {lead_phone}: {exc}",

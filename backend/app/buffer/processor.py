@@ -285,10 +285,10 @@ async def process_buffered_messages(
         response = await run_agent(conversation, resolved_text, lead_context=lead_context, agent_profile_id=agent_profile_id)
 
         if not response or not response.strip():
-            logger.error(
-                f"[AGENT EMPTY RESPONSE] run_agent returned empty string for {phone} "
+            logger.info(
+                f"[AGENT NO TEXT RESPONSE] run_agent returned empty for {phone} "
                 f"(conv={conversation['id']}, stage={conversation.get('stage')}). "
-                "Likely cause: tool loop exhausted without producing text content."
+                "Expected when encaminhar_humano was called — handoff message sent directly by tool."
             )
             _update_last_msg(conversation["id"])
             return

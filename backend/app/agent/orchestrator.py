@@ -199,6 +199,11 @@ async def run_agent(
                 "content": result,
             })
 
+        # encaminhar_humano sends the handoff message directly inside execute_tool.
+        # Return empty to prevent the processor from sending a duplicate message.
+        if any(tc.function.name == "encaminhar_humano" for tc in message.tool_calls):
+            return ""
+
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.
         for tc in message.tool_calls:
