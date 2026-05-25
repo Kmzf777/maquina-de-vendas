@@ -26,12 +26,20 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
 
     if event_type == "message_received":
         message_body = (data.get("body") or "").lower()
+        from app.automation.engine import _conversation_followup_disabled
         for tn in get_campaigns_with_trigger_type("keyword_received"):
             cfg = tn.get("config") or {}
             keywords = [k.lower() for k in (cfg.get("keywords") or []) if k]
             if not keywords or not any(k in message_body for k in keywords):
                 continue
             if is_already_enrolled(tn["campaign_id"], lead_id) or not tn.get("next_node_id"):
+                continue
+            # Gate: don't enroll a lead whose conversation in this channel was finalized.
+            if _conversation_followup_disabled(lead_id, tn.get("channel_id")):
+                logger.info(
+                    "[AUTOMATION] keyword_received skipped for lead %s — conversation finalized",
+                    lead_id,
+                )
                 continue
             try:
                 create_enrollment(
@@ -144,6 +152,15 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
 
 
 def _safe_enroll(trigger_node: dict, lead_id: str, now: datetime) -> None:
+    # Gate: passive (polling) triggers must not pull a lead into a cadence
+    # when the seller has finalized that lead's conversation in /conversas.
+    from app.automation.engine import _conversation_followup_disabled
+    if _conversation_followup_disabled(lead_id, trigger_node.get("channel_id")):
+        logger.info(
+            "[AUTOMATION] polling skipped for lead %s via %s — conversation finalized",
+            lead_id, (trigger_node.get("config") or {}).get("trigger_type"),
+        )
+        return
     try:
         create_enrollment(trigger_node["campaign_id"], lead_id, trigger_node["next_node_id"], now)
         logger.info("[AUTOMATION] polling enrolled %s via %s", lead_id, trigger_node.get("type"))

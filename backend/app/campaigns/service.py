@@ -155,13 +155,20 @@ def get_campaigns_with_trigger_type(trigger_type: str) -> list[dict[str, Any]]:
     campaign_ids = [c["id"] for c in campaigns]
     nodes = (
         sb.table("campaign_nodes")
-        .select("*, campaigns!inner(id, status)")
+        .select("*, campaigns!inner(id, status, channel_id)")
         .eq("type", "trigger")
         .in_("campaign_id", campaign_ids)
         .execute()
         .data
     )
-    return [n for n in nodes if n["config"].get("trigger_type") == trigger_type]
+    # Flatten channel_id onto the node so trigger callers can gate enrollment
+    # by the lead's conversation followup_enabled in that channel.
+    out = []
+    for n in nodes:
+        if n["config"].get("trigger_type") == trigger_type:
+            n["channel_id"] = (n.get("campaigns") or {}).get("channel_id")
+            out.append(n)
+    return out
 
 
 def is_already_enrolled(campaign_id: str, lead_id: str) -> bool:

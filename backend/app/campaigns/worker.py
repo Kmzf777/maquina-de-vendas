@@ -283,18 +283,30 @@ def _execute_end_node(enrollment: dict, node: dict, lead: dict) -> None:
 
 
 def handle_campaign_reply(lead_id: str) -> None:
-    """Called by webhook when a lead sends a message. Pauses/cancels enrollment per config."""
+    """Called by webhook when a lead sends a message. Pauses (or cancels) the
+    active enrollment regardless of which node it is currently parked on.
+
+    Previously this only acted when the current node was `send`; enrollments
+    sitting in `wait` / `condition` / `action` ignored the reply and would
+    advance to the next `send`, mailing the lead despite engagement. We now
+    treat any inbound message as a signal to pause; the seller can resume
+    manually if needed. on_reply='cancel' is still honored on `send` nodes.
+    """
     from app.campaigns.service import get_active_enrollment_for_lead
     enrollment = get_active_enrollment_for_lead(lead_id)
     if not enrollment:
         return
-    node = enrollment.get("campaign_nodes")
-    if not node or node.get("type") != "send":
-        return
-    on_reply = node.get("config", {}).get("on_reply", "pause")
-    if on_reply == "pause":
-        pause_enrollment(enrollment["id"])
-        logger.info("[CAMPAIGNS] Paused enrollment %s — lead replied", enrollment["id"])
-    elif on_reply == "cancel":
+    node = enrollment.get("campaign_nodes") or {}
+    on_reply = (node.get("config") or {}).get("on_reply", "pause")
+    if node.get("type") == "send" and on_reply == "cancel":
         cancel_enrollment(enrollment["id"])
-        logger.info("[CAMPAIGNS] Cancelled enrollment %s — lead replied", enrollment["id"])
+        logger.info(
+            "[CAMPAIGNS] Cancelled enrollment %s — lead replied (on_reply=cancel)",
+            enrollment["id"],
+        )
+        return
+    pause_enrollment(enrollment["id"])
+    logger.info(
+        "[CAMPAIGNS] Paused enrollment %s — lead replied (node_type=%s)",
+        enrollment["id"], node.get("type"),
+    )

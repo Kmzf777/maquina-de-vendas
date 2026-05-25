@@ -65,6 +65,26 @@ def _compare(actual: float, op: str, target: float) -> bool:
     }.get(op, False)
 
 
+def _conversation_followup_disabled(lead_id: str, channel_id: str | None) -> bool:
+    """True if the lead's conversation in the campaign's channel was finalized
+    by the seller (followup_enabled=false). Mirrors the gate the legacy
+    follow_up system already respects, so the cadence engine no longer
+    disturbs conversations marked as closed via /conversas."""
+    if not channel_id:
+        return False
+    sb = get_supabase()
+    rows = (
+        sb.table("conversations")
+        .select("followup_enabled")
+        .eq("lead_id", lead_id)
+        .eq("channel_id", channel_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return bool(rows) and not rows[0].get("followup_enabled", True)
+
+
 def _resolve_channel(node_cfg: dict, campaign: dict) -> dict:
     """Resolve channel: node override → campaign default → raise."""
     channel_id = node_cfg.get("channel_id") or campaign.get("channel_id")
@@ -139,6 +159,20 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
     if not node or campaign.get("status") != "active":
         return
     if not lead.get("ai_enabled", True):
+        return
+
+    # Gate: respect "Finalizar Conversa" toggle set by the seller in /conversas.
+    # Pause (not cancel) so the seller can resume by re-enabling the conversation.
+    if _conversation_followup_disabled(lead["id"], campaign.get("channel_id")):
+        logger.info(
+            "[AUTOMATION] enrollment=%s — conversation finalized, pausing",
+            enrollment["id"],
+        )
+        _update(
+            enrollment["id"],
+            status="paused",
+            last_error="conversation_finalized",
+        )
         return
 
     node_type = node["type"]
