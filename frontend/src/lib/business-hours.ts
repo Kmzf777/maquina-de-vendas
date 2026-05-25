@@ -93,25 +93,25 @@ function localMinutesOfDay(date: Date): number {
 }
 
 /**
- * Quantos minutos comerciais há neste dia, considerando apenas o intervalo
- * [intervalStart, intervalEnd) dentro da janela 10h–16h.
- *
- * weekday deve ser calculado a partir de intervalStart.
+ * Minutos comerciais no segmento [intervalStart, intervalEnd) para um dia.
+ * Usa timestamps UTC da janela comercial para evitar ambiguidade de meia-noite.
+ * dayMidnightUTC: resultado de midnightSPtoUTC para o dia em questão.
  */
 function bizMinutesInSegment(
   intervalStart: Date,
   intervalEnd: Date,
-  weekday: number
+  weekday: number,
+  dayMidnightUTC: Date
 ): number {
   if (!isWeekday(weekday)) return 0;
 
-  const startMin = localMinutesOfDay(intervalStart);
-  const endMin = localMinutesOfDay(intervalEnd);
+  const bizStart = new Date(dayMidnightUTC.getTime() + BIZ_START_MIN * 60_000);
+  const bizEnd   = new Date(dayMidnightUTC.getTime() + BIZ_END_MIN   * 60_000);
 
-  const clampedStart = Math.max(startMin, BIZ_START_MIN);
-  const clampedEnd = Math.min(endMin, BIZ_END_MIN);
+  const effectiveStart = intervalStart > bizStart ? intervalStart : bizStart;
+  const effectiveEnd   = intervalEnd   < bizEnd   ? intervalEnd   : bizEnd;
 
-  return Math.max(0, clampedEnd - clampedStart);
+  return Math.max(0, (effectiveEnd.getTime() - effectiveStart.getTime()) / 60_000);
 }
 
 /**
@@ -125,38 +125,29 @@ export function businessMinutesBetween(from: Date, to: Date): number {
 
   let total = 0;
 
-  // Obtém o dia calendário inicial em SP
   const startParts = tzParts(from);
-  let year = startParts.year;
+  let year  = startParts.year;
   let month = startParts.month;
-  let day = startParts.day;
+  let day   = startParts.day;
 
-  // Ponteiro para início do segmento atual
   let segStart = from;
 
   while (segStart < to) {
-    // Meia-noite do próximo dia calendário em SP
-    const nextMidnight = new Date(
-      midnightSPtoUTC(year, month, day).getTime() + 24 * 60 * 60 * 1000
-    );
+    const dayMidnight  = midnightSPtoUTC(year, month, day);
+    const nextMidnight = new Date(dayMidnight.getTime() + 24 * 60 * 60 * 1000);
 
-    // O segmento termina no menor entre: fim do dia atual ou `to`
     const segEnd = to < nextMidnight ? to : nextMidnight;
 
-    // Calcula weekday a partir do segStart
     const parts = tzParts(segStart);
-    total += bizMinutesInSegment(segStart, segEnd, parts.weekday);
+    total += bizMinutesInSegment(segStart, segEnd, parts.weekday, dayMidnight);
 
-    // Avança para o próximo dia
     segStart = nextMidnight;
-
     if (segStart >= to) break;
 
-    // Obtém partes do próximo segmento para controle do loop
     const nextParts = tzParts(segStart);
-    year = nextParts.year;
+    year  = nextParts.year;
     month = nextParts.month;
-    day = nextParts.day;
+    day   = nextParts.day;
   }
 
   return total;
