@@ -7,6 +7,7 @@ import { KpiCard } from "@/components/kpi-card";
 import { FunnelChart } from "@/components/funnel-chart";
 import { LeadSourcesChart } from "@/components/dashboard/lead-sources-chart";
 import { FunnelMovement } from "@/components/dashboard/funnel-movement";
+import { SlaHeroSection } from "@/components/dashboard/sla-hero-section";
 
 const TrendUpIcon = (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -126,6 +127,7 @@ export default function DashboardPage() {
 
       {/* Main content */}
       <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
+        <SlaHeroSection />
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-5 mb-8">
           <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />
           <KpiCard label="Deals ativos" value={activeDeals.length} subtitle={fmt(activeValue)} icon={UsersIcon} />
