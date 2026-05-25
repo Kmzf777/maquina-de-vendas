@@ -18,6 +18,13 @@ const DATE_FILTER_OPTIONS: { value: DateFilter; label: string }[] = [
   { value: "all", label: "Tudo" },
 ];
 
+const WORST_SLA_LABEL: Record<DateFilter, string> = {
+  "1d":  "Pior SLA hoje",
+  "7d":  "Pior SLA (7 dias)",
+  "30d": "Pior SLA (30 dias)",
+  "all": "Pior SLA registrado",
+};
+
 // ---------- Skeleton ----------
 function MetricCardSkeleton() {
   return (
@@ -75,7 +82,7 @@ function MetricCard({ label, value, subtitle, alert = false }: MetricCardProps) 
 // ---------- Main section ----------
 export function SlaHeroSection() {
   const [filter, setFilter] = useState<DateFilter>("7d");
-  const { avgSlaMinutes, overdueCount, worstSlaTodayMinutes, loading } =
+  const { avgSlaMinutes, overdueCount, worstSlaMinutes, loading } =
     useJoaoSlaStats(filter);
 
   return (
@@ -152,10 +159,10 @@ export function SlaHeroSection() {
               alert={overdueCount > 0}
             />
             <MetricCard
-              label="Pior SLA hoje"
+              label={WORST_SLA_LABEL[filter]}
               value={
-                worstSlaTodayMinutes !== null
-                  ? formatBusinessDuration(worstSlaTodayMinutes)
+                worstSlaMinutes !== null
+                  ? formatBusinessDuration(worstSlaMinutes)
                   : "—"
               }
               subtitle="maior tempo registrado"

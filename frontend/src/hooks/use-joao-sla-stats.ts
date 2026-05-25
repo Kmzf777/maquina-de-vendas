@@ -30,23 +30,6 @@ function getCutoff(filter: DateFilter): Date | null {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-function todayInSP(): string {
-  return new Date().toLocaleDateString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-}
-
-function dateInSP(iso: string): string {
-  return new Date(iso).toLocaleDateString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-}
 
 async function fetchConversations(
   supabase: ReturnType<typeof createClient>,
@@ -175,7 +158,6 @@ function computeStats(convs: ConvRow[], msgs: MsgRow[]) {
       ? pairs.reduce((a, b) => a + b, 0) / pairs.length
       : null;
 
-  // Conversas em atraso: última msg do cliente sem resposta do vendedor há >20 min comerciais
   const overdueCount = convs.filter((conv) => {
     const lastCustomer = conv.leads?.last_customer_message_at;
     if (!lastCustomer) return false;
@@ -184,53 +166,16 @@ function computeStats(convs: ConvRow[], msgs: MsgRow[]) {
     return businessMinutesElapsed(new Date(lastCustomer)) > 20;
   }).length;
 
-  // Pior SLA do dia: maior par cujo timestamp de resposta é hoje (SP)
-  const today = todayInSP();
-  const byConv = new Map<string, MsgRow[]>();
-  for (const m of msgs) {
-    if (!byConv.has(m.conversation_id)) byConv.set(m.conversation_id, []);
-    byConv.get(m.conversation_id)!.push(m);
-  }
+  // Pior SLA do período: conversas já filtradas pelo cutoff, então o max dos pares é correto
+  const worstSlaMinutes = pairs.length > 0 ? Math.max(...pairs) : null;
 
-  let worstSlaTodayMinutes: number | null = null;
-  for (const conv of convs) {
-    const convMsgs = byConv.get(conv.id) ?? [];
-    let lastUserAt: string | null = null;
-    for (const msg of convMsgs) {
-      if (msg.sent_by === "user") {
-        lastUserAt = msg.created_at;
-      } else if (msg.sent_by === "seller" && lastUserAt) {
-        if (dateInSP(msg.created_at) === today) {
-          const mins = businessMinutesBetween(
-            new Date(lastUserAt),
-            new Date(msg.created_at)
-          );
-          if (worstSlaTodayMinutes === null || mins > worstSlaTodayMinutes) {
-            worstSlaTodayMinutes = mins;
-          }
-        }
-        lastUserAt = null;
-      }
-    }
-    // "Finalizar" hoje
-    if (lastUserAt && conv.last_seller_response_at) {
-      const ls = conv.last_seller_response_at;
-      if (ls > lastUserAt && dateInSP(ls) === today) {
-        const mins = businessMinutesBetween(new Date(lastUserAt), new Date(ls));
-        if (worstSlaTodayMinutes === null || mins > worstSlaTodayMinutes) {
-          worstSlaTodayMinutes = mins;
-        }
-      }
-    }
-  }
-
-  return { avgSlaMinutes, overdueCount, worstSlaTodayMinutes };
+  return { avgSlaMinutes, overdueCount, worstSlaMinutes };
 }
 
 export interface JoaoSlaStats {
   avgSlaMinutes: number | null;
   overdueCount: number;
-  worstSlaTodayMinutes: number | null;
+  worstSlaMinutes: number | null;
   loading: boolean;
 }
 
@@ -238,7 +183,7 @@ export function useJoaoSlaStats(filter: DateFilter = "7d"): JoaoSlaStats {
   const [stats, setStats] = useState<Omit<JoaoSlaStats, "loading">>({
     avgSlaMinutes: null,
     overdueCount: 0,
-    worstSlaTodayMinutes: null,
+    worstSlaMinutes: null,
   });
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
