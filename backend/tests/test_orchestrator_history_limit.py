@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 @pytest.mark.asyncio
 async def test_run_agent_usa_history_limit_10():
-    """run_agent deve buscar no máximo 10 mensagens do histórico."""
+    """run_agent deve buscar no máximo 20 mensagens do histórico."""
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -30,6 +30,6 @@ async def test_run_agent_usa_history_limit_10():
         mock_client.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
         await run_agent(conversation, "oi")
 
-    assert captured_limit.get("limit") == 10, (
-        f"run_agent deveria usar limit=10, mas usou limit={captured_limit.get('limit')}"
+    assert captured_limit.get("limit") == 20, (
+        f"run_agent deveria usar limit=20, mas usou limit={captured_limit.get('limit')}"
     )
