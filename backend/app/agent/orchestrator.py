@@ -136,6 +136,16 @@ async def run_agent(
     for msg in history:
         if msg["role"] in ("user", "assistant"):
             messages.append({"role": msg["role"], "content": msg["content"]})
+
+    is_outbound = prompt_key == "valeria_outbound"
+    is_first_turn = len(history) == 0
+    campaign_message = (lead_context or {}).get("campaign_message")
+
+    if is_outbound and is_first_turn and campaign_message:
+        from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
+        ctx = build_outbound_first_turn_context(campaign_message, lead.get("name"))
+        messages.append({"role": "user", "content": ctx})
+
     messages.append({"role": "user", "content": user_text})
 
     response = await _get_client(model).chat.completions.create(
