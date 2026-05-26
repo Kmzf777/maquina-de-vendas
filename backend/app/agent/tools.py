@@ -279,7 +279,7 @@ async def execute_tool(
         try:
             update_lead(lead_id, ai_enabled=False)
         except Exception as exc:
-            logger.error("registrar_optout: falha ao desativar AI para lead %s: %s", lead_id, exc)
+            logger.error("registrar_optout: falha ao desativar AI para lead %s: %s", lead_id, exc, exc_info=True)
             return f"ERRO ao registrar opt-out: {exc}"
         save_message(
             lead_id, "system",
