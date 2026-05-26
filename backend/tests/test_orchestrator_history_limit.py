@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 
 @pytest.mark.asyncio
-async def test_run_agent_usa_history_limit_10():
+async def test_run_agent_usa_history_limit_20():
     """run_agent deve buscar no máximo 20 mensagens do histórico."""
     from app.agent.orchestrator import run_agent
 

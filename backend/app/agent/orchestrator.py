@@ -204,6 +204,12 @@ async def run_agent(
         if any(tc.function.name == "encaminhar_humano" for tc in message.tool_calls):
             return ""
 
+        # registrar_optout sets ai_enabled=False silently. The farewell Valéria
+        # wrote lives in message.content of this same turn — return it now and skip
+        # the second API call (there is nothing left to say after opt-out).
+        if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
+            return message.content or ""
+
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.
         for tc in message.tool_calls:
