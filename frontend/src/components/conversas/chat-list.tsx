@@ -281,7 +281,7 @@ export function ChatList({
                 isActive
                   ? "border-l-[3px] border-l-[#ff5600] bg-[#faf9f6] rounded-r-[6px] mx-2 cursor-pointer"
                   : breached
-                  ? "border-l-[3px] border-l-[#dc2626] bg-[#fef2f2] hover:bg-[#fef2f2] rounded-[6px] mx-2 cursor-pointer"
+                  ? "border-l-[3px] border-l-[#c2410c] bg-[#fdf6ee] hover:bg-[#faeee0] rounded-[6px] mx-2 cursor-pointer"
                   : `hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent ${windowBg}`
               }`}
               style={{ width: "calc(100% - 16px)" }}
@@ -326,6 +326,14 @@ export function ChatList({
                   <span className="text-xs text-[#7b7b78]">
                     {formatRelativeTime(conv.last_msg_at)}
                   </span>
+                  {breached && (
+                    <span className="inline-flex items-center gap-0.5 rounded-[3px] bg-[#c2410c]/10 px-1.5 py-px text-[10px] font-semibold text-[#c2410c] leading-none tracking-wide uppercase flex-shrink-0">
+                      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                      </svg>
+                      Atraso
+                    </span>
+                  )}
                   {conv.deal_stage_label && (
                     <Badge
                       variant="outline"
