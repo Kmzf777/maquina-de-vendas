@@ -399,7 +399,7 @@ async def _run_with_jitter(
     redis,
     run_dir: Path,
 ) -> dict:
-    phone = f"5521{(90 + idx):08d}"  # Range separado dos T1-T6 (5511...) para evitar colisão
+    phone = f"55219{(90 + idx):08d}"  # Range separado dos T1-T6 (5511...); já normalizado (13 dígitos)
     log.info(f"[{archetype.id}] Agendado — phone={phone} jitter={idx * 2.0}s")
     await asyncio.sleep(idx * 2.0)
     return await _run_outbound_archetype(archetype, client, redis, run_dir, phone)
@@ -473,7 +473,7 @@ async def main():
         "git_sha": _git_sha(),
         "archetypes": [a.id for a in archetypes],
         "dev_backend_url": DEV_BACKEND_URL,
-        "phones": {a.id: f"5521{(90 + idx):08d}" for idx, a in enumerate(archetypes)},
+        "phones": {a.id: f"55219{(90 + idx):08d}" for idx, a in enumerate(archetypes)},
         "gemini_model": gemini_actor.MODEL_NAME,
         "verifications": verifications,
         "mode": "parallel_execution",
