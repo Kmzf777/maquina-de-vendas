@@ -23,7 +23,10 @@ def test_atacado_tools():
 def test_consumo_tools():
     tools = get_tools_for_stage("consumo")
     names = [t["function"]["name"] for t in tools]
-    assert names == ["salvar_nome", "mudar_stage"]
+    assert "salvar_nome" in names
+    assert "mudar_stage" in names
+    assert "registrar_optout" in names
+    assert "encaminhar_humano" not in names
 
 
 def test_photo_captions_exist_for_atacado():
@@ -145,3 +148,84 @@ def test_encaminhar_humano_description_contem_casos():
     assert "REJEITOU" in desc
     assert "turnos" in desc
     assert "NAO envie" in desc or "nao envie" in desc.lower()
+
+
+def test_registrar_optout_presente_em_todos_os_stages():
+    """registrar_optout deve estar disponível em todos os stages."""
+    for stage in ["secretaria", "atacado", "private_label", "exportacao", "consumo"]:
+        tools = get_tools_for_stage(stage)
+        names = [t["function"]["name"] for t in tools]
+        assert "registrar_optout" in names, f"registrar_optout ausente no stage '{stage}'"
+
+
+def test_registrar_optout_schema():
+    """registrar_optout deve ter schema correto com campo motivo obrigatório."""
+    from app.agent.tools import TOOLS_SCHEMA
+    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "registrar_optout")
+    fn = schema["function"]
+    assert fn["name"] == "registrar_optout"
+    assert "motivo" in fn["parameters"]["properties"]
+    assert "motivo" in fn["parameters"]["required"]
+    desc = fn["description"]
+    assert "opt-out" in desc.lower() or "parar" in desc.lower()
+    assert "NAO envie" in desc or "nao envie" in desc.lower()
+
+
+@pytest.mark.asyncio
+async def test_registrar_optout_chama_update_lead_ai_enabled_false():
+    """registrar_optout deve chamar update_lead com ai_enabled=False e salvar system message."""
+    with patch("app.agent.tools.update_lead") as mock_update, \
+         patch("app.agent.tools.save_message") as mock_save:
+        result = await execute_tool(
+            "registrar_optout",
+            {"motivo": "clicou parar mensagens"},
+            lead_id="lead-optout-1",
+            phone="5511999990001",
+            conversation_id="conv-optout-1",
+        )
+    assert result == "Opt-out registrado."
+    mock_update.assert_called_once_with("lead-optout-1", ai_enabled=False)
+    mock_save.assert_called_once()
+    call_args = mock_save.call_args
+    assert "registrar_optout" in call_args[0][2]
+    assert "clicou parar mensagens" in call_args[0][2]
+
+
+@pytest.mark.asyncio
+async def test_registrar_optout_retorna_erro_se_update_lead_falha(caplog):
+    """registrar_optout deve retornar mensagem de erro se update_lead lançar exceção."""
+    import logging
+    with patch("app.agent.tools.update_lead", side_effect=RuntimeError("db timeout")), \
+         patch("app.agent.tools.save_message") as mock_save:
+        caplog.set_level(logging.ERROR, logger="app.agent.tools")
+        result = await execute_tool(
+            "registrar_optout",
+            {"motivo": "nao quer mais contato"},
+            lead_id="lead-optout-2",
+            phone="5511999990002",
+            conversation_id="conv-optout-2",
+        )
+    assert "ERRO" in result or "erro" in result.lower()
+    assert "db timeout" in result
+    mock_save.assert_not_called()
+    assert any("registrar_optout" in rec.message and rec.levelname == "ERROR" for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_registrar_optout_nao_chama_create_deal_nem_human_control():
+    """registrar_optout NÃO deve chamar create_deal, não deve setar human_control."""
+    with patch("app.agent.tools.update_lead") as mock_update, \
+         patch("app.agent.tools.save_message"), \
+         patch("app.agent.tools.create_deal") as mock_create_deal:
+        await execute_tool(
+            "registrar_optout",
+            {"motivo": "opt-out"},
+            lead_id="lead-optout-3",
+            phone="5511999990003",
+        )
+    mock_create_deal.assert_not_called()
+    # update_lead must only receive ai_enabled=False — not human_control or status
+    call_kwargs = mock_update.call_args[1]
+    assert "human_control" not in call_kwargs
+    assert "status" not in call_kwargs
+    assert call_kwargs.get("ai_enabled") is False
