@@ -479,7 +479,8 @@ async def main():
         "mode": "parallel_execution",
     }
     (run_dir / "run.json").write_text(
-        json.dumps(run_json, ensure_ascii=False, indent=2, default=str)
+        json.dumps(run_json, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
     )
 
     log.info(f"Artefatos em: {run_dir}")
