@@ -31,3 +31,27 @@ def test_context_builder_sem_nome():
     assert "O lead se chama" not in result
     assert "Template da campanha." in result
     assert "O lead está respondendo" in result
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — secretaria.py outbound não contém mais conteúdo transitório
+# ---------------------------------------------------------------------------
+
+def test_secretaria_outbound_sem_bloco_transitorio():
+    """SECRETARIA_PROMPT outbound não deve mais conter o bloco 'CONTEXTO DESTA ABORDAGEM'."""
+    from app.agent.prompts.valeria_outbound.secretaria import SECRETARIA_PROMPT
+
+    assert "CONTEXTO DESTA ABORDAGEM" not in SECRETARIA_PROMPT
+    assert "Voce iniciou este contato via campanha de WhatsApp. A mensagem que voce enviou foi" not in SECRETARIA_PROMPT
+    assert "O lead esta RESPONDENDO a essa mensagem agora" not in SECRETARIA_PROMPT
+
+
+def test_secretaria_outbound_mantem_regras_de_negocio():
+    """As regras de negócio e o funil devem permanecer no prompt."""
+    from app.agent.prompts.valeria_outbound.secretaria import SECRETARIA_PROMPT
+
+    assert "CONTEXTO OUTBOUND" in SECRETARIA_PROMPT
+    assert "POSTURA OUTBOUND" in SECRETARIA_PROMPT
+    assert "REGRAS CRITICAS DE SEGURANCA" in SECRETARIA_PROMPT
+    assert "ETAPA 1" in SECRETARIA_PROMPT
+    assert "ETAPA 4" in SECRETARIA_PROMPT
