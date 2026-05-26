@@ -35,6 +35,20 @@ function getCutoff(filter: DateFilter): Date | null {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+// PostgREST devolve relação to-one (conversations.lead_id → leads) como OBJETO,
+// não array. Mantém fallback para array por segurança.
+function pickLead(
+  raw: unknown
+): { last_customer_message_at: string | null } | null {
+  if (!raw) return null;
+  if (Array.isArray(raw)) {
+    return raw.length > 0
+      ? (raw[0] as { last_customer_message_at: string | null })
+      : null;
+  }
+  return raw as { last_customer_message_at: string | null };
+}
+
 // Fetches period-filtered conversations for SLA pair computation.
 async function fetchConversations(
   supabase: ReturnType<typeof createClient>,
@@ -59,10 +73,9 @@ async function fetchConversations(
 
     const rows: ConvRow[] = (data as unknown[]).map((r) => {
       const row = r as Record<string, unknown>;
-      const leadsArr = row.leads as Array<{ last_customer_message_at: string | null }> | null;
       return {
         ...(row as Omit<ConvRow, "leads">),
-        leads: Array.isArray(leadsArr) && leadsArr.length > 0 ? leadsArr[0] : null,
+        leads: pickLead(row.leads),
       } as ConvRow;
     });
 
@@ -94,10 +107,9 @@ async function fetchAllConvsForOverdue(
 
     const rows: OverdueConvRow[] = (data as unknown[]).map((r) => {
       const row = r as Record<string, unknown>;
-      const leadsArr = row.leads as Array<{ last_customer_message_at: string | null }> | null;
       return {
         last_seller_response_at: (row.last_seller_response_at as string | null) ?? null,
-        leads: Array.isArray(leadsArr) && leadsArr.length > 0 ? leadsArr[0] : null,
+        leads: pickLead(row.leads),
       };
     });
 
@@ -247,7 +259,14 @@ export function useJoaoSlaStats(filter: DateFilter = "7d"): JoaoSlaStats {
       .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, fetchAndCompute)
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // Recalcula a cada 60s: 'em atraso agora' depende do tempo decorrido,
+    // não só de eventos do banco.
+    const ticker = setInterval(fetchAndCompute, 60_000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(ticker);
+    };
   }, [fetchAndCompute]);
 
   return { ...stats, loading };
