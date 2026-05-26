@@ -32,24 +32,20 @@ function getCutoff(filter: DateFilter): Date | null {
 
 
 async function fetchConversations(
-  supabase: ReturnType<typeof createClient>,
-  cutoff: Date | null
+  supabase: ReturnType<typeof createClient>
 ): Promise<ConvRow[]> {
   const PAGE = 1000;
   const all: ConvRow[] = [];
   let offset = 0;
 
   while (true) {
-    let q = supabase
+    const { data, error } = await supabase
       .from("conversations")
       .select("id, created_at, last_seller_response_at, leads(last_customer_message_at)")
       .eq("channel_id", JOAO_CHANNEL_ID)
       .order("created_at", { ascending: false })
       .range(offset, offset + PAGE - 1);
 
-    if (cutoff) q = q.gte("created_at", cutoff.toISOString());
-
-    const { data, error } = await q;
     if (error || !data || data.length === 0) break;
 
     const rows: ConvRow[] = (data as unknown[]).map((r) => {
@@ -150,14 +146,19 @@ function computePairs(convs: ConvRow[], msgs: MsgRow[]): number[] {
   return pairs;
 }
 
-function computeStats(convs: ConvRow[], msgs: MsgRow[]) {
-  const pairs = computePairs(convs, msgs);
+function computeStats(convs: ConvRow[], msgs: MsgRow[], cutoff: Date | null) {
+  // SLA metrics (avg, worst) respect the selected period
+  const periodConvs = cutoff
+    ? convs.filter((c) => new Date(c.created_at) >= cutoff)
+    : convs;
+  const pairs = computePairs(periodConvs, msgs);
 
   const avgSlaMinutes =
     pairs.length > 0
       ? pairs.reduce((a, b) => a + b, 0) / pairs.length
       : null;
 
+  // overdueCount is real-time — all conversations regardless of period
   const overdueCount = convs.filter((conv) => {
     const lastCustomer = conv.leads?.last_customer_message_at;
     if (!lastCustomer) return false;
@@ -166,7 +167,6 @@ function computeStats(convs: ConvRow[], msgs: MsgRow[]) {
     return businessMinutesElapsed(new Date(lastCustomer)) > 20;
   }).length;
 
-  // Pior SLA do período: conversas já filtradas pelo cutoff, então o max dos pares é correto
   const worstSlaMinutes = pairs.length > 0 ? Math.max(...pairs) : null;
 
   return { avgSlaMinutes, overdueCount, worstSlaMinutes };
@@ -190,10 +190,10 @@ export function useJoaoSlaStats(filter: DateFilter = "7d"): JoaoSlaStats {
 
   const fetchAndCompute = useCallback(async () => {
     const cutoff = getCutoff(filter);
-    const convs = await fetchConversations(supabase, cutoff);
+    const convs = await fetchConversations(supabase);
     const convIds = convs.map((c) => c.id);
     const msgs = await fetchMessages(supabase, convIds);
-    setStats(computeStats(convs, msgs));
+    setStats(computeStats(convs, msgs, cutoff));
     setLoading(false);
   }, [filter]);
 
