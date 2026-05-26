@@ -18,6 +18,11 @@ interface ConvRow {
   leads: { last_customer_message_at: string | null } | null;
 }
 
+interface OverdueConvRow {
+  last_seller_response_at: string | null;
+  leads: { last_customer_message_at: string | null } | null;
+}
+
 interface MsgRow {
   conversation_id: string;
   sent_by: string;
@@ -30,22 +35,26 @@ function getCutoff(filter: DateFilter): Date | null {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-
+// Fetches period-filtered conversations for SLA pair computation.
 async function fetchConversations(
-  supabase: ReturnType<typeof createClient>
+  supabase: ReturnType<typeof createClient>,
+  cutoff: Date | null
 ): Promise<ConvRow[]> {
   const PAGE = 1000;
   const all: ConvRow[] = [];
   let offset = 0;
 
   while (true) {
-    const { data, error } = await supabase
+    let q = supabase
       .from("conversations")
       .select("id, created_at, last_seller_response_at, leads(last_customer_message_at)")
       .eq("channel_id", JOAO_CHANNEL_ID)
       .order("created_at", { ascending: false })
       .range(offset, offset + PAGE - 1);
 
+    if (cutoff) q = q.gte("created_at", cutoff.toISOString());
+
+    const { data, error } = await q;
     if (error || !data || data.length === 0) break;
 
     const rows: ConvRow[] = (data as unknown[]).map((r) => {
@@ -55,6 +64,41 @@ async function fetchConversations(
         ...(row as Omit<ConvRow, "leads">),
         leads: Array.isArray(leadsArr) && leadsArr.length > 0 ? leadsArr[0] : null,
       } as ConvRow;
+    });
+
+    all.push(...rows);
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
+
+  return all;
+}
+
+// Lightweight fetch of ALL conversations for real-time overdueCount.
+// Does NOT fetch messages — only needs seller/customer timestamps.
+async function fetchAllConvsForOverdue(
+  supabase: ReturnType<typeof createClient>
+): Promise<OverdueConvRow[]> {
+  const PAGE = 1000;
+  const all: OverdueConvRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("last_seller_response_at, leads(last_customer_message_at)")
+      .eq("channel_id", JOAO_CHANNEL_ID)
+      .range(offset, offset + PAGE - 1);
+
+    if (error || !data || data.length === 0) break;
+
+    const rows: OverdueConvRow[] = (data as unknown[]).map((r) => {
+      const row = r as Record<string, unknown>;
+      const leadsArr = row.leads as Array<{ last_customer_message_at: string | null }> | null;
+      return {
+        last_seller_response_at: (row.last_seller_response_at as string | null) ?? null,
+        leads: Array.isArray(leadsArr) && leadsArr.length > 0 ? leadsArr[0] : null,
+      };
     });
 
     all.push(...rows);
@@ -96,11 +140,8 @@ async function fetchMessages(
 /**
  * Computa pares (última msg do cliente antes de resposta do vendedor → msg do vendedor).
  * Retorna lista de businessMinutes por par.
- * Também inclui conversas "finalizadas" via last_seller_response_at quando não há
- * mensagem seller após a última msg do cliente.
  */
 function computePairs(convs: ConvRow[], msgs: MsgRow[]): number[] {
-  // Agrupa mensagens por conversa
   const byConv = new Map<string, MsgRow[]>();
   for (const m of msgs) {
     if (!byConv.has(m.conversation_id)) byConv.set(m.conversation_id, []);
@@ -111,13 +152,10 @@ function computePairs(convs: ConvRow[], msgs: MsgRow[]): number[] {
 
   for (const conv of convs) {
     const convMsgs = byConv.get(conv.id) ?? [];
-    // convMsgs já estão ordenados por created_at ASC
-
     let lastUserAt: string | null = null;
 
     for (const msg of convMsgs) {
       if (msg.sent_by === "user") {
-        // Acumula — mantém a última msg do cliente antes da resposta do vendedor
         lastUserAt = msg.created_at;
       } else if (msg.sent_by === "seller" && lastUserAt) {
         const mins = businessMinutesBetween(
@@ -125,12 +163,11 @@ function computePairs(convs: ConvRow[], msgs: MsgRow[]): number[] {
           new Date(msg.created_at)
         );
         if (mins >= 0) pairs.push(mins);
-        lastUserAt = null; // ciclo encerrado
+        lastUserAt = null;
       }
     }
 
-    // Se sobrou msg do cliente sem resposta textual, verifica se a conversa
-    // foi "finalizada" (last_seller_response_at atualizado via botão Finalizar)
+    // Conversa "finalizada" via botão Finalizar
     if (lastUserAt && conv.last_seller_response_at) {
       const lastSeller = conv.last_seller_response_at;
       if (lastSeller > lastUserAt) {
@@ -146,11 +183,11 @@ function computePairs(convs: ConvRow[], msgs: MsgRow[]): number[] {
   return pairs;
 }
 
-function computeStats(convs: ConvRow[], msgs: MsgRow[], cutoff: Date | null) {
-  // SLA metrics (avg, worst) respect the selected period
-  const periodConvs = cutoff
-    ? convs.filter((c) => new Date(c.created_at) >= cutoff)
-    : convs;
+function computeStats(
+  periodConvs: ConvRow[],
+  msgs: MsgRow[],
+  allConvs: OverdueConvRow[]
+) {
   const pairs = computePairs(periodConvs, msgs);
 
   const avgSlaMinutes =
@@ -158,16 +195,16 @@ function computeStats(convs: ConvRow[], msgs: MsgRow[], cutoff: Date | null) {
       ? pairs.reduce((a, b) => a + b, 0) / pairs.length
       : null;
 
-  // overdueCount is real-time — all conversations regardless of period
-  const overdueCount = convs.filter((conv) => {
+  const worstSlaMinutes = pairs.length > 0 ? Math.max(...pairs) : null;
+
+  // overdueCount usa TODAS as conversas — métrica em tempo real, sem cutoff
+  const overdueCount = allConvs.filter((conv) => {
     const lastCustomer = conv.leads?.last_customer_message_at;
     if (!lastCustomer) return false;
     const lastSeller = conv.last_seller_response_at;
     if (lastSeller && lastSeller >= lastCustomer) return false;
     return businessMinutesElapsed(new Date(lastCustomer)) > 20;
   }).length;
-
-  const worstSlaMinutes = pairs.length > 0 ? Math.max(...pairs) : null;
 
   return { avgSlaMinutes, overdueCount, worstSlaMinutes };
 }
@@ -190,10 +227,13 @@ export function useJoaoSlaStats(filter: DateFilter = "7d"): JoaoSlaStats {
 
   const fetchAndCompute = useCallback(async () => {
     const cutoff = getCutoff(filter);
-    const convs = await fetchConversations(supabase);
-    const convIds = convs.map((c) => c.id);
+    const [periodConvs, allConvs] = await Promise.all([
+      fetchConversations(supabase, cutoff),
+      fetchAllConvsForOverdue(supabase),
+    ]);
+    const convIds = periodConvs.map((c) => c.id);
     const msgs = await fetchMessages(supabase, convIds);
-    setStats(computeStats(convs, msgs, cutoff));
+    setStats(computeStats(periodConvs, msgs, allConvs));
     setLoading(false);
   }, [filter]);
 
