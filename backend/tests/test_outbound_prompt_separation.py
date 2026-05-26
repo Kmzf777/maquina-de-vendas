@@ -88,7 +88,7 @@ def _mock_openai_response(text: str = "resposta da ia"):
 
 def _capture_messages(create_mock):
     """Retorna a lista de messages passada na primeira chamada ao create."""
-    call_args = create_mock.call_args
+    call_args = create_mock.call_args_list[0]
     return call_args.kwargs.get("messages") or call_args.args[0]
 
 
