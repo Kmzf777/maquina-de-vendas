@@ -21,48 +21,51 @@ def _get_env_tag() -> str:
 
 async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) -> None:
     """Event-driven: enroll lead in all active campaigns with matching trigger."""
-    data = data or {}
-    now = datetime.now(timezone.utc)
+    try:
+        data = data or {}
+        now = datetime.now(timezone.utc)
 
-    if event_type == "message_received":
-        message_body = (data.get("body") or "").lower()
-        for tn in get_campaigns_with_trigger_type("keyword_received"):
-            cfg = tn.get("config") or {}
-            keywords = [k.lower() for k in (cfg.get("keywords") or []) if k]
-            if not keywords or not any(k in message_body for k in keywords):
+        if event_type == "message_received":
+            message_body = (data.get("body") or "").lower()
+            for tn in get_campaigns_with_trigger_type("keyword_received"):
+                cfg = tn.get("config") or {}
+                keywords = [k.lower() for k in (cfg.get("keywords") or []) if k]
+                if not keywords or not any(k in message_body for k in keywords):
+                    continue
+                if is_already_enrolled(tn["campaign_id"], lead_id) or not tn.get("next_node_id"):
+                    continue
+                try:
+                    create_enrollment(
+                        campaign_id=tn["campaign_id"],
+                        lead_id=lead_id,
+                        current_node_id=tn["next_node_id"],
+                        next_execute_at=now,
+                    )
+                    logger.info("[AUTOMATION] Enrolled %s via keyword_received", lead_id)
+                except Exception as enroll_err:
+                    logger.warning("[AUTOMATION] Failed to enroll %s via keyword_received: %s", lead_id, enroll_err)
+            return
+
+        for trigger_node in get_campaigns_with_trigger_type(event_type):
+            if not _passes_filter(event_type, trigger_node.get("config") or {}, data):
                 continue
-            if is_already_enrolled(tn["campaign_id"], lead_id) or not tn.get("next_node_id"):
+            if is_already_enrolled(trigger_node["campaign_id"], lead_id):
+                continue
+            if not trigger_node.get("next_node_id"):
                 continue
             try:
                 create_enrollment(
-                    campaign_id=tn["campaign_id"],
+                    campaign_id=trigger_node["campaign_id"],
                     lead_id=lead_id,
-                    current_node_id=tn["next_node_id"],
+                    current_node_id=trigger_node["next_node_id"],
                     next_execute_at=now,
+                    deal_id=data.get("deal_id"),
                 )
-                logger.info("[AUTOMATION] Enrolled %s via keyword_received", lead_id)
-            except Exception as e:
-                logger.warning("[AUTOMATION] Failed to enroll %s via keyword_received: %s", lead_id, e)
-        return
-
-    for trigger_node in get_campaigns_with_trigger_type(event_type):
-        if not _passes_filter(event_type, trigger_node.get("config") or {}, data):
-            continue
-        if is_already_enrolled(trigger_node["campaign_id"], lead_id):
-            continue
-        if not trigger_node.get("next_node_id"):
-            continue
-        try:
-            create_enrollment(
-                campaign_id=trigger_node["campaign_id"],
-                lead_id=lead_id,
-                current_node_id=trigger_node["next_node_id"],
-                next_execute_at=now,
-                deal_id=data.get("deal_id"),
-            )
-            logger.info("[AUTOMATION] Enrolled %s via %s", lead_id, event_type)
-        except Exception as e:
-            logger.warning("[AUTOMATION] Failed to enroll %s via %s: %s", lead_id, event_type, e)
+                logger.info("[AUTOMATION] Enrolled %s via %s", lead_id, event_type)
+            except Exception as enroll_err:
+                logger.warning("[AUTOMATION] Failed to enroll %s via %s: %s", lead_id, event_type, enroll_err)
+    except Exception as e:
+        logger.error("[AUTOMATION] fire_trigger(%s, lead=%s) failed: %s", event_type, lead_id, e)
 
 
 def _passes_filter(event_type: str, cfg: dict, data: dict) -> bool:
