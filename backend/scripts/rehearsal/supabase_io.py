@@ -25,7 +25,7 @@ def wipe_lead(phone: str) -> None:
         return
     lead_id = lead["id"]
     # Order matters due to foreign keys: children first
-    for table in ("messages", "conversations", "deals", "token_usage"):
+    for table in ("messages", "follow_up_jobs", "conversations", "deals", "token_usage"):
         sb.table(table).delete().eq("lead_id", lead_id).execute()
     sb.table("leads").delete().eq("id", lead_id).execute()
     logger.info(f"wipe_lead: deleted lead {lead_id} (phone={phone})")
