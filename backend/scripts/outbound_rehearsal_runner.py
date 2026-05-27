@@ -9,7 +9,7 @@ Envs necessárias (em .env.local):
     GEMINI_API_KEY, DEV_BACKEND_URL, SUPABASE_URL,
     SUPABASE_SERVICE_KEY, REDIS_URL
 Opcionais:
-    REHEARSAL_TURN_TIMEOUT (default 20), REHEARSAL_MAX_TURNS (default 20)
+    REHEARSAL_TURN_TIMEOUT (default 45), REHEARSAL_MAX_TURNS (default 20)
 """
 import asyncio
 import datetime as dt
@@ -45,7 +45,7 @@ log = logging.getLogger("outbound_rehearsal")
 DEV_BACKEND_URL = os.environ.get("DEV_BACKEND_URL", "http://127.0.0.1:8001")
 META_PHONE_NUMBER_ID = os.environ.get("META_PHONE_NUMBER_ID", "rehearsal")
 MAX_TURNS = int(os.environ.get("REHEARSAL_MAX_TURNS", "20"))
-TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "20"))
+TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "45"))
 POLL_INTERVAL = 0.5
 _MAX_CONNECT_RETRIES = 2
 OUTPUT_ROOT = (
