@@ -304,7 +304,7 @@ async def _run_with_jitter(
     redis,
     run_dir: Path,
 ) -> dict:
-    phone = f"5511{(idx + 1):08d}"
+    phone = f"55119{(idx + 1):08d}"
     log.info(f"[{archetype.id}] Agendado — phone={phone} jitter={idx * 2.0}s")
     await asyncio.sleep(idx * 2.0)
     return await _run_archetype(archetype, client, redis, run_dir, phone)
@@ -369,7 +369,7 @@ async def main():
         "git_sha": _git_sha(),
         "archetypes": [a.id for a in archetypes],
         "dev_backend_url": DEV_BACKEND_URL,
-        "phones": {a.id: f"5511{(idx + 1):08d}" for idx, a in enumerate(archetypes)},
+        "phones": {a.id: f"55119{(idx + 1):08d}" for idx, a in enumerate(archetypes)},
         "gemini_model": gemini_actor.MODEL_NAME,
         "verifications": verifications,
     }
