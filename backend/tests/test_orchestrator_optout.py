@@ -93,8 +93,8 @@ async def test_registrar_optout_nao_envia_handoff():
 
 
 @pytest.mark.asyncio
-async def test_registrar_optout_retorna_vazio_se_sem_despedida():
-    """Se o modelo não gerou texto de despedida, run_agent retorna string vazia (não quebra)."""
+async def test_registrar_optout_retorna_fallback_se_sem_despedida():
+    """Se o modelo não gerou texto de despedida, run_agent retorna mensagem de fallback padrão."""
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -124,5 +124,5 @@ async def test_registrar_optout_retorna_vazio_se_sem_despedida():
         mock_client.return_value.chat.completions.create = AsyncMock(return_value=first_response)
         result = await run_agent(conversation, "sair")
 
-    assert result == ""
+    assert result == "Entendido, sem problema. Não entrarei mais em contato."
     assert mock_client.return_value.chat.completions.create.call_count == 1

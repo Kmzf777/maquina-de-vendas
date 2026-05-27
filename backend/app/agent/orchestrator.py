@@ -219,7 +219,7 @@ async def run_agent(
         # wrote lives in message.content of this same turn — return it now and skip
         # the second API call (there is nothing left to say after opt-out).
         if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
-            return message.content or ""
+            return message.content or "Entendido, sem problema. Não entrarei mais em contato."
 
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.

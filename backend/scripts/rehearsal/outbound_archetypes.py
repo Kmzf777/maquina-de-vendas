@@ -130,7 +130,8 @@ O4 = OutboundArchetype(
     persona_prompt=_O4_PERSONA,
     first_message="oi quem é?? café??",
     hard_checks=[
-        visited_multiple_stages(2),
+        reached_stage("atacado"),
+        has_tool_call("encaminhar_humano"),
         min_turns(4),
     ],
     forbids=list(UNIVERSAL_FORBIDS),
