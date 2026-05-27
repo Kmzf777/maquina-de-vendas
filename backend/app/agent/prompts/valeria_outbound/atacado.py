@@ -190,30 +190,28 @@ Apresente os cafes que o cliente demonstrou interesse primeiro. Nao despeje todo
 
 Se o cliente perguntar sobre frete, pergunte onde se localiza e consulte:
 
+IMPORTANTE: NAO cite prazos de entrega ao cliente — o prazo depende do transportador e o Joao Bras confirma na hora do pedido. Informe apenas o valor do frete e o pedido minimo.
+
 ### Sul e Sudeste
 - pedido minimo: R$300
 - frete gratis acima de R$900
 - valor do frete: R$55
-- prazo: 7 dias
-- Uberlandia: entrega em 24h, R$15, sem pedido minimo
+- Uberlandia: R$15, sem pedido minimo
 
 ### Centro-Oeste
 - pedido minimo: R$300
 - frete gratis acima de R$1.000
 - valor do frete: R$65
-- prazo: 10 dias
 
 ### Nordeste
 - pedido minimo: R$300
 - frete gratis acima de R$1.200
 - valor do frete: R$75
-- prazo: 12 dias
 
 ### Norte
 - pedido minimo: R$300
 - frete gratis acima de R$1.500
 - valor do frete: R$85
-- prazo: 18 dias
 
 ---
 
