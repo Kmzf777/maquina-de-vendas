@@ -82,7 +82,7 @@ async def test_process_lp_lead_creates_lead_and_conversation():
     with patch("app.lp_webhook.service.normalize_phone", return_value="5511999990001"), \
          patch("app.lp_webhook.service.get_or_create_lead", return_value=fake_lead), \
          patch("app.lp_webhook.service.get_or_create_conversation", return_value=fake_conv), \
-         patch("app.lp_webhook.service.get_lp_config", return_value=fake_config), \
+         patch("app.lp_webhook.service.get_lp_config", new=AsyncMock(return_value={"channel_id": "ch-1", "template_name": "boas_vindas", "language_code": "pt_BR", "delay_minutes": 15})), \
          patch("app.lp_webhook.service._schedule_lp_welcome") as mock_schedule, \
          patch("app.lp_webhook.service.get_supabase") as mock_sb:
 
@@ -122,7 +122,7 @@ async def test_process_lp_lead_skips_job_when_config_incomplete():
 
     with patch("app.lp_webhook.service.normalize_phone", return_value="5511999990001"), \
          patch("app.lp_webhook.service.get_or_create_lead", return_value=fake_lead), \
-         patch("app.lp_webhook.service.get_lp_config", return_value=fake_config), \
+         patch("app.lp_webhook.service.get_lp_config", new=AsyncMock(return_value={"channel_id": "", "template_name": "", "language_code": "pt_BR", "delay_minutes": 15})), \
          patch("app.lp_webhook.service._schedule_lp_welcome") as mock_schedule, \
          patch("app.lp_webhook.service.get_supabase") as mock_sb:
 

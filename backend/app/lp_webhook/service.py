@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from app.config import get_settings as _get_settings
+from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.leads.service import normalize_phone, get_or_create_lead
 from app.conversations.service import get_or_create_conversation
@@ -30,7 +30,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 # Use same pattern as follow_up/service.py
-_ENV_TAG = "dev" if _get_settings().is_dev_env else "production"
+_ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
 
 async def get_lp_config(redis) -> dict:
@@ -175,6 +175,12 @@ def _schedule_lp_welcome(
             "language_code": language_code,
         },
     }
+
+    # Cancel any existing pending lp_welcome jobs for this conversation (idempotency)
+    sb.table("follow_up_jobs").update({
+        "status": "cancelled",
+        "cancel_reason": "rescheduled",
+    }).eq("conversation_id", conversation_id).eq("status", "pending").eq("job_type", "lp_welcome").execute()
 
     try:
         result = sb.table("follow_up_jobs").insert(job).execute()
