@@ -69,6 +69,10 @@ async def process_due_followups(now: datetime | None = None) -> None:
             await _process_handoff_rescue(job, now)
             continue
 
+        if job.get("job_type") == "lp_welcome":
+            await _process_lp_welcome(job, now)
+            continue
+
         conversation_id = job["conversation_id"]
         lead = job["leads"]
         channel = job["channels"]
@@ -228,6 +232,34 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
             exc_info=True,
         )
         return  # Não marca sent → job será retentado no próximo tick do worker
+
+    _mark_sent(job["id"])
+
+
+async def _process_lp_welcome(job: dict, now: datetime) -> None:
+    """Dispara template de boas-vindas para lead capturado por landing page."""
+    metadata = job.get("metadata") or {}
+    lead_phone = metadata.get("lead_phone")
+    template_name = metadata.get("template_name")
+    language_code = metadata.get("language_code", "pt_BR")
+    channel = job["channels"]
+
+    if not lead_phone or not template_name:
+        _cancel_job(job["id"], "missing_metadata")
+        logger.error(
+            "[LP_WELCOME] Job %s sem lead_phone ou template_name no metadata", job["id"]
+        )
+        return
+
+    try:
+        provider = MetaCloudClient(channel["provider_config"])
+        await provider.send_template(lead_phone, template_name, language_code=language_code)
+        logger.info("[LP_WELCOME] Template '%s' enviado para %s", template_name, lead_phone)
+    except Exception as exc:
+        logger.error(
+            "[LP_WELCOME] Falha ao enviar template para %s: %s", lead_phone, exc, exc_info=True
+        )
+        return  # Não marca sent → retry automático no próximo tick
 
     _mark_sent(job["id"])
 

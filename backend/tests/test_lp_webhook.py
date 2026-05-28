@@ -185,3 +185,88 @@ def test_schedule_lp_welcome_inserts_correct_job():
     fire_at = datetime.fromisoformat(job["fire_at"])
     expected = now + timedelta(minutes=15)
     assert abs((fire_at - expected).total_seconds()) < 2
+
+
+# ── _process_lp_welcome (scheduler) ──────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_process_lp_welcome_dispatches_template_and_marks_sent():
+    from app.follow_up.scheduler import _process_lp_welcome
+
+    now = datetime(2026, 5, 28, 10, 15, 0, tzinfo=timezone.utc)
+
+    job = {
+        "id": "job-lp-1",
+        "lead_id": "lead-1",
+        "conversation_id": "conv-1",
+        "channel_id": "ch-1",
+        "channels": {"id": "ch-1", "provider": "meta_cloud", "provider_config": {"access_token": "tok"}},
+        "metadata": {
+            "lead_phone": "5534999999999",
+            "template_name": "boas_vindas",
+            "language_code": "pt_BR",
+        },
+    }
+
+    mock_provider = AsyncMock()
+    mock_provider.send_template = AsyncMock()
+
+    with patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_provider) as mock_meta, \
+         patch("app.follow_up.scheduler._mark_sent") as mock_mark_sent:
+
+        await _process_lp_welcome(job, now)
+
+    mock_provider.send_template.assert_awaited_once_with(
+        "5534999999999", "boas_vindas", language_code="pt_BR"
+    )
+    mock_mark_sent.assert_called_once_with("job-lp-1")
+
+
+@pytest.mark.anyio
+async def test_process_lp_welcome_cancels_when_metadata_missing():
+    from app.follow_up.scheduler import _process_lp_welcome
+
+    now = datetime(2026, 5, 28, 10, 15, 0, tzinfo=timezone.utc)
+
+    job = {
+        "id": "job-lp-2",
+        "lead_id": "lead-1",
+        "channels": {"provider_config": {}},
+        "metadata": {},  # missing lead_phone and template_name
+    }
+
+    with patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
+         patch("app.follow_up.scheduler.MetaCloudClient") as mock_meta:
+
+        await _process_lp_welcome(job, now)
+
+    mock_cancel.assert_called_once_with("job-lp-2", "missing_metadata")
+    mock_meta.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_process_lp_welcome_does_not_mark_sent_on_send_failure():
+    from app.follow_up.scheduler import _process_lp_welcome
+
+    now = datetime(2026, 5, 28, 10, 15, 0, tzinfo=timezone.utc)
+
+    job = {
+        "id": "job-lp-3",
+        "lead_id": "lead-1",
+        "channels": {"provider_config": {}},
+        "metadata": {
+            "lead_phone": "5534999999999",
+            "template_name": "boas_vindas",
+            "language_code": "pt_BR",
+        },
+    }
+
+    mock_provider = AsyncMock()
+    mock_provider.send_template.side_effect = Exception("Meta API down")
+
+    with patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_provider), \
+         patch("app.follow_up.scheduler._mark_sent") as mock_mark_sent:
+
+        await _process_lp_welcome(job, now)
+
+    mock_mark_sent.assert_not_called()
