@@ -26,6 +26,7 @@ export interface Lead {
   on_hold: boolean;
   ai_enabled: boolean;
   notes: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface Pipeline {

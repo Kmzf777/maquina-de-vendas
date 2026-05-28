@@ -10,7 +10,7 @@ interface LeadSourcesChartProps {
 const UNIDENTIFIED_COLOR = "#b3b3b0";
 
 export function LeadSourcesChart({ leads }: LeadSourcesChartProps) {
-  const knownKeys = new Set(LP_ORIGINS.map((o) => o.key));
+  const knownKeys = new Set<string>(LP_ORIGINS.map((o) => o.key));
 
   const counts: { key: string; label: string; color: string; count: number }[] = LP_ORIGINS.map((o) => ({
     key: o.key,
