@@ -1,0 +1,197 @@
+"""Landing-page webhook service.
+
+Handles leads arriving from landing pages:
+  1. Normalizes phone and upserts lead in Supabase.
+  2. Optionally creates a conversation if channel_id is configured.
+  3. Optionally schedules a follow-up job (job_type='lp_welcome') via follow_up_jobs.
+
+Config is persisted in Redis under REDIS_CONFIG_KEY so it can be changed at runtime
+without a deploy.
+"""
+import json
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Any
+
+from app.config import get_settings as _get_settings
+from app.db.supabase import get_supabase
+from app.leads.service import normalize_phone, get_or_create_lead
+from app.conversations.service import get_or_create_conversation
+
+logger = logging.getLogger(__name__)
+
+REDIS_CONFIG_KEY = "lp_webhook:config"
+
+_DEFAULT_CONFIG: dict[str, Any] = {
+    "channel_id": "",
+    "template_name": "",
+    "language_code": "pt_BR",
+    "delay_minutes": 15,
+}
+
+# Use same pattern as follow_up/service.py
+_ENV_TAG = "dev" if _get_settings().is_dev_env else "production"
+
+
+async def get_lp_config(redis) -> dict:
+    """Read config from Redis. Returns defaults merged with stored values when set."""
+    raw = await redis.get(REDIS_CONFIG_KEY)
+    if not raw:
+        return dict(_DEFAULT_CONFIG)
+    try:
+        stored = json.loads(raw)
+    except Exception:
+        logger.warning("lp_webhook.service: invalid JSON in Redis config, using defaults")
+        return dict(_DEFAULT_CONFIG)
+    return {**_DEFAULT_CONFIG, **stored}
+
+
+async def save_lp_config(redis, config: dict) -> None:
+    """Persist config to Redis as JSON string."""
+    await redis.set(REDIS_CONFIG_KEY, json.dumps(config))
+
+
+async def process_landing_page_lead(payload: dict, redis) -> dict:
+    """
+    Main handler for landing-page lead submissions.
+
+    Steps:
+    1. normalize_phone(payload["whatsapp"]) — if empty/invalid return error
+    2. get_or_create_lead(phone, name=payload["nome"])
+    3. Update leads.email if payload["email"] non-empty
+    4. Update leads.metadata merging {"origem": payload["origem"]} if origem non-empty
+    5. get_lp_config(redis)
+    6. get_or_create_conversation(lead_id, config["channel_id"]) — only if channel_id non-empty
+    7. _schedule_lp_welcome(...) — only if channel_id AND template_name AND conversation_id all non-empty
+    8. Return {"ok": True, "lead_id": "...", "conversation_id": "..." or None}
+
+    All errors are caught, logged, and returned as {"ok": False, "error": "..."}.
+    """
+    try:
+        # Step 1 — normalize phone
+        phone = normalize_phone(payload.get("whatsapp", ""))
+        if not phone:
+            return {"ok": False, "error": "Telefone inválido ou ausente"}
+
+        # Step 2 — upsert lead
+        nome = payload.get("nome") or None
+        lead = get_or_create_lead(phone, name=nome)
+        lead_id: str = lead["id"]
+
+        sb = get_supabase()
+
+        # Step 3 — update email if provided
+        email = (payload.get("email") or "").strip()
+        if email:
+            try:
+                sb.table("leads").update({"email": email}).eq("id", lead_id).execute()
+            except Exception as exc:
+                logger.warning("lp_webhook: failed to update email for lead %s: %s", lead_id, exc)
+
+        # Step 4 — merge origem into metadata
+        origem = (payload.get("origem") or "").strip()
+        if origem:
+            try:
+                existing_meta: dict = lead.get("metadata") or {}
+                new_meta = {**existing_meta, "origem": origem}
+                sb.table("leads").update({"metadata": new_meta}).eq("id", lead_id).execute()
+            except Exception as exc:
+                logger.warning("lp_webhook: failed to update metadata for lead %s: %s", lead_id, exc)
+
+        # Step 5 — load config
+        config = await get_lp_config(redis)
+        channel_id: str = config.get("channel_id", "")
+        template_name: str = config.get("template_name", "")
+        language_code: str = config.get("language_code", "pt_BR")
+        delay_minutes: int = int(config.get("delay_minutes", 15))
+
+        conversation_id: str | None = None
+
+        # Step 6 — create conversation if channel configured
+        if channel_id:
+            try:
+                conv = get_or_create_conversation(lead_id, channel_id)
+                conversation_id = conv["id"]
+            except Exception as exc:
+                logger.error(
+                    "lp_webhook: failed to get/create conversation lead=%s channel=%s: %s",
+                    lead_id, channel_id, exc,
+                )
+
+        # Step 7 — schedule welcome job if everything is available
+        if channel_id and template_name and conversation_id:
+            try:
+                _schedule_lp_welcome(
+                    conversation_id=conversation_id,
+                    lead_id=lead_id,
+                    channel_id=channel_id,
+                    lead_phone=phone,
+                    template_name=template_name,
+                    language_code=language_code,
+                    delay_minutes=delay_minutes,
+                )
+            except Exception as exc:
+                logger.error(
+                    "lp_webhook: failed to schedule lp_welcome lead=%s: %s",
+                    lead_id, exc,
+                )
+
+        return {"ok": True, "lead_id": lead_id, "conversation_id": conversation_id}
+
+    except Exception as exc:
+        logger.exception("lp_webhook: unexpected error processing lead: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def _schedule_lp_welcome(
+    conversation_id: str,
+    lead_id: str,
+    channel_id: str,
+    lead_phone: str,
+    template_name: str,
+    language_code: str,
+    delay_minutes: int,
+) -> None:
+    """Insert a follow_up_jobs row with job_type='lp_welcome'.
+
+    Raises RuntimeError if the insert returns empty data.
+    """
+    sb = get_supabase()
+    now = datetime.now(timezone.utc)
+    fire_at = (now + timedelta(minutes=delay_minutes)).isoformat()
+
+    job = {
+        "conversation_id": conversation_id,
+        "lead_id": lead_id,
+        "channel_id": channel_id,
+        "sequence": 1,
+        "fire_at": fire_at,
+        "status": "pending",
+        "env_tag": _ENV_TAG,
+        "job_type": "lp_welcome",
+        "metadata": {
+            "lead_phone": lead_phone,
+            "template_name": template_name,
+            "language_code": language_code,
+        },
+    }
+
+    try:
+        result = sb.table("follow_up_jobs").insert(job).execute()
+    except Exception as exc:
+        logger.error(
+            "[LP_WELCOME] Erro ao inserir job para lead %s: %s", lead_id, exc
+        )
+        raise RuntimeError(
+            f"Falha ao agendar job lp_welcome para lead {lead_id}"
+        ) from exc
+
+    if not result.data:
+        raise RuntimeError(
+            f"lp_welcome insert returned empty data for lead {lead_id}"
+        )
+
+    logger.info(
+        "[LP_WELCOME] Agendado em %dmin lead=%s conversation=%s",
+        delay_minutes, lead_id, conversation_id,
+    )
