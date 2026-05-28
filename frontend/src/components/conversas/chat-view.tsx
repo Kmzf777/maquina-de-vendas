@@ -6,7 +6,7 @@ import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 import { getWindowStatus } from "@/lib/window-status";
 import { TemplateDispatchModal } from "@/components/conversas/template-dispatch-modal";
 import { ChatHeader } from "@/components/conversas/chat-header";
-import { MessageList } from "@/components/conversas/message-list";
+import { MessageList, type MessageListHandle } from "@/components/conversas/message-list";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 
@@ -35,8 +35,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [dispatchSuccess, setDispatchSuccess] = useState(false);
   const [quickSendPhone, setQuickSendPhone] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
+  const messageListRef = useRef<MessageListHandle>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Media states
@@ -61,6 +63,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     setShowTemplateModal(false);
     setDispatchSuccess(false);
     setQuickSendPhone(null);
+    setReplyingTo(null);
     setMediaState('idle');
     setMediaBlob(null);
     setMediaFilename("");
@@ -111,6 +114,17 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       stage: null,
       sent_by: "seller",
       created_at: new Date().toISOString(),
+      ...(replyingTo?.wamid
+        ? {
+            quoted_wamid: replyingTo.wamid,
+            quoted_message: {
+              id: replyingTo.id,
+              content: replyingTo.content,
+              role: replyingTo.role,
+              message_type: replyingTo.message_type ?? null,
+            },
+          }
+        : {}),
     };
 
     setText("");
@@ -123,7 +137,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       const res = await fetch(`/api/conversations/${conversation.id}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: content }),
+        body: JSON.stringify({
+          text: content,
+          ...(replyingTo?.wamid ? { quoted_wamid: replyingTo.wamid } : {}),
+        }),
         signal: controller.signal,
         keepalive: true,
       });
@@ -140,6 +157,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       setOptimisticMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
       setSending(false);
       sendingRef.current = false;
+      setReplyingTo(null);
     }
   }
 
@@ -316,11 +334,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       />
 
       <MessageList
+        ref={messageListRef}
         key={conversation.id}
         messages={displayMessages}
         loading={loading}
         conversationId={conversation.id}
         onContactDispatch={handleContactDispatch}
+        onReply={(msg) => setReplyingTo(msg)}
       />
 
       <WhatsappWindowIndicator
@@ -405,7 +425,39 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
           </button>
         </div>
       ) : (
-        <div className="border-t border-[#dedbd6] bg-[#faf9f6] p-3 flex gap-2 flex-shrink-0">
+        <div className="border-t border-[#dedbd6] bg-[#faf9f6] flex flex-col flex-shrink-0">
+          {/* Reply preview */}
+          {replyingTo && (
+            <div className="mx-3 mt-2 mb-1 flex items-center gap-2 rounded-lg border-l-4 border-[#25d366] bg-[#f7f7f7] pl-2 pr-3 py-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-[#25d366] mb-0.5">
+                  {replyingTo.role === "user" ? "Lead" : "Você"}
+                </p>
+                <p className="text-xs text-[#666] truncate">
+                  {replyingTo.message_type && replyingTo.message_type !== "text"
+                    ? ({
+                        image: "📷 Imagem",
+                        audio: "🎵 Áudio",
+                        video: "🎬 Vídeo",
+                        document: "📄 Documento",
+                        sticker: "😀 Figurinha",
+                      } as Record<string, string>)[replyingTo.message_type] ?? "📎 Mídia"
+                    : replyingTo.content}
+                </p>
+              </div>
+              <button
+                onClick={() => setReplyingTo(null)}
+                className="text-[#999] hover:text-[#333] transition-colors flex-shrink-0"
+                aria-label="Cancelar resposta"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
+          <div className="p-3 flex gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -454,6 +506,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           </button>
+          </div>
         </div>
       )}
 

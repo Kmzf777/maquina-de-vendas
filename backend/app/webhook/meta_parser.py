@@ -127,6 +127,8 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     logger.info(f"Skipping unsupported Meta message type: {msg_type}")
                     continue
 
+                quoted_wamid: str | None = msg.get("context", {}).get("id")
+
                 messages.append(IncomingMessage(
                     from_number=from_number,
                     remote_jid="",
@@ -139,6 +141,7 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     push_name=push_name,
                     document_name=document_name,
                     metadata=metadata_dict,
+                    quoted_wamid=quoted_wamid,
                 ))
 
     return messages

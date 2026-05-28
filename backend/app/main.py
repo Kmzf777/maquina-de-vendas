@@ -65,6 +65,7 @@ from app.templates.router import router as templates_router
 from app.follow_up.router import router as follow_up_router
 from app.campaigns.router import router as campaigns_router
 from app.automation.router import router as automation_router
+from app.lp_webhook.router import router as lp_webhook_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
@@ -81,6 +82,7 @@ app.include_router(templates_router)
 app.include_router(follow_up_router)
 app.include_router(campaigns_router)
 app.include_router(automation_router)
+app.include_router(lp_webhook_router)
 
 
 @app.get("/health")

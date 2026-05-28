@@ -192,5 +192,31 @@ export async function GET(
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json((data ?? []).reverse());
+
+  const messages = (data ?? []).reverse();
+
+  // Build wamid → message lookup for resolving quoted messages
+  const wamidMap = new Map<string, typeof messages[0]>();
+  for (const msg of messages) {
+    if (msg.wamid) wamidMap.set(msg.wamid, msg);
+  }
+
+  // Attach quoted_message to each message that has quoted_wamid
+  const enriched = messages.map((msg) => {
+    if (!msg.quoted_wamid) return msg;
+    const quoted = wamidMap.get(msg.quoted_wamid);
+    return {
+      ...msg,
+      quoted_message: quoted
+        ? {
+            id: quoted.id,
+            content: quoted.content,
+            role: quoted.role,
+            message_type: quoted.message_type ?? null,
+          }
+        : null,
+    };
+  });
+
+  return NextResponse.json(enriched);
 }

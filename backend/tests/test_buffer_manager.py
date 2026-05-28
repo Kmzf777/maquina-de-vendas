@@ -43,7 +43,10 @@ async def test_push_texto_imediato_quando_buffer_desativado(fake_redis):
     with patch("app.buffer.processor.process_buffered_messages", new_callable=AsyncMock) as mock_process:
         await push_to_buffer(fake_redis, msg)
 
-    mock_process.assert_called_once_with("5511999999999", "oi direto", "chan-uuid")
+    mock_process.assert_called_once_with(
+        "5511999999999", "oi direto", "chan-uuid",
+        wamid="wamid.test1", quoted_wamid=None,
+    )
 
 
 async def test_segunda_push_estende_lock(fake_redis, monkeypatch):
@@ -147,6 +150,32 @@ async def test_media_url_gera_placeholder_no_buffer(fake_redis):
     assert len(items) == 1
     assert "audio" in items[0]
     assert "media_url" in items[0]
+
+
+async def test_push_imediato_passa_wamid_e_quoted_wamid(fake_redis):
+    """Immediate mode deve passar wamid e quoted_wamid para process_buffered_messages."""
+    await fake_redis.set("config:buffer_enabled", "0")
+    msg = IncomingMessage(
+        from_number="5511999999999",
+        remote_jid="5511999999999@s.whatsapp.net",
+        message_id="wamid.incoming1",
+        timestamp="123",
+        type="text",
+        text="sim, esse mesmo",
+        channel_id="chan-uuid",
+        quoted_wamid="wamid.original1",
+    )
+
+    with patch("app.buffer.processor.process_buffered_messages", new_callable=AsyncMock) as mock_process:
+        await push_to_buffer(fake_redis, msg)
+
+    mock_process.assert_called_once_with(
+        "5511999999999",
+        "sim, esse mesmo",
+        "chan-uuid",
+        wamid="wamid.incoming1",
+        quoted_wamid="wamid.original1",
+    )
 
 
 @pytest.mark.asyncio
