@@ -89,6 +89,15 @@ export interface Message {
   metadata?: Record<string, unknown> | null;
   wamid?: string | null;
   delivery_status?: "sent" | "delivered" | "read" | null;
+  quoted_wamid?: string | null;
+  quoted_message?: QuotedMessage | null;
+}
+
+export interface QuotedMessage {
+  id: string;
+  content: string | null;
+  role: string;
+  message_type?: string | null;
 }
 
 export interface Tag {
