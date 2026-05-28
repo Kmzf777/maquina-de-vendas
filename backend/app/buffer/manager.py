@@ -128,12 +128,13 @@ async def _wait_and_flush(r: aioredis.Redis, phone: str, channel_id: str):
     # Clean up timer reference
     _active_timers.pop(timer_key, None)
 
+    pending_wamid = await r.get(f"pending_wamid:{phone}:{channel_id}")
+    pending_quoted = await r.get(f"pending_quoted:{phone}:{channel_id}")
+    await r.delete(f"pending_wamid:{phone}:{channel_id}")
+    await r.delete(f"pending_quoted:{phone}:{channel_id}")
+
     if messages:
         combined = "\n".join(messages)
-        pending_wamid = await r.get(f"pending_wamid:{phone}:{channel_id}")
-        pending_quoted = await r.get(f"pending_quoted:{phone}:{channel_id}")
-        await r.delete(f"pending_wamid:{phone}:{channel_id}")
-        await r.delete(f"pending_quoted:{phone}:{channel_id}")
         logger.info(f"Buffer flushed for {phone}: {len(messages)} messages")
         await process_buffered_messages(
             phone, combined, channel_id,
