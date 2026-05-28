@@ -73,6 +73,15 @@ export function QuickSendModal({ open, onClose, onSuccess, prefillPhone }: Quick
 
   useEffect(() => {
     if (!open) return;
+    if (prefillPhone) {
+      phoneKeysRef.current = [0];
+      nextKeyRef.current = 1;
+      setPhones([prefillPhone]);
+    }
+  }, [open, prefillPhone]);
+
+  useEffect(() => {
+    if (!open) return;
     fetch("/api/channels")
       .then((r) => r.json())
       .then((d) => {
