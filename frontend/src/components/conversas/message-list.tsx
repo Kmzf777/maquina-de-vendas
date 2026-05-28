@@ -10,10 +10,12 @@ interface MessageListProps {
   messages: Message[];
   loading: boolean;
   conversationId: string;
+  onReply?: (msg: Message) => void;
 }
 
 export interface MessageListHandle {
   scrollToBottom: () => void;
+  scrollToMessage: (messageId: string) => void;
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -34,17 +36,26 @@ function isGrouped(current: Message, previous: Message | undefined): boolean {
 }
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
-  function MessageList({ messages, loading, conversationId }, ref) {
+  function MessageList({ messages, loading, conversationId, onReply }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
     const prevMessageCountRef = useRef(messages.length);
     const isAtBottomRef = useRef(true);
+    const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+    const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
     useImperativeHandle(ref, () => ({
       scrollToBottom() {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      },
+      scrollToMessage(id: string) {
+        const el = messageRefsMap.current.get(id);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedId(id);
+        setTimeout(() => setHighlightedId(null), 1500);
       },
     }));
 
@@ -109,9 +120,19 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
             const prevDate = prev ? new Date(prev.created_at) : null;
             const showDaySep = !prevDate || !isSameDay(currDate, prevDate);
             const grouped = isGrouped(msg, prev);
+            const isHighlighted = highlightedId === msg.id;
 
             return (
-              <div key={msg.id}>
+              <div
+                key={msg.id}
+                ref={(el) => {
+                  if (el) messageRefsMap.current.set(msg.id, el);
+                  else messageRefsMap.current.delete(msg.id);
+                }}
+                className={`transition-colors duration-300 rounded-lg ${
+                  isHighlighted ? "bg-yellow-100/60" : ""
+                }`}
+              >
                 {showDaySep && <DaySeparator date={currDate} />}
                 {msg.role === "system" ? (
                   <EventCard message={msg} />
@@ -120,6 +141,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                     message={msg}
                     isGrouped={grouped}
                     conversationId={conversationId}
+                    onReply={onReply}
+                    onScrollToMessage={(targetId) => {
+                      const el = messageRefsMap.current.get(targetId);
+                      if (!el) return;
+                      el.scrollIntoView({ behavior: "smooth", block: "center" });
+                      setHighlightedId(targetId);
+                      setTimeout(() => setHighlightedId(null), 1500);
+                    }}
                   />
                 )}
               </div>

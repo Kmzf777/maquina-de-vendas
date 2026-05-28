@@ -26,6 +26,8 @@ interface MessageBubbleProps {
   message: Message;
   isGrouped: boolean;
   conversationId: string;
+  onReply?: (msg: Message) => void;
+  onScrollToMessage?: (messageId: string) => void;
 }
 
 function getSenderBadge(message: Message): string | null {
@@ -35,7 +37,7 @@ function getSenderBadge(message: Message): string | null {
   return null;
 }
 
-export function MessageBubble({ message, isGrouped, conversationId }: MessageBubbleProps) {
+export function MessageBubble({ message, isGrouped, conversationId, onReply, onScrollToMessage }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
