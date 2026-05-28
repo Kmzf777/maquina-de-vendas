@@ -15,7 +15,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: conversationId } = await params;
-  const { text } = await request.json();
+  const { text, quoted_wamid } = await request.json();
 
   if (!text?.trim()) {
     return NextResponse.json({ error: "text is required" }, { status: 400 });
@@ -106,23 +106,37 @@ export async function POST(
   }
 
   try {
+    let sentWamid: string | null = null;
     if (channel.provider === "evolution") {
       await sendViaEvolution(channel.provider_config, lead.phone, text.trim());
     } else if (channel.provider === "meta_cloud") {
-      await sendViaMeta(channel.provider_config, lead.phone, text.trim());
+      sentWamid = await sendViaMeta(
+        channel.provider_config,
+        lead.phone,
+        text.trim(),
+        quoted_wamid ?? null,
+      );
     } else {
       return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
     }
 
     // Save message to DB
-    await supabase.from("messages").insert({
+    const insertData: Record<string, unknown> = {
       lead_id: lead.id,
       conversation_id: conversationId,
       role: "assistant",
       content: text.trim(),
       sent_by: "seller",
       stage: conv.stage || "secretaria",
-    });
+    };
+    if (sentWamid) {
+      insertData.wamid = sentWamid;
+      insertData.delivery_status = "sent";
+    }
+    if (quoted_wamid) {
+      insertData.quoted_wamid = quoted_wamid;
+    }
+    await supabase.from("messages").insert(insertData);
 
     // Update last_msg_at and zero unread badge
     await supabase
@@ -173,10 +187,22 @@ async function sendViaEvolution(
 async function sendViaMeta(
   config: Record<string, string>,
   phone: string,
-  text: string
-) {
+  text: string,
+  quotedWamid?: string | null,
+): Promise<string | null> {
   const phoneNumberId = config.phone_number_id || "";
   const accessToken = config.access_token || "";
+
+  const body: Record<string, unknown> = {
+    messaging_product: "whatsapp",
+    to: phone,
+    type: "text",
+    text: { body: text },
+  };
+
+  if (quotedWamid) {
+    body.context = { message_id: quotedWamid };
+  }
 
   const res = await fetch(
     `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
@@ -186,12 +212,7 @@ async function sendViaMeta(
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: phone,
-        type: "text",
-        text: { body: text },
-      }),
+      body: JSON.stringify(body),
     }
   );
 
@@ -199,4 +220,7 @@ async function sendViaMeta(
     const err = await res.text();
     throw new Error(`Meta API error: ${err}`);
   }
+
+  const result = await res.json();
+  return (result?.messages?.[0]?.id as string | undefined) ?? null;
 }
