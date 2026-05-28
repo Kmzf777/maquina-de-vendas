@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { TagsTab } from "@/components/config/tags-tab";
 import { PricingTab } from "@/components/config/pricing-tab";
+import { LpWebhookTab } from "@/components/config/lp-webhook-tab";
 
 const TABS = [
   { key: "tags", label: "Tags" },
   { key: "pricing", label: "Precos IA" },
+  { key: "lp-webhook", label: "Landing Pages" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -40,6 +42,7 @@ export default function ConfigPage() {
 
           {activeTab === "tags" && <TagsTab />}
           {activeTab === "pricing" && <PricingTab />}
+          {activeTab === "lp-webhook" && <LpWebhookTab />}
         </div>
       </div>
     </div>
