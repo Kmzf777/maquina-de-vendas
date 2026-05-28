@@ -53,6 +53,13 @@ export const LEAD_CHANNELS = [
   { key: "manual", label: "Manual", color: "#ad9c4a" },
 ] as const;
 
+export const LP_ORIGINS = [
+  { key: "graocafeteria", label: "Grão Cafeteria", color: "#65b5ff" },
+  { key: "atacado", label: "Atacado", color: "#0bdf50" },
+  { key: "terceirizacao", label: "Terceirização", color: "#fe4c02" },
+  { key: "Chat WhatsApp", label: "Chat WhatsApp", color: "#ff2067" },
+] as const;
+
 export const ENROLLMENT_STATUS_COLORS: Record<string, { dot: string; bg: string; text: string }> = {
   active: { dot: "#f59e0b", bg: "bg-[#fef3c7]", text: "text-[#92400e]" },
   paused: { dot: "#9ca3af", bg: "bg-[#f4f4f0]", text: "text-[#5f6368]" },
