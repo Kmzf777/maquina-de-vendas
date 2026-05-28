@@ -123,6 +123,7 @@ def save_message(
     document_name: str | None = None,
     media_mime: str | None = None,
     metadata: dict | None = None,
+    quoted_wamid: str | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
@@ -146,6 +147,8 @@ def save_message(
         msg["media_mime"] = media_mime
     if metadata is not None:
         msg["metadata"] = metadata
+    if quoted_wamid is not None:
+        msg["quoted_wamid"] = quoted_wamid
     logger.info(f"[DEBUG-SAVE_MESSAGE] enter payload={msg}")
     try:
         result = sb.table("messages").insert(msg).execute()

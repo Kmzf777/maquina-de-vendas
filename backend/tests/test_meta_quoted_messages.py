@@ -1,4 +1,6 @@
 # backend/tests/test_meta_quoted_messages.py
+from unittest.mock import MagicMock, patch
+
 from app.webhook.meta_parser import parse_meta_webhook_payload
 from app.webhook.parser import IncomingMessage
 
@@ -62,3 +64,51 @@ def test_parse_image_reply_with_context():
     assert len(msgs) == 1
     assert msgs[0].type == "image"
     assert msgs[0].quoted_wamid == "wamid.original2"
+
+
+def test_save_message_persists_quoted_wamid():
+    """save_message deve incluir quoted_wamid no payload de insert quando fornecido."""
+    captured = {}
+
+    def fake_insert(data):
+        captured["data"] = data
+        mock_result = MagicMock()
+        mock_result.data = [{**data, "id": "msg-uuid-1"}]
+        return MagicMock(execute=MagicMock(return_value=mock_result))
+
+    mock_table = MagicMock()
+    mock_table.insert.side_effect = fake_insert
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value = mock_table
+
+    with patch("app.conversations.service.get_supabase", return_value=mock_sb):
+        from app.conversations.service import save_message
+        save_message(
+            "conv-1", "lead-1", "user", "sim, esse mesmo",
+            quoted_wamid="wamid.original1",
+        )
+
+    assert captured["data"].get("quoted_wamid") == "wamid.original1"
+
+
+def test_save_message_omits_quoted_wamid_when_none():
+    """save_message não deve incluir quoted_wamid no payload quando não fornecido."""
+    captured = {}
+
+    def fake_insert(data):
+        captured["data"] = data
+        mock_result = MagicMock()
+        mock_result.data = [{**data, "id": "msg-uuid-2"}]
+        return MagicMock(execute=MagicMock(return_value=mock_result))
+
+    mock_table = MagicMock()
+    mock_table.insert.side_effect = fake_insert
+    mock_sb = MagicMock()
+    mock_sb.table.return_value = mock_table
+
+    with patch("app.conversations.service.get_supabase", return_value=mock_sb):
+        from app.conversations.service import save_message
+        save_message("conv-1", "lead-1", "user", "olá")
+
+    assert "quoted_wamid" not in captured["data"]
