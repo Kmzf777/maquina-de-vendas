@@ -8,6 +8,7 @@ import { TemplateDispatchModal } from "@/components/conversas/template-dispatch-
 import { ChatHeader } from "@/components/conversas/chat-header";
 import { MessageList } from "@/components/conversas/message-list";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
+import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -33,6 +34,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const [sending, setSending] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [dispatchSuccess, setDispatchSuccess] = useState(false);
+  const [quickSendPhone, setQuickSendPhone] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -58,6 +60,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     setOptimisticMessages([]);
     setShowTemplateModal(false);
     setDispatchSuccess(false);
+    setQuickSendPhone(null);
     setMediaState('idle');
     setMediaBlob(null);
     setMediaFilename("");
@@ -90,6 +93,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     () => [...messages, ...optimisticMessages],
     [messages, optimisticMessages]
   );
+
+  function handleContactDispatch(phone: string) {
+    setQuickSendPhone(phone);
+  }
 
   async function handleSend() {
     if (!text.trim() || sendingRef.current || isInputBlocked) return;
@@ -313,6 +320,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         messages={displayMessages}
         loading={loading}
         conversationId={conversation.id}
+        onContactDispatch={handleContactDispatch}
       />
 
       <WhatsappWindowIndicator
@@ -459,6 +467,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
           }}
         />
       )}
+
+      <QuickSendModal
+        open={quickSendPhone !== null}
+        onClose={() => setQuickSendPhone(null)}
+        onSuccess={() => setQuickSendPhone(null)}
+        prefillPhone={quickSendPhone ?? undefined}
+      />
     </div>
   );
 }

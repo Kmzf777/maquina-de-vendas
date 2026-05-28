@@ -26,6 +26,7 @@ interface MessageBubbleProps {
   message: Message;
   isGrouped: boolean;
   conversationId: string;
+  onContactDispatch?: (phone: string) => void;
 }
 
 function getSenderBadge(message: Message): string | null {
@@ -35,7 +36,7 @@ function getSenderBadge(message: Message): string | null {
   return null;
 }
 
-export function MessageBubble({ message, isGrouped, conversationId }: MessageBubbleProps) {
+export function MessageBubble({ message, isGrouped, conversationId, onContactDispatch }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
@@ -219,26 +220,52 @@ export function MessageBubble({ message, isGrouped, conversationId }: MessageBub
               ? `data:text/vcard;charset=utf-8,${encodeURIComponent(meta.vcard)}`
               : null;
             return (
-              <div className="flex items-start gap-2 py-1">
-                <svg className="w-4 h-4 mt-0.5 flex-shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z"/>
-                </svg>
-                <div className="flex flex-col min-w-0">
-                  {meta?.name && <span className="text-[13px] font-medium">{meta.name}</span>}
-                  {meta?.phone && <span className="text-[12px] opacity-70">{meta.phone}</span>}
-                  {vcardUrl && (
-                    <a
-                      href={vcardUrl}
-                      download={`${meta?.name || "contato"}.vcf`}
-                      className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5"
-                    >
-                      Baixar contato
-                    </a>
-                  )}
-                  {!meta?.name && !meta?.phone && (
-                    <span className="text-[13px] opacity-60">Contato</span>
-                  )}
+              <div className="rounded-[8px] border border-[#dedbd6] bg-white overflow-hidden min-w-[200px] max-w-[240px] -mx-1 -my-1">
+                {/* Header: avatar + name + phone */}
+                <div className="px-3 py-2.5 flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#f0ede8] flex-shrink-0 flex items-center justify-center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7b7b78" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                      <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    {meta?.name ? (
+                      <span className="text-[13px] font-medium text-[#111111] leading-tight truncate">{meta.name}</span>
+                    ) : (
+                      <span className="text-[13px] font-medium text-[#111111] leading-tight">Contato</span>
+                    )}
+                    {meta?.phone && (
+                      <span className="text-[12px] text-[#7b7b78] leading-tight truncate">{meta.phone}</span>
+                    )}
+                    {vcardUrl && (
+                      <a
+                        href={vcardUrl}
+                        download={`${meta?.name || "contato"}.vcf`}
+                        className="text-[11px] text-[#7b7b78] opacity-70 hover:opacity-100 underline mt-0.5 leading-tight"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Baixar contato
+                      </a>
+                    )}
+                  </div>
                 </div>
+                {/* Action button */}
+                {meta?.phone && onContactDispatch && (
+                  <>
+                    <div className="border-t border-[#dedbd6]" />
+                    <button
+                      onClick={() => onContactDispatch(meta.phone!)}
+                      className="w-full px-3 py-2 text-[12px] text-[#111111] hover:bg-[#f0ede8] transition-colors flex items-center gap-1.5"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                      </svg>
+                      Chamar contato
+                    </button>
+                  </>
+                )}
               </div>
             );
           })()

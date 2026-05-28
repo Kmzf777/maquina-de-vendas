@@ -10,6 +10,7 @@ interface MessageListProps {
   messages: Message[];
   loading: boolean;
   conversationId: string;
+  onContactDispatch?: (phone: string) => void;
 }
 
 export interface MessageListHandle {
@@ -34,7 +35,7 @@ function isGrouped(current: Message, previous: Message | undefined): boolean {
 }
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
-  function MessageList({ messages, loading, conversationId }, ref) {
+  function MessageList({ messages, loading, conversationId, onContactDispatch }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
@@ -120,6 +121,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                     message={msg}
                     isGrouped={grouped}
                     conversationId={conversationId}
+                    onContactDispatch={onContactDispatch}
                   />
                 )}
               </div>
