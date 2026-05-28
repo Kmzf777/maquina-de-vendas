@@ -7,6 +7,7 @@ from openai import AsyncOpenAI
 from app.config import settings
 from app.agent.prompts.base import build_base_prompt
 from app.agent.prompts import get_stage_prompts
+from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.tools import get_tools_for_stage, execute_tool
 from app.conversations.service import get_history
 from app.agent.token_tracker import track_token_usage
@@ -127,7 +128,7 @@ async def run_agent(
     tools = get_tools_for_stage(stage)
     system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
 
-    history = get_history(conversation_id, limit=10)
+    history = get_history(conversation_id, limit=20)
     # processor.py saves user message before calling run_agent, so history already
     # includes the current message — strip it to avoid sending it twice.
     if history and history[-1]["role"] == "user" and history[-1]["content"] == user_text:
@@ -136,6 +137,16 @@ async def run_agent(
     for msg in history:
         if msg["role"] in ("user", "assistant"):
             messages.append({"role": msg["role"], "content": msg["content"]})
+
+    is_outbound = prompt_key == "valeria_outbound"
+    # history here has the current message already stripped (lines above); len == 0 means genuine first turn
+    is_first_turn = len(history) == 0
+    campaign_message = (lead_context or {}).get("campaign_message")
+
+    if is_outbound and is_first_turn and campaign_message:
+        ctx = build_outbound_first_turn_context(campaign_message, lead.get("name"))
+        messages.append({"role": "user", "content": ctx})
+
     messages.append({"role": "user", "content": user_text})
 
     response = await _get_client(model).chat.completions.create(
@@ -203,6 +214,12 @@ async def run_agent(
         # Return empty to prevent the processor from sending a duplicate message.
         if any(tc.function.name == "encaminhar_humano" for tc in message.tool_calls):
             return ""
+
+        # registrar_optout sets ai_enabled=False silently. The farewell Valéria
+        # wrote lives in message.content of this same turn — return it now and skip
+        # the second API call (there is nothing left to say after opt-out).
+        if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
+            return message.content or "Entendido, sem problema. Não entrarei mais em contato."
 
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Message } from "@/lib/types";
+import type { Message, QuotedMessage } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 
 function DeliveryTick({ status }: { status?: "sent" | "delivered" | "read" | null }) {
@@ -28,6 +28,7 @@ interface MessageBubbleProps {
   conversationId: string;
   onReply?: (msg: Message) => void;
   onScrollToMessage?: (messageId: string) => void;
+  onContactDispatch?: (phone: string) => void;
 }
 
 function getSenderBadge(message: Message): string | null {
@@ -37,7 +38,63 @@ function getSenderBadge(message: Message): string | null {
   return null;
 }
 
-export function MessageBubble({ message, isGrouped, conversationId, onReply, onScrollToMessage }: MessageBubbleProps) {
+function getMediaLabel(messageType: string | null | undefined): string {
+  switch (messageType) {
+    case "image": return "📷 Imagem";
+    case "audio": return "🎵 Áudio";
+    case "video": return "🎬 Vídeo";
+    case "document": return "📄 Documento";
+    case "sticker": return "😀 Figurinha";
+    case "location": return "📍 Localização";
+    case "contact": return "👤 Contato";
+    default: return "📎 Mídia";
+  }
+}
+
+function QuotedBlock({
+  quoted,
+  isFromMe,
+  onClick,
+}: {
+  quoted: QuotedMessage | null;
+  isFromMe: boolean;
+  onClick: () => void;
+}) {
+  const isText = !quoted?.message_type || quoted.message_type === "text";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left rounded-md mb-1.5 overflow-hidden flex transition-colors ${
+        isFromMe
+          ? "bg-white/20 hover:bg-white/30"
+          : "bg-black/5 hover:bg-black/10"
+      }`}
+    >
+      <div className={`w-1 flex-shrink-0 rounded-l-md ${isFromMe ? "bg-white/50" : "bg-[#25d366]"}`} />
+      <div className="px-2 py-1.5 min-w-0 flex-1">
+        {!quoted ? (
+          <p className={`text-xs italic ${isFromMe ? "text-white/50" : "text-[#7b7b78]"}`}>
+            Mensagem original não disponível
+          </p>
+        ) : (
+          <>
+            <p className={`text-xs font-semibold mb-0.5 ${isFromMe ? "text-white/80" : "text-[#25d366]"}`}>
+              {quoted.role === "user" ? "Lead" : "Você"}
+            </p>
+            <p className={`text-xs truncate ${isFromMe ? "text-white/60" : "text-[#555]"}`}>
+              {isText
+                ? (quoted.content ?? "")
+                : getMediaLabel(quoted.message_type)}
+            </p>
+          </>
+        )}
+      </div>
+    </button>
+  );
+}
+
+export function MessageBubble({ message, isGrouped, conversationId, onReply, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
@@ -63,8 +120,23 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
 
   return (
     <div
-      className={`flex ${isFromMe ? "justify-end" : "justify-start"} ${isGrouped ? "mt-0.5" : "mt-2"}`}
+      className={`flex group relative ${isFromMe ? "justify-end" : "justify-start"} ${isGrouped ? "mt-0.5" : "mt-2"}`}
     >
+      {onReply && !isTemp && (
+        <button
+          onClick={() => onReply(message)}
+          className={`absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 p-1.5 rounded-full bg-[#f0f0f0] hover:bg-[#e0e0e0] shadow-sm text-[#555] ${
+            isFromMe ? "-left-8" : "-right-8"
+          }`}
+          title="Responder"
+          aria-label="Responder"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 17 4 12 9 7" />
+            <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+          </svg>
+        </button>
+      )}
       <div
         className={`px-3 py-2 text-[14px] max-w-[75%] rounded-[8px] ${
           isFromMe
@@ -72,6 +144,17 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
             : "bg-white border border-[#dedbd6] text-[#111111]"
         } ${isTemp ? "opacity-70" : ""}`}
       >
+        {(message.quoted_wamid || message.quoted_message !== undefined) && (
+          <QuotedBlock
+            quoted={message.quoted_message ?? null}
+            isFromMe={isFromMe}
+            onClick={() => {
+              if (message.quoted_message?.id) {
+                onScrollToMessage?.(message.quoted_message.id);
+              }
+            }}
+          />
+        )}
         {isAudio ? (
           mediaSrc ? (
             <audio
@@ -221,26 +304,52 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
               ? `data:text/vcard;charset=utf-8,${encodeURIComponent(meta.vcard)}`
               : null;
             return (
-              <div className="flex items-start gap-2 py-1">
-                <svg className="w-4 h-4 mt-0.5 flex-shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z"/>
-                </svg>
-                <div className="flex flex-col min-w-0">
-                  {meta?.name && <span className="text-[13px] font-medium">{meta.name}</span>}
-                  {meta?.phone && <span className="text-[12px] opacity-70">{meta.phone}</span>}
-                  {vcardUrl && (
-                    <a
-                      href={vcardUrl}
-                      download={`${meta?.name || "contato"}.vcf`}
-                      className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5"
-                    >
-                      Baixar contato
-                    </a>
-                  )}
-                  {!meta?.name && !meta?.phone && (
-                    <span className="text-[13px] opacity-60">Contato</span>
-                  )}
+              <div className="rounded-[8px] border border-[#dedbd6] bg-white overflow-hidden min-w-[200px] max-w-[240px] -mx-1 -my-1">
+                {/* Header: avatar + name + phone */}
+                <div className="px-3 py-2.5 flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#f0ede8] flex-shrink-0 flex items-center justify-center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7b7b78" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                      <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    {meta?.name ? (
+                      <span className="text-[13px] font-medium text-[#111111] leading-tight truncate">{meta.name}</span>
+                    ) : (
+                      <span className="text-[13px] font-medium text-[#111111] leading-tight">Contato</span>
+                    )}
+                    {meta?.phone && (
+                      <span className="text-[12px] text-[#7b7b78] leading-tight truncate">{meta.phone}</span>
+                    )}
+                    {vcardUrl && (
+                      <a
+                        href={vcardUrl}
+                        download={`${meta?.name || "contato"}.vcf`}
+                        className="text-[11px] text-[#7b7b78] opacity-70 hover:opacity-100 underline mt-0.5 leading-tight"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Baixar contato
+                      </a>
+                    )}
+                  </div>
                 </div>
+                {/* Action button */}
+                {meta?.phone && onContactDispatch && (
+                  <>
+                    <div className="border-t border-[#dedbd6]" />
+                    <button
+                      onClick={() => onContactDispatch(meta.phone!)}
+                      className="w-full px-3 py-2 text-[12px] text-[#111111] hover:bg-[#f0ede8] transition-colors flex items-center gap-1.5"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                      </svg>
+                      Chamar contato
+                    </button>
+                  </>
+                )}
               </div>
             );
           })()

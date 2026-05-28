@@ -14,6 +14,7 @@ interface QuickSendModalProps {
   open: boolean;
   onClose: () => void;
   onSuccess: (count: number) => void;
+  prefillPhone?: string;
 }
 
 function normalizePhone(raw: string): string {
@@ -55,20 +56,29 @@ function renderInteractiveBody(
   });
 }
 
-export function QuickSendModal({ open, onClose, onSuccess }: QuickSendModalProps) {
+export function QuickSendModal({ open, onClose, onSuccess, prefillPhone }: QuickSendModalProps) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channelId, setChannelId] = useState("");
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplate | null>(null);
   const [templateVarValues, setTemplateVarValues] = useState<Record<string, string>>({});
-  const [phones, setPhones] = useState<string[]>([""]);
+  const [phones, setPhones] = useState<string[]>(prefillPhone ? [prefillPhone] : [""]);
   const [savedPhones, setSavedPhones] = useState<SavedPhone[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingDeletePhone, setPendingDeletePhone] = useState<string | null>(null);
   const phoneKeysRef = useRef<number[]>([0]);
   const nextKeyRef = useRef(1);
+
+  useEffect(() => {
+    if (!open) return;
+    if (prefillPhone) {
+      phoneKeysRef.current = [0];
+      nextKeyRef.current = 1;
+      setPhones([prefillPhone]);
+    }
+  }, [open, prefillPhone]);
 
   useEffect(() => {
     if (!open) return;

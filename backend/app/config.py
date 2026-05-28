@@ -56,6 +56,12 @@ if PYDANTIC_V2:
             "env_file_encoding": "utf-8",
         }
         @property
+        def ai_phone_number_ids(self) -> frozenset[str]:
+            if not self.ai_phone_number_id:
+                return frozenset()
+            return frozenset(x.strip() for x in self.ai_phone_number_id.split(",") if x.strip())
+
+        @property
         def is_dev_env(self) -> bool:
             return any(x in (self.api_base_url or "") for x in ("localhost", "127.0.0.1"))
 
@@ -81,6 +87,12 @@ else:
             env_file = ".env"
             env_file_encoding = "utf-8"
             extra = "allow"
+        @property
+        def ai_phone_number_ids(self) -> frozenset[str]:
+            if not self.ai_phone_number_id:
+                return frozenset()
+            return frozenset(x.strip() for x in self.ai_phone_number_id.split(",") if x.strip())
+
         @property
         def is_dev_env(self) -> bool:
             return any(x in (self.api_base_url or "") for x in ("localhost", "127.0.0.1"))

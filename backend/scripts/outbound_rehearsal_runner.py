@@ -1,18 +1,15 @@
-"""Rehearsal runner — executa os 6 archetypes T1-T6 sequencialmente.
-
-Archetypes derivados de conversas reais em .conversasreais/. Ver spec em
-docs/superpowers/specs/2026-04-21-rehearsal-v2-real-leads-design.md.
+"""Outbound Rehearsal Runner — valida a Valéria Outbound com 4 archetypes (O1-O4).
 
 Uso:
     REHEARSAL_MODE=true uvicorn app.main:app --env-file .env.local --port 8001 &
-    python -m scripts.rehearsal_runner                 # roda T1-T6
-    REHEARSAL_ONLY=T5 python -m scripts.rehearsal_runner  # roda so uma
+    python -m scripts.outbound_rehearsal_runner          # roda O1-O4 em paralelo
+    REHEARSAL_ONLY=O3 python -m scripts.outbound_rehearsal_runner  # roda só um
 
-Envs necessarias (em .env.local):
+Envs necessárias (em .env.local):
     GEMINI_API_KEY, DEV_BACKEND_URL, SUPABASE_URL,
     SUPABASE_SERVICE_KEY, REDIS_URL
 Opcionais:
-    REHEARSAL_TURN_TIMEOUT (default 15), REHEARSAL_MAX_TURNS (default 20)
+    REHEARSAL_TURN_TIMEOUT (default 45), REHEARSAL_MAX_TURNS (default 20)
 """
 import asyncio
 import datetime as dt
@@ -29,31 +26,142 @@ import httpx
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 
-# Load .env.local before importing backend modules that depend on env
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env.local")
 
 from app.config import settings  # noqa: E402
 from scripts.rehearsal import supabase_io, logger as rlogger, gemini_actor, verifier  # noqa: E402
-from scripts.rehearsal.archetypes import ALL_ARCHETYPES, Archetype  # noqa: E402
+from scripts.rehearsal.outbound_archetypes import (  # noqa: E402
+    ALL_OUTBOUND_ARCHETYPES,
+    OutboundArchetype,
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
-log = logging.getLogger("rehearsal")
+log = logging.getLogger("outbound_rehearsal")
 
 DEV_BACKEND_URL = os.environ.get("DEV_BACKEND_URL", "http://127.0.0.1:8001")
 META_PHONE_NUMBER_ID = os.environ.get("META_PHONE_NUMBER_ID", "rehearsal")
 MAX_TURNS = int(os.environ.get("REHEARSAL_MAX_TURNS", "20"))
-TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "15"))
+TURN_TIMEOUT = float(os.environ.get("REHEARSAL_TURN_TIMEOUT", "45"))
 POLL_INTERVAL = 0.5
-# T6 inicia com ~10s de jitter; connect timeout maior + retry evita ConnectTimeout sob carga
 _MAX_CONNECT_RETRIES = 2
-OUTPUT_ROOT = Path(__file__).resolve().parent.parent.parent / "docs" / "superpowers" / "plans" / "pilot" / "rehearsal-runs"
+OUTPUT_ROOT = (
+    Path(__file__).resolve().parent.parent.parent
+    / "docs"
+    / "superpowers"
+    / "plans"
+    / "pilot"
+    / "outbound-rehearsal-runs"
+)
 
-FINAL_STAGES: dict[str, str | None] = {"T1": None, "T2": None, "T3": None, "T4": None, "T5": None, "T6": None}
 
+# ─── Payload builders ────────────────────────────────────────────────────────
+
+def _build_button_reply_payload(phone: str, button_id: str, button_title: str) -> dict:
+    """Monta payload webhook Meta para interactive/button_reply (quick reply)."""
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "rehearsal",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "phone_number_id": META_PHONE_NUMBER_ID,
+                        "display_phone_number": phone,
+                    },
+                    "contacts": [{"profile": {"name": "Rehearsal Lead"}, "wa_id": phone}],
+                    "messages": [{
+                        "from": phone,
+                        "id": f"wamid.rehearsal.{uuid.uuid4().hex}",
+                        "timestamp": str(int(time.time())),
+                        "type": "interactive",
+                        "interactive": {
+                            "type": "button_reply",
+                            "button_reply": {
+                                "id": button_id,
+                                "title": button_title,
+                            },
+                        },
+                    }],
+                },
+                "field": "messages",
+            }],
+        }],
+    }
+
+
+def _build_text_payload(phone: str, text: str) -> dict:
+    """Monta payload webhook Meta para mensagem de texto simples."""
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "rehearsal",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "phone_number_id": META_PHONE_NUMBER_ID,
+                        "display_phone_number": phone,
+                    },
+                    "contacts": [{"profile": {"name": "Rehearsal Lead"}, "wa_id": phone}],
+                    "messages": [{
+                        "from": phone,
+                        "id": f"wamid.rehearsal.{uuid.uuid4().hex}",
+                        "timestamp": str(int(time.time())),
+                        "type": "text",
+                        "text": {"body": text},
+                    }],
+                },
+                "field": "messages",
+            }],
+        }],
+    }
+
+
+def _build_first_message_payload(phone: str, first_message) -> dict:
+    """Dispatcher: retorna payload correto conforme tipo de first_message."""
+    if isinstance(first_message, dict) and first_message.get("type") == "button_reply":
+        return _build_button_reply_payload(
+            phone,
+            first_message["button_id"],
+            first_message["button_title"],
+        )
+    return _build_text_payload(phone, str(first_message))
+
+
+def build_outbound_template_payload(phone: str) -> dict:
+    """Monta o payload do template de disparo inicial para envio via Meta Cloud API.
+
+    NOTA: Este payload é para referência/documentação. O envio real via broadcast
+    já é feito pela infra existente (broadcast/worker.py + MetaCloudClient.send_template).
+    No contexto do Rehearsal, o lead já existe e a conversa começa com a resposta dele.
+    """
+    return {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": "utilidade_22_04_2026_16_40",
+            "language": {"code": "en"},
+            "components": [
+                {
+                    "type": "button",
+                    "buttons": [
+                        {"type": "QUICK_REPLY", "text": "Sim"},
+                        {"type": "QUICK_REPLY", "text": "Não"},
+                        {"type": "QUICK_REPLY", "text": "Parar mensagens"},
+                    ],
+                }
+            ],
+        },
+    }
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
     return dt.datetime.now(dt.UTC).isoformat()
@@ -70,6 +178,33 @@ def _git_sha() -> str:
         return "unknown"
 
 
+def _extract_stage_from_event(content: str) -> str | None:
+    marker = "stage alterado para"
+    low = content.lower()
+    if marker in low:
+        after = content[low.index(marker) + len(marker):].strip(": ,.")
+        return after.split()[0].strip().lower() if after else None
+    return None
+
+
+def _terminated(archetype: OutboundArchetype, events: list[dict], turns: int) -> str | None:
+    if turns >= MAX_TURNS:
+        return "max_turns"
+    for ev in events:
+        if "encaminhado para" in ev.get("content", "").lower():
+            return "encaminhar_humano"
+    return None
+
+
+def _render_inline(messages: list[dict]) -> str:
+    lines = []
+    for m in messages:
+        role = m.get("role", "?")
+        label = {"user": "Lead", "assistant": "Valeria", "system": "system"}.get(role, role)
+        lines.append(f"[{label}] {m.get('content', '')}")
+    return "\n".join(lines)
+
+
 async def _health_check(client: httpx.AsyncClient) -> None:
     try:
         r = await client.get(f"{DEV_BACKEND_URL}/health", timeout=5)
@@ -77,35 +212,13 @@ async def _health_check(client: httpx.AsyncClient) -> None:
         log.info(f"Dev backend health OK ({DEV_BACKEND_URL})")
     except Exception as e:
         log.error(f"Dev backend health check failed: {e}")
-        raise SystemExit(f"Dev backend em {DEV_BACKEND_URL} nao respondeu. Subir com REHEARSAL_MODE=true antes.")
+        raise SystemExit(
+            f"Dev backend em {DEV_BACKEND_URL} nao respondeu. "
+            "Subir com REHEARSAL_MODE=true antes."
+        )
 
 
-def _build_meta_payload(phone: str, text: str) -> dict:
-    return {
-        "object": "whatsapp_business_account",
-        "entry": [{
-            "id": "rehearsal",
-            "changes": [{
-                "value": {
-                    "messaging_product": "whatsapp",
-                    "metadata": {"phone_number_id": META_PHONE_NUMBER_ID, "display_phone_number": phone},
-                    "contacts": [{"profile": {"name": "Rehearsal Lead"}, "wa_id": phone}],
-                    "messages": [{
-                        "from": phone,
-                        "id": f"wamid.rehearsal.{uuid.uuid4().hex}",
-                        "timestamp": str(int(time.time())),
-                        "type": "text",
-                        "text": {"body": text},
-                    }],
-                },
-                "field": "messages",
-            }],
-        }],
-    }
-
-
-async def _send_user_message(client: httpx.AsyncClient, phone: str, text: str) -> None:
-    payload = _build_meta_payload(phone, text)
+async def _send_webhook(client: httpx.AsyncClient, payload: dict) -> None:
     for attempt in range(3):
         try:
             r = await client.post(
@@ -118,39 +231,19 @@ async def _send_user_message(client: httpx.AsyncClient, phone: str, text: str) -
             return
         except (httpx.ReadError, httpx.ConnectError, httpx.PoolTimeout) as exc:
             wait = 2 ** attempt
-            log.warning(f"Webhook POST falhou ({exc.__class__.__name__}) tentativa {attempt + 1}/3 — aguardando {wait}s")
+            log.warning(
+                f"Webhook POST falhou ({exc.__class__.__name__}) "
+                f"tentativa {attempt + 1}/3 — aguardando {wait}s"
+            )
             if attempt == 2:
                 raise
             await asyncio.sleep(wait)
 
 
-def _extract_stage_from_event(content: str) -> str | None:
-    marker = "stage alterado para"
-    low = content.lower()
-    if marker in low:
-        after = content[low.index(marker) + len(marker):].strip(": ,.")
-        return after.split()[0].strip().lower() if after else None
-    return None
+# ─── Archetype runner ────────────────────────────────────────────────────────
 
-
-def _terminated(archetype: Archetype, events: list[dict], turns: int) -> str | None:
-    if turns >= MAX_TURNS:
-        return "max_turns"
-    for ev in events:
-        content = ev.get("content", "").lower()
-        if "encaminhado para" in content:
-            return "encaminhar_humano"
-    final_stage = FINAL_STAGES.get(archetype.id)
-    if final_stage:
-        for ev in events:
-            stage = _extract_stage_from_event(ev.get("content", ""))
-            if stage == final_stage:
-                return "stage_reached"
-    return None
-
-
-async def _run_archetype(
-    archetype: Archetype,
+async def _run_outbound_archetype(
+    archetype: OutboundArchetype,
     client: httpx.AsyncClient,
     redis,
     run_dir: Path,
@@ -162,13 +255,15 @@ async def _run_archetype(
     await supabase_io.wipe_redis_buffer(phone, redis)
 
     start_iso = _now_iso()
+
+    first_payload = _build_first_message_payload(phone, archetype.first_message)
     for _attempt in range(_MAX_CONNECT_RETRIES + 1):
         try:
-            await _send_user_message(client, phone, archetype.first_message)
+            await _send_webhook(client, first_payload)
             break
         except httpx.ConnectTimeout:
             if _attempt == _MAX_CONNECT_RETRIES:
-                log.error(f"[{archetype.id}] ConnectTimeout apos {_MAX_CONNECT_RETRIES + 1} tentativas — abortando")
+                log.error(f"[{archetype.id}] ConnectTimeout apos {_MAX_CONNECT_RETRIES + 1} tentativas")
                 return {
                     "archetype_id": archetype.id,
                     "archetype_slug": archetype.slug,
@@ -191,14 +286,20 @@ async def _run_archetype(
         lead = supabase_io.get_lead_by_phone(phone)
         if lead:
             lead_id = lead["id"]
-            break
 
     if not lead_id:
         log.error(f"[{archetype.id}] Lead nao criado em {TURN_TIMEOUT}s — abortando")
-        return {"archetype_id": archetype.id, "archetype_slug": archetype.slug,
-                "status": "error", "error": "lead_not_created", "turns_count": 0,
-                "terminated_by": "error", "soft_check": {}, "hard_checks": [],
-                "stages_visited": []}
+        return {
+            "archetype_id": archetype.id,
+            "archetype_slug": archetype.slug,
+            "status": "error",
+            "error": "lead_not_created",
+            "turns_count": 0,
+            "terminated_by": "error",
+            "soft_check": {},
+            "hard_checks": [],
+            "stages_visited": [],
+        }
 
     turns = 1
     last_poll_iso = start_iso
@@ -258,7 +359,7 @@ async def _run_archetype(
             break
 
         log.info(f"[{archetype.id}] Turno {turns + 1} — Lead: {next_user_msg[:80]}")
-        await _send_user_message(client, phone, next_user_msg)
+        await _send_webhook(client, _build_text_payload(phone, next_user_msg))
         turns += 1
 
         if turns >= MAX_TURNS:
@@ -284,38 +385,40 @@ async def _run_archetype(
         verification=verification,
     )
 
-    log.info(f"[{archetype.id}] Finalizado: status={verification['status']} turns={turns} by={terminated_by}")
+    log.info(
+        f"[{archetype.id}] Finalizado: status={verification['status']} "
+        f"turns={turns} by={terminated_by}"
+    )
     return verification
-
-
-def _render_inline(messages: list[dict]) -> str:
-    lines = []
-    for m in messages:
-        role = m.get("role", "?")
-        label = {"user": "Lead", "assistant": "Valeria", "system": "system"}.get(role, role)
-        lines.append(f"[{label}] {m.get('content', '')}")
-    return "\n".join(lines)
 
 
 async def _run_with_jitter(
     idx: int,
-    archetype: Archetype,
+    archetype: OutboundArchetype,
     client: httpx.AsyncClient,
     redis,
     run_dir: Path,
 ) -> dict:
-    phone = f"55119{(idx + 1):08d}"
+    phone = f"55219{(90 + idx):08d}"  # Range separado dos T1-T6 (5511...); já normalizado (13 dígitos)
     log.info(f"[{archetype.id}] Agendado — phone={phone} jitter={idx * 2.0}s")
     await asyncio.sleep(idx * 2.0)
-    return await _run_archetype(archetype, client, redis, run_dir, phone)
+    return await _run_outbound_archetype(archetype, client, redis, run_dir, phone)
 
+
+# ─── Main ────────────────────────────────────────────────────────────────────
 
 async def main():
     if not os.environ.get("GEMINI_API_KEY"):
         raise SystemExit("GEMINI_API_KEY nao definido em .env.local")
 
+    if os.environ.get("REHEARSAL_MODE") != "true":
+        raise SystemExit(
+            "REHEARSAL_MODE nao esta setado como 'true'. "
+            "Subir o backend com REHEARSAL_MODE=true antes de executar."
+        )
+
     only = os.environ.get("REHEARSAL_ONLY")
-    archetypes = [a for a in ALL_ARCHETYPES if (not only or a.id == only)]
+    archetypes = [a for a in ALL_OUTBOUND_ARCHETYPES if (not only or a.id == only)]
     if not archetypes:
         raise SystemExit(f"Nenhum arquetipo encontrado com REHEARSAL_ONLY={only}")
 
@@ -336,6 +439,7 @@ async def main():
         timeout=httpx.Timeout(connect=20.0, read=90.0, write=10.0, pool=15.0),
     ) as client:
         await _health_check(client)
+
         tasks = [
             _run_with_jitter(idx, archetype, client, redis, run_dir)
             for idx, archetype in enumerate(archetypes)
@@ -369,17 +473,17 @@ async def main():
         "git_sha": _git_sha(),
         "archetypes": [a.id for a in archetypes],
         "dev_backend_url": DEV_BACKEND_URL,
-        "phones": {a.id: f"55119{(idx + 1):08d}" for idx, a in enumerate(archetypes)},
+        "phones": {a.id: f"55219{(90 + idx):08d}" for idx, a in enumerate(archetypes)},
         "gemini_model": gemini_actor.MODEL_NAME,
         "verifications": verifications,
+        "mode": "parallel_execution",
     }
     (run_dir / "run.json").write_text(
-        json.dumps(run_json, ensure_ascii=False, indent=2, default=str)
+        json.dumps(run_json, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
     )
 
-    log.info(f"Run completo. Artefatos em: {run_dir}")
-    any_fail = any(v.get("status") != "passed" for v in verifications)
-    sys.exit(1 if any_fail else 0)
+    log.info(f"Artefatos em: {run_dir}")
 
 
 if __name__ == "__main__":

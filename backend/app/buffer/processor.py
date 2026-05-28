@@ -262,11 +262,11 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # Channel gate: if AI_PHONE_NUMBER_ID is configured, only that channel runs AI
-    allowed_phone_number_id = settings.ai_phone_number_id
-    if allowed_phone_number_id:
+    # Channel gate: if AI_PHONE_NUMBER_ID is configured, only those channels run AI
+    allowed_ids = settings.ai_phone_number_ids
+    if allowed_ids:
         channel_phone_number_id = (channel.get("provider_config") or {}).get("phone_number_id")
-        if channel_phone_number_id != allowed_phone_number_id:
+        if channel_phone_number_id not in allowed_ids:
             logger.info(
                 f"[AI DISABLED] channel phone_number_id={channel_phone_number_id!r} not in allowlist "
                 f"— conv={conversation['id']} phone={phone}"

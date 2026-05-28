@@ -120,6 +120,30 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "registrar_optout",
+            "description": (
+                "Registra opt-out silencioso do lead. Use SOMENTE quando o lead pedir explicitamente "
+                "para parar de receber mensagens, sair da lista, ou expressar que nao quer mais contato "
+                "(incluindo clique no botao 'Parar mensagens'). "
+                "Desativa a IA para este lead silenciosamente, sem notificar o time comercial e sem criar negocio. "
+                "Antes de chamar esta tool, escreva UMA mensagem de despedida respeitosa no texto do turno. "
+                "Apos chamar, NAO envie mais nenhuma mensagem."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "motivo": {
+                        "type": "string",
+                        "description": "Descricao do pedido (ex: 'clicou parar mensagens', 'nao quer mais contato')"
+                    }
+                },
+                "required": ["motivo"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "enviar_fotos",
             "description": "Envia catalogo de fotos dos produtos ao lead",
             "parameters": {
@@ -163,11 +187,11 @@ TOOLS_SCHEMA = [
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
-        "atacado": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos", "enviar_foto_produto"],
-        "exportacao": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
-        "consumo": ["salvar_nome", "mudar_stage"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout"],
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
@@ -249,6 +273,21 @@ async def execute_tool(
                 lead_id,
             )
         return f"Lead encaminhado para {vendedor}"
+
+    elif tool_name == "registrar_optout":
+        motivo = args.get("motivo", "opt-out solicitado pelo lead")
+        try:
+            update_lead(lead_id, ai_enabled=False)
+        except Exception as exc:
+            logger.error("registrar_optout: falha ao desativar AI para lead %s: %s", lead_id, exc, exc_info=True)
+            return f"ERRO ao registrar opt-out: {exc}"
+        save_message(
+            lead_id, "system",
+            f"[registrar_optout] lead solicitou opt-out: {motivo}",
+            conversation_id=conversation_id,
+        )
+        logger.info("registrar_optout: ai_enabled=False para lead %s — motivo: %s", lead_id, motivo)
+        return "Opt-out registrado."
 
     elif tool_name == "enviar_fotos":
         history = get_history(lead_id, limit=100)

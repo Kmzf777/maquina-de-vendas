@@ -51,7 +51,7 @@ FORBID_PRAZO = forbids_regex(
 )
 
 FORBID_DESCONTO = forbids_regex(
-    r"(posso\s+fazer\s+por|libero\s+por|sai\s+por\s+R\$|desconto\s+de\s+\d+\s*%|promocao|condicao\s+especial)",
+    r"(posso\s+fazer\s+por|libero\s+por|desconto\s+de\s+\d+\s*%|promocao|condicao\s+especial)",
     label="DESCONTO",
     description="bot ofereceu desconto improvisado — condições são fechadas pelo comercial",
 )

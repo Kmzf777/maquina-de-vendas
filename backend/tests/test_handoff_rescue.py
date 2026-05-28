@@ -219,6 +219,24 @@ async def test_handoff_rescue_does_not_mark_sent_if_template_send_fails():
     mock_cancel.assert_not_called()
 
 
+def test_schedule_handoff_rescue_skipped_in_rehearsal_mode(monkeypatch):
+    """REHEARSAL_MODE=true deve impedir que o rescue job seja inserido."""
+    from app.follow_up.service import schedule_handoff_rescue
+
+    monkeypatch.setenv("REHEARSAL_MODE", "true")
+    mock_sb = MagicMock()
+
+    with patch("app.follow_up.service.get_supabase", return_value=mock_sb):
+        schedule_handoff_rescue(
+            lead_id="lead-r",
+            lead_phone="5511000000001",
+            conversation_id="conv-r",
+            channel_id="chan-r",
+        )
+
+    mock_sb.table.return_value.insert.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_standard_jobs_not_affected_by_handoff_rescue_routing():
     """Jobs job_type='standard' continuam sendo processados pelo caminho existente."""

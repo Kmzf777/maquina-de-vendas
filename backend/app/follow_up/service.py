@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -172,6 +173,9 @@ def schedule_handoff_rescue(
     delay_minutes: int = 15,
 ) -> None:
     """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes."""
+    if os.environ.get("REHEARSAL_MODE") == "true":
+        logger.info("[HANDOFF_RESCUE] REHEARSAL_MODE ativo — rescue ignorado")
+        return
     sb = get_supabase()
     now = datetime.now(timezone.utc)
     job = {
