@@ -51,7 +51,11 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     buffer_enabled = await r.get("config:buffer_enabled")
     if buffer_enabled == "0":
         logger.info(f"Buffer OFF — processing immediately for {phone}")
-        await process_buffered_messages(phone, text, channel_id)
+        await process_buffered_messages(
+            phone, text, channel_id,
+            wamid=msg.message_id or None,
+            quoted_wamid=msg.quoted_wamid,
+        )
         return
 
     # Buffer is keyed per phone+channel so messages from different channels
@@ -60,6 +64,15 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     lock_key = f"buffer:{phone}:{channel_id}:lock"
     deadline_key = f"buffer:{phone}:{channel_id}:deadline"
     timer_key = f"{phone}:{channel_id}"
+
+    # Store per-message metadata for retrieval at flush time (last-write wins)
+    if msg.message_id:
+        await r.set(f"pending_wamid:{phone}:{channel_id}", msg.message_id, ex=120)
+    if msg.quoted_wamid:
+        await r.set(f"pending_quoted:{phone}:{channel_id}", msg.quoted_wamid, ex=120)
+    elif msg.message_id:
+        # No quoted_wamid — clear any stale value from previous messages
+        await r.delete(f"pending_quoted:{phone}:{channel_id}")
 
     # Push message to the list
     await r.rpush(buf_key, text)
@@ -117,5 +130,13 @@ async def _wait_and_flush(r: aioredis.Redis, phone: str, channel_id: str):
 
     if messages:
         combined = "\n".join(messages)
+        pending_wamid = await r.get(f"pending_wamid:{phone}:{channel_id}")
+        pending_quoted = await r.get(f"pending_quoted:{phone}:{channel_id}")
+        await r.delete(f"pending_wamid:{phone}:{channel_id}")
+        await r.delete(f"pending_quoted:{phone}:{channel_id}")
         logger.info(f"Buffer flushed for {phone}: {len(messages)} messages")
-        await process_buffered_messages(phone, combined, channel_id)
+        await process_buffered_messages(
+            phone, combined, channel_id,
+            wamid=pending_wamid,
+            quoted_wamid=pending_quoted,
+        )

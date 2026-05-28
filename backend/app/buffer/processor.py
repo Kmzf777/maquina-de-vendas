@@ -131,7 +131,8 @@ def _is_recent_duplicate(
 
 
 async def process_buffered_messages(
-    phone: str, combined_text: str, channel_id: str = ""
+    phone: str, combined_text: str, channel_id: str = "",
+    wamid: str | None = None, quoted_wamid: str | None = None,
 ):
     """Process accumulated buffer messages for a lead on a specific channel."""
     try:
@@ -181,6 +182,8 @@ async def process_buffered_messages(
             message_type=_message_type,
             document_name=_document_name,
             metadata=_metadata,
+            wamid=wamid,
+            quoted_wamid=quoted_wamid,
         )
     except Exception as e:
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
