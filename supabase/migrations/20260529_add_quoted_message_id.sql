@@ -1,0 +1,1 @@
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS quoted_message_id UUID NULL REFERENCES messages(id) ON DELETE SET NULL;

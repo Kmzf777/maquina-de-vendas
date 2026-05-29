@@ -140,6 +140,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         body: JSON.stringify({
           text: content,
           ...(replyingTo?.wamid ? { quoted_wamid: replyingTo.wamid } : {}),
+          ...(replyingTo ? { quoted_message_id: replyingTo.id } : {}),
         }),
         signal: controller.signal,
         keepalive: true,
