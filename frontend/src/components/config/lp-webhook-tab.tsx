@@ -230,7 +230,7 @@ export function LpWebhookTab() {
         </p>
         <div className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 flex items-center justify-between gap-2">
           <code className="text-[13px] text-[#111111] font-mono select-all break-all">
-            POST https://api.canastrainteligencia.com/webhook/landing-page
+            POST https://crm.canastrainteligencia.com/webhook/landing-page
           </code>
         </div>
       </div>

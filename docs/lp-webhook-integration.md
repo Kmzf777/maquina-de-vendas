@@ -15,7 +15,7 @@ https://n8n.canastrainteligencia.com/webhook-test/landing-page
 
 ### Endpoint novo (CRM — ADICIONAR)
 ```
-https://api.canastrainteligencia.com/webhook/landing-page
+https://crm.canastrainteligencia.com/webhook/landing-page
 ```
 
 > O endpoint de produção existente (`https://webhook.canastrainteligencia.com/webhook/landing-page`) pode continuar ou ser removido — confirme com o time do CRM.
@@ -87,7 +87,7 @@ const WEBHOOK_URLS = [
 ### Depois (CRM)
 ```typescript
 const WEBHOOK_URLS = [
-  "https://api.canastrainteligencia.com/webhook/landing-page",
+  "https://crm.canastrainteligencia.com/webhook/landing-page",
   // remover ou manter o segundo endpoint conforme necessidade
 ];
 ```
