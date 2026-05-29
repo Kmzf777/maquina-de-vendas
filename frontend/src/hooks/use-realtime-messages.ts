@@ -2,7 +2,27 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Message } from "@/lib/types";
+import type { Message, QuotedMessage } from "@/lib/types";
+
+function enrichWithQuotedMessages(raw: Message[]): Message[] {
+  const wamidMap = new Map<string, Message>();
+  const idMap = new Map<string, Message>();
+  for (const msg of raw) {
+    if (msg.wamid) wamidMap.set(msg.wamid, msg);
+    idMap.set(msg.id, msg);
+  }
+  return raw.map((msg) => {
+    const hasQuote = msg.quoted_wamid || msg.quoted_message_id;
+    if (!hasQuote) return msg;
+    const original =
+      (msg.quoted_wamid ? wamidMap.get(msg.quoted_wamid) : undefined) ??
+      (msg.quoted_message_id ? idMap.get(msg.quoted_message_id) : undefined);
+    const quoted: QuotedMessage | null = original
+      ? { id: original.id, content: original.content, role: original.role, message_type: original.message_type ?? null }
+      : null;
+    return { ...msg, quoted_message: quoted };
+  });
+}
 
 export function useRealtimeMessages(leadId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -22,7 +42,7 @@ export function useRealtimeMessages(leadId: string | null) {
       .eq("lead_id", leadId)
       .order("created_at", { ascending: false });
 
-    if (data) setMessages([...data].reverse());
+    if (data) setMessages(enrichWithQuotedMessages([...data].reverse() as Message[]));
     setLoading(false);
   }, [leadId, supabase]);
 
@@ -45,7 +65,7 @@ export function useRealtimeMessages(leadId: string | null) {
           filter: `lead_id=eq.${leadId}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as Message]);
+          setMessages((prev) => enrichWithQuotedMessages([...prev, payload.new as Message]));
         }
       )
       .subscribe();

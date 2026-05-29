@@ -91,6 +91,7 @@ export interface Message {
   wamid?: string | null;
   delivery_status?: "sent" | "delivered" | "read" | null;
   quoted_wamid?: string | null;
+  quoted_message_id?: string | null;
   quoted_message?: QuotedMessage | null;
 }
 
