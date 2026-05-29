@@ -118,25 +118,25 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
       : `/api/media?media_id=${encodeURIComponent(message.media_url)}&conversation_id=${encodeURIComponent(conversationId)}`
     : null;
 
+  const replyBtn = onReply && !isTemp ? (
+    <button
+      onClick={() => onReply(message)}
+      className="flex-shrink-0 self-center opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-full bg-[#e8e8e8] hover:bg-[#d8d8d8] text-[#666]"
+      title="Responder"
+      aria-label="Responder"
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="9 17 4 12 9 7" />
+        <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+      </svg>
+    </button>
+  ) : null;
+
   return (
     <div
-      className={`flex group relative ${isFromMe ? "justify-end" : "justify-start"} ${isGrouped ? "mt-0.5" : "mt-2"}`}
+      className={`flex group items-end gap-1 ${isFromMe ? "flex-row-reverse" : "flex-row"} ${isGrouped ? "mt-0.5" : "mt-2"}`}
     >
-      {onReply && !isTemp && (
-        <button
-          onClick={() => onReply(message)}
-          className={`absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 p-1.5 rounded-full bg-[#f0f0f0] hover:bg-[#e0e0e0] shadow-sm text-[#555] ${
-            isFromMe ? "-left-8" : "-right-8"
-          }`}
-          title="Responder"
-          aria-label="Responder"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 17 4 12 9 7" />
-            <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
-          </svg>
-        </button>
-      )}
+      {replyBtn}
       <div
         className={`px-3 py-2 text-[14px] max-w-[75%] rounded-[8px] ${
           isFromMe

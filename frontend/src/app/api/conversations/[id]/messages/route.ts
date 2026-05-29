@@ -195,27 +195,26 @@ export async function GET(
 
   const messages = (data ?? []).reverse();
 
-  // Build wamid → message lookup for resolving quoted messages
+  // Build wamid → message and id → message lookups for resolving quoted messages
   const wamidMap = new Map<string, typeof messages[0]>();
+  const idMap = new Map<string, typeof messages[0]>();
   for (const msg of messages) {
     if (msg.wamid) wamidMap.set(msg.wamid, msg);
+    idMap.set(msg.id, msg);
   }
 
-  // Attach quoted_message to each message that has quoted_wamid
+  function toQuoted(m: typeof messages[0]) {
+    return { id: m.id, content: m.content, role: m.role, message_type: m.message_type ?? null };
+  }
+
+  // Attach quoted_message: try wamid lookup, then UUID fallback (quoted_message_id)
   const enriched = messages.map((msg) => {
-    if (!msg.quoted_wamid) return msg;
-    const quoted = wamidMap.get(msg.quoted_wamid);
-    return {
-      ...msg,
-      quoted_message: quoted
-        ? {
-            id: quoted.id,
-            content: quoted.content,
-            role: quoted.role,
-            message_type: quoted.message_type ?? null,
-          }
-        : null,
-    };
+    const hasQuote = msg.quoted_wamid || msg.quoted_message_id;
+    if (!hasQuote) return msg;
+    const quoted =
+      (msg.quoted_wamid ? wamidMap.get(msg.quoted_wamid) : undefined) ??
+      (msg.quoted_message_id ? idMap.get(msg.quoted_message_id) : undefined);
+    return { ...msg, quoted_message: quoted ? toQuoted(quoted) : null };
   });
 
   return NextResponse.json(enriched);

@@ -15,7 +15,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: conversationId } = await params;
-  const { text, quoted_wamid } = await request.json();
+  const { text, quoted_wamid, quoted_message_id } = await request.json();
 
   if (!text?.trim()) {
     return NextResponse.json({ error: "text is required" }, { status: 400 });
@@ -135,6 +135,9 @@ export async function POST(
     }
     if (quoted_wamid) {
       insertData.quoted_wamid = quoted_wamid;
+    }
+    if (quoted_message_id) {
+      insertData.quoted_message_id = quoted_message_id;
     }
     await supabase.from("messages").insert(insertData);
 
