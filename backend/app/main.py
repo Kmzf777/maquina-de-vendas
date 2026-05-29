@@ -49,6 +49,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class _PublicWebhookCORSMiddleware:
+    """Open CORS for /webhook/landing-page — public, unauthenticated endpoint called from LP browsers."""
+
+    _PATH = "/webhook/landing-page"
+
+    def __init__(self, app):
+        self._app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("path") != self._PATH:
+            await self._app(scope, receive, send)
+            return
+
+        if scope.get("method") == "OPTIONS":
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"access-control-allow-origin", b"*"),
+                    (b"access-control-allow-methods", b"POST, OPTIONS"),
+                    (b"access-control-allow-headers", b"content-type"),
+                    (b"access-control-max-age", b"86400"),
+                    (b"content-length", b"0"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def _send_with_cors(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"access-control-allow-origin", b"*"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self._app(scope, receive, _send_with_cors)
+
+
+app.add_middleware(_PublicWebhookCORSMiddleware)
+
 # --- Routers ---
 from app.webhook.router import router as webhook_router
 from app.webhook.meta_router import router as meta_webhook_router
