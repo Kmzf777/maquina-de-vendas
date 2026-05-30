@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _openai_client: AsyncOpenAI | None = None
 _gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_TOOL_ITERATIONS = 5
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")

@@ -15,9 +15,16 @@ from app.whatsapp.meta import MetaCloudClient
 logger = logging.getLogger(__name__)
 
 
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+_FOLLOWUP_MODEL = "gemini-2.5-flash"
+
+
 async def _generate_followup_message(history: list[dict], sequence: int) -> str:
     """Gera mensagem contextualizada via LLM para o follow-up."""
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client = AsyncOpenAI(
+        api_key=settings.gemini_api_key,
+        base_url=_GEMINI_BASE_URL,
+    )
 
     sequence_context = (
         "Esta é a primeira tentativa de retomar contato (1 hora após o último envio do vendedor). "
@@ -34,7 +41,7 @@ async def _generate_followup_message(history: list[dict], sequence: int) -> str:
     )
 
     resp = await client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model=_FOLLOWUP_MODEL,
         messages=[
             {
                 "role": "system",
