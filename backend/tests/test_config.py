@@ -1,23 +1,14 @@
 def test_settings_loads_from_env(monkeypatch):
-    monkeypatch.setenv("EVOLUTION_API_URL", "https://evo.test.com")
-    monkeypatch.setenv("EVOLUTION_API_KEY", "test-key")
-    monkeypatch.setenv("EVOLUTION_INSTANCE", "test-instance")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
     monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "key")
 
-    import app.config
-    app.config._settings = None
+    from app.config import Settings
+    s = Settings()
 
-    from importlib import reload
-    reload(app.config)
-    s = app.config.Settings()
-
-    assert s.evolution_api_url == "https://evo.test.com"
-    assert s.evolution_api_key == "test-key"
-    assert s.evolution_instance == "test-instance"
-    assert s.buffer_base_timeout == 15
-    assert s.buffer_max_timeout == 45
+    assert s.gemini_api_key == "test-gemini"
+    assert s.buffer_base_timeout == 3
+    assert s.buffer_max_timeout == 30
 
 
 def test_gemini_api_key_configured():

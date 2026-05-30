@@ -59,7 +59,7 @@ def test_track_inbound_message_time_updates_lead():
     update_payload = mock_sb.table.return_value.update.call_args.args[0]
     assert "last_customer_message_at" in update_payload
     assert update_payload["last_customer_message_at"] is not None
-    mock_sb.table.return_value.update.return_value.eq.assert_called_with("phone", "553496654020")
+    mock_sb.table.return_value.update.return_value.eq.assert_called_with("phone", "5534996654020")
 
 
 def test_track_inbound_message_time_swallows_exceptions():

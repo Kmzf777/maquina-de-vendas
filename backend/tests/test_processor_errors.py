@@ -64,6 +64,7 @@ def _mock_settings():
     """Settings mock that disables the ai_phone_number_id channel gate."""
     s = MagicMock()
     s.ai_phone_number_id = None
+    s.ai_phone_number_ids = frozenset()
     return s
 
 

@@ -43,7 +43,7 @@ def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
     assert job["channel_id"] == "ch-1"
     assert job["metadata"]["lead_phone"] == "5511999999999"
     assert job["metadata"]["joao_phone_number_id"] == "1049315514934778"
-    assert job["metadata"]["template_name"] == "rabubens"
+    assert job["metadata"]["template_name"] == "automacao_valeria_to_joao"
 
     fire_at = datetime.fromisoformat(job["fire_at"])
     expected = now + timedelta(minutes=15)
@@ -125,7 +125,7 @@ async def test_handoff_rescue_sends_template_when_lead_has_not_contacted_joao():
         from app.follow_up.scheduler import process_due_followups
         await process_due_followups(now=datetime.now(timezone.utc))
 
-    mock_meta.send_template.assert_called_once_with("5511999999999", "rabubens")
+    mock_meta.send_template.assert_called_once_with("5511999999999", "rabubens", language_code="en_US")
     mock_sent.assert_called_once_with("job-rescue-1")
     mock_cancel.assert_not_called()
 

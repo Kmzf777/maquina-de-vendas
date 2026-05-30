@@ -7,6 +7,7 @@ from app.campaigns.service import (
     is_already_enrolled,
     create_enrollment,
 )
+from app.automation import engine as _engine
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
                 if not keywords or not any(k in message_body for k in keywords):
                     continue
                 if is_already_enrolled(tn["campaign_id"], lead_id) or not tn.get("next_node_id"):
+                    continue
+                if _engine._conversation_followup_disabled(lead_id, tn.get("channel_id")):
+                    logger.info("[AUTOMATION] keyword_received: conversation finalized — skip enrollment for lead %s", lead_id)
                     continue
                 try:
                     create_enrollment(
@@ -147,6 +151,9 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
 
 
 def _safe_enroll(trigger_node: dict, lead_id: str, now: datetime) -> None:
+    if _engine._conversation_followup_disabled(lead_id, trigger_node.get("channel_id")):
+        logger.info("[AUTOMATION] polling: conversation finalized — skip enrollment for lead %s", lead_id)
+        return
     try:
         create_enrollment(trigger_node["campaign_id"], lead_id, trigger_node["next_node_id"], now)
         logger.info("[AUTOMATION] polling enrolled %s via %s", lead_id, trigger_node.get("type"))

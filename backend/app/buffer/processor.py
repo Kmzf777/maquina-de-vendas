@@ -19,6 +19,7 @@ from app.humanizer.splitter import split_into_bubbles
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
+from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
