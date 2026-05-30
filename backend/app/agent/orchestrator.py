@@ -174,9 +174,21 @@ async def run_agent(
         tool_iterations += 1
         if tool_iterations > MAX_TOOL_ITERATIONS:
             logger.error(
-                "[LOOP GUARD] max tool iterations (%d) reached for conv %s — breaking",
+                "[LOOP GUARD] max tool iterations (%d) reached for conv %s — forcing text response",
                 MAX_TOOL_ITERATIONS, conversation_id,
             )
+            if not message.content:
+                try:
+                    fallback = await _get_client(model).chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=None,
+                        temperature=0.7,
+                        max_tokens=500,
+                    )
+                    message = fallback.choices[0].message
+                except Exception as _exc:
+                    logger.error("[LOOP GUARD] fallback call failed for conv %s: %s", conversation_id, _exc)
             break
         messages.append(message.model_dump(exclude_none=True))
         for tool_call in message.tool_calls:

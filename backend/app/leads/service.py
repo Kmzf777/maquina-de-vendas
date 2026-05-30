@@ -184,7 +184,7 @@ def reset_lead(lead_id: str) -> None:
     }).eq("lead_id", lead_id).execute()
 
 
-_DEV_PURGE_WHITELIST = {"5534996652412", "5534932262600"}
+_DEV_PURGE_WHITELIST = {"5534996652412", "5534932262600", "5534988861441"}
 
 
 def purge_dev_lead(phone: str) -> dict:
