@@ -4,6 +4,9 @@
 # MCP config (contains secrets)
 .mcp.json
 
+# Claude Code local settings (contains MCP tokens)
+.claude/settings.local.json
+
 # Python
 __pycache__/
 *.py[cod]
