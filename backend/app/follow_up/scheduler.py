@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _FOLLOWUP_MODEL = "gemini-2.5-flash"
+# gemini-2.5-flash conta tokens de thinking + texto no mesmo budget via API de compatibilidade.
+# Com max_tokens baixo, o modelo consome o budget pensando e trunca a saída (ex: "E aí, Rafael! Tudo").
+_FOLLOWUP_MAX_TOKENS = 1024
 
 
 async def _generate_followup_message(history: list[dict], sequence: int) -> str:
@@ -59,7 +62,7 @@ async def _generate_followup_message(history: list[dict], sequence: int) -> str:
                 "content": f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:",
             },
         ],
-        max_tokens=200,
+        max_tokens=_FOLLOWUP_MAX_TOKENS,
         temperature=0.8,
     )
     return (resp.choices[0].message.content or "").strip()
