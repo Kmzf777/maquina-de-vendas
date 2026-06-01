@@ -42,12 +42,15 @@ def schedule_followup(
             f"conversation_id '{conversation_id}' não existe na tabela conversations"
         )
 
-    # Cancela pending da mesma conversa (idempotência)
+    # Cancela pending da mesma conversa (idempotência).
+    # Preserva lp_welcome — é independente do ciclo de follow-up manual.
     try:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": "rescheduled",
-        }).eq("conversation_id", conversation_id).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
+        }).eq("conversation_id", conversation_id).eq("status", "pending").not_.in_(
+            "job_type", ["handoff_rescue", "lp_welcome"]
+        ).execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar jobs anteriores da conversa {conversation_id}: {exc}"

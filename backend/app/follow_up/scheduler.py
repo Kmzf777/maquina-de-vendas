@@ -247,17 +247,32 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
 
 
 async def _process_lp_welcome(job: dict, now: datetime) -> None:
-    """Dispara template de boas-vindas para lead capturado por landing page."""
+    """Dispara template de boas-vindas para lead capturado por landing page.
+
+    Só envia se o lead ainda não enviou mensagem — guarda do requisito
+    'apenas em caso do lead não enviar nenhuma mensagem'.
+    """
     metadata = job.get("metadata") or {}
     lead_phone = metadata.get("lead_phone")
     template_name = metadata.get("template_name")
     language_code = metadata.get("language_code", "pt_BR")
     channel = job["channels"]
+    lead = job["leads"]
 
     if not lead_phone or not template_name:
         _cancel_job(job["id"], "missing_metadata")
         logger.error(
             "[LP_WELCOME] Job %s sem lead_phone ou template_name no metadata", job["id"]
+        )
+        return
+
+    # Guard: só dispara se o lead ainda não entrou em contato via WhatsApp
+    if lead.get("last_customer_message_at"):
+        _cancel_job(job["id"], "lead_already_replied")
+        logger.info(
+            "[LP_WELCOME] Lead já enviou mensagem (last_customer_message_at=%s) — cancelando job %s",
+            lead["last_customer_message_at"],
+            job["id"],
         )
         return
 

@@ -201,6 +201,7 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
         "conversation_id": "conv-1",
         "channel_id": "ch-1",
         "channels": {"id": "ch-1", "provider": "meta_cloud", "provider_config": {"access_token": "tok"}},
+        "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
         "metadata": {
             "lead_phone": "5534999999999",
             "template_name": "boas_vindas",
@@ -232,6 +233,7 @@ async def test_process_lp_welcome_cancels_when_metadata_missing():
         "id": "job-lp-2",
         "lead_id": "lead-1",
         "channels": {"provider_config": {}},
+        "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
         "metadata": {},  # missing lead_phone and template_name
     }
 
@@ -245,6 +247,38 @@ async def test_process_lp_welcome_cancels_when_metadata_missing():
 
 
 @pytest.mark.anyio
+async def test_process_lp_welcome_cancels_when_lead_already_replied():
+    """Se lead já enviou mensagem, job é cancelado sem enviar template."""
+    from app.follow_up.scheduler import _process_lp_welcome
+
+    now = datetime(2026, 5, 28, 10, 15, 0, tzinfo=timezone.utc)
+
+    job = {
+        "id": "job-lp-5",
+        "lead_id": "lead-1",
+        "channels": {"provider_config": {"phone_number_id": "123", "access_token": "tok"}},
+        "leads": {
+            "id": "lead-1",
+            "phone": "5534999999999",
+            "last_customer_message_at": "2026-05-28T10:10:00+00:00",  # lead já respondeu
+        },
+        "metadata": {
+            "lead_phone": "5534999999999",
+            "template_name": "boas_vindas",
+            "language_code": "pt_BR",
+        },
+    }
+
+    with patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
+         patch("app.follow_up.scheduler.MetaCloudClient") as mock_meta:
+
+        await _process_lp_welcome(job, now)
+
+    mock_cancel.assert_called_once_with("job-lp-5", "lead_already_replied")
+    mock_meta.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_process_lp_welcome_does_not_mark_sent_on_send_failure():
     from app.follow_up.scheduler import _process_lp_welcome
 
@@ -254,6 +288,7 @@ async def test_process_lp_welcome_does_not_mark_sent_on_send_failure():
         "id": "job-lp-3",
         "lead_id": "lead-1",
         "channels": {"provider_config": {}},
+        "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
         "metadata": {
             "lead_phone": "5534999999999",
             "template_name": "boas_vindas",

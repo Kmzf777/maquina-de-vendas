@@ -105,18 +105,29 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
         language_code: str = config.get("language_code", "pt_BR")
         delay_minutes: int = int(config.get("delay_minutes", 15))
 
+        logger.info(
+            "[LP_WELCOME] Config carregada: channel_id=%r template_name=%r delay_minutes=%d lead=%s",
+            channel_id, template_name, delay_minutes, lead_id,
+        )
+
         conversation_id: str | None = None
 
         # Step 6 — create conversation if channel configured
-        if channel_id:
+        if not channel_id:
+            logger.warning("[LP_WELCOME] channel_id vazio — job NÃO será agendado. Configure em /config > Landing Pages.")
+        else:
             try:
                 conv = get_or_create_conversation(lead_id, channel_id)
                 conversation_id = conv["id"]
+                logger.info("[LP_WELCOME] Conversa obtida: conversation_id=%s lead=%s", conversation_id, lead_id)
             except Exception as exc:
                 logger.error(
-                    "lp_webhook: failed to get/create conversation lead=%s channel=%s: %s",
+                    "[LP_WELCOME] Falha ao obter/criar conversa lead=%s channel=%s: %s",
                     lead_id, channel_id, exc,
                 )
+
+        if not template_name:
+            logger.warning("[LP_WELCOME] template_name vazio — job NÃO será agendado. Configure em /config > Landing Pages.")
 
         # Step 7 — schedule welcome job if everything is available
         if channel_id and template_name and conversation_id:
@@ -132,9 +143,14 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
                 )
             except Exception as exc:
                 logger.error(
-                    "lp_webhook: failed to schedule lp_welcome lead=%s: %s",
-                    lead_id, exc,
+                    "[LP_WELCOME] Falha ao agendar job lp_welcome lead=%s conversation=%s: %s",
+                    lead_id, conversation_id, exc,
                 )
+        elif not (channel_id and template_name and conversation_id):
+            logger.warning(
+                "[LP_WELCOME] Job NÃO agendado — channel_id=%r template_name=%r conversation_id=%r lead=%s",
+                bool(channel_id), bool(template_name), bool(conversation_id), lead_id,
+            )
 
         return {"ok": True, "lead_id": lead_id, "conversation_id": conversation_id}
 
