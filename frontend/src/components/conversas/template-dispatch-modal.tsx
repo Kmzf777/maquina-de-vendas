@@ -53,6 +53,7 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
 
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MetaTemplate | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
@@ -61,9 +62,16 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
   useEffect(() => {
     if (!channelId) return;
     fetch(`/api/channels/${channelId}/templates`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Erro ao carregar templates");
+        return d;
+      })
       .then((data) => setTemplates(Array.isArray(data) ? data : []))
-      .catch(() => setTemplates([]))
+      .catch((err) => {
+        setTemplates([]);
+        setTemplateLoadError(err instanceof Error ? err.message : "Erro ao carregar templates");
+      })
       .finally(() => setLoading(false));
   }, [channelId]);
 
@@ -160,6 +168,8 @@ export function TemplateDispatchModal({ conversation, onClose, onSuccess }: Prop
           </p>
           {loading ? (
             <p className="text-[13px] text-[#7b7b78]">Buscando templates...</p>
+          ) : templateLoadError ? (
+            <p className="text-[13px] text-[#c41c1c]">{templateLoadError}</p>
           ) : templates.length === 0 ? (
             <p className="text-[13px] text-[#c41c1c]">Nenhum template aprovado encontrado.</p>
           ) : (

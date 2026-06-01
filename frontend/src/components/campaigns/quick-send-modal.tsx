@@ -61,6 +61,7 @@ export function QuickSendModal({ open, onClose, onSuccess, prefillPhone }: Quick
   const [channelId, setChannelId] = useState("");
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplate | null>(null);
   const [templateVarValues, setTemplateVarValues] = useState<Record<string, string>>({});
   const [phones, setPhones] = useState<string[]>(prefillPhone ? [prefillPhone] : [""]);
@@ -106,10 +107,18 @@ export function QuickSendModal({ open, onClose, onSuccess, prefillPhone }: Quick
     setLoadingTemplates(true);
     setSelectedTemplate(null);
     setTemplateVarValues({});
+    setTemplateLoadError(null);
     fetch(`/api/channels/${channelId}/templates`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Erro ao carregar templates");
+        return d;
+      })
       .then((d) => setTemplates(Array.isArray(d) ? d : []))
-      .catch(() => setTemplates([]))
+      .catch((err) => {
+        setTemplates([]);
+        setTemplateLoadError(err instanceof Error ? err.message : "Erro ao carregar templates");
+      })
       .finally(() => setLoadingTemplates(false));
   }, [channelId]);
 
@@ -339,6 +348,10 @@ export function QuickSendModal({ open, onClose, onSuccess, prefillPhone }: Quick
               <div className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#7b7b78]">
                 Buscando templates...
               </div>
+            ) : templateLoadError ? (
+              <p className="text-[12px] text-[#c41c1c]">
+                {templateLoadError}
+              </p>
             ) : templates.length === 0 ? (
               <p className="text-[12px] text-[#c41c1c]">
                 Nenhum template aprovado encontrado para esta instância

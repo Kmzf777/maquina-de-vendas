@@ -73,6 +73,7 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplate | null>(null);
   const [templateInputs, setTemplateInputs] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
@@ -104,10 +105,18 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
   useEffect(() => {
     if (!showTemplatePicker || !channelId || provider !== "meta_cloud") return;
     setLoadingTemplates(true);
+    setTemplateLoadError(null);
     fetch(`/api/channels/${channelId}/templates`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Erro ao carregar templates");
+        return d;
+      })
       .then((data) => setTemplates(Array.isArray(data) ? data : []))
-      .catch(() => setTemplates([]))
+      .catch((err) => {
+        setTemplates([]);
+        setTemplateLoadError(err instanceof Error ? err.message : "Erro ao carregar templates");
+      })
       .finally(() => setLoadingTemplates(false));
   }, [showTemplatePicker, channelId, provider]);
 
@@ -275,6 +284,8 @@ export function WindowReactivatePanel({ conversation, onClose }: WindowReactivat
           </div>
           {loadingTemplates ? (
             <p className="text-[13px] text-[#7b7b78]">Buscando templates...</p>
+          ) : templateLoadError ? (
+            <p className="text-[13px] text-[#c41c1c]">{templateLoadError}</p>
           ) : templates.length === 0 ? (
             <p className="text-[13px] text-[#c41c1c]">Nenhum template aprovado encontrado.</p>
           ) : (
