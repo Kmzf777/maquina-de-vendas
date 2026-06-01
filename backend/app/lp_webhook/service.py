@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.leads.service import normalize_phone, get_or_create_lead
 from app.conversations.service import get_or_create_conversation
+from app.lp_webhook.phone import normalize_lp_phone
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,8 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
     """
     try:
         # Step 1 — normalize phone
-        phone = normalize_phone(payload.get("whatsapp", ""))
+        raw_phone = payload.get("whatsapp", "")
+        phone, phone_confidence = normalize_lp_phone(raw_phone)
         if not phone:
             return {"ok": False, "error": "Telefone inválido ou ausente"}
 
@@ -88,6 +90,15 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
             except Exception as exc:
                 logger.warning("lp_webhook: failed to update email for lead %s: %s", lead_id, exc)
 
+        # Step 3b — preserve raw phone in metadata if normalization was imprecise
+        if raw_phone.strip() and phone_confidence != "ok":
+            try:
+                existing_meta_raw: dict = lead.get("metadata") or {}
+                new_meta_raw = {**existing_meta_raw, "phone_raw": raw_phone.strip()}
+                sb.table("leads").update({"metadata": new_meta_raw}).eq("id", lead_id).execute()
+            except Exception as exc:
+                logger.warning("lp_webhook: failed to save phone_raw for lead %s: %s", lead_id, exc)
+
         # Step 4 — merge origem into metadata
         origem = (payload.get("origem") or "").strip()
         if origem:
@@ -97,6 +108,13 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
                 sb.table("leads").update({"metadata": new_meta}).eq("id", lead_id).execute()
             except Exception as exc:
                 logger.warning("lp_webhook: failed to update metadata for lead %s: %s", lead_id, exc)
+
+        # Step 4b — tag lead as "número incerto" if phone was not recognized
+        if phone_confidence == "uncertain":
+            try:
+                _tag_lead_phone_uncertain(lead_id)
+            except Exception as exc:
+                logger.warning("lp_webhook: failed to tag uncertain phone for lead %s: %s", lead_id, exc)
 
         # Step 5 — load config
         config = await get_lp_config(redis)
@@ -152,11 +170,31 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
                 bool(channel_id), bool(template_name), bool(conversation_id), lead_id,
             )
 
+        logger.info(
+            "[LP_WEBHOOK] Lead processado: lead_id=%s phone=%s confidence=%s",
+            lead_id, phone, phone_confidence,
+        )
         return {"ok": True, "lead_id": lead_id, "conversation_id": conversation_id}
 
     except Exception as exc:
         logger.exception("lp_webhook: unexpected error processing lead: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _tag_lead_phone_uncertain(lead_id: str) -> None:
+    """Ensure the lead has the 'número incerto' tag applied."""
+    sb = get_supabase()
+    TAG_NAME = "número incerto"
+    tag_result = sb.table("tags").select("id").eq("name", TAG_NAME).limit(1).execute()
+    if tag_result.data:
+        tag_id = tag_result.data[0]["id"]
+    else:
+        created = sb.table("tags").insert({"name": TAG_NAME}).execute()
+        tag_id = created.data[0]["id"]
+    try:
+        sb.table("lead_tags").insert({"lead_id": lead_id, "tag_id": tag_id}).execute()
+    except Exception:
+        pass  # already tagged — ignore duplicate key error
 
 
 def _schedule_lp_welcome(
