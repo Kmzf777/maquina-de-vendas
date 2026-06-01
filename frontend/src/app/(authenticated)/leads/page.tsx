@@ -113,6 +113,12 @@ export default function LeadsPage() {
     });
   }
 
+  async function handleDeleteLead(leadId: string) {
+    await fetch(`/api/leads/${leadId}`, { method: "DELETE" });
+    setSelectedLead(null);
+    setMobileSelectedLead(null);
+  }
+
   async function handleTagsChange(leadId: string, tagIds: string[]) {
     await fetch(`/api/leads/${leadId}/tags`, {
       method: "POST",
@@ -329,6 +335,7 @@ export default function LeadsPage() {
           onClose={() => setSelectedLead(null)}
           onSave={handleSaveLead}
           onTagsChange={handleTagsChange}
+          onDelete={handleDeleteLead}
         />
       )}
       {showCreate && (
