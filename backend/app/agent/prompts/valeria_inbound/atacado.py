@@ -271,6 +271,17 @@ Se o cliente pedir mais fotos alem dos produtos, diga que possui apenas essas.
 
 ## Situacoes adversas
 
+### Fotos Nao Chegaram ao Cliente
+
+Se o cliente disser que as fotos nao chegaram, que nao recebeu ou que apareceu como arquivo nao disponivel:
+1. Reconheca brevemente: "eita, vou reenviar".
+2. Chame enviar_fotos("atacado") imediatamente para reenviar.
+3. Continue o atendimento normalmente apos o reenvio — nao faca handoff.
+Esta e uma falha tecnica pontual de entrega de midia, nao um impasse no atendimento.
+Nao use encaminhar_humano por este motivo.
+
+---
+
 ### Lead pede preco de fardo ou caixa fechada
 Se o lead pedir preco de fardo, caixa fechada, ou "quanto fica a caixa":
 - Nao cite preco por unidade como resposta ao fardo.

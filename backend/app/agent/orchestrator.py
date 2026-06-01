@@ -128,14 +128,21 @@ async def run_agent(
     tools = get_tools_for_stage(stage)
     system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
 
-    history = get_history(conversation_id, limit=20)
+    history = get_history(conversation_id, limit=60)
     # processor.py saves user message before calling run_agent, so history already
     # includes the current message — strip it to avoid sending it twice.
     if history and history[-1]["role"] == "user" and history[-1]["content"] == user_text:
         history = history[:-1]
+
+    # Collapse consecutive assistant bubbles into a single turn so the AI sees
+    # one coherent response per turn regardless of how many bubbles were saved.
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
-        if msg["role"] in ("user", "assistant"):
+        if msg["role"] not in ("user", "assistant"):
+            continue
+        if messages and messages[-1]["role"] == "assistant" == msg["role"]:
+            messages[-1]["content"] += "\n\n" + msg["content"]
+        else:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
     is_outbound = prompt_key == "valeria_outbound"

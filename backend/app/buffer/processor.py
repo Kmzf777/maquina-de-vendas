@@ -317,14 +317,15 @@ async def process_buffered_messages(
             break
 
     if send_ok:
-        try:
-            save_message(
-                conversation["id"], lead["id"], "assistant",
-                response, conversation.get("stage"),
-                sent_by="agent",
-            )
-        except Exception as e:
-            logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
+        for bubble in bubbles:
+            try:
+                save_message(
+                    conversation["id"], lead["id"], "assistant",
+                    bubble, conversation.get("stage"),
+                    sent_by="agent",
+                )
+            except Exception as e:
+                logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
         # Agenda follow-up se habilitado para a conversa
         if conversation.get("followup_enabled", True) and channel:

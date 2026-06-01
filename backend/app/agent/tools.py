@@ -7,7 +7,7 @@ from typing import Any
 from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history
 from app.conversations.service import update_conversation
 from app.whatsapp.registry import get_provider
-from app.channels.service import get_active_channel, get_channel_for_lead
+from app.channels.service import get_channel_for_lead
 from app.follow_up.service import schedule_handoff_rescue
 
 logger = logging.getLogger(__name__)
@@ -297,8 +297,7 @@ async def execute_tool(
             len(system_messages), lead_id
         )
         if any("[enviar_fotos]" in m.get("content", "") for m in system_messages):
-            logger.info("enviar_fotos: dedup ativado — fotos já enviadas para lead %s", lead_id)
-            return "fotos ja enviadas nesta conversa — nao reenviar"
+            logger.info("enviar_fotos: fotos ja enviadas anteriormente para lead %s — reenviando por solicitacao do cliente", lead_id)
 
         categoria = args["categoria"]
         photos_dir = Path(__file__).parent.parent / "photos" / categoria
@@ -310,7 +309,7 @@ async def execute_tool(
             return f"Nenhuma foto encontrada para {categoria}"
 
         captions = PHOTO_CAPTIONS.get(categoria, {})
-        channel = get_active_channel()
+        channel = get_channel_for_lead(lead_id)
         if not channel:
             return "Nenhum canal ativo disponivel"
         provider = get_provider(channel)
@@ -355,7 +354,7 @@ async def execute_tool(
             return f"foto do produto '{produto}' nao encontrada"
         photo_path = matches[0]
 
-        channel = get_active_channel()
+        channel = get_channel_for_lead(lead_id)
         if not channel:
             return "Nenhum canal ativo disponivel"
         provider = get_provider(channel)
