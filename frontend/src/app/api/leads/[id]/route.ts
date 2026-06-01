@@ -69,3 +69,26 @@ export async function PATCH(
 
   return NextResponse.json(data);
 }
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const supabase = await getServiceSupabase();
+
+  const { data: lead } = await supabase.from("leads").select("id").eq("id", id).single();
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+  await supabase.from("follow_up_jobs").delete().eq("lead_id", id);
+  await supabase.from("campaign_enrollments").delete().eq("lead_id", id);
+  await supabase.from("broadcast_leads").delete().eq("lead_id", id);
+  await supabase.from("deals").delete().eq("lead_id", id);
+  await supabase.from("lead_tags").delete().eq("lead_id", id);
+  await supabase.from("token_usage").delete().eq("lead_id", id);
+  await supabase.from("messages").delete().eq("lead_id", id);
+  await supabase.from("conversations").delete().eq("lead_id", id);
+  await supabase.from("leads").delete().eq("id", id);
+
+  return NextResponse.json({ deleted: true, lead_id: id });
+}
