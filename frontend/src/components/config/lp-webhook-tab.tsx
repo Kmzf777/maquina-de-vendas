@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,10 +30,144 @@ interface Channel {
   is_active: boolean;
 }
 
+interface TemplateParam {
+  index: number;
+  paramName: string;
+  example: string;
+}
+
+interface TemplateHeader {
+  type: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+  text?: string;
+  example?: string;
+}
+
 interface MetaTemplate {
   name: string;
   language: string;
   category: string;
+  body?: string;
+  params?: TemplateParam[];
+  paramsType?: "positional" | "named" | "none";
+  header?: TemplateHeader | null;
+  footer?: string | null;
+  buttons?: { type: string; text: string }[];
+}
+
+// ─── Category badge config ─────────────────────────────────────────────────────
+
+const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  marketing:      { label: "Marketing",      color: "#c2590a", bg: "#fff3e8" },
+  utility:        { label: "Utilidade",       color: "#1d5fa8", bg: "#e8f1fc" },
+  authentication: { label: "Autenticação",    color: "#6b27a8", bg: "#f2eafc" },
+};
+
+// ─── Inline template preview ───────────────────────────────────────────────────
+
+function TemplateInlinePreview({ template }: { template: MetaTemplate }) {
+  const cat =
+    CATEGORY_CONFIG[template.category?.toLowerCase()] ?? CATEGORY_CONFIG.utility;
+
+  const renderBody = () => {
+    if (!template.body) return null;
+    const raw = template.body;
+    const segments = raw.split(/(\{\{[\w]+\}\})/g);
+    return segments.map((seg, i) => {
+      if (/^\{\{[\w]+\}\}$/.test(seg)) {
+        return (
+          <span
+            key={i}
+            className="inline-flex items-center px-1 rounded text-[12px] font-medium text-[#7a5a00] bg-[#fff8e0]"
+          >
+            {seg}
+          </span>
+        );
+      }
+      return <React.Fragment key={i}>{seg}</React.Fragment>;
+    });
+  };
+
+  const hasMediaHeader = template.header != null && template.header.type !== "TEXT";
+
+  return (
+    <div className="mt-3 border border-[#dedbd6] rounded-[8px] overflow-hidden bg-[#faf9f6]">
+      {/* Category + name bar */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-[#faf9f6] border-b border-[#dedbd6]">
+        {template.category && (
+          <span
+            className="text-[10px] font-semibold uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px]"
+            style={{ color: cat.color, backgroundColor: cat.bg }}
+          >
+            {cat.label}
+          </span>
+        )}
+        <span className="text-[12px] text-[#7b7b78] truncate">{template.name}</span>
+        <span className="text-[10px] text-[#b0aca6] ml-auto">{template.language}</span>
+      </div>
+
+      {/* WhatsApp bubble */}
+      <div className="px-3 py-2.5 bg-[#ece5dd]">
+        <div className="max-w-[85%] bg-white rounded-[8px] rounded-tl-none shadow-sm overflow-hidden">
+          {/* Media header placeholder */}
+          {hasMediaHeader && (
+            <div className="w-full h-14 bg-[#d0ccc5] flex items-center justify-center border-b border-[#e0dbd4]">
+              <span className="text-[11px] text-[#7b7b78] uppercase tracking-[0.5px]">
+                {template.header!.type === "IMAGE"
+                  ? "Imagem"
+                  : template.header!.type === "VIDEO"
+                  ? "Vídeo"
+                  : "Documento"}
+              </span>
+            </div>
+          )}
+
+          {/* Text header */}
+          {template.header?.type === "TEXT" && template.header.text && (
+            <div className="px-3 pt-2.5 pb-0.5">
+              <p className="text-[13px] font-semibold text-[#111111] leading-snug">
+                {template.header.text}
+              </p>
+            </div>
+          )}
+
+          {/* Body */}
+          {template.body && (
+            <div className="px-3 py-2.5">
+              <p className="text-[13px] text-[#111111] leading-relaxed whitespace-pre-wrap">
+                {renderBody()}
+              </p>
+            </div>
+          )}
+
+          {/* Footer */}
+          {template.footer && (
+            <div className="px-3 pb-2 -mt-1">
+              <p className="text-[11px] text-[#7b7b78] italic">{template.footer}</p>
+            </div>
+          )}
+
+          {/* Timestamp stub */}
+          <div className="flex justify-end px-3 pb-1.5 -mt-0.5">
+            <span className="text-[10px] text-[#b0aca6]">agora</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Buttons row */}
+      {template.buttons && template.buttons.length > 0 && (
+        <div className="bg-[#ece5dd] border-t border-[#d9d3c9] px-3 pb-2.5 pt-0 flex flex-wrap gap-1.5">
+          {template.buttons.map((btn, i) => (
+            <div
+              key={i}
+              className="max-w-[85%] bg-white rounded-[6px] shadow-sm px-3 py-1.5 text-center w-full"
+            >
+              <span className="text-[12px] text-[#1d8cdb] font-medium">{btn.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Main Tab ────────────────────────────────────────────────────────────────
@@ -136,6 +271,10 @@ export function LpWebhookTab() {
       ? `${settings.template_name}|${settings.language_code}`
       : "";
 
+  const selectedTemplate = templates.find(
+    (t) => `${t.name}|${t.language}` === selectedTemplateKey
+  ) ?? null;
+
   return (
     <div className="space-y-6">
       <p className="text-[14px] text-[#7b7b78]">
@@ -231,6 +370,9 @@ export function LpWebhookTab() {
               </SelectContent>
             </Select>
           )}
+
+          {/* Inline preview — shown only when a template is selected */}
+          {selectedTemplate && <TemplateInlinePreview template={selectedTemplate} />}
         </div>
 
         {/* Language code + Delay — side by side */}
