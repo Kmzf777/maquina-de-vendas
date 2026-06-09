@@ -15,6 +15,106 @@ from app.whatsapp.meta import MetaCloudClient
 
 logger = logging.getLogger(__name__)
 
+_last_health_check: datetime | None = None
+_HEALTH_CHECK_INTERVAL = timedelta(hours=1)
+
+_BILLING_ERROR_CODE = 131042
+_META_API_BASE = "https://graph.facebook.com/v21.0"
+
+
+async def check_meta_channel_health() -> None:
+    """Roda a cada hora: verifica canais Meta via API e escaneia logs por erros de billing."""
+    global _last_health_check
+    now = datetime.now(timezone.utc)
+    if _last_health_check and (now - _last_health_check) < _HEALTH_CHECK_INTERVAL:
+        return
+    _last_health_check = now
+    logger.info("[HEALTH] Iniciando health check dos canais Meta")
+
+    await _health_check_via_api()
+    await _health_check_via_logs(now)
+
+
+async def _health_check_via_api() -> None:
+    """GET leve em cada canal Meta para verificar token e quality_rating."""
+    try:
+        from app.channels.service import list_channels
+        channels = [c for c in list_channels() if c.get("provider") == "meta_cloud"]
+    except Exception as exc:
+        logger.error("[HEALTH] Falha ao listar canais: %s", exc)
+        return
+
+    for channel in channels:
+        config = channel.get("provider_config") or {}
+        phone_number_id = config.get("phone_number_id", "")
+        access_token = config.get("access_token", "")
+        if not phone_number_id or not access_token:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{_META_API_BASE}/{phone_number_id}",
+                    params={"fields": "id,quality_rating,display_phone_number"},
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            data = resp.json()
+            if not resp.is_success:
+                error = data.get("error", {})
+                code = error.get("code")
+                logger.critical(
+                    "[HEALTH] Canal '%s' retornou erro Meta code=%s: %s",
+                    channel.get("name"), code, error.get("message"),
+                )
+                if code == 190:
+                    from app.alerts.service import create_system_alert
+                    create_system_alert(
+                        "token_expired",
+                        f"Token Meta expirado — canal {channel.get('name')}",
+                        f"O access_token do canal '{channel.get('name')}' está inválido ou expirado. "
+                        "Renove o token no Business Manager da Meta.",
+                        severity="critical",
+                        metadata={"channel_id": channel.get("id"), "meta_error": error},
+                    )
+            else:
+                quality = (data.get("quality_rating") or "GREEN").upper()
+                if quality == "RED":
+                    logger.warning(
+                        "[HEALTH] Canal '%s' com quality_rating=RED — risco de bloqueio pela Meta",
+                        channel.get("name"),
+                    )
+                else:
+                    logger.info("[HEALTH] Canal '%s' OK (quality=%s)", channel.get("name"), quality)
+        except Exception as exc:
+            logger.error("[HEALTH] Erro ao verificar canal '%s': %s", channel.get("name"), exc)
+
+
+async def _health_check_via_logs(now: datetime) -> None:
+    """Escaneia meta_webhook_logs da última hora por erros de billing (131042)."""
+    try:
+        sb = get_supabase()
+        since = (now - _HEALTH_CHECK_INTERVAL).isoformat()
+        result = (
+            sb.table("meta_webhook_logs")
+            .select("id, payload")
+            .eq("direction", "inbound")
+            .gte("received_at", since)
+            .order("received_at", desc=True)
+            .limit(200)
+            .execute()
+        )
+        has_billing = any(
+            str(_BILLING_ERROR_CODE) in str(row.get("payload", ""))
+            for row in (result.data or [])
+        )
+        if has_billing:
+            logger.critical("[HEALTH] Erros de billing (%d) detectados nos logs da última hora", _BILLING_ERROR_CODE)
+            from app.alerts.service import fire_billing_alert
+            await fire_billing_alert([{"code": _BILLING_ERROR_CODE, "title": "Business eligibility payment issue"}])
+        else:
+            logger.info("[HEALTH] Nenhum erro de billing nos logs da última hora")
+    except Exception as exc:
+        logger.error("[HEALTH] Falha ao escanear logs por billing errors: %s", exc)
+
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _FOLLOWUP_MODEL = "gemini-2.5-flash"

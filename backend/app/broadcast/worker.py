@@ -19,7 +19,7 @@ from app.broadcast.service import (
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.leads.service import update_lead
-from app.follow_up.scheduler import process_due_followups
+from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
@@ -265,6 +265,7 @@ async def run_worker():
         try:
             from app.automation.engine import process_due_enrollments
             from app.automation.triggers import check_polling_triggers
+            await check_meta_channel_health()
             await process_scheduled_broadcasts()
             await process_broadcasts()
             await check_polling_triggers()
@@ -334,6 +335,29 @@ async def process_scheduled_broadcasts():
 async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
+
+    # Pre-flight: aborta se há alerta de billing ativo — evita mandar 80 mensagens que vão falhar
+    try:
+        billing_alert = (
+            sb.table("system_alerts")
+            .select("id, title")
+            .eq("type", "billing_payment_issue")
+            .eq("resolved", False)
+            .limit(1)
+            .execute()
+        )
+        if billing_alert.data:
+            alert_title = billing_alert.data[0].get("title", "pagamento pendente")
+            logger.critical(
+                "[BROADCAST] Abortando broadcast '%s' (%s) — alerta de billing ativo: %s",
+                broadcast.get("name"), broadcast_id, alert_title,
+            )
+            sb.table("broadcasts").update({
+                "status": "paused",
+            }).eq("id", broadcast_id).execute()
+            return
+    except Exception as exc:
+        logger.error("[BROADCAST] Falha no pre-flight check de billing para broadcast %s: %s", broadcast_id, exc)
 
     # Recover leads stuck in 'processing' for over 5 minutes (worker crash/restart).
     # If wamid is set, the message reached Meta — mark as sent instead of re-queuing
