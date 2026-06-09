@@ -35,3 +35,6 @@ dist/
 
 # Logs (keep directory, ignore log files)
 logs/*.log
+
+# Redis config com senha (gerado na VPS, nao commitar)
+backend/redis.conf
