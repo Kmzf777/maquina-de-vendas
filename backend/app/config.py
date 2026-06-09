@@ -49,6 +49,7 @@ if PYDANTIC_V2:
         buffer_max_timeout: int = 30
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
+        alert_phone: Optional[str] = None
 
         model_config = {
             "extra": "allow",
@@ -82,6 +83,7 @@ else:
         buffer_max_timeout: int = 30
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
+        alert_phone: Optional[str] = None
 
         class Config:
             env_file = ".env"

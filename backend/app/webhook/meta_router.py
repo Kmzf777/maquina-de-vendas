@@ -77,9 +77,9 @@ def _extract_statuses(payload: dict) -> list[dict]:
     return statuses
 
 
-def _handle_delivery_status(wamid: str, status: str) -> None:
+async def _handle_delivery_status(wamid: str, status: str, errors: list | None = None) -> None:
     """Handle Meta delivery status events: updates messages.delivery_status and broadcast counters."""
-    if status not in ("sent", "delivered", "read"):
+    if status not in ("sent", "delivered", "read", "failed"):
         return
     try:
         sb = get_supabase()
@@ -102,6 +102,24 @@ def _handle_delivery_status(wamid: str, status: str) -> None:
                 logger.info("[DELIVERY] wamid=%s duplicate webhook — already counted", wamid)
         except Exception as e:
             logger.warning("[DELIVERY] Failed to process broadcast delivery for wamid=%s: %s", wamid, e)
+
+    elif status == "failed":
+        try:
+            from app.broadcast.service import find_broadcast_lead_by_wamid, mark_broadcast_lead_failed, increment_broadcast_failed
+            bl = find_broadcast_lead_by_wamid(wamid)
+            if not bl:
+                return
+            error_codes = [err.get("code") for err in (errors or [])]
+            error_msg = "; ".join(err.get("title", str(err.get("code", ""))) for err in (errors or [])) or "failed"
+            mark_broadcast_lead_failed(bl["id"], error_msg)
+            increment_broadcast_failed(bl["broadcast_id"])
+            logger.warning("[DELIVERY] wamid=%s broadcast_lead=%s FAILED — %s", wamid, bl["id"], error_msg)
+
+            if 131042 in error_codes:
+                from app.alerts.service import fire_billing_alert
+                await fire_billing_alert(errors or [])
+        except Exception as e:
+            logger.warning("[DELIVERY] Failed to process broadcast failure for wamid=%s: %s", wamid, e)
 
 
 def _extract_template_events(payload: dict) -> list[dict]:
@@ -299,12 +317,13 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         message_count=len(messages),
     )
 
-    # Process delivery receipts — updates broadcasts.delivered counter
+    # Process delivery receipts — updates broadcasts.delivered/failed counters
     for status_event in _extract_statuses(payload):
         wamid = status_event.get("id")
         status = status_event.get("status")
+        errors = status_event.get("errors") or []
         if wamid and status:
-            background_tasks.add_task(_handle_delivery_status, wamid, status)
+            background_tasks.add_task(_handle_delivery_status, wamid, status, errors)
 
     for msg in messages:
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
