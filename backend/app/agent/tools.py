@@ -261,6 +261,7 @@ async def execute_tool(
                     lead_phone=phone,
                     conversation_id=conversation_id,
                     channel_id=channel["id"],
+                    lead_name=(lead.get("name") or "") if lead else "",
                 )
             except Exception as exc:
                 logger.error(

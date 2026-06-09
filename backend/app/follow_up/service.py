@@ -174,6 +174,7 @@ def schedule_handoff_rescue(
     conversation_id: str,
     channel_id: str,
     delay_minutes: int = 15,
+    lead_name: str = "",
 ) -> None:
     """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes."""
     if os.environ.get("REHEARSAL_MODE") == "true":
@@ -192,6 +193,7 @@ def schedule_handoff_rescue(
         "job_type": "handoff_rescue",
         "metadata": {
             "lead_phone": lead_phone,
+            "lead_name": lead_name,
             "joao_phone_number_id": "1049315514934778",
             "template_name": "automacao_valeria_to_joao",
             "language_code": "en_US",
@@ -219,7 +221,7 @@ def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
             sb.table("follow_up_jobs")
             .select(
                 "*, "
-                "leads!inner(id, phone, last_customer_message_at), "
+                "leads!inner(id, phone, name, last_customer_message_at), "
                 "channels!inner(id, name, provider, provider_config, mode), "
                 "conversations!inner(id, stage, followup_enabled)"
             )

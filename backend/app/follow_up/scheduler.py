@@ -2,6 +2,7 @@
 import logging
 from datetime import datetime, timezone, timedelta
 
+import httpx
 from openai import AsyncOpenAI
 
 from app.config import settings
@@ -232,16 +233,33 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
         )
         # Segurança: se falhou a verificação, envia o template (falso negativo > falso positivo)
 
+    lead_name = (job.get("leads") or {}).get("name") or metadata.get("lead_name") or ""
+    first_name = lead_name.split()[0] if lead_name else ""
+    components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
-        await provider.send_template(lead_phone, template_name, language_code=language_code)
+        await provider.send_template(lead_phone, template_name, components=components, language_code=language_code)
         logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' ({language_code}) enviado para {lead_phone}")
+    except httpx.HTTPStatusError as http_exc:
+        status = http_exc.response.status_code
+        if 400 <= status < 500:
+            _cancel_job(job["id"], f"meta_permanent_error_{status}")
+            logger.error(
+                f"[HANDOFF_RESCUE] Erro permanente Meta HTTP {status} para {lead_phone} — job cancelado"
+            )
+        else:
+            logger.error(
+                f"[HANDOFF_RESCUE] Erro transitório Meta HTTP {status} para {lead_phone} — será retentado",
+                exc_info=True,
+            )
+        return
     except Exception as exc:
         logger.error(
             f"[HANDOFF_RESCUE] Falha ao enviar template para {lead_phone}: {exc}",
             exc_info=True,
         )
-        return  # Não marca sent → job será retentado no próximo tick do worker
+        return  # erro transitório → retry no próximo tick
 
     _mark_sent(job["id"])
 
@@ -276,15 +294,32 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
         )
         return
 
+    lead_name = metadata.get("lead_name") or (job.get("leads") or {}).get("name") or ""
+    first_name = lead_name.split()[0] if lead_name else ""
+    components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+
     try:
         provider = MetaCloudClient(channel["provider_config"])
-        await provider.send_template(lead_phone, template_name, language_code=language_code)
+        await provider.send_template(lead_phone, template_name, components=components, language_code=language_code)
         logger.info("[LP_WELCOME] Template '%s' enviado para %s", template_name, lead_phone)
+    except httpx.HTTPStatusError as http_exc:
+        status = http_exc.response.status_code
+        if 400 <= status < 500:
+            _cancel_job(job["id"], f"meta_permanent_error_{status}")
+            logger.error(
+                "[LP_WELCOME] Erro permanente Meta HTTP %s para %s — job cancelado", status, lead_phone
+            )
+        else:
+            logger.error(
+                "[LP_WELCOME] Erro transitório Meta HTTP %s para %s — será retentado", status, lead_phone,
+                exc_info=True,
+            )
+        return
     except Exception as exc:
         logger.error(
             "[LP_WELCOME] Falha ao enviar template para %s: %s", lead_phone, exc, exc_info=True
         )
-        return  # Não marca sent → retry automático no próximo tick
+        return  # erro transitório → retry no próximo tick
 
     _mark_sent(job["id"])
 

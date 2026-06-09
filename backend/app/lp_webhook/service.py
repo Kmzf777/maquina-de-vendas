@@ -155,6 +155,7 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
                     lead_id=lead_id,
                     channel_id=channel_id,
                     lead_phone=phone,
+                    lead_name=lead.get("name") or "",
                     template_name=template_name,
                     language_code=language_code,
                     delay_minutes=delay_minutes,
@@ -205,6 +206,7 @@ def _schedule_lp_welcome(
     template_name: str,
     language_code: str,
     delay_minutes: int,
+    lead_name: str = "",
 ) -> None:
     """Insert a follow_up_jobs row with job_type='lp_welcome'.
 
@@ -225,6 +227,7 @@ def _schedule_lp_welcome(
         "job_type": "lp_welcome",
         "metadata": {
             "lead_phone": lead_phone,
+            "lead_name": lead_name,
             "template_name": template_name,
             "language_code": language_code,
         },
