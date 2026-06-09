@@ -29,7 +29,7 @@ def create_system_alert(
 
 
 async def fire_billing_alert(errors: list) -> None:
-    """Create billing alert and notify via WhatsApp — deduplicated to once per hour."""
+    """Cria alerta de billing no banco (dedup: 1 por hora). Aparece como popup no CRM."""
     sb = get_supabase()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     try:
@@ -58,28 +58,3 @@ async def fire_billing_alert(errors: list) -> None:
         severity="critical",
         metadata={"meta_errors": errors},
     )
-    await _send_whatsapp_alert(title, message)
-
-
-async def _send_whatsapp_alert(title: str, message: str) -> None:
-    from app.config import get_settings
-    from app.channels.service import get_channel_by_provider_config
-    from app.whatsapp.meta import MetaCloudClient
-
-    settings = get_settings()
-    alert_phone = getattr(settings, "alert_phone", None) or ""
-    if not alert_phone:
-        logger.warning("[ALERT] ALERT_PHONE not configured — WhatsApp alert skipped")
-        return
-
-    try:
-        joao_channel = get_channel_by_provider_config("phone_number_id", "1049315514934778", "meta_cloud")
-        if not joao_channel:
-            logger.error("[ALERT] João channel not found — cannot send WhatsApp alert")
-            return
-        provider = MetaCloudClient(joao_channel["provider_config"])
-        text = f"⚠️ *ALERTA CRM*\n\n*{title}*\n\n{message}"
-        await provider.send_text(alert_phone, text)
-        logger.info("[ALERT] WhatsApp alert sent to %s", alert_phone)
-    except Exception as exc:
-        logger.error("[ALERT] Failed to send WhatsApp alert: %s", exc)
