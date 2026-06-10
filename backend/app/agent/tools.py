@@ -248,13 +248,13 @@ async def execute_tool(
         # Gera e armazena resumo estruturado da qualificação
         try:
             from app.agent.summary import generate_qualification_summary
-            from app.agent.orchestrator import _get_client, DEFAULT_MODEL
+            from app.agent.orchestrator import get_ai_client, DEFAULT_MODEL
             from app.db.supabase import get_supabase
             conv_history = get_conversation_history(conversation_id, limit=100)
             fresh_lead = get_lead(lead_id) or {}
             _model = DEFAULT_MODEL
             summary_text = await generate_qualification_summary(
-                conv_history, fresh_lead, _get_client(_model), _model
+                conv_history, fresh_lead, get_ai_client(_model), _model
             )
             _sb = get_supabase()
             _sb.table("lead_notes").insert({

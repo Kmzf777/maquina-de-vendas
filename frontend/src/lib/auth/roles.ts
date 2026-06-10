@@ -28,6 +28,7 @@ export const ADMIN_API_PREFIXES = [
   "/api/stats",
   "/api/evolution",
   "/api/admin",
+  "/api/users",
 ];
 
 export function isAdminOnlyPage(pathname: string): boolean {

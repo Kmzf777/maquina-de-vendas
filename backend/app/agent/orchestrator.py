@@ -57,6 +57,11 @@ def _get_client(model: str) -> AsyncOpenAI:
     return _get_gemini() if _is_gemini_model(model) else _get_openai()
 
 
+def get_ai_client(model: str) -> AsyncOpenAI:
+    """Public accessor — returns the appropriate AI client for the given model."""
+    return _get_client(model)
+
+
 def _resolve_prompt_key(profile: dict | None) -> str:
     """Return the prompt_key for this agent profile, defaulting to valeria_inbound."""
     if not profile:
