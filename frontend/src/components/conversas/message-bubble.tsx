@@ -110,6 +110,40 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
   const isContact = message.message_type === "contact";
   const isReaction = message.message_type === "reaction";
 
+  // Contexto de qualificação: card especial, não bolha de chat
+  if (message.sent_by === "handoff_context") {
+    return (
+      <div className="mx-2 my-3">
+        <div className="rounded-[8px] border border-[#d4a840]/40 bg-[#fffbeb] p-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <svg
+              className="w-4 h-4 text-[#b07d10] flex-shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={1.8}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            <span className="text-[11px] font-semibold text-[#7b5a00] uppercase tracking-wider">
+              Contexto da Qualificação
+            </span>
+          </div>
+          <div className="text-[13px] text-[#3d2e00] whitespace-pre-wrap leading-relaxed">
+            {message.content}
+          </div>
+          <div className="mt-3 text-[11px] text-[#9a7a20]">
+            {formatTimeOnly(message.created_at)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // New messages: media_url is a Supabase Storage URL (https://...) or object URL (blob:...)
   // Legacy messages: media_url is a Meta media_id (numeric string) — use proxy fallback
   const mediaSrc = message.media_url
