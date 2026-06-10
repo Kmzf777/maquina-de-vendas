@@ -43,7 +43,12 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
         router.push(`/campanhas/disparos/${id}`);
         return;
       }
-      await fetch(`/api/broadcasts/${id}/start`, { method: "POST" });
+      const startRes = await fetch(`/api/broadcasts/${id}/start`, { method: "POST" });
+      if (!startRes.ok) {
+        const body = await startRes.json().catch(() => ({}));
+        alert(body.detail ?? "Erro ao iniciar disparo.");
+        return;
+      }
       onRefresh();
       return;
     }

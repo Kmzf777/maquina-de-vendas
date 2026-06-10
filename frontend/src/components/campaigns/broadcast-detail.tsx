@@ -93,7 +93,12 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         return;
       }
 
-      await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
+      const startRes = await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
+      if (!startRes.ok) {
+        const body = await startRes.json().catch(() => ({}));
+        alert(body.detail ?? "Erro ao iniciar disparo.");
+        return;
+      }
       setBroadcast({ ...broadcast, status: "running" });
     } finally {
       setActionLoading(false);
@@ -121,7 +126,8 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       if (startRes.ok) {
         setBroadcast({ ...broadcast, status: "running" });
       } else {
-        alert("Leads removidos, mas erro ao iniciar o disparo. Tente iniciar manualmente.");
+        const body = await startRes.json().catch(() => ({}));
+        alert(body.detail ?? "Leads removidos, mas erro ao iniciar o disparo. Tente iniciar manualmente.");
       }
     } finally {
       setModalActionLoading(false);
@@ -149,8 +155,11 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       setSelectedConflictIds(new Set());
       if (startRes.ok) {
         setBroadcast({ ...broadcast, status: "running" });
+        alert(`${resolveData.removed_count} lead(s) movidos para o rascunho "${resolveData.new_broadcast_name}"`);
+      } else {
+        const body = await startRes.json().catch(() => ({}));
+        alert(body.detail ?? `${resolveData.removed_count} lead(s) movidos, mas erro ao iniciar o disparo.`);
       }
-      alert(`${resolveData.removed_count} lead(s) movidos para o rascunho "${resolveData.new_broadcast_name}"`);
     } finally {
       setModalActionLoading(false);
       setActionLoading(false);
@@ -167,6 +176,9 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       setSelectedConflictIds(new Set());
       if (startRes.ok) {
         setBroadcast({ ...broadcast, status: "running" });
+      } else {
+        const body = await startRes.json().catch(() => ({}));
+        alert(body.detail ?? "Erro ao iniciar o disparo.");
       }
     } finally {
       setModalActionLoading(false);

@@ -159,6 +159,19 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
 @router.post("/{broadcast_id}/start")
 async def start_broadcast(broadcast_id: str):
     sb = get_supabase()
+
+    billing_alert = (
+        sb.table("system_alerts")
+        .select("title")
+        .eq("type", "billing_payment_issue")
+        .eq("resolved", False)
+        .limit(1)
+        .execute()
+    )
+    if billing_alert.data:
+        title = billing_alert.data[0].get("title", "Pagamento pendente na conta WhatsApp")
+        raise HTTPException(400, f"Disparo bloqueado: {title}. Resolva o pagamento no Business Manager da Meta antes de retomar.")
+
     broadcast = sb.table("broadcasts").select("*").eq("id", broadcast_id).single().execute().data
     if broadcast["status"] == "running":
         raise HTTPException(400, "Disparo ja esta rodando")
