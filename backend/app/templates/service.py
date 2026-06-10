@@ -1,5 +1,6 @@
 # backend/app/templates/service.py
 import logging
+import os
 import httpx
 from fastapi import HTTPException
 from app.db.supabase import get_supabase
@@ -13,12 +14,12 @@ def _get_meta_client(channel: dict) -> MetaTemplateClient:
     if channel.get("provider") != "meta_cloud":
         raise HTTPException(400, "Templates are only supported for meta_cloud channels")
     config = channel.get("provider_config", {})
-    waba_id = config.get("waba_id")
+    waba_id = config.get("waba_id") or os.environ.get("META_WABA_ID", "")
+    access_token = config.get("access_token") or os.environ.get("META_ACCESS_TOKEN", "")
     if not waba_id:
-        raise HTTPException(400, "Channel provider_config is missing 'waba_id'")
-    access_token = config.get("access_token")
+        raise HTTPException(400, "META_WABA_ID not configured (env var or provider_config)")
     if not access_token:
-        raise HTTPException(400, "Channel provider_config is missing 'access_token'")
+        raise HTTPException(400, "META_ACCESS_TOKEN not configured (env var or provider_config)")
     return MetaTemplateClient(waba_id=waba_id, access_token=access_token)
 
 

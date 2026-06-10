@@ -58,11 +58,13 @@ export async function GET(
   }
 
   const config = channel.provider_config as Record<string, string>;
-  const { access_token, waba_id, api_version } = config;
+  const access_token = config.access_token || process.env.META_ACCESS_TOKEN || "";
+  const waba_id = config.waba_id || process.env.META_WABA_ID || "";
+  const api_version = config.api_version;
 
   if (!access_token || !waba_id) {
     return NextResponse.json(
-      { error: "Canal sem access_token ou waba_id configurado" },
+      { error: "META_ACCESS_TOKEN ou META_WABA_ID não configurados" },
       { status: 400 }
     );
   }

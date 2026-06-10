@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import random
 from datetime import datetime, timezone, timedelta
 
@@ -147,8 +148,8 @@ async def _render_template_body(template_name: str, template_variables: dict, le
     if channel:
         try:
             config = channel.get("provider_config", {})
-            waba_id = config.get("waba_id")
-            access_token = config.get("access_token")
+            waba_id = config.get("waba_id") or os.environ.get("META_WABA_ID", "")
+            access_token = config.get("access_token") or os.environ.get("META_ACCESS_TOKEN", "")
             if waba_id and access_token:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.get(

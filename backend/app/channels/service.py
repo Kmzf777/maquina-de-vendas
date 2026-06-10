@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 def _inject_meta_credentials(config: dict) -> dict:
     """Fill missing Meta Cloud API credentials from global env vars.
 
-    access_token, verify_token and app_secret are project-wide constants
-    and must never be left empty for meta_cloud channels.
+    access_token, verify_token, app_secret and waba_id are project-wide
+    constants shared across all numbers on the same WABA.
     """
     config = dict(config)
     if not config.get("access_token"):
@@ -19,6 +19,8 @@ def _inject_meta_credentials(config: dict) -> dict:
         config["verify_token"] = os.environ.get("META_VERIFY_TOKEN", "")
     if not config.get("app_secret"):
         config["app_secret"] = os.environ.get("META_APP_SECRET", "")
+    if not config.get("waba_id"):
+        config["waba_id"] = os.environ.get("META_WABA_ID", "")
     return config
 
 
