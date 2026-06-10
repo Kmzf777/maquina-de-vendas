@@ -115,6 +115,20 @@ async def _handle_delivery_status(wamid: str, status: str, errors: list | None =
             increment_broadcast_failed(bl["broadcast_id"])
             logger.warning("[DELIVERY] wamid=%s broadcast_lead=%s FAILED — %s", wamid, bl["id"], error_msg)
 
+            # Remove conversation if the lead never replied (only broadcast messages present).
+            # Avoids polluting /conversas with conversations the lead never received.
+            try:
+                msg_result = sb.table("messages").select("id, conversation_id").eq("wamid", wamid).limit(1).execute()
+                if msg_result.data:
+                    conv_id = msg_result.data[0].get("conversation_id")
+                    if conv_id:
+                        user_msgs = sb.table("messages").select("id", count="exact").eq("conversation_id", conv_id).eq("role", "user").execute()
+                        if not (user_msgs.count or 0):
+                            sb.table("conversations").delete().eq("id", conv_id).execute()
+                            logger.info("[DELIVERY] Removed conversation %s — lead never replied, failed broadcast wamid=%s", conv_id, wamid)
+            except Exception as cleanup_exc:
+                logger.warning("[DELIVERY] Failed to clean up conversation for wamid=%s: %s", wamid, cleanup_exc)
+
             if 131042 in error_codes:
                 from app.alerts.service import fire_billing_alert
                 await fire_billing_alert(errors or [])

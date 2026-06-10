@@ -190,7 +190,14 @@ class MetaCloudClient(WhatsAppProvider):
         }
         if components:
             payload["template"]["components"] = components
-        return await self._post(payload, request_type="send_template")
+        result = await self._post(payload, request_type="send_template")
+        # Meta can return HTTP 200 with an embedded error object — same caveat as send_text.
+        # A real acceptance always contains "messages" with at least one wamid.
+        if not isinstance(result, dict) or "messages" not in result:
+            raise RuntimeError(
+                f"Meta send_template rejected (missing messages in response): {result!r}"
+            )
+        return result
 
     async def download_media(self, media_id: str) -> tuple[bytes, str]:
         """Download media from Meta using media_id. Returns (bytes, content_type)."""
