@@ -60,9 +60,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Strip channel_id from update body for restricted users to prevent unauthorized reassignment
+  const updateBody = allowedChannelIds !== null
+    ? (({ channel_id, ...rest }) => rest)(body)
+    : body;
+
   let dbQuery = supabase
     .from("broadcasts")
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update({ ...updateBody, updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (allowedChannelIds !== null) {
