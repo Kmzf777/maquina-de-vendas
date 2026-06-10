@@ -36,7 +36,7 @@ async def generate_qualification_summary(
     """Gera resumo estruturado da qualificação a partir do histórico da conversa.
 
     Args:
-        history: lista de mensagens com campos role, content (de leads.service.get_history)
+        history: lista de mensagens com campos role, content (de conversations.service.get_history)
         lead: dict do lead com campos name, stage, company
         client: instância AsyncOpenAI (OpenAI ou Gemini-compat)
         model: nome do modelo a usar
@@ -60,9 +60,11 @@ async def generate_qualification_summary(
 
     lead_name = lead.get("name") or "não informado"
     lead_stage = lead.get("stage") or "não identificado"
+    lead_company = lead.get("company") or "não informada"
+    history_text = "\n".join(lines)
     context = (
-        f"Informações do lead — Nome: {lead_name} | Segmento identificado: {lead_stage}\n\n"
-        f"Histórico da conversa:\n" + "\n".join(lines)
+        f"Informações do lead — Nome: {lead_name} | Empresa: {lead_company} | Segmento identificado: {lead_stage}\n\n"
+        f"Histórico da conversa:\n{history_text}"
     )
 
     try:
@@ -75,6 +77,8 @@ async def generate_qualification_summary(
             max_tokens=600,
             temperature=0.2,
         )
+        if not response.choices:
+            return "## Resumo da Qualificação\n\n*Resumo indisponível (resposta vazia do modelo).*"
         return response.choices[0].message.content or ""
     except Exception as exc:
         logger.error("generate_qualification_summary: falha na chamada LLM: %s", exc, exc_info=True)

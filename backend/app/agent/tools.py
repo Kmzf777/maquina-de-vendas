@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history
-from app.conversations.service import update_conversation
+from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_for_lead
 from app.follow_up.service import schedule_handoff_rescue
@@ -245,6 +245,32 @@ async def execute_tool(
                 lead_id, exc, exc_info=True,
             )
         save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
+        # Gera e armazena resumo estruturado da qualificação
+        try:
+            from app.agent.summary import generate_qualification_summary
+            from app.agent.orchestrator import _get_client, DEFAULT_MODEL
+            from app.db.supabase import get_supabase
+            conv_history = get_conversation_history(conversation_id, limit=100)
+            fresh_lead = get_lead(lead_id) or {}
+            _model = DEFAULT_MODEL
+            summary_text = await generate_qualification_summary(
+                conv_history, fresh_lead, _get_client(_model), _model
+            )
+            _sb = get_supabase()
+            _sb.table("lead_notes").insert({
+                "lead_id": lead_id,
+                "author": "qualificação-ia",
+                "content": summary_text,
+            }).execute()
+            existing_meta = dict(fresh_lead.get("metadata") or {})
+            existing_meta["handoff_summary"] = summary_text
+            update_lead(lead_id, metadata=existing_meta)
+            logger.info("encaminhar_humano: resumo de qualificação salvo para lead %s", lead_id)
+        except Exception as _exc:
+            logger.error(
+                "encaminhar_humano: falha ao gerar/salvar resumo para lead %s: %s",
+                lead_id, _exc, exc_info=True,
+            )
         channel = get_channel_for_lead(lead_id)
         if channel:
             try:

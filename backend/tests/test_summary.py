@@ -20,6 +20,7 @@ async def test_empty_history_returns_fallback():
     result = await generate_qualification_summary([], {}, client, "gpt-4o-mini")
     assert "Resumo da Qualificação" in result
     assert "Nenhuma mensagem" in result
+    client.chat.completions.create.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -29,6 +30,7 @@ async def test_history_without_user_or_assistant_returns_fallback():
     result = await generate_qualification_summary(history, {}, client, "gpt-4o-mini")
     assert "Resumo da Qualificação" in result
     assert "sem mensagens relevantes" in result
+    client.chat.completions.create.assert_not_called()
 
 
 @pytest.mark.asyncio
