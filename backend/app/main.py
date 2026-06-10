@@ -15,6 +15,67 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 
+logger = logging.getLogger(__name__)
+
+
+async def _recover_orphaned_buffers(redis: aioredis.Redis) -> None:
+    """Flush buffer keys left in Redis after a container restart.
+
+    manager.py stores asyncio Tasks in-process; a restart destroys them while
+    the Redis list keys (buffer:{phone}:{channel_id}) survive. This scan finds
+    lists whose lock has already expired (timer gone) and re-processes them so
+    no inbound message is silently dropped.
+    """
+    from app.buffer.processor import process_buffered_messages
+
+    recovered = 0
+    cursor = 0
+    while True:
+        cursor, keys = await redis.scan(cursor, match="buffer:*", count=200)
+        for key in keys:
+            if key.endswith(":lock") or key.endswith(":deadline"):
+                continue
+            parts = key.split(":", 2)
+            if len(parts) != 3:
+                continue
+            _, phone, channel_id = parts
+
+            lock_key = f"buffer:{phone}:{channel_id}:lock"
+            has_lock = await redis.exists(lock_key)
+            if has_lock:
+                continue
+
+            messages = await redis.lrange(key, 0, -1)
+            if not messages:
+                await redis.delete(key)
+                continue
+
+            await redis.delete(key)
+            pending_wamid = await redis.get(f"pending_wamid:{phone}:{channel_id}")
+            pending_quoted = await redis.get(f"pending_quoted:{phone}:{channel_id}")
+            await redis.delete(f"pending_wamid:{phone}:{channel_id}")
+            await redis.delete(f"pending_quoted:{phone}:{channel_id}")
+
+            combined = "\n".join(messages)
+            logger.warning(
+                "[BUFFER RECOVERY] %d mensagem(ns) órfã(s) recuperada(s) para phone=%s channel=%s",
+                len(messages), phone, channel_id,
+            )
+            asyncio.create_task(
+                process_buffered_messages(
+                    phone, combined, channel_id,
+                    wamid=pending_wamid,
+                    quoted_wamid=pending_quoted,
+                )
+            )
+            recovered += 1
+
+        if cursor == 0:
+            break
+
+    if recovered:
+        logger.warning("[BUFFER RECOVERY] %d buffer(s) órfão(s) reprocessado(s) no startup", recovered)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -25,6 +86,8 @@ async def lifespan(app: FastAPI):
     # Default buffer ON; can be overridden in Redis via POST /api/buffer.
     # setnx only sets the key if it does NOT exist — preserves runtime toggles across restarts.
     await app.state.redis.setnx("config:buffer_enabled", "1")
+
+    await _recover_orphaned_buffers(app.state.redis)
 
     flusher_task = asyncio.create_task(run_flusher(app))
 

@@ -282,22 +282,43 @@ async def process_buffered_messages(
     # None means no explicit profile — orchestrator defaults to valeria_inbound
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
 
-    # Run AI agent
-    try:
-        conversation["leads"] = lead
-        lead_context = lead.get("metadata") or {}
-        response = await run_agent(conversation, resolved_text, lead_context=lead_context, agent_profile_id=agent_profile_id)
+    # Run AI agent — up to 3 attempts with 5s backoff between failures
+    _AGENT_MAX_ATTEMPTS = 3
+    _AGENT_RETRY_DELAY = 5
 
-        if not response or not response.strip():
-            logger.info(
-                f"[AGENT NO TEXT RESPONSE] run_agent returned empty for {phone} "
-                f"(conv={conversation['id']}, stage={conversation.get('stage')}). "
-                "Expected when encaminhar_humano was called — handoff message sent directly by tool."
+    conversation["leads"] = lead
+    lead_context = lead.get("metadata") or {}
+    response = None
+    for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
+        try:
+            response = await run_agent(
+                conversation, resolved_text,
+                lead_context=lead_context,
+                agent_profile_id=agent_profile_id,
             )
-            _update_last_msg(conversation["id"])
-            return
-    except Exception as e:
-        logger.error(f"Agent error for {phone}: {e}", exc_info=True)
+            break
+        except Exception as e:
+            if attempt < _AGENT_MAX_ATTEMPTS:
+                logger.warning(
+                    f"[AGENT RETRY] Tentativa {attempt}/{_AGENT_MAX_ATTEMPTS} falhou para {phone} "
+                    f"(conv={conversation['id']}): {e} — nova tentativa em {_AGENT_RETRY_DELAY}s"
+                )
+                await asyncio.sleep(_AGENT_RETRY_DELAY)
+            else:
+                logger.error(
+                    f"[AGENT FAILED] Todas as {_AGENT_MAX_ATTEMPTS} tentativas falharam para {phone} "
+                    f"(conv={conversation['id']}): {e}",
+                    exc_info=True,
+                )
+                _update_last_msg(conversation["id"])
+                return
+
+    if not response or not response.strip():
+        logger.info(
+            f"[AGENT NO TEXT RESPONSE] run_agent returned empty para {phone} "
+            f"(conv={conversation['id']}, stage={conversation.get('stage')}). "
+            "Esperado quando encaminhar_humano foi chamado — handoff enviado diretamente pela tool."
+        )
         _update_last_msg(conversation["id"])
         return
 
