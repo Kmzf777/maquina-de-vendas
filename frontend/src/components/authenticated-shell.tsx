@@ -4,10 +4,9 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { NotificationToast } from "@/components/notification-toast";
-import { usePresenceTracker } from "@/hooks/use-presence-tracker";
+import { PresenceProvider } from "@/hooks/use-presence";
 
 export function AuthenticatedShell({ children }: { children: React.ReactNode }) {
-  usePresenceTracker();
   const pathname = usePathname();
   const isConversas = pathname === "/conversas";
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -25,6 +24,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
   }, [drawerOpen]);
 
   return (
+    <PresenceProvider>
     <div className="flex h-svh bg-[#faf9f6] overflow-x-hidden">
       {/* Desktop sidebar — hidden on mobile */}
       <div className="hidden md:flex flex-shrink-0">
@@ -74,6 +74,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
       </main>
       <NotificationToast />
     </div>
+    </PresenceProvider>
   );
 }
 
