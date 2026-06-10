@@ -112,6 +112,28 @@ async def _health_check_via_logs(now: datetime) -> None:
             await fire_billing_alert([{"code": _BILLING_ERROR_CODE, "title": "Business eligibility payment issue"}])
         else:
             logger.info("[HEALTH] Nenhum erro de billing nos logs da última hora")
+            # Auto-resolve alertas de billing pendentes — billing foi normalizado
+            try:
+                sb = get_supabase()
+                open_alerts = (
+                    sb.table("system_alerts")
+                    .select("id")
+                    .eq("type", "billing_payment_issue")
+                    .eq("resolved", False)
+                    .execute()
+                )
+                if open_alerts.data:
+                    ids = [a["id"] for a in open_alerts.data]
+                    sb.table("system_alerts").update({
+                        "resolved": True,
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    }).in_("id", ids).execute()
+                    logger.info(
+                        "[HEALTH] %d alerta(s) de billing auto-resolvido(s) — sem erros na última hora",
+                        len(ids),
+                    )
+            except Exception as exc:
+                logger.error("[HEALTH] Falha ao auto-resolver alertas de billing: %s", exc)
     except Exception as exc:
         logger.error("[HEALTH] Falha ao escanear logs por billing errors: %s", exc)
 
