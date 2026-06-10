@@ -12,7 +12,14 @@ interface Channel {
   provider_config: Record<string, string>;
   is_active: boolean;
   mode: "ai" | "human";
+  owner_user_id: string | null;
   created_at: string;
+}
+
+interface CrmUser {
+  id: string;
+  email: string;
+  name: string;
 }
 
 interface FormData {
@@ -21,6 +28,7 @@ interface FormData {
   is_active: boolean;
   mode: "ai" | "human";
   meta_phone_number_id: string;
+  owner_user_id: string;
 }
 
 const EMPTY_FORM: FormData = {
@@ -29,6 +37,7 @@ const EMPTY_FORM: FormData = {
   is_active: true,
   mode: "ai",
   meta_phone_number_id: "",
+  owner_user_id: "",
 };
 
 function IconPencil({ className }: { className?: string }) {
@@ -54,6 +63,7 @@ export default function CanaisPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState<CrmUser[]>([]);
 
   const fetchChannels = useCallback(async () => {
     const res = await fetch("/api/channels");
@@ -62,9 +72,17 @@ export default function CanaisPage() {
     setLoading(false);
   }, []);
 
+  const fetchUsers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/users");
+      if (res.ok) setUsers(await res.json());
+    } catch { /* silently ignore */ }
+  }, []);
+
   useEffect(() => {
     fetchChannels();
-  }, [fetchChannels]);
+    fetchUsers();
+  }, [fetchChannels, fetchUsers]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -75,6 +93,7 @@ export default function CanaisPage() {
       provider_config: { phone_number_id: form.meta_phone_number_id },
       is_active: form.is_active,
       mode: form.mode,
+      owner_user_id: form.owner_user_id || null,
     };
 
     if (editingId) {
@@ -106,6 +125,7 @@ export default function CanaisPage() {
       is_active: ch.is_active,
       mode: ch.mode ?? "ai",
       meta_phone_number_id: config.phone_number_id || "",
+      owner_user_id: ch.owner_user_id || "",
     });
     setEditingId(ch.id);
     setShowForm(true);
@@ -372,6 +392,28 @@ export default function CanaisPage() {
                     Humano
                   </button>
                 </div>
+              </div>
+
+              {/* Responsável */}
+              <div>
+                <label className="block text-[13px] text-[#7b7b78] mb-1">
+                  Responsável (vendedor/atendente)
+                </label>
+                <select
+                  value={form.owner_user_id}
+                  onChange={(e) => setForm({ ...form, owner_user_id: e.target.value })}
+                  className="w-full border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] bg-white focus:outline-none focus:border-[#111111]"
+                >
+                  <option value="">— Nenhum (somente admins) —</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name || u.email}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[12px] text-[#7b7b78] mt-1">
+                  Vendedores só veem conversas dos seus canais. Admins veem tudo.
+                </p>
               </div>
 
               {/* Ativo */}
