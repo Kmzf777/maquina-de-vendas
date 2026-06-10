@@ -22,8 +22,72 @@ from app.leads.service import update_lead
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
+_META_API_BASE = "https://graph.facebook.com/v21.0"
+_BILLING_ERROR_CODE = 131042
 
 logger = logging.getLogger(__name__)
+
+
+async def _preflight_channel_check(channel: dict) -> bool:
+    """Live GET to Meta API before each broadcast batch.
+
+    Returns True (proceed) if the channel responds OK.
+    Returns False if the channel has an auth error.
+    On network error or non-auth failure returns True optimistically — billing
+    issues are caught in real-time during the per-lead send and handled there.
+
+    Side effect: auto-resolves open billing alerts when Meta API responds OK,
+    so the user doesn't have to wait for the hourly health check after fixing payment.
+    """
+    config = channel.get("provider_config") or {}
+    phone_number_id = config.get("phone_number_id", "")
+    access_token = config.get("access_token", "")
+    if not phone_number_id or not access_token:
+        return True
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{_META_API_BASE}/{phone_number_id}",
+                params={"fields": "id,quality_rating"},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if resp.is_success:
+            # Channel reachable — auto-resolve stale billing alerts so retries are unblocked
+            try:
+                sb = get_supabase()
+                sb.table("system_alerts").update({
+                    "resolved": True,
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("type", "billing_payment_issue").eq("resolved", False).execute()
+            except Exception:
+                pass
+            return True
+
+        error = resp.json().get("error", {})
+        logger.critical(
+            "[BROADCAST] Pre-flight Meta check failed code=%s: %s",
+            error.get("code"), error.get("message"),
+        )
+        # Token expired/invalid — fire alert so admin notices
+        if error.get("code") in (190, 102):
+            try:
+                from app.alerts.service import create_system_alert
+                create_system_alert(
+                    "token_expired",
+                    f"Token Meta expirado — canal {channel.get('name')}",
+                    error.get("message", "Token inválido"),
+                    severity="critical",
+                    metadata={"channel_id": channel.get("id")},
+                )
+            except Exception:
+                pass
+        return False
+
+    except Exception as exc:
+        logger.warning("[BROADCAST] Pre-flight: falha ao contactar Meta (prosseguindo): %s", exc)
+        return True  # network error — proceed optimistically
 
 # Dynamic variable tokens that get resolved from the lead record at send time.
 _LEAD_FIELD_TOKENS = {
@@ -336,28 +400,22 @@ async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
 
-    # Pre-flight: aborta se há alerta de billing ativo — evita mandar 80 mensagens que vão falhar
+    # Pre-flight: live check on Meta API — auto-resolves stale billing alerts when channel is OK.
+    # Billing issues not detectable via GET are caught in real-time during per-lead send (below).
     try:
-        billing_alert = (
-            sb.table("system_alerts")
-            .select("id, title")
-            .eq("type", "billing_payment_issue")
-            .eq("resolved", False)
-            .limit(1)
-            .execute()
-        )
-        if billing_alert.data:
-            alert_title = billing_alert.data[0].get("title", "pagamento pendente")
-            logger.critical(
-                "[BROADCAST] Abortando broadcast '%s' (%s) — alerta de billing ativo: %s",
-                broadcast.get("name"), broadcast_id, alert_title,
-            )
-            sb.table("broadcasts").update({
-                "status": "paused",
-            }).eq("id", broadcast_id).execute()
-            return
+        preflight_channel_id = broadcast.get("channel_id")
+        if preflight_channel_id:
+            preflight_channel = get_channel_by_id(preflight_channel_id)
+            if preflight_channel and preflight_channel.get("provider") == "meta_cloud":
+                if not await _preflight_channel_check(preflight_channel):
+                    logger.critical(
+                        "[BROADCAST] Abortando broadcast '%s' (%s) — canal Meta indisponível (token/auth)",
+                        broadcast.get("name"), broadcast_id,
+                    )
+                    sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
+                    return
     except Exception as exc:
-        logger.error("[BROADCAST] Falha no pre-flight check de billing para broadcast %s: %s", broadcast_id, exc)
+        logger.error("[BROADCAST] Falha no pre-flight check para broadcast %s: %s", broadcast_id, exc)
 
     # Recover leads stuck in 'processing' for over 5 minutes (worker crash/restart).
     # If wamid is set, the message reached Meta — mark as sent instead of re-queuing
@@ -611,6 +669,7 @@ async def process_single_broadcast(broadcast: dict):
             logger.info(f"Template sent to {lead['phone']}")
 
         except httpx.HTTPStatusError as http_err:
+            meta_err: dict = {}
             try:
                 meta_err = http_err.response.json().get("error", {})
                 detail = meta_err.get("message", str(http_err))
@@ -623,6 +682,20 @@ async def process_single_broadcast(broadcast: dict):
             logger.error(f"[BROADCAST] Meta API error para {lead['phone']}: {error_msg}")
             mark_broadcast_lead_failed(bl["id"], error_msg)
             increment_broadcast_failed(broadcast_id)
+            # Billing error detected in real-time: pause broadcast immediately so
+            # remaining leads are not attempted (they would all fail the same way).
+            if meta_err.get("code") == _BILLING_ERROR_CODE:
+                logger.critical(
+                    "[BROADCAST] Billing error %d — pausando broadcast %s imediatamente",
+                    _BILLING_ERROR_CODE, broadcast_id,
+                )
+                sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
+                try:
+                    from app.alerts.service import fire_billing_alert
+                    asyncio.create_task(fire_billing_alert([meta_err]))
+                except Exception:
+                    pass
+                return
         except Exception as e:
             logger.error(f"Failed to send to {lead['phone']}: {e}")
             mark_broadcast_lead_failed(bl["id"], str(e))
