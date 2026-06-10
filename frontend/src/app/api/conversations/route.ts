@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { createClient as createServerClient } from "@/lib/supabase/server";
 
 interface EvolutionChat {
   id?: string;
@@ -129,6 +130,25 @@ export async function GET(request: NextRequest) {
   const channelId = searchParams.get("channel_id");
   const status = searchParams.get("status");
 
+  // Determina quais channel_ids o usuário logado pode ver
+  let allowedChannelIds: string[] | null = null; // null = sem restrição (admin)
+  try {
+    const userClient = await createServerClient();
+    const { data: { user } } = await userClient.auth.getUser();
+    const role = user?.app_metadata?.role as string | undefined;
+    if (user && role !== "admin") {
+      // vendedor: apenas os canais que possui (owner_user_id = user.id)
+      const { data: ownedChannels } = await supabase
+        .from("channels")
+        .select("id")
+        .eq("owner_user_id", user.id);
+      allowedChannelIds = (ownedChannels || []).map((c: { id: string }) => c.id);
+    }
+  } catch {
+    // Se não conseguir autenticar, bloqueia tudo — nunca exibir dados sensíveis sem auth
+    allowedChannelIds = [];
+  }
+
   // 1. Get DB conversations
   let dbQuery = supabase
     .from("conversations")
@@ -138,6 +158,14 @@ export async function GET(request: NextRequest) {
 
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
   if (status) dbQuery = dbQuery.eq("status", status);
+  // Restringe ao conjunto de canais permitidos para o usuário logado
+  if (allowedChannelIds !== null) {
+    if (allowedChannelIds.length === 0) {
+      // Usuário não tem nenhum canal — retorna lista vazia imediatamente
+      return NextResponse.json([]);
+    }
+    dbQuery = dbQuery.in("channel_id", allowedChannelIds);
+  }
 
   const { data: dbConversations } = await dbQuery
     .order("last_msg_at", { ascending: false, nullsFirst: false });
@@ -189,6 +217,9 @@ export async function GET(request: NextRequest) {
     .eq("is_active", true);
 
   if (channelId) channelsQuery = channelsQuery.eq("id", channelId);
+  if (allowedChannelIds !== null && allowedChannelIds.length > 0) {
+    channelsQuery = channelsQuery.in("id", allowedChannelIds);
+  }
 
   const { data: evoChannels } = await channelsQuery;
 
