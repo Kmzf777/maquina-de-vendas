@@ -4,8 +4,10 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { NotificationToast } from "@/components/notification-toast";
+import { usePresenceTracker } from "@/hooks/use-presence-tracker";
 
 export function AuthenticatedShell({ children }: { children: React.ReactNode }) {
+  usePresenceTracker();
   const pathname = usePathname();
   const isConversas = pathname === "/conversas";
   const [drawerOpen, setDrawerOpen] = useState(false);
