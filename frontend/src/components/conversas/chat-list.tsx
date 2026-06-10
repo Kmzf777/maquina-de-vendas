@@ -50,6 +50,15 @@ function getInitial(name: string | null | undefined): string {
   return name.charAt(0).toUpperCase();
 }
 
+function getChannelBadge(channelName: string | undefined): { label: string; color: string } | null {
+  if (!channelName) return null;
+  const upper = channelName.toUpperCase();
+  if (upper === "NUMERO VALERIA") return { label: "Valéria", color: "#5aad65" };
+  if (upper === "NUMERO ARTHUR") return { label: "Arthur", color: "#5b8aad" };
+  if (upper === "NUMERO JOAO" || upper === "NUMERO JOÃO") return { label: "João", color: "#ff5600" };
+  return null;
+}
+
 function getWindowBgClass(lastCustomerMsgAt: string | null | undefined, provider: string | null | undefined): string {
   const status = getWindowStatus(lastCustomerMsgAt ?? null, provider ?? null);
   if (status === "closed") return "bg-[#fdf2ec]";
@@ -326,6 +335,18 @@ export function ChatList({
                   <span className="text-xs text-[#7b7b78]">
                     {formatRelativeTime(conv.last_msg_at)}
                   </span>
+                  {channels.length > 1 && (() => {
+                    const badge = getChannelBadge(conv.channels?.name);
+                    if (!badge) return null;
+                    return (
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
+                        style={{ backgroundColor: `${badge.color}15`, color: badge.color }}
+                      >
+                        {badge.label}
+                      </span>
+                    );
+                  })()}
                   {breached && (
                     <span className="inline-flex items-center gap-0.5 rounded-[3px] bg-[#c2410c]/10 px-1.5 py-px text-[10px] font-semibold text-[#c2410c] leading-none tracking-wide uppercase flex-shrink-0">
                       <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
