@@ -96,7 +96,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       const startRes = await fetch(`/api/broadcasts/${broadcastId}/start`, { method: "POST" });
       if (!startRes.ok) {
         const body = await startRes.json().catch(() => ({}));
-        alert(body.detail ?? "Erro ao iniciar disparo.");
+        alert(body.error ?? body.detail ?? "Erro ao iniciar disparo.");
         return;
       }
       setBroadcast({ ...broadcast, status: "running" });
