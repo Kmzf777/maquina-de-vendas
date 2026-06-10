@@ -43,7 +43,39 @@ def get_or_create_conversation(lead_id: str, channel_id: str) -> dict[str, Any]:
         "status": "active",
     }
     result = sb.table("conversations").insert(new_conv).execute()
-    return result.data[0]
+    conversation = result.data[0]
+
+    # Injeta contexto de qualificação se o lead foi encaminhado pela Valéria
+    try:
+        lead_result = (
+            sb.table("leads")
+            .select("metadata")
+            .eq("id", lead_id)
+            .single()
+            .execute()
+        )
+        lead_meta = (lead_result.data or {}).get("metadata") or {}
+        handoff_summary = lead_meta.get("handoff_summary")
+        if handoff_summary:
+            sb.table("messages").insert({
+                "conversation_id": conversation["id"],
+                "lead_id": lead_id,
+                "role": "system",
+                "content": handoff_summary,
+                "sent_by": "handoff_context",
+                "stage": "secretaria",
+            }).execute()
+            logger.info(
+                "get_or_create_conversation: handoff_context injetado para lead %s conv %s",
+                lead_id, conversation["id"],
+            )
+    except Exception as exc:
+        logger.warning(
+            "get_or_create_conversation: falha ao injetar handoff_context para lead %s: %s",
+            lead_id, exc,
+        )
+
+    return conversation
 
 
 def get_conversation(conversation_id: str) -> dict[str, Any]:
