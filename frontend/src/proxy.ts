@@ -80,6 +80,7 @@ export const config = {
     "/config/:path*",
     "/api/channels/:path*",
     "/api/stats/:path*",
+    "/api/users/:path*",
     "/api/agent-profiles/:path*",
     "/api/evolution/:path*",
     "/api/admin/:path*",

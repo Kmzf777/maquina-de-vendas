@@ -119,8 +119,18 @@ export default function EstatisticasPage() {
         fetch(`${API_BASE}/api/stats/whatsapp/daily?${params}`),
       ]);
 
-      if (!aiRes.ok || !waRes.ok || !aiDailyRes.ok || !waDailyRes.ok) {
-        throw new Error("stats fetch failed");
+      const responses = [
+        { name: "costs", res: aiRes },
+        { name: "whatsapp", res: waRes },
+        { name: "costs/daily", res: aiDailyRes },
+        { name: "whatsapp/daily", res: waDailyRes },
+      ];
+      const failed = responses.filter((r) => !r.res.ok);
+      if (failed.length > 0) {
+        const details = failed
+          .map((r) => `${r.name} → HTTP ${r.res.status}`)
+          .join(", ");
+        throw new Error(`stats fetch failed: ${details}`);
       }
       const [aiData, waData, aiDailyData, waDailyData] = await Promise.all([
         aiRes.json(),
