@@ -28,6 +28,7 @@ export async function POST(
 
   // If broadcast is paused with no pending leads but has failed leads, reset them so the
   // resume acts as a retry — avoids "Nenhum lead pendente" error when user clicks Retomar.
+  let isRetry = false;
   if (!leadsQueued && broadcast?.status === "paused") {
     const { count: failedCount } = await supabase
       .from("broadcast_leads")
@@ -42,6 +43,7 @@ export async function POST(
         .eq("broadcast_id", id)
         .eq("status", "failed");
       leadsQueued = failedCount;
+      isRetry = true;
     }
   }
 
@@ -49,9 +51,17 @@ export async function POST(
     return NextResponse.json({ error: "Nenhum lead pendente" }, { status: 400 });
   }
 
+  // On retry, reset all counters so metrics reflect only the new attempt.
+  const broadcastUpdate: Record<string, unknown> = { status: "running" };
+  if (isRetry) {
+    broadcastUpdate.sent = 0;
+    broadcastUpdate.delivered = 0;
+    broadcastUpdate.failed = 0;
+  }
+
   await supabase
     .from("broadcasts")
-    .update({ status: "running", failed: 0 })
+    .update(broadcastUpdate)
     .eq("id", id);
 
   return NextResponse.json({ status: "started", leads_queued: leadsQueued });
