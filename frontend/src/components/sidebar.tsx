@@ -153,7 +153,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       </div>
 
       <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-5">
-        {NAV_GROUPS.map((group) => (
+        {NAV_GROUPS.filter((group) =>
+          group.items.some((item) => !item.roles || item.roles.includes(role))
+        ).map((group) => (
           <div key={group.label}>
             <p className="text-[10px] font-medium uppercase tracking-[1.2px] text-[#7b7b78] px-3 mb-1.5">
               {group.label}
