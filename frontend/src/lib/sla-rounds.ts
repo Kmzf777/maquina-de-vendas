@@ -25,10 +25,54 @@ export interface SellerSlaResult {
   worstMinutes: number | null;
 }
 
+export interface OpenRound {
+  conversationId: string;
+  elapsedMinutes: number;
+}
+
 /**
- * Percorre as conversas e extrai as rodadas de espera.
- * Rodada = primeira msg do cliente sem resposta -> primeira resposta do vendedor
- * (msg do vendedor ou Finalizar). Rajadas do cliente não reiniciam o relógio.
+ * Um único passe cronológico por conversa. Retorna os minutos comerciais das
+ * rodadas fechadas e, se houver uma rodada aberta no fim, seus minutos decorridos.
+ * Regras: rodada começa na primeira msg do cliente sem resposta; fecha na primeira
+ * resposta do vendedor (msg 'seller' ou Finalizar via last_seller_response_at);
+ * rajadas do cliente não reiniciam; msg proativa do vendedor é ignorada.
+ */
+function walkConversation(
+  conv: SlaConversation,
+  win: BusinessWindow,
+  now: Date
+): { closed: number[]; openElapsedMinutes: number | null } {
+  const closed: number[] = [];
+  let waitStart: string | null = null;
+
+  for (const msg of conv.messages) {
+    if (msg.sent_by === "user") {
+      if (waitStart === null) waitStart = msg.created_at;
+    } else if (msg.sent_by === "seller") {
+      if (waitStart !== null) {
+        const mins = businessMinutesBetween(new Date(waitStart), new Date(msg.created_at), win);
+        if (mins >= 0) closed.push(mins);
+        waitStart = null;
+      }
+    }
+  }
+
+  if (waitStart !== null) {
+    const finalize = conv.last_seller_response_at;
+    if (finalize && finalize > waitStart) {
+      const mins = businessMinutesBetween(new Date(waitStart), new Date(finalize), win);
+      if (mins >= 0) closed.push(mins);
+      return { closed, openElapsedMinutes: null };
+    }
+    const elapsed = businessMinutesBetween(new Date(waitStart), now, win);
+    return { closed, openElapsedMinutes: elapsed };
+  }
+
+  return { closed, openElapsedMinutes: null };
+}
+
+/**
+ * Percorre as conversas e extrai as rodadas de espera (fechadas + aberta).
  */
 export function collectRounds(
   conversations: SlaConversation[],
@@ -39,33 +83,31 @@ export function collectRounds(
   const openElapsed: number[] = [];
 
   for (const conv of conversations) {
-    let waitStart: string | null = null;
-
-    for (const msg of conv.messages) {
-      if (msg.sent_by === "user") {
-        if (waitStart === null) waitStart = msg.created_at;
-      } else if (msg.sent_by === "seller") {
-        if (waitStart !== null) {
-          const mins = businessMinutesBetween(new Date(waitStart), new Date(msg.created_at), win);
-          if (mins >= 0) closed.push(mins);
-          waitStart = null;
-        }
-      }
-    }
-
-    if (waitStart !== null) {
-      const finalize = conv.last_seller_response_at;
-      if (finalize && finalize > waitStart) {
-        const mins = businessMinutesBetween(new Date(waitStart), new Date(finalize), win);
-        if (mins >= 0) closed.push(mins);
-      } else {
-        const elapsed = businessMinutesBetween(new Date(waitStart), now, win);
-        openElapsed.push(elapsed);
-      }
-    }
+    const r = walkConversation(conv, win, now);
+    closed.push(...r.closed);
+    if (r.openElapsedMinutes !== null) openElapsed.push(r.openElapsedMinutes);
   }
 
   return { closed, openElapsed };
+}
+
+/**
+ * Retorna só as rodadas ABERTAS, preservando o conversationId, para a seção
+ * acionável "Em atraso agora". O filtro por alvo (> target) é aplicado pelo chamador.
+ */
+export function collectOpenRounds(
+  conversations: SlaConversation[],
+  win: BusinessWindow,
+  now: Date = new Date()
+): OpenRound[] {
+  const out: OpenRound[] = [];
+  for (const conv of conversations) {
+    const r = walkConversation(conv, win, now);
+    if (r.openElapsedMinutes !== null) {
+      out.push({ conversationId: conv.id, elapsedMinutes: r.openElapsedMinutes });
+    }
+  }
+  return out;
 }
 
 /** Resume rodadas em média (fechadas), pior (fechadas+abertas) e atraso (>alvo). */

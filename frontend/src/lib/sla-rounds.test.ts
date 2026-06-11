@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collectRounds, summarizeRounds, type SlaConversation } from "@/lib/sla-rounds";
+import { collectRounds, summarizeRounds, collectOpenRounds, type SlaConversation } from "@/lib/sla-rounds";
 import { DEFAULT_WINDOW } from "@/lib/business-hours";
 
 // Datas em horário comercial SP. 13:00 UTC = 10:00 SP (qua 2026-06-10).
@@ -78,5 +78,60 @@ describe("summarizeRounds", () => {
     expect(s.avgMinutes).toBeNull();
     expect(s.worstMinutes).toBeNull();
     expect(s.overdueCount).toBe(0);
+  });
+});
+
+describe("collectOpenRounds — rodadas abertas com identidade", () => {
+  it("rodada aberta retorna conversationId + elapsedMinutes", () => {
+    const c: SlaConversation = {
+      id: "conv-1",
+      last_seller_response_at: null,
+      messages: [{ sent_by: "user", created_at: U("13:00:00") }],
+    };
+    const now = new Date("2026-06-10T13:25:00Z"); // 10:25 SP
+    const open = collectOpenRounds([c], DEFAULT_WINDOW, now);
+    expect(open).toEqual([{ conversationId: "conv-1", elapsedMinutes: 25 }]);
+  });
+
+  it("rodada fechada por resposta do vendedor não entra", () => {
+    const c: SlaConversation = {
+      id: "conv-2",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "seller", created_at: U("13:05:00") },
+      ],
+    };
+    const open = collectOpenRounds([c], DEFAULT_WINDOW, new Date("2026-06-10T20:00:00Z"));
+    expect(open).toEqual([]);
+  });
+
+  it("rodada fechada via Finalizar (last_seller_response_at) não entra", () => {
+    const c: SlaConversation = {
+      id: "conv-3",
+      last_seller_response_at: U("13:15:00"),
+      messages: [{ sent_by: "user", created_at: U("13:00:00") }],
+    };
+    const open = collectOpenRounds([c], DEFAULT_WINDOW, new Date("2026-06-10T20:00:00Z"));
+    expect(open).toEqual([]);
+  });
+
+  it("dois leads abertos → dois itens com os conversationIds certos", () => {
+    const a: SlaConversation = {
+      id: "conv-a",
+      last_seller_response_at: null,
+      messages: [{ sent_by: "user", created_at: U("13:00:00") }],
+    };
+    const b: SlaConversation = {
+      id: "conv-b",
+      last_seller_response_at: null,
+      messages: [{ sent_by: "user", created_at: U("13:10:00") }],
+    };
+    const now = new Date("2026-06-10T13:30:00Z"); // 10:30 SP
+    const open = collectOpenRounds([a, b], DEFAULT_WINDOW, now);
+    expect(open).toEqual([
+      { conversationId: "conv-a", elapsedMinutes: 30 },
+      { conversationId: "conv-b", elapsedMinutes: 20 },
+    ]);
   });
 });
