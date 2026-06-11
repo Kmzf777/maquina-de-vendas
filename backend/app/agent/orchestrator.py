@@ -235,9 +235,10 @@ async def run_agent(
             })
 
         # encaminhar_humano sends the handoff message directly inside execute_tool.
-        # Return empty to prevent the processor from sending a duplicate message.
+        # Return None (sentinel) so the processor can distinguish an intentional
+        # handoff from an unexpected empty response.
         if any(tc.function.name == "encaminhar_humano" for tc in message.tool_calls):
-            return ""
+            return None
 
         # registrar_optout sets ai_enabled=False silently. The farewell Valéria
         # wrote lives in message.content of this same turn — return it now and skip
@@ -284,6 +285,44 @@ async def run_agent(
         message = response.choices[0].message
 
     assistant_text = message.content or ""
+
+    # If the AI returned empty content after tool calls (e.g. after enviar_fotos Gemini
+    # sometimes returns nothing), force one more call without tools to get a text response.
+    if not assistant_text and tool_iterations > 0:
+        logger.warning(
+            "[AGENT EMPTY AFTER TOOLS] resposta vazia após %d tool iteration(s) para conv %s "
+            "— forçando chamada de texto sem tools",
+            tool_iterations, conversation_id,
+        )
+        try:
+            fallback_resp = await _get_client(model).chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=None,
+                temperature=0.7,
+                max_tokens=500,
+            )
+            if fallback_resp.usage:
+                track_token_usage(
+                    lead_id=lead_id,
+                    stage=stage,
+                    model=model,
+                    call_type="response",
+                    prompt_tokens=fallback_resp.usage.prompt_tokens,
+                    completion_tokens=fallback_resp.usage.completion_tokens,
+                )
+            assistant_text = fallback_resp.choices[0].message.content or ""
+            if not assistant_text:
+                logger.error(
+                    "[AGENT EMPTY AFTER TOOLS] fallback também vazio para conv %s",
+                    conversation_id,
+                )
+        except Exception as _exc:
+            logger.error(
+                "[AGENT EMPTY AFTER TOOLS] fallback call falhou para conv %s: %s",
+                conversation_id, _exc,
+            )
+
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
     )

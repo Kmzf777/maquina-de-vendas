@@ -313,11 +313,22 @@ async def process_buffered_messages(
                 _update_last_msg(conversation["id"])
                 return
 
-    if not response or not response.strip():
+    if response is None:
+        # Intentional: encaminhar_humano was called — handoff message already sent by the tool.
         logger.info(
-            f"[AGENT NO TEXT RESPONSE] run_agent returned empty para {phone} "
-            f"(conv={conversation['id']}, stage={conversation.get('stage')}). "
-            "Esperado quando encaminhar_humano foi chamado — handoff enviado diretamente pela tool."
+            "[AGENT HANDOFF] encaminhar_humano executado para %s (conv=%s, stage=%s) — "
+            "mensagem de handoff enviada pela tool.",
+            phone, conversation["id"], conversation.get("stage"),
+        )
+        _update_last_msg(conversation["id"])
+        return
+
+    if not response.strip():
+        # Unexpected empty response — the AI returned no text and no handoff tool was called.
+        logger.warning(
+            "[AGENT EMPTY RESPONSE] resposta de texto vazia inesperada para %s "
+            "(conv=%s, stage=%s) — nenhuma mensagem enviada ao lead.",
+            phone, conversation["id"], conversation.get("stage"),
         )
         _update_last_msg(conversation["id"])
         return

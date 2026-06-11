@@ -229,11 +229,14 @@ async def execute_tool(
                 "CRITICAL: encaminhar_humano failed to set ai_enabled=False for lead %s: %s",
                 lead_id, exc, exc_info=True,
             )
-            save_message(
-                lead_id, "system",
-                f"[encaminhar_humano][ERRO] nao foi possivel desativar AI: {exc}",
-                conversation_id=conversation_id,
-            )
+            try:
+                save_message(
+                    lead_id, "system",
+                    f"[encaminhar_humano][ERRO] nao foi possivel desativar AI: {exc}",
+                    conversation_id=conversation_id,
+                )
+            except Exception:
+                pass
             return f"CRITICAL: erro ao encaminhar para {vendedor} — humano precisa verificar lead manualmente"
         try:
             lead = get_lead(lead_id)
