@@ -19,7 +19,7 @@ VALUES (
     'rehearsal',
     'meta_cloud',
     '{"phone_number_id": "rehearsal", "verify_token": "rehearsal", "access_token": "", "app_secret": ""}'::jsonb,
-    (SELECT id FROM agent_profiles WHERE prompt_key = 'valeria_outbound' LIMIT 1),
+    NULL,  -- sem agent_profile: orchestrator usa DEFAULT_MODEL (gemini-2.5-flash)
     true
 )
-ON CONFLICT (phone) DO NOTHING;
+ON CONFLICT (phone) DO UPDATE SET agent_profile_id = NULL;
