@@ -29,17 +29,30 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 
-def _bubble_delays(count: int, is_rehearsal: bool) -> list[float]:
-    """Returns per-bubble pre-send delay in seconds.
+# Typing-speed simulation constants.
+# At 15 chars/sec (≈ 36 WPM) a 45-char bubble implies a 3s pause before the
+# next one — the upper bound. Shorter bubbles are floored at 1s.
+_TYPING_CHARS_PER_SEC: float = 15.0
+_MIN_BUBBLE_DELAY: float = 1.0   # seconds
+_MAX_BUBBLE_DELAY: float = 3.0   # seconds
 
-    Production: first bubble immediate, second after 4s, rest after 2s.
-    Rehearsal: no delays to keep tests fast.
+
+def _bubble_delays(bubbles: list[str], is_rehearsal: bool) -> list[float]:
+    """Per-bubble pre-send delay, simulating human typing speed.
+
+    Delay before bubble[i] is proportional to len(bubble[i-1]):
+        delay = clamp(len(prev) / CHARS_PER_SEC, MIN_DELAY, MAX_DELAY)
+
+    First bubble is always sent immediately — the LLM call already provides
+    the implicit "thinking" pause. Rehearsal mode zeroes all delays.
     """
+    count = len(bubbles)
     if is_rehearsal or count == 0:
         return [0.0] * count
-    delays = [0.0]
-    for i in range(1, count):
-        delays.append(4.0 if i == 1 else 2.0)
+    delays = [0.0]  # first bubble: no extra wait
+    for prev_bubble in bubbles[:-1]:
+        typing_secs = len(prev_bubble) / _TYPING_CHARS_PER_SEC
+        delays.append(max(_MIN_BUBBLE_DELAY, min(_MAX_BUBBLE_DELAY, typing_secs)))
     return delays
 
 _openai_client: AsyncOpenAI | None = None
@@ -405,7 +418,7 @@ async def process_buffered_messages(
     # Send bubbles — persist only after all bubbles are delivered
     is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
     bubbles = split_into_bubbles(response)
-    delays = _bubble_delays(len(bubbles), is_rehearsal)
+    delays = _bubble_delays(bubbles, is_rehearsal)
     send_ok = True
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:

@@ -305,3 +305,75 @@ async def test_processor_guardrail_skips_run_agent_on_desisto():
     # encaminhar_humano must have been called via guardrail
     mock_execute_tool.assert_called_once()
     assert mock_execute_tool.call_args[0][0] == "encaminhar_humano"
+
+
+# ---------------------------------------------------------------------------
+# Fix D: dynamic typing-speed delay between bubbles
+# ---------------------------------------------------------------------------
+
+def test_bubble_delays_rehearsal_mode_all_zero():
+    """In rehearsal mode, all delays must be 0.0 regardless of content."""
+    from app.buffer.processor import _bubble_delays
+    bubbles = ["curta", "a" * 50, "b" * 100]
+    delays = _bubble_delays(bubbles, is_rehearsal=True)
+    assert delays == [0.0, 0.0, 0.0]
+
+
+def test_bubble_delays_empty_list():
+    """Empty bubble list returns empty delays."""
+    from app.buffer.processor import _bubble_delays
+    assert _bubble_delays([], is_rehearsal=False) == []
+
+
+def test_bubble_delays_single_bubble():
+    """Single bubble always gets delay 0.0 — no 'previous' bubble to measure."""
+    from app.buffer.processor import _bubble_delays
+    delays = _bubble_delays(["mensagem única"], is_rehearsal=False)
+    assert delays == [0.0]
+
+
+def test_bubble_delays_first_bubble_always_zero():
+    """First bubble is always immediate regardless of length."""
+    from app.buffer.processor import _bubble_delays
+    long_bubbles = ["x" * 200, "next bubble"]
+    delays = _bubble_delays(long_bubbles, is_rehearsal=False)
+    assert delays[0] == 0.0
+
+
+def test_bubble_delays_short_bubble_clamped_to_min():
+    """A very short bubble (e.g. 'Sim') produces MIN_BUBBLE_DELAY, not less."""
+    from app.buffer.processor import _bubble_delays, _MIN_BUBBLE_DELAY
+    # "Sim" = 3 chars → 3/15 = 0.2s → clamped to MIN
+    delays = _bubble_delays(["Sim", "segunda mensagem"], is_rehearsal=False)
+    assert delays[1] == _MIN_BUBBLE_DELAY
+
+
+def test_bubble_delays_long_bubble_clamped_to_max():
+    """A very long bubble (≥45 chars at 15 cps) produces MAX_BUBBLE_DELAY."""
+    from app.buffer.processor import _bubble_delays, _MAX_BUBBLE_DELAY
+    # 90 chars / 15 = 6.0s → clamped to MAX (3.0s)
+    long_bubble = "a" * 90
+    delays = _bubble_delays([long_bubble, "próxima mensagem"], is_rehearsal=False)
+    assert delays[1] == _MAX_BUBBLE_DELAY
+
+
+def test_bubble_delays_medium_bubble_proportional():
+    """A medium bubble (30 chars) produces a proportional delay within bounds."""
+    from app.buffer.processor import _bubble_delays, _MIN_BUBBLE_DELAY, _MAX_BUBBLE_DELAY, _TYPING_CHARS_PER_SEC
+    medium_bubble = "a" * 30   # 30 / 15 = 2.0s
+    delays = _bubble_delays([medium_bubble, "segunda"], is_rehearsal=False)
+    expected = 30 / _TYPING_CHARS_PER_SEC  # 2.0
+    assert _MIN_BUBBLE_DELAY <= delays[1] <= _MAX_BUBBLE_DELAY
+    assert delays[1] == expected
+
+
+def test_bubble_delays_delay_per_previous_bubble():
+    """Each delay is based on the PREVIOUS bubble's length, not the current one."""
+    from app.buffer.processor import _bubble_delays, _TYPING_CHARS_PER_SEC
+    b0 = "a" * 15  # → delay before b1: 15/15 = 1.0s
+    b1 = "a" * 30  # → delay before b2: 30/15 = 2.0s
+    b2 = "a" * 5   # this bubble itself is short but delay is based on b1
+    delays = _bubble_delays([b0, b1, b2], is_rehearsal=False)
+    assert delays[0] == 0.0
+    assert delays[1] == pytest.approx(15 / _TYPING_CHARS_PER_SEC)  # 1.0s
+    assert delays[2] == pytest.approx(30 / _TYPING_CHARS_PER_SEC)  # 2.0s
