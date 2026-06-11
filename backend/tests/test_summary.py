@@ -18,7 +18,7 @@ def _make_client(response_text: str) -> MagicMock:
 async def test_empty_history_returns_fallback():
     client = _make_client("irrelevante")
     result = await generate_qualification_summary([], {}, client, "gpt-4o-mini")
-    assert "Resumo da Qualificação" in result
+    assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
     assert "Nenhuma mensagem" in result
     client.chat.completions.create.assert_not_called()
 
@@ -28,7 +28,7 @@ async def test_history_without_user_or_assistant_returns_fallback():
     history = [{"role": "system", "content": "stage alterado"}]
     client = _make_client("irrelevante")
     result = await generate_qualification_summary(history, {}, client, "gpt-4o-mini")
-    assert "Resumo da Qualificação" in result
+    assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
     assert "sem mensagens relevantes" in result
     client.chat.completions.create.assert_not_called()
 
@@ -41,7 +41,7 @@ async def test_calls_llm_and_returns_response():
         {"role": "user", "content": "Atacado, minha empresa é Padaria XYZ"},
     ]
     lead = {"name": "Carlos", "stage": "atacado"}
-    expected = "## Resumo da Qualificação\n\n**Interesse:** atacado"
+    expected = "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n* **Nome do Lead:** Carlos"
     client = _make_client(expected)
 
     result = await generate_qualification_summary(history, lead, client, "gemini-2.5-flash")
@@ -69,5 +69,5 @@ async def test_llm_failure_returns_graceful_fallback():
         "gemini-2.5-flash",
     )
 
-    assert "Resumo da Qualificação" in result
+    assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
     assert "Erro" in result
