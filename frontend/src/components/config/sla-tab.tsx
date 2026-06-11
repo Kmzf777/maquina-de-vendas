@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 
 const WEEKDAYS = [
   { v: 0, label: "Dom" },
@@ -60,6 +70,9 @@ export function SlaTab() {
   const [ovEnd, setOvEnd] = useState("");
   const [ovReason, setOvReason] = useState("");
 
+  // vendedor pendente de exclusão (controla o popup de confirmação)
+  const [deleteTarget, setDeleteTarget] = useState<Config | null>(null);
+
   useEffect(() => {
     void loadAll();
   }, []);
@@ -86,6 +99,15 @@ export function SlaTab() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cfg),
     });
+    if (res.ok) void loadAll();
+  }
+
+  async function confirmDeleteConfig() {
+    if (!deleteTarget) return;
+    const res = await fetch(`/api/admin/sla/config/${deleteTarget.user_id}`, {
+      method: "DELETE",
+    });
+    setDeleteTarget(null);
     if (res.ok) void loadAll();
   }
 
@@ -280,7 +302,20 @@ export function SlaTab() {
                 />
                 Ativo
               </label>
-              <button onClick={() => saveConfig(cfg)} className={`${btnDark} ml-auto`}>Salvar</button>
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={() => saveConfig(cfg)} className={btnDark}>Salvar</button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(cfg)}
+                  className="p-2 rounded-[4px] text-[#7b7b78] hover:text-[#c41c1c] transition-colors"
+                  title="Remover vendedor"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -358,6 +393,32 @@ export function SlaTab() {
           <button type="submit" className={btnDark}>+ Adicionar</button>
         </form>
       </div>
+
+      {/* Popup de confirmação de exclusão de vendedor */}
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover vendedor</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `Remover "${deleteTarget.display_name || "(sem nome)"}" da medição de SLA? Esta ação não apaga o usuário nem as conversas — apenas a configuração de SLA dele.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteConfig}
+              className="bg-[#c41c1c] hover:bg-[#c41c1c]"
+            >
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
