@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
-import type { Lead } from "@/lib/types";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { Lead, Message } from "@/lib/types";
 
 interface ChatPanelProps {
   lead: Lead;
@@ -10,7 +10,36 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ lead, onClose }: ChatPanelProps) {
-  const { messages, loading } = useRealtimeMessages(lead.id);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const supabase = useMemo(() => createClient(), []);
+
+  const fetchMessages = useCallback(async () => {
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false });
+    if (data) setMessages([...data].reverse() as Message[]);
+    setLoading(false);
+  }, [lead.id]);
+
+  useEffect(() => {
+    setMessages([]);
+    setLoading(true);
+    fetchMessages();
+
+    const channel = supabase
+      .channel(`panel-messages-${lead.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `lead_id=eq.${lead.id}` },
+        (payload) => setMessages((prev) => [...prev, payload.new as Message]),
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [lead.id, fetchMessages]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

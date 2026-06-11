@@ -28,7 +28,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const lead = conversation.leads;
   const channel = conversation.channels;
 
-  const { messages, loading, refetch } = useRealtimeMessages(lead?.id ?? null);
+  const { messages, loading, refetch } = useRealtimeMessages(conversation.id ?? null);
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
