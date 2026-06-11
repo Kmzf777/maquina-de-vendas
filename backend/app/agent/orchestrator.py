@@ -166,7 +166,7 @@ async def run_agent(
         messages=messages,
         tools=tools if tools else None,
         temperature=0.7,
-        max_tokens=500,
+        max_tokens=1024,
     )
 
     if response.usage:
@@ -196,7 +196,7 @@ async def run_agent(
                         messages=messages,
                         tools=None,
                         temperature=0.7,
-                        max_tokens=500,
+                        max_tokens=1024,
                     )
                     message = fallback.choices[0].message
                 except Exception as _exc:
@@ -271,7 +271,7 @@ async def run_agent(
             messages=messages,
             tools=tools if tools else None,
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=1024,
         )
         if response.usage:
             track_token_usage(
@@ -300,7 +300,7 @@ async def run_agent(
                 messages=messages,
                 tools=None,
                 temperature=0.7,
-                max_tokens=500,
+                max_tokens=1024,
             )
             if fallback_resp.usage:
                 track_token_usage(

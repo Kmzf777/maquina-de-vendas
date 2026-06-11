@@ -12,6 +12,21 @@ from app.follow_up.service import schedule_handoff_rescue
 
 logger = logging.getLogger(__name__)
 
+# Per-conversation deferred media queue: photos queued during tool execution that
+# should be dispatched by the processor AFTER the text response is sent.
+# Keyed by conversation_id to avoid cross-contamination between concurrent calls.
+_deferred_media: dict[str, list[dict]] = {}
+
+
+def pop_deferred_media(conversation_id: str) -> list[dict]:
+    """Return and clear deferred media for a conversation.
+
+    Each entry: {"b64": str, "mimetype": str, "caption": str}.
+    Called by processor.py after text bubbles are sent.
+    """
+    return _deferred_media.pop(conversation_id, [])
+
+
 PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
     "atacado": {
         "foto_1": "Classico — torra media-escura, notas achocolatadas",
@@ -339,29 +354,19 @@ async def execute_tool(
             return f"Nenhuma foto encontrada para {categoria}"
 
         captions = PHOTO_CAPTIONS.get(categoria, {})
-        channel = get_channel_for_lead(lead_id)
-        if not channel:
-            return "Nenhum canal ativo disponivel"
-        provider = get_provider(channel)
 
-        sent = 0
+        # Queue photos for deferred dispatch: processor sends them AFTER the text
+        # response so the chronological order in WhatsApp is: text first, photos second.
+        queue = _deferred_media.setdefault(conversation_id, [])
         for photo in photos:
             b64 = base64.b64encode(photo.read_bytes()).decode()
             mimetype = "image/png" if photo.suffix == ".png" else "image/jpeg"
-            stem = photo.stem  # e.g. "foto_1"
+            stem = photo.stem
             caption = captions.get(stem, "")
-            try:
-                await provider.send_image_base64(phone, b64, mimetype, caption=caption)
-                sent += 1
-                await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(
-                    "Failed to send photo %s to %s: %s",
-                    photo.name, phone, e, exc_info=True,
-                )
+            queue.append({"b64": b64, "mimetype": mimetype, "caption": caption})
 
-        save_message(lead_id, "system", f"[enviar_fotos] Fotos de {categoria} enviadas ({sent}/{len(photos)})", conversation_id=conversation_id)
-        return f"{sent} fotos de {categoria} enviadas ao lead"
+        save_message(lead_id, "system", f"[enviar_fotos] Fotos de {categoria} enviadas ({len(photos)}/{len(photos)})", conversation_id=conversation_id)
+        return f"{len(photos)} fotos de {categoria} enfileiradas para envio após o texto"
 
     elif tool_name == "enviar_foto_produto":
         categoria = args["categoria"]
@@ -384,22 +389,14 @@ async def execute_tool(
             return f"foto do produto '{produto}' nao encontrada"
         photo_path = matches[0]
 
-        channel = get_channel_for_lead(lead_id)
-        if not channel:
-            return "Nenhum canal ativo disponivel"
-        provider = get_provider(channel)
-
         b64 = base64.b64encode(photo_path.read_bytes()).decode()
         mimetype = "image/png" if photo_path.suffix == ".png" else "image/jpeg"
-        try:
-            await provider.send_image_base64(phone, b64, mimetype, caption=entry["caption"])
-            save_message(lead_id, "system", f"[enviar_foto_produto] Foto de {produto} enviada", conversation_id=conversation_id)
-            return f"foto de {produto} enviada ao lead"
-        except Exception as e:
-            logger.error(
-                "Failed to send product photo '%s' to %s: %s",
-                produto, phone, e, exc_info=True,
-            )
-            return f"erro ao enviar foto de {produto}"
+
+        # Queue for deferred dispatch so text explanation arrives before the photo.
+        _deferred_media.setdefault(conversation_id, []).append(
+            {"b64": b64, "mimetype": mimetype, "caption": entry["caption"]}
+        )
+        save_message(lead_id, "system", f"[enviar_foto_produto] Foto de {produto} enviada", conversation_id=conversation_id)
+        return f"foto de {produto} enfileirada para envio após o texto"
 
     return f"Tool {tool_name} nao reconhecida"

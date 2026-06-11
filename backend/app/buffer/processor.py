@@ -20,6 +20,7 @@ from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
+from app.agent.tools import pop_deferred_media
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
@@ -129,6 +130,69 @@ def _is_recent_duplicate(
     )
     # Only skip if a real reply was already sent — otherwise allow retry
     return len(reply.data) > 0
+
+
+_FRUSTRATION_PATTERNS = [
+    r"\bdesisto\b",
+    r"\bdesisti\b",
+    r"quero falar com (um |uma )?(humano|pessoa|atendente|vendedor)\b",
+    r"\bfalar com atendente\b",
+    r"\bfalar com (uma )?pessoa\b",
+    r"\bfalar com humano\b",
+    r"\bme passa (pro|para o) (humano|atendente|vendedor)\b",
+    r"atendimento (pessimo|ruim|horrivel|terrivel|uma merda)\b",
+    r"nao (quero|vou) (mais )?(falar|conversar) com (robo|ia|bot)\b",
+]
+
+
+async def _check_frustration_guardrail(
+    text: str,
+    lead_id: str,
+    phone: str,
+    conversation_id: str,
+) -> bool:
+    """Return True if a high-confidence frustration signal was found and encaminhar_humano was triggered.
+
+    Bypasses the LLM entirely for unambiguous desistência or explicit human-agent requests.
+    Only fires for very clear signals to avoid false positives.
+    """
+    import re
+    import unicodedata
+
+    def _normalize(s: str) -> str:
+        return "".join(
+            c for c in unicodedata.normalize("NFD", s.lower())
+            if unicodedata.category(c) != "Mn"
+        )
+
+    normalized = _normalize(text)
+    matched = next((p for p in _FRUSTRATION_PATTERNS if re.search(p, normalized)), None)
+    if matched is None:
+        return False
+
+    logger.warning(
+        "[FRUSTRATION_GUARDRAIL] sinal de frustração detectado para lead %s (conv=%s) "
+        "— disparando encaminhar_humano direto sem chamar LLM. padrao=%r texto=%r",
+        lead_id, conversation_id, matched, text[:120],
+    )
+    try:
+        from app.agent.tools import execute_tool
+        await execute_tool(
+            "encaminhar_humano",
+            {
+                "vendedor": "Joao Bras",
+                "motivo": "lead demonstrou frustracao ou desistencia — guardrail ativado",
+            },
+            lead_id=lead_id,
+            phone=phone,
+            conversation_id=conversation_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "[FRUSTRATION_GUARDRAIL] execute_tool(encaminhar_humano) falhou para lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+    return True
 
 
 async def process_buffered_messages(
@@ -282,6 +346,11 @@ async def process_buffered_messages(
     # None means no explicit profile — orchestrator defaults to valeria_inbound
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
 
+    # Frustration guardrail: bypass LLM for unambiguous desistência / explicit human requests.
+    if await _check_frustration_guardrail(resolved_text, lead["id"], phone, conversation["id"]):
+        _update_last_msg(conversation["id"])
+        return
+
     # Run AI agent — up to 3 attempts with 5s backoff between failures
     _AGENT_MAX_ATTEMPTS = 3
     _AGENT_RETRY_DELAY = 5
@@ -369,6 +438,20 @@ async def process_buffered_messages(
                 )
             except Exception as e:
                 logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
+
+        # Dispatch deferred media (enviar_fotos / enviar_foto_produto) after text so
+        # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
+        deferred = pop_deferred_media(conversation["id"])
+        for item in deferred:
+            try:
+                await provider.send_image_base64(
+                    phone, item["b64"], item["mimetype"], caption=item.get("caption", "")
+                )
+                await asyncio.sleep(1)
+            except Exception as _e:
+                logger.error(
+                    "Failed to send deferred media to %s: %s", phone, _e, exc_info=True
+                )
 
     _update_last_msg(conversation["id"])
 
