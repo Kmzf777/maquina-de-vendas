@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from app.channels.service import get_channel_for_lead
 from app.follow_up.service import schedule_handoff_rescue
 
 logger = logging.getLogger(__name__)
+
+_TZ_BR = timezone(timedelta(hours=-3))
 
 # Per-conversation deferred media queue: photos queued during tool execution that
 # should be dispatched by the processor AFTER the text response is sent.
@@ -271,8 +274,11 @@ async def execute_tool(
             conv_history = get_conversation_history(conversation_id, limit=100)
             fresh_lead = get_lead(lead_id) or {}
             _model = DEFAULT_MODEL
+            _handoff_at = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
             summary_text = await generate_qualification_summary(
-                conv_history, fresh_lead, get_ai_client(_model), _model
+                conv_history, fresh_lead, get_ai_client(_model), _model,
+                motivo=motivo,
+                handoff_at=_handoff_at,
             )
             _sb = get_supabase()
             _sb.table("lead_notes").insert({
