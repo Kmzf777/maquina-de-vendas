@@ -15,6 +15,28 @@ const TZ = "America/Sao_Paulo";
 const BIZ_START_MIN = 10 * 60; // 10h00 = 600
 const BIZ_END_MIN = 16 * 60; // 16h00 = 960
 
+export interface BusinessWindow {
+  startMin: number;           // minutos desde meia-noite (default 600 = 10h)
+  endMin: number;             // default 960 = 16h
+  weekdays: Set<number>;      // 0=dom..6=sáb (default seg-sex)
+  excludedDates: Set<string>; // 'YYYY-MM-DD' em SP -> 0 min
+}
+
+export const DEFAULT_WINDOW: BusinessWindow = {
+  startMin: BIZ_START_MIN,
+  endMin: BIZ_END_MIN,
+  weekdays: new Set([1, 2, 3, 4, 5]),
+  excludedDates: new Set<string>(),
+};
+
+/** Data SP em 'YYYY-MM-DD' (para casar com excludedDates). */
+export function spDateString(date: Date): string {
+  const p = tzParts(date);
+  const mm = String(p.month).padStart(2, "0");
+  const dd = String(p.day).padStart(2, "0");
+  return `${p.year}-${mm}-${dd}`;
+}
+
 // Offset fixo America/Sao_Paulo: UTC-3 (horário de verão abolido desde 2019)
 const SP_OFFSET_MS = 3 * 60 * 60 * 1000;
 
@@ -101,12 +123,15 @@ function bizMinutesInSegment(
   intervalStart: Date,
   intervalEnd: Date,
   weekday: number,
-  dayMidnightUTC: Date
+  dayMidnightUTC: Date,
+  win: BusinessWindow,
+  dateStr: string
 ): number {
-  if (!isWeekday(weekday)) return 0;
+  if (!win.weekdays.has(weekday)) return 0;
+  if (win.excludedDates.has(dateStr)) return 0;
 
-  const bizStart = new Date(dayMidnightUTC.getTime() + BIZ_START_MIN * 60_000);
-  const bizEnd   = new Date(dayMidnightUTC.getTime() + BIZ_END_MIN   * 60_000);
+  const bizStart = new Date(dayMidnightUTC.getTime() + win.startMin * 60_000);
+  const bizEnd   = new Date(dayMidnightUTC.getTime() + win.endMin   * 60_000);
 
   const effectiveStart = intervalStart > bizStart ? intervalStart : bizStart;
   const effectiveEnd   = intervalEnd   < bizEnd   ? intervalEnd   : bizEnd;
@@ -120,7 +145,11 @@ function bizMinutesInSegment(
  * Segmenta o intervalo [from, to) em dias calendário SP e acumula a
  * interseção de cada segmento com a janela 10h–16h seg–sex.
  */
-export function businessMinutesBetween(from: Date, to: Date): number {
+export function businessMinutesBetween(
+  from: Date,
+  to: Date,
+  win: BusinessWindow = DEFAULT_WINDOW
+): number {
   if (from >= to) return 0;
 
   let total = 0;
@@ -139,7 +168,8 @@ export function businessMinutesBetween(from: Date, to: Date): number {
     const segEnd = to < nextMidnight ? to : nextMidnight;
 
     const parts = tzParts(segStart);
-    total += bizMinutesInSegment(segStart, segEnd, parts.weekday, dayMidnight);
+    const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    total += bizMinutesInSegment(segStart, segEnd, parts.weekday, dayMidnight, win, dateStr);
 
     segStart = nextMidnight;
     if (segStart >= to) break;
@@ -156,8 +186,11 @@ export function businessMinutesBetween(from: Date, to: Date): number {
 /**
  * Minutos comerciais acumulados desde `from` até agora.
  */
-export function businessMinutesElapsed(from: Date): number {
-  return businessMinutesBetween(from, new Date());
+export function businessMinutesElapsed(
+  from: Date,
+  win: BusinessWindow = DEFAULT_WINDOW
+): number {
+  return businessMinutesBetween(from, new Date(), win);
 }
 
 /**
