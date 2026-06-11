@@ -106,6 +106,7 @@ export interface OverdueLead {
   leadName: string;   // nome ou, na falta, telefone
   leadPhone: string;
   channelId: string;
+  userId: string;     // user_id do vendedor (filtro robusto do admin)
   vendedorName: string;
   elapsedMinutes: number;
 }
