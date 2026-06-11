@@ -24,13 +24,13 @@ function enrichWithQuotedMessages(raw: Message[]): Message[] {
   });
 }
 
-export function useRealtimeMessages(leadId: string | null) {
+export function useRealtimeMessages(conversationId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createClient(), []);
 
   const fetchMessages = useCallback(async () => {
-    if (!leadId) {
+    if (!conversationId) {
       setMessages([]);
       setLoading(false);
       return;
@@ -39,30 +39,30 @@ export function useRealtimeMessages(leadId: string | null) {
     const { data } = await supabase
       .from("messages")
       .select("*")
-      .eq("lead_id", leadId)
+      .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false });
 
     if (data) setMessages(enrichWithQuotedMessages([...data].reverse() as Message[]));
     setLoading(false);
-  }, [leadId, supabase]);
+  }, [conversationId, supabase]);
 
   useEffect(() => {
-    // Reset state immediately on leadId change to avoid stale message flash
+    // Reset state immediately on conversationId change to avoid stale message flash
     setMessages([]);
     setLoading(true);
     fetchMessages();
 
-    if (!leadId) return;
+    if (!conversationId) return;
 
     const channel = supabase
-      .channel(`messages-${leadId}`)
+      .channel(`messages-conv-${conversationId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "messages",
-          filter: `lead_id=eq.${leadId}`,
+          filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
           setMessages((prev) => enrichWithQuotedMessages([...prev, payload.new as Message]));
@@ -73,7 +73,7 @@ export function useRealtimeMessages(leadId: string | null) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [leadId, fetchMessages, supabase]);
+  }, [conversationId, fetchMessages, supabase]);
 
   return { messages, loading, refetch: fetchMessages };
 }
