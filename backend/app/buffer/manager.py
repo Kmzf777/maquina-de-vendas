@@ -51,10 +51,12 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     buffer_enabled = await r.get("config:buffer_enabled")
     if buffer_enabled == "0":
         logger.info(f"Buffer OFF — processing immediately for {phone}")
-        await process_buffered_messages(
-            phone, text, channel_id,
-            wamid=msg.message_id or None,
-            quoted_wamid=msg.quoted_wamid,
+        asyncio.create_task(
+            process_buffered_messages(
+                phone, text, channel_id,
+                wamid=msg.message_id or None,
+                quoted_wamid=msg.quoted_wamid,
+            )
         )
         return
 
