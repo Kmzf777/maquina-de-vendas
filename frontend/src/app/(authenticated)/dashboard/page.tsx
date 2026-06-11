@@ -8,6 +8,7 @@ import { FunnelChart } from "@/components/funnel-chart";
 import { LeadSourcesChart } from "@/components/dashboard/lead-sources-chart";
 import { FunnelMovement } from "@/components/dashboard/funnel-movement";
 import { SlaTable } from "@/components/dashboard/sla-table";
+import { OverdueLeadsSection } from "@/components/dashboard/overdue-leads-section";
 import { OnlineUsersSection } from "@/components/dashboard/online-users-section";
 
 const TrendUpIcon = (
@@ -129,6 +130,7 @@ export default function DashboardPage() {
       {/* Main content */}
       <div className="px-4 md:px-8 py-4 md:py-8 overflow-auto flex-1 bg-[#faf9f6]">
         <OnlineUsersSection />
+        <OverdueLeadsSection />
         <SlaTable />
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-5 mb-8">
           <KpiCard label="Leads hoje" value={leadsToday} icon={TrendUpIcon} />

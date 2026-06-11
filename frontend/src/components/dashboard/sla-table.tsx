@@ -50,23 +50,19 @@ export function SlaTable() {
             <tr className="border-b border-[#dedbd6] text-[#7b7b78] text-[12px] uppercase tracking-[0.4px]">
               <th className="text-left font-normal px-4 py-3">Vendedor</th>
               <th className="text-right font-normal px-4 py-3">Média resp.</th>
-              <th className="text-right font-normal px-4 py-3">Em atraso agora</th>
               <th className="text-right font-normal px-4 py-3">Pior SLA</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-[#7b7b78]">Carregando…</td></tr>
+              <tr><td colSpan={3} className="px-4 py-6 text-center text-[#7b7b78]">Carregando…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-[#7b7b78]">Nenhum vendedor configurado.</td></tr>
+              <tr><td colSpan={3} className="px-4 py-6 text-center text-[#7b7b78]">Nenhum vendedor configurado.</td></tr>
             ) : (
               rows.map((r) => (
                 <tr key={r.userId} className="border-b border-[#f0ede8] last:border-0">
                   <td className="px-4 py-3 text-[#111111]">{r.displayName}</td>
                   <td className="px-4 py-3 text-right text-[#111111]">{dur(r.avgMinutes)}</td>
-                  <td className={`px-4 py-3 text-right font-medium ${r.overdueCount > 0 ? "text-[#c41c1c]" : "text-[#111111]"}`}>
-                    {r.overdueCount}
-                  </td>
                   <td className="px-4 py-3 text-right text-[#111111]">{dur(r.worstMinutes)}</td>
                 </tr>
               ))
@@ -77,9 +73,6 @@ export function SlaTable() {
               <tr className="border-t border-[#dedbd6] bg-[#faf9f6] font-medium">
                 <td className="px-4 py-3 text-[#111111]">Total</td>
                 <td className="px-4 py-3 text-right text-[#111111]">{dur(total.avgMinutes)}</td>
-                <td className={`px-4 py-3 text-right ${total.overdueCount > 0 ? "text-[#c41c1c]" : "text-[#111111]"}`}>
-                  {total.overdueCount}
-                </td>
                 <td className="px-4 py-3 text-right text-[#111111]">{dur(total.worstMinutes)}</td>
               </tr>
             </tfoot>
