@@ -282,3 +282,11 @@ def test_private_label_outbound_sem_produtos_removidos():
     from app.agent.prompts.valeria_outbound.private_label import PRIVATE_LABEL_PROMPT
     assert "Drip Coffee" not in PRIVATE_LABEL_PROMPT
     assert "Capsulas Nespresso" not in PRIVATE_LABEL_PROMPT
+
+
+def test_outbound_secretaria_trata_abertura_template():
+    from app.agent.prompts import get_stage_prompts
+    p = get_stage_prompts("valeria_outbound")["secretaria"]
+    # seção dedicada a responder o lead após o template "atualizando cadastro / Falo com X?"
+    assert "## RESPOSTA À ABERTURA" in p
+    assert "cadastro" in p.lower()
