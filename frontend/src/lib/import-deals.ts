@@ -10,7 +10,7 @@ export interface ImportDealRow {
   value: number;
   pipeline_id: string;
   stage_id: string;
-  stage: string;
+  stage: "novo";
 }
 
 /**
@@ -30,7 +30,7 @@ export function buildImportDeals(params: {
     .filter((l) => !existingDealLeadIds.has(l.id))
     .map((l) => ({
       lead_id: l.id,
-      title: `${l.name || l.phone} - ${pipelineName}`,
+      title: `${l.name?.trim() || l.phone} - ${pipelineName}`,
       value: 0,
       pipeline_id: pipelineId,
       stage_id: stageId,

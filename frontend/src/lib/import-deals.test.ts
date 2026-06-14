@@ -38,6 +38,28 @@ describe("buildImportDeals", () => {
     expect(rows[0].title).toBe("5531999990002 - Leads Frio Disparos");
   });
 
+  it("usa o telefone quando o nome é só espaços em branco", () => {
+    const rows = buildImportDeals({
+      leads: [{ id: "lead-x", name: "   ", phone: "5531999990009" }],
+      pipelineId: "pipe-1",
+      stageId: "stage-frio",
+      pipelineName: "Leads Frio Disparos",
+      existingDealLeadIds: new Set<string>(),
+    });
+    expect(rows[0].title).toBe("5531999990009 - Leads Frio Disparos");
+  });
+
+  it("retorna vazio quando não há leads", () => {
+    const rows = buildImportDeals({
+      leads: [],
+      pipelineId: "pipe-1",
+      stageId: "stage-frio",
+      pipelineName: "Leads Frio Disparos",
+      existingDealLeadIds: new Set<string>(),
+    });
+    expect(rows).toEqual([]);
+  });
+
   it("pula leads que já têm deal no funil (anti-duplicação)", () => {
     const rows = buildImportDeals({
       leads,
