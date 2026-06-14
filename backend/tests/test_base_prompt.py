@@ -290,3 +290,9 @@ def test_outbound_secretaria_trata_abertura_template():
     # seção dedicada a responder o lead após o template "atualizando cadastro / Falo com X?"
     assert "## RESPOSTA À ABERTURA" in p
     assert "cadastro" in p.lower()
+
+
+def test_outbound_handoff_para_joao():
+    from app.agent.prompts import get_stage_prompts
+    full = "\n".join(get_stage_prompts("valeria_outbound").values())
+    assert "João" in full

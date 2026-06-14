@@ -42,9 +42,9 @@ Pergunte ao cliente qual e o objetivo dele:
 
 ## ETAPA 4: ENCAMINHAR
 
-Com todas as perguntas realizadas, agradeca ao cliente e diga que vai passar para o Arthur, responsavel pelo setor de exportacao, e assim que ele estiver disponivel, entrara em contato.
+Com todas as perguntas realizadas, agradeca ao cliente e diga que vai passar para o João Brás, responsavel pelo setor de exportacao, e assim que ele estiver disponivel, entrara em contato.
 
-Use a ferramenta encaminhar_humano(vendedor="Arthur").
+Use a ferramenta encaminhar_humano(vendedor="João Brás").
 
 ---
 
