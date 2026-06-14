@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       channel: "manual" as const,
       status: "active" as const,
     }));
-    const { error } = await supabase.from("leads").insert(rows).select("id, phone");
+    const { error } = await supabase.from("leads").insert(rows);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!resolvedStageId) {
-      const { data: firstStage } = await supabase
+      const { data: firstStage, error: stageError } = await supabase
         .from("pipeline_stages")
         .select("id")
         .eq("pipeline_id", pipelineId)
@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
         .order("order_index", { ascending: true })
         .limit(1)
         .maybeSingle();
+      if (stageError) console.error("[leads/import] stage fallback query failed:", stageError);
       resolvedStageId = firstStage?.id ?? null;
     }
 
