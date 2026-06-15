@@ -358,7 +358,7 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                 </button>
                 <button
                   onClick={handleImport}
-                  disabled={importing}
+                  disabled={importing || stagesLoading}
                   className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
                 >
                   {importing ? "Importando..." : "Importar"}
