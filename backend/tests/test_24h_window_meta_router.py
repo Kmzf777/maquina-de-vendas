@@ -87,8 +87,6 @@ def test_meta_webhook_schedules_window_tracking_for_inbound_message(meta_client)
         patch("app.webhook.meta_router.get_dev_route", new_callable=AsyncMock, return_value=None),
         patch("app.webhook.meta_router._track_inbound_message_time") as mock_track,
     ):
-        mock_provider.return_value.mark_read = AsyncMock()
-
         response = meta_client.post(
             "/webhook/meta",
             content=json.dumps(META_PAYLOAD),
@@ -133,7 +131,6 @@ def test_meta_webhook_no_tracking_for_resetar_command(meta_client):
         patch("app.webhook.meta_router.reset_lead"),
         patch("app.webhook.meta_router._track_inbound_message_time") as mock_track,
     ):
-        mock_provider.return_value.mark_read = AsyncMock()
         mock_provider.return_value.send_text = AsyncMock()
 
         response = meta_client.post(
@@ -185,8 +182,6 @@ def test_meta_webhook_tracks_multiple_messages_in_one_payload(meta_client):
         patch("app.webhook.meta_router.get_dev_route", new_callable=AsyncMock, return_value=None),
         patch("app.webhook.meta_router._track_inbound_message_time") as mock_track,
     ):
-        mock_provider.return_value.mark_read = AsyncMock()
-
         meta_client.post(
             "/webhook/meta",
             content=json.dumps(multi_payload),
@@ -212,20 +207,47 @@ async def test_mark_read_bg_calls_provider():
 
 @pytest.mark.anyio
 async def test_mark_read_bg_swallows_exceptions():
-    """_mark_read_bg must not propagate exceptions — only log a warning."""
+    """_mark_read_bg must not propagate exceptions when get_provider raises — only log a warning."""
     channel = {"provider": "meta_cloud", "provider_config": {}}
     with patch("app.webhook.meta_router.get_provider", side_effect=RuntimeError("network error")):
         await _mark_read_bg(channel, "wamid.fail")  # must not raise
 
 
+@pytest.mark.anyio
+async def test_mark_read_bg_swallows_mark_read_exception():
+    """_mark_read_bg must not propagate exceptions when provider.mark_read raises — only log."""
+    mock_provider = AsyncMock()
+    mock_provider.mark_read = AsyncMock(side_effect=RuntimeError("mark_read failed"))
+    channel = {"provider": "meta_cloud", "provider_config": {}}
+    with patch("app.webhook.meta_router.get_provider", return_value=mock_provider):
+        await _mark_read_bg(channel, "wamid.fail_mark_read")  # must not raise
+    mock_provider.mark_read.assert_awaited_once_with("wamid.fail_mark_read")
+
+
 def test_meta_webhook_schedules_mark_read_as_background_task(meta_client):
-    """mark_read must be scheduled via background_tasks, NOT awaited in the request path."""
+    """Verify that _mark_read_bg is SCHEDULED via BackgroundTasks.add_task, not awaited inline.
+
+    Patching _mark_read_bg directly and asserting it was called is not sufficient proof of
+    scheduling: FastAPI's TestClient runs background tasks synchronously, so the assertion
+    would also pass if the code awaited _mark_read_bg inline.
+
+    Instead, we patch BackgroundTasks.add_task itself and assert that one of its calls
+    registered _mark_read_bg (the patched mock object the production code references) with
+    the expected (channel, message_id) arguments. If the production code switched to an
+    inline await, _mark_read_bg would never appear in add_task's call list and this test
+    would fail.
+
+    Note: add_task is also used for _register_lead, _track_inbound_message_time, log_inbound,
+    and _handle_delivery_status; we only assert that _mark_read_bg is among the registered
+    callables.
+    """
     with (
         patch("app.webhook.meta_router.get_channel_by_provider_config", return_value=FAKE_META_CHANNEL),
-        patch("app.webhook.meta_router._mark_read_bg") as mock_mark_read_bg,
         patch("app.webhook.meta_router.push_to_buffer", new_callable=AsyncMock),
         patch("app.webhook.meta_router.get_dev_route", new_callable=AsyncMock, return_value=None),
         patch("app.webhook.meta_router._track_inbound_message_time"),
+        patch("app.webhook.meta_router._mark_read_bg") as mock_mark_read_bg,
+        patch("fastapi.BackgroundTasks.add_task") as mock_add_task,
     ):
         response = meta_client.post(
             "/webhook/meta",
@@ -234,6 +256,18 @@ def test_meta_webhook_schedules_mark_read_as_background_task(meta_client):
         )
 
         assert response.status_code == 200
-        # _mark_read_bg is a background task — it must have been scheduled (called by FastAPI
-        # BackgroundTasks after the response), not awaited inline during the request.
-        mock_mark_read_bg.assert_called_once_with(FAKE_META_CHANNEL, "wamid.test123")
+
+        # The production code calls background_tasks.add_task(_mark_read_bg, channel, message_id).
+        # After patching, the name _mark_read_bg in the module namespace resolves to
+        # mock_mark_read_bg.  So we check that add_task was called with that mock object
+        # as the first positional arg and the correct (channel, message_id) following args.
+        mark_read_calls = [
+            call for call in mock_add_task.call_args_list
+            if call.args and call.args[0] is mock_mark_read_bg
+        ]
+        assert len(mark_read_calls) == 1, (
+            f"Expected exactly one add_task call with _mark_read_bg; got: {mock_add_task.call_args_list}"
+        )
+        _, channel_arg, message_id_arg = mark_read_calls[0].args
+        assert channel_arg == FAKE_META_CHANNEL
+        assert message_id_arg == "wamid.test123"
