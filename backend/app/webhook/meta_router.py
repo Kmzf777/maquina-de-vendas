@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 WAMID_DEDUP_TTL_SECS = 86400  # 24h
 
 
+async def _mark_read_bg(channel: dict, message_id: str) -> None:
+    """Call Meta mark-as-read in the background so it never delays the 200 response."""
+    try:
+        provider = get_provider(channel)
+        await provider.mark_read(message_id)
+    except Exception as e:
+        logger.warning("Failed to mark read via Meta: %s", e)
+
+
 def _register_lead(from_number: str, push_name: str | None) -> None:
     """Ensure the lead exists in the CRM the moment they contact us.
 
@@ -378,11 +387,8 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         # Register lead immediately — guarantees CRM entry before buffer flushes
         background_tasks.add_task(_register_lead, msg.from_number, msg.push_name)
 
-        try:
-            provider = get_provider(channel)
-            await provider.mark_read(msg.message_id)
-        except Exception as e:
-            logger.warning(f"Failed to mark read via Meta: {e}")
+        if msg.message_id:
+            background_tasks.add_task(_mark_read_bg, channel, msg.message_id)
 
         if msg.text and msg.text.strip().lower() == "!resetar":
             try:
