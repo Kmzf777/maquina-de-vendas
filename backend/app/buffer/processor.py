@@ -114,6 +114,32 @@ def _resolve_agent_profile_id(conversation: dict, channel: dict) -> str | None:
     return None
 
 
+def _wamid_already_processed(wamid: str) -> bool:
+    """Return True if a message with this wamid is already persisted in the messages table.
+
+    This is a durable, defense-in-depth backstop: catches duplicates that survive
+    a Redis flush/restart (which would allow the SETNX check at ingestion to pass again).
+    Fail-open: on any exception, log a warning and return False — never drop a real message
+    because of a DB hiccup.
+    """
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("id")
+            .eq("wamid", wamid)
+            .limit(1)
+            .execute()
+        )
+        return len(result.data) > 0
+    except Exception as exc:
+        logger.warning(
+            "[DEDUP-DB] falha ao verificar wamid=%s no banco — fail-open (mensagem será processada): %s",
+            wamid, exc,
+        )
+        return False
+
+
 def _is_recent_duplicate(
     conversation_id: str, content: str, role: str, window_seconds: int = 30
 ) -> bool:
@@ -275,6 +301,15 @@ async def process_buffered_messages(
     # Dedup: skip if this exact message was already processed recently
     if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
         logger.warning(f"Duplicate user message detected for {phone}, skipping")
+        return
+
+    # Dedup (defense-in-depth): skip if this wamid is already persisted in the DB.
+    # Catches duplicates that survive a Redis flush/restart (Task 1 SETNX may re-allow them).
+    if wamid and _wamid_already_processed(wamid):
+        logger.warning(
+            "[DEDUP-DB] wamid=%s já persistido no banco — descartando duplicata para phone=%s",
+            wamid, phone,
+        )
         return
 
     # Always save the incoming user message
