@@ -32,12 +32,12 @@ async def test_different_wamids_are_independent(fake_redis):
 
 
 @pytest.mark.anyio
-async def test_none_wamid_is_not_checked(fake_redis):
-    """Callers skip the check when message_id is None, but if passed directly it must not crash."""
-    # The guard `if msg.message_id` in meta_router prevents calling with None;
-    # this test documents that calling with an empty string also returns False (not a duplicate).
-    # We don't call with None because key=f"seen_wamid:{None}" would be a valid key — callers
-    # are responsible for the guard. Here we verify empty string is handled gracefully.
+async def test_empty_wamid_returns_false(fake_redis):
+    """An empty string wamid must return False (not a duplicate)."""
+    # The guard `if msg.message_id` in meta_router prevents calling with None at the call site;
+    # this test documents that passing an empty string directly also returns False gracefully.
+    # We don't call with None because key=f"seen_wamid:{None}" would be a valid key — the
+    # None guard lives at the webhook call site, not inside this helper.
     result = await _is_duplicate_wamid(fake_redis, "")
     assert result is False
 

@@ -19,6 +19,8 @@ from app.meta_audit import log_inbound
 
 logger = logging.getLogger(__name__)
 
+WAMID_DEDUP_TTL_SECS = 86400  # 24h
+
 
 def _register_lead(from_number: str, push_name: str | None) -> None:
     """Ensure the lead exists in the CRM the moment they contact us.
@@ -212,7 +214,7 @@ async def _is_duplicate_wamid(redis, wamid: str) -> bool:
     """
     key = f"seen_wamid:{wamid}"
     try:
-        result = await redis.set(key, "1", nx=True, ex=86400)
+        result = await redis.set(key, "1", nx=True, ex=WAMID_DEDUP_TTL_SECS)
         # set(..., nx=True) returns True when the key was newly created,
         # None when the key already existed.
         return result is None
@@ -358,6 +360,10 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
             background_tasks.add_task(_handle_delivery_status, wamid, status, errors)
 
     for msg in messages:
+        # NOTE: marcamos o wamid como visto na ingestão (antes do processamento). Se o
+        # push_to_buffer falhar logo após o SETNX, uma reentrega da Meta seria pulada —
+        # risco aceito: (a) o objetivo é justamente deduplicar os retries agressivos da Meta;
+        # (b) se o Redis estiver fora, o SETNX falha-open e o wamid NÃO é marcado.
         if msg.message_id and await _is_duplicate_wamid(redis, msg.message_id):
             logger.info(
                 "[DEDUP] Duplicate wamid=%s from=%s — skipping (already processed)",
