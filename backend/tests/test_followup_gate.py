@@ -176,6 +176,40 @@ async def test_followup_not_scheduled_when_followup_disabled():
 
 
 @pytest.mark.asyncio
+async def test_interest_flag_cleared_on_agent_failure_path():
+    """pop_interest_marked is called in the all-retries-failed branch so the flag never leaks."""
+
+    with patch("app.buffer.processor.get_or_create_lead", return_value=_make_lead()), \
+         patch("app.buffer.processor.get_channel_by_id", return_value=_make_channel()), \
+         patch("app.buffer.processor.get_provider") as mock_provider_fn, \
+         patch("app.buffer.processor.get_or_create_conversation", return_value=_make_conversation()), \
+         patch("app.buffer.processor.get_active_enrollment", return_value=None), \
+         patch("app.buffer.processor.save_message"), \
+         patch("app.buffer.processor.run_agent", side_effect=RuntimeError("LLM down")), \
+         patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.update_conversation"), \
+         patch("app.buffer.processor._schedule_followup") as mock_followup, \
+         patch("app.buffer.processor.pop_interest_marked") as mock_pop_interest, \
+         patch("app.buffer.processor.pop_deferred_media", return_value=[]), \
+         patch("app.buffer.processor.get_supabase", return_value=_make_supabase_mock()), \
+         patch("app.buffer.processor.settings", _mock_settings()), \
+         patch("app.buffer.processor._check_frustration_guardrail", return_value=False), \
+         patch("app.buffer.processor._update_last_msg"):
+
+        mock_pop_interest.return_value = {"nivel": "quente", "motivo": "set before crash"}
+        mock_provider = AsyncMock()
+        mock_provider_fn.return_value = mock_provider
+
+        from app.buffer.processor import process_buffered_messages
+        await process_buffered_messages("+5511999999999", "qual o preço?", "ch-fg-1")
+
+        # pop_interest_marked must be called in the failure branch to drain the flag
+        mock_pop_interest.assert_called_once_with("conv-fg-1")
+        # follow-up must NOT be scheduled when agent failed
+        mock_followup.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_followup_flag_cleared_on_handoff_path():
     """pop_interest_marked is still called on the handoff path (response=None) to avoid leaks."""
 
