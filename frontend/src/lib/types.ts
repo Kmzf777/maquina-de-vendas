@@ -151,6 +151,7 @@ export interface Broadcast {
   sent: number;
   failed: number;
   delivered: number;
+  template_language_code: string;
   status: "draft" | "scheduled" | "running" | "paused" | "completed" | "failed";
   scheduled_at: string | null;
   send_interval_min: number;

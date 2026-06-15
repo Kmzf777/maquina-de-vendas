@@ -59,6 +59,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -198,6 +199,52 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       setBroadcast({ ...broadcast, status: "paused" });
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleRetryFailures = async () => {
+    if (!broadcast || retryLoading) return;
+    const failedLeads = leads.filter((l) => l.status === "failed");
+    if (failedLeads.length === 0) return;
+    setRetryLoading(true);
+    try {
+      const createRes = await fetch("/api/broadcasts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${broadcast.name} — Reenvio`,
+          channel_id: broadcast.channel_id,
+          template_name: broadcast.template_name,
+          template_language_code: broadcast.template_language_code || "pt_BR",
+          template_variables: broadcast.template_variables || {},
+          agent_profile_id: broadcast.agent_profile_id || null,
+          move_to_stage_id: broadcast.move_to_stage_id || null,
+        }),
+      });
+      if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}));
+        alert(`Erro ao criar reenvio: ${err.error ?? createRes.statusText}`);
+        return;
+      }
+      const newBroadcast = await createRes.json();
+
+      const leadsRes = await fetch(`/api/broadcasts/${newBroadcast.id}/leads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lead_ids: failedLeads.map((l) => l.lead_id) }),
+      });
+      if (!leadsRes.ok) {
+        const err = await leadsRes.json().catch(() => ({}));
+        alert(`Erro ao adicionar leads ao reenvio: ${err.error ?? leadsRes.statusText}`);
+        return;
+      }
+
+      await fetch(`/api/broadcasts/${newBroadcast.id}/start`, { method: "POST" });
+      router.push(`/campanhas/disparos/${newBroadcast.id}`);
+    } catch (e) {
+      alert(`Erro de rede: ${e}`);
+    } finally {
+      setRetryLoading(false);
     }
   };
 
@@ -580,12 +627,13 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                 </p>
               </div>
             </div>
-            <Link
-              href={`/campanhas?tab=disparos&retry=${broadcastId}`}
-              className="flex-shrink-0 bg-[#c41c1c] text-white px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-110 active:scale-[0.85]"
+            <button
+              onClick={handleRetryFailures}
+              disabled={retryLoading}
+              className="flex-shrink-0 bg-[#c41c1c] text-white px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-60 disabled:cursor-not-allowed disabled:scale-100"
             >
-              ↩ Retentar Falhas
-            </Link>
+              {retryLoading ? "Criando reenvio..." : "↩ Retentar Falhas"}
+            </button>
           </div>
         )}
 

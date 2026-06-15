@@ -7,7 +7,7 @@ import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
-import { CreateBroadcastModal, type BroadcastPrefill } from "@/components/campaigns/create-broadcast-modal";
+import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
 
@@ -53,8 +53,6 @@ function CampanhasPageInner() {
   const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
-  const [prefill, setPrefill] = useState<BroadcastPrefill | undefined>(undefined);
-
   // Load connected channels once on mount
   useEffect(() => {
     fetch("/api/channels")
@@ -72,39 +70,6 @@ function CampanhasPageInner() {
       setActiveTab(tab);
     }
   }, [searchParams]);
-
-  // Handle ?retry=<broadcastId>
-  useEffect(() => {
-    const retryId = searchParams.get("retry");
-    if (!retryId) return;
-
-    Promise.all([
-      fetch(`/api/broadcasts/${retryId}`).then((r) => r.json()),
-      fetch(`/api/broadcasts/${retryId}/leads`).then((r) => r.json()),
-    ]).then(([broadcast, leads]) => {
-      const failedLeads = (Array.isArray(leads) ? leads : []).filter(
-        (l: { status: string }) => l.status === "failed"
-      );
-
-      fetch(`/api/channels/${broadcast.channel_id}/templates`)
-        .then((r) => r.json())
-        .then((templates: Array<{ name: string; language: string; category: string; body: string; params: { index: number; paramName: string; example: string }[] }>) => {
-          const tpl = templates.find((t) => t.name === broadcast.template_name);
-          if (!tpl) return;
-          setPrefill({
-            channelId: broadcast.channel_id,
-            templateName: tpl.name,
-            templateLanguage: tpl.language,
-            varValues: broadcast.template_variables as Record<string, string> ?? {},
-            leadIds: failedLeads.map((l: { lead_id: string }) => l.lead_id),
-          });
-          setShowBroadcastModal(true);
-          router.replace("/campanhas?tab=disparos");
-        });
-    }).catch(() => {
-      // silently ignore fetch errors for retry
-    });
-  }, [searchParams, router]);
 
   const handleCreateCadence = async () => {
     if (!cadenceName.trim() || !channelId) return;
@@ -280,9 +245,8 @@ function CampanhasPageInner() {
 
       <CreateBroadcastModal
         open={showBroadcastModal}
-        onClose={() => { setShowBroadcastModal(false); setPrefill(undefined); }}
+        onClose={() => setShowBroadcastModal(false)}
         onCreated={() => {}}
-        prefill={prefill}
       />
 
       <QuickSendModal
