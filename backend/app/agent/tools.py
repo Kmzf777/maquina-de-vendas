@@ -30,6 +30,16 @@ def pop_deferred_media(conversation_id: str) -> list[dict]:
     return _deferred_media.pop(conversation_id, [])
 
 
+# Per-conversation flag: set when the LLM calls marcar_interesse during this turn.
+# Popped by the processor to decide whether to (re)schedule follow-ups.
+_interest_marked: dict[str, dict] = {}
+
+
+def pop_interest_marked(conversation_id: str) -> dict | None:
+    """Return and clear the interest signal for a conversation (None if not set)."""
+    return _interest_marked.pop(conversation_id, None)
+
+
 PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
     "atacado": {
         "foto_1": "Classico — torra media-escura, notas achocolatadas",
@@ -199,17 +209,44 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "marcar_interesse",
+            "description": (
+                "Marca que o lead demonstrou INTERESSE COMERCIAL CLARO nesta conversa "
+                "(ex: perguntou preço/condições, pediu detalhes para comprar, demonstrou intenção real de avançar). "
+                "NÃO use para resposta educada, 'ok', 'obrigado', 'vou pensar', saudação, ou curiosidade vaga. "
+                "Só o interesse genuíno habilita o follow-up automático."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nivel": {
+                        "type": "string",
+                        "enum": ["morno", "quente"],
+                        "description": "Nivel de interesse do lead",
+                    },
+                    "motivo": {
+                        "type": "string",
+                        "description": "Breve descricao do sinal de interesse observado",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout"],
-        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse"],
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
@@ -404,5 +441,16 @@ async def execute_tool(
         )
         save_message(lead_id, "system", f"[enviar_foto_produto] Foto de {produto} enviada", conversation_id=conversation_id)
         return f"foto de {produto} enfileirada para envio após o texto"
+
+    elif tool_name == "marcar_interesse":
+        nivel = args.get("nivel", "morno")
+        motivo = args.get("motivo", "")
+        if conversation_id:
+            _interest_marked[conversation_id] = {"nivel": nivel, "motivo": motivo}
+        logger.info(
+            "marcar_interesse: nivel=%s motivo=%r lead=%s conv=%s",
+            nivel, motivo, lead_id, conversation_id,
+        )
+        return f"Interesse registrado: {nivel}"
 
     return f"Tool {tool_name} nao reconhecida"

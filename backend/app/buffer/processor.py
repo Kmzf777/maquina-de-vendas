@@ -21,7 +21,7 @@ from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
-from app.agent.tools import pop_deferred_media
+from app.agent.tools import pop_deferred_media, pop_interest_marked
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
@@ -465,6 +465,10 @@ async def process_buffered_messages(
                 _update_last_msg(conversation["id"])
                 return
 
+    # Pop the interest flag once right after the agent attempt — before any early returns
+    # so stale state never leaks into the next turn (handoff, empty-response, or normal path).
+    interest = pop_interest_marked(conversation["id"])
+
     if response is None:
         # Intentional: encaminhar_humano was called — handoff message already sent by the tool.
         logger.info(
@@ -513,16 +517,25 @@ async def process_buffered_messages(
             except Exception as e:
                 logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
-        # Agenda follow-up se habilitado para a conversa
+        # Agenda follow-up apenas quando o lead demonstrou interesse comercial claro.
+        # interest é populado pela tool marcar_interesse durante run_agent e
+        # já foi limpado acima via pop_interest_marked — não cancela agendamentos
+        # existentes, apenas evita criar novos sem sinal de interesse.
         if conversation.get("followup_enabled", True) and channel:
-            try:
-                _schedule_followup(
-                    conversation_id=conversation["id"],
-                    lead_id=lead["id"],
-                    channel_id=channel["id"],
+            if interest:
+                try:
+                    _schedule_followup(
+                        conversation_id=conversation["id"],
+                        lead_id=lead["id"],
+                        channel_id=channel["id"],
+                    )
+                except Exception as e:
+                    logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
+            else:
+                logger.info(
+                    "[FOLLOWUP] sem interesse marcado — follow-up não agendado para %s",
+                    phone,
                 )
-            except Exception as e:
-                logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
 
         # Dispatch deferred media (enviar_fotos / enviar_foto_produto) after text so
         # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
