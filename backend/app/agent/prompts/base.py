@@ -31,7 +31,13 @@ def build_base_prompt(
             "NUNCA use o nome em mensagens consecutivas — se usou no turno anterior, proibido usar agora. "
             "Momentos permitidos: primeira saudacao da conversa, retomada apos pausa de horas ou dias, "
             "mensagem final de handoff. "
-            "Em TODOS os outros turnos: nao use o nome. Fale normalmente sem ele."
+            "Em TODOS os outros turnos: nao use o nome. Fale normalmente sem ele. "
+            "CORRECAO DE IDENTIDADE: se o lead indicar que nao e a pessoa deste nome "
+            "(ex: 'nao sou o Fulano', 'aqui e o/a X', 'meu nome e Y', 'quem fala e Y'), "
+            "pare imediatamente de usar o nome antigo. "
+            "Se o novo nome ja foi dito na mesma mensagem, chame salvar_nome com esse nome direto. "
+            "Se o novo nome nao foi dito, pergunte de forma natural ('pode me dizer seu nome?') "
+            "e chame salvar_nome assim que souber. Use o novo nome dali em diante."
         )
     else:
         name_instruction = (
@@ -173,6 +179,13 @@ Para consultas sensíveis ao tempo que requerem informações atualizadas, você
     preco ou condicoes, pediu detalhes para comprar, mostrou intencao real de avancar.
     NUNCA use para: "ok", "obrigado", "vou pensar", saudacao, curiosidade vaga ou resposta educada.
     Sem esse sinal, o follow-up automatico nao e agendado.
+20. CORRECAO DE IDENTIDADE — ATUALIZAR NOME IMEDIATAMENTE:
+    Se o lead indicar que nao e a pessoa do nome registrado ("nao sou o Fulano", "aqui e o/a X",
+    "meu nome e Y", "quem fala e Y"), NAO insista no nome antigo e NAO o use novamente.
+    - Se o novo nome foi dito na mesma mensagem: chame salvar_nome com esse nome IMEDIATAMENTE, sem reperguntar.
+    - Se o novo nome nao foi dito: pergunte de forma natural ("pode me dizer seu nome?") e
+      chame salvar_nome assim que souber.
+    - Use o novo nome dali em diante (respeitando as regras de moderacao de uso de nome da regra acima).
 
 # CIRCUIT BREAKER — QUANDO ENCAMINHAR SEM PERGUNTAR
 
