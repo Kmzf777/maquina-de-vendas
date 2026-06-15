@@ -51,25 +51,14 @@ async def get_lead_messages(lead_id: str, limit: int = Query(50, le=200)):
 @router.post("/{lead_id}/optout")
 async def optout_lead(lead_id: str):
     """Parar mensagens: desativa IA, move deals para Blacklist e cancela follow-ups."""
-    from app.leads.service import get_lead, update_lead, move_lead_deals_to_blacklist, save_message
-    from app.follow_up.service import cancel_followups_by_phone
+    from app.leads.service import get_lead, update_lead, apply_optout_side_effects, save_message
 
     lead = get_lead(lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
     update_lead(lead_id, ai_enabled=False)
-    move_lead_deals_to_blacklist(lead_id)
-
-    phone = lead.get("phone", "")
-    if phone:
-        try:
-            cancel_followups_by_phone(phone, reason="optout_manual")
-        except Exception as exc:
-            logger.error(
-                "optout_lead: falha ao cancelar follow-ups para lead %s (phone %s): %s",
-                lead_id, phone, exc, exc_info=True,
-            )
+    apply_optout_side_effects(lead_id, lead.get("phone", ""), reason="optout_manual")
 
     try:
         save_message(lead_id, "system", "[optout_manual] Operador parou mensagens manualmente.")

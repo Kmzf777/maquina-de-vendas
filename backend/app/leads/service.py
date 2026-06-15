@@ -336,6 +336,29 @@ def move_lead_deals_to_blacklist(lead_id: str) -> None:
         )
 
 
+def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
+    """Shared opt-out side-effects: move the lead's deals to Blacklist and cancel follow-ups.
+
+    Both the `registrar_optout` tool and the manual POST /api/leads/{id}/optout endpoint
+    call this so the sequence lives in ONE place — a future change (e.g. also removing from
+    active campaigns) is made once. Callers keep their own ai_enabled disabling and system
+    message (which legitimately differ). Fail-soft: never raises.
+
+    `cancel_followups_by_phone` is imported lazily to avoid a circular import
+    (app.follow_up.service imports from app.leads.service).
+    """
+    move_lead_deals_to_blacklist(lead_id)  # already fail-soft internally
+    if phone:
+        try:
+            from app.follow_up.service import cancel_followups_by_phone
+            cancel_followups_by_phone(phone, reason=reason)
+        except Exception as exc:
+            logger.error(
+                "apply_optout_side_effects: falha ao cancelar follow-ups para lead %s (phone %s): %s",
+                lead_id, phone, exc, exc_info=True,
+            )
+
+
 def get_history(lead_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (

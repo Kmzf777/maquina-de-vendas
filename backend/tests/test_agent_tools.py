@@ -176,8 +176,7 @@ async def test_registrar_optout_chama_update_lead_ai_enabled_false():
     """registrar_optout deve chamar update_lead com ai_enabled=False e salvar system message."""
     with patch("app.agent.tools.update_lead") as mock_update, \
          patch("app.agent.tools.save_message") as mock_save, \
-         patch("app.agent.tools.move_lead_deals_to_blacklist"), \
-         patch("app.agent.tools.cancel_followups_by_phone"):
+         patch("app.agent.tools.apply_optout_side_effects"):
         result = await execute_tool(
             "registrar_optout",
             {"motivo": "clicou parar mensagens"},
@@ -199,8 +198,7 @@ async def test_registrar_optout_retorna_erro_se_update_lead_falha(caplog):
     import logging
     with patch("app.agent.tools.update_lead", side_effect=RuntimeError("db timeout")), \
          patch("app.agent.tools.save_message") as mock_save, \
-         patch("app.agent.tools.move_lead_deals_to_blacklist"), \
-         patch("app.agent.tools.cancel_followups_by_phone"):
+         patch("app.agent.tools.apply_optout_side_effects"):
         caplog.set_level(logging.ERROR, logger="app.agent.tools")
         result = await execute_tool(
             "registrar_optout",
@@ -221,8 +219,7 @@ async def test_registrar_optout_nao_chama_create_deal_nem_human_control():
     with patch("app.agent.tools.update_lead") as mock_update, \
          patch("app.agent.tools.save_message"), \
          patch("app.agent.tools.create_deal") as mock_create_deal, \
-         patch("app.agent.tools.move_lead_deals_to_blacklist"), \
-         patch("app.agent.tools.cancel_followups_by_phone"):
+         patch("app.agent.tools.apply_optout_side_effects"):
         await execute_tool(
             "registrar_optout",
             {"motivo": "opt-out"},
