@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Papa from "papaparse";
+import { usePipelines } from "@/hooks/use-pipelines";
+import type { PipelineStage } from "@/lib/types";
 
 const LEAD_FIELDS = [
   { key: "", label: "Pular coluna" },
@@ -55,9 +57,32 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ inserted: number; updated: number; skipped: number; invalidPhones?: number } | null>(null);
+  const [result, setResult] = useState<{ inserted: number; updated: number; skipped: number; invalidPhones?: number; dealsCreated?: number } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const { pipelines } = usePipelines();
+  const [selectedPipelineId, setSelectedPipelineId] = useState("");
+  const [selectedStageId, setSelectedStageId] = useState("");
+  const [stageOptions, setStageOptions] = useState<PipelineStage[]>([]);
+  const [stagesLoading, setStagesLoading] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!selectedPipelineId) { setStageOptions([]); setSelectedStageId(""); return; }
+    const controller = new AbortController();
+    setStagesLoading(true);
+    fetch(`/api/pipelines/${selectedPipelineId}/stages`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data: PipelineStage[]) => {
+        const active = Array.isArray(data) ? data.filter((s) => !s.is_protected) : [];
+        setStageOptions(active);
+        setSelectedStageId(active[0]?.id || "");
+      })
+      .catch((e) => { if (e?.name !== "AbortError") { setStageOptions([]); setSelectedStageId(""); } })
+      .finally(() => setStagesLoading(false));
+    return () => controller.abort();
+  }, [selectedPipelineId]);
 
   function handleFile(file: File) {
     Papa.parse(file, {
@@ -122,7 +147,11 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
     const res = await fetch("/api/leads/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ leads, skipDuplicates }),
+      body: JSON.stringify({
+        leads,
+        skipDuplicates,
+        ...(selectedPipelineId ? { pipelineId: selectedPipelineId, stageId: selectedStageId } : {}),
+      }),
     });
     const data = await res.json();
     setResult({ ...data, invalidPhones: invalidPhoneCount });
@@ -272,6 +301,42 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                 </p>
               </div>
 
+              {/* Destino no Kanban (opcional) */}
+              <div className="border border-[#dedbd6] rounded-[8px] p-4 mb-4 space-y-3">
+                <p className="text-[13px] font-medium text-[#111111]">Adicionar ao Kanban (opcional)</p>
+
+                <div>
+                  <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Funil</label>
+                  <select
+                    value={selectedPipelineId}
+                    onChange={(e) => setSelectedPipelineId(e.target.value)}
+                    className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                  >
+                    <option value="">Não adicionar ao Kanban</option>
+                    {pipelines.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+                  </select>
+                </div>
+
+                {selectedPipelineId && (
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Etapa</label>
+                    {stagesLoading ? (
+                      <p className="text-[12px] text-[#7b7b78] py-1">Carregando etapas...</p>
+                    ) : stageOptions.length === 0 ? (
+                      <p className="text-[12px] text-[#7b7b78] py-1">Nenhuma etapa disponível.</p>
+                    ) : (
+                      <select
+                        value={selectedStageId}
+                        onChange={(e) => setSelectedStageId(e.target.value)}
+                        className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                      >
+                        {stageOptions.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
+                      </select>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <label className="flex items-center gap-2 mb-4 cursor-pointer">
                 <input
                   type="checkbox"
@@ -324,6 +389,12 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
                   <p className="text-[24px] font-semibold text-[#7b7b78]">{result.skipped}</p>
                   <p className="text-[12px] text-[#7b7b78]">Pulados</p>
                 </div>
+                {(result.dealsCreated ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[24px] font-semibold text-[#111111]">{result.dealsCreated}</p>
+                    <p className="text-[12px] text-[#7b7b78]">Cards criados</p>
+                  </div>
+                )}
               </div>
               {(result.invalidPhones ?? 0) > 0 && (
                 <p className="text-[13px] text-[#c41c1c] mb-5">
