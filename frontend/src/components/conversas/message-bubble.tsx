@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Message, QuotedMessage } from "@/lib/types";
+import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 
 function DeliveryTick({ status }: { status?: "sent" | "delivered" | "read" | null }) {
@@ -91,6 +91,42 @@ function QuotedBlock({
         )}
       </div>
     </button>
+  );
+}
+
+function ReactionTargetBlock({
+  target,
+  emoji,
+  isFromMe,
+}: {
+  target: ReactionTarget | null | undefined;
+  emoji: string;
+  isFromMe: boolean;
+}) {
+  const isText = !target?.message_type || target.message_type === "text";
+  return (
+    <div className="flex flex-col gap-1">
+      {target ? (
+        <div
+          className={`rounded-md overflow-hidden flex text-[12px] ${
+            isFromMe ? "bg-white/20" : "bg-black/5"
+          }`}
+        >
+          <div className={`w-1 flex-shrink-0 rounded-l-md ${isFromMe ? "bg-white/50" : "bg-[#25d366]"}`} />
+          <div className="px-2 py-1.5 min-w-0 flex-1">
+            <p className={`font-semibold mb-0.5 ${isFromMe ? "text-white/80" : "text-[#25d366]"}`}>
+              {target.role === "user" ? "Lead" : "Você"}
+            </p>
+            <p className={`truncate max-w-[200px] ${isFromMe ? "text-white/60" : "text-[#555]"}`}>
+              {isText ? (target.content ?? "") : getMediaLabel(target.message_type)}
+            </p>
+          </div>
+        </div>
+      ) : null}
+      <span className={`text-[13px] italic ${isFromMe ? "text-white/70" : "text-[#555]"}`}>
+        Reagiu com {emoji}
+      </span>
+    </div>
   );
 }
 
@@ -389,11 +425,14 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
           })()
         ) : isReaction ? (
           (() => {
-            const meta = message.metadata as { emoji?: string } | undefined;
+            const meta = message.metadata as { emoji?: string; target_wamid?: string } | null;
+            const emoji = meta?.emoji ?? "?";
             return (
-              <span className="text-[12px] opacity-60 italic">
-                Reagiu: {meta?.emoji ?? "?"}
-              </span>
+              <ReactionTargetBlock
+                target={message.reaction_target}
+                emoji={emoji}
+                isFromMe={isFromMe}
+              />
             );
           })()
         ) : (

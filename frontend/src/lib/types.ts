@@ -75,6 +75,12 @@ export interface Deal {
   pipeline_stages?: PipelineStage | null;
 }
 
+export interface ReactionTarget {
+  content: string | null;
+  role: string;
+  message_type?: string | null;
+}
+
 export interface Message {
   id: string;
   lead_id: string;
@@ -93,6 +99,7 @@ export interface Message {
   quoted_wamid?: string | null;
   quoted_message_id?: string | null;
   quoted_message?: QuotedMessage | null;
+  reaction_target?: ReactionTarget | null;
 }
 
 export interface QuotedMessage {

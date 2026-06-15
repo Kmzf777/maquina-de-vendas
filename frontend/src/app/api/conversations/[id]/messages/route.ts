@@ -207,6 +207,10 @@ export async function GET(
     return { id: m.id, content: m.content, role: m.role, message_type: m.message_type ?? null };
   }
 
+  function toReactionTarget(m: typeof messages[0]) {
+    return { content: m.content, role: m.role, message_type: m.message_type ?? null };
+  }
+
   // Attach quoted_message: try wamid lookup, then UUID fallback (quoted_message_id)
   const enriched = messages.map((msg) => {
     const hasQuote = msg.quoted_wamid || msg.quoted_message_id;
@@ -217,5 +221,74 @@ export async function GET(
     return { ...msg, quoted_message: quoted ? toQuoted(quoted) : null };
   });
 
-  return NextResponse.json(enriched);
+  // Collect wamids missing from the in-batch maps:
+  // - reply messages whose quoted_wamid wasn't resolved
+  // - reaction messages whose target_wamid isn't in the batch
+  const missingWamids = new Set<string>();
+
+  for (const msg of enriched) {
+    if (msg.quoted_wamid && !wamidMap.has(msg.quoted_wamid) && msg.quoted_message === null) {
+      missingWamids.add(msg.quoted_wamid);
+    }
+    if (msg.message_type === "reaction") {
+      const meta = msg.metadata as { target_wamid?: string; emoji?: string } | null;
+      const tw = meta?.target_wamid;
+      if (tw && !wamidMap.has(tw)) {
+        missingWamids.add(tw);
+      }
+    }
+  }
+
+  // One batched supplemental query for all missing wamids
+  const supplementalMap = new Map<string, { id: string; content: string | null; role: string; message_type: string | null }>();
+  if (missingWamids.size > 0) {
+    const { data: supplemental } = await supabase
+      .from("messages")
+      .select("id, content, role, message_type, wamid")
+      .in("wamid", [...missingWamids]);
+    for (const row of supplemental ?? []) {
+      if (row.wamid) {
+        supplementalMap.set(row.wamid, {
+          id: row.id,
+          content: row.content,
+          role: row.role,
+          message_type: row.message_type ?? null,
+        });
+      }
+    }
+  }
+
+  // Second pass: fill gaps using supplemental map and attach reaction_target
+  const finalEnriched = enriched.map((msg) => {
+    let result: typeof msg & { reaction_target?: { content: string | null; role: string; message_type?: string | null } | null } = msg;
+
+    // Fill unresolved reply quoted_message from supplemental
+    if (msg.quoted_wamid && msg.quoted_message === null) {
+      const sup = supplementalMap.get(msg.quoted_wamid);
+      if (sup) {
+        result = { ...result, quoted_message: { id: sup.id, content: sup.content, role: sup.role, message_type: sup.message_type } };
+      }
+    }
+
+    // Attach reaction_target
+    if (msg.message_type === "reaction") {
+      const meta = msg.metadata as { target_wamid?: string; emoji?: string } | null;
+      const tw = meta?.target_wamid;
+      if (tw) {
+        const inBatch = wamidMap.get(tw);
+        if (inBatch) {
+          result = { ...result, reaction_target: toReactionTarget(inBatch) };
+        } else {
+          const sup = supplementalMap.get(tw);
+          result = { ...result, reaction_target: sup ? { content: sup.content, role: sup.role, message_type: sup.message_type } : null };
+        }
+      } else {
+        result = { ...result, reaction_target: null };
+      }
+    }
+
+    return result;
+  });
+
+  return NextResponse.json(finalEnriched);
 }
