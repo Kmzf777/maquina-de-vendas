@@ -125,7 +125,9 @@ async def test_handoff_rescue_sends_template_when_lead_has_not_contacted_joao():
         from app.follow_up.scheduler import process_due_followups
         await process_due_followups(now=datetime.now(timezone.utc))
 
-    mock_meta.send_template.assert_called_once_with("5511999999999", "rabubens", language_code="en_US")
+    # Falha C (commit 3315e50): default de language_code corrigido de en_US → pt_BR
+    # (en_US causava 404 #132001 e cancelava o job). components=None pois o job não tem nome.
+    mock_meta.send_template.assert_called_once_with("5511999999999", "rabubens", components=None, language_code="pt_BR")
     mock_sent.assert_called_once_with("job-rescue-1")
     mock_cancel.assert_not_called()
 
