@@ -12,7 +12,7 @@ from app.agent.prompts.base import build_base_prompt
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.tools import get_tools_for_stage, execute_tool
-from app.conversations.service import get_history
+from app.conversations.service import get_history, resolve_message_text_by_wamid
 from app.agent.token_tracker import track_token_usage
 from app.agent_profiles.service import get_agent_profile
 from app.leads.service import get_lead, update_lead
@@ -36,6 +36,70 @@ _SAFETY_FALLBACK_MESSAGE = (
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# ---------------------------------------------------------------------------
+# Helpers for reply/reaction context enrichment (prompt-only, never persisted)
+# ---------------------------------------------------------------------------
+
+_TRUNCATE_LEN = 120
+
+
+def _truncate(text: str, length: int = _TRUNCATE_LEN) -> str:
+    """Truncate text to `length` chars, appending '…' only when cut."""
+    if len(text) <= length:
+        return text
+    return text[:length] + "…"
+
+
+def _build_reply_marker(quoted_wamid: str) -> str:
+    """Return a '[Em resposta a: "..."]' prefix line for a quoted message.
+
+    Resolves the quoted wamid to its stored content. Falls back to a soft
+    marker when the message cannot be found.
+    """
+    orig = resolve_message_text_by_wamid(quoted_wamid)
+    if orig:
+        return f'[Em resposta a: "{_truncate(orig)}"]'
+    return "[Em resposta a uma mensagem anterior]"
+
+
+def _render_history_content(msg: dict) -> str:
+    """Return the display content for a history message, with reply/reaction enrichment.
+
+    - Reaction messages are translated to a human-readable line.
+    - Messages with quoted_wamid get a reply-marker prepended.
+    - All other messages pass through unchanged.
+
+    Never raises — degrades to the raw content on any error.
+    """
+    try:
+        content = msg.get("content") or ""
+        message_type = msg.get("message_type")
+
+        # Reaction: replace content entirely with a translated line
+        if message_type == "reaction":
+            metadata = msg.get("metadata")
+            emoji = "?"
+            target_wamid = None
+            if isinstance(metadata, dict):
+                emoji = metadata.get("emoji") or "?"
+                target_wamid = metadata.get("target_wamid")
+            if target_wamid:
+                target_text = resolve_message_text_by_wamid(target_wamid)
+                if target_text:
+                    return f'[O lead reagiu com {emoji} à mensagem: "{_truncate(target_text)}"]'
+            return f"[O lead reagiu com {emoji} a uma mensagem anterior]"
+
+        # Reply: prepend a marker with the quoted text
+        quoted_wamid = msg.get("quoted_wamid")
+        if quoted_wamid:
+            marker = _build_reply_marker(quoted_wamid)
+            return f"{marker}\n{content}"
+
+        return content
+    except Exception as exc:  # pragma: no cover
+        logger.warning("_render_history_content: erro ao enriquecer mensagem: %s", exc)
+        return msg.get("content") or ""
 
 
 def _is_valid_openai_model(model: str) -> bool:
@@ -173,19 +237,25 @@ async def run_agent(
     history = get_history(conversation_id, limit=60)
     # processor.py saves user message before calling run_agent, so history already
     # includes the current message — strip it to avoid sending it twice.
+    # Capture quoted_wamid of the current turn BEFORE stripping so we can enrich
+    # the user_text that gets appended at the end.
+    current_quoted_wamid: str | None = None
     if history and history[-1]["role"] == "user" and history[-1]["content"] == user_text:
+        current_quoted_wamid = history[-1].get("quoted_wamid")
         history = history[:-1]
 
     # Collapse consecutive assistant bubbles into a single turn so the AI sees
     # one coherent response per turn regardless of how many bubbles were saved.
+    # Reply/reaction enrichment is applied via _render_history_content.
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
         if msg["role"] not in ("user", "assistant"):
             continue
+        enriched_content = _render_history_content(msg)
         if messages and messages[-1]["role"] == "assistant" == msg["role"]:
-            messages[-1]["content"] += "\n\n" + msg["content"]
+            messages[-1]["content"] += "\n\n" + enriched_content
         else:
-            messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": msg["role"], "content": enriched_content})
 
     is_outbound = prompt_key == "valeria_outbound"
     # history here has the current message already stripped (lines above); len == 0 means genuine first turn
@@ -196,7 +266,13 @@ async def run_agent(
         ctx = build_outbound_first_turn_context(campaign_message, lead.get("name"))
         messages.append({"role": "user", "content": ctx})
 
-    messages.append({"role": "user", "content": user_text})
+    # Apply reply marker to the current user message when it was a reply
+    if current_quoted_wamid:
+        marker = _build_reply_marker(current_quoted_wamid)
+        enriched_user_text = f"{marker}\n{user_text}"
+    else:
+        enriched_user_text = user_text
+    messages.append({"role": "user", "content": enriched_user_text})
 
     response = await _create_with_retry(_get_client(model),
         model=model,
