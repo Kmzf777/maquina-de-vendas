@@ -305,7 +305,10 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
     lead_phone = metadata.get("lead_phone")
     joao_phone_number_id = metadata.get("joao_phone_number_id", "1049315514934778")
     template_name = metadata.get("template_name", "automacao_valeria_to_joao")
-    language_code = metadata.get("language_code", "en_US")
+    # Template 'automacao_valeria_to_joao' está registrado na Meta em pt_BR.
+    # O default 'en_US' causava 404 (#132001 "does not exist in en_US") e o job
+    # de resgate de handoff era cancelado permanentemente sem ser entregue.
+    language_code = metadata.get("language_code", "pt_BR")
 
     if not lead_phone:
         _cancel_job(job["id"], "missing_lead_phone")
