@@ -6,6 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from openai import AsyncOpenAI
 
 from app.config import settings
@@ -27,6 +28,32 @@ VALERIA_ENABLED = True
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+# Conexões HTTP/2 com Supabase/Meta às vezes recebem GOAWAY sob concorrência
+# (rajada de disparo), derrubando o save e PERDENDO a mensagem do agente (regressão
+# observada: Micheli, João). Retry simples preserva o estado no banco sem refatorar
+# o cliente HTTP. httpx.TransportError cobre RemoteProtocolError/ConnectError/ReadError
+# mas NÃO HTTPStatusError — então erros de aplicação (4xx/5xx) não são mascarados.
+_DB_RETRY_ATTEMPTS = 3
+_DB_RETRY_DELAY = 2  # segundos
+
+
+async def _save_with_retry(label: str, fn, *args, **kwargs):
+    """Executa uma operação de persistência síncrona com retry em drops de conexão."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _DB_RETRY_ATTEMPTS + 1):
+        try:
+            return fn(*args, **kwargs)
+        except httpx.TransportError as exc:
+            last_exc = exc
+            logger.warning(
+                "[DB RETRY] %s — tentativa %d/%d falhou (conexão): %s",
+                label, attempt, _DB_RETRY_ATTEMPTS, exc,
+            )
+            if attempt < _DB_RETRY_ATTEMPTS:
+                await asyncio.sleep(_DB_RETRY_DELAY)
+    raise last_exc
 
 
 # Typing-speed simulation constants.
@@ -252,7 +279,9 @@ async def process_buffered_messages(
 
     # Always save the incoming user message
     try:
-        save_message(
+        await _save_with_retry(
+            f"save user msg {phone}",
+            save_message,
             conversation["id"], lead["id"], "user",
             resolved_text, conversation.get("stage"),
             sent_by="user",
@@ -433,7 +462,9 @@ async def process_buffered_messages(
     if send_ok:
         for bubble in bubbles:
             try:
-                save_message(
+                await _save_with_retry(
+                    f"save assistant msg {phone}",
+                    save_message,
                     conversation["id"], lead["id"], "assistant",
                     bubble, conversation.get("stage"),
                     sent_by="agent",
