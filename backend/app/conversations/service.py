@@ -204,6 +204,32 @@ def save_message(
     return result.data[0]
 
 
+def resolve_message_text_by_wamid(wamid: str) -> str | None:
+    """Return the content of a previously stored message by its Meta wamid, or None.
+
+    Fail-open: returns None on any error (missing row, DB hiccup) so callers
+    degrade gracefully — they should fall back to a soft marker.
+    """
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("content")
+            .eq("wamid", wamid)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]["content"]
+        return None
+    except Exception as exc:
+        logger.warning(
+            "resolve_message_text_by_wamid: falha ao resolver wamid=%s: %s",
+            wamid, exc,
+        )
+        return None
+
+
 def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (
