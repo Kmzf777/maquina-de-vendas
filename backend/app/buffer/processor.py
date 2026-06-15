@@ -462,6 +462,7 @@ async def process_buffered_messages(
                     f"(conv={conversation['id']}): {e}",
                     exc_info=True,
                 )
+                pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
                 _update_last_msg(conversation["id"])
                 return
 
