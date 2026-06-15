@@ -232,6 +232,19 @@ async def _is_duplicate_wamid(redis, wamid: str) -> bool:
         return False
 
 
+async def _unmark_wamid(redis, wamid: str) -> None:
+    """Clear the seen-wamid key so a message that failed to buffer is reprocessed on redelivery.
+
+    The dedup mark is set on ingestion (before buffering) to absorb Meta's retry bursts.
+    If buffering then fails, leaving the mark would make Meta's redelivery be silently
+    skipped — a data-loss window. Clearing it here lets the redelivery be processed.
+    """
+    try:
+        await redis.delete(f"seen_wamid:{wamid}")
+    except Exception as exc:
+        logger.warning("[DEDUP] failed to unmark wamid=%s after buffer error: %s", wamid, exc)
+
+
 def _verify_signature(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False
@@ -405,6 +418,18 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
             continue
 
         background_tasks.add_task(_track_inbound_message_time, msg.from_number)
-        await push_to_buffer(redis, msg)
+        try:
+            await push_to_buffer(redis, msg)
+        except Exception as exc:
+            # Buffering failed AFTER the wamid was marked as seen — clear the mark so
+            # Meta's redelivery is reprocessed instead of silently deduped (data-loss window),
+            # then re-raise so Meta receives a non-200 and retries.
+            logger.error(
+                "[BUFFER] push_to_buffer falhou para wamid=%s: %s — desfazendo dedup mark",
+                msg.message_id, exc, exc_info=True,
+            )
+            if msg.message_id:
+                await _unmark_wamid(redis, msg.message_id)
+            raise
 
     return {"status": "ok"}

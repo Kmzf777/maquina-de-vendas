@@ -1,7 +1,7 @@
 """Unit tests for _is_duplicate_wamid — wamid-based idempotency helper."""
 import pytest
 
-from app.webhook.meta_router import _is_duplicate_wamid
+from app.webhook.meta_router import _is_duplicate_wamid, _unmark_wamid
 
 
 @pytest.mark.anyio
@@ -51,3 +51,26 @@ async def test_redis_error_is_fail_open(fake_redis, monkeypatch):
     monkeypatch.setattr(fake_redis, "set", broken_set)
     result = await _is_duplicate_wamid(fake_redis, "wamid.xyz")
     assert result is False
+
+
+@pytest.mark.anyio
+async def test_unmark_allows_reprocessing(fake_redis):
+    """Unmarking a wamid must let it be processed again (closes the buffer-failure data-loss window)."""
+    wamid = "wamid.buf_fail"
+    # First delivery marks it seen
+    assert await _is_duplicate_wamid(fake_redis, wamid) is False
+    # Simulated buffering failure → unmark
+    await _unmark_wamid(fake_redis, wamid)
+    # Meta's redelivery must NOT be treated as a duplicate now
+    assert await _is_duplicate_wamid(fake_redis, wamid) is False
+
+
+@pytest.mark.anyio
+async def test_unmark_is_fail_soft(fake_redis, monkeypatch):
+    """_unmark_wamid must never raise, even if Redis delete fails."""
+    async def broken_delete(*args, **kwargs):
+        raise ConnectionError("Redis unreachable")
+
+    monkeypatch.setattr(fake_redis, "delete", broken_delete)
+    # Must not raise
+    await _unmark_wamid(fake_redis, "wamid.xyz")
