@@ -208,7 +208,7 @@ def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (
         sb.table("messages")
-        .select("role, content, stage, created_at")
+        .select("role, content, stage, created_at, wamid, quoted_wamid, message_type, metadata")
         .eq("conversation_id", conversation_id)
         .order("created_at", desc=False)
         .limit(limit)
