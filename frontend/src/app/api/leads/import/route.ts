@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { buildImportDeals, type ImportDealLead } from "@/lib/import-deals";
+import { dedupeByPhone } from "@/lib/dedupe-leads";
 
 interface ImportLead {
   phone: string;
@@ -18,12 +19,16 @@ interface ImportLead {
 
 export async function POST(request: NextRequest) {
   const supabase = await getServiceSupabase();
-  const { leads, skipDuplicates, pipelineId, stageId } = (await request.json()) as {
+  const { leads: rawLeads, skipDuplicates, pipelineId, stageId } = (await request.json()) as {
     leads: ImportLead[];
     skipDuplicates: boolean;
     pipelineId?: string;
     stageId?: string;
   };
+
+  // Remove telefones repetidos dentro do próprio CSV (mantém a 1ª ocorrência).
+  // Sem isso, o insert em lote viola leads_phone_key e derruba a importação (500).
+  const leads = dedupeByPhone(rawLeads);
 
   const phones = leads.map((l) => l.phone);
   const { data: existing } = await supabase
