@@ -16,6 +16,7 @@ interface ChatHeaderProps {
   onMarkRead?: () => void | Promise<void>;
   onBack?: () => void;
   onOpenContact?: () => void;
+  onOptOut?: () => void | Promise<void>;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -41,6 +42,7 @@ export function ChatHeader({
   onMarkRead,
   onBack,
   onOpenContact,
+  onOptOut,
 }: ChatHeaderProps) {
   const lead = conversation.leads;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -182,6 +184,29 @@ export function ChatHeader({
               </svg>
               <span className="text-[#111111]">Finalizar conversa</span>
             </button>
+
+            {onOptOut && (
+              <>
+                <div className="border-t border-[#dedbd6] my-1" />
+                {/* Parar mensagens — opt-out manual */}
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); onOptOut(); }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-left hover:bg-red-50 transition-colors"
+                >
+                  <svg
+                    className="w-4 h-4 text-red-500 flex-shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                  <span className="text-red-600">Parar mensagens</span>
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

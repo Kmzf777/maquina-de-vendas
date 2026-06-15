@@ -36,10 +36,12 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const [dispatchSuccess, setDispatchSuccess] = useState(false);
   const [quickSendPhone, setQuickSendPhone] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [optOutLoading, setOptOutLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
   const messageListRef = useRef<MessageListHandle>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const autoSendAfterStopRef = useRef(false);
 
   // Media states
   const [mediaState, setMediaState] = useState<'idle' | 'recording' | 'previewing' | 'sendingMedia'>('idle');
@@ -99,6 +101,32 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
   function handleContactDispatch(phone: string) {
     setQuickSendPhone(phone);
+  }
+
+  async function handleOptOut() {
+    if (optOutLoading) return;
+    const confirmed = window.confirm(
+      "Parar mensagens para este lead?\n\nIsso irá:\n• Desativar a IA (Valéria)\n• Mover os deals para a Blacklist\n• Cancelar follow-ups pendentes\n\nEsta ação não pode ser desfeita automaticamente."
+    );
+    if (!confirmed) return;
+
+    const leadId = lead?.id;
+    if (!leadId) return;
+
+    setOptOutLoading(true);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/optout`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Falha ao parar mensagens. Tente novamente.");
+        return;
+      }
+      await onToggleAi();
+    } catch {
+      alert("Erro ao conectar ao servidor. Tente novamente.");
+    } finally {
+      setOptOutLoading(false);
+    }
   }
 
   async function handleSend() {
@@ -170,6 +198,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   }
 
   function cancelMedia() {
+    autoSendAfterStopRef.current = false;
     if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
     setMediaBlob(null);
     setMediaFilename("");
@@ -178,6 +207,26 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     setMediaState('idle');
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
+    mediaRecorderRef.current?.stop();
+  }
+
+  function cancelRecording() {
+    autoSendAfterStopRef.current = false;
+    chunksRef.current = [];
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    setRecordingSeconds(0);
+    setMediaState('idle');
+    // Stop without firing onstop side-effects by overwriting handler temporarily
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.onstop = null;
+      mediaRecorderRef.current.stop();
+    }
+  }
+
+  function handleSendFromRecording() {
+    autoSendAfterStopRef.current = true;
+    stopRecording();
   }
 
   async function startRecording() {
@@ -200,14 +249,66 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        const objectUrl = URL.createObjectURL(blob);
-        setMediaBlob(blob);
-        setMediaObjectUrl(objectUrl);
-        setMediaMessageType('audio');
-        setMediaState('previewing');
         streamRef.current?.getTracks().forEach(t => t.stop());
         if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        if (chunksRef.current.length === 0) return;
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        const objectUrl = URL.createObjectURL(blob);
+
+        if (autoSendAfterStopRef.current) {
+          autoSendAfterStopRef.current = false;
+          // Send directly without preview
+          const tempMsg: Message = {
+            id: `temp_media_${Date.now()}`,
+            lead_id: lead?.id ?? '',
+            role: 'assistant',
+            content: '',
+            stage: null,
+            sent_by: 'seller',
+            created_at: new Date().toISOString(),
+            message_type: 'audio',
+            media_url: objectUrl,
+          };
+          setOptimisticMessages(prev => [...prev, tempMsg]);
+          setMediaState('sendingMedia');
+
+          const fd = new FormData();
+          fd.append('file', blob, 'audio.webm');
+          fd.append('filename', 'audio.webm');
+
+          const controller = new AbortController();
+          abortRef.current = controller;
+          fetch(`/api/conversations/${conversation.id}/send-media`, {
+            method: 'POST',
+            body: fd,
+            signal: controller.signal,
+          })
+            .then(async (res) => {
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({ error: 'Falha ao enviar' }));
+                alert(data.error || 'Falha ao enviar');
+              } else {
+                refetch().catch(() => {});
+              }
+            })
+            .catch((err) => {
+              if (!(err instanceof Error && err.name === 'AbortError')) {
+                alert('Falha ao enviar áudio');
+              }
+            })
+            .finally(() => {
+              setOptimisticMessages(prev => prev.filter(m => m.id !== tempMsg.id));
+              setMediaState('idle');
+              setRecordingSeconds(0);
+              URL.revokeObjectURL(objectUrl);
+            });
+        } else {
+          setMediaBlob(blob);
+          setMediaObjectUrl(objectUrl);
+          setMediaMessageType('audio');
+          setMediaState('previewing');
+          setRecordingSeconds(0);
+        }
       };
 
       recorder.start();
@@ -332,6 +433,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         onMarkRead={onMarkRead}
         onBack={onBack}
         onOpenContact={onOpenContact}
+        onOptOut={handleOptOut}
       />
 
       <MessageList
@@ -380,7 +482,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       ) : mediaState === 'previewing' || mediaState === 'sendingMedia' ? (
         <div className="border-t border-[#dedbd6] bg-[#faf9f6] p-3 flex flex-col gap-2 flex-shrink-0">
           {mediaMessageType === 'audio' && mediaObjectUrl && (
-            <audio controls src={mediaObjectUrl} className="w-full h-10" />
+            <audio controls src={mediaObjectUrl} className="w-[240px] h-10" />
           )}
           {mediaMessageType === 'image' && mediaObjectUrl && (
             <img src={mediaObjectUrl} alt="preview" className="max-h-40 rounded-[4px] object-contain self-start" />
@@ -399,30 +501,53 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
             <button
               onClick={cancelMedia}
               disabled={mediaState === 'sendingMedia'}
-              className="px-4 py-2 text-[13px] border border-[#dedbd6] rounded-[4px] text-[#111111] disabled:opacity-40"
+              className="cursor-pointer px-4 py-2 text-[13px] border border-[#dedbd6] rounded-[4px] text-[#111111] hover:bg-[#f5f5f5] transition-all hover:scale-105 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Cancelar
             </button>
             <button
               onClick={handleSendMedia}
               disabled={mediaState === 'sendingMedia'}
-              className="bg-[#111111] text-white px-4 py-2 rounded-[4px] text-[13px] disabled:opacity-40"
+              className="cursor-pointer bg-[#111111] text-white px-4 py-2 rounded-[4px] text-[13px] hover:scale-105 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {mediaState === 'sendingMedia' ? 'Enviando...' : 'Enviar'}
             </button>
           </div>
         </div>
       ) : mediaState === 'recording' ? (
-        <div className="border-t border-[#dedbd6] bg-[#faf9f6] p-3 flex items-center gap-3 flex-shrink-0">
-          <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-          <span className="text-[13px] text-[#111111]">
-            {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
-          </span>
+        <div className="border-t border-[#dedbd6] bg-[#faf9f6] px-3 py-2.5 flex items-center gap-3 flex-shrink-0">
+          {/* Discard */}
           <button
-            onClick={stopRecording}
-            className="ml-auto bg-[#111111] text-white px-4 py-2 rounded-[4px] text-[13px]"
+            onClick={cancelRecording}
+            title="Descartar gravação"
+            className="cursor-pointer text-[#aaa] hover:text-red-500 transition-all hover:scale-110 flex-shrink-0 p-1.5 rounded-full hover:bg-red-50"
           >
-            Parar
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+            </svg>
+          </button>
+
+          {/* Timer */}
+          <div className="flex-1 flex items-center justify-center gap-2.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+            <span className="text-[14px] font-mono text-[#111111] tabular-nums">
+              {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
+            </span>
+          </div>
+
+          {/* Send */}
+          <button
+            onClick={handleSendFromRecording}
+            title="Enviar áudio"
+            className="cursor-pointer text-white bg-[#25d366] hover:bg-[#1db954] transition-all hover:scale-110 flex-shrink-0 p-2 rounded-full shadow-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
           </button>
         </div>
       ) : (
@@ -470,7 +595,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
             onClick={startRecording}
             disabled={isInputBlocked}
             title="Gravar áudio"
-            className="text-[#7b7b78] hover:text-[#111111] disabled:opacity-40 flex-shrink-0 self-end pb-[9px]"
+            className="cursor-pointer text-[#7b7b78] hover:text-[#111111] hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 self-end pb-[9px]"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
@@ -483,7 +608,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
             onClick={() => fileInputRef.current?.click()}
             disabled={isInputBlocked}
             title="Anexar arquivo"
-            className="text-[#7b7b78] hover:text-[#111111] disabled:opacity-40 flex-shrink-0 self-end pb-[9px]"
+            className="cursor-pointer text-[#7b7b78] hover:text-[#111111] hover:scale-105 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 self-end pb-[9px]"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 1 0 2.828 2.828l6.414-6.586a4 4 0 0 0-5.656-5.656l-6.415 6.585a6 6 0 1 0 8.486 8.486L20.5 13" />
@@ -501,7 +626,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
           <button
             onClick={handleSend}
             disabled={sending || !text.trim()}
-            className="bg-[#111111] text-white px-4 py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-40 flex-shrink-0 self-end"
+            className="cursor-pointer bg-[#111111] text-white px-3 py-2 rounded-[4px] text-[14px] transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 self-end"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />

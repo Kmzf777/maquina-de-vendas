@@ -1,5 +1,9 @@
-from fastapi import APIRouter, Query
+import logging
+
+from fastapi import APIRouter, HTTPException, Query
 from app.db.supabase import get_supabase
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
@@ -42,6 +46,38 @@ async def get_lead_messages(lead_id: str, limit: int = Query(50, le=200)):
         .execute()
     )
     return {"data": result.data}
+
+
+@router.post("/{lead_id}/optout")
+async def optout_lead(lead_id: str):
+    """Parar mensagens: desativa IA, move deals para Blacklist e cancela follow-ups."""
+    from app.leads.service import get_lead, update_lead, move_lead_deals_to_blacklist, save_message
+    from app.follow_up.service import cancel_followups_by_phone
+
+    lead = get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    update_lead(lead_id, ai_enabled=False)
+    move_lead_deals_to_blacklist(lead_id)
+
+    phone = lead.get("phone", "")
+    if phone:
+        try:
+            cancel_followups_by_phone(phone, reason="optout_manual")
+        except Exception as exc:
+            logger.error(
+                "optout_lead: falha ao cancelar follow-ups para lead %s (phone %s): %s",
+                lead_id, phone, exc, exc_info=True,
+            )
+
+    try:
+        save_message(lead_id, "system", "[optout_manual] Operador parou mensagens manualmente.")
+    except Exception as exc:
+        logger.warning("optout_lead: falha ao salvar system message para lead %s: %s", lead_id, exc)
+
+    logger.info("optout_lead: ai_enabled=False para lead %s (opt-out manual)", lead_id)
+    return {"status": "ok"}
 
 
 @router.delete("/{lead_id}")
