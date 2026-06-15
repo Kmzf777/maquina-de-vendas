@@ -10,6 +10,11 @@ import { MessageList, type MessageListHandle } from "@/components/conversas/mess
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 
+export interface SiblingConversationSummary {
+  id: string;
+  channelName: string;
+}
+
 interface ChatViewProps {
   conversation: Conversation;
   tags: Tag[];
@@ -22,9 +27,11 @@ interface ChatViewProps {
   onMarkRead?: () => void | Promise<void>;
   onBack?: () => void;
   onOpenContact?: () => void;
+  siblingConversations?: SiblingConversationSummary[];
+  onSelectSibling?: (conversationId: string) => void;
 }
 
-export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup, onMarkRead, onBack, onOpenContact }: ChatViewProps) {
+export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup, onMarkRead, onBack, onOpenContact, siblingConversations, onSelectSibling }: ChatViewProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
 
@@ -435,6 +442,46 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         onOpenContact={onOpenContact}
         onOptOut={handleOptOut}
       />
+
+      {/* Sibling-conversation indicator: same lead, different channel */}
+      {siblingConversations && siblingConversations.length > 0 && (
+        <div className="flex items-center gap-2 border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-2 text-sm text-[#626260]" role="status">
+          <svg className="w-3.5 h-3.5 flex-shrink-0 text-[#1e6ee8]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span className="text-[#7b7b78]">Este lead tem outra conversa</span>
+          {siblingConversations.length === 1 ? (
+            <>
+              <span className="font-medium text-[#111111]">{siblingConversations[0].channelName}</span>
+              {onSelectSibling && (
+                <button
+                  type="button"
+                  onClick={() => onSelectSibling(siblingConversations[0].id)}
+                  className="ml-auto text-xs text-[#1e6ee8] hover:underline flex-shrink-0 font-medium"
+                >
+                  Ver conversa
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-[#111111]">{siblingConversations.length} canais</span>
+              <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                {siblingConversations.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => onSelectSibling?.(s.id)}
+                    className="text-xs text-[#1e6ee8] hover:underline font-medium"
+                  >
+                    {s.channelName}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <MessageList
         ref={messageListRef}

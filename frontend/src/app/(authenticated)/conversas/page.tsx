@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ChatList } from "@/components/conversas/chat-list";
-import { ChatView } from "@/components/conversas/chat-view";
+import { ChatView, type SiblingConversationSummary } from "@/components/conversas/chat-view";
 import { ContactDetail } from "@/components/conversas/contact-detail";
 import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
 
@@ -320,6 +320,20 @@ export default function ConversasPage() {
     ? tags.filter((t) => leadTagsMap[selectedLead.id]?.includes(t.id))
     : [];
 
+  // Sibling conversations: same lead_id as open conversation, different conversation id
+  const siblingConversations: SiblingConversationSummary[] = selectedConversation
+    ? conversations
+        .filter(
+          (c) =>
+            c.lead_id === selectedConversation.lead_id &&
+            c.id !== selectedConversation.id,
+        )
+        .map((c) => ({
+          id: c.id,
+          channelName: c.channels?.name ?? "Outro canal",
+        }))
+    : [];
+
   function handleLeadUpdate(leadId: string, patch: Partial<Lead>) {
     const updateConv = (c: Conversation): Conversation =>
       (c.leads as Lead)?.id === leadId
@@ -391,6 +405,11 @@ export default function ConversasPage() {
             onMarkRead={() => handleMarkRead(selectedConversation.id)}
             onBack={() => setMobileView("list")}
             onOpenContact={() => setMobileView("contact")}
+            siblingConversations={siblingConversations}
+            onSelectSibling={(id) => {
+              const sibling = conversations.find((c) => c.id === id);
+              if (sibling) handleSelectConversation(sibling);
+            }}
           />
         )}
       </div>
@@ -439,6 +458,11 @@ export default function ConversasPage() {
               togglingFollowup={togglingFollowup}
               onToggleFollowup={handleToggleFollowup}
               onMarkRead={() => handleMarkRead(selectedConversation.id)}
+              siblingConversations={siblingConversations}
+              onSelectSibling={(id) => {
+                const sibling = conversations.find((c) => c.id === id);
+                if (sibling) handleSelectConversation(sibling);
+              }}
             />
             <ContactDetail
               conversation={selectedConversation}
