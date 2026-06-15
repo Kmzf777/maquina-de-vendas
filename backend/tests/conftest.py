@@ -45,8 +45,11 @@ class FakeRedis:
         items = self._sorted.get(key, {})
         return [m for m, s in items.items() if float(min_score if min_score != "-inf" else "-inf") <= s <= float(max_score if max_score != "+inf" else "inf")]
 
-    async def set(self, key, value, ex=None, px=None):
+    async def set(self, key, value, ex=None, px=None, nx=False):
+        if nx and key in self._strings:
+            return None  # key already exists — SETNX returns None (not set)
         self._strings[key] = value
+        return True
 
     async def get(self, key):
         return self._strings.get(key)

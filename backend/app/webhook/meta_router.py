@@ -203,6 +203,24 @@ def _handle_template_status_events(events: list[dict], raw_payload: dict, channe
     )
 
 
+async def _is_duplicate_wamid(redis, wamid: str) -> bool:
+    """Return True if this wamid has already been processed (idempotency check).
+
+    Uses Redis SETNX with a 24h TTL so each unique wamid is processed at most once.
+    Fail-open: if Redis raises, logs a warning and returns False so the message is
+    processed normally — we never drop a real customer message due to a Redis hiccup.
+    """
+    key = f"seen_wamid:{wamid}"
+    try:
+        result = await redis.set(key, "1", nx=True, ex=86400)
+        # set(..., nx=True) returns True when the key was newly created,
+        # None when the key already existed.
+        return result is None
+    except Exception as exc:
+        logger.warning("[DEDUP] Redis error checking wamid=%s — processing normally: %s", wamid, exc)
+        return False
+
+
 def _verify_signature(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False
@@ -340,6 +358,14 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
             background_tasks.add_task(_handle_delivery_status, wamid, status, errors)
 
     for msg in messages:
+        if msg.message_id and await _is_duplicate_wamid(redis, msg.message_id):
+            logger.info(
+                "[DEDUP] Duplicate wamid=%s from=%s — skipping (already processed)",
+                msg.message_id,
+                msg.from_number,
+            )
+            continue
+
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
         msg.channel_id = channel["id"]
 
