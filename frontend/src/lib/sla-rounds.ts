@@ -4,22 +4,26 @@ import {
 } from "@/lib/business-hours";
 
 export interface SlaMessage {
-  sent_by: string;       // 'user' abre a espera; resposta real (REPLY_SENDERS) fecha
+  sent_by: string;       // 'user' = cliente; resto = nosso lado (role assistant)
   created_at: string;    // ISO
 }
 
 /**
- * Quem conta como "resposta real" ao cliente — encerra a rodada de espera.
- * Vendedor humano (via CRM) e a IA conversacional (ValerIA = 'agent').
- * Disparos em massa não-conversacionais (broadcast/followup/campaign/automation/
- * handoff) NÃO contam como resposta: não tiram o cliente da fila de espera.
+ * Quem conta como "resposta real" ao cliente — fecha a rodada e entra no tempo
+ * médio de resposta. Vendedor humano (via CRM) e a IA conversacional (ValerIA =
+ * 'agent'). Disparos não-conversacionais (broadcast/followup/campaign/automation/
+ * handoff) NÃO são resposta real: não entram no tempo médio. Mas, por serem
+ * mensagens NOSSAS, se forem a última da conversa tiram o lead de "em atraso"
+ * (a bola está com o cliente). Ver walkConversation.
  */
 const REPLY_SENDERS = new Set(["seller", "agent"]);
 
 export interface SlaConversation {
   id: string;
   last_seller_response_at: string | null;
-  messages: SlaMessage[]; // ordem cronológica: 'user' + respostas reais ('seller'/'agent')
+  // ordem cronológica: cliente ('user') + TODAS as nossas mensagens (role assistant).
+  // Inclui disparos — necessários para saber quem falou por último.
+  messages: SlaMessage[];
 }
 
 export interface SellerRounds {
@@ -41,10 +45,12 @@ export interface OpenRound {
 /**
  * Um único passe cronológico por conversa. Retorna os minutos comerciais das
  * rodadas fechadas e, se houver uma rodada aberta no fim, seus minutos decorridos.
- * Regras: rodada começa na primeira msg do cliente sem resposta; fecha na primeira
- * resposta real (msg de REPLY_SENDERS — vendedor ou IA — ou Finalizar via
- * last_seller_response_at); rajadas do cliente não reiniciam; mensagens proativas
- * ou disparos em massa (broadcast/followup/...) sem espera aberta são ignorados.
+ * Regras: rodada começa na primeira msg do cliente sem resposta; fecha (e entra no
+ * tempo médio) na primeira resposta real (REPLY_SENDERS — vendedor ou IA — ou
+ * Finalizar via last_seller_response_at); rajadas do cliente não reiniciam; disparos
+ * são ignorados no cálculo de tempo. Só fica "em atraso" (rodada aberta) se o CLIENTE
+ * foi o último a falar — se mandamos qualquer mensagem depois (disparo/follow-up),
+ * a bola está com o cliente e o lead sai da fila.
  */
 function walkConversation(
   conv: SlaConversation,
@@ -71,6 +77,12 @@ function walkConversation(
     if (finalize && finalize > waitStart) {
       const mins = businessMinutesBetween(new Date(waitStart), new Date(finalize), win);
       if (mins >= 0) closed.push(mins);
+      return { closed, openElapsedMinutes: null };
+    }
+    // Só é "em atraso" se o CLIENTE foi o último a falar. Qualquer mensagem nossa
+    // depois (disparo/follow-up/etc.) significa que a bola está com o cliente.
+    const last = conv.messages[conv.messages.length - 1];
+    if (last && last.sent_by !== "user") {
       return { closed, openElapsedMinutes: null };
     }
     const elapsed = businessMinutesBetween(new Date(waitStart), now, win);

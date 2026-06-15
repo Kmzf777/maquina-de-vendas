@@ -136,10 +136,10 @@ describe("collectOpenRounds — rodadas abertas com identidade", () => {
   });
 });
 
-describe("resposta real = vendedor OU IA (agent); disparos em massa não contam", () => {
+describe("em atraso só se o CLIENTE foi o último a falar; resposta real = vendedor/IA", () => {
   const LATE = new Date("2026-06-10T20:00:00Z"); // 17:00 SP, fora da janela → nada aberto
 
-  it("resposta da IA (agent) fecha a rodada", () => {
+  it("resposta da IA (agent) fecha a rodada e conta no tempo de resposta", () => {
     // user 10:00 SP, agent 10:08 SP → rodada fechada de 8 min
     const c = conv([
       { sent_by: "user", t: "13:00:00" },
@@ -150,7 +150,7 @@ describe("resposta real = vendedor OU IA (agent); disparos em massa não contam"
     expect(r.openElapsed).toEqual([]);
   });
 
-  it("resposta da IA (agent) tira o lead de 'em atraso agora'", () => {
+  it("IA (agent) por último → não em atraso", () => {
     const c: SlaConversation = {
       id: "conv-agent",
       last_seller_response_at: null,
@@ -162,7 +162,19 @@ describe("resposta real = vendedor OU IA (agent); disparos em massa não contam"
     expect(collectOpenRounds([c], DEFAULT_WINDOW, LATE)).toEqual([]);
   });
 
-  it("disparo em massa (broadcast) NÃO fecha a rodada", () => {
+  it("vendedor (seller) por último → não em atraso", () => {
+    const c: SlaConversation = {
+      id: "conv-seller",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "seller", created_at: U("13:05:00") },
+      ],
+    };
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, LATE)).toEqual([]);
+  });
+
+  it("disparo (broadcast) por último → NÃO em atraso (nós falamos por último)", () => {
     const c: SlaConversation = {
       id: "conv-bc",
       last_seller_response_at: null,
@@ -172,12 +184,21 @@ describe("resposta real = vendedor OU IA (agent); disparos em massa não contam"
       ],
     };
     const now = new Date("2026-06-10T13:45:00Z"); // 10:45 SP
-    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([
-      { conversationId: "conv-bc", elapsedMinutes: 45 },
-    ]);
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([]);
   });
 
-  it("follow-up NÃO fecha a rodada", () => {
+  it("disparo não é resposta real: não cria rodada fechada nem aberta", () => {
+    // cliente perguntou, só recebeu disparo → não conta em nenhuma métrica
+    const c = conv([
+      { sent_by: "user", t: "13:00:00" },
+      { sent_by: "broadcast", t: "13:30:00" },
+    ]);
+    const r = collectRounds([c], DEFAULT_WINDOW, LATE);
+    expect(r.closed).toEqual([]);
+    expect(r.openElapsed).toEqual([]);
+  });
+
+  it("follow-up por último → NÃO em atraso", () => {
     const c: SlaConversation = {
       id: "conv-fu",
       last_seller_response_at: null,
@@ -187,8 +208,36 @@ describe("resposta real = vendedor OU IA (agent); disparos em massa não contam"
       ],
     };
     const now = new Date("2026-06-10T13:50:00Z"); // 10:50 SP
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([]);
+  });
+
+  it("disparo no meio mas CLIENTE volta a falar → em atraso, ancorado na 1ª msg do cliente", () => {
+    // user 10:00 (abre) → broadcast 10:30 (ignora) → user 11:00 (cliente por último)
+    // now 11:30 SP → atraso desde 10:00 = 90 min comerciais
+    const c: SlaConversation = {
+      id: "conv-mix",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "broadcast", created_at: U("13:30:00") },
+        { sent_by: "user", created_at: U("14:00:00") },
+      ],
+    };
+    const now = new Date("2026-06-10T14:30:00Z"); // 11:30 SP
     expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([
-      { conversationId: "conv-fu", elapsedMinutes: 50 },
+      { conversationId: "conv-mix", elapsedMinutes: 90 },
+    ]);
+  });
+
+  it("cliente por último sem nenhuma resposta → em atraso", () => {
+    const c: SlaConversation = {
+      id: "conv-wait",
+      last_seller_response_at: null,
+      messages: [{ sent_by: "user", created_at: U("13:00:00") }],
+    };
+    const now = new Date("2026-06-10T13:45:00Z"); // 10:45 SP
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([
+      { conversationId: "conv-wait", elapsedMinutes: 45 },
     ]);
   });
 

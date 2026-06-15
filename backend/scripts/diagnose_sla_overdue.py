@@ -187,6 +187,7 @@ def main():
     sent_by_global = Counter()
     examples = []
     forkb_examples = []
+    forkb_last_sender = Counter()  # entre os que PERMANECEM no fix: quem foi o último real
 
     for c in convs:
         ch = c["channel_id"]
@@ -213,14 +214,30 @@ def main():
         e_b = walk_conversation(b_msgs, REPLY, lsra, now, win)
         if e_b is not None and e_b > target:
             overdue_forkB += 1
+            forkb_last_sender[all_msgs[-1]["sent_by"] if all_msgs else "(none)"] += 1
             if len(forkb_examples) < 20:
                 tail = [(mm["sent_by"], mm["created_at"]) for mm in all_msgs[-5:]]
                 forkb_examples.append({
                     "conv": c["id"], "elapsed": round(e_b), "tail": tail,
                 })
 
-        # Fork A: any our-side message closes (=> open iff TRUE last is user)
-        e_a = walk_conversation(all_msgs, ANY_OUR, lsra, now, win)
+        # FIX REAL (impl shipada): cliente-facing = tudo menos nota interna (handoff_context);
+        # seller/agent fecham e contam; disparo ignora; suprime atraso se a ÚLTIMA
+        # mensagem cliente-facing NÃO for do cliente (nós falamos por último).
+        cf = [m for m in all_msgs if m["sent_by"] != "handoff_context"]
+        wait = None
+        for m in cf:
+            if m["sent_by"] == "user":
+                if wait is None:
+                    wait = m["created_at"]
+            elif m["sent_by"] in REPLY:
+                wait = None
+        e_a = None
+        if wait is not None and not (lsra and lsra > wait):
+            last = cf[-1] if cf else None
+            if not (last and last["sent_by"] != "user"):
+                sm, em, wd, ex = win
+                e_a = business_minutes_between(parse_ts(wait), now, sm, em, wd, ex)
         if e_a is not None and e_a > target:
             overdue_forkA += 1
 
@@ -253,8 +270,11 @@ def main():
     print(f"Total marcado como OVERDUE pelo dashboard (ATUAL, só 'seller' fecha): {overdue_total}")
     print(f"  -> TRUE last message é do CLIENTE (user)        : {genuine_open_user_last}")
     print(f"  -> TRUE last message é do NOSSO LADO (FALSO ATRASO): {false_overdue}")
-    print(f"\nOverdue sob FORK B (seller+agent fecham, broadcast/followup NÃO): {overdue_forkB}")
-    print(f"Overdue sob FORK A (qualquer msg nossa fecha => só conta se cliente foi o último): {overdue_forkA}")
+    print(f"\nOverdue sob FORK B = FIX ATUAL (seller+agent fecham, broadcast/followup NÃO): {overdue_forkB}")
+    print(f"  Quebra do ÚLTIMO remetente real desses {overdue_forkB} (deve ser só broadcast/user):")
+    for k, v in forkb_last_sender.most_common():
+        print(f"     {k:18s} {v}")
+    print(f"Overdue sob FIX REAL (impl shipada, atraso só se cliente falou por último): {overdue_forkA}")
     print(f"\nQuebra por sent_by da ÚLTIMA mensagem real das conversas marcadas:")
     for k, v in true_last_sender_counter.most_common():
         flag = "  <-- cliente (ok)" if k == "user" else "  <-- nosso lado (FALSO)"
