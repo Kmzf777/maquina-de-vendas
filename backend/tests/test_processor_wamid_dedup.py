@@ -113,11 +113,17 @@ async def test_process_buffered_messages_skips_on_duplicate_wamid():
 
 @pytest.mark.asyncio
 async def test_process_buffered_messages_proceeds_when_wamid_is_none():
-    """When wamid=None, the DB dedup check is skipped entirely and processing continues."""
+    """When wamid=None, the DB dedup check is skipped entirely and processing continues normally.
+
+    run_agent returns a non-empty reply string to exercise the normal flow (not the handoff path).
+    """
     from app.buffer.processor import process_buffered_messages
 
+    mock_provider = AsyncMock()
+    mock_provider.send_text = AsyncMock()
+
     with patch("app.buffer.processor.get_channel_by_id", return_value=_make_channel()), \
-         patch("app.buffer.processor.get_provider", return_value=AsyncMock()), \
+         patch("app.buffer.processor.get_provider", return_value=mock_provider), \
          patch("app.buffer.processor.get_or_create_lead", return_value={"id": "lead-1", "phone": "5511999999999", "ai_enabled": True}), \
          patch("app.buffer.processor.get_or_create_conversation", return_value={
              "id": "conv-1", "status": "active", "stage": "secretaria"
@@ -126,17 +132,19 @@ async def test_process_buffered_messages_proceeds_when_wamid_is_none():
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
          patch("app.buffer.processor._wamid_already_processed") as mock_dedup_db, \
          patch("app.buffer.processor.save_message") as mock_save, \
-         patch("app.buffer.processor.run_agent", return_value=None), \
+         patch("app.buffer.processor.run_agent", return_value="Olá!"), \
          patch("app.buffer.processor.get_supabase"), \
-         patch("app.buffer.processor._update_last_msg"):
+         patch("app.buffer.processor._update_last_msg"), \
+         patch("app.buffer.processor._schedule_followup"), \
+         patch("app.buffer.processor.pop_deferred_media", return_value=[]):
         await process_buffered_messages(
             "5511999999999", "oi", "chan-uuid", wamid=None
         )
 
     # DB dedup must NOT be called when wamid is None
     mock_dedup_db.assert_not_called()
-    # User message must still be saved
-    mock_save.assert_called_once()
+    # User message must still be saved (normal flow, not handoff)
+    mock_save.assert_called()
 
 
 @pytest.mark.asyncio

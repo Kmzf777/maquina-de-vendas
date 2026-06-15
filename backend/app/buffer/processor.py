@@ -298,18 +298,24 @@ async def process_buffered_messages(
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
 
-    # Dedup: skip if this exact message was already processed recently
+    # Dedup (wamid backstop — durable, defense-in-depth): runs FIRST because it is one cheap
+    # indexed query with no time-window blind spot, making it the most reliable gate.
+    # Rationale: catches duplicates that survive a Redis flush/restart (the SETNX layer at
+    # ingestion would re-allow them after a flush, so this DB check is the last-resort backstop).
+    # NOT race-safe: two concurrent deliveries of the same wamid can both pass here before either
+    # saves. The Redis SETNX layer handles that race; this DB layer is last-resort only.
+    # TODO: wrap blocking Supabase call in asyncio.to_thread (same pre-existing pattern as _is_recent_duplicate)
+    if wamid:  # empty-string wamids are intentionally treated as absent (same as None)
+        if _wamid_already_processed(wamid):
+            logger.warning(
+                "[DEDUP-DB] wamid=%s já persistido no banco — descartando duplicata para phone=%s",
+                wamid, phone,
+            )
+            return
+
+    # Dedup: skip if this exact message was already processed recently (content-based, time-windowed)
     if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
         logger.warning(f"Duplicate user message detected for {phone}, skipping")
-        return
-
-    # Dedup (defense-in-depth): skip if this wamid is already persisted in the DB.
-    # Catches duplicates that survive a Redis flush/restart (Task 1 SETNX may re-allow them).
-    if wamid and _wamid_already_processed(wamid):
-        logger.warning(
-            "[DEDUP-DB] wamid=%s já persistido no banco — descartando duplicata para phone=%s",
-            wamid, phone,
-        )
         return
 
     # Always save the incoming user message
