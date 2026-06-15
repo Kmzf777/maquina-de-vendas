@@ -287,6 +287,55 @@ def create_deal(lead_id: str, title: str, category: str | None = None) -> dict[s
     return result.data[0]
 
 
+BLACKLIST_PIPELINE_ID = "8988e852-2836-4add-b023-4db4d6cd0e6e"
+BLACKLIST_STAGE_ID = "fbace13d-d788-423a-879d-ee468dff29ed"
+
+
+def move_lead_deals_to_blacklist(lead_id: str) -> None:
+    """Move ALL of the lead's deals into the Blacklist pipeline/stage.
+
+    If the lead has no deal, create one in Blacklist so the opt-out is tracked.
+    Fail-soft: log on error, never raise (opt-out must not break on deal issues).
+    """
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("deals")
+            .update({
+                "pipeline_id": BLACKLIST_PIPELINE_ID,
+                "stage_id": BLACKLIST_STAGE_ID,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+            .eq("lead_id", lead_id)
+            .execute()
+        )
+        if result.data:
+            logger.info(
+                "move_lead_deals_to_blacklist: %d deal(s) movidos para Blacklist para lead %s",
+                len(result.data), lead_id,
+            )
+        else:
+            # No deals existed — insert a tracking deal in Blacklist
+            lead = get_lead(lead_id)
+            lead_name = (lead.get("name") or lead.get("phone") or "Lead") if lead else "Lead"
+            sb.table("deals").insert({
+                "lead_id": lead_id,
+                "title": f"{lead_name} - Opt-out",
+                "stage": "novo",
+                "pipeline_id": BLACKLIST_PIPELINE_ID,
+                "stage_id": BLACKLIST_STAGE_ID,
+            }).execute()
+            logger.info(
+                "move_lead_deals_to_blacklist: nenhum deal existente — deal de opt-out criado na Blacklist para lead %s",
+                lead_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "move_lead_deals_to_blacklist: erro ao mover deals para Blacklist para lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+
+
 def get_history(lead_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (

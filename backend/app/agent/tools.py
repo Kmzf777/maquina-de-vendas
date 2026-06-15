@@ -5,11 +5,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history
+from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history, move_lead_deals_to_blacklist
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_for_lead
-from app.follow_up.service import schedule_handoff_rescue
+from app.follow_up.service import schedule_handoff_rescue, cancel_followups_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +369,14 @@ async def execute_tool(
         except Exception as exc:
             logger.error("registrar_optout: falha ao desativar AI para lead %s: %s", lead_id, exc, exc_info=True)
             return f"ERRO ao registrar opt-out: {exc}"
+        move_lead_deals_to_blacklist(lead_id)
+        try:
+            cancel_followups_by_phone(phone, reason="optout")
+        except Exception as exc:
+            logger.error(
+                "registrar_optout: falha ao cancelar follow-ups para lead %s (phone %s): %s",
+                lead_id, phone, exc, exc_info=True,
+            )
         save_message(
             lead_id, "system",
             f"[registrar_optout] lead solicitou opt-out: {motivo}",
