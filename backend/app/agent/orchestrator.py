@@ -1,7 +1,10 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone, timedelta
 
+import httpx
+import openai
 from openai import AsyncOpenAI
 
 from app.config import settings
@@ -21,6 +24,15 @@ _gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_TOOL_ITERATIONS = 5
+# gemini-2.5-flash conta tokens de "thinking" no MESMO budget que a saída via API
+# OpenAI-compat. Com teto baixo (1024) o modelo gasta o orçamento pensando e devolve
+# texto vazio após tool calls — deixando o lead sem resposta. 4096 dá folga ao thinking.
+MAX_OUTPUT_TOKENS = 4096
+# Resposta de segurança quando, mesmo após o fallback sem tools, a IA não produz texto.
+# Garante que o lead nunca fique mudo (regressão observada: Ademilson, Thainara).
+_SAFETY_FALLBACK_MESSAGE = (
+    "Entendi! Só um momento enquanto verifico essas informações internamente."
+)
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -55,6 +67,31 @@ def _get_gemini() -> AsyncOpenAI:
 
 def _get_client(model: str) -> AsyncOpenAI:
     return _get_gemini() if _is_gemini_model(model) else _get_openai()
+
+
+# Drops de conexão HTTP/2 (GOAWAY) sob concorrência (rajada de disparo) derrubavam
+# chamadas ao LLM. Retry localizado é mais seguro que reexecutar o turno inteiro no
+# processor — este reexecutaria tools já aplicadas (encaminhar_humano, mudar_stage).
+# Chamadas a chat.completions.create() não têm efeitos colaterais → seguras para retry.
+_LLM_RETRY_ATTEMPTS = 3
+_LLM_RETRY_DELAY = 2  # segundos
+
+
+async def _create_with_retry(client: AsyncOpenAI, **kwargs):
+    """chat.completions.create com retry em drops de conexão (GOAWAY/timeout)."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except (openai.APIConnectionError, openai.APITimeoutError, httpx.TransportError) as exc:
+            last_exc = exc
+            logger.warning(
+                "[LLM RETRY] tentativa %d/%d falhou (conexão): %s",
+                attempt, _LLM_RETRY_ATTEMPTS, exc,
+            )
+            if attempt < _LLM_RETRY_ATTEMPTS:
+                await asyncio.sleep(_LLM_RETRY_DELAY)
+    raise last_exc
 
 
 def get_ai_client(model: str) -> AsyncOpenAI:
@@ -161,12 +198,12 @@ async def run_agent(
 
     messages.append({"role": "user", "content": user_text})
 
-    response = await _get_client(model).chat.completions.create(
+    response = await _create_with_retry(_get_client(model),
         model=model,
         messages=messages,
         tools=tools if tools else None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=MAX_OUTPUT_TOKENS,
     )
 
     if response.usage:
@@ -191,12 +228,12 @@ async def run_agent(
             )
             if not message.content:
                 try:
-                    fallback = await _get_client(model).chat.completions.create(
+                    fallback = await _create_with_retry(_get_client(model),
                         model=model,
                         messages=messages,
                         tools=None,
                         temperature=0.7,
-                        max_tokens=1024,
+                        max_tokens=MAX_OUTPUT_TOKENS,
                     )
                     message = fallback.choices[0].message
                 except Exception as _exc:
@@ -266,12 +303,12 @@ async def run_agent(
                     lead["metadata"] = updated_meta
                 break
 
-        response = await _get_client(model).chat.completions.create(
+        response = await _create_with_retry(_get_client(model),
             model=model,
             messages=messages,
             tools=tools if tools else None,
             temperature=0.7,
-            max_tokens=1024,
+            max_tokens=MAX_OUTPUT_TOKENS,
         )
         if response.usage:
             track_token_usage(
@@ -295,12 +332,12 @@ async def run_agent(
             tool_iterations, conversation_id,
         )
         try:
-            fallback_resp = await _get_client(model).chat.completions.create(
+            fallback_resp = await _create_with_retry(_get_client(model),
                 model=model,
                 messages=messages,
                 tools=None,
                 temperature=0.7,
-                max_tokens=1024,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
             if fallback_resp.usage:
                 track_token_usage(
@@ -314,14 +351,20 @@ async def run_agent(
             assistant_text = fallback_resp.choices[0].message.content or ""
             if not assistant_text:
                 logger.error(
-                    "[AGENT EMPTY AFTER TOOLS] fallback também vazio para conv %s",
+                    "[AGENT EMPTY AFTER TOOLS] fallback também vazio para conv %s "
+                    "— usando resposta de segurança",
                     conversation_id,
                 )
         except Exception as _exc:
             logger.error(
-                "[AGENT EMPTY AFTER TOOLS] fallback call falhou para conv %s: %s",
+                "[AGENT EMPTY AFTER TOOLS] fallback call falhou para conv %s: %s "
+                "— usando resposta de segurança",
                 conversation_id, _exc,
             )
+
+        # Rede de segurança: nunca deixar o lead sem resposta após tool calls.
+        if not assistant_text:
+            assistant_text = _SAFETY_FALLBACK_MESSAGE
 
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
