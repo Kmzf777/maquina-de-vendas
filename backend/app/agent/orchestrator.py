@@ -33,6 +33,22 @@ MAX_OUTPUT_TOKENS = 4096
 _SAFETY_FALLBACK_MESSAGE = (
     "Entendi! Só um momento enquanto verifico essas informações internamente."
 )
+# Resposta de segurança contextual para quando a última tool usada foi de mídia
+# (enviar_fotos / enviar_foto_produto). O genérico "verifico internamente" é nonsense
+# após um catálogo — preferimos uma pergunta de avanço coerente com o envio.
+_SAFETY_FALLBACK_MEDIA = (
+    "Te enviei as fotos aqui no chat. Qual delas chamou mais sua atenção?"
+)
+
+_MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
+
+
+def _empty_fallback_text(media_tool_used: bool) -> str:
+    """Return the appropriate safety fallback message for the empty-after-tools case.
+
+    Extracted as a pure helper so it can be unit-tested without running run_agent.
+    """
+    return _SAFETY_FALLBACK_MEDIA if media_tool_used else _SAFETY_FALLBACK_MESSAGE
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -295,6 +311,7 @@ async def run_agent(
     message = response.choices[0].message
 
     tool_iterations = 0
+    media_tool_used = False
     while message.tool_calls:
         tool_iterations += 1
         if tool_iterations > MAX_TOOL_ITERATIONS:
@@ -318,6 +335,8 @@ async def run_agent(
         messages.append(message.model_dump(exclude_none=True))
         for tool_call in message.tool_calls:
             func_name = tool_call.function.name
+            if func_name in _MEDIA_TOOL_NAMES:
+                media_tool_used = True
             try:
                 func_args = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError as exc:
@@ -439,8 +458,9 @@ async def run_agent(
             )
 
         # Rede de segurança: nunca deixar o lead sem resposta após tool calls.
+        # Escolhe mensagem contextual: se foi mídia, pergunta de avanço; senão, genérica.
         if not assistant_text:
-            assistant_text = _SAFETY_FALLBACK_MESSAGE
+            assistant_text = _empty_fallback_text(media_tool_used)
 
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
