@@ -210,6 +210,10 @@ def resolve_message_text_by_wamid(wamid: str) -> str | None:
     Fail-open: returns None on any error (missing row, DB hiccup) so callers
     degrade gracefully — they should fall back to a soft marker.
     """
+    if not wamid:
+        # Empty/None wamid (ex.: reação sem target_wamid) — nada a resolver.
+        # Evita query que ignoraria o índice parcial (WHERE wamid IS NOT NULL).
+        return None
     try:
         sb = get_supabase()
         result = (
