@@ -135,3 +135,71 @@ describe("collectOpenRounds — rodadas abertas com identidade", () => {
     ]);
   });
 });
+
+describe("resposta real = vendedor OU IA (agent); disparos em massa não contam", () => {
+  const LATE = new Date("2026-06-10T20:00:00Z"); // 17:00 SP, fora da janela → nada aberto
+
+  it("resposta da IA (agent) fecha a rodada", () => {
+    // user 10:00 SP, agent 10:08 SP → rodada fechada de 8 min
+    const c = conv([
+      { sent_by: "user", t: "13:00:00" },
+      { sent_by: "agent", t: "13:08:00" },
+    ]);
+    const r = collectRounds([c], DEFAULT_WINDOW, LATE);
+    expect(r.closed).toEqual([8]);
+    expect(r.openElapsed).toEqual([]);
+  });
+
+  it("resposta da IA (agent) tira o lead de 'em atraso agora'", () => {
+    const c: SlaConversation = {
+      id: "conv-agent",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "agent", created_at: U("13:05:00") },
+      ],
+    };
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, LATE)).toEqual([]);
+  });
+
+  it("disparo em massa (broadcast) NÃO fecha a rodada", () => {
+    const c: SlaConversation = {
+      id: "conv-bc",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "broadcast", created_at: U("13:30:00") },
+      ],
+    };
+    const now = new Date("2026-06-10T13:45:00Z"); // 10:45 SP
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([
+      { conversationId: "conv-bc", elapsedMinutes: 45 },
+    ]);
+  });
+
+  it("follow-up NÃO fecha a rodada", () => {
+    const c: SlaConversation = {
+      id: "conv-fu",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "followup", created_at: U("13:30:00") },
+      ],
+    };
+    const now = new Date("2026-06-10T13:50:00Z"); // 10:50 SP
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([
+      { conversationId: "conv-fu", elapsedMinutes: 50 },
+    ]);
+  });
+
+  it("broadcast proativo (sem espera aberta) é ignorado; IA fecha a seguir", () => {
+    const c = conv([
+      { sent_by: "broadcast", t: "13:00:00" },
+      { sent_by: "user", t: "13:10:00" },
+      { sent_by: "agent", t: "13:20:00" },
+    ]);
+    const r = collectRounds([c], DEFAULT_WINDOW, LATE);
+    expect(r.closed).toEqual([10]);
+    expect(r.openElapsed).toEqual([]);
+  });
+});

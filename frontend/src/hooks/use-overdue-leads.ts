@@ -119,7 +119,7 @@ async function fetchMessages(
         .from("messages")
         .select("conversation_id, sent_by, created_at")
         .in("conversation_id", slice)
-        .in("sent_by", ["user", "seller"])
+        .in("sent_by", ["user", "seller", "agent"])
         .order("created_at", { ascending: true })
         .range(offset, offset + PAGE - 1);
       if (error || !data || data.length === 0) break;

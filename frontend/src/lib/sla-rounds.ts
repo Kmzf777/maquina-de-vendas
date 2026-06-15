@@ -4,14 +4,22 @@ import {
 } from "@/lib/business-hours";
 
 export interface SlaMessage {
-  sent_by: string;       // só 'user' e 'seller' importam
+  sent_by: string;       // 'user' abre a espera; resposta real (REPLY_SENDERS) fecha
   created_at: string;    // ISO
 }
+
+/**
+ * Quem conta como "resposta real" ao cliente — encerra a rodada de espera.
+ * Vendedor humano (via CRM) e a IA conversacional (ValerIA = 'agent').
+ * Disparos em massa não-conversacionais (broadcast/followup/campaign/automation/
+ * handoff) NÃO contam como resposta: não tiram o cliente da fila de espera.
+ */
+const REPLY_SENDERS = new Set(["seller", "agent"]);
 
 export interface SlaConversation {
   id: string;
   last_seller_response_at: string | null;
-  messages: SlaMessage[]; // ordem cronológica, apenas 'user'/'seller'
+  messages: SlaMessage[]; // ordem cronológica: 'user' + respostas reais ('seller'/'agent')
 }
 
 export interface SellerRounds {
@@ -34,8 +42,9 @@ export interface OpenRound {
  * Um único passe cronológico por conversa. Retorna os minutos comerciais das
  * rodadas fechadas e, se houver uma rodada aberta no fim, seus minutos decorridos.
  * Regras: rodada começa na primeira msg do cliente sem resposta; fecha na primeira
- * resposta do vendedor (msg 'seller' ou Finalizar via last_seller_response_at);
- * rajadas do cliente não reiniciam; msg proativa do vendedor é ignorada.
+ * resposta real (msg de REPLY_SENDERS — vendedor ou IA — ou Finalizar via
+ * last_seller_response_at); rajadas do cliente não reiniciam; mensagens proativas
+ * ou disparos em massa (broadcast/followup/...) sem espera aberta são ignorados.
  */
 function walkConversation(
   conv: SlaConversation,
@@ -48,7 +57,7 @@ function walkConversation(
   for (const msg of conv.messages) {
     if (msg.sent_by === "user") {
       if (waitStart === null) waitStart = msg.created_at;
-    } else if (msg.sent_by === "seller") {
+    } else if (REPLY_SENDERS.has(msg.sent_by)) {
       if (waitStart !== null) {
         const mins = businessMinutesBetween(new Date(waitStart), new Date(msg.created_at), win);
         if (mins >= 0) closed.push(mins);
