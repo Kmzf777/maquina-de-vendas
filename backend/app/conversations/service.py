@@ -234,6 +234,37 @@ def resolve_message_text_by_wamid(wamid: str) -> str | None:
         return None
 
 
+def resolve_message_texts_by_wamids(wamids: list[str]) -> dict[str, str]:
+    """Batch-resolve message contents by wamid in a single query.
+
+    Returns {wamid: content} for the wamids that exist. Fail-open: returns the
+    partial map gathered so far (or {}) on error. Use this instead of calling
+    resolve_message_text_by_wamid in a loop to avoid N sequential round-trips.
+    """
+    unique = [w for w in {*wamids} if w]
+    if not unique:
+        return {}
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("wamid, content")
+            .in_("wamid", unique)
+            .execute()
+        )
+        return {
+            row["wamid"]: row["content"]
+            for row in (result.data or [])
+            if row.get("wamid")
+        }
+    except Exception as exc:
+        logger.warning(
+            "resolve_message_texts_by_wamids: falha ao resolver %d wamids: %s",
+            len(unique), exc,
+        )
+        return {}
+
+
 def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (

@@ -331,3 +331,50 @@ async def test_run_agent_current_message_reply_marker():
     last_user = user_msgs[-1]
     assert '[Em resposta a: "Quer saber sobre nosso plano premium?"]' in last_user["content"]
     assert user_text in last_user["content"]
+
+
+# ---------------------------------------------------------------------------
+# Batch cache (efficiency: avoid N sequential queries) — Task #2 from review
+# ---------------------------------------------------------------------------
+
+def test_lookup_uses_cache_without_single_query():
+    """When the wamid is in the batch cache, the single-query resolver is NOT called."""
+    from app.agent import orchestrator
+    with patch.object(orchestrator, "resolve_message_text_by_wamid") as single:
+        single.side_effect = AssertionError("single-query resolver should not be called on cache hit")
+        out = orchestrator._lookup_wamid_text("wamid.A", {"wamid.A": "texto original"})
+        assert out == "texto original"
+
+
+def test_lookup_falls_back_when_not_in_cache():
+    """When the wamid is absent from the cache, fall back to the single-query resolver."""
+    from app.agent import orchestrator
+    with patch.object(orchestrator, "resolve_message_text_by_wamid", return_value="via fallback") as single:
+        out = orchestrator._lookup_wamid_text("wamid.MISS", {"wamid.OTHER": "x"})
+        assert out == "via fallback"
+        single.assert_called_once_with("wamid.MISS")
+
+
+def test_render_reply_uses_batch_cache():
+    """_render_history_content builds the reply marker from the batch cache (no single query)."""
+    from app.agent import orchestrator
+    with patch.object(orchestrator, "resolve_message_text_by_wamid") as single:
+        single.side_effect = AssertionError("should not query per-message when cache has the wamid")
+        msg = {"role": "user", "content": "sim", "quoted_wamid": "wamid.Q"}
+        out = orchestrator._render_history_content(msg, {"wamid.Q": "Quanto custa?"})
+        assert '[Em resposta a: "Quanto custa?"]' in out
+        assert out.endswith("\nsim")
+
+
+def test_render_reaction_uses_batch_cache():
+    """Reaction target is resolved from the batch cache (no single query)."""
+    from app.agent import orchestrator
+    with patch.object(orchestrator, "resolve_message_text_by_wamid") as single:
+        single.side_effect = AssertionError("should not query per-message when cache has the target")
+        msg = {
+            "role": "user", "content": "[reaction]", "message_type": "reaction",
+            "metadata": {"emoji": "👍", "target_wamid": "wamid.T"},
+        }
+        out = orchestrator._render_history_content(msg, {"wamid.T": "Te enviei o catálogo"})
+        assert "reagiu com 👍" in out
+        assert "Te enviei o catálogo" in out

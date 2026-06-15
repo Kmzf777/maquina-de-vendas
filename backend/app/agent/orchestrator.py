@@ -12,7 +12,11 @@ from app.agent.prompts.base import build_base_prompt
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.tools import get_tools_for_stage, execute_tool
-from app.conversations.service import get_history, resolve_message_text_by_wamid
+from app.conversations.service import (
+    get_history,
+    resolve_message_text_by_wamid,
+    resolve_message_texts_by_wamids,
+)
 from app.agent.token_tracker import track_token_usage
 from app.agent_profiles.service import get_agent_profile
 from app.leads.service import get_lead, update_lead
@@ -67,24 +71,37 @@ def _truncate(text: str, length: int = _TRUNCATE_LEN) -> str:
     return text[:length] + "…"
 
 
-def _build_reply_marker(quoted_wamid: str) -> str:
+def _build_reply_marker(quoted_wamid: str, resolved: dict | None = None) -> str:
     """Return a '[Em resposta a: "..."]' prefix line for a quoted message.
 
     Resolves the quoted wamid to its stored content. Falls back to a soft
     marker when the message cannot be found.
+
+    `resolved` is an optional {wamid: content} cache (batch pre-fetch); when the
+    wamid is absent from it, falls back to a single DB lookup.
     """
-    orig = resolve_message_text_by_wamid(quoted_wamid)
+    orig = _lookup_wamid_text(quoted_wamid, resolved)
     if orig:
         return f'[Em resposta a: "{_truncate(orig)}"]'
     return "[Em resposta a uma mensagem anterior]"
 
 
-def _render_history_content(msg: dict) -> str:
+def _lookup_wamid_text(wamid: str, resolved: dict | None) -> str | None:
+    """Read a wamid's text from the batch cache, falling back to a single query."""
+    if resolved is not None and wamid in resolved:
+        return resolved[wamid]
+    return resolve_message_text_by_wamid(wamid)
+
+
+def _render_history_content(msg: dict, resolved: dict | None = None) -> str:
     """Return the display content for a history message, with reply/reaction enrichment.
 
     - Reaction messages are translated to a human-readable line.
     - Messages with quoted_wamid get a reply-marker prepended.
     - All other messages pass through unchanged.
+
+    `resolved` is an optional {wamid: content} cache (batch pre-fetch) used to avoid
+    one DB query per message; absent wamids fall back to a single lookup.
 
     Never raises — degrades to the raw content on any error.
     """
@@ -101,7 +118,7 @@ def _render_history_content(msg: dict) -> str:
                 emoji = metadata.get("emoji") or "?"
                 target_wamid = metadata.get("target_wamid")
             if target_wamid:
-                target_text = resolve_message_text_by_wamid(target_wamid)
+                target_text = _lookup_wamid_text(target_wamid, resolved)
                 if target_text:
                     return f'[O lead reagiu com {emoji} à mensagem: "{_truncate(target_text)}"]'
             return f"[O lead reagiu com {emoji} a uma mensagem anterior]"
@@ -109,7 +126,7 @@ def _render_history_content(msg: dict) -> str:
         # Reply: prepend a marker with the quoted text
         quoted_wamid = msg.get("quoted_wamid")
         if quoted_wamid:
-            marker = _build_reply_marker(quoted_wamid)
+            marker = _build_reply_marker(quoted_wamid, resolved)
             return f"{marker}\n{content}"
 
         return content
@@ -260,14 +277,29 @@ async def run_agent(
         current_quoted_wamid = history[-1].get("quoted_wamid")
         history = history[:-1]
 
+    # Batch-resolve every wamid referenced by replies/reactions (history + current turn)
+    # in ONE query, instead of one DB round-trip per message inside the loop.
+    _wamids_to_resolve: list[str] = []
+    if current_quoted_wamid:
+        _wamids_to_resolve.append(current_quoted_wamid)
+    for msg in history:
+        qw = msg.get("quoted_wamid")
+        if qw:
+            _wamids_to_resolve.append(qw)
+        if msg.get("message_type") == "reaction":
+            meta = msg.get("metadata")
+            if isinstance(meta, dict) and meta.get("target_wamid"):
+                _wamids_to_resolve.append(meta["target_wamid"])
+    resolved_wamids = resolve_message_texts_by_wamids(_wamids_to_resolve) if _wamids_to_resolve else {}
+
     # Collapse consecutive assistant bubbles into a single turn so the AI sees
     # one coherent response per turn regardless of how many bubbles were saved.
-    # Reply/reaction enrichment is applied via _render_history_content.
+    # Reply/reaction enrichment is applied via _render_history_content (reads the batch cache).
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
         if msg["role"] not in ("user", "assistant"):
             continue
-        enriched_content = _render_history_content(msg)
+        enriched_content = _render_history_content(msg, resolved_wamids)
         if messages and messages[-1]["role"] == "assistant" == msg["role"]:
             messages[-1]["content"] += "\n\n" + enriched_content
         else:
@@ -284,7 +316,7 @@ async def run_agent(
 
     # Apply reply marker to the current user message when it was a reply
     if current_quoted_wamid:
-        marker = _build_reply_marker(current_quoted_wamid)
+        marker = _build_reply_marker(current_quoted_wamid, resolved_wamids)
         enriched_user_text = f"{marker}\n{user_text}"
     else:
         enriched_user_text = user_text
