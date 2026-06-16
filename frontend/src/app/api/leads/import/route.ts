@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { buildImportDeals, type ImportDealLead } from "@/lib/import-deals";
 import { dedupeByPhone } from "@/lib/dedupe-leads";
+import { normalizePhoneBR } from "@/lib/phone";
 
 interface ImportLead {
   phone: string;
@@ -26,9 +27,20 @@ export async function POST(request: NextRequest) {
     stageId?: string;
   };
 
+  // Normaliza o telefone (injeta o 9º dígito BR, espelhando o backend) antes de
+  // deduplicar/buscar/inserir. Defense-in-depth: o cliente já normaliza, mas o
+  // servidor não pode confiar nisso — sem essa etapa, leads de 12 dígitos nunca
+  // casam com o lead canônico de 13 dígitos criado pelo webhook (conversas fragmentadas).
+  const invalidPhones: string[] = [];
+  const normalizedLeads = rawLeads.flatMap((l) => {
+    const phone = normalizePhoneBR(l.phone);
+    if (!phone) { invalidPhones.push(l.phone); return []; }
+    return [{ ...l, phone }];
+  });
+
   // Remove telefones repetidos dentro do próprio CSV (mantém a 1ª ocorrência).
   // Sem isso, o insert em lote viola leads_phone_key e derruba a importação (500).
-  const leads = dedupeByPhone(rawLeads);
+  const leads = dedupeByPhone(normalizedLeads);
 
   const phones = leads.map((l) => l.phone);
   const { data: existing } = await supabase
@@ -186,5 +198,6 @@ export async function POST(request: NextRequest) {
     updated: updatedCount,
     skipped: skipped.length,
     dealsCreated,
+    invalidPhones: invalidPhones.length,
   });
 }

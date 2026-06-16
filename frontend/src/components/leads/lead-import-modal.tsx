@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Papa from "papaparse";
 import { usePipelines } from "@/hooks/use-pipelines";
 import type { PipelineStage } from "@/lib/types";
+import { normalizePhoneBR } from "@/lib/phone";
 
 const LEAD_FIELDS = [
   { key: "", label: "Pular coluna" },
@@ -33,15 +34,6 @@ const AUTO_MAP: Record<string, string> = {
   "telefone comercial": "telefone_comercial",
   stage: "stage", etapa: "stage",
 };
-
-function normalizePhone(raw: string): string | null {
-  let digits = raw.replace(/\D/g, "");
-  if (digits.startsWith("0")) digits = digits.slice(1);
-  if (digits.length === 10 || digits.length === 11) digits = "55" + digits;
-  if ((digits.length === 12 || digits.length === 13) && !digits.startsWith("55")) return null;
-  if (digits.length < 12 || digits.length > 13) return null;
-  return digits;
-}
 
 interface LeadImportModalProps {
   onClose: () => void;
@@ -137,7 +129,7 @@ export function LeadImportModal({ onClose, onImportDone }: LeadImportModalProps)
       })
       .map((lead) => {
         if (!lead.phone) return lead;
-        const normalized = normalizePhone(lead.phone);
+        const normalized = normalizePhoneBR(lead.phone);
         return normalized ? { ...lead, phone: normalized } : { ...lead, phone: "" };
       })
       .filter((l) => l.phone);
