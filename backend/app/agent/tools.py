@@ -236,16 +236,45 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "retomar_contato_vendedor",
+            "description": (
+                "Reconecta ao vendedor Joao Bras um lead que JA teve atendimento com ele no passado e esfriou "
+                "(cenario de reativacao). USE somente apos as 3 etapas: "
+                "(1) voce investigou por que o atendimento anterior nao avancou e contornou a objecao; "
+                "(2) o lead demonstrou que quer retomar; "
+                "(3) voce perguntou EXPLICITAMENTE se pode encaminha-lo de novo ao Joao e o lead respondeu SIM. "
+                "Esta ferramenta dispara uma mensagem pelo numero do Joao para o lead — AGORA se em horario comercial "
+                "(09h-16h, dias uteis), senao AGENDA para o proximo dia util — e ENCERRA a conversa automatica (desativa a IA). "
+                "O retorno informa se o disparo foi AGORA ou AGENDADO: use isso para se despedir corretamente "
+                "('o Joao acabou de te chamar' vs 'o Joao vai te chamar amanha de manha'). "
+                "Apos chama-la, escreva APENAS a mensagem de despedida e NAO envie mais nada. "
+                "NAO use sem o SIM explicito do lead. Para handoff de lead novo/qualificado, use encaminhar_humano."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "motivo": {
+                        "type": "string",
+                        "description": "Breve resumo do que esfriou o atendimento anterior e do que o lead quer retomar",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse", "retomar_contato_vendedor"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse", "retomar_contato_vendedor"],
         "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
@@ -454,4 +483,140 @@ async def execute_tool(
         )
         return f"Interesse registrado: {nivel}"
 
+    elif tool_name == "retomar_contato_vendedor":
+        return await _retomar_contato_vendedor(args, lead_id, phone, conversation_id)
+
     return f"Tool {tool_name} nao reconhecida"
+
+
+def _format_next_dispatch(fire_at: datetime | None) -> str:
+    """Frase natural (pt-BR) para quando o João vai chamar o lead, a partir do fire_at agendado."""
+    if fire_at is None:
+        return "o proximo horario comercial"
+    local = fire_at.astimezone(_TZ_BR)
+    today_local = datetime.now(_TZ_BR).date()
+    delta_days = (local.date() - today_local).days
+    hora = local.strftime("%Hh%M") if local.minute else local.strftime("%Hh")
+    if delta_days <= 0:
+        return f"hoje de manha (por volta das {hora})"
+    if delta_days == 1:
+        return f"amanha de manha (por volta das {hora})"
+    return f"no proximo dia util ({local.strftime('%d/%m')} de manha, por volta das {hora})"
+
+
+async def _retomar_contato_vendedor(
+    args: dict[str, Any], lead_id: str, phone: str, conversation_id: str
+) -> str:
+    """Reabordagem de lead que esfriou apos handoff anterior com o Joao Bras.
+
+    Efeitos (na ordem):
+      (c) Desativa a IA imediatamente (ai_enabled=False, human_control=True) — a Valeria para de responder.
+      (a) Dispara o template do Joao para o lead AGORA se dentro do horario comercial
+          (09h-16h, dias uteis, America/Sao_Paulo); caso contrario, agenda para o
+          proximo horario comercial valido (job handoff_rescue).
+      (b) Retorna uma string instruindo a Valeria a se despedir conforme o disparo
+          tenha sido imediato ou agendado.
+    """
+    from app.follow_up.service import is_within_business_window
+    from app.follow_up.scheduler import send_joao_handoff_template
+
+    motivo = args.get("motivo", "lead pediu para retomar o contato com o vendedor")
+    lead = get_lead(lead_id) or {}
+    lead_name = lead.get("name") or ""
+
+    # (c) Desativa a IA imediatamente — a partir daqui a Valeria nao responde mais.
+    try:
+        update_lead(lead_id, ai_enabled=False, human_control=True, status="converted")
+    except Exception as exc:
+        logger.error(
+            "CRITICAL: retomar_contato_vendedor falhou ao desativar IA para lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+        return (
+            "CRITICAL: erro ao processar a retomada — nao foi possivel desativar a IA. "
+            "Peca desculpas brevemente e diga que um vendedor vai assumir; um humano precisa verificar manualmente."
+        )
+
+    # Visibilidade para o time comercial: registra o retorno do lead como deal.
+    try:
+        create_deal(lead_id, title=f"Joao (retomada) - {motivo}", category=lead.get("stage"))
+    except Exception as exc:
+        logger.error(
+            "retomar_contato_vendedor: falha ao criar deal para lead %s: %s", lead_id, exc, exc_info=True
+        )
+
+    now = datetime.now(timezone.utc)
+
+    # (a) Dentro do horario comercial: dispara AGORA, sincrono.
+    if is_within_business_window(now):
+        sent = await send_joao_handoff_template(phone, lead_name)
+        if sent:
+            save_message(
+                lead_id, "system",
+                f"[retomar_contato_vendedor] Joao disparou AGORA para o lead — {motivo}",
+                conversation_id=conversation_id,
+            )
+            return (
+                "DISPARO REALIZADO AGORA. O Joao acabou de enviar uma mensagem para o lead aqui no WhatsApp. "
+                "Despeca-se em UMA mensagem avisando que o Joao ACABOU DE CHAMAR o lead e que e so responder a ele por aqui. "
+                "NAO envie mais nenhuma mensagem depois desta."
+            )
+        # Falha no disparo imediato → reagenda como rede de seguranca (proximo tick do worker).
+        fire_at = _safe_schedule_reengage(lead_id, phone, conversation_id, lead_name)
+        save_message(
+            lead_id, "system",
+            f"[retomar_contato_vendedor] disparo imediato falhou — reagendado — {motivo}",
+            conversation_id=conversation_id,
+        )
+        return (
+            "DISPARO AGENDADO. Houve um contratempo no envio imediato, mas o Joao vai chamar o lead em instantes. "
+            "Despeca-se em UMA mensagem avisando que o Joao vai chamar o lead em breve aqui no WhatsApp. "
+            "NAO envie mais nenhuma mensagem depois desta."
+        )
+
+    # (a) Fora do horario comercial: agenda para o proximo dia util as 09h.
+    fire_at = _safe_schedule_reengage(lead_id, phone, conversation_id, lead_name)
+    save_message(
+        lead_id, "system",
+        f"[retomar_contato_vendedor] disparo agendado fora do horario comercial — {motivo}",
+        conversation_id=conversation_id,
+    )
+    when_label = _format_next_dispatch(fire_at)
+    return (
+        f"DISPARO AGENDADO para {when_label}. Estamos fora do horario comercial (09h-16h em dias uteis). "
+        f"Despeca-se em UMA mensagem avisando que o Joao vai chamar o lead {when_label}, "
+        "pedindo pra ele ficar de olho no WhatsApp. "
+        "NAO envie mais nenhuma mensagem depois desta."
+    )
+
+
+def _safe_schedule_reengage(
+    lead_id: str, phone: str, conversation_id: str, lead_name: str
+) -> "datetime | None":
+    """Agenda o disparo do Joao via job handoff_rescue (delay 0 → clampa p/ janela comercial).
+
+    Retorna o fire_at agendado, ou None se nao houver canal ativo ou o agendamento falhar.
+    """
+    from app.follow_up.service import schedule_handoff_rescue
+
+    channel = get_channel_for_lead(lead_id)
+    if not channel:
+        logger.warning(
+            "retomar_contato_vendedor: nenhum canal ativo para lead %s — agendamento ignorado", lead_id
+        )
+        return None
+    try:
+        return schedule_handoff_rescue(
+            lead_id=lead_id,
+            lead_phone=phone,
+            conversation_id=conversation_id,
+            channel_id=channel["id"],
+            delay_minutes=0,
+            lead_name=lead_name,
+        )
+    except Exception as exc:
+        logger.error(
+            "retomar_contato_vendedor: falha ao agendar disparo para lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+        return None
