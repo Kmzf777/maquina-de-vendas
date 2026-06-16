@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { createClient as createServerClient } from "@/lib/supabase/server";
+import { getAllowedChannelIds, ChannelAccessError } from "@/lib/supabase/channel-access";
 
 interface EvolutionChat {
   id?: string;
@@ -130,23 +130,17 @@ export async function GET(request: NextRequest) {
   const channelId = searchParams.get("channel_id");
   const status = searchParams.get("status");
 
-  // Determina quais channel_ids o usuário logado pode ver
-  let allowedChannelIds: string[] | null = null; // null = sem restrição (admin)
+  // Determina quais channel_ids o usuário logado pode ver.
+  // Falha de auth lança ChannelAccessError → respondemos 401, NUNCA [] silencioso
+  // (um [] em erro é indistinguível de "zero conversas" e apaga a lista na UI).
+  let allowedChannelIds: string[] | null;
   try {
-    const userClient = await createServerClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    const role = user?.app_metadata?.role as string | undefined;
-    if (user && role !== "admin") {
-      // vendedor: apenas os canais que possui (owner_user_id = user.id)
-      const { data: ownedChannels } = await supabase
-        .from("channels")
-        .select("id")
-        .eq("owner_user_id", user.id);
-      allowedChannelIds = (ownedChannels || []).map((c: { id: string }) => c.id);
+    allowedChannelIds = await getAllowedChannelIds(supabase);
+  } catch (err) {
+    if (err instanceof ChannelAccessError) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-  } catch {
-    // Se não conseguir autenticar, bloqueia tudo — nunca exibir dados sensíveis sem auth
-    allowedChannelIds = [];
+    throw err;
   }
 
   // 1. Get DB conversations
@@ -167,8 +161,13 @@ export async function GET(request: NextRequest) {
     dbQuery = dbQuery.in("channel_id", allowedChannelIds);
   }
 
-  const { data: dbConversations } = await dbQuery
+  const { data: dbConversations, error: dbError } = await dbQuery
     .order("last_msg_at", { ascending: false, nullsFirst: false });
+  // Não devolver [] silencioso em erro de query: a UI não distingue erro de
+  // "zero conversas" e apagaria a lista. Responder 500 mantém o estado anterior.
+  if (dbError) {
+    return NextResponse.json({ error: dbError.message }, { status: 500 });
+  }
 
   // Fetch last message text for meta_cloud conversations via RPC
   const metaConvIds = (dbConversations || [])
