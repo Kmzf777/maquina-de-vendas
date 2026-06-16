@@ -252,6 +252,10 @@ async def process_due_followups(now: datetime | None = None) -> None:
             await _process_lp_welcome(job, now)
             continue
 
+        if job.get("job_type") == "ai_reengage":
+            await _process_ai_reengage(job, now)
+            continue
+
         conversation_id = job["conversation_id"]
         lead = job["leads"]
         channel = job["channels"]
@@ -493,6 +497,142 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
         return  # erro transitório → retry no próximo tick
 
     _mark_sent(job["id"])
+
+
+async def _process_ai_reengage(job: dict, now: datetime) -> None:
+    """Reativação pós-handoff: roda o AGENTE REAL (Valéria) sobre a última mensagem
+    inbound órfã do lead e envia a resposta livre.
+
+    Diferente do follow-up `standard` (que gera uma mensagem genérica via Gemini),
+    este handler reinvoca `run_agent` sobre o texto da última mensagem do cliente —
+    a Valéria "continua o atendimento" de onde parou. Agendado pelo script avulso
+    `scripts/sql/reativar_ia_valeria_janela24h.sql`.
+
+    Guards estritos (qualquer um falha → não envia):
+    - lead.ai_enabled deve estar True (se alguém redesativou, aborta sem enviar).
+    - janela de 24h da Meta deve estar aberta (senão free-text é rejeitado #131047).
+    - canal humano nunca roda IA.
+
+    O lead é RE-LIDO do banco aqui porque o select de `get_due_followups` não traz
+    `ai_enabled`/`metadata` — não confiar no payload joinado para os guards.
+    """
+    from app.agent.orchestrator import run_agent
+    from app.humanizer.splitter import split_into_bubbles
+
+    channel = job["channels"]
+    conversation = job["conversations"]
+    conversation_id = job["conversation_id"]
+
+    # Guard: canal humano nunca roda IA
+    if channel.get("mode", "ai") == "human":
+        _cancel_job(job["id"], "human_channel")
+        logger.info("[AI_REENGAGE] mode=human — cancelando conv=%s", conversation_id)
+        return
+
+    sb = get_supabase()
+
+    # Re-lê o lead para obter ai_enabled/metadata/last_customer_message_at atuais.
+    try:
+        lead_row = (
+            sb.table("leads")
+            .select("id, phone, name, ai_enabled, last_customer_message_at, metadata")
+            .eq("id", job["lead_id"])
+            .single()
+            .execute()
+        )
+        lead = lead_row.data
+    except Exception as exc:
+        logger.error("[AI_REENGAGE] falha ao reler lead %s: %s", job["lead_id"], exc, exc_info=True)
+        return  # transitório → retry no próximo tick
+
+    if not lead or not lead.get("ai_enabled", False):
+        _cancel_job(job["id"], "ai_disabled")
+        logger.info("[AI_REENGAGE] ai_enabled=false — cancelando conv=%s", conversation_id)
+        return
+
+    phone = lead["phone"]
+
+    # Guard: janela de 24h (mesma regra do follow-up standard)
+    last_msg_str = lead.get("last_customer_message_at")
+    if not last_msg_str:
+        _cancel_job(job["id"], "window_expired")
+        logger.info("[AI_REENGAGE] sem last_customer_message_at — cancelando conv=%s", conversation_id)
+        return
+    last_msg = datetime.fromisoformat(last_msg_str.replace("Z", "+00:00"))
+    if last_msg + timedelta(hours=24) <= now:
+        _cancel_job(job["id"], "window_expired")
+        logger.warning("[AI_REENGAGE] janela 24h expirada — cancelando conv=%s", conversation_id)
+        return
+
+    # Recupera a última mensagem inbound (a órfã) para o agente continuar o atendimento.
+    try:
+        last_inbound = (
+            sb.table("messages")
+            .select("content")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("[AI_REENGAGE] falha ao buscar última inbound conv=%s: %s", conversation_id, exc, exc_info=True)
+        return  # transitório → retry
+
+    if not last_inbound.data or not (last_inbound.data[0].get("content") or "").strip():
+        _cancel_job(job["id"], "no_inbound_message")
+        logger.warning("[AI_REENGAGE] sem mensagem inbound — cancelando conv=%s", conversation_id)
+        return
+    orphan_text = last_inbound.data[0]["content"]
+
+    # agent_profile_id None → orchestrator usa valeria_inbound (o desejado p/ inbound).
+    conversation["leads"] = lead
+    lead_context = lead.get("metadata") or {}
+    try:
+        response = await run_agent(
+            conversation, orphan_text,
+            lead_context=lead_context,
+            agent_profile_id=None,
+        )
+    except Exception as exc:
+        logger.error("[AI_REENGAGE] run_agent falhou conv=%s: %s", conversation_id, exc, exc_info=True)
+        return  # transitório → retry no próximo tick (não marca sent)
+
+    if response is None:
+        # encaminhar_humano foi chamado pela tool — mensagem de handoff já enviada.
+        logger.info("[AI_REENGAGE] handoff via tool conv=%s — nada a enviar", conversation_id)
+        _mark_sent(job["id"])
+        return
+
+    if not response.strip():
+        _cancel_job(job["id"], "empty_response")
+        logger.warning("[AI_REENGAGE] resposta vazia — cancelando conv=%s", conversation_id)
+        return
+
+    provider = get_provider(channel)
+    bubbles = split_into_bubbles(response)
+    for bubble in bubbles:
+        try:
+            await provider.send_text(phone, bubble)
+        except Exception as exc:
+            logger.error("[AI_REENGAGE] falha ao enviar bubble conv=%s: %s", conversation_id, exc, exc_info=True)
+            return  # não marca sent → retry no próximo tick
+
+    for bubble in bubbles:
+        try:
+            save_message(
+                lead_id=job["lead_id"],
+                role="assistant",
+                content=bubble,
+                stage=conversation.get("stage"),
+                sent_by="agent",
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:
+            logger.error("[AI_REENGAGE] falha ao salvar bubble conv=%s: %s", conversation_id, exc)
+
+    _mark_sent(job["id"])
+    logger.info("[AI_REENGAGE] Valéria respondeu lead=%s conv=%s", phone, conversation_id)
 
 
 def _cancel_job(job_id: str, reason: str) -> None:
