@@ -70,6 +70,33 @@ def test_clamp_to_business_window_saturday_moves_to_monday_09h():
     assert result.astimezone(SP_TZ).weekday() == 0  # segunda-feira
 
 
+# ─── _build_joao_handoff_components (params NOMEADOS do template aprovado) ───
+
+def test_build_joao_handoff_components_uses_two_named_params():
+    """O template automacao_valeria_to_joao usa 2 params NOMEADOS na Meta
+    (nome_do_lead, nome_do_vendedor). O builder deve emitir exatamente esses,
+    com o primeiro nome do lead e o vendedor (default João)."""
+    from app.follow_up.scheduler import _build_joao_handoff_components
+
+    components = _build_joao_handoff_components("Elisangele Accordi")
+
+    assert components == [{
+        "type": "body",
+        "parameters": [
+            {"type": "text", "parameter_name": "nome_do_lead", "text": "Elisangele"},
+            {"type": "text", "parameter_name": "nome_do_vendedor", "text": "João"},
+        ],
+    }]
+
+
+def test_build_joao_handoff_components_accepts_custom_vendedor():
+    from app.follow_up.scheduler import _build_joao_handoff_components
+    components = _build_joao_handoff_components("Maria Silva", vendedor="Arthur")
+    params = components[0]["parameters"]
+    assert params[0] == {"type": "text", "parameter_name": "nome_do_lead", "text": "Maria"}
+    assert params[1] == {"type": "text", "parameter_name": "nome_do_vendedor", "text": "Arthur"}
+
+
 # ─── schedule_handoff_rescue ────────────────────────────────────────────────
 
 def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
@@ -121,11 +148,12 @@ def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
     assert abs((fire_at - expected).total_seconds()) < 2
 
 
-def test_schedule_handoff_rescue_uses_pt_br_locale():
-    """Bug raiz do 404 #132001: metadata.language_code deve ser pt_BR (não en_US).
+def test_schedule_handoff_rescue_uses_approved_en_locale():
+    """Bug raiz do 404 #132001: metadata.language_code deve ser o locale APROVADO.
 
-    O template 'automacao_valeria_to_joao' só existe aprovado em pt_BR no Meta;
-    en_US fazia a Meta retornar 404 e o job era cancelado permanentemente.
+    Auditoria 2026-06-16 (message_templates): 'automacao_valeria_to_joao' existe SÓ em
+    `en` (corpo é PT, locale Meta é `en`). pt_BR não existe → 404. Logo, o locale correto
+    é `en`.
     """
     from app.follow_up.service import schedule_handoff_rescue
 
@@ -154,7 +182,7 @@ def test_schedule_handoff_rescue_uses_pt_br_locale():
 
     assert len(inserted) == 1
     job = inserted[0]
-    assert job["metadata"]["language_code"] == "pt_BR"
+    assert job["metadata"]["language_code"] == "en"
 
 
 def test_schedule_handoff_rescue_raises_on_db_error():
@@ -187,6 +215,7 @@ def _make_rescue_job():
         "leads": {
             "id": "lead-1",
             "phone": "5511999999999",
+            "name": "Pedro Souza",
             "last_customer_message_at": datetime.now(timezone.utc).isoformat(),
         },
         "channels": {
@@ -232,9 +261,19 @@ async def test_handoff_rescue_sends_template_when_lead_has_not_contacted_joao():
         from app.follow_up.scheduler import process_due_followups
         await process_due_followups(now=datetime.now(timezone.utc))
 
-    # Falha C (commit 3315e50): default de language_code corrigido de en_US → pt_BR
-    # (en_US causava 404 #132001 e cancelava o job). components=None pois o job não tem nome.
-    mock_meta.send_template.assert_called_once_with("5511999999999", "rabubens", components=None, language_code="pt_BR")
+    # Locale aprovado é `en` (automacao_valeria_to_joao só existe em `en`; pt_BR → 404).
+    # Componentes usam os 2 params NOMEADOS do template aprovado (nome_do_lead/nome_do_vendedor).
+    mock_meta.send_template.assert_called_once_with(
+        "5511999999999", "rabubens",
+        components=[{
+            "type": "body",
+            "parameters": [
+                {"type": "text", "parameter_name": "nome_do_lead", "text": "Pedro"},
+                {"type": "text", "parameter_name": "nome_do_vendedor", "text": "João"},
+            ],
+        }],
+        language_code="en",
+    )
     mock_sent.assert_called_once_with("job-rescue-1")
     mock_cancel.assert_not_called()
 

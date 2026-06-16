@@ -238,7 +238,9 @@ def schedule_handoff_rescue(
             "lead_name": lead_name,
             "joao_phone_number_id": "1049315514934778",
             "template_name": "automacao_valeria_to_joao",
-            "language_code": "pt_BR",
+            # Locale APROVADO na Meta (message_templates): automacao_valeria_to_joao só
+            # existe em `en`. pt_BR não existe → 404 #132001. Ver scheduler.JOAO_TEMPLATE_LANG.
+            "language_code": "en",
         },
     }
     try:

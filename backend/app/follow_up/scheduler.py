@@ -30,7 +30,30 @@ AI_REENGAGE_PROFILE_ID = "b9930820-2c7e-4f1a-998f-f9531ed12c95"
 # Mesma identidade do resgate de handoff (_process_handoff_rescue), centralizada aqui.
 JOAO_PHONE_NUMBER_ID = "1049315514934778"
 JOAO_TEMPLATE_NAME = "automacao_valeria_to_joao"
-JOAO_TEMPLATE_LANG = "pt_BR"
+# Locale APROVADO na Meta para automacao_valeria_to_joao (verificado em message_templates,
+# 2026-06-16): o template existe SÓ em `en` — o corpo é PT, mas o code da Meta é `en`.
+# pt_BR não existe e causava 404 #132001 (job cancelado sem entregar). Não confiar em
+# memória sobre o locale: conferir sempre em message_templates.
+JOAO_TEMPLATE_LANG = "en"
+# Nome do vendedor injetado no template (param nomeado nome_do_vendedor).
+JOAO_VENDEDOR_NAME = "João"
+
+
+def _build_joao_handoff_components(lead_name: str, vendedor: str = JOAO_VENDEDOR_NAME) -> list:
+    """Componentes BODY do template automacao_valeria_to_joao.
+
+    O template aprovado usa DOIS params NOMEADOS (`nome_do_lead`, `nome_do_vendedor`) —
+    enviar 1 param posicional (como o código antigo fazia) causa erro de parâmetros na Meta.
+    Usa o primeiro nome do lead; `vendedor` default João.
+    """
+    first_name = lead_name.split()[0] if lead_name else ""
+    return [{
+        "type": "body",
+        "parameters": [
+            {"type": "text", "parameter_name": "nome_do_lead", "text": first_name},
+            {"type": "text", "parameter_name": "nome_do_vendedor", "text": vendedor},
+        ],
+    }]
 
 
 async def send_joao_handoff_template(lead_phone: str, lead_name: str = "") -> bool:
@@ -53,8 +76,7 @@ async def send_joao_handoff_template(lead_phone: str, lead_name: str = "") -> bo
         )
         return False
 
-    first_name = lead_name.split()[0] if lead_name else ""
-    components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+    components = _build_joao_handoff_components(lead_name)
 
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
@@ -360,11 +382,12 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
     metadata = job.get("metadata") or {}
     lead_phone = metadata.get("lead_phone")
     joao_phone_number_id = metadata.get("joao_phone_number_id", "1049315514934778")
-    template_name = metadata.get("template_name", "automacao_valeria_to_joao")
-    # Template 'automacao_valeria_to_joao' está registrado na Meta em pt_BR.
-    # O default 'en_US' causava 404 (#132001 "does not exist in en_US") e o job
-    # de resgate de handoff era cancelado permanentemente sem ser entregue.
-    language_code = metadata.get("language_code", "pt_BR")
+    template_name = metadata.get("template_name", JOAO_TEMPLATE_NAME)
+    # Template 'automacao_valeria_to_joao' está aprovado na Meta SÓ em `en` (corpo é PT,
+    # mas o locale Meta é `en`) e usa 2 params NOMEADOS. O default pt_BR causava 404
+    # (#132001 "does not exist in pt_BR") e o job era cancelado sem entregar.
+    # Fonte de verdade: message_templates (verificado 2026-06-16). Ver JOAO_TEMPLATE_LANG.
+    language_code = metadata.get("language_code", JOAO_TEMPLATE_LANG)
 
     if not lead_phone:
         _cancel_job(job["id"], "missing_lead_phone")
@@ -415,8 +438,7 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
         # Segurança: se falhou a verificação, envia o template (falso negativo > falso positivo)
 
     lead_name = (job.get("leads") or {}).get("name") or metadata.get("lead_name") or ""
-    first_name = lead_name.split()[0] if lead_name else ""
-    components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+    components = _build_joao_handoff_components(lead_name)
 
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
