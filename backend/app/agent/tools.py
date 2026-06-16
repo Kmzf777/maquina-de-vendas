@@ -550,7 +550,7 @@ async def _retomar_contato_vendedor(
 
     # (a) Dentro do horario comercial: dispara AGORA, sincrono.
     if is_within_business_window(now):
-        sent = await send_joao_handoff_template(phone, lead_name)
+        sent = await send_joao_handoff_template(phone, lead_name, lead_id=lead_id)
         if sent:
             save_message(
                 lead_id, "system",

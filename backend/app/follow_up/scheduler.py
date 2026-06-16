@@ -11,6 +11,7 @@ from app.leads.service import save_message
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
+from app.conversations.service import get_or_create_conversation
 from app.whatsapp.meta import MetaCloudClient, extract_wamid
 
 logger = logging.getLogger(__name__)
@@ -56,13 +57,67 @@ def _build_joao_handoff_components(lead_name: str, vendedor: str = JOAO_VENDEDOR
     }]
 
 
-async def send_joao_handoff_template(lead_phone: str, lead_name: str = "") -> bool:
+# Corpo APROVADO do template automacao_valeria_to_joao (Meta), com os placeholders
+# nomeados como campos .format(). Usado para PERSISTIR a mensagem do disparo no histórico
+# (o envio em si vai pelo template; aqui só registramos o texto renderizado para o frontend).
+# Se o texto aprovado mudar na Meta, atualizar aqui (fonte: message_templates.components).
+_JOAO_TEMPLATE_BODY = (
+    "Olá, {nome_do_lead}! \n\n"
+    "Sou o {nome_do_vendedor} e recebi o repasse do seu contato feito com a Valéria mais cedo.\n"
+    "Estou enviando esta mensagem para confirmar o seu atendimento.\n\n"
+    "Para prosseguirmos com a sua solicitação, basta responder aqui."
+)
+
+
+def _render_joao_handoff_text(lead_name: str, vendedor: str = JOAO_VENDEDOR_NAME) -> str:
+    """Renderiza o corpo do template do João com os params, para persistência no histórico."""
+    first_name = lead_name.split()[0] if lead_name else ""
+    return _JOAO_TEMPLATE_BODY.format(nome_do_lead=first_name, nome_do_vendedor=vendedor)
+
+
+def _persist_joao_handoff_message(
+    lead_id: str, joao_channel_id: str, lead_name: str, send_result: dict | None
+) -> None:
+    """Persiste a mensagem do template de resgate na conversa do CANAL DO JOÃO.
+
+    Sem isto, o disparo sai pela Meta mas não vai para a tabela `messages` — e quando o
+    lead responde (criando/reabrindo a conversa do João), o frontend mostra só a resposta,
+    como se o cliente tivesse iniciado do nada. Cria/reaproveita a conversa do canal humano
+    do João e grava a mensagem outbound com o wamid.
+
+    Nunca levanta: falha de persistência não pode derrubar o disparo (já entregue à Meta).
+    """
+    try:
+        conv = get_or_create_conversation(lead_id, joao_channel_id)
+        save_message(
+            lead_id=lead_id,
+            role="assistant",
+            content=_render_joao_handoff_text(lead_name),
+            sent_by="followup",
+            conversation_id=conv["id"],
+            wamid=extract_wamid(send_result),
+        )
+        logger.info(
+            "[JOAO_HANDOFF] mensagem do template persistida lead=%s conv=%s", lead_id, conv["id"]
+        )
+    except Exception as exc:
+        logger.error(
+            "[JOAO_HANDOFF] falha ao persistir mensagem do template (lead %s): %s",
+            lead_id, exc, exc_info=True,
+        )
+
+
+async def send_joao_handoff_template(lead_phone: str, lead_name: str = "", lead_id: str | None = None) -> bool:
     """Dispara AGORA o template de reabordagem pelo número do João para o lead.
 
     Usado pelo fluxo `retomar_contato_vendedor` quando estamos dentro do horário
     comercial — o envio é síncrono para que a Valéria possa confirmar ao lead que
     "o João acabou de chamar". Retorna True em sucesso, False em qualquer falha.
     Nunca levanta: o chamador decide o fallback (reagendamento).
+
+    Quando `lead_id` é informado, persiste a mensagem do template na conversa do canal
+    do João (mesmo motivo do _process_handoff_rescue: o histórico não pode mostrar só a
+    resposta do lead).
     """
     if not lead_phone:
         logger.error("[JOAO_REENGAGE] lead_phone vazio — disparo abortado")
@@ -80,13 +135,15 @@ async def send_joao_handoff_template(lead_phone: str, lead_name: str = "") -> bo
 
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
-        await provider.send_template(
+        send_result = await provider.send_template(
             lead_phone, JOAO_TEMPLATE_NAME, components=components, language_code=JOAO_TEMPLATE_LANG
         )
         logger.info(
             "[JOAO_REENGAGE] Template '%s' (%s) disparado AGORA para %s",
             JOAO_TEMPLATE_NAME, JOAO_TEMPLATE_LANG, lead_phone,
         )
+        if lead_id:
+            _persist_joao_handoff_message(lead_id, joao_channel["id"], lead_name, send_result)
         return True
     except Exception as exc:
         logger.error(
@@ -442,7 +499,7 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
 
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
-        await provider.send_template(lead_phone, template_name, components=components, language_code=language_code)
+        send_result = await provider.send_template(lead_phone, template_name, components=components, language_code=language_code)
         logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' ({language_code}) enviado para {lead_phone}")
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code
@@ -463,6 +520,10 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
             exc_info=True,
         )
         return  # erro transitório → retry no próximo tick
+
+    # Persiste a mensagem do template na conversa do canal do João (senão o histórico
+    # mostra só a resposta do lead — "como se ele tivesse iniciado do nada").
+    _persist_joao_handoff_message(job["lead_id"], joao_channel["id"], lead_name, send_result)
 
     _mark_sent(job["id"])
 

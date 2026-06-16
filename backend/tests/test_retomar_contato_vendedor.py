@@ -72,7 +72,7 @@ async def test_retomar_in_business_hours_dispatches_now_and_disables_ai():
         )
 
     mock_update.assert_called_once_with("lead-1", ai_enabled=False, human_control=True, status="converted")
-    mock_send.assert_awaited_once_with("5511999999999", "Rafael")
+    mock_send.assert_awaited_once_with("5511999999999", "Rafael", lead_id="lead-1")
     assert "DISPARO REALIZADO AGORA" in out
 
 

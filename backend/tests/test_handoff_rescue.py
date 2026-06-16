@@ -97,6 +97,61 @@ def test_build_joao_handoff_components_accepts_custom_vendedor():
     assert params[1] == {"type": "text", "parameter_name": "nome_do_vendedor", "text": "Arthur"}
 
 
+# ─── _render_joao_handoff_text (texto do template para persistir no histórico) ─
+
+def test_render_joao_handoff_text_fills_named_params():
+    from app.follow_up.scheduler import _render_joao_handoff_text
+    txt = _render_joao_handoff_text("Elisangele Accordi")
+    assert txt.startswith("Olá, Elisangele!")
+    assert "Sou o João" in txt
+    # Sem placeholders não-resolvidos
+    assert "{{" not in txt and "{nome" not in txt
+
+
+# ─── _process_handoff_rescue PERSISTE a mensagem do template ─────────────────
+
+@pytest.mark.asyncio
+async def test_handoff_rescue_persists_template_message_in_joao_conversation():
+    """Após enviar o template, a mensagem DEVE ser salva na conversa do canal do João
+    (com wamid), senão o histórico no frontend mostra só a resposta do lead."""
+    job = _make_rescue_job()  # lead "Pedro Souza"
+    joao_channel = {
+        "id": "ch-joao-1",
+        "provider": "meta_cloud",
+        "provider_config": {"phone_number_id": "1049315514934778", "access_token": "joao_tok"},
+    }
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+
+    mock_meta = AsyncMock()
+    mock_meta.send_template = AsyncMock(return_value={"messages": [{"id": "wamid.789"}]})
+
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler.get_channel_by_provider_config", return_value=joao_channel), \
+         patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
+         patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
+         patch("app.follow_up.scheduler.get_or_create_conversation", return_value={"id": "conv-joao-1"}) as mock_goc, \
+         patch("app.follow_up.scheduler.save_message") as mock_save, \
+         patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
+         patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
+
+        from app.follow_up.scheduler import process_due_followups
+        await process_due_followups(now=datetime.now(timezone.utc))
+
+    # Conversa do canal do João é criada/reaproveitada para o lead
+    mock_goc.assert_called_once_with("lead-1", "ch-joao-1")
+    # Mensagem do template persistida na conversa do João, com wamid e texto real
+    assert mock_save.call_count == 1
+    _, kwargs = mock_save.call_args
+    assert kwargs["conversation_id"] == "conv-joao-1"
+    assert kwargs["wamid"] == "wamid.789"
+    assert kwargs["role"] == "assistant"
+    assert kwargs["content"].startswith("Olá, Pedro!")
+    mock_sent.assert_called_once_with("job-rescue-1")
+    mock_cancel.assert_not_called()
+
+
 # ─── schedule_handoff_rescue ────────────────────────────────────────────────
 
 def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
@@ -255,6 +310,8 @@ async def test_handoff_rescue_sends_template_when_lead_has_not_contacted_joao():
          patch("app.follow_up.scheduler.get_channel_by_provider_config", return_value=joao_channel), \
          patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
          patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
+         patch("app.follow_up.scheduler.get_or_create_conversation", return_value={"id": "conv-joao-1"}), \
+         patch("app.follow_up.scheduler.save_message"), \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
 
