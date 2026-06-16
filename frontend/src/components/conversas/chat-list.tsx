@@ -19,6 +19,9 @@ interface ChatListProps {
   onMarkRead?: (conversationId: string) => void;
   onTabChange: (tab: string) => void;
   onChannelChange: (channelId: string) => void;
+  listError?: boolean;
+  isRefreshing?: boolean;
+  onRetry?: () => void;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -95,6 +98,9 @@ export function ChatList({
   onMarkRead,
   onTabChange,
   onChannelChange,
+  listError,
+  isRefreshing,
+  onRetry,
 }: ChatListProps) {
   const [search, setSearch] = useState("");
 
@@ -152,6 +158,31 @@ export function ChatList({
 
   return (
     <div className="w-full md:w-[320px] bg-[#f0ede8] border-r border-[#dedbd6] flex flex-col h-full">
+      {/* Erro ao atualizar: mantém a lista anterior visível e oferece retry,
+          em vez de apagar tudo (a "tela em branco" relatada). */}
+      {listError && (
+        <div className="px-3 pt-3">
+          <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#f0c0a8] bg-[#fdf2ec] px-3 py-2 text-[12px] text-[#9a3412]">
+            <span>Erro ao atualizar. Exibindo a lista anterior.</span>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="font-semibold underline underline-offset-2 hover:text-[#7c2d12] flex-shrink-0"
+              >
+                Tentar de novo
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {isRefreshing && !listError && (
+        <div className="px-3 pt-3 flex items-center gap-2 text-[11px] text-[#7b7b78]">
+          <span className="w-3 h-3 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin flex-shrink-0" />
+          Atualizando conversas...
+        </div>
+      )}
+
       {/* Channel filter */}
       {channels.length > 1 && (
         <div className="px-3 pt-3 pb-2">

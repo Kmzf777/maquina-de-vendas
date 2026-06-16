@@ -13,6 +13,10 @@ export default function ConversasPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const deepLinkApplied = useRef(false);
+  // Cancelamento de fetch + guarda de sequência (latest-wins) para a lista de conversas.
+  // Sem isso, trocar de filtro rápido fazia respostas fora de ordem sobrescreverem a lista.
+  const fetchAbortRef = useRef<AbortController | null>(null);
+  const fetchSeqRef = useRef(0);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -21,6 +25,12 @@ export default function ConversasPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<string>("");
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
+  // Primeira carga das conversas concluída (mantém o spinner inicial cobrindo a lista).
+  const [initialConvDone, setInitialConvDone] = useState(false);
+  // Erro ao buscar conversas: mantém a lista anterior e sinaliza, em vez de apagar tudo.
+  const [listError, setListError] = useState(false);
+  // Indicador sutil enquanto a lista do novo filtro carrega.
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [togglingAi, setTogglingAi] = useState(false);
   const [togglingFollowup, setTogglingFollowup] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "chat" | "contact">("list");
@@ -45,34 +55,55 @@ export default function ConversasPage() {
   }, []);
 
   const fetchConversations = useCallback(async () => {
+    // Cancela a requisição anterior em voo e marca esta como a vigente. Sem isso,
+    // ao alternar filtros uma resposta antiga (mais lenta) sobrescrevia a lista
+    // correta — e um erro virava lista vazia (a "tela em branco" relatada).
+    fetchAbortRef.current?.abort();
+    const ac = new AbortController();
+    fetchAbortRef.current = ac;
+    const seq = ++fetchSeqRef.current;
     try {
       const url = selectedChannelId
         ? `/api/conversations?channel_id=${selectedChannelId}`
         : "/api/conversations";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        const raw = Array.isArray(data) ? data : [];
-        const base = applyRecentlyMarkedOverride(raw);
-        // Preserve in-flight toggles so realtime doesn't race against PATCH
-        const list = base.map((c) => {
-          let out = c;
-          const pendingAi = recentlyToggledAiRef.current.get(c.id);
-          if (pendingAi !== undefined) out = { ...out, leads: { ...(out.leads as any), ai_enabled: pendingAi } };
-          const pendingFollowup = recentlyToggledFollowupRef.current.get(c.id);
-          if (pendingFollowup !== undefined) out = { ...out, followup_enabled: pendingFollowup };
-          return out;
-        });
-        setConversations(list);
-        // Sync selectedConversation when its data changes
-        setSelectedConversation((prev: Conversation | null) => {
-          if (!prev) return prev;
-          const updated = list.find((c: Conversation) => c.id === prev.id);
-          return updated ?? prev;
-        });
+      const res = await fetch(url, { signal: ac.signal });
+      if (seq !== fetchSeqRef.current) return; // resposta obsoleta — ignora
+      if (!res.ok) {
+        // Erro real (401/500): NÃO apaga a lista — mantém o estado anterior e sinaliza.
+        setListError(true);
+        return;
       }
-    } catch {
-      // ignore
+      const data = await res.json();
+      if (seq !== fetchSeqRef.current) return;
+      const raw = Array.isArray(data) ? data : [];
+      const base = applyRecentlyMarkedOverride(raw);
+      // Preserve in-flight toggles so realtime doesn't race against PATCH
+      const list = base.map((c) => {
+        let out = c;
+        const pendingAi = recentlyToggledAiRef.current.get(c.id);
+        if (pendingAi !== undefined) out = { ...out, leads: { ...(out.leads as any), ai_enabled: pendingAi } };
+        const pendingFollowup = recentlyToggledFollowupRef.current.get(c.id);
+        if (pendingFollowup !== undefined) out = { ...out, followup_enabled: pendingFollowup };
+        return out;
+      });
+      setListError(false);
+      setConversations(list);
+      // Sync selectedConversation when its data changes
+      setSelectedConversation((prev: Conversation | null) => {
+        if (!prev) return prev;
+        const updated = list.find((c: Conversation) => c.id === prev.id);
+        return updated ?? prev;
+      });
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return; // cancelamento esperado — ignora
+      // Falha de rede: mantém a lista anterior e sinaliza, em vez de apagar.
+      if (seq === fetchSeqRef.current) setListError(true);
+    } finally {
+      // Só a requisição vigente controla os flags de UI (evita flicker de respostas obsoletas).
+      if (seq === fetchSeqRef.current) {
+        setIsRefreshing(false);
+        setInitialConvDone(true);
+      }
     }
   }, [selectedChannelId, applyRecentlyMarkedOverride]);
 
@@ -82,6 +113,8 @@ export default function ConversasPage() {
 
   useEffect(() => {
     fetchConversations();
+    // Aborta o fetch em voo ao trocar de filtro ou desmontar (evita race/leak).
+    return () => fetchAbortRef.current?.abort();
   }, [fetchConversations]);
 
   // Deep-link: pre-select conversation by lead_id from URL param
@@ -120,7 +153,9 @@ export default function ConversasPage() {
 
   async function loadData() {
     setLoading(true);
-    await Promise.all([fetchConversations(), fetchChannels(), fetchTags(), fetchLeadTags()]);
+    // Conversas são carregadas pelo effect dedicado (com cancelamento), não aqui —
+    // evita o duplo-fetch no mount. Aqui só os dados auxiliares.
+    await Promise.all([fetchChannels(), fetchTags(), fetchLeadTags()]);
     setLoading(false);
   }
 
@@ -189,6 +224,7 @@ export default function ConversasPage() {
     setSelectedChannelId(channelId);
     setSelectedConversation(null);
     setMobileView("list");
+    setIsRefreshing(true); // feedback até a lista do novo filtro chegar
   }
 
   function handleAgentUpdate(
@@ -362,7 +398,7 @@ export default function ConversasPage() {
     }
   }
 
-  if (loading) {
+  if (loading || !initialConvDone) {
     return (
       <div className="flex items-center justify-center h-full bg-[#faf9f6]">
         <div className="text-center">
@@ -388,6 +424,9 @@ export default function ConversasPage() {
           onMarkRead={handleMarkRead}
           onTabChange={setActiveTab}
           onChannelChange={handleChannelChange}
+          listError={listError}
+          isRefreshing={isRefreshing}
+          onRetry={fetchConversations}
         />
       </div>
 
@@ -445,6 +484,9 @@ export default function ConversasPage() {
           onMarkRead={handleMarkRead}
           onTabChange={setActiveTab}
           onChannelChange={handleChannelChange}
+          listError={listError}
+          isRefreshing={isRefreshing}
+          onRetry={fetchConversations}
         />
         {selectedConversation ? (
           <>
