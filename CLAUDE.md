@@ -4,18 +4,22 @@ Repositório com deploy crítico em Docker Swarm. Siga as regras abaixo sem exce
 
 ---
 
-## 🚀 1. Fluxo Git — Sem Pull Requests
+## 🚀 1. Fluxo Git — Sem Pull Requests (REGRA INEGOCIÁVEL)
 
-**NÃO usamos PRs.** Fluxo obrigatório:
+**NÃO USAMOS Pull Requests (PRs).** O fluxo de trabalho é exatamente:
 
 ```
-Codificar → Commitar (branch local opcional) → PARAR → Usuário testa no Dev → Push master (só com autorização)
+1. Criar branch.
+2. Implementar e testar.
+3. git pull origin master   (atualizar com a master remota)
+4. git push origin nome_da_branch:master   (subir DIRETO para produção)
 ```
 
-- **Branch local** para organizar o trabalho é recomendada, mas não obrigatória. O destino final é sempre `master` no remoto.
-- **Testar:** use as VS Code tasks (ex: `Run All Dev (CRM & Backend)`). Valide o comportamento manualmente antes de commitar.
-- **⛔ REGRA DE OURO:** Após commitar, **pare e avise o usuário.** Aguarde ele testar no dev. Só faça push após **autorização expressa** ("pode fazer o push", "faça isso", etc.).
-- **Push para master:** `git push origin master` ou `git push origin minha-branch:master`. O push aciona deploy de produção via GitHub Actions.
+- **Passo 1 — Branch:** crie uma branch local para organizar o trabalho. O destino final é sempre `master` no remoto.
+- **Passo 2 — Implementar e testar:** use as VS Code tasks (ex: `Run All Dev (CRM & Backend)`) e rode a suíte de testes. Valide o comportamento antes de commitar.
+- **Passo 3 — `git pull origin master`:** sempre atualize com a master remota antes de subir, para evitar divergência/conflito.
+- **Passo 4 — `git push origin nome_da_branch:master`:** sobe direto para produção. **O push aciona deploy de produção via GitHub Actions.**
+- **Autorização:** o push para `master` (passo 4) é feito mediante autorização do usuário — ele decide quando subir após validar.
 
 ---
 
