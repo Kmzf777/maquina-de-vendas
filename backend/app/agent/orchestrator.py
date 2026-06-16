@@ -176,6 +176,20 @@ def _is_gemini_model(model: str) -> bool:
     return model.startswith("gemini-")
 
 
+def _gemini_thinking_off(model: str) -> dict:
+    """Kwargs que desligam o 'thinking' do Gemini 2.5 (flash/flash-lite) nas chamadas pós-tool.
+
+    Causa raiz do Bug 2: gemini-2.5-flash gasta o budget de saída pensando e devolve
+    completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A doc oficial
+    (OpenAI-compat) permite `reasoning_effort="none"` para DESLIGAR o thinking nos modelos
+    2.5 — mas NÃO em 2.5-pro nem 3.x, que rejeitam o valor. Por isso retornamos {} nesses
+    casos (e para modelos OpenAI), evitando um 400 em produção.
+    """
+    if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
+        return {"reasoning_effort": "none"}
+    return {}
+
+
 def _get_openai() -> AsyncOpenAI:
     global _openai_client
     if _openai_client is None:
@@ -409,6 +423,7 @@ async def run_agent(
                         tools=None,
                         temperature=0.7,
                         max_tokens=MAX_OUTPUT_TOKENS,
+                        **_gemini_thinking_off(model),
                     )
                     message = fallback.choices[0].message
                 except Exception as _exc:
@@ -481,12 +496,15 @@ async def run_agent(
                     lead["metadata"] = updated_meta
                 break
 
+        # Chamada PÓS-TOOL: desliga o thinking do Gemini 2.5 — é aqui que o modelo
+        # gastava o budget pensando e devolvia completion_tokens=0 (Bug 2).
         response = await _create_with_retry(_get_client(model),
             model=model,
             messages=messages,
             tools=tools if tools else None,
             temperature=0.7,
             max_tokens=MAX_OUTPUT_TOKENS,
+            **_gemini_thinking_off(model),
         )
         if response.usage:
             track_token_usage(
@@ -516,6 +534,7 @@ async def run_agent(
                 tools=None,
                 temperature=0.7,
                 max_tokens=MAX_OUTPUT_TOKENS,
+                **_gemini_thinking_off(model),
             )
             if fallback_resp.usage:
                 track_token_usage(
