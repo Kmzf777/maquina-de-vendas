@@ -218,7 +218,7 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
         await _process_lp_welcome(job, now)
 
     mock_provider.send_template.assert_awaited_once_with(
-        "5534999999999", "boas_vindas", language_code="pt_BR"
+        "5534999999999", "boas_vindas", components=None, language_code="pt_BR"
     )
     mock_mark_sent.assert_called_once_with("job-lp-1")
 
