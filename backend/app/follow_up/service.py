@@ -196,7 +196,7 @@ def schedule_handoff_rescue(
             "lead_name": lead_name,
             "joao_phone_number_id": "1049315514934778",
             "template_name": "automacao_valeria_to_joao",
-            "language_code": "en_US",
+            "language_code": "pt_BR",
         },
     }
     try:
