@@ -127,9 +127,11 @@ async def test_run_agent_fallback_when_empty_after_tool_iterations():
 
 
 @pytest.mark.asyncio
-async def test_run_agent_no_fallback_when_no_tool_iterations():
-    """Fallback is NOT triggered when there were no tool iterations (empty = genuinely empty)."""
-    from app.agent.orchestrator import run_agent
+async def test_run_agent_empty_no_tool_uses_safety_net_without_extra_llm_call():
+    """Empty turn sem tool iterations: NENHUMA chamada LLM extra de fallback é feita, mas a
+    rede de segurança final (atomicidade) garante que o lead nunca recebe vazio — devolve o
+    stall genérico em vez de "" (regressão Lanny)."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE
 
     msg_empty = MagicMock()
     msg_empty.tool_calls = None
@@ -160,8 +162,8 @@ async def test_run_agent_no_fallback_when_no_tool_iterations():
          patch("app.agent.orchestrator._get_client", return_value=mock_client):
         result = await run_agent(conversation, "ola")
 
-    assert result == ""
-    assert call_count["n"] == 1, "Sem tool iterations, não deve fazer chamada extra de fallback"
+    assert result == _SAFETY_FALLBACK_MESSAGE
+    assert call_count["n"] == 1, "Sem tool iterations, não deve fazer chamada extra de LLM (só o helper puro)"
 
 
 # ---------------------------------------------------------------------------

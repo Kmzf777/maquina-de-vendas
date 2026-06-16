@@ -46,12 +46,45 @@ _SAFETY_FALLBACK_MEDIA = (
 
 _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
 
+# Frases de avanço contextuais por stage, usadas quando a IA fica MUDA logo após um
+# mudar_stage (gemini-2.5-flash devolvendo completion_tokens=0 — Bug 2: Elisangele,
+# Ademilson, Renato). A transição é silenciosa por design, então o lead não pode ficar
+# sem resposta: emitimos uma pergunta coerente com o novo stage no lugar do genérico
+# "verifico internamente". `secretaria` fica de fora de propósito (é o stage de entrada,
+# não um avanço comercial) → cai no fallback genérico.
+_STAGE_TRANSITION_FALLBACKS: dict[str, str] = {
+    "atacado": (
+        "Pelo que você me contou, faz todo sentido a gente falar de condições para o seu "
+        "negócio. Você procura o café para revender ou para servir no seu estabelecimento?"
+    ),
+    "private_label": (
+        "Que ideia bacana! Você está pensando em ter o café com a sua própria marca? "
+        "Me conta um pouco do que tem em mente."
+    ),
+    "exportacao": (
+        "Mercado externo é um universo e tanto! Você já tem algum país de destino em mente "
+        "para levar o café?"
+    ),
+    "consumo": (
+        "Show! Pra eu te indicar o ideal pro seu dia a dia, você prefere o café em grãos "
+        "ou já moído?"
+    ),
+}
 
-def _empty_fallback_text(media_tool_used: bool) -> str:
-    """Return the appropriate safety fallback message for the empty-after-tools case.
+
+def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | None = None) -> str:
+    """Return the appropriate safety fallback message for the empty-response case.
+
+    Priority (mais específico → mais genérico):
+      1. Pergunta de avanço contextual, quando houve um mudar_stage neste turno — o lead
+         nunca pode ficar mudo logo após uma transição silenciosa de funil.
+      2. Pergunta de fechamento de mídia, quando uma tool de foto foi usada.
+      3. Stall genérico.
 
     Extracted as a pure helper so it can be unit-tested without running run_agent.
     """
+    if transitioned_to_stage and transitioned_to_stage in _STAGE_TRANSITION_FALLBACKS:
+        return _STAGE_TRANSITION_FALLBACKS[transitioned_to_stage]
     return _SAFETY_FALLBACK_MEDIA if media_tool_used else _SAFETY_FALLBACK_MESSAGE
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
@@ -360,6 +393,7 @@ async def run_agent(
 
     tool_iterations = 0
     media_tool_used = False
+    transitioned_to_stage: str | None = None
     while message.tool_calls:
         tool_iterations += 1
         if tool_iterations > MAX_TOOL_ITERATIONS:
@@ -436,6 +470,7 @@ async def run_agent(
                     break
                 old_stage = stage
                 stage = new_stage
+                transitioned_to_stage = new_stage
                 tools = get_tools_for_stage(stage)
                 system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
                 messages[0] = {"role": "system", "content": system_prompt}
@@ -505,10 +540,17 @@ async def run_agent(
                 conversation_id, _exc,
             )
 
-        # Rede de segurança: nunca deixar o lead sem resposta após tool calls.
-        # Escolhe mensagem contextual: se foi mídia, pergunta de avanço; senão, genérica.
-        if not assistant_text:
-            assistant_text = _empty_fallback_text(media_tool_used)
+    # Rede de segurança FINAL (atomicidade — "nunca deixar o lead no vácuo"): cobre tanto
+    # o caso pós-tool (acima) quanto o turno normal vazio sem tool (ex: input vazio/figurinha
+    # → completion_tokens=0, regressão observada: Lanny). Escolhe a mensagem mais contextual:
+    # transição de stage > mídia > genérico.
+    if not assistant_text:
+        assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage)
+        logger.error(
+            "[AGENT EMPTY] resposta final vazia para conv %s (tool_iterations=%d) — "
+            "usando fallback de segurança (stage=%s, media=%s)",
+            conversation_id, tool_iterations, transitioned_to_stage, media_tool_used,
+        )
 
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
