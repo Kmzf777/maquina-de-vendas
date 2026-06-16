@@ -637,6 +637,8 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
                 sent_by="agent",
                 conversation_id=conversation_id,
                 wamid=bubble_wamid,
+                # ai_reengage força AI_REENGAGE_PROFILE_ID → persona sempre outbound.
+                agent_persona="valeria_outbound",
             )
         except Exception as exc:
             logger.error("[AI_REENGAGE] falha ao salvar bubble conv=%s: %s", conversation_id, exc)

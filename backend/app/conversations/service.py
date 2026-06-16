@@ -156,6 +156,7 @@ def save_message(
     media_mime: str | None = None,
     metadata: dict | None = None,
     quoted_wamid: str | None = None,
+    agent_persona: str | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
@@ -166,6 +167,9 @@ def save_message(
         "stage": stage,
         "sent_by": sent_by,
     }
+    # Rastreabilidade: persona (prompt_key) que gerou a resposta. NULL p/ não-persona.
+    if agent_persona is not None:
+        msg["agent_persona"] = agent_persona
     if media_url is not None:
         msg["media_url"] = media_url
     if message_type is not None:

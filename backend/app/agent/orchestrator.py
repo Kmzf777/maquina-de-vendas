@@ -203,6 +203,22 @@ def _resolve_prompt_key(profile: dict | None) -> str:
     return profile.get("prompt_key", "valeria_inbound")
 
 
+def resolve_prompt_key(agent_profile_id: str | None) -> str:
+    """Resolve o prompt_key (persona) a partir de um agent_profile_id.
+
+    Usado para rastreabilidade (coluna messages.agent_persona): permite ao caller
+    saber qual persona run_agent usará/usou sem alterar o retorno de run_agent.
+    Fail-open: default valeria_inbound em qualquer falha de fetch.
+    """
+    profile = None
+    if agent_profile_id:
+        try:
+            profile = get_agent_profile(agent_profile_id)
+        except Exception:
+            logger.warning("resolve_prompt_key: falha ao buscar profile %s", agent_profile_id, exc_info=True)
+    return _resolve_prompt_key(profile)
+
+
 def build_system_prompt(
     lead: dict,
     stage: str,

@@ -15,7 +15,7 @@ from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
     update_conversation, save_message,
 )
-from app.agent.orchestrator import run_agent
+from app.agent.orchestrator import run_agent, resolve_prompt_key
 from app.humanizer.splitter import split_into_bubbles
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
@@ -429,6 +429,8 @@ async def process_buffered_messages(
     # Resolve agent profile: conversation takes priority over channel default
     # None means no explicit profile — orchestrator defaults to valeria_inbound
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
+    # Persona (prompt_key) usada nesta resposta — persistida para rastreabilidade.
+    agent_persona = resolve_prompt_key(agent_profile_id)
 
     # Frustration guardrail: bypass LLM for unambiguous desistência / explicit human requests.
     if await _check_frustration_guardrail(resolved_text, lead["id"], phone, conversation["id"]):
@@ -518,6 +520,7 @@ async def process_buffered_messages(
                     bubble, conversation.get("stage"),
                     sent_by="agent",
                     wamid=bubble_wamid,
+                    agent_persona=agent_persona,
                 )
             except Exception as e:
                 logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
