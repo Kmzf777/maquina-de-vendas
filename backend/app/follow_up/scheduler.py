@@ -11,7 +11,7 @@ from app.leads.service import save_message
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
-from app.whatsapp.meta import MetaCloudClient
+from app.whatsapp.meta import MetaCloudClient, extract_wamid
 
 logger = logging.getLogger(__name__)
 
@@ -328,7 +328,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
         # Envia via WhatsApp
         try:
             provider = get_provider(channel)
-            await provider.send_text(lead["phone"], message)
+            send_result = await provider.send_text(lead["phone"], message)
         except Exception as e:
             logger.error(
                 f"[FOLLOWUP] Falha ao enviar seq={sequence} lead={lead['phone']}: {e}",
@@ -346,6 +346,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
                 stage=conversation.get("stage"),
                 sent_by="followup",
                 conversation_id=conversation_id,
+                wamid=extract_wamid(send_result),
             )
         except Exception as e:
             logger.error(f"[FOLLOWUP] Falha ao salvar mensagem seq={sequence}: {e}")
@@ -617,14 +618,16 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
 
     provider = get_provider(channel)
     bubbles = split_into_bubbles(response)
+    sent_wamids: list[str | None] = []
     for bubble in bubbles:
         try:
-            await provider.send_text(phone, bubble)
+            send_result = await provider.send_text(phone, bubble)
+            sent_wamids.append(extract_wamid(send_result))
         except Exception as exc:
             logger.error("[AI_REENGAGE] falha ao enviar bubble conv=%s: %s", conversation_id, exc, exc_info=True)
             return  # não marca sent → retry no próximo tick
 
-    for bubble in bubbles:
+    for bubble, bubble_wamid in zip(bubbles, sent_wamids):
         try:
             save_message(
                 lead_id=job["lead_id"],
@@ -633,6 +636,7 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
                 stage=conversation.get("stage"),
                 sent_by="agent",
                 conversation_id=conversation_id,
+                wamid=bubble_wamid,
             )
         except Exception as exc:
             logger.error("[AI_REENGAGE] falha ao salvar bubble conv=%s: %s", conversation_id, exc)

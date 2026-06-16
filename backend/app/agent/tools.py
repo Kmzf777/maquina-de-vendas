@@ -8,6 +8,7 @@ from typing import Any
 from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history, apply_optout_side_effects
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
+from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_for_lead
 from app.follow_up.service import schedule_handoff_rescue
 
@@ -364,8 +365,8 @@ async def execute_tool(
         channel = get_channel_for_lead(lead_id)
         if channel:
             try:
-                await get_provider(channel).send_text(phone, _HANDOFF_MSG)
-                save_message(lead_id, "assistant", _HANDOFF_MSG, sent_by="handoff", conversation_id=conversation_id)
+                send_result = await get_provider(channel).send_text(phone, _HANDOFF_MSG)
+                save_message(lead_id, "assistant", _HANDOFF_MSG, sent_by="handoff", conversation_id=conversation_id, wamid=extract_wamid(send_result))
             except Exception as exc:
                 logger.error(
                     "encaminhar_humano: falha ao enviar mensagem de handoff para lead %s: %s",

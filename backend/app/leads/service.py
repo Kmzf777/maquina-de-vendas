@@ -217,7 +217,7 @@ def purge_dev_lead(phone: str) -> dict:
     return {"purged": True, "lead_id": lead_id, "phone": normalized}
 
 
-def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent", conversation_id: str | None = None) -> dict[str, Any]:
+def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent", conversation_id: str | None = None, wamid: str | None = None) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
         "lead_id": lead_id,
@@ -228,6 +228,11 @@ def save_message(lead_id: str, role: str, content: str, stage: str | None = None
     }
     if conversation_id:
         msg["conversation_id"] = conversation_id
+    # wamid da Meta: necessário para que respostas (reply/citação) a esta mensagem
+    # sejam resolvíveis. Sem ele, o frontend mostra "Mensagem original não disponível".
+    if wamid is not None:
+        msg["wamid"] = wamid
+        msg["delivery_status"] = "sent"
     result = sb.table("messages").insert(msg).execute()
     return result.data[0]
 

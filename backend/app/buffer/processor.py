@@ -18,6 +18,7 @@ from app.conversations.service import (
 from app.agent.orchestrator import run_agent
 from app.humanizer.splitter import split_into_bubbles
 from app.whatsapp.registry import get_provider
+from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
@@ -495,18 +496,20 @@ async def process_buffered_messages(
     bubbles = split_into_bubbles(response)
     delays = _bubble_delays(bubbles, is_rehearsal)
     send_ok = True
+    sent_wamids: list[str | None] = []
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:
             await asyncio.sleep(delay)
         try:
-            await provider.send_text(phone, bubble)
+            send_result = await provider.send_text(phone, bubble)
+            sent_wamids.append(extract_wamid(send_result))
         except Exception as e:
             logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
             send_ok = False
             break
 
     if send_ok:
-        for bubble in bubbles:
+        for bubble, bubble_wamid in zip(bubbles, sent_wamids):
             try:
                 await _save_with_retry(
                     f"save assistant msg {phone}",
@@ -514,6 +517,7 @@ async def process_buffered_messages(
                     conversation["id"], lead["id"], "assistant",
                     bubble, conversation.get("stage"),
                     sent_by="agent",
+                    wamid=bubble_wamid,
                 )
             except Exception as e:
                 logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)

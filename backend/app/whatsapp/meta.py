@@ -10,6 +10,25 @@ META_API_BASE = "https://graph.facebook.com"
 logger = logging.getLogger(__name__)
 
 
+def extract_wamid(send_result: dict | None) -> str | None:
+    """Extrai o wamid da resposta de send_text/send_template da Meta.
+
+    A Meta retorna {"messages": [{"id": "wamid...."}], ...}. Devolve None para
+    qualquer outro formato (providers Mock/Evolution, envelopes de erro) para que
+    o chamador possa persistir wamid=None sem quebrar. Sem isso, citações (reply)
+    a mensagens da Valéria ficam irresolvíveis no frontend.
+    """
+    if not isinstance(send_result, dict):
+        return None
+    messages = send_result.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return None
+    first = messages[0]
+    if not isinstance(first, dict):
+        return None
+    return first.get("id")
+
+
 class MetaCloudClient(WhatsAppProvider):
     def __init__(self, config: dict):
         self.phone_number_id = config.get("phone_number_id") or ""
