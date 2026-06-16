@@ -21,6 +21,11 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 _BILLING_ERROR_CODE = 131042
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 
+# agent_profile "ValerIA - Outbound / Recuperacao" (prompt_key=valeria_outbound).
+# Todo job ai_reengage é, por definição, uma recuperação outbound — força esta
+# persona explicitamente (agent_profile_id=None resolveria para valeria_inbound).
+AI_REENGAGE_PROFILE_ID = "b9930820-2c7e-4f1a-998f-f9531ed12c95"
+
 # Número/template do João Bras usados para reabordar o lead pelo número dele.
 # Mesma identidade do resgate de handoff (_process_handoff_rescue), centralizada aqui.
 JOAO_PHONE_NUMBER_ID = "1049315514934778"
@@ -585,14 +590,15 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
         return
     orphan_text = last_inbound.data[0]["content"]
 
-    # agent_profile_id None → orchestrator usa valeria_inbound (o desejado p/ inbound).
+    # Força a persona valeria_outbound: ai_reengage é sempre recuperação outbound.
+    # agent_profile_id=None resolveria para valeria_inbound (persona errada).
     conversation["leads"] = lead
     lead_context = lead.get("metadata") or {}
     try:
         response = await run_agent(
             conversation, orphan_text,
             lead_context=lead_context,
-            agent_profile_id=None,
+            agent_profile_id=AI_REENGAGE_PROFILE_ID,
         )
     except Exception as exc:
         logger.error("[AI_REENGAGE] run_agent falhou conv=%s: %s", conversation_id, exc, exc_info=True)
