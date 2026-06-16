@@ -16,6 +16,12 @@ _BUSINESS_START = time(9, 0)
 _BUSINESS_END = time(16, 0)
 
 
+def is_within_business_window(target: datetime) -> bool:
+    """True se `target` (UTC) cai na janela comercial 09h-16h, seg-sex, America/Sao_Paulo."""
+    local = target.astimezone(_SP_TZ)
+    return local.weekday() < 5 and _BUSINESS_START <= local.time() < _BUSINESS_END
+
+
 def _clamp_to_business_window(target: datetime) -> datetime:
     """Garante que `target` (UTC) caia na janela comercial 09h-16h, seg-sex,
     America/Sao_Paulo. Se estiver fora, empurra para o proximo horario valido
@@ -24,7 +30,7 @@ def _clamp_to_business_window(target: datetime) -> datetime:
     """
     local = target.astimezone(_SP_TZ)
 
-    if local.weekday() < 5 and _BUSINESS_START <= local.time() < _BUSINESS_END:
+    if is_within_business_window(target):
         return target
 
     if local.weekday() < 5 and local.time() < _BUSINESS_START:
@@ -205,11 +211,16 @@ def schedule_handoff_rescue(
     channel_id: str,
     delay_minutes: int = 15,
     lead_name: str = "",
-) -> None:
-    """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes."""
+) -> datetime | None:
+    """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes.
+
+    Retorna o `fire_at` (UTC) efetivamente agendado — clampado para a janela comercial —
+    ou None quando o agendamento é ignorado (REHEARSAL_MODE). O retorno permite ao chamador
+    informar ao lead quando o vendedor entrará em contato.
+    """
     if os.environ.get("REHEARSAL_MODE") == "true":
         logger.info("[HANDOFF_RESCUE] REHEARSAL_MODE ativo — rescue ignorado")
-        return
+        return None
     sb = get_supabase()
     now = datetime.now(timezone.utc)
     fire_at = _clamp_to_business_window(now + timedelta(minutes=delay_minutes))
@@ -240,8 +251,9 @@ def schedule_handoff_rescue(
             f"Falha ao agendar job de resgate para lead {lead_id}"
         ) from exc
     logger.info(
-        f"[HANDOFF_RESCUE] Agendado em {delay_minutes}min lead={lead_id} conversation={conversation_id}"
+        f"[HANDOFF_RESCUE] Agendado em {delay_minutes}min lead={lead_id} conversation={conversation_id} fire_at={fire_at.isoformat()}"
     )
+    return fire_at
 
 
 def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:

@@ -21,6 +21,52 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 _BILLING_ERROR_CODE = 131042
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 
+# Número/template do João Bras usados para reabordar o lead pelo número dele.
+# Mesma identidade do resgate de handoff (_process_handoff_rescue), centralizada aqui.
+JOAO_PHONE_NUMBER_ID = "1049315514934778"
+JOAO_TEMPLATE_NAME = "automacao_valeria_to_joao"
+JOAO_TEMPLATE_LANG = "pt_BR"
+
+
+async def send_joao_handoff_template(lead_phone: str, lead_name: str = "") -> bool:
+    """Dispara AGORA o template de reabordagem pelo número do João para o lead.
+
+    Usado pelo fluxo `retomar_contato_vendedor` quando estamos dentro do horário
+    comercial — o envio é síncrono para que a Valéria possa confirmar ao lead que
+    "o João acabou de chamar". Retorna True em sucesso, False em qualquer falha.
+    Nunca levanta: o chamador decide o fallback (reagendamento).
+    """
+    if not lead_phone:
+        logger.error("[JOAO_REENGAGE] lead_phone vazio — disparo abortado")
+        return False
+
+    joao_channel = get_channel_by_provider_config("phone_number_id", JOAO_PHONE_NUMBER_ID, "meta_cloud")
+    if not joao_channel:
+        logger.error(
+            "[JOAO_REENGAGE] Canal do João (phone_number_id=%s) não encontrado — disparo abortado",
+            JOAO_PHONE_NUMBER_ID,
+        )
+        return False
+
+    first_name = lead_name.split()[0] if lead_name else ""
+    components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+
+    try:
+        provider = MetaCloudClient(joao_channel["provider_config"])
+        await provider.send_template(
+            lead_phone, JOAO_TEMPLATE_NAME, components=components, language_code=JOAO_TEMPLATE_LANG
+        )
+        logger.info(
+            "[JOAO_REENGAGE] Template '%s' (%s) disparado AGORA para %s",
+            JOAO_TEMPLATE_NAME, JOAO_TEMPLATE_LANG, lead_phone,
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "[JOAO_REENGAGE] Falha ao disparar template para %s: %s", lead_phone, exc, exc_info=True
+        )
+        return False
+
 
 async def check_meta_channel_health() -> None:
     """Roda a cada hora: verifica canais Meta via API e escaneia logs por erros de billing."""
