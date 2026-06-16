@@ -1,13 +1,84 @@
 """Tests for handoff rescue: schedule_handoff_rescue and _process_handoff_rescue."""
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch, AsyncMock
+from zoneinfo import ZoneInfo
 import pytest
+
+SP_TZ = ZoneInfo("America/Sao_Paulo")
+
+
+# ─── _clamp_to_business_window ──────────────────────────────────────────────
+
+def test_clamp_to_business_window_keeps_target_inside_window_on_weekday():
+    """Segunda-feira 12:00 local (dentro de [09:00,16:00)) -> inalterado."""
+    from app.follow_up.service import _clamp_to_business_window
+
+    target = datetime(2026, 5, 25, 12, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+    result = _clamp_to_business_window(target)
+
+    assert result == target
+
+
+def test_clamp_to_business_window_moves_to_same_day_09h_when_before_window():
+    """Segunda-feira 07:30 local (antes de 09:00) -> mesmo dia 09:00 local."""
+    from app.follow_up.service import _clamp_to_business_window
+
+    target = datetime(2026, 5, 25, 7, 30, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+    expected = datetime(2026, 5, 25, 9, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+
+    result = _clamp_to_business_window(target)
+
+    assert result == expected
+
+
+def test_clamp_to_business_window_moves_to_next_day_09h_when_after_window():
+    """Segunda-feira 17:00 local (>= 16:00) -> dia seguinte (terca) 09:00 local."""
+    from app.follow_up.service import _clamp_to_business_window
+
+    target = datetime(2026, 5, 25, 17, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+    expected = datetime(2026, 5, 26, 9, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+
+    result = _clamp_to_business_window(target)
+
+    assert result == expected
+    assert result.astimezone(SP_TZ).weekday() == 1  # terca-feira (dia util)
+
+
+def test_clamp_to_business_window_friday_after_16h_moves_to_monday_09h():
+    """Sexta-feira 18:00 local (>= 16:00) -> segunda-feira seguinte 09:00 local."""
+    from app.follow_up.service import _clamp_to_business_window
+
+    target = datetime(2026, 5, 22, 18, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+    expected = datetime(2026, 5, 25, 9, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+
+    result = _clamp_to_business_window(target)
+
+    assert result == expected
+    assert result.astimezone(SP_TZ).weekday() == 0  # segunda-feira
+
+
+def test_clamp_to_business_window_saturday_moves_to_monday_09h():
+    """Sabado 10:00 local (fim de semana) -> segunda-feira seguinte 09:00 local."""
+    from app.follow_up.service import _clamp_to_business_window
+
+    target = datetime(2026, 5, 23, 10, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+    expected = datetime(2026, 5, 25, 9, 0, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
+
+    result = _clamp_to_business_window(target)
+
+    assert result == expected
+    assert result.astimezone(SP_TZ).weekday() == 0  # segunda-feira
 
 
 # ─── schedule_handoff_rescue ────────────────────────────────────────────────
 
 def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
-    """Insere job com job_type='handoff_rescue', sequence=1, fire_at=now+15min."""
+    """Insere job com job_type='handoff_rescue', sequence=1, fire_at=now+15min.
+
+    now = 2026-05-25 15:00 UTC = segunda-feira 12:00 America/Sao_Paulo,
+    dentro da janela comercial [09:00,16:00) — fire_at (+15min) permanece
+    dentro da janela e nao e clampado (ver _clamp_to_business_window).
+    """
     from app.follow_up.service import schedule_handoff_rescue
 
     inserted = []
@@ -19,7 +90,7 @@ def test_schedule_handoff_rescue_inserts_job_with_correct_fields():
     mock_sb = MagicMock()
     mock_sb.table.return_value.insert = mock_insert
 
-    now = datetime(2026, 5, 23, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 25, 15, 0, 0, tzinfo=timezone.utc)
 
     with patch("app.follow_up.service.get_supabase", return_value=mock_sb), \
          patch("app.follow_up.service.datetime") as mock_dt:

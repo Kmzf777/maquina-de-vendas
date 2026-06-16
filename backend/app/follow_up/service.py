@@ -1,7 +1,8 @@
 import logging
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
@@ -9,6 +10,35 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
+
+_SP_TZ = ZoneInfo("America/Sao_Paulo")
+_BUSINESS_START = time(9, 0)
+_BUSINESS_END = time(16, 0)
+
+
+def _clamp_to_business_window(target: datetime) -> datetime:
+    """Garante que `target` (UTC) caia na janela comercial 09h-16h, seg-sex,
+    America/Sao_Paulo. Se estiver fora, empurra para o proximo horario valido
+    (mesmo dia 09h se for antes da janela; proximo dia util 09h se for depois
+    da janela ou fim de semana).
+    """
+    local = target.astimezone(_SP_TZ)
+
+    if local.weekday() < 5 and _BUSINESS_START <= local.time() < _BUSINESS_END:
+        return target
+
+    if local.weekday() < 5 and local.time() < _BUSINESS_START:
+        clamped_local = local.replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
+        return clamped_local.astimezone(timezone.utc)
+
+    # Fora da janela (>= 16h) ou fim de semana: avanca para o proximo dia util as 09h.
+    next_day = local + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    clamped_local = next_day.replace(hour=9, minute=0, second=0, microsecond=0)
+    return clamped_local.astimezone(timezone.utc)
 
 
 def schedule_followup(
@@ -182,12 +212,13 @@ def schedule_handoff_rescue(
         return
     sb = get_supabase()
     now = datetime.now(timezone.utc)
+    fire_at = _clamp_to_business_window(now + timedelta(minutes=delay_minutes))
     job = {
         "conversation_id": conversation_id,
         "lead_id": lead_id,
         "channel_id": channel_id,
         "sequence": 1,
-        "fire_at": (now + timedelta(minutes=delay_minutes)).isoformat(),
+        "fire_at": fire_at.isoformat(),
         "status": "pending",
         "env_tag": _ENV_TAG,
         "job_type": "handoff_rescue",
