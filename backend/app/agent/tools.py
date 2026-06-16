@@ -8,6 +8,7 @@ from typing import Any
 from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
+    resolve_send_target,
 )
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
@@ -405,8 +406,10 @@ async def execute_tool(
             )
         channel = get_channel_for_lead(lead_id)
         if channel:
+            # Destino entregável: wa_id real do lead quando houver, senão phone (evita 131026).
+            send_to = resolve_send_target(lead, phone)
             try:
-                send_result = await get_provider(channel).send_text(phone, _HANDOFF_MSG)
+                send_result = await get_provider(channel).send_text(send_to, _HANDOFF_MSG)
                 save_message(lead_id, "assistant", _HANDOFF_MSG, sent_by="handoff", conversation_id=conversation_id, wamid=extract_wamid(send_result))
             except Exception as exc:
                 logger.error(
@@ -598,6 +601,8 @@ async def _retomar_contato_vendedor(
     motivo = args.get("motivo", "lead pediu para retomar o contato com o vendedor")
     lead = get_lead(lead_id) or {}
     lead_name = lead.get("name") or ""
+    # Destino entregável (wa_id real quando houver) para o disparo do João — evita 131026.
+    send_to = resolve_send_target(lead, phone)
 
     # (c) Desativa a IA imediatamente — a partir daqui a Valeria nao responde mais.
     try:
@@ -624,7 +629,7 @@ async def _retomar_contato_vendedor(
 
     # (a) Dentro do horario comercial: dispara AGORA, sincrono.
     if is_within_business_window(now):
-        sent = await send_joao_handoff_template(phone, lead_name, lead_id=lead_id)
+        sent = await send_joao_handoff_template(send_to, lead_name, lead_id=lead_id)
         if sent:
             save_message(
                 lead_id, "system",
@@ -637,7 +642,7 @@ async def _retomar_contato_vendedor(
                 "NAO envie mais nenhuma mensagem depois desta."
             )
         # Falha no disparo imediato → reagenda como rede de seguranca (proximo tick do worker).
-        fire_at = _safe_schedule_reengage(lead_id, phone, conversation_id, lead_name)
+        fire_at = _safe_schedule_reengage(lead_id, send_to, conversation_id, lead_name)
         save_message(
             lead_id, "system",
             f"[retomar_contato_vendedor] disparo imediato falhou — reagendado — {motivo}",

@@ -266,7 +266,7 @@ def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
             sb.table("follow_up_jobs")
             .select(
                 "*, "
-                "leads!inner(id, phone, name, last_customer_message_at), "
+                "leads!inner(id, phone, name, last_customer_message_at, wa_id), "
                 "channels!inner(id, name, provider, provider_config, mode), "
                 "conversations!inner(id, stage, followup_enabled)"
             )

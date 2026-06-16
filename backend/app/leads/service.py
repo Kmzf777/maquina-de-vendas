@@ -170,6 +170,22 @@ def update_lead(lead_id: str, **fields) -> dict[str, Any]:
     return result.data[0]
 
 
+def resolve_send_target(lead: dict[str, Any] | None, fallback: str | None = None) -> str:
+    """Endereço WhatsApp ENTREGÁVEL do lead para envio.
+
+    Prefere `wa_id` (o `from` real que a Meta entregou no inbound) sobre `phone`
+    (normalizado, que injeta o 9º dígito BR). Alguns números estão no WhatsApp SEM o 9,
+    então enviar para o phone normalizado falha com Meta 131026 "Message Undeliverable" —
+    o `wa_id` é o endereço que a Meta de fato entrega. NULL/ausente → cai para phone, depois
+    para `fallback`. Ver migration 20260616_leads_wa_id.sql.
+    """
+    if lead:
+        target = lead.get("wa_id") or lead.get("phone")
+        if target:
+            return target
+    return fallback or ""
+
+
 def append_lead_observation(lead_id: str, text: str) -> None:
     """Anexa uma linha de observacao (timestamped pelo chamador) ao campo `notes` do lead.
 

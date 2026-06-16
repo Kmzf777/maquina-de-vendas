@@ -10,11 +10,11 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response
 from app.webhook.meta_parser import parse_meta_webhook_payload, extract_phone_number_id
 from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
-from app.leads.service import get_or_create_lead, normalize_phone, reset_lead, purge_dev_lead
+from app.leads.service import get_or_create_lead, normalize_phone, reset_lead, purge_dev_lead, update_lead
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, run_with_retry
 from app.meta_audit import log_inbound
 
 logger = logging.getLogger(__name__)
@@ -37,21 +37,34 @@ def _register_lead(from_number: str, push_name: str | None) -> None:
     Called as a BackgroundTask so it never delays the webhook response.
     Runs before the buffer flushes, guaranteeing CRM registration even if
     the buffer fails (e.g. backend restart during buffering).
+
+    Também captura o `wa_id` REAL: `from_number` é o `messages[].from` cru da Meta —
+    o endereço que a Meta de fato entrega. Guardamos no lead para usar como destino de
+    envio (evita 131026 em números BR sem o 9º dígito). A identidade do lead continua
+    pelo phone normalizado; o wa_id é só o endereço de entrega.
     """
     try:
-        get_or_create_lead(from_number, name=push_name, channel="whatsapp")
+        lead = get_or_create_lead(from_number, name=push_name, channel="whatsapp")
     except Exception as exc:
         logger.warning("Failed to register lead for %s: %s", from_number, exc)
+        return
+    try:
+        if lead and from_number and lead.get("wa_id") != from_number:
+            update_lead(lead["id"], wa_id=from_number)
+    except Exception as exc:
+        logger.warning("Failed to capture wa_id=%s for lead %s: %s", from_number, lead.get("id"), exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:
     """Update last_customer_message_at so the 24h window status stays current."""
     normalized = normalize_phone(phone)
     try:
-        sb = get_supabase()
-        sb.table("leads").update(
-            {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("phone", normalized).execute()
+        run_with_retry(
+            lambda: get_supabase().table("leads").update(
+                {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("phone", normalized).execute(),
+            label="last_customer_message_at",
+        )
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {normalized}: {e}")
 

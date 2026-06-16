@@ -10,7 +10,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from app.config import settings
-from app.leads.service import get_or_create_lead
+from app.leads.service import get_or_create_lead, resolve_send_target
 from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
     update_conversation, save_message,
@@ -26,7 +26,7 @@ from app.agent.tools import pop_deferred_media, pop_interest_marked
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -367,25 +367,33 @@ async def process_buffered_messages(
 
     # Track last inbound message time for WhatsApp 24h window enforcement
     try:
-        sb = get_supabase()
-        sb.table("leads").update(
-            {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("id", lead["id"]).execute()
+        run_with_retry(
+            lambda: get_supabase().table("leads").update(
+                {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("id", lead["id"]).execute(),
+            label="last_customer_message_at",
+        )
     except Exception as e:
         logger.warning(f"Failed to update last_customer_message_at for {lead['id']}: {e}")
 
     # Incrementa contador de não-lidas para o vendedor (resetado quando o vendedor responde)
     try:
-        sb = get_supabase()
-        current = (
-            sb.table("conversations")
+        current = run_with_retry(
+            lambda: get_supabase()
+            .table("conversations")
             .select("unread_count")
             .eq("id", conversation["id"])
             .single()
-            .execute()
+            .execute(),
+            label="unread_count read",
         )
         new_count = (current.data.get("unread_count") or 0) + 1
-        sb.table("conversations").update({"unread_count": new_count}).eq("id", conversation["id"]).execute()
+        run_with_retry(
+            lambda: get_supabase().table("conversations").update(
+                {"unread_count": new_count}
+            ).eq("id", conversation["id"]).execute(),
+            label="unread_count write",
+        )
     except Exception as e:
         logger.warning(f"Failed to increment unread_count for {conversation['id']}: {e}")
 
@@ -493,7 +501,10 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # Send bubbles — persist only after all bubbles are delivered
+    # Send bubbles — persist only after all bubbles are delivered.
+    # Destino de envio = wa_id real do lead quando houver (entregável); senão phone.
+    # Evita 131026 em números BR registrados sem o 9º dígito (ver resolve_send_target).
+    send_to = resolve_send_target(lead, phone)
     is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
     bubbles = split_into_bubbles(response)
     delays = _bubble_delays(bubbles, is_rehearsal)
@@ -503,10 +514,10 @@ async def process_buffered_messages(
         if delay > 0:
             await asyncio.sleep(delay)
         try:
-            send_result = await provider.send_text(phone, bubble)
+            send_result = await provider.send_text(send_to, bubble)
             sent_wamids.append(extract_wamid(send_result))
         except Exception as e:
-            logger.error(f"Failed to send bubble to {phone}: {e}", exc_info=True)
+            logger.error(f"Failed to send bubble to {send_to}: {e}", exc_info=True)
             send_ok = False
             break
 
@@ -551,12 +562,12 @@ async def process_buffered_messages(
         for item in deferred:
             try:
                 await provider.send_image_base64(
-                    phone, item["b64"], item["mimetype"], caption=item.get("caption", "")
+                    send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
                 )
                 await asyncio.sleep(1)
             except Exception as _e:
                 logger.error(
-                    "Failed to send deferred media to %s: %s", phone, _e, exc_info=True
+                    "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
                 )
 
     _update_last_msg(conversation["id"])

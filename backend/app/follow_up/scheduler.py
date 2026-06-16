@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.follow_up.service import get_due_followups
-from app.leads.service import save_message
+from app.leads.service import save_message, resolve_send_target
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -404,13 +404,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
             )
             continue
 
-        # Envia via WhatsApp
+        # Envia via WhatsApp — destino entregável (wa_id real quando houver; evita 131026)
+        send_to = resolve_send_target(lead, lead["phone"])
         try:
             provider = get_provider(channel)
-            send_result = await provider.send_text(lead["phone"], message)
+            send_result = await provider.send_text(send_to, message)
         except Exception as e:
             logger.error(
-                f"[FOLLOWUP] Falha ao enviar seq={sequence} lead={lead['phone']}: {e}",
+                f"[FOLLOWUP] Falha ao enviar seq={sequence} lead={send_to}: {e}",
                 exc_info=True,
             )
             # Intencional per spec: em caso de falha no envio, não atualiza status — job será retentado no próximo tick
@@ -496,11 +497,13 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
 
     lead_name = (job.get("leads") or {}).get("name") or metadata.get("lead_name") or ""
     components = _build_joao_handoff_components(lead_name)
+    # Destino entregável: wa_id real do lead quando houver; senão o lead_phone do metadata.
+    send_to = resolve_send_target(job.get("leads"), lead_phone)
 
     try:
         provider = MetaCloudClient(joao_channel["provider_config"])
-        send_result = await provider.send_template(lead_phone, template_name, components=components, language_code=language_code)
-        logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' ({language_code}) enviado para {lead_phone}")
+        send_result = await provider.send_template(send_to, template_name, components=components, language_code=language_code)
+        logger.info(f"[HANDOFF_RESCUE] Template '{template_name}' ({language_code}) enviado para {send_to}")
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code
         if 400 <= status < 500:
@@ -561,11 +564,13 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
     lead_name = metadata.get("lead_name") or (job.get("leads") or {}).get("name") or ""
     first_name = lead_name.split()[0] if lead_name else ""
     components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+    # Destino entregável: wa_id real quando houver (LP lead normalmente não tem → usa lead_phone).
+    send_to = resolve_send_target(job.get("leads"), lead_phone)
 
     try:
         provider = MetaCloudClient(channel["provider_config"])
-        await provider.send_template(lead_phone, template_name, components=components, language_code=language_code)
-        logger.info("[LP_WELCOME] Template '%s' enviado para %s", template_name, lead_phone)
+        await provider.send_template(send_to, template_name, components=components, language_code=language_code)
+        logger.info("[LP_WELCOME] Template '%s' enviado para %s", template_name, send_to)
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code
         if 400 <= status < 500:
@@ -624,7 +629,7 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
     try:
         lead_row = (
             sb.table("leads")
-            .select("id, phone, name, ai_enabled, last_customer_message_at, metadata")
+            .select("id, phone, name, ai_enabled, last_customer_message_at, metadata, wa_id")
             .eq("id", job["lead_id"])
             .single()
             .execute()
@@ -640,6 +645,8 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
         return
 
     phone = lead["phone"]
+    # Destino entregável (wa_id real quando houver; evita 131026).
+    send_to = resolve_send_target(lead, phone)
 
     # Guard: janela de 24h (mesma regra do follow-up standard)
     last_msg_str = lead.get("last_customer_message_at")
@@ -704,7 +711,7 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
     sent_wamids: list[str | None] = []
     for bubble in bubbles:
         try:
-            send_result = await provider.send_text(phone, bubble)
+            send_result = await provider.send_text(send_to, bubble)
             sent_wamids.append(extract_wamid(send_result))
         except Exception as exc:
             logger.error("[AI_REENGAGE] falha ao enviar bubble conv=%s: %s", conversation_id, exc, exc_info=True)

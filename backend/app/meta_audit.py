@@ -12,7 +12,7 @@ Chamadas síncronas ao Supabase rodam em thread pool para não bloquear o event 
 import logging
 import concurrent.futures
 
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,17 @@ def _write_inbound(
     message_count: int,
 ) -> None:
     try:
-        get_supabase().table("meta_webhook_logs").insert({
-            "direction": "inbound",
-            "channel_id": channel_id,
-            "phone_number_id": phone_number_id,
-            "from_number": from_number,
-            "payload": payload,
-            "message_count": message_count,
-        }).execute()
+        run_with_retry(
+            lambda: get_supabase().table("meta_webhook_logs").insert({
+                "direction": "inbound",
+                "channel_id": channel_id,
+                "phone_number_id": phone_number_id,
+                "from_number": from_number,
+                "payload": payload,
+                "message_count": message_count,
+            }).execute(),
+            label="audit inbound",
+        )
     except Exception as exc:
         logger.warning(
             "[META AUDIT] inbound log failed channel=%s from=%s: %s",
@@ -98,19 +101,22 @@ def _write_outbound(
     error_message: str | None,
 ) -> None:
     try:
-        get_supabase().table("meta_webhook_logs").insert({
-            "direction": "outbound",
-            "endpoint": endpoint,
-            "http_method": http_method,
-            "request_type": request_type,
-            "payload": payload,
-            "response": response,
-            "status_code": status_code,
-            "success": success,
-            "to_number": to_number,
-            "phone_number_id": phone_number_id,
-            "error_message": error_message,
-        }).execute()
+        run_with_retry(
+            lambda: get_supabase().table("meta_webhook_logs").insert({
+                "direction": "outbound",
+                "endpoint": endpoint,
+                "http_method": http_method,
+                "request_type": request_type,
+                "payload": payload,
+                "response": response,
+                "status_code": status_code,
+                "success": success,
+                "to_number": to_number,
+                "phone_number_id": phone_number_id,
+                "error_message": error_message,
+            }).execute(),
+            label="audit outbound",
+        )
     except Exception as exc:
         logger.warning(
             "[META AUDIT] outbound log failed type=%s to=%s status=%s: %s",
