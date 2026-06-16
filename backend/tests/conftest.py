@@ -9,6 +9,14 @@ os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-service-key")
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret-32-chars-minimum!")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 
+# Hermeticidade: neutraliza toggles locais de .env.local (app/config.py carrega
+# .env.local em os.environ no import, com `if k not in os.environ`). Definindo um
+# baseline limpo AQUI — antes de qualquer import de app — impede que o
+# REHEARSAL_MODE/AI_PHONE_NUMBER_ID do desenvolvedor contamine a suíte. Testes que
+# precisam desses valores os definem explicitamente via monkeypatch/mock.
+os.environ.setdefault("REHEARSAL_MODE", "false")
+os.environ.setdefault("AI_PHONE_NUMBER_ID", "")
+
 
 @pytest.fixture
 def anyio_backend():

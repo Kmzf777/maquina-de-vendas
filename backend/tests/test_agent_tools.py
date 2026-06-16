@@ -95,9 +95,18 @@ async def test_encaminhar_humano_logs_when_update_lead_fails(caplog):
 
 
 @pytest.mark.asyncio
-async def test_enviar_fotos_nao_reenvia_se_ja_enviado():
-    """enviar_fotos não deve enviar se já foi enviado nesta conversa."""
+async def test_enviar_fotos_reenvia_mesmo_se_ja_enviado():
+    """enviar_fotos REENVIA a pedido do cliente, mesmo com marca de envio anterior.
+
+    Contrato atual (commit b7703cc, 'corrigir envio de fotos'): o dedup-block foi
+    removido de enviar_fotos — ele apenas loga e reenfileira. O bloqueio por dedup
+    permanece apenas em enviar_foto_produto.
+    """
+    from app.agent.tools import _deferred_media
+
     lead_id = "lead-joana-test"
+    conversation_id = "conv-joana-test"
+    _deferred_media.pop(conversation_id, None)
 
     # Histórico simulado com a marca de fotos já enviadas — formato exato salvo em produção
     history_com_fotos = [
@@ -105,19 +114,24 @@ async def test_enviar_fotos_nao_reenvia_se_ja_enviado():
     ]
 
     with patch("app.agent.tools.get_history", return_value=history_com_fotos), \
-         patch("app.agent.tools.get_active_channel") as mock_channel:
+         patch("app.agent.tools.save_message") as mock_save:
 
         result = await execute_tool(
             "enviar_fotos",
             {"categoria": "private_label"},
             lead_id=lead_id,
             phone="5511999999999",
+            conversation_id=conversation_id,
         )
 
-    assert "ja enviadas" in result.lower() or "nao reenviar" in result.lower(), (
-        f"Deveria retornar mensagem de dedup, mas retornou: '{result}'"
+    # Reenvia: enfileira as fotos novamente e retorna a contagem (não bloqueia por dedup).
+    assert "enfileiradas" in result.lower(), (
+        f"Deveria reenfileirar as fotos, mas retornou: '{result}'"
     )
-    mock_channel.assert_not_called()  # não deve chegar a buscar canal
+    queued = _deferred_media.get(conversation_id, [])
+    assert len(queued) == 4, f"Esperava 4 fotos reenfileiradas, mas havia {len(queued)}"
+    mock_save.assert_called_once()  # grava nova marca [enviar_fotos] no histórico
+    _deferred_media.pop(conversation_id, None)
 
 
 def test_registrar_pedido_simples_removida_do_schema():
