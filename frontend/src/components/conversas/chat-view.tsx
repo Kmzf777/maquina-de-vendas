@@ -427,7 +427,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#faf9f6]">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-[#faf9f6]">
       <ChatHeader
         conversation={conversation}
         tags={tags}
