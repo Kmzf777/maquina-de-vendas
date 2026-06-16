@@ -314,9 +314,16 @@ async def process_buffered_messages(
             )
             return
 
-    # Dedup: skip if this exact message was already processed recently (content-based, time-windowed)
-    if _is_recent_duplicate(conversation["id"], resolved_text, "user"):
-        logger.warning(f"Duplicate user message detected for {phone}, skipping")
+    # Dedup por conteúdo+tempo SOMENTE quando NÃO há wamid.
+    # Quando a Meta fornece wamid (sempre, no fluxo Meta Cloud), os layers por wamid
+    # (Redis SETNX na ingestão + _wamid_already_processed acima) são a autoridade: cada
+    # mensagem é unicamente identificada, e retries da Meta repetem o MESMO wamid.
+    # O dedup por conteúdo dava FALSO POSITIVO em respostas curtas legítimas e repetidas
+    # ("sim", "ok", "não") a perguntas consecutivas — wamids distintos, mas mesmo texto
+    # dentro da janela → a 2ª resposta era descartada (bug: lead 5534932262600, 2026-06-16).
+    # Sem wamid (ex.: providers sem id de mensagem), mantemos a rede de segurança.
+    if not wamid and _is_recent_duplicate(conversation["id"], resolved_text, "user"):
+        logger.warning(f"Duplicate user message detected for {phone} (sem wamid), skipping")
         return
 
     # Always save the incoming user message
