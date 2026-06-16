@@ -5,12 +5,15 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.leads.service import update_lead, save_message, create_deal, get_lead, get_history, apply_optout_side_effects
+from app.leads.service import (
+    update_lead, save_message, create_deal, get_lead, get_history,
+    apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
+)
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_for_lead
-from app.follow_up.service import schedule_handoff_rescue
+from app.follow_up.service import schedule_handoff_rescue, cancel_followups_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +154,12 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "registrar_optout",
             "description": (
-                "Registra opt-out silencioso do lead. Use SOMENTE quando o lead pedir explicitamente "
-                "para parar de receber mensagens, sair da lista, ou expressar que nao quer mais contato "
-                "(incluindo clique no botao 'Parar mensagens'). "
-                "Desativa a IA para este lead silenciosamente, sem notificar o time comercial e sem criar negocio. "
+                "HARD OPT-OUT (descarte definitivo). Use SOMENTE quando o lead PROIBIR explicitamente o contato: "
+                "pedir para parar de receber mensagens, sair da lista, 'me tira da lista', ameacar ('vou processar', "
+                "'vou denunciar'), ou clicar no botao 'Parar mensagens'. "
+                "Efeito: marca opt_out=true, desativa a IA, joga o lead na Blacklist (sem notificar o time, sem negocio). "
+                "NAO confunda com falta de interesse no momento ('to sem grana', 'ja fechei com outro') — isso NAO e "
+                "opt-out: nesse caso use registrar_sem_interesse_atual. "
                 "Antes de chamar esta tool, escreva UMA mensagem de despedida respeitosa no texto do turno. "
                 "Apos chamar, NAO envie mais nenhuma mensagem."
             ),
@@ -163,7 +168,43 @@ TOOLS_SCHEMA = [
                 "properties": {
                     "motivo": {
                         "type": "string",
-                        "description": "Descricao do pedido (ex: 'clicou parar mensagens', 'nao quer mais contato')"
+                        "description": (
+                            "O que o lead disse, com o maximo de detalhe: pedido/ameaca exata e contexto "
+                            "(ex: 'clicou parar mensagens', 'pediu para sair da lista — disse que recebe spam demais'). "
+                            "Evite generico; capture as palavras reais do lead."
+                        ),
+                    }
+                },
+                "required": ["motivo"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "registrar_sem_interesse_atual",
+            "description": (
+                "SOFT REJECTION (perda, NAO e opt-out). Use quando o lead nao quer avancar a compra AGORA mas NAO "
+                "proibiu o contato: ex. 'to sem grana', 'ja fechei com outro fornecedor', 'agora nao da', "
+                "'deixa pra mais pra frente', ou objecao de preco/momento que voce nao conseguiu contornar. "
+                "Efeito: tira o lead do funil (stage=perdido, IA desativada, human_control, deal movido para o stage "
+                "Perdido do pipeline), MAS mantem o lead na base para reativacao futura — opt_out continua FALSE, "
+                "SEM blacklist. "
+                "NUNCA use se o lead pediu para parar de receber mensagens ou proibiu contato — nesse caso use registrar_optout. "
+                "Antes de chamar, escreva UMA mensagem de despedida cordial deixando a porta aberta. "
+                "Apos chamar, NAO envie mais nenhuma mensagem."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "motivo": {
+                        "type": "string",
+                        "description": (
+                            "Motivo DETALHADO e analitico da perda — nunca generico ('nao quis'). Capture: a objecao real "
+                            "nao superada, o concorrente atual se citado, o volume/ticket discutido, e a dor ou contexto "
+                            "por tras (ex: 'objecao de preco — achou caro vs fornecedor atual X que entrega a R$18/kg; "
+                            "compra ~30kg/mes pra cafeteria; quer reavaliar no proximo trimestre')."
+                        ),
                     }
                 },
                 "required": ["motivo"],
@@ -272,11 +313,11 @@ TOOLS_SCHEMA = [
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse", "retomar_contato_vendedor"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "marcar_interesse", "retomar_contato_vendedor"],
-        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor"],
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
@@ -395,18 +436,51 @@ async def execute_tool(
     elif tool_name == "registrar_optout":
         motivo = args.get("motivo", "opt-out solicitado pelo lead")
         try:
-            update_lead(lead_id, ai_enabled=False)
+            update_lead(lead_id, ai_enabled=False, opt_out=True)
         except Exception as exc:
             logger.error("registrar_optout: falha ao desativar AI para lead %s: %s", lead_id, exc, exc_info=True)
             return f"ERRO ao registrar opt-out: {exc}"
         apply_optout_side_effects(lead_id, phone, reason="optout")
+        _ts = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
+        append_lead_observation(lead_id, f"🚫 [OPT-OUT DEFINITIVO] Registado em {_ts}. Motivo: {motivo}")
         save_message(
             lead_id, "system",
             f"[registrar_optout] lead solicitou opt-out: {motivo}",
             conversation_id=conversation_id,
         )
-        logger.info("registrar_optout: ai_enabled=False para lead %s — motivo: %s", lead_id, motivo)
+        logger.info("registrar_optout: ai_enabled=False opt_out=True para lead %s — motivo: %s", lead_id, motivo)
         return "Opt-out registrado."
+
+    elif tool_name == "registrar_sem_interesse_atual":
+        motivo = args.get("motivo", "lead sem interesse no momento")
+        # Soft rejection: tira do funil mas mantem opt_out=False (lead reativavel, sem blacklist).
+        try:
+            update_lead(lead_id, stage="perdido", ai_enabled=False, human_control=True, opt_out=False)
+        except Exception as exc:
+            logger.error(
+                "registrar_sem_interesse_atual: falha ao atualizar lead %s: %s", lead_id, exc, exc_info=True
+            )
+            return f"ERRO ao registrar sem interesse: {exc}"
+        move_lead_deals_to_perdido(lead_id, reason=motivo)
+        try:
+            cancel_followups_by_phone(phone, reason="sem_interesse_atual")
+        except Exception as exc:
+            logger.error(
+                "registrar_sem_interesse_atual: falha ao cancelar follow-ups para lead %s: %s",
+                lead_id, exc, exc_info=True,
+            )
+        _ts = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
+        append_lead_observation(lead_id, f"⏸️ [SEM INTERESSE ATUAL] Registado em {_ts}. Motivo: {motivo}")
+        save_message(
+            lead_id, "system",
+            f"[registrar_sem_interesse_atual] lead sem interesse no momento: {motivo}",
+            conversation_id=conversation_id,
+        )
+        logger.info(
+            "registrar_sem_interesse_atual: stage=perdido ai_enabled=False opt_out=False para lead %s — motivo: %s",
+            lead_id, motivo,
+        )
+        return "Lead marcado como sem interesse atual."
 
     elif tool_name == "enviar_fotos":
         history = get_history(lead_id, limit=100)

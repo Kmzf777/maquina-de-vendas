@@ -187,9 +187,10 @@ def test_registrar_optout_schema():
 
 @pytest.mark.asyncio
 async def test_registrar_optout_chama_update_lead_ai_enabled_false():
-    """registrar_optout deve chamar update_lead com ai_enabled=False e salvar system message."""
+    """registrar_optout deve chamar update_lead com ai_enabled=False e opt_out=True, e salvar system message."""
     with patch("app.agent.tools.update_lead") as mock_update, \
          patch("app.agent.tools.save_message") as mock_save, \
+         patch("app.agent.tools.append_lead_observation") as mock_obs, \
          patch("app.agent.tools.apply_optout_side_effects"):
         result = await execute_tool(
             "registrar_optout",
@@ -199,11 +200,16 @@ async def test_registrar_optout_chama_update_lead_ai_enabled_false():
             conversation_id="conv-optout-1",
         )
     assert result == "Opt-out registrado."
-    mock_update.assert_called_once_with("lead-optout-1", ai_enabled=False)
+    mock_update.assert_called_once_with("lead-optout-1", ai_enabled=False, opt_out=True)
     mock_save.assert_called_once()
     call_args = mock_save.call_args
     assert "registrar_optout" in call_args[0][2]
     assert "clicou parar mensagens" in call_args[0][2]
+    # Hard opt-out tambem anexa observacao com o prefixo definitivo.
+    mock_obs.assert_called_once()
+    obs_text = mock_obs.call_args[0][1]
+    assert "OPT-OUT DEFINITIVO" in obs_text
+    assert "clicou parar mensagens" in obs_text
 
 
 @pytest.mark.asyncio
@@ -232,6 +238,7 @@ async def test_registrar_optout_nao_chama_create_deal_nem_human_control():
     """registrar_optout NÃO deve chamar create_deal, não deve setar human_control."""
     with patch("app.agent.tools.update_lead") as mock_update, \
          patch("app.agent.tools.save_message"), \
+         patch("app.agent.tools.append_lead_observation"), \
          patch("app.agent.tools.create_deal") as mock_create_deal, \
          patch("app.agent.tools.apply_optout_side_effects"):
         await execute_tool(
@@ -241,8 +248,80 @@ async def test_registrar_optout_nao_chama_create_deal_nem_human_control():
             phone="5511999990003",
         )
     mock_create_deal.assert_not_called()
-    # update_lead must only receive ai_enabled=False — not human_control or status
+    # update_lead must NOT set human_control/status; only ai_enabled=False + opt_out=True
     call_kwargs = mock_update.call_args[1]
     assert "human_control" not in call_kwargs
     assert "status" not in call_kwargs
     assert call_kwargs.get("ai_enabled") is False
+    assert call_kwargs.get("opt_out") is True
+
+
+def test_registrar_sem_interesse_presente_nos_stages():
+    """registrar_sem_interesse_atual deve estar disponível em todos os stages (igual ao optout)."""
+    for stage in ["secretaria", "atacado", "private_label", "exportacao", "consumo"]:
+        tools = get_tools_for_stage(stage)
+        names = [t["function"]["name"] for t in tools]
+        assert "registrar_sem_interesse_atual" in names, f"ausente no stage '{stage}'"
+
+
+def test_registrar_sem_interesse_schema():
+    """Schema do soft rejection: motivo obrigatório e descrição que o distingue do opt-out."""
+    from app.agent.tools import TOOLS_SCHEMA
+    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "registrar_sem_interesse_atual")
+    fn = schema["function"]
+    assert "motivo" in fn["parameters"]["properties"]
+    assert "motivo" in fn["parameters"]["required"]
+    desc = fn["description"]
+    assert "SOFT REJECTION" in desc
+    assert "registrar_optout" in desc  # aponta o caminho do hard opt-out
+    assert "opt_out continua FALSE" in desc or "opt_out continua false" in desc.lower()
+
+
+@pytest.mark.asyncio
+async def test_registrar_sem_interesse_atual_marca_perdido_sem_optout():
+    """Soft rejection: stage=perdido, ai_enabled=False, human_control=True, opt_out=False; move deal e anexa observação."""
+    with patch("app.agent.tools.update_lead") as mock_update, \
+         patch("app.agent.tools.move_lead_deals_to_perdido") as mock_perdido, \
+         patch("app.agent.tools.cancel_followups_by_phone") as mock_cancel, \
+         patch("app.agent.tools.append_lead_observation") as mock_obs, \
+         patch("app.agent.tools.save_message") as mock_save:
+        result = await execute_tool(
+            "registrar_sem_interesse_atual",
+            {"motivo": "ja fechou com outro fornecedor a R$18/kg; ~30kg/mes"},
+            lead_id="lead-soft-1",
+            phone="5511999990010",
+            conversation_id="conv-soft-1",
+        )
+    assert result == "Lead marcado como sem interesse atual."
+    call_kwargs = mock_update.call_args[1]
+    assert call_kwargs.get("stage") == "perdido"
+    assert call_kwargs.get("ai_enabled") is False
+    assert call_kwargs.get("human_control") is True
+    assert call_kwargs.get("opt_out") is False  # invariante: soft NUNCA dá opt-out
+    mock_perdido.assert_called_once()
+    mock_cancel.assert_called_once()
+    obs_text = mock_obs.call_args[0][1]
+    assert "SEM INTERESSE ATUAL" in obs_text
+    assert "fechou com outro fornecedor" in obs_text
+    assert "registrar_sem_interesse_atual" in mock_save.call_args[0][2]
+
+
+@pytest.mark.asyncio
+async def test_registrar_sem_interesse_atual_erro_no_update_retorna_erro():
+    """Se update_lead falhar, retorna erro e NÃO mexe em deals/follow-ups."""
+    with patch("app.agent.tools.update_lead", side_effect=RuntimeError("db down")), \
+         patch("app.agent.tools.move_lead_deals_to_perdido") as mock_perdido, \
+         patch("app.agent.tools.cancel_followups_by_phone") as mock_cancel, \
+         patch("app.agent.tools.append_lead_observation") as mock_obs, \
+         patch("app.agent.tools.save_message") as mock_save:
+        result = await execute_tool(
+            "registrar_sem_interesse_atual",
+            {"motivo": "sem grana agora"},
+            lead_id="lead-soft-2",
+            phone="5511999990011",
+        )
+    assert "ERRO" in result and "db down" in result
+    mock_perdido.assert_not_called()
+    mock_cancel.assert_not_called()
+    mock_obs.assert_not_called()
+    mock_save.assert_not_called()

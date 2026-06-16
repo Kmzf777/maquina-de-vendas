@@ -170,6 +170,27 @@ def update_lead(lead_id: str, **fields) -> dict[str, Any]:
     return result.data[0]
 
 
+def append_lead_observation(lead_id: str, text: str) -> None:
+    """Anexa uma linha de observacao (timestamped pelo chamador) ao campo `notes` do lead.
+
+    Reusa a coluna `notes` existente — nao ha coluna dedicada `observations`. O conteudo de
+    `notes` ja e injetado no prompt da Valeria como "Notas do CRM" (ver build_base_prompt),
+    entao a observacao realimenta o contexto da IA em conversas futuras.
+
+    Fail-soft: nunca levanta — perder uma observacao nao pode derrubar a tool que a chamou.
+    """
+    try:
+        lead = get_lead(lead_id) or {}
+        existing = (lead.get("notes") or "").rstrip()
+        new_notes = f"{existing}\n{text}".strip() if existing else text
+        update_lead(lead_id, notes=new_notes)
+    except Exception as exc:
+        logger.error(
+            "append_lead_observation: falha ao anexar observacao para lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+
+
 def reset_lead(lead_id: str) -> None:
     """Reset lead: delete message history and reset stage to secretaria on both lead and conversations."""
     sb = get_supabase()
@@ -340,6 +361,91 @@ def move_lead_deals_to_blacklist(lead_id: str) -> None:
     except Exception as exc:
         logger.error(
             "move_lead_deals_to_blacklist: erro ao mover deals para Blacklist para lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+
+
+def _perdido_stage_id(sb, pipeline_id: str | None) -> str | None:
+    """Resolve o stage_id de 'Perdido' dentro de um pipeline (key in perdido/fechado_perdido)."""
+    if not pipeline_id:
+        return None
+    res = (
+        sb.table("pipeline_stages")
+        .select("id, key")
+        .eq("pipeline_id", pipeline_id)
+        .in_("key", ["perdido", "fechado_perdido"])
+        .order("order_index", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0]["id"] if res.data else None
+
+
+def _perdido_target_for_category(sb, category: str | None) -> tuple[str | None, str | None]:
+    """(pipeline_id, stage_id) do 'Perdido' para a categoria do lead — mesma resolucao de create_deal."""
+    pipeline_id: str | None = None
+    pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
+    if pipeline_name:
+        p = sb.table("pipelines").select("id").eq("name", pipeline_name).limit(1).execute()
+        if p.data:
+            pipeline_id = p.data[0]["id"]
+    if not pipeline_id:
+        p = sb.table("pipelines").select("id").order("order_index", desc=False).limit(1).execute()
+        if p.data:
+            pipeline_id = p.data[0]["id"]
+    return pipeline_id, _perdido_stage_id(sb, pipeline_id)
+
+
+def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
+    """Move os deals do lead para o stage 'Perdido' do PROPRIO pipeline (Soft Rejection).
+
+    Diferente do opt-out (que joga tudo no pipeline Blacklist), uma rejeicao branda mantem o
+    deal no pipeline de origem e so o move para o stage Perdido daquele pipeline, registrando
+    lost_reason/closed_at. Se o lead ainda nao tem deal, cria um no Perdido do pipeline da sua
+    categoria. Fail-soft: nunca levanta (descarte nao pode quebrar por problema de deal).
+    """
+    try:
+        sb = get_supabase()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        deals = sb.table("deals").select("id, pipeline_id").eq("lead_id", lead_id).execute()
+        if deals.data:
+            for deal in deals.data:
+                stage_id = _perdido_stage_id(sb, deal.get("pipeline_id"))
+                update: dict[str, Any] = {
+                    "stage": "perdido",
+                    "lost_reason": reason,
+                    "closed_at": now_iso,
+                    "updated_at": now_iso,
+                }
+                if stage_id:
+                    update["stage_id"] = stage_id
+                sb.table("deals").update(update).eq("id", deal["id"]).execute()
+            logger.info(
+                "move_lead_deals_to_perdido: %d deal(s) movidos para Perdido para lead %s",
+                len(deals.data), lead_id,
+            )
+        else:
+            lead = get_lead(lead_id) or {}
+            category = lead.get("stage")
+            lead_name = lead.get("name") or lead.get("phone") or "Lead"
+            pipeline_id, stage_id = _perdido_target_for_category(sb, category)
+            sb.table("deals").insert({
+                "lead_id": lead_id,
+                "title": f"{lead_name} - Sem interesse",
+                "stage": "perdido",
+                "category": category,
+                "pipeline_id": pipeline_id,
+                "stage_id": stage_id,
+                "lost_reason": reason,
+                "closed_at": now_iso,
+            }).execute()
+            logger.info(
+                "move_lead_deals_to_perdido: nenhum deal existente — deal Perdido criado para lead %s",
+                lead_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "move_lead_deals_to_perdido: erro ao mover deals para Perdido para lead %s: %s",
             lead_id, exc, exc_info=True,
         )
 
