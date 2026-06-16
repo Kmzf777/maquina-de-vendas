@@ -89,3 +89,15 @@ https://dev.canastrainteligencia.com
 
 - Esta versão usa **App Router e Server Components**. Convenções, APIs e estrutura de pastas podem diferir dos seus dados de treinamento.
 - **Consulte os padrões existentes em `frontend/src/app` antes de criar lógica nova.** Não confie em memória para APIs e estrutura de rotas.
+
+---
+
+## 📲 6. Provedor de WhatsApp — Meta Graph API é a fonte única
+
+O provedor **Evolution API está temporariamente desativado/obsoleto.** Todo o foco de
+desenvolvimento, debug e integrações de WhatsApp deve ser direcionado **exclusivamente
+para a Meta Graph API oficial** (`backend/app/whatsapp/meta.py`, `backend/app/webhook/meta_*`).
+
+- **Ignore arquivos ou lógicas focadas apenas no Evolution API** (ex.: `backend/app/whatsapp/evolution.py`, `backend/app/webhook/parser.py` no formato `messages.upsert`, caminhos `provider == "evolution"`). Não invista tempo corrigindo, otimizando ou estendendo esse código.
+- Ao investigar bugs de mensagens (parsing, envio, citação/reply, mídia), assuma o **fluxo Meta** como o ativo: parser `meta_parser.py`, roteador `meta_router.py`, cliente `MetaCloudClient`.
+- Código novo de envio deve passar pela interface `WhatsAppProvider`, mas o comportamento de referência é sempre o do `MetaCloudClient`.
