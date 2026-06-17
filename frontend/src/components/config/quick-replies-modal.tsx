@@ -21,12 +21,6 @@ export function QuickRepliesModal({ open, onClose, initialCreate = false }: Prop
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
 
-  useEffect(() => {
-    if (!open) return;
-    fetchItems();
-    if (initialCreate) startCreate();
-  }, [open, initialCreate]);
-
   async function fetchItems() {
     setLoading(true);
     const res = await fetch("/api/quick-replies");
@@ -57,6 +51,12 @@ export function QuickRepliesModal({ open, onClose, initialCreate = false }: Prop
     const res = await fetch(`/api/quick-replies/${id}`, { method: "DELETE" });
     if (res.ok) fetchItems();
   }
+
+  useEffect(() => {
+    if (!open) return;
+    fetchItems();
+    if (initialCreate) startCreate();
+  }, [open, initialCreate]);
 
   if (!open) return null;
 
