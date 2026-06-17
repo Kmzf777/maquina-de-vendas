@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, type ChangeEvent } from "react";
-import type { Message, Conversation, Tag } from "@/lib/types";
+import type { Message, Conversation, Tag, QuickReply } from "@/lib/types";
 import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 import { getWindowStatus } from "@/lib/window-status";
 import { TemplateDispatchModal } from "@/components/conversas/template-dispatch-modal";
@@ -9,6 +9,10 @@ import { ChatHeader } from "@/components/conversas/chat-header";
 import { MessageList, type MessageListHandle } from "@/components/conversas/message-list";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
+import { useRouter } from "next/navigation";
+import { QuickReplyMenu } from "@/components/conversas/quick-reply-menu";
+import { getSlashQuery, applyQuickReply, filterQuickReplies } from "@/lib/quick-replies";
+import { resolveLeadVariables } from "@/lib/lead-variables";
 
 export interface SiblingConversationSummary {
   id: string;
@@ -38,6 +42,11 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const { messages, loading, refetch } = useRealtimeMessages(conversation.id ?? null);
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
+  const router = useRouter();
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrQuery, setQrQuery] = useState("");
+  const [qrIndex, setQrIndex] = useState(0);
   const [sending, setSending] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [dispatchSuccess, setDispatchSuccess] = useState(false);
@@ -84,6 +93,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     setRecordingSeconds(0);
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
+    setQrOpen(false);
+    setQrQuery("");
+    setQrIndex(0);
   }, [conversation.id]);
 
   useEffect(() => {
@@ -101,6 +113,15 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       mediaRecorderRef.current?.stop();
     };
   }, []);
+
+  useEffect(() => {
+    fetch("/api/quick-replies")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setQuickReplies(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  const qrFiltered = useMemo(() => filterQuickReplies(quickReplies, qrQuery), [quickReplies, qrQuery]);
 
   const displayMessages = useMemo(
     () => [...messages, ...optimisticMessages],
@@ -198,7 +219,57 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     }
   }
 
+  function handleTextChange(e: ChangeEvent<HTMLTextAreaElement>) {
+    const value = e.target.value;
+    setText(value);
+    const caret = e.target.selectionStart ?? value.length;
+    const slash = getSlashQuery(value, caret);
+    if (slash) {
+      setQrOpen(true);
+      setQrQuery(slash.query);
+      setQrIndex(0);
+    } else {
+      setQrOpen(false);
+    }
+  }
+
+  function insertQuickReply(item: QuickReply) {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? text.length;
+    const slash = getSlashQuery(text, caret);
+    const start = slash ? slash.start : caret;
+    const resolved = resolveLeadVariables(item.content, lead ?? {});
+    const result = applyQuickReply(text, caret, start, resolved);
+    setText(result.text);
+    setQrOpen(false);
+    setQrQuery("");
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (node) {
+        node.focus();
+        node.setSelectionRange(result.caret, result.caret);
+      }
+    });
+  }
+
+  function handleCreateQuickReply() {
+    setQrOpen(false);
+    router.push("/config?tab=respostas-rapidas&new=1");
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (qrOpen) {
+      if (e.key === "Escape") { e.preventDefault(); setQrOpen(false); return; }
+      if (qrFiltered.length > 0) {
+        if (e.key === "ArrowDown") { e.preventDefault(); setQrIndex((i) => Math.min(i + 1, qrFiltered.length - 1)); return; }
+        if (e.key === "ArrowUp")   { e.preventDefault(); setQrIndex((i) => Math.max(i - 1, 0)); return; }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          insertQuickReply(qrFiltered[qrIndex] ?? qrFiltered[0]);
+          return;
+        }
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -631,7 +702,16 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
               </button>
             </div>
           )}
-          <div className="p-3 flex gap-2">
+          <div className="relative p-3 flex gap-2">
+          {qrOpen && (
+            <QuickReplyMenu
+              items={qrFiltered}
+              highlightedIndex={qrIndex}
+              onSelect={insertQuickReply}
+              onCreate={handleCreateQuickReply}
+              onHighlight={setQrIndex}
+            />
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -665,8 +745,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={handleTextChange}
             onKeyDown={handleKeyDown}
+            onBlur={() => setQrOpen(false)}
             placeholder="Digitar mensagem..."
             rows={1}
             className="flex-1 bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none resize-none max-h-32"
