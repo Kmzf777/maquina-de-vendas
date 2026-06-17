@@ -116,6 +116,15 @@ export interface Tag {
   created_at: string;
 }
 
+export interface QuickReply {
+  id: string;
+  shortcut: string | null;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface EvolutionChat {
   id: string;
   remoteJid: string;
