@@ -81,7 +81,8 @@ function computeExpiresAt(lastCustomerMsgAt: string | null | undefined, provider
 function isSlaBreached(conv: Conversation): boolean {
   const channel = conv.channels;
   if (channel?.mode !== "human") return false;
-  const lastCustomer = conv.leads?.last_customer_message_at;
+  // Janela 24h POR CANAL: usa o campo da conversa (lead+canal), não o global do lead.
+  const lastCustomer = conv.last_customer_message_at;
   if (!lastCustomer) return false;
   const lastSeller = conv.last_seller_response_at;
   if (lastSeller && lastSeller >= lastCustomer) return false;
@@ -310,7 +311,8 @@ export function ChatList({
           const isActive = selectedConversationId === conv.id;
           const unreadCount = conv.unread_count ?? 0;
           const provider = channel?.provider;
-          const lastCustomerMsgAt = lead?.last_customer_message_at;
+          // Janela 24h POR CANAL: campo da conversa (lead+canal), não o global do lead.
+          const lastCustomerMsgAt = conv.last_customer_message_at;
           const windowBg = getWindowBgClass(lastCustomerMsgAt, provider);
           const windowExpiresAt = computeExpiresAt(lastCustomerMsgAt, provider);
           const breached = isSlaBreached(conv);

@@ -362,8 +362,9 @@ async def process_due_followups(now: datetime | None = None) -> None:
             )
             continue
 
-        # Guard: janela de 24h
-        last_msg_str = lead.get("last_customer_message_at")
+        # Guard: janela de 24h POR CANAL — fonte é a conversa (lead+canal), não o
+        # campo global do lead. A janela pode estar aberta em outro canal e expirada aqui.
+        last_msg_str = conversation.get("last_customer_message_at")
         if not last_msg_str:
             _cancel_job(job["id"], "window_expired")
             logger.info(
@@ -543,6 +544,7 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
     language_code = metadata.get("language_code", "pt_BR")
     channel = job["channels"]
     lead = job["leads"]
+    conversation = job["conversations"]
 
     if not lead_phone or not template_name:
         _cancel_job(job["id"], "missing_metadata")
@@ -551,12 +553,13 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
         )
         return
 
-    # Guard: só dispara se o lead ainda não entrou em contato via WhatsApp
-    if lead.get("last_customer_message_at"):
+    # Guard POR CANAL: só dispara se o lead ainda não respondeu NESTE canal.
+    # A janela é independente por canal — usa a conversa (lead+canal), não o lead global.
+    if conversation.get("last_customer_message_at"):
         _cancel_job(job["id"], "lead_already_replied")
         logger.info(
             "[LP_WELCOME] Lead já enviou mensagem (last_customer_message_at=%s) — cancelando job %s",
-            lead["last_customer_message_at"],
+            conversation["last_customer_message_at"],
             job["id"],
         )
         return
@@ -648,8 +651,9 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
     # Destino entregável (wa_id real quando houver; evita 131026).
     send_to = resolve_send_target(lead, phone)
 
-    # Guard: janela de 24h (mesma regra do follow-up standard)
-    last_msg_str = lead.get("last_customer_message_at")
+    # Guard: janela de 24h POR CANAL (mesma regra do follow-up standard) — fonte é a
+    # conversa (lead+canal), não o campo global do lead. Janela é independente por canal.
+    last_msg_str = conversation.get("last_customer_message_at")
     if not last_msg_str:
         _cancel_job(job["id"], "window_expired")
         logger.info("[AI_REENGAGE] sem last_customer_message_at — cancelando conv=%s", conversation_id)

@@ -280,6 +280,9 @@ export interface Conversation {
   agent_profile_id: string | null;
   last_message_text: string | null;
   unread_count: number;
+  // Janela de 24h POR CANAL: última mensagem do cliente NESTA conversa (lead+canal).
+  // Fonte da janela independente por canal — não confundir com Lead.last_customer_message_at (global).
+  last_customer_message_at: string | null;
   whatsapp_window_expires_at: string | null;
   followup_enabled: boolean;
   deal_pipeline_name?: string | null;

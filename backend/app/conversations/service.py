@@ -8,11 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 def _compute_window_expiration(conversation: dict[str, Any]) -> str | None:
-    """Retorna ISO da expiração da janela 24h ou None se nunca houve inbound."""
-    leads = conversation.get("leads")
-    if not leads:
-        return None
-    last = leads.get("last_customer_message_at")
+    """Retorna ISO da expiração da janela 24h ou None se nunca houve inbound.
+
+    A janela é POR CANAL: a fonte da verdade é `conversations.last_customer_message_at`
+    (última mensagem recebida do cliente NESTE canal), não o campo global do lead.
+    Um lead pode ter a janela aberta num canal e expirada em outro.
+    """
+    last = conversation.get("last_customer_message_at")
     if not last:
         return None
     try:
@@ -196,11 +198,16 @@ def save_message(
         logger.error(f"[DEBUG-SAVE_MESSAGE] insert returned empty data — NADA SALVO (payload={msg})")
         return {}
 
-    # Keep conversations.last_msg_at current; zero unread badge on outbound
+    # Keep conversations.last_msg_at current; zero unread badge on outbound.
+    # Janela 24h POR CANAL: mensagens do cliente (role='user') carimbam
+    # conversations.last_customer_message_at — fonte da verdade da janela deste canal.
     try:
-        update_fields: dict = {"last_msg_at": datetime.now(timezone.utc).isoformat()}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        update_fields: dict = {"last_msg_at": now_iso}
         if role == "assistant":
             update_fields["unread_count"] = 0
+        if role == "user":
+            update_fields["last_customer_message_at"] = now_iso
         sb.table("conversations").update(update_fields).eq("id", conversation_id).execute()
     except Exception as e:
         logger.warning(f"[DEBUG-SAVE_MESSAGE] failed to update last_msg_at: {e}")

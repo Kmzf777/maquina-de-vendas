@@ -462,7 +462,13 @@ async def test_standard_jobs_not_affected_by_handoff_rescue_routing():
             "provider": "meta_cloud",
             "provider_config": {"phone_number_id": "111", "access_token": "tok"},
         },
-        "conversations": {"id": "conv-1", "stage": "atacado", "followup_enabled": True},
+        "conversations": {
+            "id": "conv-1",
+            "stage": "atacado",
+            "followup_enabled": True,
+            # Janela por canal: guard de 24h lê a conversa, não o lead global.
+            "last_customer_message_at": datetime.now(timezone.utc).isoformat(),
+        },
         "metadata": {},
     }
 

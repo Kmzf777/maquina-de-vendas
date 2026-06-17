@@ -268,7 +268,7 @@ def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
                 "*, "
                 "leads!inner(id, phone, name, last_customer_message_at, wa_id), "
                 "channels!inner(id, name, provider, provider_config, mode), "
-                "conversations!inner(id, stage, followup_enabled)"
+                "conversations!inner(id, stage, followup_enabled, last_customer_message_at)"
             )
             .eq("status", "pending")
             .eq("env_tag", _ENV_TAG)

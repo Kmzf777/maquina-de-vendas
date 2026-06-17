@@ -64,7 +64,8 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const provider = channel?.provider ?? null;
-  const lastCustomerMsgAt = lead?.last_customer_message_at ?? null;
+  // Janela 24h POR CANAL: usa o campo da conversa (lead+canal), não o global do lead.
+  const lastCustomerMsgAt = conversation.last_customer_message_at ?? null;
   const windowStatus = getWindowStatus(lastCustomerMsgAt, provider);
   const isInputBlocked = windowStatus === "closed";
   useEffect(() => {
