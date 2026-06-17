@@ -260,14 +260,16 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (qrOpen) {
       if (e.key === "Escape") { e.preventDefault(); setQrOpen(false); return; }
-      if (qrFiltered.length > 0) {
-        if (e.key === "ArrowDown") { e.preventDefault(); setQrIndex((i) => Math.min(i + 1, qrFiltered.length - 1)); return; }
-        if (e.key === "ArrowUp")   { e.preventDefault(); setQrIndex((i) => Math.max(i - 1, 0)); return; }
-        if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
+      if (e.key === "ArrowDown") { e.preventDefault(); setQrIndex((i) => Math.min(i + 1, Math.max(qrFiltered.length - 1, 0))); return; }
+      if (e.key === "ArrowUp")   { e.preventDefault(); setQrIndex((i) => Math.max(i - 1, 0)); return; }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        if (qrFiltered.length > 0) {
           insertQuickReply(qrFiltered[qrIndex] ?? qrFiltered[0]);
-          return;
+        } else {
+          setQrOpen(false);
         }
+        return;
       }
     }
     if (e.key === "Enter" && !e.shiftKey) {
