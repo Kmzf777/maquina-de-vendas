@@ -53,7 +53,7 @@ export function QuickRepliesModal({ open, onClose, initialCreate = false }: Prop
   }
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) { resetForm(); return; }
     fetchItems();
     if (initialCreate) startCreate();
   }, [open, initialCreate]);
