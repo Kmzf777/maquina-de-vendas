@@ -32,6 +32,10 @@ MAX_TOOL_ITERATIONS = 5
 # OpenAI-compat. Com teto baixo (1024) o modelo gasta o orçamento pensando e devolve
 # texto vazio após tool calls — deixando o lead sem resposta. 4096 dá folga ao thinking.
 MAX_OUTPUT_TOKENS = 4096
+# Stop sequences: corta saída runaway sem colidir com o separador de bolhas \n\n
+# (usamos \n\n\n, três quebras), e barra alucinação de turnos/tokens de controle.
+# Via endpoint OpenAI-compat do Gemini isto vira stopSequences (limite 5).
+_STOP_SEQUENCES = ["\n\n\n", "User:", "<|im_end|>"]
 # Resposta de segurança quando, mesmo após o fallback sem tools, a IA não produz texto.
 # Garante que o lead nunca fique mudo (regressão observada: Ademilson, Thainara).
 _SAFETY_FALLBACK_MESSAGE = (
@@ -389,8 +393,9 @@ async def run_agent(
         model=model,
         messages=messages,
         tools=tools if tools else None,
-        temperature=0.7,
+        temperature=0.4,
         max_tokens=MAX_OUTPUT_TOKENS,
+        stop=_STOP_SEQUENCES,
     )
 
     if response.usage:
@@ -421,8 +426,9 @@ async def run_agent(
                         model=model,
                         messages=messages,
                         tools=None,
-                        temperature=0.7,
+                        temperature=0.4,
                         max_tokens=MAX_OUTPUT_TOKENS,
+                        stop=_STOP_SEQUENCES,
                         **_gemini_thinking_off(model),
                     )
                     message = fallback.choices[0].message
@@ -502,8 +508,9 @@ async def run_agent(
             model=model,
             messages=messages,
             tools=tools if tools else None,
-            temperature=0.7,
+            temperature=0.4,
             max_tokens=MAX_OUTPUT_TOKENS,
+            stop=_STOP_SEQUENCES,
             **_gemini_thinking_off(model),
         )
         if response.usage:
@@ -532,8 +539,9 @@ async def run_agent(
                 model=model,
                 messages=messages,
                 tools=None,
-                temperature=0.7,
+                temperature=0.4,
                 max_tokens=MAX_OUTPUT_TOKENS,
+                stop=_STOP_SEQUENCES,
                 **_gemini_thinking_off(model),
             )
             if fallback_resp.usage:
