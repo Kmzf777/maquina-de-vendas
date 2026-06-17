@@ -8,7 +8,7 @@ import openai
 from openai import AsyncOpenAI
 
 from app.config import settings
-from app.agent.prompts.base import build_base_prompt
+from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.tools import get_tools_for_stage, execute_tool
@@ -285,7 +285,10 @@ def build_system_prompt(
     )
     stage_prompts = get_stage_prompts(prompt_key)
     stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
-    return base + "\n\n" + stage_prompt
+    # Ordem hierarquica: base (persona) -> estagio (roteiro do funil) -> instrucao final.
+    # FINAL_INSTRUCTION fica por ultimo para que <final_instruction> seja literalmente a
+    # ultima tag da string, preservando a hierarquia XML esperada pelo Gemini.
+    return base + "\n\n" + stage_prompt + "\n\n" + FINAL_INSTRUCTION
 
 
 async def run_agent(

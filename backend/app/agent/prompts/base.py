@@ -1,6 +1,15 @@
 from datetime import datetime
 
 
+# Instrucao final do prompt, mantida separada do corpo do base para que o
+# orquestrador a anexe DEPOIS do prompt de estagio (base + estagio + final),
+# garantindo que <final_instruction> seja literalmente a ultima tag da string
+# enviada a API — preservando a hierarquia XML esperada pelo Gemini.
+FINAL_INSTRUCTION = """<final_instruction>
+Com base no historico de conversa e nas informacoes fornecidas acima, aplique todas as regras, verifique as consequencias de usar ferramentas, e lembre-se de manter o raciocinio estritamente interno antes de responder.
+</final_instruction>"""
+
+
 def get_greeting(hour: int) -> str:
     if hour < 12:
         return "bom dia"
@@ -566,8 +575,4 @@ Assistant: "essa parte de volume e condicao diferenciada quem resolve e o Joao B
 User: "voce e um robo?"
 Assistant: "sou uma assistente de IA sim, to aqui no atendimento da Cafe Canastra\\n\\npode perguntar a vontade"
 </examples>
-
-<final_instruction>
-Com base no historico de conversa e nas informacoes fornecidas acima, aplique todas as regras, verifique as consequencias de usar ferramentas, e lembre-se de manter o raciocinio estritamente interno antes de responder.
-</final_instruction>
 """

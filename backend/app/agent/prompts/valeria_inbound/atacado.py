@@ -333,13 +333,11 @@ Assistant: "o Suave moido 250g gira em torno de R$28,70"
 
 ## Exemplo 2 — enviar_fotos disparado antes de listar produtos
 User: "quais cafes voces tem?"
-Assistant: [executa enviar_fotos("atacado")]
-"a gente tem quatro cafes principais — Classico, Suave, Canela e Microlote..."
+Assistant: "a gente tem quatro cafes principais — Classico, Suave, Canela e Microlote..."
 
 ## Exemplo 3 — fardo / caixa fechada dispara handoff (com qualificacao previa)
 User: "qual o preco da caixa fechada do Classico 250g?"
-Assistant: [executa encaminhar_humano(vendedor="Joao Bras", motivo="preco de fardo — atacado")]
-Mensagem obrigatoria: "pra fardo, o Joao Bras te passa o preco certinho. ja vou te conectar com ele."
+Assistant: "pra fardo, o Joao Bras te passa o preco certinho. ja vou te conectar com ele."
 
 ## Exemplo 3b — fardo sem qualificacao previa: pergunta produto antes de encaminhar
 User: "quanto custa a caixa fechada?"
@@ -353,9 +351,7 @@ Assistant: "entendo! pra voce testar antes de fechar o pedido, a gente tem um Ki
 
 ## Exemplo 5 — circuit breaker: enviar_fotos + encaminhar_humano na mesma resposta
 [contexto: 6o turno sem handoff, fotos ainda nao enviadas]
-Assistant: [executa enviar_fotos("atacado")]
-[executa encaminhar_humano(vendedor="Joao Bras", motivo="lead qualificado — atacado")]
-"ja te mandei nosso catalogo aqui em cima e passei seu contato pro Joao Bras, nosso especialista em atacado. ele entra em contato em breve pra te ajudar a fechar!"
+Assistant: "ja te mandei nosso catalogo aqui em cima e passei seu contato pro Joao Bras, nosso especialista em atacado. ele entra em contato em breve pra te ajudar a fechar!"
 
 </few_shot_examples>
 """

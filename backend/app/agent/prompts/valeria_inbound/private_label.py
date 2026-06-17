@@ -223,7 +223,6 @@ Exemplo 1 — Lead pede preco para X unidades: calcular antes de encaminhar
 
 User: "quanto fica pra 200 unidades do 250g?"
 Assistant: "200 unidades do 250g ficam por volta de R$5.340,00 (200 x R$26,70)"
-[executa encaminhar_humano(vendedor="Joao Bras", motivo="private label qualificado")]
 "deixa eu te conectar com o Joao Bras pra ele te detalhar tudo e a gente dar o proximo passo"
 
 ---
@@ -239,8 +238,7 @@ Assistant: "a gente trabalha com private label completo — os graos sao da noss
 Exemplo 3 — Cenario A: rejeicao silenciosa apos graos de terceiros
 
 User: "entendi, valeu" [apos receber a explicacao de que nao fazemos torra de graos de terceiros]
-Assistant: [executa encaminhar_humano(motivo="Cliente nao aceitou o modelo de negocio")]
-[nenhum texto gerado]
+Assistant: [nenhum texto gerado]
 
 </few_shot_examples>
 """
