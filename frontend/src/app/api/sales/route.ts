@@ -41,6 +41,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "value é obrigatório" }, { status: 400 });
   }
 
+  // Vínculo de deal é obrigatório: deal_id existente OU new_deal para criar inline.
+  const hasExistingDeal = !!body.deal_id;
+  const hasNewDeal = !!body.new_deal?.title?.trim() && !!body.new_deal?.pipeline_id;
+  if (!hasExistingDeal && !hasNewDeal) {
+    return NextResponse.json(
+      { error: "Toda venda precisa estar vinculada a um deal. Selecione um deal ou crie um novo." },
+      { status: 400 }
+    );
+  }
+
+  // Resolve o deal_id: cria o deal inline quando necessário (antes de inserir a venda).
+  let dealId: string = body.deal_id;
+  if (!hasExistingDeal) {
+    const pipelineId: string = body.new_deal.pipeline_id;
+    const { data: firstStage, error: stageError } = await supabase
+      .from("pipeline_stages")
+      .select("id")
+      .eq("pipeline_id", pipelineId)
+      .eq("is_protected", false)
+      .order("order_index", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (stageError) return NextResponse.json({ error: stageError.message }, { status: 500 });
+    if (!firstStage) return NextResponse.json({ error: "Funil não tem stages disponíveis." }, { status: 422 });
+
+    const { data: createdDeal, error: dealError } = await supabase
+      .from("deals")
+      .insert({
+        lead_id: body.lead_id,
+        title: body.new_deal.title.trim(),
+        value: Number(body.value) || 0,
+        pipeline_id: pipelineId,
+        stage_id: firstStage.id,
+        stage: "novo",
+      })
+      .select("id")
+      .single();
+    if (dealError || !createdDeal) {
+      return NextResponse.json({ error: dealError?.message || "Erro ao criar deal." }, { status: 500 });
+    }
+    dealId = createdDeal.id;
+  }
+
   const { data, error } = await supabase
     .from("sales")
     .insert({
@@ -49,7 +92,7 @@ export async function POST(request: NextRequest) {
       value: Number(body.value),
       product: body.product.trim(),
       sold_by: body.sold_by || null,
-      deal_id: body.deal_id || null,
+      deal_id: dealId,
       conversation_id: body.conversation_id || null,
       notes: body.notes?.trim() || null,
     })
@@ -66,32 +109,22 @@ export async function POST(request: NextRequest) {
     body: JSON.stringify({
       event_type: "sale_created",
       lead_id: data.lead_id,
-      data: {
-        sale_id: data.id,
-        value: data.value,
-        product: data.product,
-        deal_id: data.deal_id,
-      },
+      data: { sale_id: data.id, value: data.value, product: data.product, deal_id: data.deal_id },
     }),
   }).catch(() => {});
 
-  if (body.deal_id) {
-    const { data: wonStage } = await supabase
-      .from("pipeline_stages")
-      .select("id")
-      .eq("key", "fechado_ganho")
-      .limit(1)
-      .maybeSingle();
-    if (wonStage) {
-      await supabase
-        .from("deals")
-        .update({
-          stage_id: wonStage.id,
-          closed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", body.deal_id);
-    }
+  // Move o deal vinculado para Fechado Ganho (vale tanto para deal existente quanto recém-criado).
+  const { data: wonStage } = await supabase
+    .from("pipeline_stages")
+    .select("id")
+    .eq("key", "fechado_ganho")
+    .limit(1)
+    .maybeSingle();
+  if (wonStage) {
+    await supabase
+      .from("deals")
+      .update({ stage_id: wonStage.id, closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", dealId);
   }
 
   return NextResponse.json(data, { status: 201 });
