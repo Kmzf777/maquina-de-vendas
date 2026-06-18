@@ -69,22 +69,20 @@ def test_get_products_by_funnel_setor_casa_normalizado():
     assert "Produto X" in md
 
 
-def test_atacado_outbound_usa_setor_proprio():
-    """Atacado no perfil outbound busca o setor 'Atacado Outbound' (preço agressivo)."""
-    rows = [
-        {"sector": "Atacado", "name": "Clássico 250g", "price_formatted": "R$ 28,70"},
-        {"sector": "Atacado Outbound", "name": "Clássico 250g", "price_formatted": "R$ 27,70"},
-    ]
+def test_atacado_inbound_e_outbound_usam_mesmo_catalogo():
+    """Inbound e outbound de atacado usam o MESMO setor 'Atacado' (mesmo preço)."""
+    rows = [{"sector": "Atacado", "name": "Clássico 250g", "price_formatted": "R$ 28,70"}]
     with patch("app.agent.catalog.get_supabase", return_value=_mock_supabase(rows)):
         inbound = catalog.get_products_by_funnel("atacado")
         outbound = catalog.get_products_by_funnel("atacado", prompt_key="valeria_outbound")
 
-    assert "R$ 28,70" in inbound and "R$ 27,70" not in inbound
-    assert "R$ 27,70" in outbound and "R$ 28,70" not in outbound
+    assert "R$ 28,70" in inbound
+    assert "R$ 28,70" in outbound
+    assert inbound == outbound
 
 
 def test_private_label_outbound_usa_mesmo_setor():
-    """Private label não tem tabela outbound separada — usa o setor 'private_label'."""
+    """Private label usa o setor 'private_label' independente do perfil (in/outbound)."""
     rows = [{"sector": "Private Label", "name": "PL 250g", "price_formatted": "R$ 26,70"}]
     with patch("app.agent.catalog.get_supabase", return_value=_mock_supabase(rows)):
         md = catalog.get_products_by_funnel("private_label", prompt_key="valeria_outbound")

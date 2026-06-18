@@ -21,11 +21,9 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 # Funis (setores) que possuem catálogo comercial. `secretaria` é o stage de entrada
-# e não recebe catálogo. `atacado_outbound` é o setor com a tabela de preços agressiva
-# usada na prospecção ativa (valeria_outbound) — ver _resolve_sector.
-_KNOWN_FUNNELS = frozenset(
-    {"atacado", "atacado_outbound", "private_label", "exportacao", "consumo"}
-)
+# e não recebe catálogo. Inbound e outbound usam EXATAMENTE o mesmo catálogo por
+# setor — não há tabela de preços separada por perfil.
+_KNOWN_FUNNELS = frozenset({"atacado", "private_label", "exportacao", "consumo"})
 
 # Cache em memória: {funnel_normalizado: (timestamp, markdown)}. TTL curto porque
 # ops pode atualizar o CSV a qualquer momento; 5 min é um bom equilíbrio entre
@@ -81,29 +79,16 @@ def _fetch_active_products() -> list[dict]:
     return result.data or []
 
 
-def _resolve_sector(funnel_name: str | None, prompt_key: str | None) -> str:
-    """Resolve a stage + perfil de prompt no `sector` correspondente no banco.
-
-    O atacado de prospecção ativa (`valeria_outbound`) tem uma tabela de preços
-    própria (mais agressiva), persistida no setor `Atacado Outbound`. Para todos
-    os demais casos, o setor é a própria stage normalizada.
-    """
-    funnel = _normalize(funnel_name)
-    if funnel == "atacado" and _normalize(prompt_key) == "valeria_outbound":
-        return "atacado_outbound"
-    return funnel
-
-
 def get_products_by_funnel(funnel_name: str, prompt_key: str | None = None) -> str:
     """Retorna o catálogo do funil em Markdown, ou "" se não houver/erro.
 
     `funnel_name` é a stage da conversa (atacado, private_label, exportacao,
-    consumo). `prompt_key` distingue inbound/outbound — o atacado outbound usa o
-    setor `Atacado Outbound`. Filtra `products` por `is_active=true` e `sector`
-    casando com o funil resolvido (comparação normalizada). Fail-open: qualquer
-    exceção → "".
+    consumo). `prompt_key` (inbound/outbound) é aceito por compatibilidade, mas
+    NÃO altera o catálogo: ambos os perfis usam exatamente o mesmo setor. Filtra
+    `products` por `is_active=true` e `sector` casando com o funil (comparação
+    normalizada). Fail-open: qualquer exceção → "".
     """
-    funnel = _resolve_sector(funnel_name, prompt_key)
+    funnel = _normalize(funnel_name)
     if not funnel or funnel not in _KNOWN_FUNNELS:
         return ""
 

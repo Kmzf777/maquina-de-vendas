@@ -33,61 +33,6 @@ _DEFAULT_CSV = os.path.join(
 # Valores que representam "vazio" em colunas opcionais (ops usa travessão).
 _EMPTY_TOKENS = {"", "-", "—", "–", "n/a", "na"}
 
-# ---------------------------------------------------------------------------
-# Atacado Outbound — tabela de preços agressiva da prospecção ativa
-# ---------------------------------------------------------------------------
-# O funil outbound (valeria_outbound) usa preços mais baixos que o inbound. Em vez
-# de hardcodar no prompt (risco de alucinação), o banco vira a fonte de verdade:
-# clonamos os produtos de "Atacado" para o setor "Atacado Outbound", aplicando o
-# preço outbound apenas onde há divergência. Produtos sem override mantêm o preço
-# padrão — assim o outbound enxerga o catálogo completo, só que com a tabela certa.
-_OUTBOUND_ATACADO_SECTOR = "Atacado Outbound"
-
-# name (exato, como no CSV) -> price_formatted outbound
-_OUTBOUND_PRICE_OVERRIDES = {
-    "Canastra Clássico — Moído 250g": "R$ 27,70",
-    "Canastra Clássico — Moído 500g": "R$ 46,70",
-    "Canastra Clássico — Em Grãos 250g": "R$ 29,70",
-    "Canastra Clássico — Em Grãos 500g": "R$ 48,70",
-    "Canastra Clássico — Em Grãos 1kg": "R$ 88,70",
-    "Canastra Suave — Moído 250g": "R$ 27,70",
-    "Canastra Suave — Moído 500g": "R$ 46,70",
-    "Canastra Suave — Em Grãos 250g": "R$ 29,70",
-    "Canastra Suave — Em Grãos 500g": "R$ 48,70",
-    "Canastra Suave — Em Grãos 1kg": "R$ 88,70",
-    "Canastra Canela — Moído 250g": "R$ 27,70",
-    "Microlote — Moído 250g": "R$ 31,70",
-    "Microlote — Em Grãos 250g": "R$ 31,70",
-    "Drip Coffee Canastra Suave — Display 10 sachês": "R$ 24,70",
-    "Cápsula Canastra Clássico — Display 10 cápsulas": "R$ 17,70",
-    "Cápsula Canastra Canela — Display 10 cápsulas": "R$ 17,70",
-    "Granel Canastra Suave — 2kg em grãos": "R$ 155,70",
-    "Granel Canastra Clássico — 2kg em grãos": "R$ 155,70",
-}
-
-
-def _build_outbound_atacado(products: list[dict]) -> list[dict]:
-    """Clona os produtos de 'Atacado' para o setor 'Atacado Outbound'.
-
-    Aplica o preço outbound onde há divergência (ver _OUTBOUND_PRICE_OVERRIDES);
-    os demais herdam o preço padrão. Avisa se algum override não casou com nenhum
-    produto (proteção contra erro de digitação no mapa).
-    """
-    atacado = [p for p in products if p["sector"] == "Atacado"]
-    catalog_names = {p["name"] for p in atacado}
-    for name in _OUTBOUND_PRICE_OVERRIDES:
-        if name not in catalog_names:
-            print(f"  [aviso] override outbound sem produto correspondente: {name!r}")
-
-    clones: list[dict] = []
-    for p in atacado:
-        clone = dict(p)
-        clone["sector"] = _OUTBOUND_ATACADO_SECTOR
-        if p["name"] in _OUTBOUND_PRICE_OVERRIDES:
-            clone["price_formatted"] = _OUTBOUND_PRICE_OVERRIDES[p["name"]]
-        clones.append(clone)
-    return clones
-
 
 def _clean(value: str | None) -> str | None:
     """Normaliza célula: strip e converte tokens vazios/travessão em None."""
@@ -131,12 +76,7 @@ def _parse_rows(csv_path: str) -> list[dict]:
 
 def seed(csv_path: str) -> None:
     products = _parse_rows(csv_path)
-    outbound = _build_outbound_atacado(products)
-    products += outbound
-    print(
-        f"CSV parseado: {len(products)} produtos válidos em {csv_path!r} "
-        f"(inclui {len(outbound)} de '{_OUTBOUND_ATACADO_SECTOR}')"
-    )
+    print(f"CSV parseado: {len(products)} produtos válidos em {csv_path!r}")
 
     sb = get_supabase()
 
