@@ -36,6 +36,7 @@ def get_or_create_lead(
     phone: str,
     name: str | None = None,
     channel: str | None = None,
+    ctwa_clid: str | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     normalized = normalize_phone(phone)
@@ -160,6 +161,9 @@ def get_or_create_lead(
         new_lead["name"] = name
     if channel:
         new_lead["channel"] = channel
+    # Atribuição CTWA: captura o click id do anúncio na criação do lead (first-touch).
+    if ctwa_clid:
+        new_lead["ctwa_clid"] = ctwa_clid
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 
