@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { Deal, PipelineStage } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
+import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 
 function formatCurrency(value: number): string {
   if (value === 0) return "R$ 0";
@@ -21,6 +22,7 @@ interface DealDetailSidebarProps {
 export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }: DealDetailSidebarProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [showFinalizeSale, setShowFinalizeSale] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -184,6 +186,16 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
                 {categoryInfo.label}
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setShowFinalizeSale(true)}
+              className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-[6px] bg-[#1f9d57] text-white text-[14px] font-medium hover:bg-[#1b8a4c] active:scale-[0.98] transition-all mt-3"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+              Finalizar Venda
+            </button>
           </>
         )}
 
@@ -240,6 +252,16 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
           </div>
         )}
       </div>
+
+      {showFinalizeSale && deal.lead_id && (
+        <SaleCreateModal
+          leadId={deal.lead_id}
+          lockedDealId={deal.id}
+          lockedDealTitle={deal.title}
+          onClose={() => setShowFinalizeSale(false)}
+          onSaved={() => setShowFinalizeSale(false)}
+        />
+      )}
     </div>
   );
 }
