@@ -9,7 +9,7 @@ import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
 import { CrmCampanhasTab } from "./tabs/crm-campanhas-tab";
 import { CrmMetricasTab } from "./tabs/crm-metricas-tab";
-import type { Lead, Tag, Conversation, Pipeline, PipelineStage } from "@/lib/types";
+import type { Lead, Tag, Conversation, Pipeline, PipelineStage, Sale } from "@/lib/types";
 
 interface LeadDeal {
   id: string;
@@ -65,6 +65,7 @@ export function ContactDetail({
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [showCreateDeal, setShowCreateDeal] = useState(false);
   const [showCreateSale, setShowCreateSale] = useState(false);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string>("");
   const lead = conversation.leads as Lead | undefined | null;
   const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
@@ -236,6 +237,12 @@ export function ContactDetail({
                 onDealStageChange={onDealStageChange ?? handleDealStageChange}
                 sales={sales}
                 onCreateSale={() => setShowCreateSale(true)}
+                onEditSale={(s) => setEditingSale(s as Sale)}
+                onDeleteSale={async (saleId) => {
+                  if (!window.confirm("Excluir esta venda? Esta ação não pode ser desfeita.")) return;
+                  const res = await fetch(`/api/sales/${saleId}`, { method: "DELETE" });
+                  if (res.ok) refetchSales(); else alert("Erro ao excluir venda.");
+                }}
               />
             )}
             {activeTab === "notas" && (
@@ -267,13 +274,14 @@ export function ContactDetail({
           onCreate={handleCreateDeal}
         />
       )}
-      {showCreateSale && lead && (
+      {(showCreateSale || editingSale) && lead && (
         <SaleCreateModal
           leadId={lead.id}
           conversationId={conversation.id}
           currentUserEmail={currentUserEmail}
-          onClose={() => setShowCreateSale(false)}
-          onSaved={refetchSales}
+          editingSale={editingSale}
+          onClose={() => { setShowCreateSale(false); setEditingSale(null); }}
+          onSaved={() => { refetchSales(); setShowCreateSale(false); setEditingSale(null); }}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
 import type { Lead, Tag, Pipeline, PipelineStage } from "@/lib/types";
 
@@ -36,6 +37,8 @@ interface CrmPerfilTabProps {
   onDealStageChange?: (dealId: string, stageId: string) => Promise<void>;
   sales: LeadSale[];
   onCreateSale: () => void;
+  onEditSale: (sale: LeadSale) => void;
+  onDeleteSale: (saleId: string) => void;
 }
 
 const CLOSED_KEYS = ["fechado_ganho", "fechado_perdido"];
@@ -52,6 +55,8 @@ export function CrmPerfilTab({
   onDealStageChange,
   sales,
   onCreateSale,
+  onEditSale,
+  onDeleteSale,
 }: CrmPerfilTabProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const activeDeal = deals.find((d) => !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")) ?? null;
@@ -107,12 +112,12 @@ export function CrmPerfilTab({
           <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</span>
           <button
             onClick={onCreateSale}
-            className="w-6 h-6 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors"
-            title="Registrar venda"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] bg-[#1f9d57] text-white text-[12px] font-medium hover:bg-[#1b8a4c] transition-colors"
           >
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
             </svg>
+            Registrar Venda
           </button>
         </div>
         {sales.length === 0 ? (
@@ -130,6 +135,22 @@ export function CrmPerfilTab({
                   <p className="text-[12px] text-[#111111]">
                     R$ {Number(sale.value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </p>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    onClick={() => onEditSale(sale)}
+                    title="Editar venda"
+                    className="w-6 h-6 flex items-center justify-center rounded-[3px] text-[#7b7b78] hover:text-[#111111] hover:bg-[#f0ede8] transition-colors"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={() => onDeleteSale(sale.id)}
+                    title="Excluir venda"
+                    className="w-6 h-6 flex items-center justify-center rounded-[3px] text-[#7b7b78] hover:text-[#e53e3e] hover:bg-[#fff5f5] transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
             ))}
