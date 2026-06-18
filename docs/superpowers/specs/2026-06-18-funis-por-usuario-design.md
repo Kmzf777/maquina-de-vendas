@@ -124,13 +124,19 @@ fail-closed em erro de auth):
 // string[] => apenas esses pipeline_ids (pessoais do vendedor + universais)
 export async function getAllowedPipelineIds(supabase): Promise<string[] | null>;
 
-// Pode escrever se: admin OU dono OU funil universal. Senão 403; 401 se auth falhar.
-export async function assertCanWritePipeline(pipelineId: string): Promise<...>;
+// Mover/criar DEALS no funil: admin OU dono OU universal.
+export async function assertCanWriteDealsInPipeline(supabase, pipelineId): Promise<...>;
+
+// GERENCIAR a estrutura do funil (renomear, stages, excluir, trocar dono):
+// admin OU dono — NÃO universal (um vendedor não pode excluir/renomear o Blacklist).
+export async function assertCanManagePipeline(supabase, pipelineId): Promise<...>;
 ```
 
-Regra de escrita: **`is_admin() OR owner_user_id = auth.uid() OR is_universal`**.
-Isso atende à decisão do Blacklist ("todos podem mover cards"): por ser universal, é
-gravável por qualquer autenticado.
+**Dois predicados** (distinção importante):
+- **Escrever deals:** `is_admin() OR owner_user_id = auth.uid() OR is_universal` — atende à
+  decisão do Blacklist ("todos podem mover cards").
+- **Gerenciar estrutura:** `is_admin() OR owner_user_id = auth.uid()` — sem `is_universal`,
+  para que vendedores **não** possam excluir/renomear/reestruturar o Blacklist.
 
 Alterações nas rotas (todas via service role hoje):
 
@@ -139,13 +145,17 @@ Alterações nas rotas (todas via service role hoje):
   - vendedor → `owner_user_id = self`;
   - admin → `owner_user_id = body.owner_user_id` (pode ser um vendedor **ou NULL** =
     administrativo).
-- **`PATCH/DELETE /api/pipelines/[id]`** — exigir admin ou dono. Trocar `owner_user_id`
-  (e `is_universal`) só é permitido para admin.
-- **`/api/pipelines/[id]/stages` (POST) e `/stages/[stageId]` (PATCH/DELETE)** — validar
-  posse do funil-pai (`assertCanWritePipeline`).
-- **`POST /api/deals`** — validar escrita no `body.pipeline_id`.
-- **`PATCH/DELETE /api/deals/[id]`** — carregar o deal → seu funil → validar posse. Em
-  movimentação entre funis (ex.: arrastar para o Blacklist), validar origem **e** destino.
+- **`PATCH/DELETE /api/pipelines/[id]`** — `assertCanManagePipeline` (admin ou dono).
+  Trocar `owner_user_id` (e `is_universal`) só é permitido para admin.
+- **`/api/pipelines/[id]/stages` (POST) e `/stages/[stageId]` (PATCH/DELETE)** —
+  `assertCanManagePipeline` no funil-pai.
+- **`POST /api/deals`** — `assertCanWriteDealsInPipeline` no `body.pipeline_id`.
+- **`PATCH/DELETE /api/deals/[id]`** — carregar o deal → seu funil →
+  `assertCanWriteDealsInPipeline`. Em movimentação entre funis (arrastar para o Blacklist),
+  validar origem **e** destino.
+- **GET `/api/pipelines` e `/api/deals`** — escopar com `getAllowedPipelineIds` (essas
+  rotas usam service role e hoje devolveriam tudo; sem escopo seriam um vazamento caso
+  consumidas por vendedor).
 
 `requireAdmin()` (`lib/admin-auth.ts`) já existe e é reusado nas ações estritamente admin
 (trocar dono, marcar universal).
