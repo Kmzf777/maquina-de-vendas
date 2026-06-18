@@ -52,7 +52,8 @@ export async function POST(request: NextRequest) {
   }
 
   // Resolve o deal_id: cria o deal inline quando necessário (antes de inserir a venda).
-  let dealId: string = body.deal_id;
+  let dealId: string | undefined = body.deal_id ?? undefined;
+  let createdDealInline = false;
   if (!hasExistingDeal) {
     const pipelineId: string = body.new_deal.pipeline_id;
     const { data: firstStage, error: stageError } = await supabase
@@ -82,6 +83,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: dealError?.message || "Erro ao criar deal." }, { status: 500 });
     }
     dealId = createdDeal.id;
+    createdDealInline = true;
   }
 
   const { data, error } = await supabase
@@ -99,7 +101,13 @@ export async function POST(request: NextRequest) {
     .select("*, leads(id, name, phone, company), deals(id, title)")
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // Compensação: se criamos o deal inline e a venda falhou, remove o deal órfão.
+    if (createdDealInline && dealId) {
+      await supabase.from("deals").delete().eq("id", dealId);
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   // Fire-and-forget: notify automation engine of the new sale
   const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
@@ -113,18 +121,26 @@ export async function POST(request: NextRequest) {
     }),
   }).catch(() => {});
 
-  // Move o deal vinculado para Fechado Ganho (vale tanto para deal existente quanto recém-criado).
-  const { data: wonStage } = await supabase
-    .from("pipeline_stages")
-    .select("id")
-    .eq("key", "fechado_ganho")
-    .limit(1)
-    .maybeSingle();
-  if (wonStage) {
-    await supabase
-      .from("deals")
-      .update({ stage_id: wonStage.id, closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq("id", dealId);
+  // Move o deal vinculado para Fechado Ganho — escopado ao pipeline do próprio deal
+  // (a key 'fechado_ganho' é única por pipeline; sem o filtro pegaríamos o stage de outro funil).
+  const { data: dealRow } = await supabase
+    .from("deals")
+    .select("pipeline_id")
+    .eq("id", dealId)
+    .single();
+  if (dealRow?.pipeline_id) {
+    const { data: wonStage } = await supabase
+      .from("pipeline_stages")
+      .select("id")
+      .eq("pipeline_id", dealRow.pipeline_id)
+      .eq("key", "fechado_ganho")
+      .maybeSingle();
+    if (wonStage) {
+      await supabase
+        .from("deals")
+        .update({ stage_id: wonStage.id, closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", dealId);
+    }
   }
 
   return NextResponse.json(data, { status: 201 });
