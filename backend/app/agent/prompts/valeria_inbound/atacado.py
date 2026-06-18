@@ -70,49 +70,12 @@ Na segunda objecao: se Kit Amostra ja foi apresentado e o lead continua resisten
 
 ## Catalogo de produtos
 
-### Descricoes
-- Classico: torra media-escura, intenso, notas achocolatadas, pontuacao 84 SCA
-- Suave: torra media, intensidade intermediaria, notas de melaco e frutas amarelas, pontuacao 84 SCA
-- Canela: torra media, intensidade intermediaria, caramelizado com um toque de canela, pontuacao 84 SCA
-- Microlote: media intensidade, notas de mel, caramelo e cacau, pontuacao 86 SCA
-- Drip Coffee Suave: sachets individuais para preparo direto na xicara
-- Capsulas Nespresso: compativeis sistema Nespresso (Classico e Canela)
+Para informacoes de produtos, precos, lotes e fotos, consulte ESTRITAMENTE a tag XML <catalogo_de_produtos> injetada no seu contexto. NUNCA invente ou cite precos, pacotes, variacoes ou imagens que nao estejam la.
 
 ### Informacoes do cafe
 - Tipos de graos arabica: Bourbon, Mundo Novo, Catuai Amarelo e Vermelho
 - Fazenda: Pratinha - MG (Regiao da Serra da Canastra)
 - Torrefacao e CD: Uberlandia - MG (Distrito Industrial)
-
-### Precos atacado
-
-Classico
-- moido 250g: R$28,70
-- moido 500g: R$52,70
-- graos 250g: R$31,70
-- graos 500g: R$54,70
-- graos 1kg: R$97,70
-- granel 2kg (graos): R$169,70
-
-Suave
-- moido 250g: R$28,70
-- moido 500g: R$52,70
-- graos 250g: R$31,70
-- graos 500g: R$54,70
-- graos 1kg: R$97,70
-- granel 2kg (graos): R$169,70
-
-Canela
-- 250g moido: R$28,70
-
-Microlote
-- 250g (moido ou graos): R$32,70
-
-Drip Coffee
-- display 10 unidades suave: R$24,90
-
-Capsulas Nespresso
-- classico 10un: R$22,90
-- canela 10un: R$22,90
 
 ### Glossario — fardo / caixa fechada
 "Fardo" ou "caixa fechada" = pedido de produtos ja embalados em caixas de atacado (ex: caixa com multiplas unidades de 250g, display de drip coffee).

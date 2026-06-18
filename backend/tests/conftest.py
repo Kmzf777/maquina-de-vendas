@@ -23,6 +23,23 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _stub_catalog(monkeypatch):
+    """Neutraliza a leitura do catálogo (Supabase) por padrão em todos os testes.
+
+    run_agent passou a injetar o catálogo dinâmico via get_products_by_funnel, que
+    bate no Supabase. Sem este stub, cada teste de orchestrator faria uma chamada de
+    rede real (URL fake → lentidão/flakiness). Retorna "" por padrão; o teste
+    dedicado de catálogo (test_catalog.py) mocka o cliente Supabase diretamente e
+    não importa este símbolo do orchestrator, então não é afetado.
+    """
+    monkeypatch.setattr(
+        "app.agent.orchestrator.get_products_by_funnel",
+        lambda *_a, **_k: "",
+        raising=False,
+    )
+
+
 class FakeRedis:
     """Minimal in-memory async Redis stub for tests."""
 

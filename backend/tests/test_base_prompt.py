@@ -252,13 +252,12 @@ def test_base_prompt_checklist_verifica_nome():
     )
 
 
-def test_private_label_inbound_preco_vem_do_csv():
-    """Preços no prompt inbound devem vir do CSV, não hardcoded."""
+def test_private_label_inbound_preco_vem_do_catalogo():
+    """Preços não são mais hardcoded no prompt — vêm do <catalogo_de_produtos>."""
     from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
-    assert "R$26,70" in PRIVATE_LABEL_PROMPT, "250g com embalagem (CSV) ausente no inbound"
-    assert "R$48,70" in PRIVATE_LABEL_PROMPT, "500g com embalagem (CSV) ausente no inbound"
-    assert "R$23,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 250g ainda presente no inbound"
-    assert "R$44,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 500g ainda presente no inbound"
+    assert "R$26,70" not in PRIVATE_LABEL_PROMPT, "Preço hardcoded ainda presente no inbound"
+    assert "R$48,70" not in PRIVATE_LABEL_PROMPT, "Preço hardcoded ainda presente no inbound"
+    assert "<catalogo_de_produtos>" in PRIVATE_LABEL_PROMPT, "Diretriz de catálogo ausente no inbound"
 
 
 def test_private_label_inbound_sem_produtos_removidos():
@@ -268,13 +267,12 @@ def test_private_label_inbound_sem_produtos_removidos():
     assert "Capsulas Nespresso" not in PRIVATE_LABEL_PROMPT
 
 
-def test_private_label_outbound_preco_vem_do_csv():
-    """Preços no prompt outbound devem vir do CSV."""
+def test_private_label_outbound_preco_vem_do_catalogo():
+    """Preços não são mais hardcoded no prompt — vêm do <catalogo_de_produtos>."""
     from app.agent.prompts.valeria_outbound.private_label import PRIVATE_LABEL_PROMPT
-    assert "R$26,70" in PRIVATE_LABEL_PROMPT, "250g com embalagem (CSV) ausente no outbound"
-    assert "R$48,70" in PRIVATE_LABEL_PROMPT, "500g com embalagem (CSV) ausente no outbound"
-    assert "R$23,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 250g ainda presente no outbound"
-    assert "R$44,90" not in PRIVATE_LABEL_PROMPT, "Preço antigo 500g ainda presente no outbound"
+    assert "R$26,70" not in PRIVATE_LABEL_PROMPT, "Preço hardcoded ainda presente no outbound"
+    assert "R$48,70" not in PRIVATE_LABEL_PROMPT, "Preço hardcoded ainda presente no outbound"
+    assert "<catalogo_de_produtos>" in PRIVATE_LABEL_PROMPT, "Diretriz de catálogo ausente no outbound"
 
 
 def test_private_label_outbound_sem_produtos_removidos():
