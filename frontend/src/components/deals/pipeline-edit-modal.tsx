@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useCurrentRole } from "@/hooks/use-current-role";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -22,9 +23,13 @@ interface EditableStage extends PipelineStage {
 }
 
 
+interface UserOption { id: string; name: string; role: string; }
+
 interface PipelineEditModalProps {
   pipelineId: string;
   pipelineName: string;
+  ownerUserId: string | null;
+  isUniversal: boolean;
   stages: PipelineStage[];
   onClose: () => void;
   onSaved: () => void;
@@ -90,12 +95,24 @@ function SortableStageRow({
 }
 
 export function PipelineEditModal({
-  pipelineId, pipelineName, stages: initialStages, onClose, onSaved,
+  pipelineId, pipelineName, ownerUserId: initialOwner, isUniversal, stages: initialStages, onClose, onSaved,
 }: PipelineEditModalProps) {
+  const { role } = useCurrentRole();
+  const isAdmin = role === "admin";
+  const [owner, setOwner] = useState<string>(initialOwner ?? ""); // "" = Administrativo (null)
+  const [vendedores, setVendedores] = useState<UserOption[]>([]);
   const [stages, setStages] = useState<EditableStage[]>(initialStages);
   const [name, setName] = useState(pipelineName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/users")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: UserOption[]) => setVendedores(list.filter((u) => u.role !== "admin")))
+      .catch(() => setVendedores([]));
+  }, [isAdmin]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -170,6 +187,22 @@ export function PipelineEditModal({
         );
       }
 
+      // Troca de dono (admin, funil não-universal)
+      if (isAdmin && !isUniversal && (owner || null) !== (initialOwner ?? null)) {
+        ops.push(
+          fetch(`/api/pipelines/${pipelineId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ owner_user_id: owner || null }),
+          }).then(async (r) => {
+            if (!r.ok) {
+              const d = await r.json().catch(() => ({}));
+              throw new Error(d.error ?? "Erro ao trocar o dono do funil.");
+            }
+          })
+        );
+      }
+
       // Salvar apenas stages marcados como dirty
       const dirty = stages.filter((s) => s._dirty);
       ops.push(
@@ -211,6 +244,24 @@ export function PipelineEditModal({
             className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
           />
         </div>
+        {isAdmin && !isUniversal && (
+          <div className="mb-4">
+            <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Dono</label>
+            <select
+              value={owner}
+              onChange={(e) => setOwner(e.target.value)}
+              className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+            >
+              <option value="">Administrativo (todos os admins)</option>
+              {vendedores.map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {isUniversal && (
+          <div className="mb-4 text-[12px] text-[#7b7b78]">Funil universal (Blacklist) — visível a todos.</div>
+        )}
 
         {error && (
           <div className="bg-[#fee2e2] border border-[#fca5a5] rounded-[6px] px-3 py-2 text-[13px] text-[#991b1b] mb-3">

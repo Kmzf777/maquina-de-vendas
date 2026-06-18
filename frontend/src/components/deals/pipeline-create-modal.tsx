@@ -1,16 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useCurrentRole } from "@/hooks/use-current-role";
+
+interface UserOption { id: string; name: string; role: string; }
 
 interface PipelineCreateModalProps {
   onClose: () => void;
-  onCreate: (name: string) => Promise<void>;
+  onCreate: (name: string, ownerUserId: string | null) => Promise<void>;
 }
 
 export function PipelineCreateModal({ onClose, onCreate }: PipelineCreateModalProps) {
+  const { role } = useCurrentRole();
+  const isAdmin = role === "admin";
   const [name, setName] = useState("");
+  const [ownerUserId, setOwnerUserId] = useState<string>(""); // "" = Administrativo (null)
+  const [vendedores, setVendedores] = useState<UserOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/users")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: UserOption[]) => setVendedores(list.filter((u) => u.role !== "admin")))
+      .catch(() => setVendedores([]));
+  }, [isAdmin]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,7 +33,7 @@ export function PipelineCreateModal({ onClose, onCreate }: PipelineCreateModalPr
     setSaving(true);
     setError(null);
     try {
-      await onCreate(name.trim());
+      await onCreate(name.trim(), isAdmin ? (ownerUserId || null) : null);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar funil.");
@@ -45,6 +60,21 @@ export function PipelineCreateModal({ onClose, onCreate }: PipelineCreateModalPr
             />
             <p className="text-[11px] text-[#7b7b78] mt-1.5">O funil será criado com os stages padrão (Novo, Contato, Proposta, Negociação, Fechado Ganho, Perdido).</p>
           </div>
+          {isAdmin && (
+            <div>
+              <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Dono</label>
+              <select
+                value={ownerUserId}
+                onChange={(e) => setOwnerUserId(e.target.value)}
+                className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+              >
+                <option value="">Administrativo (todos os admins)</option>
+                {vendedores.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {error && (
             <div className="bg-[#fee2e2] border border-[#fca5a5] rounded-[6px] px-3 py-2 text-[13px] text-[#991b1b]">
               {error}

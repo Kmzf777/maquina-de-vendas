@@ -1,13 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { assertCanManagePipeline } from "@/lib/supabase/pipeline-access";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; stageId: string }> }
 ) {
-  const { stageId } = await params;
+  const { id, stageId } = await params;
   const body = await request.json();
   const supabase = await getServiceSupabase();
+
+  const guard = await assertCanManagePipeline(supabase, id);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   const { error: fetchError } = await supabase
     .from("pipeline_stages")
@@ -37,8 +41,11 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string; stageId: string }> }
 ) {
-  const { stageId } = await params;
+  const { id, stageId } = await params;
   const supabase = await getServiceSupabase();
+
+  const guard = await assertCanManagePipeline(supabase, id);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   const { count, error: countError } = await supabase
     .from("deals")

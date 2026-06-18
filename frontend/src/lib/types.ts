@@ -33,6 +33,8 @@ export interface Pipeline {
   id: string;
   name: string;
   order_index: number;
+  owner_user_id: string | null;
+  is_universal: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -20,6 +20,7 @@ import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
 import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
 import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
 import { BulkMoveDealsModal } from "@/components/deals/bulk-move-deals-modal";
+import { useCurrentRole } from "@/hooks/use-current-role";
 import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 
 function DroppableColumn({
@@ -104,6 +105,8 @@ function DraggableDealCard({ deal, onClick }: { deal: Deal; onClick: (deal: Deal
 }
 
 export default function VendasPage() {
+  const { role } = useCurrentRole();
+  const isAdmin = role === "admin";
   const { pipelines, loading: pipelinesLoading, refetch: refetchPipelines } = usePipelines();
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const { stages, refetch: refetchStages } = usePipelineStages(selectedPipelineId);
@@ -191,11 +194,11 @@ export default function VendasPage() {
     setSelectedDealId(null);
   }
 
-  async function handleCreatePipeline(name: string) {
+  async function handleCreatePipeline(name: string, ownerUserId: string | null) {
     const res = await fetch("/api/pipelines", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, owner_user_id: ownerUserId }),
     });
     if (!res.ok) {
       const { error } = await res.json().catch(() => ({}));
@@ -278,6 +281,7 @@ export default function VendasPage() {
         <PipelineSwitcher
           pipelines={pipelines}
           activePipelineId={selectedPipelineId}
+          isAdmin={isAdmin}
           onSelect={setSelectedPipelineId}
           onCreateNew={() => setShowPipelineCreate(true)}
           onEdit={() => setShowPipelineEdit(true)}
@@ -355,6 +359,8 @@ export default function VendasPage() {
         <PipelineEditModal
           pipelineId={activePipeline.id}
           pipelineName={activePipeline.name}
+          ownerUserId={activePipeline.owner_user_id}
+          isUniversal={activePipeline.is_universal}
           stages={stages}
           onClose={() => setShowPipelineEdit(false)}
           onSaved={refetchStages}

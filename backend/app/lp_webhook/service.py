@@ -15,7 +15,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
-from app.leads.service import normalize_phone, get_or_create_lead
+from app.leads.service import normalize_phone, get_or_create_lead, persist_lead_tracking, TRACKING_COLUMNS
 from app.conversations.service import get_or_create_conversation
 from app.lp_webhook.phone import normalize_lp_phone
 
@@ -75,10 +75,22 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
         if not phone:
             return {"ok": False, "error": "Telefone inválido ou ausente"}
 
-        # Step 2 — upsert lead
+        # Extração defensiva dos parâmetros de rastreio (somente chaves da whitelist,
+        # apenas valores não-vazios). Campos ausentes no payload → simplesmente não entram.
+        tracking = {
+            col: (payload.get(col) or "").strip()
+            for col in TRACKING_COLUMNS
+            if (payload.get(col) or "").strip()
+        }
+
+        # Step 2 — upsert lead (first-touch: grava o rastreio já na criação)
         nome = payload.get("nome") or None
-        lead = get_or_create_lead(phone, name=nome)
+        lead = get_or_create_lead(phone, name=nome, tracking=tracking)
         lead_id: str = lead["id"]
+
+        # Lead já existia → atualiza rastreio com o clique mais recente (last-touch).
+        # Sem rastreio no payload, persist_lead_tracking é no-op e não apaga o anterior.
+        persist_lead_tracking(lead, tracking)
 
         sb = get_supabase()
 

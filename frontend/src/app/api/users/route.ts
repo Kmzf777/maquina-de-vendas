@@ -10,6 +10,7 @@ export async function GET() {
       id: u.id,
       email: u.email ?? "",
       name: (u.user_metadata?.full_name as string | undefined) ?? u.email ?? "",
+      role: (u.app_metadata?.role as string | undefined) ?? "vendedor",
     }))
   );
 }

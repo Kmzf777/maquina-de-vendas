@@ -15,6 +15,12 @@ class LandingPagePayload(BaseModel):
     email: str = ""
     timestamp: str = ""
     origem: str = ""
+    # Rastreio de tráfego pago (preenchidos pelo JS da landing page a partir da URL).
+    fbclid: str = ""
+    gclid: str = ""
+    utm_source: str = ""
+    utm_medium: str = ""
+    utm_campaign: str = ""
 
 
 class LpWebhookSettings(BaseModel):
@@ -34,6 +40,11 @@ async def landing_page_webhook(payload: LandingPagePayload, request: Request):
         "email": payload.email,
         "timestamp": payload.timestamp,
         "origem": payload.origem,
+        "fbclid": payload.fbclid,
+        "gclid": payload.gclid,
+        "utm_source": payload.utm_source,
+        "utm_medium": payload.utm_medium,
+        "utm_campaign": payload.utm_campaign,
     }
     return await process_landing_page_lead(data, redis)
 

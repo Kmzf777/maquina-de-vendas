@@ -16,6 +16,7 @@ class IncomingMessage:
     document_name: str | None = None
     metadata: dict | None = None
     quoted_wamid: str | None = None  # wamid of the message being replied to
+    ctwa_clid: str | None = None  # Click-to-WhatsApp click id (Meta Ads referral) — base p/ CAPI
 
 
 def parse_webhook_payload(payload: dict) -> list[IncomingMessage]:

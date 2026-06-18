@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { assertCanWriteDealsInPipeline } from "@/lib/supabase/pipeline-access";
 
 export async function PATCH(
   request: NextRequest,
@@ -14,10 +15,22 @@ export async function PATCH(
   // Capture current stage_id before update to detect stage changes
   const { data: currentDeal } = await supabase
     .from("deals")
-    .select("stage_id, lead_id")
+    .select("stage_id, lead_id, pipeline_id")
     .eq("id", id)
     .single();
-  const oldStageId = currentDeal?.stage_id ?? null;
+  if (!currentDeal) return NextResponse.json({ error: "Deal não encontrado." }, { status: 404 });
+  const oldStageId = currentDeal.stage_id ?? null;
+
+  // Guarda: precisa poder escrever no funil de origem
+  if (currentDeal.pipeline_id) {
+    const guardSrc = await assertCanWriteDealsInPipeline(supabase, currentDeal.pipeline_id);
+    if (!guardSrc.ok) return NextResponse.json({ error: guardSrc.error }, { status: guardSrc.status });
+  }
+  // Movimentação entre funis: precisa poder escrever também no destino
+  if (body.pipeline_id && body.pipeline_id !== currentDeal.pipeline_id) {
+    const guardDst = await assertCanWriteDealsInPipeline(supabase, body.pipeline_id);
+    if (!guardDst.ok) return NextResponse.json({ error: guardDst.error }, { status: guardDst.status });
+  }
 
   // Se stage_id foi fornecido, detectar se é stage protegido para setar closed_at
   let newStageKey: string | null = null;
@@ -84,6 +97,17 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const supabase = await getServiceSupabase();
+
+  const { data: deal } = await supabase
+    .from("deals")
+    .select("pipeline_id")
+    .eq("id", id)
+    .single();
+  if (deal?.pipeline_id) {
+    const guard = await assertCanWriteDealsInPipeline(supabase, deal.pipeline_id);
+    if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+  }
+
   const { error } = await supabase.from("deals").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
