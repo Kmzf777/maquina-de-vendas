@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Pencil, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/types";
 
 interface SalesTableProps {
@@ -9,11 +10,13 @@ interface SalesTableProps {
   count: number;
   page: number;
   onPageChange: (p: number) => void;
+  onEdit?: (sale: Sale) => void;
+  onDelete?: (saleId: string) => void;
 }
 
 const LIMIT = 25;
 
-export function SalesTable({ sales, loading, count, page, onPageChange }: SalesTableProps) {
+export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, onDelete }: SalesTableProps) {
   const totalPages = Math.ceil(count / LIMIT);
 
   if (loading) {
@@ -46,6 +49,7 @@ export function SalesTable({ sales, loading, count, page, onPageChange }: SalesT
               <th className="text-right py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Valor</th>
               <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Vendedor</th>
               <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Deal</th>
+              <th className="text-right py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -77,6 +81,28 @@ export function SalesTable({ sales, loading, count, page, onPageChange }: SalesT
                   ) : (
                     <span className="text-[#7b7b78]">—</span>
                   )}
+                </td>
+                <td className="py-3 px-3 text-right whitespace-nowrap">
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Editar venda"
+                      aria-label="Editar venda"
+                      onClick={() => onEdit?.(sale)}
+                      className="p-1 rounded text-[#7b7b78] hover:text-[#111111] hover:bg-[#f0ede8] transition-colors"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Excluir venda"
+                      aria-label="Excluir venda"
+                      onClick={() => onDelete?.(sale.id)}
+                      className="p-1 rounded text-[#7b7b78] hover:text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
