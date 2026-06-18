@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from app.agent.tools import execute_tool
+from app.agent.tools import execute_tool, _SUPERVISOR_NAME, _SUPERVISOR_PHONE
 
 
 @pytest.mark.asyncio
@@ -94,8 +94,8 @@ async def test_encaminhar_humano_envia_despedida_da_ia_e_cartao_de_contato(monke
     # 2) logo após, o cartão de contato do João é enviado
     mock_provider.send_contact.assert_called_once()
     kwargs = mock_provider.send_contact.call_args.kwargs
-    assert kwargs["contact_name"] == "João"
-    assert kwargs["contact_phone"] == "553491461669"
+    assert kwargs["contact_name"] == _SUPERVISOR_NAME
+    assert kwargs["contact_phone"] == _SUPERVISOR_PHONE
 
 
 @pytest.mark.asyncio

@@ -88,7 +88,7 @@ _HANDOFF_MSG = (
 
 # Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é
 # enviado automaticamente logo após a mensagem de despedida no encaminhar_humano.
-_SUPERVISOR_NAME = "João"
+_SUPERVISOR_NAME = "João - Café Canastra"
 _SUPERVISOR_PHONE = "553491461669"
 # Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
 _MAX_DESPEDIDA_LEN = 600
