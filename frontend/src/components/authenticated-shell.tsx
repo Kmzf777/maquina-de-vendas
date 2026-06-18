@@ -5,11 +5,16 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { NotificationToast } from "@/components/notification-toast";
 import { PresenceProvider } from "@/hooks/use-presence";
+import { useRealtimeKeepAlive } from "@/hooks/use-realtime-keepalive";
 
 export function AuthenticatedShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isConversas = pathname === "/conversas";
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Reconecta/re-autentica o socket Realtime ao voltar de aba/suspensão/queda de
+  // rede, evitando que mensagens em tempo real parem de chegar (sem precisar de F5).
+  useRealtimeKeepAlive();
 
   useEffect(() => {
     document.body.style.overflow = drawerOpen ? "hidden" : "";

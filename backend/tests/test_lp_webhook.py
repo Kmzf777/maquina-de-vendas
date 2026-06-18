@@ -202,6 +202,7 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
         "channel_id": "ch-1",
         "channels": {"id": "ch-1", "provider": "meta_cloud", "provider_config": {"access_token": "tok"}},
         "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
+        "conversations": {"id": "conv-1", "last_customer_message_at": None},
         "metadata": {
             "lead_phone": "5534999999999",
             "template_name": "boas_vindas",
@@ -234,6 +235,7 @@ async def test_process_lp_welcome_cancels_when_metadata_missing():
         "lead_id": "lead-1",
         "channels": {"provider_config": {}},
         "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
+        "conversations": {"id": "conv-1", "last_customer_message_at": None},
         "metadata": {},  # missing lead_phone and template_name
     }
 
@@ -260,7 +262,12 @@ async def test_process_lp_welcome_cancels_when_lead_already_replied():
         "leads": {
             "id": "lead-1",
             "phone": "5534999999999",
-            "last_customer_message_at": "2026-05-28T10:10:00+00:00",  # lead já respondeu
+            "last_customer_message_at": None,
+        },
+        # Janela por canal: o lead já respondeu NESTE canal (conversa) → cancela.
+        "conversations": {
+            "id": "conv-1",
+            "last_customer_message_at": "2026-05-28T10:10:00+00:00",
         },
         "metadata": {
             "lead_phone": "5534999999999",
@@ -289,6 +296,7 @@ async def test_process_lp_welcome_does_not_mark_sent_on_send_failure():
         "lead_id": "lead-1",
         "channels": {"provider_config": {}},
         "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
+        "conversations": {"id": "conv-1", "last_customer_message_at": None},
         "metadata": {
             "lead_phone": "5534999999999",
             "template_name": "boas_vindas",

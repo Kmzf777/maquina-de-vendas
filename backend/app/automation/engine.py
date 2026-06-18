@@ -85,6 +85,26 @@ def _conversation_followup_disabled(lead_id: str, channel_id: str | None) -> boo
     return bool(rows) and not rows[0].get("followup_enabled", True)
 
 
+def _conversation_window(lead_id: str, channel_id: str | None) -> str | None:
+    """Última mensagem do cliente NESTE canal (conversations.last_customer_message_at).
+
+    Fonte da janela de 24h por canal. Retorna None se não há canal ou conversa —
+    nesse caso o chamador trata como "sem janela conhecida" (não bloqueia o envio)."""
+    if not channel_id:
+        return None
+    sb = get_supabase()
+    rows = (
+        sb.table("conversations")
+        .select("last_customer_message_at")
+        .eq("lead_id", lead_id)
+        .eq("channel_id", channel_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return rows[0].get("last_customer_message_at") if rows else None
+
+
 def _resolve_channel(node_cfg: dict, campaign: dict) -> dict:
     """Resolve channel: node override → campaign default → raise."""
     channel_id = node_cfg.get("channel_id") or campaign.get("channel_id")
@@ -250,7 +270,10 @@ async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: date
     cfg = node.get("config") or {}
     campaign = campaign or {}
 
-    last_msg = lead.get("last_customer_message_at")
+    # Janela de 24h POR CANAL: a fonte é a conversa (lead+canal) deste envio, não o
+    # campo global do lead. Um lead pode ter a janela aberta em outro canal.
+    channel_id = cfg.get("channel_id") or campaign.get("channel_id")
+    last_msg = _conversation_window(enrollment["lead_id"], channel_id)
     if last_msg:
         from dateutil.parser import parse
         if isinstance(last_msg, str):

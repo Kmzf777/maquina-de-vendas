@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { shouldNotifyForMessage, truncate } from "@/lib/notifications";
 import type { Message } from "@/lib/types";
 
 export interface MessageNotification {
@@ -16,12 +17,8 @@ function playNotificationSound() {
   try {
     new Audio("/notification_audio.mp3").play().catch(() => {});
   } catch {
-    // autoplay blocked or file missing — silently ignored
+    // autoplay bloqueado ou arquivo ausente — ignorado silenciosamente
   }
-}
-
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + "..." : text;
 }
 
 export function useMessageNotifications() {
@@ -39,42 +36,23 @@ export function useMessageNotifications() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
         async (payload) => {
-          console.log("[Notif] evento recebido:", payload.new);
           const msg = payload.new as Message;
+          // Notifica TODA mensagem do contato (role=user), com IA ligada ou não.
+          // Mensagens da IA (assistant) e de sistema não geram alerta.
+          if (!shouldNotifyForMessage(msg)) return;
 
-          if (msg.role !== "user") {
-            console.log("[Notif] ignorado: role =", msg.role);
-            return;
-          }
-
-          console.log("[Notif] mensagem de user, lead_id:", msg.lead_id);
-
-          const { data: rows, error: convError } = await supabase
+          // Busca nome do lead + id da conversa para montar o toast clicável.
+          const { data: rows } = await supabase
             .from("conversations")
-            .select("id, lead_id, leads!inner(id, name, ai_enabled)")
+            .select("id, lead_id, leads!inner(id, name)")
             .eq("lead_id", msg.lead_id)
             .limit(1);
 
-          console.log("[Notif] conversations query:", { rows, convError });
-
           const conv = rows?.[0] ?? null;
-          if (!conv) {
-            console.log("[Notif] nenhuma conversa encontrada");
-            return;
-          }
+          if (!conv) return;
 
-          const lead = (conv.leads as unknown) as { id: string; name: string; ai_enabled: boolean } | null;
-          console.log("[Notif] lead:", lead);
-
-          if (!lead) {
-            console.log("[Notif] lead nulo");
-            return;
-          }
-
-          if (lead.ai_enabled !== false) {
-            console.log("[Notif] ignorado: ai_enabled =", lead.ai_enabled, "(só notifica quando AI está OFF)");
-            return;
-          }
+          const lead = (conv.leads as unknown) as { id: string; name: string } | null;
+          if (!lead) return;
 
           const notification: MessageNotification = {
             id: crypto.randomUUID(),
@@ -84,13 +62,15 @@ export function useMessageNotifications() {
             conversationId: conv.id,
           };
 
-          console.log("[Notif] DISPARANDO notificação para:", lead.name);
           playNotificationSound();
           setNotifications((prev) => [...prev.slice(-2), notification]);
         }
       )
       .subscribe((status) => {
-        console.log("[Notif] status do canal Realtime:", status);
+        // Quieto no caminho feliz; loga só quando o canal degrada (diagnóstico futuro).
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("[notif] canal Realtime degradado:", status);
+        }
       });
 
     return () => {

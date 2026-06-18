@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import type { Conversation } from "@/lib/types";
+import { LEAD_RESOLVERS } from "@/lib/lead-variables";
 
 interface MetaTemplate {
   name: string;
@@ -17,17 +18,6 @@ interface Props {
   onClose: () => void;
   onSuccess: () => void;
 }
-
-// Mirrors _LEAD_FIELD_TOKENS in backend/app/broadcast/worker.py
-const LEAD_RESOLVERS: Record<string, (l: { name?: string | null; phone?: string; company?: string | null }) => string> = {
-  primeiro_nome: (l) => (l.name ?? "").split(" ")[0],
-  nome_completo: (l) => l.name ?? "",
-  telefone: (l) => l.phone ?? "",
-  empresa: (l) => l.company ?? "",
-  first_name: (l) => (l.name ?? "").split(" ")[0],
-  lead_name: (l) => l.name ?? "",
-  phone: (l) => l.phone ?? "",
-};
 
 function resolveBody(
   body: string,

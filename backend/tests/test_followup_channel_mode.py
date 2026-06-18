@@ -26,6 +26,8 @@ def _make_job(channel_mode="ai"):
             "id": "conv-1",
             "stage": "atacado",
             "followup_enabled": True,
+            # Janela por canal: fonte do guard de 24h é a conversa, não o lead global.
+            "last_customer_message_at": datetime.now(timezone.utc).isoformat(),
         },
     }
 
