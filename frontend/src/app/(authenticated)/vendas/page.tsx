@@ -355,6 +355,8 @@ export default function VendasPage() {
         <PipelineEditModal
           pipelineId={activePipeline.id}
           pipelineName={activePipeline.name}
+          ownerUserId={activePipeline.owner_user_id}
+          isUniversal={activePipeline.is_universal}
           stages={stages}
           onClose={() => setShowPipelineEdit(false)}
           onSaved={refetchStages}
