@@ -191,11 +191,11 @@ export default function VendasPage() {
     setSelectedDealId(null);
   }
 
-  async function handleCreatePipeline(name: string) {
+  async function handleCreatePipeline(name: string, ownerUserId: string | null) {
     const res = await fetch("/api/pipelines", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, owner_user_id: ownerUserId }),
     });
     if (!res.ok) {
       const { error } = await res.json().catch(() => ({}));
