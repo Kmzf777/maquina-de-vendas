@@ -273,7 +273,7 @@ export function ContactDetail({
           conversationId={conversation.id}
           currentUserEmail={currentUserEmail}
           onClose={() => setShowCreateSale(false)}
-          onCreated={refetchSales}
+          onSaved={refetchSales}
         />
       )}
     </div>

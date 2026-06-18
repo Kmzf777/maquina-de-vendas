@@ -1,7 +1,22 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { TeamUser } from "@/lib/types";
+import type { TeamUser, Sale } from "@/lib/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 interface LeadDeal {
   id: string;
@@ -9,187 +24,430 @@ interface LeadDeal {
   pipeline_stages?: { is_protected: boolean } | null;
 }
 
+interface Pipeline {
+  id: string;
+  name: string;
+}
+
+interface LeadOption {
+  id: string;
+  name: string | null;
+  phone: string;
+}
+
 interface SaleCreateModalProps {
-  leadId: string;
+  leadId?: string;
+  pickLead?: boolean;
+  lockedDealId?: string;
+  lockedDealTitle?: string;
   conversationId?: string | null;
   currentUserEmail?: string;
+  editingSale?: Sale | null;
   onClose: () => void;
-  onCreated: () => void;
+  onSaved: () => void;
 }
+
+const fieldLabel = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1";
+const fieldInput =
+  "w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none focus:ring-0";
 
 export function SaleCreateModal({
   leadId,
+  pickLead,
+  lockedDealId,
+  lockedDealTitle,
   conversationId,
   currentUserEmail,
+  editingSale,
   onClose,
-  onCreated,
+  onSaved,
 }: SaleCreateModalProps) {
-  const [product, setProduct] = useState("");
-  const [value, setValue] = useState("");
-  const [soldAt, setSoldAt] = useState(new Date().toISOString().slice(0, 10));
-  const [soldBy, setSoldBy] = useState(currentUserEmail ?? "");
-  const [dealId, setDealId] = useState("");
-  const [notes, setNotes] = useState("");
+  const isEditing = !!editingSale;
+
+  const [selectedLeadId, setSelectedLeadId] = useState(
+    editingSale?.lead_id ?? leadId ?? ""
+  );
+  const [product, setProduct] = useState(editingSale?.product ?? "");
+  const [value, setValue] = useState(
+    editingSale ? String(editingSale.value) : ""
+  );
+  const [soldAt, setSoldAt] = useState(
+    (editingSale?.sold_at ?? new Date().toISOString()).slice(0, 10)
+  );
+  const [soldBy, setSoldBy] = useState(
+    editingSale?.sold_by ?? currentUserEmail ?? ""
+  );
+  const [dealId, setDealId] = useState(lockedDealId ?? "");
+  const [creatingDeal, setCreatingDeal] = useState(false);
+  const [newDealTitle, setNewDealTitle] = useState("");
+  const [newDealPipeline, setNewDealPipeline] = useState("");
+  const [notes, setNotes] = useState(editingSale?.notes ?? "");
+
   const [users, setUsers] = useState<TeamUser[]>([]);
+  const [leads, setLeads] = useState<LeadOption[]>([]);
   const [deals, setDeals] = useState<LeadDeal[]>([]);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── initial data fetches ─────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/users")
       .then((r) => r.json())
-      .then((data) => setUsers(Array.isArray(data) ? data : []));
-    fetch(`/api/leads/${leadId}/deals`)
+      .then((d) => setUsers(Array.isArray(d) ? d : []));
+
+    if (pickLead && !isEditing) {
+      fetch("/api/leads")
+        .then((r) => r.json())
+        .then((d) => {
+          const arr = Array.isArray(d) ? d : (d?.data ?? []);
+          setLeads(arr);
+        });
+    }
+
+    if (!isEditing && !lockedDealId) {
+      fetch("/api/pipelines")
+        .then((r) => r.json())
+        .then((d) => setPipelines(Array.isArray(d) ? d : []));
+    }
+  }, [pickLead, isEditing, lockedDealId]);
+
+  // ── fetch deals when selectedLeadId changes ──────────────────────────────
+  useEffect(() => {
+    if (isEditing || lockedDealId || !selectedLeadId) return;
+    fetch(`/api/leads/${selectedLeadId}/deals`)
       .then((r) => r.json())
-      .then((data) =>
+      .then((d) =>
         setDeals(
-          (Array.isArray(data) ? data : []).filter(
-            (d: LeadDeal) => !d.pipeline_stages?.is_protected
+          (Array.isArray(d) ? d : []).filter(
+            (x: LeadDeal) => !x.pipeline_stages?.is_protected
           )
         )
       );
-  }, [leadId]);
+  }, [selectedLeadId, isEditing, lockedDealId]);
 
+  // ── submit ───────────────────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!product.trim() || !value) {
       setError("Produto e valor são obrigatórios");
       return;
     }
+
+    if (isEditing) {
+      setSaving(true);
+      setError(null);
+      const res = await fetch(`/api/sales/${editingSale!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product: product.trim(),
+          value: parseFloat(value),
+          sold_at: new Date(soldAt + "T12:00:00").toISOString(),
+          sold_by: soldBy || null,
+          notes: notes.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        setError((await res.json()).error ?? "Erro ao salvar venda");
+        setSaving(false);
+        return;
+      }
+      onSaved();
+      onClose();
+      return;
+    }
+
+    if (!selectedLeadId) {
+      setError("Selecione o lead");
+      return;
+    }
+
+    const linkExisting = !!dealId && !creatingDeal;
+    const linkNew =
+      creatingDeal && !!newDealTitle.trim() && !!newDealPipeline;
+
+    if (!lockedDealId && !linkExisting && !linkNew) {
+      setError("Vincule a um deal existente ou crie um novo deal");
+      return;
+    }
+
     setSaving(true);
     setError(null);
+
+    const payload: Record<string, unknown> = {
+      lead_id: selectedLeadId,
+      conversation_id: conversationId || null,
+      product: product.trim(),
+      value: parseFloat(value),
+      sold_at: new Date(soldAt + "T12:00:00").toISOString(),
+      sold_by: soldBy || null,
+      notes: notes.trim() || null,
+    };
+
+    if (lockedDealId) {
+      payload.deal_id = lockedDealId;
+    } else if (linkExisting) {
+      payload.deal_id = dealId;
+    } else {
+      payload.new_deal = {
+        title: newDealTitle.trim(),
+        pipeline_id: newDealPipeline,
+      };
+    }
+
     const res = await fetch("/api/sales", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lead_id: leadId,
-        conversation_id: conversationId || null,
-        product: product.trim(),
-        value: parseFloat(value),
-        sold_at: new Date(soldAt + "T12:00:00").toISOString(),
-        sold_by: soldBy || null,
-        deal_id: dealId || null,
-        notes: notes.trim() || null,
-      }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      const d = await res.json();
-      setError(d.error ?? "Erro ao salvar venda");
+      setError((await res.json()).error ?? "Erro ao salvar venda");
       setSaving(false);
       return;
     }
-    onCreated();
+    onSaved();
     onClose();
   }
 
+  // ── helpers ───────────────────────────────────────────────────────────────
+  const resolvedLeadId = selectedLeadId || leadId || "";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div className="bg-white rounded-[8px] border border-[#dedbd6] w-full max-w-md mx-4 shadow-lg">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#dedbd6]">
-          <h2 className="text-[15px] font-medium text-[#111111]">Registrar Venda</h2>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        showCloseButton={false}
+        className="bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full max-w-md shadow-lg gap-0"
+      >
+        {/* Header */}
+        <DialogHeader className="flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
+          <DialogTitle className="text-[15px] font-medium text-[#111111]">
+            {isEditing ? "Editar Venda" : "Registrar Venda"}
+          </DialogTitle>
           <button
+            type="button"
             onClick={onClose}
             className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
-        </div>
+        </DialogHeader>
+
+        {/* Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+
+          {/* Lead selector — only in pickLead mode and not editing */}
+          {pickLead && !isEditing && (
+            <div>
+              <label className={fieldLabel}>Lead *</label>
+              <Select
+                value={resolvedLeadId}
+                onValueChange={(v) => {
+                  setSelectedLeadId(v);
+                  setDealId("");
+                  setCreatingDeal(false);
+                  setNewDealTitle("");
+                  setNewDealPipeline("");
+                }}
+              >
+                <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                  <SelectValue placeholder="Selecione o lead" />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  {leads.map((l) => (
+                    <SelectItem key={l.id} value={l.id}>
+                      {l.name ?? l.phone}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Product */}
           <div>
-            <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
-              Produto / Serviço *
-            </label>
-            <input
+            <label className={fieldLabel}>Produto / Serviço *</label>
+            <Input
               type="text"
               value={product}
               onChange={(e) => setProduct(e.target.value)}
               placeholder="Ex: Café especial 5kg"
-              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+              className={fieldInput}
               required
             />
           </div>
+
+          {/* Value */}
           <div>
-            <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
-              Valor (R$) *
-            </label>
-            <input
+            <label className={fieldLabel}>Valor (R$) *</label>
+            <Input
               type="number"
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="0,00"
               min="0"
               step="0.01"
-              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+              className={fieldInput}
               required
             />
           </div>
+
+          {/* Sale date */}
           <div>
-            <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
-              Data da Venda
-            </label>
-            <input
+            <label className={fieldLabel}>Data da Venda</label>
+            <Input
               type="date"
               value={soldAt}
               onChange={(e) => setSoldAt(e.target.value)}
-              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+              className={fieldInput}
             />
           </div>
+
+          {/* Sold by */}
           <div>
-            <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
-              Vendedor
-            </label>
-            <select
-              value={soldBy}
-              onChange={(e) => setSoldBy(e.target.value)}
-              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-            >
-              <option value="">Nenhum</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.email}>
-                  {u.name || u.email}
-                </option>
-              ))}
-            </select>
-          </div>
-          {deals.length > 0 && (
-            <div>
-              <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
-                Vincular a Deal (opcional)
-              </label>
-              <select
-                value={dealId}
-                onChange={(e) => setDealId(e.target.value)}
-                className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-              >
-                <option value="">Nenhum</option>
-                {deals.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.title}
-                  </option>
+            <label className={fieldLabel}>Vendedor</label>
+            <Select value={soldBy} onValueChange={setSoldBy}>
+              <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                <SelectValue placeholder="Nenhum" />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                <SelectItem value="__none__">Nenhum</SelectItem>
+                {users.map((u) => (
+                  <SelectItem key={u.id} value={u.email}>
+                    {u.name || u.email}
+                  </SelectItem>
                 ))}
-              </select>
-              {dealId && (
-                <p className="text-[11px] text-[#7b7b78] mt-1">
-                  O deal será movido para Fechado Ganho automaticamente.
-                </p>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Deal block — hidden in edit mode */}
+          {!isEditing && (
+            <div>
+              <label className={fieldLabel}>Deal *</label>
+
+              {/* Locked deal — read-only */}
+              {lockedDealId ? (
+                <div className="w-full bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111]">
+                  {lockedDealTitle ?? lockedDealId}
+                </div>
+              ) : (
+                <>
+                  {/* Existing deal selector (when not creating a new one) */}
+                  {!creatingDeal && (
+                    <>
+                      <Select
+                        value={dealId}
+                        onValueChange={(v) => {
+                          if (v === "__new__") {
+                            setDealId("");
+                            setCreatingDeal(true);
+                          } else {
+                            setDealId(v);
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                          <SelectValue placeholder="Selecione ou crie um deal" />
+                        </SelectTrigger>
+                        <SelectContent position="popper">
+                          {deals.map((d) => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.title}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="__new__">
+                            + Criar novo deal
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {dealId && dealId !== "__new__" && (
+                        <p className="text-[11px] text-[#7b7b78] mt-1">
+                          O deal será movido para Fechado Ganho automaticamente.
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {/* Inline new deal form */}
+                  {creatingDeal && (
+                    <div className="space-y-3 mt-1 p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[4px]">
+                      <div>
+                        <label className={fieldLabel}>Título do Deal *</label>
+                        <Input
+                          type="text"
+                          value={newDealTitle}
+                          onChange={(e) => setNewDealTitle(e.target.value)}
+                          placeholder="Ex: Proposta Café 5kg"
+                          className={fieldInput}
+                        />
+                      </div>
+                      <div>
+                        <label className={fieldLabel}>Funil *</label>
+                        <Select
+                          value={newDealPipeline}
+                          onValueChange={setNewDealPipeline}
+                        >
+                          <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                            <SelectValue placeholder="Selecione o funil" />
+                          </SelectTrigger>
+                          <SelectContent position="popper">
+                            {pipelines.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreatingDeal(false);
+                          setNewDealTitle("");
+                          setNewDealPipeline("");
+                        }}
+                        className="text-[12px] text-[#7b7b78] hover:text-[#111111] transition-colors underline underline-offset-2"
+                      >
+                        Cancelar novo deal
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
+
+          {/* Notes */}
           <div>
-            <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
-              Observação
-            </label>
-            <textarea
+            <label className={fieldLabel}>Observação</label>
+            <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
               placeholder="Observações opcionais"
-              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none resize-none"
+              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none focus:ring-0 resize-none min-h-0"
             />
           </div>
-          {error && <p className="text-[12px] text-red-600">{error}</p>}
+
+          {/* Error */}
+          {error && (
+            <p className="text-[12px] text-red-600">{error}</p>
+          )}
+
+          {/* Actions */}
           <div className="flex gap-2 pt-2">
             <button
               type="button"
@@ -201,13 +459,24 @@ export function SaleCreateModal({
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 py-2 text-[13px] font-medium bg-[#111111] text-white rounded-[4px] hover:bg-[#222222] transition-colors disabled:opacity-50"
+              style={{ backgroundColor: saving ? undefined : "#1f9d57" }}
+              className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors disabled:opacity-50 disabled:bg-[#7b7b78]"
+              onMouseEnter={(e) => {
+                if (!saving)
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#1b8a4c";
+              }}
+              onMouseLeave={(e) => {
+                if (!saving)
+                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                    "#1f9d57";
+              }}
             >
-              {saving ? "Salvando..." : "Registrar Venda"}
+              {saving ? "Salvando..." : isEditing ? "Salvar" : "Registrar Venda"}
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
