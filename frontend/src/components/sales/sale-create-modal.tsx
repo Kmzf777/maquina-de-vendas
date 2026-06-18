@@ -260,7 +260,7 @@ export function SaleCreateModal({
             <div>
               <label className={fieldLabel}>Lead *</label>
               <Select
-                value={resolvedLeadId}
+                value={resolvedLeadId || undefined}
                 onValueChange={(v) => {
                   setSelectedLeadId(v);
                   setDealId("");
@@ -325,7 +325,7 @@ export function SaleCreateModal({
           {/* Sold by */}
           <div>
             <label className={fieldLabel}>Vendedor</label>
-            <Select value={soldBy} onValueChange={setSoldBy}>
+            <Select value={soldBy || undefined} onValueChange={setSoldBy}>
               <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
                 <SelectValue placeholder="Nenhum" />
               </SelectTrigger>
@@ -356,7 +356,7 @@ export function SaleCreateModal({
                   {!creatingDeal && (
                     <>
                       <Select
-                        value={dealId}
+                        value={dealId || undefined}
                         onValueChange={(v) => {
                           if (v === "__new__") {
                             setDealId("");
@@ -404,7 +404,7 @@ export function SaleCreateModal({
                       <div>
                         <label className={fieldLabel}>Funil *</label>
                         <Select
-                          value={newDealPipeline}
+                          value={newDealPipeline || undefined}
                           onValueChange={setNewDealPipeline}
                         >
                           <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
