@@ -18,33 +18,9 @@ export async function GET(request: NextRequest) {
   const count = periodSales.length;
   const avg_value = count > 0 ? total_value / count : 0;
 
-  const { data: allSales } = await supabase
-    .from("sales")
-    .select("lead_id, sold_at")
-    .order("sold_at", { ascending: true });
-
-  let avg_repurchase_cycle_days: number | null = null;
-  if (allSales && allSales.length > 1) {
-    const byLead: Record<string, string[]> = {};
-    for (const s of allSales) {
-      if (!byLead[s.lead_id]) byLead[s.lead_id] = [];
-      byLead[s.lead_id].push(s.sold_at);
-    }
-    const intervals: number[] = [];
-    for (const dates of Object.values(byLead)) {
-      for (let i = 1; i < dates.length; i++) {
-        const days =
-          (new Date(dates[i]).getTime() - new Date(dates[i - 1]).getTime()) /
-          (1000 * 60 * 60 * 24);
-        intervals.push(days);
-      }
-    }
-    if (intervals.length > 0) {
-      avg_repurchase_cycle_days = Math.round(
-        intervals.reduce((a, b) => a + b, 0) / intervals.length
-      );
-    }
-  }
+  // Recompra agregada no banco via RPC (não carrega a tabela inteira no Node).
+  const { data: rpcValue } = await supabase.rpc("get_avg_repurchase_cycle_days");
+  const avg_repurchase_cycle_days: number | null = rpcValue == null ? null : Number(rpcValue);
 
   return NextResponse.json({ total_value, count, avg_value, avg_repurchase_cycle_days });
 }
