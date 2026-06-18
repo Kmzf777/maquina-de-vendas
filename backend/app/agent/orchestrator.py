@@ -11,6 +11,7 @@ from app.config import settings
 from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
+from app.agent.catalog import get_products_by_funnel
 from app.agent.tools import get_tools_for_stage, execute_tool
 from app.conversations.service import (
     get_history,
@@ -270,11 +271,29 @@ def resolve_prompt_key(agent_profile_id: str | None) -> str:
     return _resolve_prompt_key(profile)
 
 
+def _build_catalog_block(catalog_text: str) -> str:
+    """Envolve o catálogo dinâmico numa tag XML com a diretriz anti-alucinação.
+
+    Injetado entre o prompt de estágio e o FINAL_INSTRUCTION para servir de fonte
+    de verdade de produtos/preços/imagens — substituindo o grounding estático.
+    """
+    return (
+        "<catalogo_de_produtos>\n"
+        "ATENÇÃO: Você DEVE usar EXCLUSIVAMENTE os produtos, preços e links de "
+        "imagens listados abaixo. NUNCA invente preços, pacotes ou imagens que não "
+        "estejam nesta lista. Se o cliente pedir um produto que não está aqui, diga "
+        "que vai verificar com o time e, se fizer sentido, encaminhe para o Joao Bras.\n\n"
+        f"{catalog_text}\n"
+        "</catalogo_de_produtos>"
+    )
+
+
 def build_system_prompt(
     lead: dict,
     stage: str,
     prompt_key: str = "valeria_inbound",
     lead_context: dict | None = None,
+    catalog_text: str | None = None,
 ) -> str:
     now = datetime.now(TZ_BR)
     base = build_base_prompt(
@@ -285,10 +304,15 @@ def build_system_prompt(
     )
     stage_prompts = get_stage_prompts(prompt_key)
     stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
-    # Ordem hierarquica: base (persona) -> estagio (roteiro do funil) -> instrucao final.
+    # Ordem hierarquica: base (persona) -> estagio (roteiro do funil) -> catalogo
+    # dinamico -> instrucao final.
     # FINAL_INSTRUCTION fica por ultimo para que <final_instruction> seja literalmente a
     # ultima tag da string, preservando a hierarquia XML esperada pelo Gemini.
-    return base + "\n\n" + stage_prompt + "\n\n" + FINAL_INSTRUCTION
+    parts = [base, stage_prompt]
+    if catalog_text:
+        parts.append(_build_catalog_block(catalog_text))
+    parts.append(FINAL_INSTRUCTION)
+    return "\n\n".join(parts)
 
 
 async def run_agent(
@@ -335,7 +359,10 @@ async def run_agent(
         logger.info("Using Gemini model '%s' via OpenAI-compatible API", model)
 
     tools = get_tools_for_stage(stage)
-    system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
+    catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)
+    system_prompt = build_system_prompt(
+        lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text
+    )
 
     history = get_history(conversation_id, limit=60)
     # processor.py saves user message before calling run_agent, so history already
@@ -496,7 +523,10 @@ async def run_agent(
                 stage = new_stage
                 transitioned_to_stage = new_stage
                 tools = get_tools_for_stage(stage)
-                system_prompt = build_system_prompt(lead, stage, prompt_key=prompt_key, lead_context=lead_context)
+                catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)
+                system_prompt = build_system_prompt(
+                    lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text
+                )
                 messages[0] = {"role": "system", "content": system_prompt}
                 if lead_id:
                     current_meta = lead.get("metadata") or {}
