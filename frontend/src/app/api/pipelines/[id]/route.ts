@@ -1,17 +1,37 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { assertCanManagePipeline } from "@/lib/supabase/pipeline-access";
+import { requireAdmin } from "@/lib/admin-auth";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { name } = await request.json();
-  if (!name?.trim()) return NextResponse.json({ error: "Nome é obrigatório" }, { status: 400 });
+  const body = await request.json();
   const supabase = await getServiceSupabase();
+
+  const guard = await assertCanManagePipeline(supabase, id);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  if (body.name !== undefined) {
+    if (!body.name?.trim()) return NextResponse.json({ error: "Nome é obrigatório" }, { status: 400 });
+    updates.name = body.name.trim();
+  }
+
+  // Trocar dono / marcar universal: só admin
+  if (body.owner_user_id !== undefined || body.is_universal !== undefined) {
+    const admin = await requireAdmin();
+    if (!admin.ok) return NextResponse.json({ error: admin.error }, { status: admin.status });
+    if (body.owner_user_id !== undefined) updates.owner_user_id = body.owner_user_id; // string | null
+    if (body.is_universal !== undefined) updates.is_universal = !!body.is_universal;
+  }
+
   const { data, error } = await supabase
     .from("pipelines")
-    .update({ name: name.trim(), updated_at: new Date().toISOString() })
+    .update(updates)
     .eq("id", id)
     .select()
     .single();
@@ -25,6 +45,10 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const supabase = await getServiceSupabase();
+
+  const guard = await assertCanManagePipeline(supabase, id);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+
   const { count: pipelineCount } = await supabase
     .from("pipelines")
     .select("*", { count: "exact", head: true });
