@@ -1,10 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { assertCanWriteDealsInPipeline, getAllowedPipelineIds } from "@/lib/supabase/pipeline-access";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const pipelineId = searchParams.get("pipeline_id");
   const supabase = await getServiceSupabase();
+
+  let allowed: string[] | null;
+  try {
+    allowed = await getAllowedPipelineIds(supabase);
+  } catch {
+    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
 
   let query = supabase
     .from("deals")
@@ -12,6 +20,7 @@ export async function GET(request: NextRequest) {
     .order("updated_at", { ascending: false });
 
   if (pipelineId) query = query.eq("pipeline_id", pipelineId);
+  if (allowed !== null) query = query.in("pipeline_id", allowed.length ? allowed : ["00000000-0000-0000-0000-000000000000"]);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -24,6 +33,9 @@ export async function POST(request: NextRequest) {
 
   if (!body.pipeline_id) return NextResponse.json({ error: "pipeline_id é obrigatório" }, { status: 400 });
   if (!body.lead_id || !body.title?.trim()) return NextResponse.json({ error: "lead_id e title são obrigatórios" }, { status: 400 });
+
+  const guard = await assertCanWriteDealsInPipeline(supabase, body.pipeline_id);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   let stageId: string | null = null;
 
