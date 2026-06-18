@@ -31,7 +31,7 @@ async def _mark_read_bg(channel: dict, message_id: str) -> None:
         logger.warning("Failed to mark read via Meta: %s", e)
 
 
-def _register_lead(from_number: str, push_name: str | None) -> None:
+def _register_lead(from_number: str, push_name: str | None, ctwa_clid: str | None = None) -> None:
     """Ensure the lead exists in the CRM the moment they contact us.
 
     Called as a BackgroundTask so it never delays the webhook response.
@@ -42,9 +42,14 @@ def _register_lead(from_number: str, push_name: str | None) -> None:
     o endereço que a Meta de fato entrega. Guardamos no lead para usar como destino de
     envio (evita 131026 em números BR sem o 9º dígito). A identidade do lead continua
     pelo phone normalizado; o wa_id é só o endereço de entrega.
+
+    Atribuição CTWA: quando a mensagem vem de um anúncio Meta Ads (Click-to-WhatsApp),
+    o `ctwa_clid` é persistido no lead — na criação (first-touch, via get_or_create_lead)
+    e atualizado quando um novo clique chega (last-touch). Mensagens orgânicas trazem
+    ctwa_clid=None e NUNCA sobrescrevem um clid já capturado. Base p/ disparos via CAPI.
     """
     try:
-        lead = get_or_create_lead(from_number, name=push_name, channel="whatsapp")
+        lead = get_or_create_lead(from_number, name=push_name, channel="whatsapp", ctwa_clid=ctwa_clid)
     except Exception as exc:
         logger.warning("Failed to register lead for %s: %s", from_number, exc)
         return
@@ -53,6 +58,11 @@ def _register_lead(from_number: str, push_name: str | None) -> None:
             update_lead(lead["id"], wa_id=from_number)
     except Exception as exc:
         logger.warning("Failed to capture wa_id=%s for lead %s: %s", from_number, lead.get("id"), exc)
+    try:
+        if lead and ctwa_clid and lead.get("ctwa_clid") != ctwa_clid:
+            update_lead(lead["id"], ctwa_clid=ctwa_clid)
+    except Exception as exc:
+        logger.warning("Failed to capture ctwa_clid=%s for lead %s: %s", ctwa_clid, lead.get("id"), exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:
@@ -410,8 +420,9 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
         msg.channel_id = channel["id"]
 
-        # Register lead immediately — guarantees CRM entry before buffer flushes
-        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name)
+        # Register lead immediately — guarantees CRM entry before buffer flushes.
+        # ctwa_clid (se presente) vincula o lead ao clique do anúncio Meta Ads (CTWA).
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid)
 
         if msg.message_id:
             background_tasks.add_task(_mark_read_bg, channel, msg.message_id)

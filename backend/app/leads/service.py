@@ -32,10 +32,24 @@ def normalize_phone(phone: str | None) -> str:
     return digits
 
 
+# Colunas de atribuição/rastreio persistíveis na criação do lead. Whitelist defensiva:
+# só estas chaves de `tracking` são gravadas, evitando injeção de colunas arbitrárias.
+TRACKING_COLUMNS: tuple[str, ...] = (
+    "ctwa_clid",     # Click-to-WhatsApp (anúncio → WhatsApp)
+    "fbclid",        # Facebook click id (anúncio → site/LP)
+    "gclid",         # Google click id (anúncio → site/LP)
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+)
+
+
 def get_or_create_lead(
     phone: str,
     name: str | None = None,
     channel: str | None = None,
+    ctwa_clid: str | None = None,
+    tracking: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     normalized = normalize_phone(phone)
@@ -160,6 +174,16 @@ def get_or_create_lead(
         new_lead["name"] = name
     if channel:
         new_lead["channel"] = channel
+    # Atribuição (first-touch): captura os identificadores de campanha na criação do lead.
+    # `ctwa_clid` explícito (caminho WhatsApp) + bag `tracking` (caminho LP/site). Só chaves
+    # da whitelist TRACKING_COLUMNS são gravadas; valores vazios/None são ignorados.
+    merged_tracking: dict[str, Any] = {**(tracking or {})}
+    if ctwa_clid:
+        merged_tracking["ctwa_clid"] = ctwa_clid
+    for col in TRACKING_COLUMNS:
+        val = merged_tracking.get(col)
+        if val:
+            new_lead[col] = val
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 
@@ -168,6 +192,31 @@ def update_lead(lead_id: str, **fields) -> dict[str, Any]:
     sb = get_supabase()
     result = sb.table("leads").update(fields).eq("id", lead_id).execute()
     return result.data[0]
+
+
+def persist_lead_tracking(lead: dict[str, Any], tracking: dict[str, Any] | None) -> None:
+    """Last-touch: atualiza os campos de rastreio do lead existente com novos valores.
+
+    Só grava chaves da whitelist TRACKING_COLUMNS cujo valor é não-vazio E difere do
+    armazenado — assim um novo clique (utm/gclid/fbclid) sobrescreve o anterior, mas um
+    payload SEM rastreio (campos vazios) NUNCA apaga uma atribuição já capturada.
+    Fail-soft: nunca levanta (rastreio não pode quebrar o cadastro do lead).
+    """
+    if not lead or not tracking:
+        return
+    updates: dict[str, Any] = {}
+    for col in TRACKING_COLUMNS:
+        val = tracking.get(col)
+        if isinstance(val, str):
+            val = val.strip()
+        if val and lead.get(col) != val:
+            updates[col] = val
+    if not updates:
+        return
+    try:
+        update_lead(lead["id"], **updates)
+    except Exception as exc:
+        logger.warning("persist_lead_tracking: falha ao gravar rastreio para lead %s: %s", lead.get("id"), exc)
 
 
 def resolve_send_target(lead: dict[str, Any] | None, fallback: str | None = None) -> str:

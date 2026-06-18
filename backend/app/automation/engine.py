@@ -421,6 +421,18 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
         )
         if rows:
             sb.table("deals").update({"stage_id": stage_id}).eq("id", rows[0]["id"]).execute()
+            # Venda confirmada → dispara conversão outbound (Meta CAPI / Google). Fail-soft:
+            # uma falha de disparo nunca pode interromper a automação. Disparo é no-op se
+            # não houver credenciais nem click id (ctwa_clid/fbclid/gclid) no lead.
+            if action_type == "mark_deal_won":
+                try:
+                    from app.campaigns.capi_dispatcher import dispatch_purchase_conversion_background
+                    from app.leads.service import get_lead
+                    lead_row = get_lead(enrollment["lead_id"]) or {}
+                    # Background (daemon thread): a latência da Meta/Google não bloqueia o worker.
+                    dispatch_purchase_conversion_background(lead_row, value=cfg.get("value"))
+                except Exception as exc:
+                    logger.warning("[AUTOMATION] mark_deal_won: falha ao disparar conversão CAPI: %s", exc)
 
     elif action_type == "add_note":
         template = cfg.get("note_template") or ""

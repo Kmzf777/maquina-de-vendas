@@ -129,6 +129,12 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
 
                 quoted_wamid: str | None = msg.get("context", {}).get("id")
 
+                # Click-to-WhatsApp (CTWA): mensagens originadas de um anúncio Meta Ads
+                # trazem um objeto `referral` aninhado com o `ctwa_clid` (click id) usado
+                # depois pela API de Conversões (CAPI). Extração defensiva: mensagens
+                # orgânicas não têm `referral` → ctwa_clid fica None.
+                ctwa_clid: str | None = msg.get("referral", {}).get("ctwa_clid")
+
                 messages.append(IncomingMessage(
                     from_number=from_number,
                     remote_jid="",
@@ -142,6 +148,7 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     document_name=document_name,
                     metadata=metadata_dict,
                     quoted_wamid=quoted_wamid,
+                    ctwa_clid=ctwa_clid,
                 ))
 
     return messages
