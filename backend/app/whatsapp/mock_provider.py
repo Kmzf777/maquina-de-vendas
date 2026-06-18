@@ -62,6 +62,16 @@ class MockProvider(WhatsAppProvider):
         })
         return {"status": "mock_ok", "method": "send_template"}
 
+    async def send_contact(self, to: str, contact_name: str, contact_phone: str) -> dict:
+        logger.warning(f"[MOCK] send_contact to={to} contact={contact_name}/{contact_phone}")
+        _log_entry({
+            "method": "send_contact",
+            "to": to,
+            "contact_name": contact_name,
+            "contact_phone": contact_phone,
+        })
+        return {"status": "mock_ok", "method": "send_contact"}
+
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         _log_entry({"method": "mark_read", "message_id": message_id})
         return {"status": "mock_ok", "method": "mark_read"}

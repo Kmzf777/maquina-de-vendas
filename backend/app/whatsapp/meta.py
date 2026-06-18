@@ -197,6 +197,30 @@ class MetaCloudClient(WhatsAppProvider):
             "audio": {"link": audio_url},
         }, request_type="send_audio")
 
+    async def send_contact(self, to: str, contact_name: str, contact_phone: str) -> dict:
+        """Envia um cartão de contato (vCard) via mensagem tipo `contacts` da Meta."""
+        digits = "".join(ch for ch in contact_phone if ch.isdigit())
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "contacts",
+            "contacts": [
+                {
+                    "name": {"formatted_name": contact_name, "first_name": contact_name},
+                    "phones": [
+                        {"phone": f"+{digits}", "wa_id": digits, "type": "WORK"}
+                    ],
+                }
+            ],
+        }
+        result = await self._post(payload, request_type="send_contact")
+        # Meta pode retornar HTTP 200 com erro embutido — aceite real tem "messages".
+        if not isinstance(result, dict) or "messages" not in result:
+            raise RuntimeError(
+                f"Meta send_contact rejected (missing messages in response): {result!r}"
+            )
+        return result
+
     async def send_template(self, to: str, template_name: str, components: list | None = None, language_code: str = "pt_BR") -> dict:
         payload = {
             "messaging_product": "whatsapp",

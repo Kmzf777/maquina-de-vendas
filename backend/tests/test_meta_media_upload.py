@@ -51,6 +51,36 @@ async def test_upload_media_returns_media_id():
 
 
 @pytest.mark.anyio
+async def test_send_contact_builds_contacts_payload():
+    """send_contact monta a mensagem tipo `contacts` e normaliza o telefone."""
+    client = MetaCloudClient(CONFIG)
+    client._post = AsyncMock(return_value={"messages": [{"id": "wamid.789"}]})
+
+    result = await client.send_contact(
+        "5511999999999", contact_name="João", contact_phone="55 (34) 9146-1669"
+    )
+
+    assert result["messages"][0]["id"] == "wamid.789"
+    payload = client._post.call_args.args[0]
+    assert payload["type"] == "contacts"
+    assert payload["to"] == "5511999999999"
+    contact = payload["contacts"][0]
+    assert contact["name"]["formatted_name"] == "João"
+    phone = contact["phones"][0]
+    assert phone["phone"] == "+553491461669"  # dígitos normalizados, com '+'
+    assert phone["wa_id"] == "553491461669"
+
+
+@pytest.mark.anyio
+async def test_send_contact_raises_when_meta_rejects():
+    """Sem 'messages' na resposta (erro embutido da Meta), send_contact levanta."""
+    client = MetaCloudClient(CONFIG)
+    client._post = AsyncMock(return_value={"error": {"message": "invalid"}})
+    with pytest.raises(RuntimeError):
+        await client.send_contact("5511999999999", contact_name="João", contact_phone="553491461669")
+
+
+@pytest.mark.anyio
 async def test_upload_media_logs_error_on_failure():
     client = MetaCloudClient(CONFIG)
     error_resp = _make_mock_resp(

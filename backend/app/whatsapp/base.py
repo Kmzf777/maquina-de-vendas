@@ -19,5 +19,14 @@ class WhatsAppProvider(ABC):
     @abstractmethod
     async def send_template(self, to: str, template_name: str, components: dict | None = None, language_code: str = "pt_BR") -> dict: ...
 
+    async def send_contact(self, to: str, contact_name: str, contact_phone: str) -> dict:
+        """Envia um cartão de contato (vCard) ao lead.
+
+        Método concreto com default não-suportado: apenas os provedores ativos
+        (Meta) e o mock o sobrescrevem — o provedor Evolution (descontinuado) herda
+        este default e não precisa implementar.
+        """
+        raise NotImplementedError(f"{type(self).__name__} não suporta send_contact")
+
     @abstractmethod
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict: ...

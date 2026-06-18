@@ -86,6 +86,13 @@ _HANDOFF_MSG = (
     "Assim que você chamar, ele já receberá seu contato e continuará seu atendimento."
 )
 
+# Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é
+# enviado automaticamente logo após a mensagem de despedida no encaminhar_humano.
+_SUPERVISOR_NAME = "João"
+_SUPERVISOR_PHONE = "553491461669"
+# Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
+_MAX_DESPEDIDA_LEN = 600
+
 TOOLS_SCHEMA = [
     {
         "type": "function",
@@ -132,21 +139,33 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "encaminhar_humano",
             "description": (
-                "Registra o encerramento da interacao e transfere o controle para um humano. "
+                "Registra o encerramento da interacao e transfere o controle para o supervisor Joao. "
                 "USE nos seguintes casos: "
                 "(1) lead qualificado e pronto para fechar — passe vendedor e motivo; "
                 "(2) lead REJEITOU explicitamente o modelo de negocio — passe motivo='Cliente nao aceitou o modelo de negocio'; "
                 "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ turnos no stage private_label — chame imediatamente. "
                 "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
+                "ANTES de chamar, escreva uma mensagem de despedida/transbordo natural e personalizada com base no "
+                "contexto da conversa e passe-a no argumento `mensagem_despedida` (curta — no maximo 2-3 frases). "
+                "O sistema envia essa mensagem ao lead e, logo em seguida, o cartao de contato do Joao automaticamente "
+                "— NAO cole telefone, link ou wa.me na mensagem. "
                 "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "mensagem_despedida": {
+                        "type": "string",
+                        "description": (
+                            "Mensagem de despedida/transbordo curta e personalizada para o lead, escrita com base no "
+                            "contexto da conversa. Sera enviada como texto, seguida do cartao de contato do Joao. "
+                            "NAO inclua telefone, link nem wa.me."
+                        ),
+                    },
                     "vendedor": {"type": "string", "description": "Nome do vendedor (opcional — omita em casos de rejeicao)"},
                     "motivo": {"type": "string", "description": "Motivo do encaminhamento ou encerramento"},
                 },
-                "required": [],
+                "required": ["mensagem_despedida"],
             },
         },
     },
@@ -408,12 +427,33 @@ async def execute_tool(
         if channel:
             # Destino entregável: wa_id real do lead quando houver, senão phone (evita 131026).
             send_to = resolve_send_target(lead, phone)
+            provider = get_provider(channel)
+            # Mensagem de despedida escrita pela IA (fallback para a estática se ausente),
+            # com teto de tamanho por usabilidade no WhatsApp.
+            despedida = (args.get("mensagem_despedida") or "").strip() or _HANDOFF_MSG
+            if len(despedida) > _MAX_DESPEDIDA_LEN:
+                despedida = despedida[:_MAX_DESPEDIDA_LEN].rstrip() + "…"
             try:
-                send_result = await get_provider(channel).send_text(send_to, _HANDOFF_MSG)
-                save_message(lead_id, "assistant", _HANDOFF_MSG, sent_by="handoff", conversation_id=conversation_id, wamid=extract_wamid(send_result))
+                send_result = await provider.send_text(send_to, despedida)
+                save_message(lead_id, "assistant", despedida, sent_by="handoff", conversation_id=conversation_id, wamid=extract_wamid(send_result))
             except Exception as exc:
                 logger.error(
                     "encaminhar_humano: falha ao enviar mensagem de handoff para lead %s: %s",
+                    lead_id, exc, exc_info=True,
+                )
+            # Logo após o texto, envia o cartão de contato do João (agrupamento visual).
+            try:
+                await provider.send_contact(
+                    send_to, contact_name=_SUPERVISOR_NAME, contact_phone=_SUPERVISOR_PHONE
+                )
+                save_message(
+                    lead_id, "system",
+                    f"[encaminhar_humano] cartão de contato de {_SUPERVISOR_NAME} enviado",
+                    conversation_id=conversation_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "encaminhar_humano: falha ao enviar cartão de contato do supervisor para lead %s: %s",
                     lead_id, exc, exc_info=True,
                 )
             try:

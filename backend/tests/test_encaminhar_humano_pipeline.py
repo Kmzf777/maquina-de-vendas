@@ -59,10 +59,51 @@ async def test_encaminhar_humano_private_label_usa_category_correta(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_encaminhar_humano_sends_handoff_text_via_ai_channel(monkeypatch):
-    """encaminhar_humano envia mensagem de redirecionamento pelo canal da IA."""
+async def test_encaminhar_humano_envia_despedida_da_ia_e_cartao_de_contato(monkeypatch):
+    """encaminhar_humano envia a mensagem_despedida escrita pela IA e, em seguida, o vCard do João."""
     mock_provider = AsyncMock()
     mock_provider.send_text = AsyncMock(return_value={"messages": [{"id": "wamid.123"}]})
+    mock_provider.send_contact = AsyncMock(return_value={"messages": [{"id": "wamid.456"}]})
+
+    monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado"})
+    monkeypatch.setattr("app.agent.tools.create_deal", lambda lead_id, title, **kw: {"id": "deal-1"})
+    monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kw: None)
+    monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: {
+        "id": "ch-1", "provider": "meta_cloud",
+        "provider_config": {"phone_number_id": "111", "access_token": "tok"},
+    })
+    monkeypatch.setattr("app.agent.tools.get_provider", lambda channel: mock_provider)
+    monkeypatch.setattr("app.agent.tools.schedule_handoff_rescue", lambda **kw: None)
+
+    despedida = "Foi um prazer, João! Vou te passar pro nosso supervisor pra fechar tudo certinho."
+    with patch("app.agent.tools.save_message"):
+        await execute_tool(
+            "encaminhar_humano",
+            {"mensagem_despedida": despedida, "vendedor": "João", "motivo": "qualificado"},
+            lead_id="lead-1",
+            phone="5511999999999",
+            conversation_id="conv-1",
+        )
+
+    # 1) o texto enviado é exatamente a despedida escrita pela IA (sem link/wa.me)
+    mock_provider.send_text.assert_called_once()
+    _, sent_msg = mock_provider.send_text.call_args[0]
+    assert sent_msg == despedida
+    assert "wa.me" not in sent_msg
+
+    # 2) logo após, o cartão de contato do João é enviado
+    mock_provider.send_contact.assert_called_once()
+    kwargs = mock_provider.send_contact.call_args.kwargs
+    assert kwargs["contact_name"] == "João"
+    assert kwargs["contact_phone"] == "553491461669"
+
+
+@pytest.mark.asyncio
+async def test_encaminhar_humano_fallback_quando_sem_mensagem_despedida(monkeypatch):
+    """Sem mensagem_despedida (ex.: guardrail), usa o texto estático e ainda envia o vCard."""
+    mock_provider = AsyncMock()
+    mock_provider.send_text = AsyncMock(return_value={"messages": [{"id": "wamid.123"}]})
+    mock_provider.send_contact = AsyncMock(return_value={"messages": [{"id": "wamid.456"}]})
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado"})
     monkeypatch.setattr("app.agent.tools.create_deal", lambda lead_id, title, **kw: {"id": "deal-1"})
@@ -77,16 +118,14 @@ async def test_encaminhar_humano_sends_handoff_text_via_ai_channel(monkeypatch):
     with patch("app.agent.tools.save_message"):
         await execute_tool(
             "encaminhar_humano",
-            {"vendedor": "João", "motivo": "qualificado"},
+            {"vendedor": "Joao Bras", "motivo": "frustracao — guardrail"},
             lead_id="lead-1",
             phone="5511999999999",
             conversation_id="conv-1",
         )
 
     mock_provider.send_text.assert_called_once()
-    _, sent_msg = mock_provider.send_text.call_args[0]
-    assert "wa.me/553491461669" in sent_msg
-    assert "João" in sent_msg
+    mock_provider.send_contact.assert_called_once()
 
 
 @pytest.mark.asyncio
