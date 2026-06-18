@@ -20,6 +20,7 @@ import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
 import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
 import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
 import { BulkMoveDealsModal } from "@/components/deals/bulk-move-deals-modal";
+import { useCurrentRole } from "@/hooks/use-current-role";
 import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 
 function DroppableColumn({
@@ -104,6 +105,8 @@ function DraggableDealCard({ deal, onClick }: { deal: Deal; onClick: (deal: Deal
 }
 
 export default function VendasPage() {
+  const { role } = useCurrentRole();
+  const isAdmin = role === "admin";
   const { pipelines, loading: pipelinesLoading, refetch: refetchPipelines } = usePipelines();
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const { stages, refetch: refetchStages } = usePipelineStages(selectedPipelineId);
@@ -278,6 +281,7 @@ export default function VendasPage() {
         <PipelineSwitcher
           pipelines={pipelines}
           activePipelineId={selectedPipelineId}
+          isAdmin={isAdmin}
           onSelect={setSelectedPipelineId}
           onCreateNew={() => setShowPipelineCreate(true)}
           onEdit={() => setShowPipelineEdit(true)}

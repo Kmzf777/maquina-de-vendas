@@ -6,6 +6,7 @@ import type { Pipeline } from "@/lib/types";
 interface PipelineSwitcherProps {
   pipelines: Pipeline[];
   activePipelineId: string | null;
+  isAdmin: boolean;
   onSelect: (id: string) => void;
   onCreateNew: () => void;
   onEdit: () => void;
@@ -13,18 +14,30 @@ interface PipelineSwitcherProps {
 }
 
 export function PipelineSwitcher({
-  pipelines,
-  activePipelineId,
-  onSelect,
-  onCreateNew,
-  onEdit,
-  onDelete,
+  pipelines, activePipelineId, isAdmin, onSelect, onCreateNew, onEdit, onDelete,
 }: PipelineSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [names, setNames] = useState<Record<string, string>>({});
   const dropdownRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const activePipeline = pipelines.find((p) => p.id === activePipelineId);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/users")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id: string; name: string }[]) =>
+        setNames(Object.fromEntries(list.map((u) => [u.id, u.name]))))
+      .catch(() => setNames({}));
+  }, [isAdmin]);
+
+  function ownerLabel(p: Pipeline): string | null {
+    if (!isAdmin) return null;
+    if (p.is_universal) return "Universal";
+    if (!p.owner_user_id) return "Administrativo";
+    return names[p.owner_user_id] ?? "—";
+  }
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -83,7 +96,12 @@ export function PipelineSwitcher({
                       : "text-[#313130] hover:bg-[#faf9f6]"
                   }`}
                 >
-                  {p.name}
+                  <span className="flex flex-col">
+                    <span>{p.name}</span>
+                    {ownerLabel(p) && (
+                      <span className="text-[11px] text-[#7b7b78]">{ownerLabel(p)}</span>
+                    )}
+                  </span>
                   {p.id === activePipelineId && (
                     <svg
                       width="14"
