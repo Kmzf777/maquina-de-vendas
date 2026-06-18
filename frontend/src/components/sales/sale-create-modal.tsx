@@ -144,12 +144,15 @@ export function SaleCreateModal({
           product: product.trim(),
           value: parseFloat(value),
           sold_at: new Date(soldAt + "T12:00:00").toISOString(),
-          sold_by: soldBy || null,
+          sold_by: soldBy && soldBy !== "__none__" ? soldBy : null,
           notes: notes.trim() || null,
         }),
       });
       if (!res.ok) {
-        setError((await res.json()).error ?? "Erro ao salvar venda");
+        const msg = res.headers.get("content-type")?.includes("json")
+          ? (await res.json().catch(() => ({}))).error
+          : null;
+        setError(msg ?? "Erro ao salvar venda");
         setSaving(false);
         return;
       }
@@ -181,7 +184,7 @@ export function SaleCreateModal({
       product: product.trim(),
       value: parseFloat(value),
       sold_at: new Date(soldAt + "T12:00:00").toISOString(),
-      sold_by: soldBy || null,
+      sold_by: soldBy && soldBy !== "__none__" ? soldBy : null,
       notes: notes.trim() || null,
     };
 
@@ -202,7 +205,10 @@ export function SaleCreateModal({
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      setError((await res.json()).error ?? "Erro ao salvar venda");
+      const msg = res.headers.get("content-type")?.includes("json")
+        ? (await res.json().catch(() => ({}))).error
+        : null;
+      setError(msg ?? "Erro ao salvar venda");
       setSaving(false);
       return;
     }
@@ -227,6 +233,7 @@ export function SaleCreateModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Fechar"
             className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 transition-colors"
           >
             <svg
@@ -336,7 +343,7 @@ export function SaleCreateModal({
           {/* Deal block — hidden in edit mode */}
           {!isEditing && (
             <div>
-              <label className={fieldLabel}>Deal *</label>
+              <label className={fieldLabel}>Deal{!lockedDealId ? " *" : ""}</label>
 
               {/* Locked deal — read-only */}
               {lockedDealId ? (
@@ -459,18 +466,7 @@ export function SaleCreateModal({
             <button
               type="submit"
               disabled={saving}
-              style={{ backgroundColor: saving ? undefined : "#1f9d57" }}
-              className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors disabled:opacity-50 disabled:bg-[#7b7b78]"
-              onMouseEnter={(e) => {
-                if (!saving)
-                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                    "#1b8a4c";
-              }}
-              onMouseLeave={(e) => {
-                if (!saving)
-                  (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                    "#1f9d57";
-              }}
+              className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
             >
               {saving ? "Salvando..." : isEditing ? "Salvar" : "Registrar Venda"}
             </button>
