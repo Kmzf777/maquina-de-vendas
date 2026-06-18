@@ -3,15 +3,7 @@
 import { useState, useEffect } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
-import type { Lead, Tag, Pipeline, PipelineStage } from "@/lib/types";
-
-interface LeadSale {
-  id: string;
-  sold_at: string;
-  value: number;
-  product: string;
-  sold_by: string | null;
-}
+import type { Lead, Tag, Pipeline, PipelineStage, Sale } from "@/lib/types";
 
 interface LeadDeal {
   id: string;
@@ -35,9 +27,9 @@ interface CrmPerfilTabProps {
   onTagToggle: (tagId: string, add: boolean) => void;
   onCreateDeal: () => void;
   onDealStageChange?: (dealId: string, stageId: string) => Promise<void>;
-  sales: LeadSale[];
+  sales: Sale[];
   onCreateSale: () => void;
-  onEditSale: (sale: LeadSale) => void;
+  onEditSale: (sale: Sale) => void;
   onDeleteSale: (saleId: string) => void;
 }
 
@@ -111,6 +103,7 @@ export function CrmPerfilTab({
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</span>
           <button
+            type="button"
             onClick={onCreateSale}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] bg-[#1f9d57] text-white text-[12px] font-medium hover:bg-[#1b8a4c] transition-colors"
           >
@@ -140,6 +133,7 @@ export function CrmPerfilTab({
                   <button
                     onClick={() => onEditSale(sale)}
                     title="Editar venda"
+                    aria-label="Editar venda"
                     className="w-6 h-6 flex items-center justify-center rounded-[3px] text-[#7b7b78] hover:text-[#111111] hover:bg-[#f0ede8] transition-colors"
                   >
                     <Pencil size={14} />
@@ -147,6 +141,7 @@ export function CrmPerfilTab({
                   <button
                     onClick={() => onDeleteSale(sale.id)}
                     title="Excluir venda"
+                    aria-label="Excluir venda"
                     className="w-6 h-6 flex items-center justify-center rounded-[3px] text-[#7b7b78] hover:text-[#e53e3e] hover:bg-[#fff5f5] transition-colors"
                   >
                     <Trash2 size={14} />

@@ -237,7 +237,7 @@ export function ContactDetail({
                 onDealStageChange={onDealStageChange ?? handleDealStageChange}
                 sales={sales}
                 onCreateSale={() => setShowCreateSale(true)}
-                onEditSale={(s) => setEditingSale(s as Sale)}
+                onEditSale={(s) => setEditingSale(s)}
                 onDeleteSale={async (saleId) => {
                   if (!window.confirm("Excluir esta venda? Esta ação não pode ser desfeita.")) return;
                   const res = await fetch(`/api/sales/${saleId}`, { method: "DELETE" });
