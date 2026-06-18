@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { assertCanManagePipeline } from "@/lib/supabase/pipeline-access";
 
 export async function GET(
   _request: NextRequest,
@@ -24,6 +25,9 @@ export async function POST(
   const { label, dot_color } = await request.json();
   if (!label?.trim()) return NextResponse.json({ error: "Label é obrigatório" }, { status: 400 });
   const supabase = await getServiceSupabase();
+
+  const guard = await assertCanManagePipeline(supabase, id);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   // Inserir antes dos stages protegidos (que ficam sempre no final)
   const { data: lastNormal, error: lastNormalError } = await supabase
