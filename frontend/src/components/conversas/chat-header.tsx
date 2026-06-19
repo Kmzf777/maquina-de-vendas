@@ -3,6 +3,12 @@
 import { useState, useRef, useEffect } from "react";
 import type { Conversation, Tag } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ChatHeaderProps {
   conversation: Conversation;
@@ -127,6 +133,35 @@ export function ChatHeader({
         </button>
       )}
 
+      {/* Finalizar Conversa — ação dedicada, ao lado do menu "..." */}
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleFinalize}
+              className="inline-flex items-center gap-2 rounded-[4px] border border-[#dedbd6] bg-[#faf9f6] px-2.5 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#dedbd6]/60 hover:border-[#cbc7c0] flex-shrink-0"
+              aria-label="Finalizar Conversa"
+            >
+              <svg
+                className="w-4 h-4 text-[#7b7b78] flex-shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                aria-hidden
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="hidden sm:inline">Finalizar Conversa</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="sm:hidden">
+            Finalizar Conversa
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
       {/* ... dropdown */}
       <div className="relative flex-shrink-0" ref={menuRef}>
         <button
@@ -163,26 +198,6 @@ export function ChatHeader({
               <span className={`text-[11px] font-medium ${followupEnabled ? "text-[#1e6ee8]" : "text-[#7b7b78]"}`}>
                 {followupEnabled ? "Ativo" : "Pausado"}
               </span>
-            </button>
-
-            <div className="border-t border-[#dedbd6] my-1" />
-
-            {/* Finalizar conversa */}
-            <button
-              type="button"
-              onClick={handleFinalize}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-left hover:bg-[#f5f3f0] transition-colors"
-            >
-              <svg
-                className="w-4 h-4 text-[#7b7b78] flex-shrink-0"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="text-[#111111]">Finalizar conversa</span>
             </button>
 
             {onOptOut && (
