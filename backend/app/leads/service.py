@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from app.db.supabase import get_supabase
@@ -8,6 +8,11 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 _PHONE_RE = re.compile(r"[^\d]+")
+_TZ_BR = timezone(timedelta(hours=-3))
+
+# Autor fixo das observações geradas automaticamente ao disparar um template.
+# Aparece como rótulo na timeline do card de CRM (lead_notes).
+DISPATCH_NOTE_AUTHOR = "sistema-disparo"
 
 
 def normalize_phone(phone: str | None) -> str:
@@ -253,6 +258,49 @@ def append_lead_observation(lead_id: str, text: str) -> None:
         logger.error(
             "append_lead_observation: falha ao anexar observacao para lead %s: %s",
             lead_id, exc, exc_info=True,
+        )
+
+
+def format_dispatch_note(template_name: str, when: datetime | None = None) -> str:
+    """Formata a observação de disparo no padrão analítico fixo.
+
+    Formato: ``[DD/MM/YYYY HH:MM] - Disparo feito usando o template {template_name}``
+
+    O timestamp é renderizado no fuso de Brasília (BRT). `when` permite
+    determinismo nos testes; quando omitido usa o agora.
+    """
+    ts = (when or datetime.now(_TZ_BR)).astimezone(_TZ_BR)
+    return (
+        f"[{ts.strftime('%d/%m/%Y %H:%M')}] - "
+        f"Disparo feito usando o template {template_name}"
+    )
+
+
+def record_dispatch_note(
+    lead_id: str, template_name: str, when: datetime | None = None
+) -> None:
+    """Registra uma observação de disparo no log de notas do lead (`lead_notes`).
+
+    A nota aparece na timeline do card de CRM e permite quantificar quantos
+    disparos foram feitos para cada lead e em quais datas (fim analítico).
+
+    Fail-soft: nunca levanta — perder a observação não pode interromper nem
+    derrubar o fluxo de disparo que a chamou. Vira no-op se faltar lead_id ou
+    template_name (ex.: lead sem card ativo / disparo sem template nomeado).
+    """
+    if not lead_id or not template_name:
+        return
+    try:
+        get_supabase().table("lead_notes").insert({
+            "lead_id": lead_id,
+            "author": DISPATCH_NOTE_AUTHOR,
+            "content": format_dispatch_note(template_name, when),
+        }).execute()
+    except Exception as exc:
+        logger.error(
+            "record_dispatch_note: falha ao registrar observação de disparo "
+            "para lead %s (template %s): %s",
+            lead_id, template_name, exc, exc_info=True,
         )
 
 

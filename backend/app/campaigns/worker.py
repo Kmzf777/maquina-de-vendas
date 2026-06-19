@@ -167,7 +167,7 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         _build_template_components, _render_template_body, _broadcast_ai_enabled,
     )
     from app.conversations.service import get_or_create_conversation, update_conversation, save_message
-    from app.leads.service import update_lead
+    from app.leads.service import update_lead, record_dispatch_note
 
     cfg = node["config"]
     template_name = cfg["template_name"]
@@ -198,6 +198,9 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         wamid = (send_resp.get("messages") or [{}])[0].get("id")
     except Exception:
         pass
+
+    # Registra observação analítica de disparo no card de CRM (fail-soft).
+    record_dispatch_note(enrollment["lead_id"], template_name)
 
     # Persist conversation + message
     try:

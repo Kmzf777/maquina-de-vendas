@@ -19,7 +19,7 @@ from app.broadcast.service import (
     save_broadcast_lead_wamid,
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
-from app.leads.service import update_lead
+from app.leads.service import update_lead, record_dispatch_note
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -531,6 +531,9 @@ async def process_single_broadcast(broadcast: dict):
                 logger.warning("[BROADCAST] Could not save wamid for lead %s: %s", lead["phone"], wamid_err)
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
+
+            # Registra observação analítica de disparo no card de CRM (fail-soft).
+            record_dispatch_note(lead["id"], broadcast["template_name"])
 
             # Fire post_broadcast automation trigger (fire-and-forget)
             try:

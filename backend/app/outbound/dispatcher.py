@@ -2,11 +2,15 @@ import logging
 
 from app.config import settings
 from app.channels.service import get_channel_by_id
-from app.leads.service import get_or_create_lead, update_lead
+from app.leads.service import get_or_create_lead, update_lead, record_dispatch_note
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.whatsapp.registry import get_provider
 
 logger = logging.getLogger(__name__)
+
+# Nome usado na observação de CRM — este disparo é um texto de re-engajamento
+# manual, não um template Meta nomeado.
+OUTBOUND_TEMPLATE_NAME = "reengajamento"
 
 TEMPLATE_TEXT = (
     "oi, tudo bem?\n\n"
@@ -44,6 +48,9 @@ async def dispatch_to_lead(phone: str, lead_context: dict) -> dict:
         update_lead(lead_id, status="template_sent")
     except Exception as e:
         logger.error(f"[DISPATCH] Failed to update lead status for {lead_id}: {e}", exc_info=True)
+
+    # Registra observação analítica de disparo no card de CRM (fail-soft).
+    record_dispatch_note(lead_id, OUTBOUND_TEMPLATE_NAME)
 
     conversation = None
     try:
