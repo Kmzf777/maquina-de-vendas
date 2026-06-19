@@ -8,7 +8,7 @@ from typing import Any
 from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
-    resolve_send_target,
+    move_open_deal_for_handoff, resolve_send_target,
 )
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
@@ -387,7 +387,12 @@ async def execute_tool(
         try:
             lead = get_lead(lead_id)
             lead_stage = lead.get("stage") if lead else None
-            create_deal(lead_id, title=f"{vendedor} - {motivo}", category=lead_stage)
+            deal_title = f"{vendedor} - {motivo}"
+            # Lead de LP: MOVE o card existente do funil de ENTRADA da Valéria para o funil
+            # de FECHAMENTO do João (1ª coluna não-protegida). Retorna None se não houver
+            # card de LP a mover → cai no fluxo padrão (cria, com dedupe p/ não duplicar).
+            if not move_open_deal_for_handoff(lead_id, title=deal_title):
+                create_deal(lead_id, title=deal_title, category=lead_stage, dedupe_open=True)
         except Exception as exc:
             logger.error(
                 "encaminhar_humano failed to create deal for lead %s: %s",
@@ -659,7 +664,11 @@ async def _retomar_contato_vendedor(
 
     # Visibilidade para o time comercial: registra o retorno do lead como deal.
     try:
-        create_deal(lead_id, title=f"Joao (retomada) - {motivo}", category=lead.get("stage"))
+        deal_title = f"Joao (retomada) - {motivo}"
+        # Lead de LP: MOVE o card do funil de ENTRADA da Valéria para o de FECHAMENTO do João
+        # (mesma lógica do encaminhar_humano). Sem card de LP → cria (dedupe p/ não duplicar).
+        if not move_open_deal_for_handoff(lead_id, title=deal_title):
+            create_deal(lead_id, title=deal_title, category=lead.get("stage"), dedupe_open=True)
     except Exception as exc:
         logger.error(
             "retomar_contato_vendedor: falha ao criar deal para lead %s: %s", lead_id, exc, exc_info=True

@@ -374,11 +374,24 @@ def save_message(lead_id: str, role: str, content: str, stage: str | None = None
     return result.data[0]
 
 
+# Categoria (stage do lead) → NOME REAL do pipeline (verificado em prod, `pipelines`).
+# Antes apontava para nomes curtos ('Atacado', 'Private Label', ...) que NÃO existem —
+# create_deal caía sempre no fallback (1º pipeline por order_index). Corrigido para os
+# nomes reais dos funis de produto da Valéria/Arthur.
 CATEGORY_PIPELINE_NAMES: dict[str, str] = {
-    "atacado": "Atacado",
-    "private_label": "Private Label",
-    "exportacao": "Exportação",
-    "consumo": "Consumo",
+    "atacado": "Valeria - Atacado",
+    "private_label": "Valeria - Private Label",
+    "exportacao": "Arthur - Exportação",
+    "consumo": "Valeria - Consumo",
+}
+
+# Roteamento de HANDOFF EXCLUSIVO para cards de LP: quando o lead qualificado já tem um
+# card aberto num funil de ENTRADA da Valéria (criado no disparo de boas-vindas da LP), o
+# encaminhar_humano MOVE o card para o funil de FECHAMENTO do vendedor (João), na 1ª coluna
+# não-protegida. Leads sem card em funil de LP não são afetados (seguem o fluxo padrão).
+LP_HANDOFF_PIPELINE_ROUTES: dict[str, str] = {
+    "Valeria - Atacado": "João - Atacado",
+    "Valeria - Private Label": "João - Private Label",
 }
 
 
@@ -388,34 +401,120 @@ def get_lead(lead_id: str) -> dict[str, Any] | None:
     return result.data[0] if result.data else None
 
 
-def create_deal(lead_id: str, title: str, category: str | None = None) -> dict[str, Any]:
+def get_open_deal(lead_id: str) -> dict[str, Any] | None:
+    """Retorna o deal ABERTO (closed_at IS NULL) mais recente do lead, ou None.
+
+    'Aberto' = ainda não fechado (nem ganho nem perdido). Serve como guard de
+    idempotência para não duplicar cards: quando um card já nasceu antes (ex.: disparo
+    de boas-vindas da LP cria o card em 'Valeria - X / Entrada') e depois a IA chama
+    encaminhar_humano, queremos reaproveitar esse card em vez de criar um segundo.
+
+    Fail-soft: em caso de erro de consulta retorna None (o chamador decide criar) —
+    nunca levanta para não derrubar o fluxo que a chamou.
+    """
     sb = get_supabase()
+    try:
+        res = (
+            sb.table("deals")
+            .select("id, title, pipeline_id, stage_id, category")
+            .eq("lead_id", lead_id)
+            .is_("closed_at", "null")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(
+            "get_open_deal: falha ao buscar deal aberto do lead %s: %s", lead_id, exc, exc_info=True
+        )
+        return None
+    return res.data[0] if res.data else None
+
+
+def create_deal(
+    lead_id: str,
+    title: str,
+    category: str | None = None,
+    *,
+    pipeline_name: str | None = None,
+    stage_label: str | None = None,
+    dedupe_open: bool = False,
+) -> dict[str, Any]:
+    """Cria um deal (card de CRM) para o lead.
+
+    Resolução do PIPELINE (precedência):
+      1. `pipeline_name` explícito (ex.: 'Valeria - Atacado') — usado pelo roteamento de LP.
+      2. `category` → CATEGORY_PIPELINE_NAMES.
+      3. fallback: primeiro pipeline por order_index.
+    Se um nome explícito/por categoria não existir naquele ambiente (ex.: pipelines da
+    Valeria não existem no homolog), cai no fallback — o código roda em dev e prod sem
+    modificação, só muda o dado.
+
+    Resolução do STAGE: se `stage_label` for informado e existir no pipeline resolvido
+    (ex.: 'Entrada'), usa-o; senão a primeira coluna não-protegida por order_index.
+
+    `dedupe_open=True`: se o lead já tiver um deal aberto, reaproveita-o e NÃO insere outro
+    (retorna o existente). Evita cards duplicados no fluxo LP→inbound→encaminhar_humano.
+    """
+    sb = get_supabase()
+
+    if dedupe_open:
+        existing = get_open_deal(lead_id)
+        if existing:
+            logger.info(
+                "create_deal: lead %s já possui deal aberto %s — reaproveitando (sem duplicar)",
+                lead_id, existing.get("id"),
+            )
+            return existing
+
     pipeline_id: str | None = None
     stage_id: str | None = None
 
-    pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
+    # (1) pipeline explícito por nome
     if pipeline_name:
         p = sb.table("pipelines").select("id").eq("name", pipeline_name).limit(1).execute()
         if p.data:
             pipeline_id = p.data[0]["id"]
 
+    # (2) pipeline derivado da categoria
+    if not pipeline_id:
+        cat_pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
+        if cat_pipeline_name:
+            p = sb.table("pipelines").select("id").eq("name", cat_pipeline_name).limit(1).execute()
+            if p.data:
+                pipeline_id = p.data[0]["id"]
+
+    # (3) fallback: primeiro pipeline
     if not pipeline_id:
         p = sb.table("pipelines").select("id").order("order_index", desc=False).limit(1).execute()
         if p.data:
             pipeline_id = p.data[0]["id"]
 
     if pipeline_id:
-        s = (
-            sb.table("pipeline_stages")
-            .select("id")
-            .eq("pipeline_id", pipeline_id)
-            .eq("is_protected", False)
-            .order("order_index", desc=False)
-            .limit(1)
-            .execute()
-        )
-        if s.data:
-            stage_id = s.data[0]["id"]
+        # Stage por label explícito (ex.: 'Entrada'); senão 1ª coluna não-protegida.
+        if stage_label:
+            s = (
+                sb.table("pipeline_stages")
+                .select("id")
+                .eq("pipeline_id", pipeline_id)
+                .eq("label", stage_label)
+                .limit(1)
+                .execute()
+            )
+            if s.data:
+                stage_id = s.data[0]["id"]
+        if not stage_id:
+            s = (
+                sb.table("pipeline_stages")
+                .select("id")
+                .eq("pipeline_id", pipeline_id)
+                .eq("is_protected", False)
+                .order("order_index", desc=False)
+                .limit(1)
+                .execute()
+            )
+            if s.data:
+                stage_id = s.data[0]["id"]
 
     deal = {
         "lead_id": lead_id,
@@ -427,6 +526,79 @@ def create_deal(lead_id: str, title: str, category: str | None = None) -> dict[s
     }
     result = sb.table("deals").insert(deal).execute()
     return result.data[0]
+
+
+def _first_unprotected_stage_id(sb, pipeline_id: str) -> str | None:
+    """Retorna o stage_id da 1ª coluna não-protegida do pipeline (ex.: 'Novo')."""
+    s = (
+        sb.table("pipeline_stages")
+        .select("id")
+        .eq("pipeline_id", pipeline_id)
+        .eq("is_protected", False)
+        .order("order_index", desc=False)
+        .limit(1)
+        .execute()
+    )
+    return s.data[0]["id"] if s.data else None
+
+
+def move_open_deal_for_handoff(lead_id: str, title: str | None = None) -> dict[str, Any] | None:
+    """MOVE o card de LP do lead para o funil de fechamento do vendedor (handoff).
+
+    Escopo EXCLUSIVO de LP: só atua quando o lead tem um deal ABERTO cujo pipeline atual é
+    um funil de ENTRADA da Valéria mapeado em LP_HANDOFF_PIPELINE_ROUTES
+    ('Valeria - Atacado' / 'Valeria - Private Label'). Nesse caso faz UPDATE do card —
+    pipeline_id + stage_id (1ª coluna não-protegida do destino, ex.: 'Novo') e, se informado,
+    o título — e retorna o deal atualizado.
+
+    Retorna None quando NÃO há card de LP a mover (sem deal aberto, ou o deal está em outro
+    funil): o chamador então segue o fluxo padrão (create_deal). Assim, leads que não vieram
+    de LP não são afetados.
+
+    Fail-soft: qualquer erro é logado e retorna None (o chamador decide o fallback) — nunca
+    levanta, para não derrubar o handoff.
+    """
+    try:
+        sb = get_supabase()
+        deal = get_open_deal(lead_id)
+        if not deal or not deal.get("pipeline_id"):
+            return None
+
+        p = sb.table("pipelines").select("name").eq("id", deal["pipeline_id"]).limit(1).execute()
+        src_name = p.data[0]["name"] if p.data else None
+        dest_name = LP_HANDOFF_PIPELINE_ROUTES.get(src_name or "")
+        if not dest_name:
+            return None  # card não está num funil de entrada de LP → não mexe
+
+        dp = sb.table("pipelines").select("id").eq("name", dest_name).limit(1).execute()
+        if not dp.data:
+            logger.warning(
+                "move_open_deal_for_handoff: pipeline destino '%s' inexistente — card %s mantido",
+                dest_name, deal["id"],
+            )
+            return None
+        dest_pipeline_id = dp.data[0]["id"]
+        dest_stage_id = _first_unprotected_stage_id(sb, dest_pipeline_id)
+
+        update: dict[str, Any] = {
+            "pipeline_id": dest_pipeline_id,
+            "stage_id": dest_stage_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if title:
+            update["title"] = title
+        res = sb.table("deals").update(update).eq("id", deal["id"]).execute()
+        logger.info(
+            "move_open_deal_for_handoff: card %s movido '%s' → '%s' (lead %s)",
+            deal["id"], src_name, dest_name, lead_id,
+        )
+        return res.data[0] if res.data else {**deal, **update}
+    except Exception as exc:
+        logger.error(
+            "move_open_deal_for_handoff: falha ao mover card do lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+        return None
 
 
 BLACKLIST_PIPELINE_ID = "8988e852-2836-4add-b023-4db4d6cd0e6e"

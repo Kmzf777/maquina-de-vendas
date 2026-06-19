@@ -14,6 +14,8 @@ async def test_encaminhar_humano_atacado_usa_category_correta(monkeypatch):
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado", "phone": "+5511999999999"})
     monkeypatch.setattr("app.agent.tools.create_deal", fake_create_deal)
+    # Sem card de LP a mover → cai no fluxo padrão de create_deal.
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kwargs: None)
     monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: None)
     monkeypatch.setattr("app.agent.tools.schedule_handoff_rescue", lambda **kw: None)
@@ -41,6 +43,8 @@ async def test_encaminhar_humano_private_label_usa_category_correta(monkeypatch)
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-2", "stage": "private_label", "phone": "+5511999999999"})
     monkeypatch.setattr("app.agent.tools.create_deal", fake_create_deal)
+    # Sem card de LP a mover → cai no fluxo padrão de create_deal.
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kwargs: None)
     monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: None)
     monkeypatch.setattr("app.agent.tools.schedule_handoff_rescue", lambda **kw: None)
@@ -59,6 +63,43 @@ async def test_encaminhar_humano_private_label_usa_category_correta(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_encaminhar_humano_moves_lp_card_instead_of_creating(monkeypatch):
+    """Lead com card de LP: o handoff MOVE o card (não cria outro)."""
+    move_calls = []
+    create_calls = []
+
+    def fake_move(lead_id, title=None):
+        move_calls.append({"lead_id": lead_id, "title": title})
+        return {"id": "deal-lp-1", "pipeline_id": "joao-atacado"}  # truthy → moveu
+
+    def fake_create_deal(lead_id, title, **kwargs):
+        create_calls.append(lead_id)
+        return {"id": "deal-x"}
+
+    monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-lp", "stage": "atacado", "phone": "+5511999999999"})
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", fake_move)
+    monkeypatch.setattr("app.agent.tools.create_deal", fake_create_deal)
+    monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kwargs: None)
+    monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: None)
+    monkeypatch.setattr("app.agent.tools.schedule_handoff_rescue", lambda **kw: None)
+
+    with patch("app.agent.tools.save_message"):
+        await execute_tool(
+            "encaminhar_humano",
+            {"vendedor": "João", "motivo": "qualificado"},
+            lead_id="lead-lp",
+            phone="+5511999999999",
+            conversation_id="conv-1",
+        )
+
+    # Moveu o card de LP (com o título do handoff) e NÃO criou um novo deal.
+    assert len(move_calls) == 1
+    assert move_calls[0]["lead_id"] == "lead-lp"
+    assert move_calls[0]["title"] == "João - qualificado"
+    assert create_calls == []
+
+
+@pytest.mark.asyncio
 async def test_encaminhar_humano_envia_despedida_da_ia_e_cartao_de_contato(monkeypatch):
     """encaminhar_humano envia a mensagem_despedida escrita pela IA e, em seguida, o vCard do João."""
     mock_provider = AsyncMock()
@@ -67,6 +108,7 @@ async def test_encaminhar_humano_envia_despedida_da_ia_e_cartao_de_contato(monke
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado"})
     monkeypatch.setattr("app.agent.tools.create_deal", lambda lead_id, title, **kw: {"id": "deal-1"})
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kw: None)
     monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: {
         "id": "ch-1", "provider": "meta_cloud",
@@ -107,6 +149,7 @@ async def test_encaminhar_humano_fallback_quando_sem_mensagem_despedida(monkeypa
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado"})
     monkeypatch.setattr("app.agent.tools.create_deal", lambda lead_id, title, **kw: {"id": "deal-1"})
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kw: None)
     monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: {
         "id": "ch-1", "provider": "meta_cloud",
@@ -137,6 +180,7 @@ async def test_encaminhar_humano_schedules_rescue_job(monkeypatch):
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado"})
     monkeypatch.setattr("app.agent.tools.create_deal", lambda lead_id, title, **kw: {"id": "deal-1"})
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kw: None)
     monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: {
         "id": "ch-ai-1", "provider": "meta_cloud",
@@ -170,6 +214,7 @@ async def test_encaminhar_humano_schedules_rescue_even_if_send_text_fails(monkey
 
     monkeypatch.setattr("app.agent.tools.get_lead", lambda lead_id: {"id": "lead-1", "stage": "atacado"})
     monkeypatch.setattr("app.agent.tools.create_deal", lambda lead_id, title, **kw: {"id": "deal-1"})
+    monkeypatch.setattr("app.agent.tools.move_open_deal_for_handoff", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.tools.update_lead", lambda lead_id, **kw: None)
     monkeypatch.setattr("app.agent.tools.get_channel_for_lead", lambda lead_id: {
         "id": "ch-ai-1", "provider": "meta_cloud",

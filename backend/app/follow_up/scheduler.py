@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.follow_up.service import get_due_followups
-from app.leads.service import save_message, resolve_send_target
+from app.leads.service import save_message, resolve_send_target, create_deal, record_dispatch_note
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -532,6 +532,25 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
     _mark_sent(job["id"])
 
 
+def _resolve_lp_pipeline(origem: str) -> tuple[str | None, str | None]:
+    """Mapeia a origem da LP → (pipeline_name, stage_label) do CRM.
+
+    `origem` é o slug salvo em leads.metadata.origem ('terceirizacao' / 'atacado'),
+    mas o casamento é por substring para também aceitar a URL completa
+    (.../terceirizacaocafe, .../cafeatacado). Verificado em `pipelines` (prod):
+    'Valeria - Private Label' e 'Valeria - Atacado' têm 'Entrada' como 1ª etapa.
+
+    Origem desconhecida → (None, None): create_deal usa o pipeline padrão (fallback).
+    Em ambientes sem esses pipelines (homolog) o fallback também atua.
+    """
+    o = (origem or "").strip().lower()
+    if "terceiriza" in o:        # 'terceirizacao' ou .../terceirizacaocafe
+        return "Valeria - Private Label", "Entrada"
+    if "atacado" in o:           # 'atacado' ou .../cafeatacado
+        return "Valeria - Atacado", "Entrada"
+    return None, None
+
+
 async def _process_lp_welcome(job: dict, now: datetime) -> None:
     """Dispara template de boas-vindas para lead capturado por landing page.
 
@@ -592,6 +611,37 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
             "[LP_WELCOME] Falha ao enviar template para %s: %s", lead_phone, exc, exc_info=True
         )
         return  # erro transitório → retry no próximo tick
+
+    # Card de CRM nasce AQUI: somente quando o disparo outbound da LP realmente acontece
+    # (lead não respondeu nos 15 min). Se o lead tivesse chamado a Valéria, o guard
+    # `lead_already_replied` acima já teria abortado e o card nasceria mais tarde pelo
+    # fluxo de qualificação (encaminhar_humano). Não há card antes deste ponto.
+    lead_id = job["lead_id"]
+    origem = (metadata.get("origem") or "").strip()
+    deal_title = f"Landing Page - {origem}" if origem else "Landing Page"
+    pipeline_name, stage_label = _resolve_lp_pipeline(origem)
+
+    # Fail-soft: o template já foi entregue à Meta — uma falha de CRM não pode derrubar
+    # nem reverter o disparo. Roteia por origem (terceirizacao→Private Label,
+    # atacado→Atacado), stage 'Entrada'. Origem desconhecida/ambiente sem o pipeline →
+    # create_deal cai no pipeline padrão. dedupe_open evita duplicar card já existente.
+    try:
+        create_deal(
+            lead_id,
+            title=deal_title,
+            category=None,
+            pipeline_name=pipeline_name,
+            stage_label=stage_label,
+            dedupe_open=True,
+        )
+    except Exception as exc:
+        logger.error(
+            "[LP_WELCOME] Falha ao criar deal para lead %s: %s", lead_id, exc, exc_info=True
+        )
+
+    # OBS padronizada de disparo no card recém-criado. `lead_notes` é keyed por lead_id,
+    # então a observação aparece na timeline do card. record_dispatch_note é fail-soft.
+    record_dispatch_note(lead_id, template_name)
 
     _mark_sent(job["id"])
 

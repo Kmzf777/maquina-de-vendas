@@ -214,6 +214,8 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
     mock_provider.send_template = AsyncMock()
 
     with patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_provider) as mock_meta, \
+         patch("app.follow_up.scheduler.create_deal") as mock_create_deal, \
+         patch("app.follow_up.scheduler.record_dispatch_note") as mock_record_note, \
          patch("app.follow_up.scheduler._mark_sent") as mock_mark_sent:
 
         await _process_lp_welcome(job, now)
@@ -221,7 +223,67 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
     mock_provider.send_template.assert_awaited_once_with(
         "5534999999999", "boas_vindas", components=None, language_code="pt_BR"
     )
+    # Cenário A: card de CRM criado no momento do disparo (lead não respondeu).
+    mock_create_deal.assert_called_once()
+    deal_args, deal_kwargs = mock_create_deal.call_args
+    assert deal_args[0] == "lead-1"                 # lead_id
+    assert deal_kwargs.get("category") is None
+    assert deal_kwargs.get("dedupe_open") is True    # idempotência: não duplica card existente
+    # Sem origem no metadata → roteamento neutro (pipeline padrão / fallback).
+    assert deal_kwargs.get("pipeline_name") is None
+    # OBS padronizada anexada ao card recém-criado.
+    mock_record_note.assert_called_once_with("lead-1", "boas_vindas")
     mock_mark_sent.assert_called_once_with("job-lp-1")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("origem,expected_pipeline", [
+    ("terceirizacao", "Valeria - Private Label"),
+    ("https://atacado.cafecanastra.com/terceirizacaocafe", "Valeria - Private Label"),
+    ("atacado", "Valeria - Atacado"),
+    ("https://atacado.cafecanastra.com/cafeatacado", "Valeria - Atacado"),
+])
+async def test_process_lp_welcome_routes_deal_by_origin(origem, expected_pipeline):
+    """Roteamento do card por origem da LP: card vai para o funil/stage corretos.
+
+    terceirizacaocafe → 'Valeria - Private Label' / 'Entrada';
+    cafeatacado       → 'Valeria - Atacado' / 'Entrada'.
+    Aceita tanto o slug ('terceirizacao'/'atacado') quanto a URL completa.
+    """
+    from app.follow_up.scheduler import _process_lp_welcome
+
+    now = datetime(2026, 5, 28, 10, 15, 0, tzinfo=timezone.utc)
+    job = {
+        "id": "job-lp-route",
+        "lead_id": "lead-1",
+        "conversation_id": "conv-1",
+        "channel_id": "ch-1",
+        "channels": {"id": "ch-1", "provider": "meta_cloud", "provider_config": {"access_token": "tok"}},
+        "leads": {"id": "lead-1", "phone": "5534999999999", "last_customer_message_at": None},
+        "conversations": {"id": "conv-1", "last_customer_message_at": None},
+        "metadata": {
+            "lead_phone": "5534999999999",
+            "template_name": "boas_vindas",
+            "language_code": "pt_BR",
+            "origem": origem,
+        },
+    }
+
+    mock_provider = AsyncMock()
+    mock_provider.send_template = AsyncMock()
+
+    with patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_provider), \
+         patch("app.follow_up.scheduler.create_deal") as mock_create_deal, \
+         patch("app.follow_up.scheduler.record_dispatch_note"), \
+         patch("app.follow_up.scheduler._mark_sent"):
+
+        await _process_lp_welcome(job, now)
+
+    mock_create_deal.assert_called_once()
+    _, deal_kwargs = mock_create_deal.call_args
+    assert deal_kwargs.get("pipeline_name") == expected_pipeline
+    assert deal_kwargs.get("stage_label") == "Entrada"
+    assert deal_kwargs.get("dedupe_open") is True
 
 
 @pytest.mark.anyio
@@ -277,12 +339,17 @@ async def test_process_lp_welcome_cancels_when_lead_already_replied():
     }
 
     with patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
+         patch("app.follow_up.scheduler.create_deal") as mock_create_deal, \
+         patch("app.follow_up.scheduler.record_dispatch_note") as mock_record_note, \
          patch("app.follow_up.scheduler.MetaCloudClient") as mock_meta:
 
         await _process_lp_welcome(job, now)
 
     mock_cancel.assert_called_once_with("job-lp-5", "lead_already_replied")
     mock_meta.assert_not_called()
+    # Cenário B: lead chamou antes dos 15 min → guard aborta → NENHUM card é criado por este fluxo.
+    mock_create_deal.assert_not_called()
+    mock_record_note.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -308,8 +375,13 @@ async def test_process_lp_welcome_does_not_mark_sent_on_send_failure():
     mock_provider.send_template.side_effect = Exception("Meta API down")
 
     with patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_provider), \
+         patch("app.follow_up.scheduler.create_deal") as mock_create_deal, \
+         patch("app.follow_up.scheduler.record_dispatch_note") as mock_record_note, \
          patch("app.follow_up.scheduler._mark_sent") as mock_mark_sent:
 
         await _process_lp_welcome(job, now)
 
     mock_mark_sent.assert_not_called()
+    # Envio falhou → não cria card nem registra OBS (retorna antes do bloco de CRM).
+    mock_create_deal.assert_not_called()
+    mock_record_note.assert_not_called()

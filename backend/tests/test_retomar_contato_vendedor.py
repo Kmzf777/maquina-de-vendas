@@ -59,6 +59,7 @@ async def test_retomar_in_business_hours_dispatches_now_and_disables_ai():
     """Dentro do horario: dispara AGORA, desativa IA e instrui despedida imediata."""
     with patch("app.agent.tools.update_lead") as mock_update, \
          patch("app.agent.tools.create_deal"), \
+         patch("app.agent.tools.move_open_deal_for_handoff", return_value=None), \
          patch("app.agent.tools.save_message"), \
          patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "name": "Rafael", "stage": "atacado"}), \
          patch("app.follow_up.service.is_within_business_window", return_value=True), \
@@ -82,6 +83,7 @@ async def test_retomar_out_of_hours_schedules_and_disables_ai():
     fire_at = datetime(2026, 5, 26, 9, 0, tzinfo=SP_TZ).astimezone(timezone.utc)
     with patch("app.agent.tools.update_lead") as mock_update, \
          patch("app.agent.tools.create_deal"), \
+         patch("app.agent.tools.move_open_deal_for_handoff", return_value=None), \
          patch("app.agent.tools.save_message"), \
          patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "name": "Rafael", "stage": "atacado"}), \
          patch("app.agent.tools.get_channel_for_lead", return_value={"id": "ch-1"}), \
@@ -117,6 +119,39 @@ async def test_retomar_returns_critical_when_disable_ai_fails(caplog):
         )
     assert "CRITICAL" in out
     mock_deal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retomar_moves_lp_card_instead_of_creating():
+    """Lead de LP: retomar MOVE o card para o funil do João (não cria outro)."""
+    move_calls = []
+    create_calls = []
+
+    def fake_move(lead_id, title=None):
+        move_calls.append({"lead_id": lead_id, "title": title})
+        return {"id": "deal-lp", "pipeline_id": "joao-atacado"}  # truthy → moveu
+
+    def fake_create(lead_id, title, **kw):
+        create_calls.append(lead_id)
+
+    with patch("app.agent.tools.update_lead"), \
+         patch("app.agent.tools.move_open_deal_for_handoff", side_effect=fake_move), \
+         patch("app.agent.tools.create_deal", side_effect=fake_create), \
+         patch("app.agent.tools.save_message"), \
+         patch("app.agent.tools.get_lead", return_value={"id": "lead-lp", "name": "Rafael", "stage": "atacado"}), \
+         patch("app.follow_up.service.is_within_business_window", return_value=True), \
+         patch("app.follow_up.scheduler.send_joao_handoff_template", new=AsyncMock(return_value=True)):
+        await execute_tool(
+            "retomar_contato_vendedor",
+            {"motivo": "retomar"},
+            lead_id="lead-lp",
+            phone="5511999999999",
+            conversation_id="conv-1",
+        )
+
+    assert len(move_calls) == 1
+    assert move_calls[0]["title"] == "Joao (retomada) - retomar"
+    assert create_calls == []  # moveu o card de LP → não criou novo
 
 
 # ─── prompt signal ──────────────────────────────────────────────────────────

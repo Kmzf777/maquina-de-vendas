@@ -171,6 +171,7 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
                     template_name=template_name,
                     language_code=language_code,
                     delay_minutes=delay_minutes,
+                    lead_origem=origem,
                 )
             except Exception as exc:
                 logger.error(
@@ -219,6 +220,7 @@ def _schedule_lp_welcome(
     language_code: str,
     delay_minutes: int,
     lead_name: str = "",
+    lead_origem: str = "",
 ) -> None:
     """Insert a follow_up_jobs row with job_type='lp_welcome'.
 
@@ -242,6 +244,9 @@ def _schedule_lp_welcome(
             "lead_name": lead_name,
             "template_name": template_name,
             "language_code": language_code,
+            # Origem da LP (ex.: 'landing-page-atacado') — usada no título do Deal
+            # criado no momento do disparo para distinguir terceirizacaocafe x cafeatacado.
+            "origem": lead_origem,
         },
     }
 
