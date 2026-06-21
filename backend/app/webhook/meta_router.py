@@ -31,7 +31,12 @@ async def _mark_read_bg(channel: dict, message_id: str) -> None:
         logger.warning("Failed to mark read via Meta: %s", e)
 
 
-def _register_lead(from_number: str, push_name: str | None, ctwa_clid: str | None = None) -> None:
+def _register_lead(
+    from_number: str,
+    push_name: str | None,
+    ctwa_clid: str | None = None,
+    ctwa_origem: str | None = None,
+) -> None:
     """Ensure the lead exists in the CRM the moment they contact us.
 
     Called as a BackgroundTask so it never delays the webhook response.
@@ -63,6 +68,15 @@ def _register_lead(from_number: str, push_name: str | None, ctwa_clid: str | Non
             update_lead(lead["id"], ctwa_clid=ctwa_clid)
     except Exception as exc:
         logger.warning("Failed to capture ctwa_clid=%s for lead %s: %s", ctwa_clid, lead.get("id"), exc)
+    # Atribuição do funil (Opção B): carimba origem do anúncio CTWA quando ainda não há
+    # origem no lead. First-touch vence — não sobrescreve uma origem já capturada (LP/CTWA
+    # anterior). Mensagens orgânicas trazem ctwa_origem=None e são no-op.
+    try:
+        if lead and ctwa_origem and not (lead.get("metadata") or {}).get("origem"):
+            new_meta = {**(lead.get("metadata") or {}), "origem": ctwa_origem}
+            update_lead(lead["id"], metadata=new_meta)
+    except Exception as exc:
+        logger.warning("Failed to stamp ctwa origem=%s for lead %s: %s", ctwa_origem, lead.get("id"), exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:
@@ -422,7 +436,7 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
 
         # Register lead immediately — guarantees CRM entry before buffer flushes.
         # ctwa_clid (se presente) vincula o lead ao clique do anúncio Meta Ads (CTWA).
-        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid)
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid, msg.ctwa_origem)
 
         if msg.message_id:
             background_tasks.add_task(_mark_read_bg, channel, msg.message_id)

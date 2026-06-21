@@ -1,7 +1,31 @@
 import logging
+from urllib.parse import urlparse
+
 from app.webhook.parser import IncomingMessage
 
 logger = logging.getLogger(__name__)
+
+
+def origem_from_referral(referral: dict | None) -> str | None:
+    """Deriva a origem do funil a partir do `referral` de um anúncio CTWA (Opção B).
+
+    Casa por substring no PATH do source_url + headline + body. Importante: as LPs vivem
+    todas no domínio `atacado.cafecanastra.com`, então o domínio contém 'atacado' mesmo na
+    página de terceirização — por isso só o PATH (/cafeatacado, /terceirizacaocafe) entra no
+    haystack, nunca o domínio. 'terceiriza' é checado primeiro como desempate quando o
+    criativo cita ambos. Mesmo vocabulário de `_resolve_lp_pipeline` (scheduler).
+    Origem desconhecida → None. Depende do anúncio ser Click-to-WhatsApp (Meta envia referral).
+    """
+    if not referral:
+        return None
+    source_url = str(referral.get("source_url", ""))
+    path = urlparse(source_url).path if source_url else ""
+    haystack = " ".join([path, str(referral.get("headline", "")), str(referral.get("body", ""))]).lower()
+    if "terceiriza" in haystack:
+        return "terceirizacao"
+    if "atacado" in haystack:
+        return "atacado"
+    return None
 
 
 def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
@@ -131,9 +155,11 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
 
                 # Click-to-WhatsApp (CTWA): mensagens originadas de um anúncio Meta Ads
                 # trazem um objeto `referral` aninhado com o `ctwa_clid` (click id) usado
-                # depois pela API de Conversões (CAPI). Extração defensiva: mensagens
-                # orgânicas não têm `referral` → ctwa_clid fica None.
-                ctwa_clid: str | None = msg.get("referral", {}).get("ctwa_clid")
+                # depois pela API de Conversões (CAPI) e a origem do funil (source_url do
+                # criativo). Extração defensiva: mensagens orgânicas não têm `referral`.
+                referral: dict = msg.get("referral") or {}
+                ctwa_clid: str | None = referral.get("ctwa_clid")
+                ctwa_origem: str | None = origem_from_referral(referral)
 
                 messages.append(IncomingMessage(
                     from_number=from_number,
@@ -149,6 +175,7 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     metadata=metadata_dict,
                     quoted_wamid=quoted_wamid,
                     ctwa_clid=ctwa_clid,
+                    ctwa_origem=ctwa_origem,
                 ))
 
     return messages

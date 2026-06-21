@@ -17,6 +17,7 @@ class IncomingMessage:
     metadata: dict | None = None
     quoted_wamid: str | None = None  # wamid of the message being replied to
     ctwa_clid: str | None = None  # Click-to-WhatsApp click id (Meta Ads referral) — base p/ CAPI
+    ctwa_origem: str | None = None  # Origem do funil derivada do referral CTWA (atacado/terceirizacao)
 
 
 def parse_webhook_payload(payload: dict) -> list[IncomingMessage]:
