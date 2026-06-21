@@ -10,6 +10,7 @@ without a deploy.
 """
 import json
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -32,6 +33,39 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 
 # Use same pattern as follow_up/service.py
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
+
+# Higienização do campo `nome`: o widget de chat de algumas LPs envia a 1ª mensagem
+# do cliente (uma pergunta inteira, ou o e-mail dele) no campo `nome`. Acima deste
+# limite de palavras — ou com '?', quebra de linha ou '@' — não é um nome.
+_MAX_NAME_WORDS = 4
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+def _sanitize_lead_name(raw_name: str | None) -> tuple[str | None, str | None, str | None]:
+    """Separa um `nome` legítimo de uma mensagem de chat colada no campo.
+
+    Retorna (clean_name, lp_message, email_from_name):
+      - clean_name: o nome, se parecer um nome; senão None (deixa o backfill via
+        push_name do WhatsApp preencher depois).
+      - lp_message: o texto cru preservado (vai para metadata.lp_message), quando o
+        valor não é um nome — assim não se perde a pergunta/contexto do lead.
+      - email_from_name: e-mail extraído quando o cliente digitou o e-mail no nome.
+    """
+    if not raw_name:
+        return None, None, None
+    name = raw_name.strip()
+    if not name:
+        return None, None, None
+    looks_dirty = (
+        "?" in name
+        or "\n" in name
+        or "@" in name
+        or len(name.split()) > _MAX_NAME_WORDS
+    )
+    if not looks_dirty:
+        return name, None, None
+    email_match = _EMAIL_RE.search(name)
+    return None, name, (email_match.group(0) if email_match else None)
 
 
 async def get_lp_config(redis) -> dict:
@@ -83,9 +117,10 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
             if (payload.get(col) or "").strip()
         }
 
-        # Step 2 — upsert lead (first-touch: grava o rastreio já na criação)
-        nome = payload.get("nome") or None
-        lead = get_or_create_lead(phone, name=nome, tracking=tracking)
+        # Step 2 — upsert lead (first-touch: grava o rastreio já na criação).
+        # Higieniza o nome: pergunta/e-mail no campo `nome` não vira name (ver _sanitize_lead_name).
+        clean_name, lp_message, email_from_name = _sanitize_lead_name(payload.get("nome"))
+        lead = get_or_create_lead(phone, name=clean_name, tracking=tracking)
         lead_id: str = lead["id"]
 
         # Lead já existia → atualiza rastreio com o clique mais recente (last-touch).
@@ -94,30 +129,39 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
 
         sb = get_supabase()
 
-        # Step 3 — update email if provided
-        email = (payload.get("email") or "").strip()
+        # Step 3 — update email if provided (fallback: e-mail digitado no campo nome)
+        email = (payload.get("email") or "").strip() or (email_from_name or "")
         if email:
             try:
                 sb.table("leads").update({"email": email}).eq("id", lead_id).execute()
             except Exception as exc:
                 logger.warning("lp_webhook: failed to update email for lead %s: %s", lead_id, exc)
 
-        # Step 3b — preserve raw phone in metadata if normalization was imprecise
+        # Step 3b — preserve raw phone in metadata if normalization was imprecise.
+        # Reflete a atualização no lead em memória para as mesclagens seguintes não
+        # sobrescreverem esta chave (cada update lê lead["metadata"]).
         if raw_phone.strip() and phone_confidence != "ok":
             try:
                 existing_meta_raw: dict = lead.get("metadata") or {}
                 new_meta_raw = {**existing_meta_raw, "phone_raw": raw_phone.strip()}
                 sb.table("leads").update({"metadata": new_meta_raw}).eq("id", lead_id).execute()
+                lead["metadata"] = new_meta_raw
             except Exception as exc:
                 logger.warning("lp_webhook: failed to save phone_raw for lead %s: %s", lead_id, exc)
 
-        # Step 4 — merge origem into metadata
+        # Step 4 — merge origem + lp_message (texto cru do chat) into metadata, num só update
         origem = (payload.get("origem") or "").strip()
+        meta_extras: dict = {}
         if origem:
+            meta_extras["origem"] = origem
+        if lp_message:
+            meta_extras["lp_message"] = lp_message
+        if meta_extras:
             try:
                 existing_meta: dict = lead.get("metadata") or {}
-                new_meta = {**existing_meta, "origem": origem}
+                new_meta = {**existing_meta, **meta_extras}
                 sb.table("leads").update({"metadata": new_meta}).eq("id", lead_id).execute()
+                lead["metadata"] = new_meta
             except Exception as exc:
                 logger.warning("lp_webhook: failed to update metadata for lead %s: %s", lead_id, exc)
 

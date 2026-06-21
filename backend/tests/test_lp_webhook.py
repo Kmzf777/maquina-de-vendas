@@ -136,6 +136,56 @@ async def test_process_lp_lead_skips_job_when_config_incomplete():
     mock_schedule.assert_not_called()
 
 
+# ─── _sanitize_lead_name (higienização do campo nome) ──────────────────────────
+
+@pytest.mark.parametrize("raw,exp_name,exp_msg,exp_email", [
+    ("Maria Silva", "Maria Silva", None, None),
+    ("João", "João", None, None),
+    ("  Ana  ", "Ana", None, None),
+    ("um dois tres quatro", "um dois tres quatro", None, None),  # 4 palavras = limite, ok
+    # Sujos → name=None, conteúdo preservado em lp_message:
+    ("Olá, qual o investimento mínimo?", None, "Olá, qual o investimento mínimo?", None),
+    ("linha1\nlinha2", None, "linha1\nlinha2", None),
+    ("um dois tres quatro cinco", None, "um dois tres quatro cinco", None),  # >4 palavras
+    ("fulano@gmail.com", None, "fulano@gmail.com", "fulano@gmail.com"),  # e-mail extraído
+    ("", None, None, None),
+    (None, None, None, None),
+])
+def test_sanitize_lead_name(raw, exp_name, exp_msg, exp_email):
+    from app.lp_webhook.service import _sanitize_lead_name
+    name, msg, email = _sanitize_lead_name(raw)
+    assert name == exp_name
+    assert msg == exp_msg
+    assert email == exp_email
+
+
+@pytest.mark.anyio
+async def test_process_lp_lead_does_not_store_question_as_name():
+    """Nome com '?' (mensagem de chat) NÃO vira name — vai p/ backfill via push_name."""
+    from app.lp_webhook.service import process_landing_page_lead
+
+    fake_lead = {"id": "lead-q", "phone": "5531973117463", "name": None, "email": None, "metadata": {}}
+    redis = AsyncMock()
+    payload = {
+        "whatsapp": "5531973117463",
+        "nome": "Olá, qual o valor mínimo de 100 pacotes?",
+        "email": "",
+        "origem": "terceirizacao",
+    }
+
+    with patch("app.lp_webhook.service.normalize_lp_phone", return_value=("5531973117463", "ok")), \
+         patch("app.lp_webhook.service.get_or_create_lead", return_value=fake_lead) as mock_gocl, \
+         patch("app.lp_webhook.service.get_lp_config", new=AsyncMock(return_value={"channel_id": "", "template_name": "", "language_code": "pt_BR", "delay_minutes": 15})), \
+         patch("app.lp_webhook.service.get_supabase") as mock_sb:
+
+        mock_sb.return_value.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        result = await process_landing_page_lead(payload, redis)
+
+    assert result["ok"] is True
+    _, kwargs = mock_gocl.call_args
+    assert kwargs.get("name") is None  # pergunta não gravada como nome
+
+
 # ─── _schedule_lp_welcome ──────────────────────────────────────────────────────
 
 def test_schedule_lp_welcome_inserts_correct_job():
