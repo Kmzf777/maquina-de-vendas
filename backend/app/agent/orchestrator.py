@@ -40,13 +40,13 @@ _STOP_SEQUENCES = ["\n\n\n", "User:", "<|im_end|>"]
 # Resposta de segurança quando, mesmo após o fallback sem tools, a IA não produz texto.
 # Garante que o lead nunca fique mudo (regressão observada: Ademilson, Thainara).
 _SAFETY_FALLBACK_MESSAGE = (
-    "Entendi! Só um momento enquanto verifico essas informações internamente."
+    "opa, me dá um segundinho aqui que já te respondo"
 )
 # Resposta de segurança contextual para quando a última tool usada foi de mídia
-# (enviar_fotos / enviar_foto_produto). O genérico "verifico internamente" é nonsense
+# (enviar_fotos / enviar_foto_produto). O genérico stall é nonsense
 # após um catálogo — preferimos uma pergunta de avanço coerente com o envio.
 _SAFETY_FALLBACK_MEDIA = (
-    "Te enviei as fotos aqui no chat. Qual delas chamou mais sua atenção?"
+    "te mandei as fotos aqui no chat. qual delas chamou mais a sua atenção?"
 )
 
 _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
@@ -59,19 +59,19 @@ _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
 # não um avanço comercial) → cai no fallback genérico.
 _STAGE_TRANSITION_FALLBACKS: dict[str, str] = {
     "atacado": (
-        "Pelo que você me contou, faz todo sentido a gente falar de condições para o seu "
-        "negócio. Você procura o café para revender ou para servir no seu estabelecimento?"
+        "pelo que você me contou, faz sentido a gente falar de condições pro seu "
+        "negócio. você procura o café pra revender ou pra servir no seu estabelecimento?"
     ),
     "private_label": (
-        "Que ideia bacana! Você está pensando em ter o café com a sua própria marca? "
-        "Me conta um pouco do que tem em mente."
+        "que ideia bacana ter o café com a sua própria marca. "
+        "me conta um pouco do que você tem em mente?"
     ),
     "exportacao": (
-        "Mercado externo é um universo e tanto! Você já tem algum país de destino em mente "
-        "para levar o café?"
+        "mercado externo é um universo e tanto. você já tem algum país de destino em mente "
+        "pra levar o café?"
     ),
     "consumo": (
-        "Show! Pra eu te indicar o ideal pro seu dia a dia, você prefere o café em grãos "
+        "show, pra eu te indicar o ideal pro seu dia a dia, você prefere o café em grãos "
         "ou já moído?"
     ),
 }
