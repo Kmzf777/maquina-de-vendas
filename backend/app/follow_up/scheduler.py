@@ -585,7 +585,14 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
 
     lead_name = metadata.get("lead_name") or (job.get("leads") or {}).get("name") or ""
     first_name = lead_name.split()[0] if lead_name else ""
-    components = [{"type": "body", "parameters": [{"type": "text", "text": first_name}]}] if first_name else None
+    # Os templates lp_* aprovados (lp_solicitacao_recebida, lp_confirmacao_pendente,
+    # lp_cadastro_registrado) usam o param NOMEADO {{primeiro_nome}}. Enviar posicional
+    # faz a Meta rejeitar (causa do loop infinito de 02/06). Espelha o padrão de
+    # _build_joao_handoff_components. Verificar em message_templates antes de mudar o template.
+    components = [{
+        "type": "body",
+        "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}],
+    }] if first_name else None
     # Destino entregável: wa_id real quando houver (LP lead normalmente não tem → usa lead_phone).
     send_to = resolve_send_target(job.get("leads"), lead_phone)
 
@@ -606,11 +613,21 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
                 exc_info=True,
             )
         return
+    except RuntimeError as exc:
+        # MetaCloudClient.send_template levanta RuntimeError quando a Meta responde
+        # HTTP 200 COM erro embutido (ex.: parâmetro inválido) — rejeição PERMANENTE.
+        # Sem cancelar aqui, o job ficava pending e era re-tentado a cada tick para
+        # sempre (o "manual_audit_cancel_loop_infinito" de 02/06). Cancela explicitamente.
+        _cancel_job(job["id"], "meta_rejected")
+        logger.error(
+            "[LP_WELCOME] Rejeição permanente Meta para %s — job cancelado: %s", lead_phone, exc
+        )
+        return
     except Exception as exc:
         logger.error(
             "[LP_WELCOME] Falha ao enviar template para %s: %s", lead_phone, exc, exc_info=True
         )
-        return  # erro transitório → retry no próximo tick
+        return  # erro transitório (rede etc.) → retry no próximo tick
 
     # Card de CRM nasce AQUI: somente quando o disparo outbound da LP realmente acontece
     # (lead não respondeu nos 15 min). Se o lead tivesse chamado a Valéria, o guard
