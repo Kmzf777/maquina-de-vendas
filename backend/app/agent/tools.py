@@ -9,7 +9,16 @@ from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
+    add_tags_to_lead, move_deal_to_vendor_pipeline,
 )
+
+# Vocabulário CONTROLADO de tags que a IA pode aplicar (allowlist). Deve espelhar o seed
+# da tabela `tags` (2026-06-22). 2ª trava (além do enum no schema): o executor descarta
+# qualquer valor fora desta lista, e add_tags_to_lead nunca cria tags novas.
+_TAG_ALLOWLIST: frozenset[str] = frozenset({
+    "B2B", "B2C", "Revenda", "Marca Própria", "Exportação",
+    "Urgente", "Já é Cliente", "Pediu Humano", "Objeção: Preço", "Objeção: Prazo",
+})
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
@@ -303,6 +312,37 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "adicionar_tag_lead",
+            "description": (
+                "Etiqueta o lead com uma ou mais tags do CRM ao identificar perfil, intencao "
+                "ou objecao durante a conversa. Use SOMENTE tags da lista permitida (enum abaixo) "
+                "— nunca invente variacoes (ex.: 'b2b', 'cliente novo'). Pode chamar mais de uma "
+                "vez na conversa; tags repetidas sao ignoradas. Aplicacao silenciosa: nao avise "
+                "o cliente sobre a marcacao."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "B2B", "B2C", "Revenda", "Marca Própria", "Exportação",
+                                "Urgente", "Já é Cliente", "Pediu Humano",
+                                "Objeção: Preço", "Objeção: Prazo",
+                            ],
+                        },
+                        "description": "Tags a aplicar (apenas valores do enum).",
+                    }
+                },
+                "required": ["tags"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "retomar_contato_vendedor",
             "description": (
                 "Reconecta ao vendedor Joao Bras um lead que JA teve atendimento com ele no passado e esfriou "
@@ -335,11 +375,11 @@ TOOLS_SCHEMA = [
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor"],
-        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "adicionar_tag_lead"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
@@ -411,6 +451,24 @@ async def execute_tool(
         update_lead(lead_id, name=args["name"])
         return f"Nome salvo: {args['name']}"
 
+    elif tool_name == "adicionar_tag_lead":
+        pedidas = args.get("tags") or []
+        # 2ª trava (além do enum no schema): descarta qualquer tag fora da allowlist —
+        # impede o modelo de inventar variações ("b2b", "Cliente_Novo").
+        validas = [t for t in pedidas if t in _TAG_ALLOWLIST]
+        descartadas = [t for t in pedidas if t not in _TAG_ALLOWLIST]
+        if descartadas:
+            logger.warning(
+                "adicionar_tag_lead: tags fora da allowlist descartadas p/ lead %s: %s",
+                lead_id, descartadas,
+            )
+        if not validas:
+            return "Nenhuma tag válida — use apenas as tags permitidas."
+        aplicadas = add_tags_to_lead(lead_id, validas)
+        if aplicadas:
+            return f"Tags aplicadas: {', '.join(aplicadas)}"
+        return "Tags já estavam aplicadas (nenhuma nova)."
+
     elif tool_name == "mudar_stage":
         new_stage = args["stage"]
         if conversation_id:
@@ -442,11 +500,14 @@ async def execute_tool(
             lead = get_lead(lead_id)
             lead_stage = lead.get("stage") if lead else None
             deal_title = f"{vendedor} - {motivo}"
-            # Lead de LP: MOVE o card existente do funil de ENTRADA da Valéria para o funil
-            # de FECHAMENTO do João (1ª coluna não-protegida). Retorna None se não houver
-            # card de LP a mover → cai no fluxo padrão (cria, com dedupe p/ não duplicar).
-            if not move_open_deal_for_handoff(lead_id, title=deal_title):
-                create_deal(lead_id, title=deal_title, category=lead_stage, dedupe_open=True)
+            # P2 (auditoria 2026-06-22): roteia o card para o pipeline do VENDEDOR por SEGMENTO
+            # (lead.stage), independente da origem — corrige broadcast-qualificados que ficavam
+            # presos em 'Valeria - Importação Leads Frios'. Fallback preserva o comportamento
+            # anterior: LP (move_open_deal_for_handoff) e, por fim, create_deal por categoria.
+            # 'consumo'/'secretaria' não têm pipeline de vendedor → caem no fallback (self-service).
+            if not move_deal_to_vendor_pipeline(lead_id, lead_stage, title=deal_title):
+                if not move_open_deal_for_handoff(lead_id, title=deal_title):
+                    create_deal(lead_id, title=deal_title, category=lead_stage, dedupe_open=True)
         except Exception as exc:
             logger.error(
                 "encaminhar_humano failed to create deal for lead %s: %s",

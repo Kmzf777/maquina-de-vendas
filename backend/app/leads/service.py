@@ -481,6 +481,104 @@ LP_HANDOFF_PIPELINE_ROUTES: dict[str, str] = {
 }
 
 
+# Destino de HANDOFF por SEGMENTO (independe do pipeline de origem do card).
+# Generaliza LP_HANDOFF_PIPELINE_ROUTES: garante que atacado/private_label/exportacao
+# cheguem ao board do vendedor venham de LP, broadcast ou inbound (auditoria 2026-06-22:
+# broadcast-qualificados ficavam presos em 'Valeria - Importação Leads Frios').
+# 'consumo' fica DE FORA de proposito (self-service; sem pipeline de vendedor dedicado).
+SEGMENT_HANDOFF_PIPELINE: dict[str, str] = {
+    "atacado":       "João - Atacado",
+    "private_label": "João - Private Label",
+    "exportacao":    "Arthur - Exportação",
+}
+
+
+def move_deal_to_vendor_pipeline(
+    lead_id: str, segment: str | None, title: str | None = None
+) -> dict[str, Any] | None:
+    """Move o deal ABERTO do lead (qualquer origem) para o pipeline do vendedor do segmento.
+
+    Resolve o destino por SEGMENTO (lead.stage) via SEGMENT_HANDOFF_PIPELINE, move o card
+    aberto para a 1ª coluna não-protegida do destino (e atualiza o título), ou cria um card
+    lá se o lead ainda não tiver deal aberto. Retorna None quando o segmento não tem pipeline
+    de vendedor mapeado (ex.: consumo/secretaria) — o chamador então usa o fallback.
+    Fail-soft: erro é logado e retorna None (nunca derruba o handoff).
+    """
+    dest_name = SEGMENT_HANDOFF_PIPELINE.get((segment or "").strip())
+    if not dest_name:
+        return None
+    try:
+        sb = get_supabase()
+        dp = sb.table("pipelines").select("id").eq("name", dest_name).limit(1).execute()
+        if not dp.data:
+            logger.warning(
+                "move_deal_to_vendor_pipeline: pipeline destino '%s' inexistente — lead %s",
+                dest_name, lead_id,
+            )
+            return None
+        dest_pipeline_id = dp.data[0]["id"]
+        dest_stage_id = _first_unprotected_stage_id(sb, dest_pipeline_id)
+
+        deal = get_open_deal(lead_id)
+        if deal:
+            update: dict[str, Any] = {
+                "pipeline_id": dest_pipeline_id,
+                "stage_id": dest_stage_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if title:
+                update["title"] = title
+            res = sb.table("deals").update(update).eq("id", deal["id"]).execute()
+            logger.info(
+                "move_deal_to_vendor_pipeline: card %s movido p/ '%s' por segmento '%s' (lead %s)",
+                deal["id"], dest_name, segment, lead_id,
+            )
+            return res.data[0] if res.data else {**deal, **update}
+        # Sem deal aberto: cria no pipeline do vendedor.
+        return create_deal(lead_id, title=title or "Handoff", pipeline_name=dest_name)
+    except Exception as exc:
+        logger.error(
+            "move_deal_to_vendor_pipeline: falha ao mover card do lead %s (segmento %s): %s",
+            lead_id, segment, exc, exc_info=True,
+        )
+        return None
+
+
+# ── Tags (etiquetas de CRM aplicadas pela IA) ───────────────────────────────
+def add_tags_to_lead(lead_id: str, names: list[str]) -> list[str]:
+    """Aplica tags (por NOME) a um lead, gravando em lead_tags com dedupe.
+
+    Segurança: resolve o tag_id por nome EXATO na tabela `tags` (já semeada) e NUNCA cria
+    tags novas — nomes inexistentes são ignorados. Pares (lead_id, tag_id) já existentes
+    não são reinseridos. Fail-soft: em erro, retorna o que conseguiu (ou []).
+    Retorna os nomes efetivamente aplicados nesta chamada.
+    """
+    if not lead_id or not names:
+        return []
+    try:
+        sb = get_supabase()
+        rows = sb.table("tags").select("id, name").in_("name", list({*names})).execute()
+        by_name = {r["name"]: r["id"] for r in (rows.data or [])}
+        if not by_name:
+            return []
+        existing = sb.table("lead_tags").select("tag_id").eq("lead_id", lead_id).execute()
+        already = {r["tag_id"] for r in (existing.data or [])}
+        applied: list[str] = []
+        to_insert: list[dict[str, str]] = []
+        for nm in names:
+            tag_id = by_name.get(nm)
+            if tag_id and tag_id not in already:
+                to_insert.append({"lead_id": lead_id, "tag_id": tag_id})
+                already.add(tag_id)
+                applied.append(nm)
+        if to_insert:
+            sb.table("lead_tags").insert(to_insert).execute()
+        return applied
+    except Exception as exc:
+        logger.error("add_tags_to_lead: falha ao aplicar tags %s p/ lead %s: %s", names, lead_id, exc)
+        return []
+
+
 def get_lead(lead_id: str) -> dict[str, Any] | None:
     sb = get_supabase()
     result = sb.table("leads").select("*").eq("id", lead_id).limit(1).execute()
