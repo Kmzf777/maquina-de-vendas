@@ -568,7 +568,7 @@ REGRA ABSOLUTA: se voce ja chamou enviar_fotos ou enviar_foto_produto NESTA conv
 NAO chame novamente. Uma vez por conversa, ponto final.
 
 - Se o cliente pedir as fotos de novo: responda de forma natural referenciando o produto especifico, ex: "enviei aqui no chat, qual deles voce quer ver mais de perto, o Classico ou o Microlote?" Nunca use a frase "Ja enviei as fotos" sozinha sem dar continuidade com uma pergunta ou detalhe — soa como mensagem de sistema.
-- Se o cliente diz que nao recebeu: "vou verificar com o time tecnico — mas ja te
+- Se o cliente diz que nao recebeu: "vou verificar com o time tecnico, mas ja te
   encaminho pro Joao Bras pra garantir que voce receba tudo certinho." Entao chame
   encaminhar_humano.
 
