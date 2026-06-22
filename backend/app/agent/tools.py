@@ -465,6 +465,18 @@ async def execute_tool(
                 "encaminhar_humano: falha ao gerar/salvar resumo para lead %s: %s",
                 lead_id, _exc, exc_info=True,
             )
+            # Fallback: SEMPRE registrar uma nota de transbordo no lead_notes, mesmo se a
+            # geração do resumo pela IA falhar — o vendedor (João) reclamou de não receber
+            # nada nesses casos (auditoria 2026-06-22). Garante data/hora + motivo no mínimo.
+            try:
+                _ts_fb = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
+                append_lead_observation(
+                    lead_id,
+                    f"➡️ [TRANSBORDO p/ {vendedor}] {_ts_fb} — Motivo: {motivo}. "
+                    f"Resumo automático indisponível; ver histórico da conversa com a Valéria.",
+                )
+            except Exception:
+                logger.error("encaminhar_humano: fallback de nota de transbordo também falhou para lead %s", lead_id)
         channel = get_channel_for_lead(lead_id)
         if channel:
             # Destino entregável: wa_id real do lead quando houver, senão phone (evita 131026).
