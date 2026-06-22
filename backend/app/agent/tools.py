@@ -8,7 +8,7 @@ from typing import Any
 from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
-    move_open_deal_for_handoff, resolve_send_target,
+    move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
 )
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
@@ -368,6 +368,23 @@ _SOFT_REJECTION_SIGNALS = (
 )
 
 
+# Sinais, no motivo passado pelo LLM, de que o lead JÁ é cliente ativo (não um lead frio).
+# Complementa lead_has_active_relationship: pega o caso em que o CRM ainda não marca o
+# cliente (deal "novo"), mas o lead afirmou na conversa que já compra (ex.: Kadi Guth — motivo
+# "Lead ja e cliente e nao tem demanda no momento").
+_CLIENTE_ATIVO_SIGNALS = (
+    "ja e cliente", "ja sou cliente", "ja e nosso cliente", "ja compra", "ja comprou",
+    "ja trabalha com", "ja trabalho com", "cliente ativo", "cliente atual", "ja e parceir",
+    "ja revende", "ja fechei com voces", "ja fechou com a gente",
+)
+
+
+def _motivo_indica_cliente(motivo: str | None) -> bool:
+    """True se o motivo do descarte indica que o lead JÁ é cliente (não lead frio perdido)."""
+    n = _normalize_text(motivo)
+    return any(s in n for s in _CLIENTE_ATIVO_SIGNALS)
+
+
 def _looks_like_soft_rejection(motivo: str | None) -> bool:
     """True se o motivo de opt-out tem cara de SOFT rejection sem proibição explícita.
 
@@ -565,7 +582,51 @@ async def execute_tool(
 
     elif tool_name == "registrar_sem_interesse_atual":
         motivo = args.get("motivo", "lead sem interesse no momento")
-        # Soft rejection: tira do funil mas mantem opt_out=False (lead reativavel, sem blacklist).
+
+        # GUARDRAIL (item 2, auditoria 2026-06-22): CLIENTE ATIVO não vira "perdido".
+        # Se o lead já tem relacionamento ativo (deal pós-handoff/closed-won) OU o próprio
+        # motivo indica que já é cliente, ele NÃO é um lead frio perdido — é um cliente sem
+        # demanda agora. Encerra cordialmente e mantém o deal no estágio atual: NÃO seta
+        # stage=perdido, NÃO move o deal p/ Perdido, NÃO fecha o negócio (caso Kadi Guth).
+        if lead_has_active_relationship(lead_id) or _motivo_indica_cliente(motivo):
+            logger.info(
+                "[CLIENTE ATIVO GUARDRAIL] registrar_sem_interesse_atual em cliente ativo %s — "
+                "encerrando sem marcar perdido (motivo=%r)", lead_id, motivo,
+            )
+            try:
+                # Encerra o bot desta abordagem, mas NÃO mexe no stage nem no human_control
+                # (não é lead perdido nem precisa de resgate de vendedor).
+                update_lead(lead_id, ai_enabled=False, opt_out=False)
+            except Exception as exc:
+                logger.error(
+                    "registrar_sem_interesse_atual (cliente ativo): falha ao atualizar lead %s: %s",
+                    lead_id, exc, exc_info=True,
+                )
+                return f"ERRO ao registrar sem interesse: {exc}"
+            try:
+                cancel_followups_by_phone(phone, reason="cliente_ativo_sem_demanda")
+            except Exception as exc:
+                logger.error(
+                    "registrar_sem_interesse_atual (cliente ativo): falha ao cancelar follow-ups p/ %s: %s",
+                    lead_id, exc, exc_info=True,
+                )
+            _ts = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
+            append_lead_observation(
+                lead_id,
+                f"⏸️ [CLIENTE ATIVO — SEM DEMANDA NO MOMENTO] Registado em {_ts}. "
+                f"Mantido no funil (não marcado perdido). Motivo: {motivo}",
+            )
+            save_message(
+                lead_id, "system",
+                f"[registrar_sem_interesse_atual] cliente ativo sem demanda — mantido no funil: {motivo}",
+                conversation_id=conversation_id,
+            )
+            return (
+                "Cliente ativo sem demanda no momento — conversa encerrada cordialmente e "
+                "mantida no funil atual (NÃO marcado como perdido)."
+            )
+
+        # Soft rejection (lead frio): tira do funil mas mantem opt_out=False (lead reativavel, sem blacklist).
         try:
             update_lead(lead_id, stage="perdido", ai_enabled=False, human_control=True, opt_out=False)
         except Exception as exc:
