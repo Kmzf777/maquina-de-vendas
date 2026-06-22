@@ -39,8 +39,11 @@ MAX_OUTPUT_TOKENS = 4096
 _STOP_SEQUENCES = ["\n\n\n", "User:", "<|im_end|>"]
 # Resposta de segurança quando, mesmo após o fallback sem tools, a IA não produz texto.
 # Garante que o lead nunca fique mudo (regressão observada: Ademilson, Thainara).
+# NÃO promete um retorno futuro ("já te respondo") — não existe processamento diferido,
+# então a promessa nunca se cumpria e a conversa morria no vácuo (auditoria 2026-06-22:
+# 5 conversas mortas nesse stall). Em vez disso, pede a re-entrada por texto.
 _SAFETY_FALLBACK_MESSAGE = (
-    "opa, me dá um segundinho aqui que já te respondo"
+    "acho que sua mensagem chegou cortada aqui\n\nme manda de novo por texto?"
 )
 # Resposta de segurança contextual para quando a última tool usada foi de mídia
 # (enviar_fotos / enviar_foto_produto). O genérico stall é nonsense
@@ -403,9 +406,26 @@ async def run_agent(
             messages.append({"role": msg["role"], "content": enriched_content})
 
     is_outbound = prompt_key == "valeria_outbound"
-    # history here has the current message already stripped (lines above); len == 0 means genuine first turn
-    is_first_turn = len(history) == 0
+    # Primeiro turno REAL = o lead ainda não tem nenhuma mensagem 'user' no histórico
+    # (a mensagem atual já foi removida acima). A abertura outbound (broadcast/followup)
+    # é uma mensagem 'assistant' e NÃO conta como turno de diálogo — por isso checamos a
+    # ausência de mensagens 'user', e não len(history)==0. O bug anterior (len==0) nunca
+    # era verdade em outbound, pois a abertura ficava no histórico → o contexto de 1º turno
+    # outbound era código morto (auditoria 2026-06-22).
+    is_first_turn = not any(m.get("role") == "user" for m in history)
     campaign_message = (lead_context or {}).get("campaign_message")
+    # Fallback: deriva a abertura fixa a partir do próprio template já enviado
+    # (broadcast/followup no histórico), já que campaign_message raramente é plumbado
+    # via lead_context. Sem isso, build_outbound_first_turn_context nunca dispararia.
+    if is_outbound and is_first_turn and not campaign_message:
+        campaign_message = next(
+            (
+                m.get("content")
+                for m in reversed(history)
+                if m.get("role") == "assistant" and m.get("sent_by") in ("broadcast", "followup")
+            ),
+            None,
+        )
 
     if is_outbound and is_first_turn and campaign_message:
         ctx = build_outbound_first_turn_context(campaign_message, lead.get("name"))
