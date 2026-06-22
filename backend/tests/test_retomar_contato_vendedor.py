@@ -61,7 +61,7 @@ async def test_retomar_in_business_hours_dispatches_now_and_disables_ai():
          patch("app.agent.tools.create_deal"), \
          patch("app.agent.tools.move_open_deal_for_handoff", return_value=None), \
          patch("app.agent.tools.save_message"), \
-         patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "name": "Rafael", "stage": "atacado"}), \
+         patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "name": "Rafael", "stage": "atacado", "metadata": {"handoff_summary": "qualificado antes, esfriou"}}), \
          patch("app.follow_up.service.is_within_business_window", return_value=True), \
          patch("app.follow_up.scheduler.send_joao_handoff_template", new=AsyncMock(return_value=True)) as mock_send:
         out = await execute_tool(
@@ -85,7 +85,7 @@ async def test_retomar_out_of_hours_schedules_and_disables_ai():
          patch("app.agent.tools.create_deal"), \
          patch("app.agent.tools.move_open_deal_for_handoff", return_value=None), \
          patch("app.agent.tools.save_message"), \
-         patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "name": "Rafael", "stage": "atacado"}), \
+         patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "name": "Rafael", "stage": "atacado", "metadata": {"handoff_summary": "qualificado antes, esfriou"}}), \
          patch("app.agent.tools.get_channel_for_lead", return_value={"id": "ch-1"}), \
          patch("app.follow_up.service.is_within_business_window", return_value=False), \
          patch("app.follow_up.service.schedule_handoff_rescue", return_value=fire_at) as mock_sched:
@@ -108,7 +108,7 @@ async def test_retomar_returns_critical_when_disable_ai_fails(caplog):
     import logging
     with patch("app.agent.tools.update_lead", side_effect=RuntimeError("db dead")), \
          patch("app.agent.tools.create_deal") as mock_deal, \
-         patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "stage": "atacado"}):
+         patch("app.agent.tools.get_lead", return_value={"id": "lead-1", "stage": "atacado", "metadata": {"handoff_summary": "qualificado antes"}}):
         caplog.set_level(logging.ERROR, logger="app.agent.tools")
         out = await execute_tool(
             "retomar_contato_vendedor",
@@ -138,7 +138,7 @@ async def test_retomar_moves_lp_card_instead_of_creating():
          patch("app.agent.tools.move_open_deal_for_handoff", side_effect=fake_move), \
          patch("app.agent.tools.create_deal", side_effect=fake_create), \
          patch("app.agent.tools.save_message"), \
-         patch("app.agent.tools.get_lead", return_value={"id": "lead-lp", "name": "Rafael", "stage": "atacado"}), \
+         patch("app.agent.tools.get_lead", return_value={"id": "lead-lp", "name": "Rafael", "stage": "atacado", "metadata": {"handoff_summary": "qualificado antes, esfriou"}}), \
          patch("app.follow_up.service.is_within_business_window", return_value=True), \
          patch("app.follow_up.scheduler.send_joao_handoff_template", new=AsyncMock(return_value=True)):
         await execute_tool(

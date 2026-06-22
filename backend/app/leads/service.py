@@ -41,14 +41,21 @@ def normalize_phone(phone: str | None) -> str:
 # Ex.: "Brunor_barista", "cassianofonseca15" — usar como nome próprio soa robótico
 # ("Falo com Brunor_barista neste número?"). Nesses casos preferimos "sem nome".
 _HANDLE_CHAR_RE = re.compile(r"[0-9_]")
+# Lixo de importação/CRM que não pode ir pro WhatsApp do cliente como nome
+# (ex.: "João - Import - Leads Frios"). Marcadores: separador " - " e palavras de import.
+_IMPORT_GARBAGE_RE = re.compile(
+    r"(\s-\s|\bimport\b|leads?\s+frios?|lead\s+frio|sem\s+nome|desconhecid)",
+    re.IGNORECASE,
+)
 
 
 def sanitize_display_name(name: str | None) -> str | None:
-    """Retorna o nome se parecer um nome real; None se parecer handle/username.
+    """Retorna o nome se parecer um nome real; None se parecer handle/username ou lixo de import.
 
-    None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez
-    de chamar o lead por um handle). Conservador: só descarta quando há sinal claro de
-    handle (dígito/underscore), pra não derrubar nomes legítimos.
+    None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez de
+    chamar o lead por um handle; o template do disparo usa "você"). Conservador: só descarta
+    com sinal claro — handle (dígito/underscore) ou marcador de lixo de importação/CRM —
+    pra não derrubar nomes legítimos como "João Silva".
     """
     if not name:
         return None
@@ -56,6 +63,8 @@ def sanitize_display_name(name: str | None) -> str | None:
     if not n:
         return None
     if _HANDLE_CHAR_RE.search(n):
+        return None
+    if _IMPORT_GARBAGE_RE.search(n):
         return None
     return n
 

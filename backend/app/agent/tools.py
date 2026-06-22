@@ -691,6 +691,39 @@ def _format_next_dispatch(fire_at: datetime | None) -> str:
     return f"no proximo dia util ({local.strftime('%d/%m')} de manha, por volta das {hora})"
 
 
+def _lead_had_prior_handoff(lead_id: str, lead: dict | None = None) -> bool:
+    """True se o lead JÁ passou por handoff/retomada com o vendedor (cenário de reativação).
+
+    Sinais (qualquer um): handoff_summary/prior_handoff_joao no metadata; deal em estágio
+    pós-handoff (ja_chamado); ou evento de sistema [encaminhar_humano]/[retomar_contato_vendedor]
+    no histórico do lead. Conservador (na dúvida → False): retomar_contato_vendedor só é
+    legítima na reativação; para lead novo/frio o caminho seguro é encaminhar_humano.
+    """
+    lead = lead if lead is not None else (get_lead(lead_id) or {})
+    meta = lead.get("metadata") or {}
+    if meta.get("handoff_summary") or meta.get("prior_handoff_joao"):
+        return True
+    try:
+        from app.db.supabase import get_supabase
+        sb = get_supabase()
+        deal = (
+            sb.table("deals").select("id")
+            .eq("lead_id", lead_id).eq("stage", "ja_chamado").limit(1).execute()
+        )
+        if deal.data:
+            return True
+        ev = (
+            sb.table("messages").select("id")
+            .eq("lead_id", lead_id)
+            .or_("content.ilike.%[encaminhar_humano]%,content.ilike.%[retomar_contato_vendedor]%")
+            .limit(1).execute()
+        )
+        return bool(ev.data)
+    except Exception as exc:
+        logger.warning("_lead_had_prior_handoff: falha ao checar histórico p/ %s: %s", lead_id, exc)
+        return False
+
+
 async def _retomar_contato_vendedor(
     args: dict[str, Any], lead_id: str, phone: str, conversation_id: str
 ) -> str:
@@ -710,6 +743,25 @@ async def _retomar_contato_vendedor(
     motivo = args.get("motivo", "lead pediu para retomar o contato com o vendedor")
     lead = get_lead(lead_id) or {}
     lead_name = lead.get("name") or ""
+
+    # GUARDRAIL (B): retomar_contato_vendedor é EXCLUSIVA de reativação pós-handoff.
+    # Se o lead NÃO tem histórico real de handoff, a IA escolheu a tool errada para um lead
+    # novo/frio (auditoria 2026-06-22: lead 5511946741676 — outbound novo, metadata vazio,
+    # ainda assim "retomado"). Rebaixa para o fluxo padrão encaminhar_humano, que é o correto
+    # para lead novo/qualificado (envia o cartão do João e gera o resumo de qualificação).
+    if not _lead_had_prior_handoff(lead_id, lead):
+        logger.warning(
+            "[RETOMADA GUARDRAIL] retomar_contato_vendedor sem histórico de handoff p/ lead %s "
+            "— rebaixando para encaminhar_humano (motivo=%r)", lead_id, motivo,
+        )
+        return await execute_tool(
+            "encaminhar_humano",
+            {
+                "vendedor": "Joao Bras",
+                "motivo": f"[rebaixado de retomada — lead sem handoff prévio] {motivo}",
+            },
+            lead_id, phone, conversation_id,
+        )
     # Destino entregável (wa_id real quando houver) para o disparo do João — evita 131026.
     send_to = resolve_send_target(lead, phone)
 
