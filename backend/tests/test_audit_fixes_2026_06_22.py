@@ -41,6 +41,25 @@ def test_outbound_prompt_tem_regra_aquecer_antes_de_qualificar():
     assert "mercado brasileiro ou pra exportacao" in SECRETARIA_PROMPT
 
 
+def test_base_prompt_tem_regra_cliente_existente():
+    """Gap #6 (prompt): ambas as personas devem reconhecer lead que já é nosso cliente."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime
+    s = build_base_prompt("Grazieli", None, datetime(2026, 6, 22, 14, 0))
+    assert "JA E NOSSO CLIENTE" in s
+
+
+def test_media_fallback_example_segue_humanizacao():
+    """O exemplo de mídia não suportada não pode mais quebrar regra 22 / lowercase / '!'."""
+    from app.agent.prompts.base import build_base_prompt
+    from datetime import datetime
+    s = build_base_prompt("Cris", None, datetime(2026, 6, 22, 14, 0))
+    # Exemplo antigo robótico removido.
+    assert "Oi! Acabei não conseguindo abrir" not in s
+    # Novo exemplo, sem falsa promessa e em texto humanizado.
+    assert "me manda de novo por texto que eu te ajudo" in s
+
+
 # --- Falha 3: contexto outbound de 1º turno com a abertura no histórico ---
 
 def _mock_openai_response(text: str = "resposta da ia"):
