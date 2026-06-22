@@ -70,34 +70,48 @@ def sanitize_display_name(name: str | None) -> str | None:
 
 
 # Estágios de deal que indicam relacionamento ativo (em tratativa humana). 'novo' é o
-# estado default da massa e fica DE FORA de propósito. Ajuste conforme a semântica do CRM.
+# estado default da massa e fica DE FORA de propósito.
 _ACTIVE_DEAL_STAGES: tuple[str, ...] = ("ja_chamado",)
+# Estágios de deal que indicam negócio fechado positivamente (closed-won) no CRM.
+_WON_DEAL_STAGES: tuple[str, ...] = ("fechado_ganho",)
+# Estágios de perda — usados para EXCLUIR da heurística de closed-won por closed_at.
+_LOST_DEAL_STAGES: tuple[str, ...] = ("perdido", "fechado_perdido")
 
 
 def lead_has_active_relationship(lead_id: str) -> bool:
-    """True se o lead já está em tratativa humana ou tem deal fechado positivamente.
+    """True se o lead já é cliente / está em tratativa humana.
 
     Sinal de "já é cliente / já em atendimento", usado para (a) excluir de disparo frio
     de prospecção e (b) avisar a Valéria (lead_is_customer). Fail-open=False: em erro,
     retorna False (não bloqueia o fluxo nem o disparo por causa da checagem).
+
+    Ponte runtime do Gap E (sem alterar schema): além do estágio de tratativa, consulta a
+    tabela `sales` (qualquer venda registrada = cliente definitivo) e os deals em
+    closed-won (`fechado_ganho`), pegando clientes reais que o disparo tratava como frios
+    (auditoria 2026-06-22: Jéssica e Kadi Guth, clientes ativas com deal ainda em 'novo').
     """
     if not lead_id:
         return False
     try:
         sb = get_supabase()
-        in_treatment = (
+        # (1) Venda registrada na tabela `sales` = cliente definitivo (sinal mais forte).
+        sale = sb.table("sales").select("id").eq("lead_id", lead_id).limit(1).execute()
+        if sale.data:
+            return True
+        # (2) Deal em tratativa humana (ja_chamado) ou fechado-ganho (closed-won).
+        deal = (
             sb.table("deals").select("id")
             .eq("lead_id", lead_id)
-            .in_("stage", list(_ACTIVE_DEAL_STAGES))
+            .in_("stage", list(_ACTIVE_DEAL_STAGES + _WON_DEAL_STAGES))
             .limit(1).execute()
         )
-        if in_treatment.data:
+        if deal.data:
             return True
-        # Deal fechado positivamente: closed_at setado e estágio != perdido.
+        # (3) Heurística legada: deal fechado (closed_at setado) que NÃO é de perda.
         closed_won = (
             sb.table("deals").select("id")
             .eq("lead_id", lead_id)
-            .neq("stage", "perdido")
+            .filter("stage", "not.in", f"({','.join(_LOST_DEAL_STAGES)})")
             .filter("closed_at", "not.is", "null")
             .limit(1).execute()
         )
