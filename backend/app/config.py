@@ -44,8 +44,8 @@ if PYDANTIC_V2:
         frontend_url: str = "http://localhost:5173"
         dev_api_key: Optional[str] = None
         dev_server_url: Optional[str] = None
-        buffer_base_timeout: int = 3
-        buffer_extend_timeout: int = 3
+        buffer_base_timeout: int = 8
+        buffer_extend_timeout: int = 5
         buffer_max_timeout: int = 30
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
@@ -77,8 +77,8 @@ else:
         frontend_url: str = "http://localhost:5173"
         dev_api_key: Optional[str] = None
         dev_server_url: Optional[str] = None
-        buffer_base_timeout: int = 3
-        buffer_extend_timeout: int = 3
+        buffer_base_timeout: int = 8
+        buffer_extend_timeout: int = 5
         buffer_max_timeout: int = 30
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None

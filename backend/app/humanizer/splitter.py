@@ -65,4 +65,24 @@ def split_into_bubbles(text: str) -> list[str]:
     # --- Step 5: R$ uppercase safety net ---
     bubbles = [re.sub(r'r\$', 'R$', b) for b in bubbles]
 
+    # --- Step 6: "sem ponto final" — strip a single terminal sentence period ---
+    # A pessoa real no WhatsApp não fecha bolha com ponto; ela quebra a bolha.
+    # Removemos APENAS um '.' no fim da bolha. Preservamos:
+    #   - reticências "..." (pausa estilística, não é ponto final)
+    #   - pontos internos de URLs (cafecanastra.com) e números (R$1.000),
+    #     que nunca ficam no fim da bolha.
+    bubbles = [_strip_terminal_period(b) for b in bubbles]
+
     return bubbles
+
+
+def _strip_terminal_period(bubble: str) -> str:
+    """Remove um único ponto final de frase no fim da bolha.
+
+    Mantém reticências (termina em '..') e qualquer ponto interno (URLs/números),
+    pois esses não são o último caractere da bolha.
+    """
+    b = bubble.rstrip()
+    if b.endswith(".") and not b.endswith(".."):
+        b = b[:-1].rstrip()
+    return b

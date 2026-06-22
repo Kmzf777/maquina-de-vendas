@@ -193,3 +193,48 @@ def test_tolerates_blank_line_with_spaces():
     assert len(bubbles) == 2
     assert bubbles[0] == "para1"
     assert bubbles[1] == "para2"
+
+
+# ---------------------------------------------------------------------------
+# "Sem ponto final" — strip terminal sentence period per bubble (WhatsApp feel)
+# Internal periods (URLs, thousands separators) and ellipsis are preserved.
+# ---------------------------------------------------------------------------
+
+def test_terminal_period_stripped():
+    """A single trailing sentence period is removed from the bubble."""
+    assert split_into_bubbles("obrigado.") == ["obrigado"]
+
+
+def test_terminal_period_stripped_each_bubble():
+    """Every bubble has its terminal period removed independently."""
+    bubbles = split_into_bubbles("show, fechou.\n\nqualquer coisa to por aqui.")
+    assert bubbles == ["show, fechou", "qualquer coisa to por aqui"]
+
+
+def test_url_internal_periods_preserved():
+    """Periods inside a URL must never be touched (no trailing period here)."""
+    bubbles = split_into_bubbles("acessa www.loja.cafecanastra.com")
+    assert bubbles[0] == "acessa www.loja.cafecanastra.com"
+
+
+def test_url_at_end_keeps_domain_dots_strips_sentence_period():
+    """Trailing sentence period removed; the URL's own dots stay intact."""
+    bubbles = split_into_bubbles("e so acessar cafecanastra.com.")
+    assert bubbles[0] == "e so acessar cafecanastra.com"
+
+
+def test_thousands_separator_preserved():
+    """R$1.000 keeps its dot — it's not a terminal period."""
+    bubbles = split_into_bubbles("o frete fica por volta de R$1.000")
+    assert bubbles[0] == "o frete fica por volta de R$1.000"
+
+
+def test_ellipsis_preserved():
+    """Reticências (...) are a stylistic pause, not a ponto final — keep them."""
+    assert split_into_bubbles("deixa eu ver...") == ["deixa eu ver..."]
+
+
+def test_question_and_exclamation_untouched():
+    """Only '.' is a ponto final; '?' and '!' bubbles are left as-is."""
+    bubbles = split_into_bubbles("tudo bem?\n\nque bacana!")
+    assert bubbles == ["tudo bem?", "que bacana!"]

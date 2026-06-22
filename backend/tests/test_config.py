@@ -7,7 +7,10 @@ def test_settings_loads_from_env(monkeypatch):
     s = Settings()
 
     assert s.gemini_api_key == "test-gemini"
-    assert s.buffer_base_timeout == 3
+    # Debounce de mensagens do lead: janela base 8s (estende +5s a cada nova
+    # mensagem, ate o teto de 30s) para agrupar bursts e evitar surto de bolhas.
+    assert s.buffer_base_timeout == 8
+    assert s.buffer_extend_timeout == 5
     assert s.buffer_max_timeout == 30
 
 
