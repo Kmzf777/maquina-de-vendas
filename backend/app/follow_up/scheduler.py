@@ -598,7 +598,7 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
 
     try:
         provider = MetaCloudClient(channel["provider_config"])
-        await provider.send_template(send_to, template_name, components=components, language_code=language_code)
+        send_result = await provider.send_template(send_to, template_name, components=components, language_code=language_code)
         logger.info("[LP_WELCOME] Template '%s' enviado para %s", template_name, send_to)
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code
@@ -628,6 +628,26 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
             "[LP_WELCOME] Falha ao enviar template para %s: %s", lead_phone, exc, exc_info=True
         )
         return  # erro transitório (rede etc.) → retry no próximo tick
+
+    # Persiste o disparo LP em `messages` para que reações/replies a ele sejam rastreáveis.
+    # Sem isso, o template (wamid outbound) ficava fora da tabela e qualquer reação do lead
+    # virava "mensagem fantasma" no CRM (auditoria 2026-06-22, lead 5531985712321).
+    # sent_by="broadcast" alinha com o disparo do broadcast worker (mesma renderização no front).
+    try:
+        _lp_body = f"olá {first_name}\n\n[disparo automático — template {template_name}]" if first_name \
+            else f"[disparo automático — template {template_name}]"
+        save_message(
+            conversation["id"],
+            lead["id"],
+            "assistant",
+            _lp_body,
+            sent_by="broadcast",
+            wamid=extract_wamid(send_result),
+        )
+    except Exception as exc:
+        logger.error(
+            "[LP_WELCOME] Falha ao persistir mensagem do disparo LP para %s: %s", lead_phone, exc, exc_info=True
+        )
 
     # Card de CRM nasce AQUI: somente quando o disparo outbound da LP realmente acontece
     # (lead não respondeu nos 15 min). Se o lead tivesse chamado a Valéria, o guard

@@ -5,6 +5,21 @@ import type { Message } from "@/lib/types";
 import { DaySeparator } from "@/components/conversas/day-separator";
 import { MessageBubble } from "@/components/conversas/message-bubble";
 import { EventCard } from "@/components/conversas/event-card";
+import { HandoffDivider } from "@/components/conversas/handoff-divider";
+
+/**
+ * Índice da primeira mensagem que marca o transbordo da IA para o vendedor.
+ * Âncora (a mais cedo dentre): card de contexto de qualificação, 1ª msg do
+ * vendedor, ou o evento de sistema [encaminhar_humano]. -1 se não houve transbordo.
+ */
+function findHandoffIndex(messages: Message[]): number {
+  return messages.findIndex(
+    (m) =>
+      m.sent_by === "handoff_context" ||
+      m.sent_by === "seller" ||
+      (m.role === "system" && m.content?.startsWith("[encaminhar_humano]"))
+  );
+}
 
 interface MessageListProps {
   messages: Message[];
@@ -115,13 +130,20 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
             </p>
           )}
 
-          {messages.map((msg, idx) => {
+          {(() => {
+            const handoffIdx = findHandoffIndex(messages);
+            return messages.map((msg, idx) => {
             const prev = messages[idx - 1];
             const currDate = new Date(msg.created_at);
             const prevDate = prev ? new Date(prev.created_at) : null;
             const showDaySep = !prevDate || !isSameDay(currDate, prevDate);
             const grouped = isGrouped(msg, prev);
             const isHighlighted = highlightedId === msg.id;
+            // Divisor de transbordo: renderizado UMA vez, logo antes da âncora.
+            const showHandoffDivider = handoffIdx >= 0 && idx === handoffIdx;
+            // O card amarelo de Contexto da Qualificação (sent_by=handoff_context) é
+            // role=system, mas deve usar o MessageBubble (card rico), não o EventCard.
+            const isHandoffContext = msg.sent_by === "handoff_context";
 
             return (
               <div
@@ -135,7 +157,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                 }`}
               >
                 {showDaySep && <DaySeparator date={currDate} />}
-                {msg.role === "system" ? (
+                {showHandoffDivider && <HandoffDivider at={msg.created_at} />}
+                {msg.role === "system" && !isHandoffContext ? (
                   <EventCard message={msg} />
                 ) : (
                   <MessageBubble
@@ -155,7 +178,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                 )}
               </div>
             );
-          })}
+            });
+          })()}
 
           <div ref={bottomRef} />
         </div>

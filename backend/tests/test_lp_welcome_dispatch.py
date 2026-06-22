@@ -62,6 +62,7 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
          patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
          patch("app.follow_up.scheduler.create_deal"), \
          patch("app.follow_up.scheduler.record_dispatch_note"), \
+         patch("app.follow_up.scheduler.save_message") as mock_save, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
 
@@ -78,6 +79,36 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
     )
     mock_sent.assert_called_once_with("job-lp-1")
     mock_cancel.assert_not_called()
+    # 1A: o disparo LP deve ser persistido em messages para reações/replies resolverem.
+    mock_save.assert_called_once()
+    _args, _kwargs = mock_save.call_args
+    assert _args[0] == "conv-lp-1"          # conversation_id
+    assert _args[1] == "lead-1"             # lead_id
+    assert _args[2] == "assistant"          # role
+    assert "lp_solicitacao_recebida" in _args[3]
+    assert _kwargs.get("sent_by") == "broadcast"
+    assert _kwargs.get("wamid") == "wamid.lp1"
+
+
+@pytest.mark.asyncio
+async def test_lp_welcome_nao_persiste_mensagem_em_rejeicao():
+    """Se a Meta rejeita (RuntimeError), NÃO deve persistir mensagem (o disparo não ocorreu)."""
+    job = _make_lp_welcome_job()
+    mock_meta = AsyncMock()
+    mock_meta.send_template = AsyncMock(side_effect=RuntimeError("rejected"))
+
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
+         patch("app.follow_up.scheduler.create_deal"), \
+         patch("app.follow_up.scheduler.record_dispatch_note"), \
+         patch("app.follow_up.scheduler.save_message") as mock_save, \
+         patch("app.follow_up.scheduler._mark_sent"), \
+         patch("app.follow_up.scheduler._cancel_job"):
+
+        from app.follow_up.scheduler import process_due_followups
+        await process_due_followups(now=datetime.now(timezone.utc))
+
+    mock_save.assert_not_called()
 
 
 @pytest.mark.asyncio
