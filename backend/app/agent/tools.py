@@ -159,7 +159,9 @@ TOOLS_SCHEMA = [
                         "description": (
                             "Mensagem de despedida/transbordo curta e personalizada para o lead, escrita com base no "
                             "contexto da conversa. Sera enviada como texto, seguida do cartao de contato do Joao. "
-                            "NAO inclua telefone, link nem wa.me."
+                            "DIRECIONE A ACAO PRO LEAD: o cartao do Joao aparece em seguida e e o LEAD que toca nele "
+                            "pra chamar — convide-o a fazer isso. NAO use 'vou te conectar'/'ja te transfiro'/'vou passar "
+                            "seu contato' (da falsa impressao de que voce faz a ponte). NAO inclua telefone, link nem wa.me."
                         ),
                     },
                     "vendedor": {"type": "string", "description": "Nome do vendedor (opcional — omita em casos de rejeicao)"},
@@ -343,6 +345,41 @@ def get_tools_for_stage(stage: str) -> list[dict]:
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
 
 
+def _normalize_text(s: str | None) -> str:
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFD", (s or "").lower())
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+# Sinais de PROIBICAO explicita de contato (HARD opt-out → Blacklist legítima).
+_HARD_OPTOUT_SIGNALS = (
+    "parar", "para de me", "nao quero mais mensagem", "nao quero mais contato",
+    "nao me mande", "nao manda mais", "sair da lista", "tira da lista", "tirar da lista",
+    "descadastr", "remover", "remova", "bloquear", "denunciar", "processar", "spam", "stop",
+)
+# Sinais de SOFT rejection (falta de momento de compra → Perdido, NUNCA Blacklist).
+_SOFT_REJECTION_SIGNALS = (
+    "interesse no momento", "sem interesse agora", "sem interesse no", "sem disponibilidade",
+    "agora nao", "mais pra frente", "mais para frente", "sem tempo", "ja sou cliente",
+    "ja compro", "ja fechei", "sem grana", "vou pensar", "talvez", "futuramente",
+    "depois eu", "nao da agora", "deixa pra depois",
+)
+
+
+def _looks_like_soft_rejection(motivo: str | None) -> bool:
+    """True se o motivo de opt-out tem cara de SOFT rejection sem proibição explícita.
+
+    Defesa em profundidade contra falso positivo de Blacklist (auditoria 2026-06-22):
+    "não tenho interesse no momento"/"sem disponibilidade" NÃO são opt-out.
+    """
+    n = _normalize_text(motivo)
+    if any(h in n for h in _HARD_OPTOUT_SIGNALS):
+        return False
+    return any(s in n for s in _SOFT_REJECTION_SIGNALS)
+
+
 async def execute_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -483,6 +520,21 @@ async def execute_tool(
 
     elif tool_name == "registrar_optout":
         motivo = args.get("motivo", "opt-out solicitado pelo lead")
+        # Guardrail anti-falso-positivo de Blacklist (auditoria 2026-06-22): se o motivo é
+        # claramente SOFT rejection (sem proibição explícita de contato), rebaixa para
+        # registrar_sem_interesse_atual (Perdido, opt_out=False, sem blacklist). Defesa em
+        # profundidade por cima da regra 18 do prompt — o LLM às vezes erra a classificação.
+        if _looks_like_soft_rejection(motivo):
+            logger.warning(
+                "[BLACKLIST GUARDRAIL] registrar_optout rebaixado para sem_interesse — "
+                "lead %s, motivo=%r (sem sinal de proibição explícita de contato)",
+                lead_id, motivo,
+            )
+            return await execute_tool(
+                "registrar_sem_interesse_atual",
+                {"motivo": f"[rebaixado de opt-out pelo guardrail] {motivo}"},
+                lead_id, phone, conversation_id,
+            )
         try:
             update_lead(lead_id, ai_enabled=False, opt_out=True)
         except Exception as exc:

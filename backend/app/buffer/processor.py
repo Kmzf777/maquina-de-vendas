@@ -831,12 +831,19 @@ async def _resolve_media(
 
     for match in re.finditer(meta_b64_pattern, text):
         meta_type = match.group(1)
+        replacement = ""
         if meta_type in ("location", "contact", "reaction") and message_type is None:
             try:
                 metadata = json.loads(base64.b64decode(match.group(2)).decode())
                 message_type = meta_type
+                if meta_type == "reaction":
+                    # Reação NUNCA pode ser salva em branco — senão vira "mensagem fantasma"
+                    # no CRM, sem o vendedor saber o que houve (auditoria 2026-06-22, lead
+                    # 5531985712321). Mostra o emoji; o alvo é resolvido via target_wamid.
+                    _emoji = (metadata or {}).get("emoji") or "👍"
+                    replacement = f"[reagiu com {_emoji}]"
             except Exception as e:
                 logger.warning(f"Failed to decode metadata for {meta_type}: {e}")
-        text = text.replace(match.group(0), "")
+        text = text.replace(match.group(0), replacement)
 
     return text.strip(), storage_url, message_type, document_name, metadata
