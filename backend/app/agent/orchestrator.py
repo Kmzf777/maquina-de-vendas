@@ -49,7 +49,7 @@ _SAFETY_FALLBACK_MESSAGE = (
 # (enviar_fotos / enviar_foto_produto). O genérico stall é nonsense
 # após um catálogo — preferimos uma pergunta de avanço coerente com o envio.
 _SAFETY_FALLBACK_MEDIA = (
-    "te mandei as fotos aqui no chat. qual delas chamou mais a sua atenção?"
+    "te mandei as fotos aqui no chat\n\nqual delas chamou mais a sua atenção?"
 )
 
 _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
@@ -62,16 +62,16 @@ _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
 # não um avanço comercial) → cai no fallback genérico.
 _STAGE_TRANSITION_FALLBACKS: dict[str, str] = {
     "atacado": (
-        "pelo que você me contou, faz sentido a gente falar de condições pro seu "
-        "negócio. você procura o café pra revender ou pra servir no seu estabelecimento?"
+        "pelo que você me contou, faz sentido a gente falar de condições pro seu negócio\n\n"
+        "você procura o café pra revender ou pra servir no seu estabelecimento?"
     ),
     "private_label": (
-        "que ideia bacana ter o café com a sua própria marca. "
+        "que ideia bacana ter o café com a sua própria marca\n\n"
         "me conta um pouco do que você tem em mente?"
     ),
     "exportacao": (
-        "mercado externo é um universo e tanto. você já tem algum país de destino em mente "
-        "pra levar o café?"
+        "mercado externo é um universo e tanto\n\n"
+        "você já tem algum país de destino em mente pra levar o café?"
     ),
     "consumo": (
         "show, pra eu te indicar o ideal pro seu dia a dia, você prefere o café em grãos "
@@ -529,7 +529,7 @@ async def run_agent(
         # wrote lives in message.content of this same turn — return it now and skip
         # the second API call (there is nothing left to say after opt-out).
         if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
-            return message.content or "Entendido, sem problema. Não entrarei mais em contato."
+            return message.content or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
 
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.

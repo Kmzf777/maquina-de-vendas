@@ -37,6 +37,67 @@ def normalize_phone(phone: str | None) -> str:
     return digits
 
 
+# Caractere que denuncia "handle"/username em vez de nome real (dígito ou underscore).
+# Ex.: "Brunor_barista", "cassianofonseca15" — usar como nome próprio soa robótico
+# ("Falo com Brunor_barista neste número?"). Nesses casos preferimos "sem nome".
+_HANDLE_CHAR_RE = re.compile(r"[0-9_]")
+
+
+def sanitize_display_name(name: str | None) -> str | None:
+    """Retorna o nome se parecer um nome real; None se parecer handle/username.
+
+    None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez
+    de chamar o lead por um handle). Conservador: só descarta quando há sinal claro de
+    handle (dígito/underscore), pra não derrubar nomes legítimos.
+    """
+    if not name:
+        return None
+    n = name.strip()
+    if not n:
+        return None
+    if _HANDLE_CHAR_RE.search(n):
+        return None
+    return n
+
+
+# Estágios de deal que indicam relacionamento ativo (em tratativa humana). 'novo' é o
+# estado default da massa e fica DE FORA de propósito. Ajuste conforme a semântica do CRM.
+_ACTIVE_DEAL_STAGES: tuple[str, ...] = ("ja_chamado",)
+
+
+def lead_has_active_relationship(lead_id: str) -> bool:
+    """True se o lead já está em tratativa humana ou tem deal fechado positivamente.
+
+    Sinal de "já é cliente / já em atendimento", usado para (a) excluir de disparo frio
+    de prospecção e (b) avisar a Valéria (lead_is_customer). Fail-open=False: em erro,
+    retorna False (não bloqueia o fluxo nem o disparo por causa da checagem).
+    """
+    if not lead_id:
+        return False
+    try:
+        sb = get_supabase()
+        in_treatment = (
+            sb.table("deals").select("id")
+            .eq("lead_id", lead_id)
+            .in_("stage", list(_ACTIVE_DEAL_STAGES))
+            .limit(1).execute()
+        )
+        if in_treatment.data:
+            return True
+        # Deal fechado positivamente: closed_at setado e estágio != perdido.
+        closed_won = (
+            sb.table("deals").select("id")
+            .eq("lead_id", lead_id)
+            .neq("stage", "perdido")
+            .filter("closed_at", "not.is", "null")
+            .limit(1).execute()
+        )
+        return bool(closed_won.data)
+    except Exception as exc:
+        logger.warning("leads.service: lead_has_active_relationship falhou p/ %s: %s", lead_id, exc)
+        return False
+
+
 # Colunas de atribuição/rastreio persistíveis na criação do lead. Whitelist defensiva:
 # só estas chaves de `tracking` são gravadas, evitando injeção de colunas arbitrárias.
 TRACKING_COLUMNS: tuple[str, ...] = (
@@ -57,6 +118,8 @@ def get_or_create_lead(
     tracking: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
+    # Não persistir handle/username (ex.: push_name "Brunor_barista") como nome do lead.
+    name = sanitize_display_name(name)
     normalized = normalize_phone(phone)
 
     # Digits-only form without 9th digit injection — matches legacy DB rows stored before normalization

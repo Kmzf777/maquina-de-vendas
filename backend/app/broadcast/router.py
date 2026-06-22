@@ -5,7 +5,10 @@ from datetime import datetime, timezone, timedelta
 from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.campaign.importer import parse_csv
-from app.leads.service import get_or_create_lead as _get_or_create_lead
+from app.leads.service import (
+    get_or_create_lead as _get_or_create_lead,
+    lead_has_active_relationship as _lead_has_active_relationship,
+)
 
 router = APIRouter(prefix="/api/broadcasts", tags=["broadcasts"])
 
@@ -111,7 +114,12 @@ async def delete_broadcast(broadcast_id: str):
 async def assign_leads(broadcast_id: str, req: AssignLeadsRequest):
     sb = get_supabase()
     assigned = 0
+    skipped_active = 0
     for lead_id in req.lead_ids:
+        # Não enviar disparo frio de prospecção a quem já é cliente / está em tratativa.
+        if _lead_has_active_relationship(lead_id):
+            skipped_active += 1
+            continue
         try:
             sb.table("broadcast_leads").insert({
                 "broadcast_id": broadcast_id,
@@ -123,7 +131,7 @@ async def assign_leads(broadcast_id: str, req: AssignLeadsRequest):
 
     total = sb.table("broadcast_leads").select("id", count="exact").eq("broadcast_id", broadcast_id).execute().count
     sb.table("broadcasts").update({"total_leads": total or 0}).eq("id", broadcast_id).execute()
-    return {"assigned": assigned}
+    return {"assigned": assigned, "skipped_active": skipped_active}
 
 
 @router.post("/{broadcast_id}/import")
@@ -136,12 +144,17 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
 
     sb = get_supabase()
     created = 0
+    skipped_active = 0
 
     for phone in result.valid:
         try:
             # get_or_create_lead handles 12→13-digit legacy backfill, preventing
             # duplicate leads that would cause the same person to receive two templates.
             lead = _get_or_create_lead(phone)
+            # Não enviar disparo frio de prospecção a quem já é cliente / está em tratativa.
+            if _lead_has_active_relationship(lead["id"]):
+                skipped_active += 1
+                continue
             sb.table("broadcast_leads").insert({
                 "broadcast_id": broadcast_id,
                 "lead_id": lead["id"],
@@ -153,7 +166,12 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
     total = sb.table("broadcast_leads").select("id", count="exact").eq("broadcast_id", broadcast_id).execute().count
     sb.table("broadcasts").update({"total_leads": total or 0}).eq("id", broadcast_id).execute()
 
-    return {"imported": created, "invalid": len(result.invalid), "invalid_numbers": result.invalid[:20]}
+    return {
+        "imported": created,
+        "invalid": len(result.invalid),
+        "invalid_numbers": result.invalid[:20],
+        "skipped_active": skipped_active,
+    }
 
 
 @router.post("/{broadcast_id}/start")

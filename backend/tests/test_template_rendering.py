@@ -122,11 +122,21 @@ def test_apply_variables_lead_with_only_first_name():
     assert v2 == "Rafael"
 
 
-def test_apply_variables_lead_with_no_name_returns_empty_string_for_name_tokens():
+def test_apply_variables_lead_with_no_name_falls_back_to_voce():
+    """Sem nome (ou handle), tokens de nome caem em "você" — evita "Olá !"/param vazio
+    (que o Meta pode rejeitar) e mantém a leitura natural (auditoria 2026-06-22, Falha 10)."""
     from app.broadcast.worker import _apply_variables
     lead = {**REAL_LEAD, "name": None}
     result = _apply_variables("Olá {{primeiro_nome}}!", {"primeiro_nome": "{{primeiro_nome}}"}, lead)
-    assert result == "Olá !"
+    assert result == "Olá você!"
+
+
+def test_apply_variables_lead_with_handle_name_falls_back_to_voce():
+    """push_name handle (com dígito/underscore) não vira nome próprio no template."""
+    from app.broadcast.worker import _apply_variables
+    lead = {**REAL_LEAD, "name": "Brunor_barista"}
+    result = _apply_variables("Falo com {{primeiro_nome}} neste número?", {"primeiro_nome": "{{primeiro_nome}}"}, lead)
+    assert result == "Falo com você neste número?"
 
 
 # ═══════════════════════════════════════════════════════════════

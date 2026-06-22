@@ -124,5 +124,6 @@ async def test_registrar_optout_retorna_fallback_se_sem_despedida():
         mock_client.return_value.chat.completions.create = AsyncMock(return_value=first_response)
         result = await run_agent(conversation, "sair")
 
-    assert result == "Entendido, sem problema. Não entrarei mais em contato."
+    # Fallback humanizado (regra 22: minúscula, sem ponto final) — auditoria 2026-06-22.
+    assert result == "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
     assert mock_client.return_value.chat.completions.create.call_count == 1

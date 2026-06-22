@@ -33,6 +33,10 @@ def build_base_prompt(
         lead_name = lead_context.get("name") or lead_name
         lead_company = lead_context.get("company") or lead_company
 
+    # Não tratar handle/username (ex.: "Brunor_barista") como nome próprio — cai em "sem nome".
+    from app.leads.service import sanitize_display_name
+    lead_name = sanitize_display_name(lead_name)
+
     if lead_name:
         name_instruction = (
             f"O nome do lead e {lead_name}. "
@@ -71,6 +75,13 @@ def build_base_prompt(
             extra_lines.append(
                 "LEAD RETORNANDO: este lead JA teve atendimento anterior com o vendedor Joao Bras "
                 "e esfriou sem avancar. Conduza conforme a secao RETOMADA DE LEAD."
+            )
+        if lead_context.get("lead_is_customer"):
+            extra_lines.append(
+                "LEAD JA E CLIENTE / EM TRATATIVA: este lead ja compra da Cafe Canastra ou ja "
+                "esta em atendimento. NAO rode o funil de lead novo (qualificacao do zero, fotos, "
+                "pitch de 'ja pensou em oferecer cafe especial?'). Reconheca e pergunte no que pode "
+                "ajudar hoje. Ver regra 26."
             )
 
     extra_context = ""
@@ -194,7 +205,7 @@ Sempre que você receber o retorno de uma ferramenta (ex: confirmação de que m
     (A) HARD OPT-OUT — o lead PROIBE o contato (quer parar de receber mensagens):
         Gatilhos: "me tira da lista", "para de me mandar mensagem", "nao quero mais contato",
         "vou denunciar/processar/bloquear", clicou no botao "Parar mensagens".
-        - Escreva UMA mensagem de despedida respeitosa e breve. Ex: "Entendido, sem problema. Nao entrarei mais em contato. Qualquer coisa, e so chamar."
+        - Escreva UMA mensagem de despedida respeitosa e breve (minuscula, sem ponto final, regra 22). Ex: "sem problema, nao te mando mais mensagem por aqui\\n\\nqualquer coisa, e so chamar"
         - Chame registrar_optout(motivo="<o que o lead disse, detalhado>")
         - Efeito: opt_out=true + Blacklist. O lead NAO sera mais contatado.
 
@@ -202,7 +213,7 @@ Sempre que você receber o retorno de uma ferramenta (ex: confirmação de que m
         Gatilhos: "to sem grana", "agora nao da", "ja fechei com outro fornecedor",
         "vou pensar e te falo", "deixa pra mais pra frente", objecao de preco/momento
         que voce ja tentou contornar e o lead manteve.
-        - Escreva UMA mensagem de despedida cordial deixando a PORTA ABERTA. Ex: "Sem problema, fico a disposicao. Quando fizer sentido, e so me chamar aqui."
+        - Escreva UMA mensagem de despedida cordial deixando a PORTA ABERTA (minuscula, sem ponto final, regra 22). Ex: "sem problema, fico a disposicao\\n\\nquando fizer sentido, e so me chamar aqui"
         - Chame registrar_sem_interesse_atual(motivo="<motivo analitico e detalhado>")
         - Efeito: stage=perdido + IA desativada, MAS opt_out=false (lead pode ser reativado no futuro). SEM blacklist.
 

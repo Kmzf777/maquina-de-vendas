@@ -7,7 +7,6 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from openai import AsyncOpenAI
 
 from app.config import settings
 from app.leads.service import get_or_create_lead, resolve_send_target
@@ -83,19 +82,76 @@ def _bubble_delays(bubbles: list[str], is_rehearsal: bool) -> list[float]:
         delays.append(max(_MIN_BUBBLE_DELAY, min(_MAX_BUBBLE_DELAY, typing_secs)))
     return delays
 
-_openai_client: AsyncOpenAI | None = None
+# Marcador único de falha de áudio — usado tanto no replace do texto quanto na
+# detecção de insistência (escalonamento). Mantido como constante para evitar drift.
+_AUDIO_FAIL_MARKER = "[audio: nao foi possivel transcrever]"
 
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# Transcrição de áudio: o endpoint OpenAI-compat do Gemini NÃO expõe
+# /audio/transcriptions (Whisper) — a chamada antiga falhava 100% (auditoria
+# 2026-06-22: 9 falhas/dia). O caminho suportado é generateContent com inline_data,
+# que aceita OGG/opus (formato do áudio do WhatsApp).
+_GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
-def _get_openai() -> AsyncOpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = AsyncOpenAI(
-            api_key=settings.gemini_api_key,
-            base_url=_GEMINI_BASE_URL,
+def _audio_mime_type(content_type: str | None) -> str:
+    """Normaliza o content-type p/ um mime aceito pelo Gemini.
+
+    O WhatsApp manda 'audio/ogg; codecs=opus' — o parâmetro codecs quebra o Gemini,
+    então mantemos só o tipo base. Default audio/ogg (voz do WhatsApp).
+    """
+    base = (content_type or "").split(";")[0].strip().lower()
+    return base or "audio/ogg"
+
+
+async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str:
+    """Transcreve áudio via Gemini generateContent (inline_data). Levanta em falha."""
+    mime = _audio_mime_type(content_type)
+    b64 = base64.b64encode(audio_bytes).decode()
+    url = _GEMINI_GENERATE_URL.format(model=settings.transcription_model)
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": "Transcreva o áudio a seguir em português do Brasil. "
+                        "Responda APENAS com a transcrição literal, sem comentários, "
+                        "aspas ou rótulos.",
+                    },
+                    {"inline_data": {"mime_type": mime, "data": b64}},
+                ]
+            }
+        ]
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(url, params={"key": settings.gemini_api_key}, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+    candidate = (data.get("candidates") or [{}])[0]
+    parts = (candidate.get("content") or {}).get("parts") or []
+    transcript = "".join(p.get("text", "") for p in parts).strip()
+    if not transcript:
+        raise RuntimeError(
+            f"transcrição vazia (finishReason={candidate.get('finishReason')!r})"
         )
-    return _openai_client
+    return transcript
+
+
+async def _download_media_with_retry(provider, media_ref: str, attempts: int = 3, delay: int = 2):
+    """download_media com retry em erros transientes (rede/GOAWAY)."""
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await provider.download_media(media_ref)
+        except Exception as exc:  # noqa: BLE001 — instrumentação: queremos o tipo real
+            last_exc = exc
+            logger.warning(
+                "[AUDIO] download tentativa %d/%d falhou para %s: %s: %s",
+                attempt, attempts, media_ref, type(exc).__name__, exc,
+            )
+            if attempt < attempts:
+                await asyncio.sleep(delay)
+    raise last_exc
 
 
 def _resolve_agent_profile_id(conversation: dict, channel: dict) -> str | None:
@@ -260,6 +316,31 @@ async def _check_frustration_guardrail(
             lead_id, exc, exc_info=True,
         )
     return True
+
+
+def _count_recent_failed_audio(conversation_id: str, window_minutes: int = 30) -> int:
+    """Conta mensagens recentes do lead cuja transcrição de áudio falhou.
+
+    Usado para escalonar p/ humano quando o lead insiste em áudio que não transcreve,
+    em vez de repetir "me manda em texto" num loop (auditoria 2026-06-22: Cris Bonanno).
+    Fail-open: 0 em qualquer erro (nunca bloqueia o fluxo por causa da contagem).
+    """
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("id")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .ilike("content", f"%{_AUDIO_FAIL_MARKER}%")
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        return len(result.data)
+    except Exception as exc:
+        logger.warning("[AUDIO] falha ao contar áudios sem transcrição p/ conv %s: %s", conversation_id, exc)
+        return 0
 
 
 async def process_buffered_messages(
@@ -452,12 +533,51 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
+    # Áudio insistente sem transcrição: escala p/ humano em vez de pedir texto em loop.
+    # (auditoria 2026-06-22: Cris Bonanno mandou 4 áudios, recebeu só "manda em texto" e
+    # quase abandonou.) Só dispara a partir do 2º áudio falho na janela — o 1º ainda pede texto.
+    if _AUDIO_FAIL_MARKER in resolved_text:
+        failed_audios = _count_recent_failed_audio(conversation["id"])
+        if failed_audios >= 2:
+            logger.warning(
+                "[AUDIO ESCALATION] %d áudios sem transcrição p/ conv %s (phone=%s) — encaminhando humano",
+                failed_audios, conversation["id"], phone,
+            )
+            try:
+                from app.agent.tools import execute_tool
+                await execute_tool(
+                    "encaminhar_humano",
+                    {
+                        "vendedor": "Joao Bras",
+                        "motivo": (
+                            "lead enviando áudios que o sistema não conseguiu transcrever — "
+                            "escalonado p/ atendimento humano"
+                        ),
+                    },
+                    lead_id=lead["id"], phone=phone, conversation_id=conversation["id"],
+                )
+            except Exception as exc:
+                logger.error(
+                    "[AUDIO ESCALATION] execute_tool(encaminhar_humano) falhou p/ conv %s: %s",
+                    conversation["id"], exc, exc_info=True,
+                )
+            _update_last_msg(conversation["id"])
+            return
+
     # Run AI agent — up to 3 attempts with 5s backoff between failures
     _AGENT_MAX_ATTEMPTS = 3
     _AGENT_RETRY_DELAY = 5
 
     conversation["leads"] = lead
     lead_context = lead.get("metadata") or {}
+    # Sinal "já é cliente / em tratativa": evita rodar o funil de lead novo com quem já
+    # compra/está em atendimento (auditoria 2026-06-22: Grazieli). Surface via base prompt.
+    try:
+        from app.leads.service import lead_has_active_relationship
+        if lead_has_active_relationship(lead["id"]):
+            lead_context = {**lead_context, "lead_is_customer": True}
+    except Exception as exc:
+        logger.debug("[CUSTOMER SIGNAL] falha ao checar relacionamento p/ %s: %s", lead["id"], exc)
     response = None
     for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
         try:
@@ -637,27 +757,41 @@ async def _resolve_media(
             message_type = "audio"
             storage_url = media_ref
 
+            # ETAPA 1 — DOWNLOAD (com retry em erro transiente). Instrumentado p/
+            # distinguir falha de download de falha de transcrição (auditoria 2026-06-22).
             try:
-                audio_bytes, content_type = await provider.download_media(media_ref)
+                audio_bytes, content_type = await _download_media_with_retry(provider, media_ref)
             except Exception as e:
-                logger.warning(f"Failed to download audio {media_ref}: {e}")
-                text = text.replace(match.group(0), "[audio: nao foi possivel transcrever]")
+                logger.error(
+                    "[AUDIO] DOWNLOAD falhou definitivamente para %s: %s: %s",
+                    media_ref, type(e).__name__, e,
+                )
+                text = text.replace(match.group(0), _AUDIO_FAIL_MARKER)
                 continue
 
-            ext = "ogg" if "ogg" in content_type else "mp4"
+            ext = "ogg" if "ogg" in (content_type or "") else "mp4"
             uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
             if uploaded_url:
                 storage_url = uploaded_url
 
+            # ETAPA 2 — TRANSCRIÇÃO (Gemini generateContent). Log granular do erro real.
             try:
-                transcript = await _get_openai().audio.transcriptions.create(
-                    model="gemini-3-flash-preview",
-                    file=(f"audio.{ext}", audio_bytes, content_type),
+                transcript_text = await _transcribe_audio(audio_bytes, content_type)
+                text = text.replace(match.group(0), f"[audio transcrito: {transcript_text}]")
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    "[AUDIO] TRANSCRICAO HTTP %s para %s (model=%s, mime=%s): %s",
+                    e.response.status_code, media_ref, settings.transcription_model,
+                    _audio_mime_type(content_type), e.response.text[:300],
                 )
-                text = text.replace(match.group(0), f"[audio transcrito: {transcript.text}]")
+                text = text.replace(match.group(0), _AUDIO_FAIL_MARKER)
             except Exception as e:
-                logger.warning(f"Failed to transcribe audio {media_ref}: {e}")
-                text = text.replace(match.group(0), "[audio: nao foi possivel transcrever]")
+                logger.error(
+                    "[AUDIO] TRANSCRICAO falhou para %s (model=%s, mime=%s, bytes=%d): %s: %s",
+                    media_ref, settings.transcription_model, _audio_mime_type(content_type),
+                    len(audio_bytes), type(e).__name__, e,
+                )
+                text = text.replace(match.group(0), _AUDIO_FAIL_MARKER)
 
     for pattern in [image_id_pattern, image_url_pattern]:
         for match in re.finditer(pattern, text):

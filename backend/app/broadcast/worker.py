@@ -90,16 +90,31 @@ async def _preflight_channel_check(channel: dict) -> bool:
         logger.warning("[BROADCAST] Pre-flight: falha ao contactar Meta (prosseguindo): %s", exc)
         return True  # network error — proceed optimistically
 
+def _lead_first_name(lead: dict) -> str:
+    """Primeiro nome real do lead, ou "você" se for handle/username/vazio.
+
+    Evita "Falo com Brunor_barista neste número?" — handle vira "Falo com você...".
+    """
+    from app.leads.service import sanitize_display_name
+    clean = sanitize_display_name(lead.get("name"))
+    return clean.split()[0] if clean else "você"
+
+
+def _lead_full_name(lead: dict) -> str:
+    from app.leads.service import sanitize_display_name
+    return sanitize_display_name(lead.get("name")) or "você"
+
+
 # Dynamic variable tokens that get resolved from the lead record at send time.
 _LEAD_FIELD_TOKENS = {
     # New tokens (used by smart broadcast modal)
-    "{{primeiro_nome}}": lambda lead: (lead.get("name") or "").split()[0] if lead.get("name") else "",
-    "{{nome_completo}}": lambda lead: lead.get("name") or "",
+    "{{primeiro_nome}}": _lead_first_name,
+    "{{nome_completo}}": _lead_full_name,
     "{{telefone}}":      lambda lead: lead.get("phone") or "",
     "{{empresa}}":       lambda lead: lead.get("company") or lead.get("nome_fantasia") or "",
     # Legacy tokens kept for backward compatibility
-    "{{first_name}}":    lambda lead: (lead.get("name") or "").split()[0] if lead.get("name") else "",
-    "{{lead_name}}":     lambda lead: lead.get("name") or "",
+    "{{first_name}}":    _lead_first_name,
+    "{{lead_name}}":     _lead_full_name,
     "{{phone}}":         lambda lead: lead.get("phone") or "",
 }
 
