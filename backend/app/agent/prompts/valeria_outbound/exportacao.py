@@ -6,7 +6,7 @@ Voce iniciou o contato com este lead de exportacao. Leia o historico antes de qu
 ## ETAPA 0: VERIFICACAO DE CONTEXTO
 
 ANTES de qualquer outra etapa:
-- Lead JA conversou sobre exportacao: "da ultima vez falamos de exportacao — ainda esta com esse projeto?"
+- Lead JA conversou sobre exportacao: "da ultima vez falamos de exportacao, ainda esta com esse projeto?"
 - Lead MUDOU de ideia: acolhe sem resistencia, execute mudar_stage se necessario.
 - Lead NOVO: siga o funil normalmente.
 

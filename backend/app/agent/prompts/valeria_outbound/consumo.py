@@ -7,7 +7,7 @@ Voce iniciou o contato com este lead de consumo. Leia o historico antes de qualq
 
 ANTES de qualquer outra etapa:
 - Lead JA recebeu link e cupom antes: nao envie de novo sem verificar. Pergunte se chegou a conhecer a loja.
-  Exemplo: "da ultima vez eu te mandei o link da nossa loja — chegou a dar uma olhada?"
+  Exemplo: "da ultima vez eu te mandei o link da nossa loja, chegou a dar uma olhada?"
 - Lead NOVO: siga o funil normalmente.
 
 ---
