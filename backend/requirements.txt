@@ -10,3 +10,5 @@ pydantic-settings>=2.5.0,<3.0
 python-dateutil>=2.9.0,<3.0
 google-generativeai>=0.8.0
 PyJWT>=2.8.0,<3.0
+# Windows nao possui a base IANA de fusos; zoneinfo (stdlib) precisa do pacote tzdata.
+tzdata; sys_platform == 'win32'
