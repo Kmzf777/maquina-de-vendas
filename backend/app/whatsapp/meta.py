@@ -1,13 +1,112 @@
+import asyncio
 import base64
 import json
 import logging
+import random
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+
 import httpx
 from app.whatsapp.base import WhatsAppProvider
 from app.meta_audit import log_outbound
 
 META_API_BASE = "https://graph.facebook.com"
 
+# A1 — robustez de envio à Meta:
+# timeout explícito + cliente compartilhado (pool/keep-alive) + retry com backoff.
+META_REQUEST_TIMEOUT = 15.0
+META_MAX_ATTEMPTS = 4  # 1 tentativa inicial + 3 retries
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
 logger = logging.getLogger(__name__)
+
+# Instância única compartilhada: reusa conexões TLS (keep-alive) em vez de abrir
+# um AsyncClient novo por chamada. Criado preguiçosamente para permitir patch em testes.
+_shared_client: httpx.AsyncClient | None = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    """Retorna o AsyncClient compartilhado (pool/keep-alive, timeout explícito)."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(META_REQUEST_TIMEOUT),
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _shared_client
+
+
+async def close_shared_client() -> None:
+    """Fecha o cliente compartilhado (chamar no shutdown da app)."""
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        await _shared_client.aclose()
+    _shared_client = None
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Interpreta o header Retry-After (segundos OU HTTP-date). None se ausente/inválido."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        dt = parsedate_to_datetime(value)
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+    except Exception:
+        return None
+
+
+def _backoff_delay(attempt: int, retry_after: float | None) -> float:
+    """Honra Retry-After quando presente; senão backoff exponencial com jitter (cap 60s)."""
+    if retry_after is not None:
+        return min(retry_after, 60.0)
+    return min(0.5 * (2 ** attempt) + random.uniform(0, 0.3), 60.0)
+
+
+async def _request_with_retry(
+    method: str, url: str, *, max_attempts: int = META_MAX_ATTEMPTS, **kwargs
+) -> httpx.Response:
+    """POST/GET via cliente compartilhado, com retry em 429/5xx e erros de transporte.
+
+    Retorna a Response final (mesmo que de erro após esgotar retries) — o chamador
+    decide o tratamento (raise_for_status). Erros de transporte são re-levantados
+    após a última tentativa.
+    """
+    client = get_shared_client()
+    for attempt in range(max_attempts):
+        try:
+            resp = await client.request(method, url, **kwargs)
+        except httpx.TransportError as exc:
+            if attempt >= max_attempts - 1:
+                raise
+            delay = _backoff_delay(attempt, None)
+            logger.warning(
+                "[Meta API] erro de transporte (tentativa %d/%d): %s — retry em %.2fs",
+                attempt + 1, max_attempts, exc, delay,
+            )
+            await asyncio.sleep(delay)
+            continue
+
+        if resp.status_code in _RETRYABLE_STATUS and attempt < max_attempts - 1:
+            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+            delay = _backoff_delay(attempt, retry_after)
+            logger.warning(
+                "[Meta API] status %s (tentativa %d/%d) — retry em %.2fs",
+                resp.status_code, attempt + 1, max_attempts, delay,
+            )
+            await asyncio.sleep(delay)
+            continue
+
+        return resp
+
+    raise RuntimeError("unreachable: retry loop esgotado sem resposta")
 
 
 def extract_wamid(send_result: dict | None) -> str | None:
@@ -57,28 +156,29 @@ class MetaCloudClient(WhatsAppProvider):
         error_msg: str | None = None
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(self._url(), json=payload, headers=self._headers())
-                status_code = resp.status_code
-                try:
-                    response_data = resp.json()
-                except Exception:
-                    response_data = {"raw": resp.text}
+            resp = await _request_with_retry(
+                "POST", self._url(), json=payload, headers=self._headers()
+            )
+            status_code = resp.status_code
+            try:
+                response_data = resp.json()
+            except Exception:
+                response_data = {"raw": resp.text}
 
-                if not resp.is_success:
-                    error_msg = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
-                    logger.error(
-                        "[Meta API] %s %s — payload: %s — response: %s",
-                        resp.status_code,
-                        resp.reason_phrase,
-                        json.dumps(payload),
-                        error_msg,
-                    )
-                else:
-                    success = True
+            if not resp.is_success:
+                error_msg = json.dumps(response_data) if isinstance(response_data, dict) else str(response_data)
+                logger.error(
+                    "[Meta API] %s %s — payload: %s — response: %s",
+                    resp.status_code,
+                    resp.reason_phrase,
+                    json.dumps(payload),
+                    error_msg,
+                )
+            else:
+                success = True
 
-                resp.raise_for_status()
-                return response_data
+            resp.raise_for_status()
+            return response_data
         except Exception as exc:
             if error_msg is None:
                 error_msg = str(exc)

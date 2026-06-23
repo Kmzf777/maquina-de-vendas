@@ -12,15 +12,39 @@ logger = logging.getLogger(__name__)
 
 BUFFER_FLAG_KEY = "config:buffer_enabled"
 
+# A2 — concorrência limitada: processa vários leads vencidos em paralelo, mas com
+# um teto para não afogar a rede/LLM (head-of-line blocking sob rajada).
+FLUSH_CONCURRENCY = 10
+
+
+async def _process_claimed(phone: str, combined: str, channel_id: str, sem: asyncio.Semaphore) -> None:
+    """Processa um item já reivindicado, respeitando o limite de concorrência.
+
+    Isola falhas: uma exceção em um lead não cancela/aborta os demais do lote.
+    """
+    async with sem:
+        try:
+            await process_buffered_messages(phone, combined, channel_id)
+        except Exception as e:
+            logger.error(
+                f"Erro ao processar buffer de {phone} no canal {channel_id}: {e}",
+                exc_info=True,
+            )
+
 
 async def flush_due_items(r: aioredis.Redis) -> None:
     """Process all flush_queue items whose score (flush_at) has passed.
 
     Uses ZREM for atomic claiming: only the worker that successfully removes
     the member processes it. Safe across multiple uvicorn workers.
+
+    O claim (ZREM + leitura do buffer) é feito sequencialmente (rápido, só Redis),
+    mas o processamento pesado (LLM/envio) roda concorrente, limitado por Semaphore.
     """
     now = time.time()
     due_members = await r.zrangebyscore(FLUSH_QUEUE_KEY, "-inf", now)
+
+    claimed: list[tuple[str, str, str]] = []  # (phone, combined, channel_id)
 
     for member in due_members:
         removed = await r.zrem(FLUSH_QUEUE_KEY, member)
@@ -58,7 +82,15 @@ async def flush_due_items(r: aioredis.Redis) -> None:
 
         # processor expects channel_id (string), not the full channel dict.
         logger.info(f"Flushing buffered messages for {phone} (push_name={push_name})")
-        await process_buffered_messages(phone, combined, channel_id)
+        claimed.append((phone, combined, channel_id))
+
+    if not claimed:
+        return
+
+    sem = asyncio.Semaphore(FLUSH_CONCURRENCY)
+    await asyncio.gather(
+        *(_process_claimed(phone, combined, channel_id, sem) for phone, combined, channel_id in claimed)
+    )
 
 
 async def run_flusher(app) -> None:

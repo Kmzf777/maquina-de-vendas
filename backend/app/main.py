@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 
 from app.config import settings
 from app.buffer.flusher import run_flusher
+from app.whatsapp.meta import close_shared_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,6 +100,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    await close_shared_client()
     await app.state.redis.close()
 
 
