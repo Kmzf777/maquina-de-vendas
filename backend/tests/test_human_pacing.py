@@ -171,3 +171,78 @@ async def test_processor_marks_read_at_turn_start_and_types_before_bubbles():
     assert events[0] == ("read", "wamid.inbound")
     # read e typing referenciam o wamid da última msg do lead; text carrega o conteúdo do balão
     assert all(e[1] == "wamid.inbound" for e in events if e[0] in ("read", "typing"))
+
+
+# ---------------------------------------------------------------------------
+# Renovação periódica do "digitando…" durante delays longos
+# ---------------------------------------------------------------------------
+def _capture_sleep():
+    slept: list[float] = []
+
+    async def fake_sleep(secs):
+        slept.append(secs)
+
+    return slept, fake_sleep
+
+
+@pytest.mark.asyncio
+async def test_sleep_with_typing_renewal_short_delay_single_pulse():
+    """Delay <= intervalo: 1 pulso de typing e 1 sleep do delay inteiro."""
+    from app.buffer.processor import _sleep_with_typing_renewal, _TYPING_RENEWAL_INTERVAL
+    provider = MagicMock()
+    provider.send_typing_indicator = AsyncMock()
+    slept, fake_sleep = _capture_sleep()
+
+    delay = _TYPING_RENEWAL_INTERVAL - 1.5  # abaixo do intervalo
+    with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep):
+        await _sleep_with_typing_renewal(delay, provider, "wamid.x")
+
+    assert provider.send_typing_indicator.await_count == 1
+    assert slept == [pytest.approx(delay)]
+
+
+@pytest.mark.asyncio
+async def test_sleep_with_typing_renewal_long_delay_pulses_each_interval():
+    """Delay longo é fatiado: re-pulsa o typing a cada intervalo (em t=0, 10, 20…)."""
+    from app.buffer.processor import _sleep_with_typing_renewal
+    provider = MagicMock()
+    provider.send_typing_indicator = AsyncMock()
+    slept, fake_sleep = _capture_sleep()
+
+    with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep), \
+         patch("app.buffer.processor._TYPING_RENEWAL_INTERVAL", 10.0):
+        await _sleep_with_typing_renewal(25.0, provider, "wamid.x")
+
+    # pulsos em t=0, t=10, t=20 → 3; fatias somam o delay total
+    assert provider.send_typing_indicator.await_count == 3
+    assert slept == [10.0, 10.0, 5.0]
+    assert sum(slept) == pytest.approx(25.0)
+
+
+@pytest.mark.asyncio
+async def test_sleep_with_typing_renewal_no_wamid_no_pulse_still_sleeps():
+    """Sem wamid: nenhum pulso de typing, mas o sleep total acontece."""
+    from app.buffer.processor import _sleep_with_typing_renewal
+    provider = MagicMock()
+    provider.send_typing_indicator = AsyncMock()
+    slept, fake_sleep = _capture_sleep()
+
+    with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep):
+        await _sleep_with_typing_renewal(7.0, provider, None)
+
+    provider.send_typing_indicator.assert_not_awaited()
+    assert sum(slept) == pytest.approx(7.0)
+
+
+@pytest.mark.asyncio
+async def test_sleep_with_typing_renewal_swallows_typing_errors():
+    """Falha no indicador é best-effort: não interrompe o sleep."""
+    from app.buffer.processor import _sleep_with_typing_renewal
+    provider = MagicMock()
+    provider.send_typing_indicator = AsyncMock(side_effect=RuntimeError("boom"))
+    slept, fake_sleep = _capture_sleep()
+
+    with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep):
+        await _sleep_with_typing_renewal(5.0, provider, "wamid.x")  # não deve levantar
+
+    assert sum(slept) == pytest.approx(5.0)

@@ -67,6 +67,9 @@ _MAX_BUBBLE_DELAY: float = 15.0   # seconds
 # Pausa de "respiração cognitiva" entre balões: enviar a frase, ler o que enviou, respirar
 # e começar a digitar a próxima. Aplicada a cada balão APÓS o primeiro.
 _BUBBLE_TRANSITION_PAUSE: float = 3.5  # seconds
+# O indicador "digitando…" da Meta expira sozinho (~25s) e pode esfriar antes em rajada.
+# Re-pulsamos o payload a cada N segundos durante o sleep para manter o status na tela.
+_TYPING_RENEWAL_INTERVAL: float = 10.0  # seconds
 
 
 def _typing_secs(text: str) -> float:
@@ -97,6 +100,27 @@ def _bubble_delays(
     for prev_bubble in bubbles[:-1]:
         delays.append(_typing_secs(prev_bubble) + _BUBBLE_TRANSITION_PAUSE)
     return delays
+
+
+async def _sleep_with_typing_renewal(delay: float, provider, wamid: str | None) -> None:
+    """Aguarda `delay` segundos re-pulsando o "digitando…" a cada _TYPING_RENEWAL_INTERVAL.
+
+    O indicador da Meta expira (~25s) e pode esfriar antes sob carga; sem renovação, em
+    delays longos o status some na tela do lead antes do balão chegar. Pulsamos no INÍCIO
+    de cada fatia (t=0, t=interval, t=2·interval…) usando sempre o mesmo wamid da última
+    mensagem do lead. Best-effort: falha no pulso nunca interrompe a espera. Sem wamid,
+    apenas dorme (não há como pulsar pela Cloud API).
+    """
+    remaining = delay
+    while remaining > 0:
+        if wamid:
+            try:
+                await provider.send_typing_indicator(wamid)
+            except Exception as e:
+                logger.debug(f"[TYPING] renovação falhou: {e}")
+        chunk = min(_TYPING_RENEWAL_INTERVAL, remaining)
+        await asyncio.sleep(chunk)
+        remaining -= chunk
 
 # Marcador único de falha de áudio — usado tanto no replace do texto quanto na
 # detecção de insistência (escalonamento). Mantido como constante para evitar drift.
@@ -679,22 +703,15 @@ async def process_buffered_messages(
     delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
     send_ok = True
     sent_wamids: list[str | None] = []
-    # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima,
-    # e dentro do loop NÃO há nenhum await entre o send_text de um balão e o
-    # send_typing_indicator do próximo — só checagens síncronas (if). Assim, assim que a
-    # bolha N chega (e o WhatsApp desliga o "typing"), o indicador da bolha N+1 dispara
-    # imediatamente, antes do sleep, sem lacuna visível além da latência de rede inerente.
+    # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima.
+    # _sleep_with_typing_renewal pulsa o "digitando…" no início e a cada ~10s durante a
+    # espera, mantendo o status na tela do lead mesmo em delays longos (a Meta expira o
+    # indicador em ~25s). O primeiro pulso é imediato, então — como não há await entre o
+    # send_text de um balão e a entrada no helper do próximo — o "digitando…" reaparece
+    # logo após cada balão, sem lacuna além da latência de rede inerente.
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:
-            # "digitando…" durante a pausa, ANTES de enviar o balão. O indicador some
-            # sozinho quando o send_text chega. wamid é o id da última mensagem do lead
-            # (exigido pela Cloud API). Best-effort: nunca quebra o envio.
-            if wamid:
-                try:
-                    await provider.send_typing_indicator(wamid)
-                except Exception as e:
-                    logger.debug(f"[TYPING] indicador falhou p/ {send_to}: {e}")
-            await asyncio.sleep(delay)
+            await _sleep_with_typing_renewal(delay, provider, wamid)
         try:
             send_result = await provider.send_text(send_to, bubble)
             sent_wamids.append(extract_wamid(send_result))
