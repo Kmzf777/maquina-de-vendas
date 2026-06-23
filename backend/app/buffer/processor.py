@@ -58,15 +58,15 @@ async def _save_with_retry(label: str, fn, *args, **kwargs):
     raise last_exc
 
 
-# Typing-speed simulation constants (afinados p/ teclado de smartphone humano lento).
-# A 6 chars/sec (≈ 14 WPM, digitação arrastada no celular) uma bolha de 72 chars implica
-# uma pausa de 12s — o teto. Bolhas curtas têm piso de 4s (dá tempo de ler a anterior).
-_TYPING_CHARS_PER_SEC: float = 6.0
-_MIN_BUBBLE_DELAY: float = 4.0    # seconds
-_MAX_BUBBLE_DELAY: float = 12.0   # seconds
-# Pausa de "respiração cognitiva" entre balões: humanos não começam a digitar a próxima
-# frase no exato ms após enviar a anterior. Aplicada a cada balão APÓS o primeiro.
-_BUBBLE_TRANSITION_PAUSE: float = 1.5  # seconds
+# Typing-speed simulation constants (afinados p/ teclado de smartphone humano relaxado).
+# A 4 chars/sec (≈ 10 WPM, digitação bem relaxada no celular) uma bolha de 60 chars implica
+# uma pausa de 15s — o teto. Bolhas curtas têm piso de 5s (dá tempo de ler a anterior).
+_TYPING_CHARS_PER_SEC: float = 4.0
+_MIN_BUBBLE_DELAY: float = 5.0    # seconds
+_MAX_BUBBLE_DELAY: float = 15.0   # seconds
+# Pausa de "respiração cognitiva" entre balões: enviar a frase, ler o que enviou, respirar
+# e começar a digitar a próxima. Aplicada a cada balão APÓS o primeiro.
+_BUBBLE_TRANSITION_PAUSE: float = 3.5  # seconds
 
 
 def _typing_secs(text: str) -> float:
@@ -679,11 +679,16 @@ async def process_buffered_messages(
     delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
     send_ok = True
     sent_wamids: list[str | None] = []
+    # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima,
+    # e dentro do loop NÃO há nenhum await entre o send_text de um balão e o
+    # send_typing_indicator do próximo — só checagens síncronas (if). Assim, assim que a
+    # bolha N chega (e o WhatsApp desliga o "typing"), o indicador da bolha N+1 dispara
+    # imediatamente, antes do sleep, sem lacuna visível além da latência de rede inerente.
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:
-            # CA#4: "digitando…" durante a pausa proporcional, ANTES de enviar o balão.
-            # O indicador some sozinho quando o send_text chega. wamid é o id da última
-            # mensagem do lead (necessário pela Cloud API). Best-effort: nunca quebra o envio.
+            # "digitando…" durante a pausa, ANTES de enviar o balão. O indicador some
+            # sozinho quando o send_text chega. wamid é o id da última mensagem do lead
+            # (exigido pela Cloud API). Best-effort: nunca quebra o envio.
             if wamid:
                 try:
                     await provider.send_typing_indicator(wamid)
