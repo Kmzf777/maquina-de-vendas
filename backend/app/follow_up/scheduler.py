@@ -13,6 +13,7 @@ from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
 from app.whatsapp.meta import MetaCloudClient, extract_wamid
+from app.agent.prompts.base import build_base_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -275,20 +276,41 @@ _FOLLOWUP_MODEL = "gemini-2.5-flash"
 _FOLLOWUP_MAX_TOKENS = 1024
 
 
+_FOLLOWUP_TZ_BR = timezone(timedelta(hours=-3))
+
+_FOLLOWUP_REENGAGE_INSTRUCTION = (
+    "# TAREFA — FOLLOW-UP DE REENGAJAMENTO\n"
+    "Você está retomando o contato com um lead que parou de responder (mensagem de follow-up no "
+    "WhatsApp). Com base no histórico, escreva UMA mensagem curta de reengajamento, contextual ao "
+    "que já foi conversado. Siga TODAS as regras de voz e formato da persona acima (minúsculas, "
+    "acentos, SEM ponto final, fragmentação em bolhas com \\n\\n, no máximo 3 bolhas, sem emoji). "
+    "Não use saudações formais como 'Olá' ou 'Bom dia'. Faça referência ao que foi discutido."
+)
+
+
+def _build_followup_system_prompt(sequence: int) -> str:
+    """System prompt do follow-up — usa a persona Valéria (não um prompt genérico).
+
+    Garante que a mensagem de reengajamento siga as mesmas regras de voz das respostas
+    normais da Valéria. A diferenciação por sequência (1ª vs última tentativa) é anexada.
+    """
+    seq_tone = (
+        "esta é a primeira tentativa (1h após o último contato): leve, curiosa e natural, "
+        "sem pressionar — só demonstre interesse genuíno"
+        if sequence == 1
+        else
+        "esta é a última tentativa antes da janela de atendimento expirar: seja mais direta, "
+        "crie senso de oportunidade, mas sem ser agressiva"
+    )
+    persona = build_base_prompt(lead_name=None, lead_company=None, now=datetime.now(_FOLLOWUP_TZ_BR))
+    return f"{persona}\n\n{_FOLLOWUP_REENGAGE_INSTRUCTION}\nTom desta tentativa: {seq_tone}"
+
+
 async def _generate_followup_message(history: list[dict], sequence: int) -> str:
-    """Gera mensagem contextualizada via LLM para o follow-up."""
+    """Gera mensagem contextualizada via LLM para o follow-up, na voz da Valéria."""
     client = AsyncOpenAI(
         api_key=settings.gemini_api_key,
         base_url=_GEMINI_BASE_URL,
-    )
-
-    sequence_context = (
-        "Esta é a primeira tentativa de retomar contato (1 hora após o último envio do vendedor). "
-        "Seja leve, curioso e natural. Não pressione. Apenas demonstre interesse genuíno."
-        if sequence == 1
-        else
-        "Esta é a última tentativa antes da janela de atendimento expirar (23 horas após o último envio). "
-        "Seja mais direto, crie senso de oportunidade, mas sem ser agressivo."
     )
 
     messages_text = "\n".join(
@@ -299,17 +321,7 @@ async def _generate_followup_message(history: list[dict], sequence: int) -> str:
     resp = await client.chat.completions.create(
         model=_FOLLOWUP_MODEL,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Você é um assistente de vendas do Café Canastra. "
-                    "Com base no histórico da conversa, escreva uma mensagem de follow-up para WhatsApp. "
-                    f"{sequence_context} "
-                    "Use linguagem informal brasileira, sem emojis excessivos. "
-                    "Máximo 3 linhas. Não use saudações formais como 'Olá' ou 'Bom dia'. "
-                    "Seja contextual — faça referência ao que foi discutido."
-                ),
-            },
+            {"role": "system", "content": _build_followup_system_prompt(sequence)},
             {
                 "role": "user",
                 "content": f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:",

@@ -220,3 +220,133 @@ async def test_orchestrator_injeta_campaign_segment_no_primeiro_turno():
 
     messages = create_mock.call_args_list[0].kwargs["messages"]
     assert "atacado" in messages[1]["content"].lower(), "segmento da campanha não foi injetado no 1º turno"
+
+
+# ===========================================================================
+# Épico B — Follow-up de vácuo/ghosting
+# ===========================================================================
+
+def _b_patches(lead, conv, schedule_mock, ai_enabled=True):
+    """Conjunto comum de patches para exercitar o bloco de agendamento do processor."""
+    return [
+        patch("app.buffer.processor.get_or_create_lead", return_value=lead),
+        patch("app.buffer.processor.get_channel_by_id", return_value={"id": "ch", "agent_profiles": None}),
+        patch("app.buffer.processor.get_provider"),
+        patch("app.buffer.processor.get_or_create_conversation", return_value=conv),
+        patch("app.buffer.processor._is_recent_duplicate", return_value=False),
+        patch("app.buffer.processor.get_active_enrollment", return_value=None),
+        patch("app.buffer.processor.save_message", return_value={}),
+        patch("app.buffer.processor.get_supabase", new=MagicMock()),
+        patch("app.buffer.processor.run_agent", new=AsyncMock(return_value="resposta")),
+        patch("app.buffer.processor._resolve_media", new=AsyncMock(side_effect=lambda t, p: t)),
+        patch("app.buffer.processor.split_into_bubbles", return_value=["resposta"]),
+        patch("app.buffer.processor.get_lead", return_value={"id": lead["id"], "ai_enabled": ai_enabled}),
+        patch("app.buffer.processor._schedule_followup", new=schedule_mock),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_b1_outbound_engajou_e_esfriou_agenda_followup():
+    """Outbound: lead respondeu e não há interesse explícito → agenda follow-up mesmo assim."""
+    from app.buffer.processor import process_buffered_messages
+    lead = {"id": "lead-o", "phone": "5531999990000", "stage": "secretaria",
+            "status": "active", "human_control": False, "metadata": {}}
+    conv = {"id": "conv-o", "stage": "secretaria", "status": "active",
+            "ai_enabled": True, "agent_profile_id": "p-out", "followup_enabled": True}
+    schedule_mock = MagicMock()
+
+    import contextlib
+    with contextlib.ExitStack() as stack:
+        for p in _b_patches(lead, conv, schedule_mock):
+            stack.enter_context(p)
+        stack.enter_context(patch("app.buffer.processor.resolve_prompt_key", return_value="valeria_outbound"))
+        prov = stack.enter_context(patch("app.buffer.processor.get_provider"))
+        prov.return_value.send_text = AsyncMock()
+        await process_buffered_messages("+5531999990000", "oi", channel_id="ch")
+
+    assert schedule_mock.called, "follow-up deveria ser agendado para outbound que engajou e esfriou"
+
+
+@pytest.mark.asyncio
+async def test_b1_outbound_optout_nao_agenda():
+    """Outbound mas IA foi desativada no turno (opt-out/soft) → NÃO agenda follow-up."""
+    from app.buffer.processor import process_buffered_messages
+    lead = {"id": "lead-opt", "phone": "5531999990000", "stage": "secretaria",
+            "status": "active", "human_control": False, "metadata": {}}
+    conv = {"id": "conv-opt", "stage": "secretaria", "status": "active",
+            "ai_enabled": True, "agent_profile_id": "p-out", "followup_enabled": True}
+    schedule_mock = MagicMock()
+
+    import contextlib
+    with contextlib.ExitStack() as stack:
+        for p in _b_patches(lead, conv, schedule_mock, ai_enabled=False):
+            stack.enter_context(p)
+        stack.enter_context(patch("app.buffer.processor.resolve_prompt_key", return_value="valeria_outbound"))
+        prov = stack.enter_context(patch("app.buffer.processor.get_provider"))
+        prov.return_value.send_text = AsyncMock()
+        await process_buffered_messages("+5531999990000", "nao quero mais contato", channel_id="ch")
+
+    assert not schedule_mock.called, "não deveria agendar follow-up quando a IA foi desativada (opt-out)"
+
+
+@pytest.mark.asyncio
+async def test_b1_inbound_sem_interesse_nao_agenda():
+    """Inbound sem interesse mantém comportamento antigo: não agenda."""
+    from app.buffer.processor import process_buffered_messages
+    lead = {"id": "lead-in", "phone": "5531999990000", "stage": "secretaria",
+            "status": "active", "human_control": False, "metadata": {}}
+    conv = {"id": "conv-in", "stage": "secretaria", "status": "active",
+            "ai_enabled": True, "agent_profile_id": None, "followup_enabled": True}
+    schedule_mock = MagicMock()
+
+    import contextlib
+    with contextlib.ExitStack() as stack:
+        for p in _b_patches(lead, conv, schedule_mock):
+            stack.enter_context(p)
+        stack.enter_context(patch("app.buffer.processor.resolve_prompt_key", return_value="valeria_inbound"))
+        prov = stack.enter_context(patch("app.buffer.processor.get_provider"))
+        prov.return_value.send_text = AsyncMock()
+        await process_buffered_messages("+5531999990000", "oi", channel_id="ch")
+
+    assert not schedule_mock.called, "inbound sem interesse não deve agendar follow-up"
+
+
+def test_b2_followup_system_prompt_usa_persona_valeria():
+    """O system prompt do follow-up deve carregar a persona Valéria, não um prompt genérico."""
+    from app.follow_up.scheduler import _build_followup_system_prompt
+    sp_seq1 = _build_followup_system_prompt(1)
+    assert "Valeria" in sp_seq1 or "Valéria" in sp_seq1
+    assert "Cafe Canastra" in sp_seq1 or "Café Canastra" in sp_seq1
+    # Regras de voz que o prompt genérico antigo não tinha
+    low = sp_seq1.lower()
+    assert "ponto final" in low or "fragment" in low, "system prompt do follow-up não carrega as regras de voz"
+    # A diferenciação por sequência deve permanecer
+    sp_seq2 = _build_followup_system_prompt(2)
+    assert sp_seq1 != sp_seq2, "instrução de sequência (1 vs 2) deve diferir"
+
+
+def test_b3_schedule_followup_clampa_janela_comercial():
+    """Os jobs seq=1 e seq=2 devem ter fire_at dentro da janela comercial (nunca de madrugada)."""
+    from app.follow_up import service
+    from app.follow_up.service import is_within_business_window
+    from datetime import datetime, timezone
+
+    captured = {}
+    sb = MagicMock()
+    sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[{"id": "conv"}])
+
+    def _insert(jobs):
+        captured["jobs"] = jobs
+        return MagicMock(execute=MagicMock())
+    sb.table.return_value.insert.side_effect = _insert
+
+    with patch.object(service, "get_supabase", return_value=sb):
+        service.schedule_followup("conv", "lead", "ch")
+
+    jobs = captured.get("jobs")
+    assert jobs and len(jobs) == 2, f"esperava 2 jobs, recebeu {jobs}"
+    for job in jobs:
+        fire_at = datetime.fromisoformat(job["fire_at"])
+        assert is_within_business_window(fire_at), (
+            f"fire_at {job['fire_at']} (seq={job['sequence']}) caiu fora da janela comercial"
+        )

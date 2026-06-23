@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from app.config import settings
-from app.leads.service import get_or_create_lead, resolve_send_target
+from app.leads.service import get_or_create_lead, resolve_send_target, get_lead
 from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
     update_conversation, save_message,
@@ -679,23 +679,42 @@ async def process_buffered_messages(
             except Exception as e:
                 logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
-        # Agenda follow-up apenas quando o lead demonstrou interesse comercial claro.
-        # interest é populado pela tool marcar_interesse durante run_agent e
-        # já foi limpado acima via pop_interest_marked — não cancela agendamentos
-        # existentes, apenas evita criar novos sem sinal de interesse.
+        # Agenda follow-up em dois gatilhos:
+        #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo;
+        #  (2) OUTBOUND "engajou e esfriou": o lead respondeu à abordagem ativa e pode sumir
+        #      em seguida. Agendamos proativamente para resgatar o vácuo (ghosting), mesmo sem
+        #      interesse declarado. schedule_followup é idempotente (cancela+recria), então se o
+        #      lead responder de novo antes do disparo, o ciclo é reagendado.
+        # Guard crítico do gatilho (2): opt-out e soft-rejection desativam a IA no mesmo turno —
+        # nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do banco). Handoff
+        # retorna response=None e já saiu antes deste bloco.
+        is_outbound = agent_persona == "valeria_outbound"
         if conversation.get("followup_enabled", True) and channel:
-            if interest:
+            should_schedule = bool(interest)
+            reason = "interesse comercial" if interest else ""
+            if not should_schedule and is_outbound:
+                fresh = get_lead(lead["id"]) or {}
+                if fresh.get("ai_enabled", True):
+                    should_schedule = True
+                    reason = "outbound engajou-e-esfriou"
+                else:
+                    logger.info(
+                        "[FOLLOWUP] outbound com IA desativada (opt-out/soft) — não agenda p/ %s",
+                        phone,
+                    )
+            if should_schedule:
                 try:
                     _schedule_followup(
                         conversation_id=conversation["id"],
                         lead_id=lead["id"],
                         channel_id=channel["id"],
                     )
+                    logger.info("[FOLLOWUP] agendado (%s) para %s", reason, phone)
                 except Exception as e:
                     logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
             else:
                 logger.info(
-                    "[FOLLOWUP] sem interesse marcado — follow-up não agendado para %s",
+                    "[FOLLOWUP] sem gatilho de follow-up — não agendado para %s",
                     phone,
                 )
 

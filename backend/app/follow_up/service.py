@@ -95,13 +95,19 @@ def schedule_followup(
             f"Falha ao cancelar follow-up jobs pendentes para conversa {conversation_id}"
         ) from exc
 
+    # Clamp na janela comercial (09h-16h, seg-sex, America/Sao_Paulo): prioridade absoluta
+    # é NUNCA disparar de madrugada para lead de prospecção. Aceita-se que o seq=2 (23h) possa,
+    # ao ser empurrado para o próximo dia útil, eventualmente estourar a janela Meta de 24h
+    # (o guard window_expired em process_due_followups cancela com segurança nesse caso).
+    fire_at_seq1 = _clamp_to_business_window(now + timedelta(hours=1))
+    fire_at_seq2 = _clamp_to_business_window(now + timedelta(hours=23))
     jobs = [
         {
             "conversation_id": conversation_id,
             "lead_id": lead_id,
             "channel_id": channel_id,
             "sequence": 1,
-            "fire_at": (now + timedelta(hours=1)).isoformat(),
+            "fire_at": fire_at_seq1.isoformat(),
             "status": "pending",
             "env_tag": _ENV_TAG,
         },
@@ -110,7 +116,7 @@ def schedule_followup(
             "lead_id": lead_id,
             "channel_id": channel_id,
             "sequence": 2,
-            "fire_at": (now + timedelta(hours=23)).isoformat(),
+            "fire_at": fire_at_seq2.isoformat(),
             "status": "pending",
             "env_tag": _ENV_TAG,
         },
