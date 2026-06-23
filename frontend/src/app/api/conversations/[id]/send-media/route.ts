@@ -208,7 +208,30 @@ export async function POST(
       );
     }
 
-    // Step 3: Save to DB
+    // Step 3: Upload a copy to Supabase Storage for permanent playback URL
+    let storageUrl: string | null = null;
+    try {
+      const uploadBytes = Buffer.from(await uploadBlob.arrayBuffer());
+      const storagePath = `outbound/${Date.now()}_${uploadFilename}`;
+      const { error: storageError } = await supabase.storage
+        .from("whatsapp-media")
+        .upload(storagePath, uploadBytes, {
+          contentType: uploadMime,
+          upsert: false,
+        });
+      if (!storageError) {
+        const { data: urlData } = supabase.storage
+          .from("whatsapp-media")
+          .getPublicUrl(storagePath);
+        storageUrl = urlData?.publicUrl ?? null;
+      } else {
+        console.warn("[send-media] supabase storage upload failed:", storageError.message);
+      }
+    } catch (storageErr) {
+      console.warn("[send-media] supabase storage upload error:", storageErr);
+    }
+
+    // Step 4: Save to DB
     await supabase.from("messages").insert({
       lead_id: lead.id,
       conversation_id: conversationId,
@@ -216,7 +239,7 @@ export async function POST(
       content: messageType === "document" ? originalFilename : "",
       sent_by: "seller",
       message_type: messageType,
-      media_url: mediaId,
+      media_url: storageUrl ?? mediaId,
     });
 
     await supabase
