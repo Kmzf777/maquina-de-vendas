@@ -58,37 +58,45 @@ async def _save_with_retry(label: str, fn, *args, **kwargs):
     raise last_exc
 
 
-# Typing-speed simulation constants (afinados p/ teclado de smartphone humano relaxado).
-# A 4 chars/sec (≈ 10 WPM, digitação bem relaxada no celular) uma bolha de 60 chars implica
-# uma pausa de 15s — o teto. Bolhas curtas têm piso de 5s (dá tempo de ler a anterior).
+# Delays ASSIMÉTRICOS — limite real da Meta API: o "digitando…" NÃO re-renderiza no
+# celular após o 1º balão ser entregue (o app ignora os 200 OK seguintes). Então:
+#
+# 1º balão (PENSATIVO): o indicador funciona, então vale demorar. A 4 chars/sec
+#    (≈10 WPM) clampado em [5s, 15s], menos a latência já gasta pela LLM.
 _TYPING_CHARS_PER_SEC: float = 4.0
-_MIN_BUBBLE_DELAY: float = 5.0    # seconds
-_MAX_BUBBLE_DELAY: float = 15.0   # seconds
-# Pausa de "respiração cognitiva" entre balões: enviar a frase, ler o que enviou, respirar
-# e começar a digitar a próxima. Aplicada a cada balão APÓS o primeiro.
-_BUBBLE_TRANSITION_PAUSE: float = 3.5  # seconds
+_MIN_BUBBLE_DELAY: float = 5.0    # seconds — piso do 1º balão
+_MAX_BUBBLE_DELAY: float = 15.0   # seconds — teto do 1º balão
+# Balões SEGUINTES (SUCESSÃO RÁPIDA): sem indicador visual entre eles, um delay longo
+# vira silêncio (parece que travou). Caem rápido em sequência, clampados num range curto
+# e engessado — imita alguém que quebrou um texto grande no Enter. Sem pausa de transição.
+_SUBSEQUENT_MIN_DELAY: float = 1.5   # seconds
+_SUBSEQUENT_MAX_DELAY: float = 2.5   # seconds
 # O indicador "digitando…" da Meta expira sozinho (~25s) e pode esfriar antes em rajada.
-# Re-pulsamos o payload a cada N segundos durante o sleep para manter o status na tela.
+# Re-pulsamos o payload a cada N segundos durante o sleep para manter o status na tela
+# (efetivo sobretudo no 1º balão, onde o indicador realmente aparece).
 _TYPING_RENEWAL_INTERVAL: float = 10.0  # seconds
 
 
 def _typing_secs(text: str) -> float:
-    """Tempo humano de digitação p/ um balão: clamp(len/CPS, MIN, MAX)."""
+    """Tempo 'pensativo' de digitação do 1º balão: clamp(len/CPS, MIN, MAX)."""
     return max(_MIN_BUBBLE_DELAY, min(_MAX_BUBBLE_DELAY, len(text) / _TYPING_CHARS_PER_SEC))
+
+
+def _subsequent_secs(text: str) -> float:
+    """Delay de sucessão rápida p/ balões pós-primeiro: clamp curto e engessado."""
+    return max(_SUBSEQUENT_MIN_DELAY, min(_SUBSEQUENT_MAX_DELAY, len(text) / _TYPING_CHARS_PER_SEC))
 
 
 def _bubble_delays(
     bubbles: list[str], is_rehearsal: bool, llm_latency: float = 0.0
 ) -> list[float]:
-    """Pré-delay por balão, simulando digitação humana em smartphone.
+    """Pré-delay ASSIMÉTRICO por balão (ver constantes acima p/ o porquê).
 
-    - Balões seguintes (i>=1): delay = tempo de digitação do balão ANTERIOR
-      (clamp(len(prev)/CPS, MIN, MAX)) MAIS uma pausa fixa de transição cognitiva
-      (_BUBBLE_TRANSITION_PAUSE) — dá tempo de o lead ler a bolha anterior e simula
-      a transição mental "enviei a frase 1, agora começo a digitar a frase 2".
-    - Primeiro balão: NÃO é imediato (LLM rápida ~1s denuncia o bot) mas também NÃO
-      leva a pausa de transição (não há balão anterior a "ler"). Usa o tempo de
-      digitação do próprio 1º balão menos a latência já gasta pela LLM, com piso em 0.
+    - Primeiro balão (pensativo): clamp(len/CPS, 5, 15) menos a latência da LLM (piso 0).
+      É onde o "digitando…" aparece de fato, então a demora é natural.
+    - Balões seguintes (sucessão rápida): clamp(len(prev)/CPS, 1.5, 2.5), SEM pausa de
+      transição. Como a Meta não re-renderiza o typing aqui, delays longos virariam
+      silêncio visual — então caem rápido em sequência.
     - Rehearsal zera tudo (testes/automação não esperam).
     """
     count = len(bubbles)
@@ -98,7 +106,7 @@ def _bubble_delays(
     first_delay = max(0.0, _typing_secs(bubbles[0]) - llm_latency)
     delays = [first_delay]
     for prev_bubble in bubbles[:-1]:
-        delays.append(_typing_secs(prev_bubble) + _BUBBLE_TRANSITION_PAUSE)
+        delays.append(_subsequent_secs(prev_bubble))
     return delays
 
 
