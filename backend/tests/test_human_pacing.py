@@ -165,7 +165,9 @@ async def test_processor_marks_read_at_turn_start_and_types_before_bubbles():
         )
 
     kinds = [e[0] for e in events]
-    # read PRIMEIRO (início do turno), typing precede o 2º balão (1º balão é imediato)
-    assert kinds == ["read", "text", "typing", "text"], f"sequência inesperada: {events}"
+    # read PRIMEIRO (início do turno). Agora o 1º balão também tem delay de digitação
+    # (LLM mock é instantânea → llm_latency ~0 → delay>0), então typing precede CADA balão.
+    assert kinds == ["read", "typing", "text", "typing", "text"], f"sequência inesperada: {events}"
     assert events[0] == ("read", "wamid.inbound")
-    assert events[2] == ("typing", "wamid.inbound")
+    # read e typing referenciam o wamid da última msg do lead; text carrega o conteúdo do balão
+    assert all(e[1] == "wamid.inbound" for e in events if e[0] in ("read", "typing"))

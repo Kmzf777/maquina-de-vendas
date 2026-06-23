@@ -4,6 +4,7 @@ import json
 import os
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -57,30 +58,41 @@ async def _save_with_retry(label: str, fn, *args, **kwargs):
     raise last_exc
 
 
-# Typing-speed simulation constants.
-# At 15 chars/sec (≈ 36 WPM) a 45-char bubble implies a 3s pause before the
-# next one — the upper bound. Shorter bubbles are floored at 1s.
-_TYPING_CHARS_PER_SEC: float = 15.0
-_MIN_BUBBLE_DELAY: float = 1.0   # seconds
-_MAX_BUBBLE_DELAY: float = 3.0   # seconds
+# Typing-speed simulation constants (afinados p/ teclado de smartphone humano).
+# A 8 chars/sec (≈ 19 WPM, digitação real no celular) uma bolha de 80 chars implica
+# uma pausa de 10s — o teto. Bolhas curtas têm piso de 2s (ninguém responde em 0.2s).
+_TYPING_CHARS_PER_SEC: float = 8.0
+_MIN_BUBBLE_DELAY: float = 2.0    # seconds
+_MAX_BUBBLE_DELAY: float = 10.0   # seconds
 
 
-def _bubble_delays(bubbles: list[str], is_rehearsal: bool) -> list[float]:
-    """Per-bubble pre-send delay, simulating human typing speed.
+def _typing_secs(text: str) -> float:
+    """Tempo humano de digitação p/ um balão: clamp(len/CPS, MIN, MAX)."""
+    return max(_MIN_BUBBLE_DELAY, min(_MAX_BUBBLE_DELAY, len(text) / _TYPING_CHARS_PER_SEC))
 
-    Delay before bubble[i] is proportional to len(bubble[i-1]):
-        delay = clamp(len(prev) / CHARS_PER_SEC, MIN_DELAY, MAX_DELAY)
 
-    First bubble is always sent immediately — the LLM call already provides
-    the implicit "thinking" pause. Rehearsal mode zeroes all delays.
+def _bubble_delays(
+    bubbles: list[str], is_rehearsal: bool, llm_latency: float = 0.0
+) -> list[float]:
+    """Pré-delay por balão, simulando digitação humana em smartphone.
+
+    - Balões seguintes (i>=1): delay = tempo de digitação do balão ANTERIOR
+      (clamp(len(prev)/CPS, MIN, MAX)) — o lead "vê" a Valéria digitando a próxima fala.
+    - Primeiro balão: NÃO é mais imediato. As LLMs ficaram rápidas (~1s) e responder
+      instantaneamente denuncia o bot. Calculamos o tempo de digitação do próprio 1º
+      balão e subtraímos a latência já gasta pela LLM (tempo que o lead já esperou),
+      com piso em 0 — assim o tempo total (mark_read → 1º balão) parece humano sem
+      somar espera dupla.
+    - Rehearsal zera tudo (testes/automação não esperam).
     """
     count = len(bubbles)
     if is_rehearsal or count == 0:
         return [0.0] * count
-    delays = [0.0]  # first bubble: no extra wait
+
+    first_delay = max(0.0, _typing_secs(bubbles[0]) - llm_latency)
+    delays = [first_delay]
     for prev_bubble in bubbles[:-1]:
-        typing_secs = len(prev_bubble) / _TYPING_CHARS_PER_SEC
-        delays.append(max(_MIN_BUBBLE_DELAY, min(_MAX_BUBBLE_DELAY, typing_secs)))
+        delays.append(_typing_secs(prev_bubble))
     return delays
 
 # Marcador único de falha de áudio — usado tanto no replace do texto quanto na
@@ -604,6 +616,7 @@ async def process_buffered_messages(
         lead_context = {**lead_context, **personalization}
 
     response = None
+    _agent_t0 = time.monotonic()  # latência da LLM → desconta do delay do 1º balão (CA#4)
     for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
         try:
             response = await run_agent(
@@ -659,7 +672,8 @@ async def process_buffered_messages(
     send_to = resolve_send_target(lead, phone)
     is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
     bubbles = split_into_bubbles(response)
-    delays = _bubble_delays(bubbles, is_rehearsal)
+    llm_latency = time.monotonic() - _agent_t0
+    delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
     send_ok = True
     sent_wamids: list[str | None] = []
     for delay, bubble in zip(delays, bubbles):
