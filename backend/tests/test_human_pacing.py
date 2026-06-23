@@ -51,17 +51,27 @@ def _redis_for(deadline_offset: float | None, has_lock: bool, current_ttl: int =
 # CA#4 — meta.py typing indicator payload
 # ---------------------------------------------------------------------------
 @pytest.mark.anyio
-async def test_send_typing_indicator_builds_read_plus_typing_payload():
+async def test_send_typing_indicator_builds_standalone_payload():
+    """Payload STANDALONE (Cloud API v18+): atrelado ao `to`, NÃO ao read receipt.
+
+    Decoplado de mark_read: re-enviar status:read+message_id na mesma mensagem é
+    deduplicado pela Meta (idempotência) e o typing some. O payload avulso por `to`
+    pode ser re-pulsado sem ser descartado, sustentando o "digitando…" entre balões.
+    """
     client = MetaCloudClient(META_CONFIG)
     client._post = AsyncMock(return_value={"success": True})
 
-    await client.send_typing_indicator("wamid.abc")
+    await client.send_typing_indicator("5511999990000")
 
     payload = client._post.call_args.args[0]
     assert payload["messaging_product"] == "whatsapp"
-    assert payload["status"] == "read"           # typing exige status read na Meta
-    assert payload["message_id"] == "wamid.abc"
+    assert payload["recipient_type"] == "individual"
+    assert payload["to"] == "5511999990000"
+    assert payload["type"] == "typing_indicator"
     assert payload["typing_indicator"] == {"type": "text"}
+    # decoplado do read receipt — sem status:read, sem message_id
+    assert "status" not in payload
+    assert "message_id" not in payload
     assert client._post.call_args.kwargs.get("request_type") == "typing_on"
 
 
@@ -139,7 +149,7 @@ async def test_processor_marks_read_at_turn_start_and_types_before_bubbles():
     events: list[tuple] = []
     provider = MagicMock()
     provider.mark_read = AsyncMock(side_effect=lambda mid: events.append(("read", mid)))
-    provider.send_typing_indicator = AsyncMock(side_effect=lambda mid: events.append(("typing", mid)))
+    provider.send_typing_indicator = AsyncMock(side_effect=lambda to: events.append(("typing", to)))
     provider.send_text = AsyncMock(side_effect=lambda ph, txt: events.append(("text", txt)))
 
     with patch("app.buffer.processor.get_or_create_lead", return_value=lead_data), \
@@ -168,9 +178,10 @@ async def test_processor_marks_read_at_turn_start_and_types_before_bubbles():
     # read PRIMEIRO (início do turno). Agora o 1º balão também tem delay de digitação
     # (LLM mock é instantânea → llm_latency ~0 → delay>0), então typing precede CADA balão.
     assert kinds == ["read", "typing", "text", "typing", "text"], f"sequência inesperada: {events}"
+    # read referencia o wamid da msg do lead; typing (standalone) referencia o `to` (send_to)
     assert events[0] == ("read", "wamid.inbound")
-    # read e typing referenciam o wamid da última msg do lead; text carrega o conteúdo do balão
-    assert all(e[1] == "wamid.inbound" for e in events if e[0] in ("read", "typing"))
+    assert all(e[1] == "wamid.inbound" for e in events if e[0] == "read")
+    assert all(e[1] == "+5511999990000" for e in events if e[0] == "typing")
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +206,7 @@ async def test_sleep_with_typing_renewal_short_delay_single_pulse():
 
     delay = _TYPING_RENEWAL_INTERVAL - 1.5  # abaixo do intervalo
     with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep):
-        await _sleep_with_typing_renewal(delay, provider, "wamid.x")
+        await _sleep_with_typing_renewal(delay, provider, "5511999990000")
 
     assert provider.send_typing_indicator.await_count == 1
     assert slept == [pytest.approx(delay)]
@@ -211,7 +222,7 @@ async def test_sleep_with_typing_renewal_long_delay_pulses_each_interval():
 
     with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep), \
          patch("app.buffer.processor._TYPING_RENEWAL_INTERVAL", 10.0):
-        await _sleep_with_typing_renewal(25.0, provider, "wamid.x")
+        await _sleep_with_typing_renewal(25.0, provider, "5511999990000")
 
     # pulsos em t=0, t=10, t=20 → 3; fatias somam o delay total
     assert provider.send_typing_indicator.await_count == 3
@@ -243,6 +254,6 @@ async def test_sleep_with_typing_renewal_swallows_typing_errors():
     slept, fake_sleep = _capture_sleep()
 
     with patch("app.buffer.processor.asyncio.sleep", new=fake_sleep):
-        await _sleep_with_typing_renewal(5.0, provider, "wamid.x")  # não deve levantar
+        await _sleep_with_typing_renewal(5.0, provider, "5511999990000")  # não deve levantar
 
     assert sum(slept) == pytest.approx(5.0)

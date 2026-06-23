@@ -102,20 +102,21 @@ def _bubble_delays(
     return delays
 
 
-async def _sleep_with_typing_renewal(delay: float, provider, wamid: str | None) -> None:
+async def _sleep_with_typing_renewal(delay: float, provider, to: str | None) -> None:
     """Aguarda `delay` segundos re-pulsando o "digitando…" a cada _TYPING_RENEWAL_INTERVAL.
 
     O indicador da Meta expira (~25s) e pode esfriar antes sob carga; sem renovação, em
     delays longos o status some na tela do lead antes do balão chegar. Pulsamos no INÍCIO
-    de cada fatia (t=0, t=interval, t=2·interval…) usando sempre o mesmo wamid da última
-    mensagem do lead. Best-effort: falha no pulso nunca interrompe a espera. Sem wamid,
-    apenas dorme (não há como pulsar pela Cloud API).
+    de cada fatia (t=0, t=interval, t=2·interval…) o payload STANDALONE por `to` (número do
+    lead) — que, ao contrário do combo read+message_id, NÃO é deduplicado pela Meta, então
+    cada pulso renova de fato os ~25s. Best-effort: falha no pulso nunca interrompe a espera.
+    Sem `to`, apenas dorme.
     """
     remaining = delay
     while remaining > 0:
-        if wamid:
+        if to:
             try:
-                await provider.send_typing_indicator(wamid)
+                await provider.send_typing_indicator(to)
             except Exception as e:
                 logger.debug(f"[TYPING] renovação falhou: {e}")
         chunk = min(_TYPING_RENEWAL_INTERVAL, remaining)
@@ -711,7 +712,7 @@ async def process_buffered_messages(
     # logo após cada balão, sem lacuna além da latência de rede inerente.
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:
-            await _sleep_with_typing_renewal(delay, provider, wamid)
+            await _sleep_with_typing_renewal(delay, provider, send_to)
         try:
             send_result = await provider.send_text(send_to, bubble)
             sent_wamids.append(extract_wamid(send_result))
