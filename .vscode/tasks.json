@@ -3,11 +3,13 @@
   "tasks": [
     {
       "label": "Start Redis",
-      "type": "shell",
+      "type": "process",
       "command": "powershell",
       "args": [
         "-NoProfile",
         "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
         "-File",
         "${workspaceFolder}/scripts/start-redis.ps1"
       ],
@@ -19,17 +21,20 @@
         "echo": true,
         "reveal": "always",
         "focus": false,
-        "panel": "shared"
+        "panel": "dedicated",
+        "group": "dev-servers"
       },
       "problemMatcher": []
     },
     {
       "label": "Start Backend Dev",
-      "type": "shell",
+      "type": "process",
       "command": "powershell",
       "args": [
         "-NoProfile",
         "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
         "-File",
         "${workspaceFolder}/scripts/start-backend.ps1"
       ],
@@ -41,17 +46,20 @@
         "echo": true,
         "reveal": "always",
         "focus": false,
-        "panel": "shared"
+        "panel": "dedicated",
+        "group": "dev-servers"
       },
       "problemMatcher": []
     },
     {
       "label": "Start Frontend Dev",
-      "type": "shell",
+      "type": "process",
       "command": "powershell",
       "args": [
         "-NoProfile",
         "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
         "-File",
         "${workspaceFolder}/scripts/start-frontend.ps1"
       ],
@@ -63,17 +71,20 @@
         "echo": true,
         "reveal": "always",
         "focus": false,
-        "panel": "shared"
+        "panel": "dedicated",
+        "group": "dev-servers"
       },
       "problemMatcher": []
     },
     {
       "label": "Start Worker Dev",
-      "type": "shell",
+      "type": "process",
       "command": "powershell",
       "args": [
         "-NoProfile",
         "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
         "-File",
         "${workspaceFolder}/scripts/start-worker.ps1"
       ],
@@ -85,7 +96,8 @@
         "echo": true,
         "reveal": "always",
         "focus": false,
-        "panel": "shared"
+        "panel": "dedicated",
+        "group": "dev-servers"
       },
       "problemMatcher": []
     },
