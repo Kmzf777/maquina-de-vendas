@@ -75,8 +75,9 @@ def build_base_prompt(
                 "uma vendedora real faria — JAMAIS soando como consulta automática. "
                 f"Ex.: \"pelo número, imagino que você seja de {lead_region}, acertei?\" ou "
                 f"\"o pessoal de {lead_region} curte muito o nosso café\". "
-                "PROIBIDO mencionar a palavra 'DDD' ou 'número' como fonte ao lead de forma técnica, "
-                "e PROIBIDO afirmar como certeza (\"você é de X\") — é só uma hipótese pelo número, que "
+                "PROIBIDO dizer 'DDD' ao lead ou explicar de forma técnica que você consultou o número "
+                "(soa como robô); o jeito casual \"pelo número\" do exemplo acima é o limite. "
+                "PROIBIDO afirmar como certeza (\"você é de X\") — é só uma hipótese pelo número, que "
                 "pode estar portado. NÃO transforme em pergunta de qualificação pesada (vale a regra de "
                 "aquecer antes de qualificar)."
             )
