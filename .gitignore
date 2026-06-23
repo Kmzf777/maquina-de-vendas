@@ -39,6 +39,10 @@ logs/*.log
 # Redis config com senha (gerado na VPS, nao commitar)
 backend/redis.conf
 
+# Override de compose dev-only (publica porta do Redis no host) — nunca em producao
+backend/docker-compose.override.yml
+docker-compose.override.yml
+
 # Vercel e arquivos de ambiente (nunca commitar)
 .vercel
 .env*

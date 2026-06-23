@@ -78,14 +78,14 @@ async def _recover_orphaned_buffers(redis: aioredis.Redis) -> None:
         logger.warning("[BUFFER RECOVERY] %d buffer(s) órfão(s) reprocessado(s) no startup", recovered)
 
 
-async def _wait_for_redis(redis: aioredis.Redis, max_wait: float = 15.0) -> None:
+async def _wait_for_redis(redis: aioredis.Redis, max_wait: float = 30.0) -> None:
     """Espera o Redis aceitar conexões antes de prosseguir o startup.
 
-    No Windows, o Docker pode levar ~1s extra para expor a porta 6379 depois que o
-    container sobe. `aioredis.from_url` é preguiçoso (não conecta), então o primeiro
-    comando real falharia com ConnectionRefusedError [WinError 1225] e derrubaria o
-    FastAPI ("Application startup failed"). Aqui fazemos PING com backoff por até
-    max_wait segundos antes de desistir, dando tempo para o mapeamento da porta.
+    No Windows/WSL2, o Docker pode levar vários segundos para mapear a porta 6379 no
+    host no primeiro boot. `aioredis.from_url` é preguiçoso (não conecta), então o
+    primeiro comando real falharia com ConnectionRefusedError [WinError 1225] e
+    derrubaria o FastAPI ("Application startup failed"). Aqui fazemos PING com backoff
+    por até max_wait segundos (≈6-8 tentativas) antes de desistir, dando tempo ao WSL2.
     """
     loop = asyncio.get_event_loop()
     deadline = loop.time() + max_wait

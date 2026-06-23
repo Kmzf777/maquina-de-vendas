@@ -19,3 +19,6 @@ __pycache__/
 
 # Docs/scripts not needed at runtime
 scripts/
+
+# Dev-only compose override (publica porta do Redis no host) — nunca na imagem/prod
+docker-compose.override.yml
