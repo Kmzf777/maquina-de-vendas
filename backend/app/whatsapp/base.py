@@ -31,8 +31,8 @@ class WhatsAppProvider(ABC):
     @abstractmethod
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict: ...
 
-    async def send_typing_indicator(self, to: str) -> dict:
-        """Mostra "digitando…" ao lead pelo número `to` (default não-suportado).
+    async def send_typing_indicator(self, message_id: str) -> dict:
+        """Mostra "digitando…" ao lead (default não-suportado).
 
         Como send_contact: apenas os provedores ativos (Meta) e o mock o sobrescrevem;
         provedores descontinuados (Evolution) herdam este default.
