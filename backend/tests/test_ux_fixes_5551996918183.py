@@ -326,71 +326,76 @@ def test_bubble_delays_empty_list():
 
 
 def test_typing_constants_tuned_for_humans():
-    """Cadência humana de teclado de smartphone: 8 cps, piso 2s, teto 10s."""
-    from app.buffer.processor import _TYPING_CHARS_PER_SEC, _MIN_BUBBLE_DELAY, _MAX_BUBBLE_DELAY
-    assert _TYPING_CHARS_PER_SEC == 8.0
-    assert _MIN_BUBBLE_DELAY == 2.0
-    assert _MAX_BUBBLE_DELAY == 10.0
+    """Cadência humana lenta: 6 cps, piso 4s, teto 12s, pausa de transição 1.5s."""
+    from app.buffer.processor import (
+        _TYPING_CHARS_PER_SEC, _MIN_BUBBLE_DELAY, _MAX_BUBBLE_DELAY, _BUBBLE_TRANSITION_PAUSE,
+    )
+    assert _TYPING_CHARS_PER_SEC == 6.0
+    assert _MIN_BUBBLE_DELAY == 4.0
+    assert _MAX_BUBBLE_DELAY == 12.0
+    assert _BUBBLE_TRANSITION_PAUSE == 1.5
 
 
 def test_bubble_delays_first_bubble_now_has_typing_delay():
-    """O 1º balão NÃO é mais imediato: ganha delay de digitação (menos a latência da LLM)."""
-    from app.buffer.processor import _bubble_delays, _MIN_BUBBLE_DELAY
-    # bolha longa o suficiente p/ delay > MIN mesmo sem latência subtraída
-    delays = _bubble_delays(["a" * 40], is_rehearsal=False, llm_latency=0.0)
-    assert delays[0] == pytest.approx(40 / 8.0)  # 5.0s (clamp [2,10])
+    """O 1º balão NÃO é mais imediato: ganha delay de digitação (sem pausa de transição)."""
+    from app.buffer.processor import _bubble_delays
+    delays = _bubble_delays(["a" * 48], is_rehearsal=False, llm_latency=0.0)
+    assert delays[0] == pytest.approx(48 / 6.0)  # 8.0s (clamp [4,12], sem +1.5)
 
 
 def test_bubble_delays_first_bubble_subtracts_llm_latency():
     """Latência da LLM conta como tempo já 'gasto' — é subtraída do delay do 1º balão."""
     from app.buffer.processor import _bubble_delays
-    # 40 chars / 8 = 5.0s de digitação; LLM já levou 2s → resta 3.0s de delay
-    delays = _bubble_delays(["a" * 40], is_rehearsal=False, llm_latency=2.0)
-    assert delays[0] == pytest.approx(3.0)
+    # 48 chars / 6 = 8.0s de digitação; LLM já levou 2s → resta 6.0s de delay
+    delays = _bubble_delays(["a" * 48], is_rehearsal=False, llm_latency=2.0)
+    assert delays[0] == pytest.approx(6.0)
 
 
 def test_bubble_delays_first_bubble_floors_at_zero_when_llm_slow():
     """Se a LLM demorou mais que o tempo de digitação, não há espera extra (>= 0)."""
     from app.buffer.processor import _bubble_delays
-    delays = _bubble_delays(["a" * 16], is_rehearsal=False, llm_latency=30.0)
-    assert delays[0] == 0.0  # 16/8=2s - 30s → floor 0
+    delays = _bubble_delays(["a" * 24], is_rehearsal=False, llm_latency=30.0)
+    assert delays[0] == 0.0  # 24/6=4s - 30s → floor 0
 
 
-def test_bubble_delays_short_bubble_clamped_to_min():
-    """Balão curto ('Sim') produz MIN_BUBBLE_DELAY, não menos."""
-    from app.buffer.processor import _bubble_delays, _MIN_BUBBLE_DELAY
-    # "Sim" = 3 chars → 3/8 = 0.375s → clamp p/ MIN (2.0s)
+def test_bubble_delays_short_bubble_clamped_to_min_plus_transition():
+    """Balão curto ('Sim') → piso MIN + pausa de transição (4.0 + 1.5 = 5.5)."""
+    from app.buffer.processor import _bubble_delays, _MIN_BUBBLE_DELAY, _BUBBLE_TRANSITION_PAUSE
+    # "Sim" = 3 chars → 3/6 = 0.5s → clamp p/ MIN (4.0) + 1.5 transição
     delays = _bubble_delays(["Sim", "segunda mensagem"], is_rehearsal=False)
-    assert delays[1] == _MIN_BUBBLE_DELAY
+    assert delays[1] == _MIN_BUBBLE_DELAY + _BUBBLE_TRANSITION_PAUSE
 
 
-def test_bubble_delays_long_bubble_clamped_to_max():
-    """Balão muito longo (> 80 chars a 8 cps) produz MAX_BUBBLE_DELAY (10s)."""
-    from app.buffer.processor import _bubble_delays, _MAX_BUBBLE_DELAY
-    # 160 chars / 8 = 20s → clamp p/ MAX (10.0s)
+def test_bubble_delays_long_bubble_clamped_to_max_plus_transition():
+    """Balão muito longo (> 72 chars a 6 cps) → teto MAX + transição (12.0 + 1.5 = 13.5)."""
+    from app.buffer.processor import _bubble_delays, _MAX_BUBBLE_DELAY, _BUBBLE_TRANSITION_PAUSE
+    # 160 chars / 6 = 26.7s → clamp p/ MAX (12.0) + 1.5
     long_bubble = "a" * 160
     delays = _bubble_delays([long_bubble, "próxima mensagem"], is_rehearsal=False)
-    assert delays[1] == _MAX_BUBBLE_DELAY
+    assert delays[1] == _MAX_BUBBLE_DELAY + _BUBBLE_TRANSITION_PAUSE
 
 
-def test_bubble_delays_medium_bubble_proportional():
-    """Balão médio (48 chars) produz delay proporcional dentro dos limites."""
-    from app.buffer.processor import _bubble_delays, _MIN_BUBBLE_DELAY, _MAX_BUBBLE_DELAY, _TYPING_CHARS_PER_SEC
-    medium_bubble = "a" * 48   # 48 / 8 = 6.0s
+def test_bubble_delays_medium_bubble_proportional_plus_transition():
+    """Balão médio (48 chars) → proporcional + pausa de transição."""
+    from app.buffer.processor import (
+        _bubble_delays, _MIN_BUBBLE_DELAY, _MAX_BUBBLE_DELAY, _TYPING_CHARS_PER_SEC,
+        _BUBBLE_TRANSITION_PAUSE,
+    )
+    medium_bubble = "a" * 48   # 48 / 6 = 8.0s
     delays = _bubble_delays([medium_bubble, "segunda"], is_rehearsal=False)
-    expected = 48 / _TYPING_CHARS_PER_SEC  # 6.0
-    assert _MIN_BUBBLE_DELAY <= delays[1] <= _MAX_BUBBLE_DELAY
-    assert delays[1] == expected
+    typing = 48 / _TYPING_CHARS_PER_SEC  # 8.0
+    assert _MIN_BUBBLE_DELAY <= typing <= _MAX_BUBBLE_DELAY
+    assert delays[1] == typing + _BUBBLE_TRANSITION_PAUSE  # 9.5
 
 
 def test_bubble_delays_delay_per_previous_bubble():
-    """Delays dos balões seguintes são baseados no balão ANTERIOR (não no próprio)."""
-    from app.buffer.processor import _bubble_delays, _TYPING_CHARS_PER_SEC
-    b0 = "a" * 24  # → delay antes de b1: 24/8 = 3.0s
-    b1 = "a" * 48  # → delay antes de b2: 48/8 = 6.0s
+    """Delays dos balões seguintes: clamp(len(prev)/CPS) + pausa de transição."""
+    from app.buffer.processor import _bubble_delays, _TYPING_CHARS_PER_SEC, _BUBBLE_TRANSITION_PAUSE
+    b0 = "a" * 30  # → delay antes de b1: 30/6 = 5.0s + 1.5
+    b1 = "a" * 48  # → delay antes de b2: 48/6 = 8.0s + 1.5
     b2 = "a" * 5   # curto, mas o delay é baseado em b1
     delays = _bubble_delays([b0, b1, b2], is_rehearsal=False, llm_latency=10.0)
-    # llm_latency >> 24/8 → 1º balão floored em 0
+    # llm_latency >> 30/6 → 1º balão floored em 0
     assert delays[0] == 0.0
-    assert delays[1] == pytest.approx(24 / _TYPING_CHARS_PER_SEC)  # 3.0s
-    assert delays[2] == pytest.approx(48 / _TYPING_CHARS_PER_SEC)  # 6.0s
+    assert delays[1] == pytest.approx(30 / _TYPING_CHARS_PER_SEC + _BUBBLE_TRANSITION_PAUSE)  # 6.5s
+    assert delays[2] == pytest.approx(48 / _TYPING_CHARS_PER_SEC + _BUBBLE_TRANSITION_PAUSE)  # 9.5s

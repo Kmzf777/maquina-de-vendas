@@ -58,12 +58,15 @@ async def _save_with_retry(label: str, fn, *args, **kwargs):
     raise last_exc
 
 
-# Typing-speed simulation constants (afinados p/ teclado de smartphone humano).
-# A 8 chars/sec (≈ 19 WPM, digitação real no celular) uma bolha de 80 chars implica
-# uma pausa de 10s — o teto. Bolhas curtas têm piso de 2s (ninguém responde em 0.2s).
-_TYPING_CHARS_PER_SEC: float = 8.0
-_MIN_BUBBLE_DELAY: float = 2.0    # seconds
-_MAX_BUBBLE_DELAY: float = 10.0   # seconds
+# Typing-speed simulation constants (afinados p/ teclado de smartphone humano lento).
+# A 6 chars/sec (≈ 14 WPM, digitação arrastada no celular) uma bolha de 72 chars implica
+# uma pausa de 12s — o teto. Bolhas curtas têm piso de 4s (dá tempo de ler a anterior).
+_TYPING_CHARS_PER_SEC: float = 6.0
+_MIN_BUBBLE_DELAY: float = 4.0    # seconds
+_MAX_BUBBLE_DELAY: float = 12.0   # seconds
+# Pausa de "respiração cognitiva" entre balões: humanos não começam a digitar a próxima
+# frase no exato ms após enviar a anterior. Aplicada a cada balão APÓS o primeiro.
+_BUBBLE_TRANSITION_PAUSE: float = 1.5  # seconds
 
 
 def _typing_secs(text: str) -> float:
@@ -77,12 +80,12 @@ def _bubble_delays(
     """Pré-delay por balão, simulando digitação humana em smartphone.
 
     - Balões seguintes (i>=1): delay = tempo de digitação do balão ANTERIOR
-      (clamp(len(prev)/CPS, MIN, MAX)) — o lead "vê" a Valéria digitando a próxima fala.
-    - Primeiro balão: NÃO é mais imediato. As LLMs ficaram rápidas (~1s) e responder
-      instantaneamente denuncia o bot. Calculamos o tempo de digitação do próprio 1º
-      balão e subtraímos a latência já gasta pela LLM (tempo que o lead já esperou),
-      com piso em 0 — assim o tempo total (mark_read → 1º balão) parece humano sem
-      somar espera dupla.
+      (clamp(len(prev)/CPS, MIN, MAX)) MAIS uma pausa fixa de transição cognitiva
+      (_BUBBLE_TRANSITION_PAUSE) — dá tempo de o lead ler a bolha anterior e simula
+      a transição mental "enviei a frase 1, agora começo a digitar a frase 2".
+    - Primeiro balão: NÃO é imediato (LLM rápida ~1s denuncia o bot) mas também NÃO
+      leva a pausa de transição (não há balão anterior a "ler"). Usa o tempo de
+      digitação do próprio 1º balão menos a latência já gasta pela LLM, com piso em 0.
     - Rehearsal zera tudo (testes/automação não esperam).
     """
     count = len(bubbles)
@@ -92,7 +95,7 @@ def _bubble_delays(
     first_delay = max(0.0, _typing_secs(bubbles[0]) - llm_latency)
     delays = [first_delay]
     for prev_bubble in bubbles[:-1]:
-        delays.append(_typing_secs(prev_bubble))
+        delays.append(_typing_secs(prev_bubble) + _BUBBLE_TRANSITION_PAUSE)
     return delays
 
 # Marcador único de falha de áudio — usado tanto no replace do texto quanto na
