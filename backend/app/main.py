@@ -78,12 +78,48 @@ async def _recover_orphaned_buffers(redis: aioredis.Redis) -> None:
         logger.warning("[BUFFER RECOVERY] %d buffer(s) órfão(s) reprocessado(s) no startup", recovered)
 
 
+async def _wait_for_redis(redis: aioredis.Redis, max_wait: float = 15.0) -> None:
+    """Espera o Redis aceitar conexões antes de prosseguir o startup.
+
+    No Windows, o Docker pode levar ~1s extra para expor a porta 6379 depois que o
+    container sobe. `aioredis.from_url` é preguiçoso (não conecta), então o primeiro
+    comando real falharia com ConnectionRefusedError [WinError 1225] e derrubaria o
+    FastAPI ("Application startup failed"). Aqui fazemos PING com backoff por até
+    max_wait segundos antes de desistir, dando tempo para o mapeamento da porta.
+    """
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + max_wait
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            await redis.ping()
+            if attempt > 1:
+                logger.info("Redis disponível após %d tentativa(s)", attempt)
+            return
+        except Exception as e:
+            if loop.time() >= deadline:
+                logger.error(
+                    "Redis indisponível após %.0fs — abortando startup: %s", max_wait, e
+                )
+                raise
+            delay = min(1.0 * attempt, 2.0)
+            logger.warning(
+                "Redis ainda não pronto (tentativa %d): %s — retry em %.1fs",
+                attempt, e, delay,
+            )
+            await asyncio.sleep(delay)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(
         settings.redis_url, decode_responses=True,
         socket_connect_timeout=5, socket_timeout=5,
     )
+    # Tolerância à inicialização: aguarda o Redis aceitar conexões (Docker/Windows
+    # pode demorar a expor a porta) antes do primeiro comando real.
+    await _wait_for_redis(app.state.redis)
     # Default buffer ON; can be overridden in Redis via POST /api/buffer.
     # setnx only sets the key if it does NOT exist — preserves runtime toggles across restarts.
     await app.state.redis.setnx("config:buffer_enabled", "1")
