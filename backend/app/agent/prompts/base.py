@@ -67,6 +67,16 @@ def build_base_prompt(
         prev_stage = lead_context.get("previous_stage")
         notes = lead_context.get("notes")
         prior_handoff = lead_context.get("handoff_summary") or lead_context.get("prior_handoff_joao")
+        lead_region = lead_context.get("lead_region")
+        if lead_region:
+            extra_lines.append(
+                f"Região provável do lead (derivada do DDD, NÃO confirmada): {lead_region}. "
+                "Você PODE usar isso para criar conexão regional leve e genuína no aquecimento "
+                f"(ex.: \"vi que seu DDD é de {lead_region}, você é de lá?\"). "
+                "NUNCA afirme como certeza (\"você é de X\" é proibido) — é só uma hipótese pelo DDD, "
+                "que pode estar portado. E NÃO transforme isso em pergunta de qualificação pesada: "
+                "continua valendo a regra de aquecer antes de qualificar."
+            )
         if prev_stage:
             extra_lines.append(f"Interesse anterior identificado: {prev_stage}")
         if notes:

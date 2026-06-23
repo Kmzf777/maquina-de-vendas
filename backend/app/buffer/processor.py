@@ -22,6 +22,7 @@ from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 from app.agent.tools import pop_deferred_media, pop_interest_marked
+from app.utils.geo import ddd_to_region
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
@@ -578,6 +579,21 @@ async def process_buffered_messages(
             lead_context = {**lead_context, "lead_is_customer": True}
     except Exception as exc:
         logger.debug("[CUSTOMER SIGNAL] falha ao checar relacionamento p/ %s: %s", lead["id"], exc)
+
+    # Personalização: dados que existem mas não chegavam ao prompt. lead_region é derivada
+    # do DDD do telefone (proxy geográfico — único disponível em escala); company quando houver.
+    personalization: dict = {}
+    try:
+        region = ddd_to_region(lead.get("phone"))
+        if region:
+            personalization["lead_region"] = region
+    except Exception as exc:
+        logger.debug("[PERSONALIZATION] falha ao derivar região do DDD p/ %s: %s", lead["id"], exc)
+    if lead.get("company"):
+        personalization["company"] = lead["company"]
+    if personalization:
+        lead_context = {**lead_context, **personalization}
+
     response = None
     for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
         try:

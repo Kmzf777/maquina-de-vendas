@@ -49,8 +49,13 @@ async def test_processor_passa_metadata_como_lead_context():
 
         await process_buffered_messages("+5511999990000", "oi", channel_id="ch-1")
 
-    assert captured.get("lead_context") == {"previous_stage": "secretaria", "notes": "interesse em atacado"}, (
-        f"lead_context esperado era o metadata do lead, mas recebeu: {captured.get('lead_context')}"
+    # lead_context = metadata + personalização (lead_region derivada do DDD 11 → São Paulo).
+    assert captured.get("lead_context") == {
+        "previous_stage": "secretaria",
+        "notes": "interesse em atacado",
+        "lead_region": "São Paulo",
+    }, (
+        f"lead_context esperado era metadata + lead_region, mas recebeu: {captured.get('lead_context')}"
     )
 
 
@@ -98,6 +103,8 @@ async def test_processor_passa_dict_vazio_quando_metadata_none():
 
         await process_buffered_messages("+5511888880000", "oi", channel_id="ch-2")
 
+    # metadata None → {}. O phone 5511888880000 não é celular válido (3º dígito ≠ 9),
+    # então ddd_to_region retorna None e nenhuma personalização é adicionada.
     assert captured.get("lead_context") == {}, (
         f"lead_context deveria ser {{}}, mas recebeu: {captured.get('lead_context')}"
     )

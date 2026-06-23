@@ -146,3 +146,77 @@ def test_context_builder_sem_segment_nao_quebra():
     )
     assert "Template." in result
     assert "segmento" not in result.lower()
+
+
+import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+
+
+@pytest.mark.asyncio
+async def test_processor_plumba_regiao_e_company():
+    """O processor deve injetar lead_region (via DDD) e company no lead_context."""
+    from app.buffer.processor import process_buffered_messages
+
+    lead_data = {
+        "id": "lead-mg", "phone": "5531999990000", "company": "Hotel Serra",
+        "stage": "secretaria", "status": "active", "human_control": False,
+        "metadata": {"previous_stage": "secretaria"},
+    }
+    conv_data = {
+        "id": "conv-mg", "stage": "secretaria", "status": "active",
+        "ai_enabled": True, "agent_profile_id": None,
+    }
+    captured = {}
+
+    async def fake_run_agent(conv, text, lead_context=None, agent_profile_id=None):
+        captured["lead_context"] = lead_context
+        return "resposta"
+
+    with patch("app.buffer.processor.get_or_create_lead", return_value=lead_data), \
+         patch("app.buffer.processor.get_channel_by_id", return_value={"id": "ch", "agent_profiles": None}), \
+         patch("app.buffer.processor.get_provider") as mock_prov, \
+         patch("app.buffer.processor.get_or_create_conversation", return_value=conv_data), \
+         patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor.get_active_enrollment", return_value=None), \
+         patch("app.buffer.processor.save_message", return_value={}), \
+         patch("app.buffer.processor.get_supabase") as mock_sb, \
+         patch("app.buffer.processor.run_agent", side_effect=fake_run_agent), \
+         patch("app.buffer.processor._resolve_media", new=AsyncMock(side_effect=lambda t, p: t)), \
+         patch("app.buffer.processor.split_into_bubbles", return_value=["resposta"]):
+        mock_sb.return_value.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_prov.return_value.send_text = AsyncMock()
+        await process_buffered_messages("+5531999990000", "oi", channel_id="ch")
+
+    ctx = captured.get("lead_context") or {}
+    assert ctx.get("lead_region") == "Minas Gerais", f"esperava lead_region MG, recebeu {ctx}"
+    assert ctx.get("company") == "Hotel Serra", f"esperava company, recebeu {ctx}"
+    assert ctx.get("previous_stage") == "secretaria", "metadata original deve ser preservado"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_injeta_campaign_segment_no_primeiro_turno():
+    """run_agent outbound deve repassar campaign_segment do lead_context ao contexto de 1º turno."""
+    from app.agent.orchestrator import run_agent
+
+    conversation = {
+        "id": "conv-seg", "stage": "secretaria",
+        "leads": {"id": "lead-seg", "name": "Ana", "phone": "5531900000001"},
+    }
+    lead_context = {"campaign_message": "Ola, aqui e a Valeria.", "campaign_segment": "atacado"}
+
+    def _resp():
+        msg = MagicMock(); msg.tool_calls = None; msg.content = "ok"
+        r = MagicMock(); r.choices = [MagicMock(message=msg)]; r.usage = None
+        return r
+    create_mock = AsyncMock(return_value=_resp())
+
+    with patch("app.agent.orchestrator.get_lead", return_value={
+            "id": "lead-seg", "name": "Ana", "phone": "5531900000001", "ai_enabled": True}), \
+         patch("app.agent.orchestrator.get_history", return_value=[]), \
+         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = create_mock
+        await run_agent(conversation, "sim", lead_context=lead_context, agent_profile_id="p")
+
+    messages = create_mock.call_args_list[0].kwargs["messages"]
+    assert "atacado" in messages[1]["content"].lower(), "segmento da campanha não foi injetado no 1º turno"

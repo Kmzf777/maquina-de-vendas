@@ -428,7 +428,10 @@ async def run_agent(
         )
 
     if is_outbound and is_first_turn and campaign_message:
-        ctx = build_outbound_first_turn_context(campaign_message, lead.get("name"))
+        campaign_segment = (lead_context or {}).get("campaign_segment")
+        ctx = build_outbound_first_turn_context(
+            campaign_message, lead.get("name"), campaign_segment=campaign_segment
+        )
         messages.append({"role": "user", "content": ctx})
 
     # Apply reply marker to the current user message when it was a reply
