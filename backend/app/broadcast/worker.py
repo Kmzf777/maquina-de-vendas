@@ -272,6 +272,48 @@ def _build_conv_updates(broadcast: dict) -> dict:
     return conv_updates
 
 
+def _pipeline_name_to_segment(pipeline_name: str | None) -> str | None:
+    """Mapeia o nome do pipeline-alvo do broadcast → segmento outbound da Valéria.
+
+    Reusa o padrão de substring de _resolve_lp_pipeline. Casa nomes como
+    'Valeria - Atacado', 'João - Private Label', 'Arthur - Exportação'. Pipelines sem
+    segmento claro (ex.: 'Importação Leads Frios', 'Recuperação') → None.
+    """
+    n = (pipeline_name or "").lower()
+    if "atacado" in n:
+        return "atacado"
+    if "private label" in n or "marca propria" in n or "marca própria" in n:
+        return "private_label"
+    if "exporta" in n:           # exportação / exportacao
+        return "exportacao"
+    if "consumo" in n:
+        return "consumo"
+    return None
+
+
+def _build_lead_updates(
+    broadcast: dict,
+    channel: dict | None,
+    lead: dict,
+    campaign_segment: str | None = None,
+) -> dict:
+    """Monta o update do lead no disparo: ai_enabled (+ human_control) e, quando a campanha
+    tem segmento-alvo, persiste metadata.campaign_segment (mergeando o metadata existente).
+
+    O segmento é gravado mesmo em canal humano — serve de inteligência futura para a Valéria
+    quando/se a IA reassumir. Sem segmento, NÃO toca o metadata (evita sobrescrever).
+    """
+    ai_enabled = _broadcast_ai_enabled(broadcast, channel=channel)
+    updates: dict = {"ai_enabled": ai_enabled}
+    if ai_enabled:
+        updates["human_control"] = False
+    if campaign_segment:
+        meta = dict(lead.get("metadata") or {})
+        meta["campaign_segment"] = campaign_segment
+        updates["metadata"] = meta
+    return updates
+
+
 def _broadcast_ai_enabled(broadcast: dict, channel: dict | None = None) -> bool:
     """Returns the ai_enabled value to set on the lead for this broadcast.
 
@@ -464,6 +506,18 @@ async def process_single_broadcast(broadcast: dict):
         except Exception as stage_err:
             logger.warning("[BROADCAST] Failed to fetch pipeline for move_to_stage_id %s: %s", move_to_stage_id, stage_err)
 
+    # Segmento da campanha (Épico A4): derivado do nome do pipeline-alvo, uma vez por batch.
+    # Persistido em lead.metadata.campaign_segment para a Valéria abrir o 1º turno com a
+    # hipótese de segmento (lido em build_outbound_first_turn_context via lead_context).
+    campaign_segment: str | None = None
+    if target_pipeline_id:
+        try:
+            pipeline_row = sb.table("pipelines").select("name").eq("id", target_pipeline_id).limit(1).execute()
+            if pipeline_row.data:
+                campaign_segment = _pipeline_name_to_segment(pipeline_row.data[0].get("name"))
+        except Exception as seg_err:
+            logger.warning("[BROADCAST] Failed to derive campaign_segment for broadcast %s: %s", broadcast_id, seg_err)
+
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
 
@@ -623,10 +677,7 @@ async def process_single_broadcast(broadcast: dict):
             # Update ai_enabled on the lead regardless of whether conversation update succeeded.
             # This is the gate that controls whether Valeria responds when the lead replies.
             try:
-                ai_enabled = _broadcast_ai_enabled(broadcast, channel=channel)
-                lead_updates: dict = {"ai_enabled": ai_enabled}
-                if ai_enabled:
-                    lead_updates["human_control"] = False
+                lead_updates = _build_lead_updates(broadcast, channel, lead, campaign_segment)
                 logger.info(f"[DEBUG-BROADCAST] step=update_lead updates={lead_updates} lead_id={lead['id']}")
                 update_lead(lead["id"], **lead_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_lead OK")

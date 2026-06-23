@@ -17,7 +17,7 @@ def get_pending_broadcast_leads(broadcast_id: str, limit: int = 10) -> list[dict
     sb = get_supabase()
     result = (
         sb.table("broadcast_leads")
-        .select("*, leads!inner(id, phone, stage, name)")
+        .select("*, leads!inner(id, phone, stage, name, metadata)")
         .eq("broadcast_id", broadcast_id)
         .eq("status", "pending")
         .limit(limit)

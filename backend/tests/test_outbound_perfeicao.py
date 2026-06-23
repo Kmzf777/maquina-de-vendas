@@ -350,3 +350,58 @@ def test_b3_schedule_followup_clampa_janela_comercial():
         assert is_within_business_window(fire_at), (
             f"fire_at {job['fire_at']} (seq={job['sequence']}) caiu fora da janela comercial"
         )
+
+
+# ===========================================================================
+# Épico A4 — Hook do dispatcher: persistir campaign_segment no metadata
+# ===========================================================================
+
+def test_pipeline_name_to_segment():
+    from app.broadcast.worker import _pipeline_name_to_segment
+    assert _pipeline_name_to_segment("Valeria - Atacado") == "atacado"
+    assert _pipeline_name_to_segment("João - Atacado") == "atacado"
+    assert _pipeline_name_to_segment("Valeria - Private Label") == "private_label"
+    assert _pipeline_name_to_segment("Arthur - Exportação") == "exportacao"
+    assert _pipeline_name_to_segment("Valeria - Consumo") == "consumo"
+
+
+def test_pipeline_name_to_segment_desconhecido():
+    from app.broadcast.worker import _pipeline_name_to_segment
+    assert _pipeline_name_to_segment("Valeria - Importação Leads Frios") is None
+    assert _pipeline_name_to_segment("João - Recuperação") is None
+    assert _pipeline_name_to_segment("") is None
+    assert _pipeline_name_to_segment(None) is None
+
+
+def test_build_lead_updates_com_segmento_persiste_metadata():
+    from app.broadcast.worker import _build_lead_updates
+    broadcast = {"agent_profile_id": "ap-out"}
+    channel = {"id": "ch", "mode": "ai"}
+    lead = {"id": "l1", "metadata": {"previous_stage": "secretaria"}}
+    updates = _build_lead_updates(broadcast, channel, lead, campaign_segment="atacado")
+    assert updates["ai_enabled"] is True
+    assert updates["human_control"] is False
+    # metadata original preservado + campaign_segment adicionado
+    assert updates["metadata"]["campaign_segment"] == "atacado"
+    assert updates["metadata"]["previous_stage"] == "secretaria"
+
+
+def test_build_lead_updates_sem_segmento_nao_toca_metadata():
+    from app.broadcast.worker import _build_lead_updates
+    broadcast = {"agent_profile_id": "ap-out"}
+    channel = {"id": "ch", "mode": "ai"}
+    lead = {"id": "l1", "metadata": {"x": 1}}
+    updates = _build_lead_updates(broadcast, channel, lead, campaign_segment=None)
+    assert "metadata" not in updates, "sem segmento, não deve sobrescrever metadata do lead"
+    assert updates["ai_enabled"] is True
+
+
+def test_build_lead_updates_canal_humano_ai_desligada():
+    from app.broadcast.worker import _build_lead_updates
+    broadcast = {"agent_profile_id": "ap-out"}
+    channel = {"id": "ch", "mode": "human"}
+    lead = {"id": "l1", "metadata": None}
+    updates = _build_lead_updates(broadcast, channel, lead, campaign_segment="atacado")
+    assert updates["ai_enabled"] is False
+    # mesmo em canal humano, o segmento é registrado para inteligência futura
+    assert updates["metadata"]["campaign_segment"] == "atacado"
