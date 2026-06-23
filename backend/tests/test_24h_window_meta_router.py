@@ -224,22 +224,13 @@ async def test_mark_read_bg_swallows_mark_read_exception():
     mock_provider.mark_read.assert_awaited_once_with("wamid.fail_mark_read")
 
 
-def test_meta_webhook_schedules_mark_read_as_background_task(meta_client):
-    """Verify that _mark_read_bg is SCHEDULED via BackgroundTasks.add_task, not awaited inline.
+def test_meta_webhook_does_not_mark_read_at_ingestion(meta_client):
+    """CA#1: o read receipt (tique azul) NÃO deve ser disparado na ingestão do webhook.
 
-    Patching _mark_read_bg directly and asserting it was called is not sufficient proof of
-    scheduling: FastAPI's TestClient runs background tasks synchronously, so the assertion
-    would also pass if the code awaited _mark_read_bg inline.
-
-    Instead, we patch BackgroundTasks.add_task itself and assert that one of its calls
-    registered _mark_read_bg (the patched mock object the production code references) with
-    the expected (channel, message_id) arguments. If the production code switched to an
-    inline await, _mark_read_bg would never appear in add_task's call list and this test
-    would fail.
-
-    Note: add_task is also used for _register_lead, _track_inbound_message_time, log_inbound,
-    and _handle_delivery_status; we only assert that _mark_read_bg is among the registered
-    callables.
+    Antes, a ingestão agendava _mark_read_bg via BackgroundTasks.add_task — o que marcava
+    a mensagem como lida instantaneamente (tique de robô). Agora o mark_read é disparado
+    apenas no INÍCIO DO TURNO DA IA (quando o debounce do buffer expira, em process_
+    buffered_messages). Este teste garante que nenhum add_task registrou _mark_read_bg.
     """
     with (
         patch("app.webhook.meta_router.get_channel_by_provider_config", return_value=FAKE_META_CHANNEL),
@@ -257,17 +248,10 @@ def test_meta_webhook_schedules_mark_read_as_background_task(meta_client):
 
         assert response.status_code == 200
 
-        # The production code calls background_tasks.add_task(_mark_read_bg, channel, message_id).
-        # After patching, the name _mark_read_bg in the module namespace resolves to
-        # mock_mark_read_bg.  So we check that add_task was called with that mock object
-        # as the first positional arg and the correct (channel, message_id) following args.
         mark_read_calls = [
             call for call in mock_add_task.call_args_list
             if call.args and call.args[0] is mock_mark_read_bg
         ]
-        assert len(mark_read_calls) == 1, (
-            f"Expected exactly one add_task call with _mark_read_bg; got: {mock_add_task.call_args_list}"
+        assert len(mark_read_calls) == 0, (
+            f"mark_read NÃO deve ser agendado na ingestão; got: {mock_add_task.call_args_list}"
         )
-        _, channel_arg, message_id_arg = mark_read_calls[0].args
-        assert channel_arg == FAKE_META_CHANNEL
-        assert message_id_arg == "wamid.test123"

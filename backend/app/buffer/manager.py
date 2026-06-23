@@ -83,16 +83,15 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     has_lock = await r.exists(lock_key)
 
     if has_lock:
-        # Timer already running — extend it, but never beyond the absolute deadline
-        current_ttl = await r.ttl(lock_key)
+        # CA#2: reset REAL — cada nova mensagem do lead volta o timer ao base (15s),
+        # simulando "espero ele parar de digitar". Nunca ultrapassa o deadline absoluto
+        # (buffer_max_timeout): se o lead metralhar mensagens, a IA força o flush ao
+        # atingir o teto para não travar o bot.
         deadline_raw = await r.get(deadline_key)
         remaining = max(1, float(deadline_raw) - time.time()) if deadline_raw else settings.buffer_max_timeout
-        new_ttl = min(
-            current_ttl + settings.buffer_extend_timeout,
-            int(remaining),
-        )
+        new_ttl = min(settings.buffer_base_timeout, int(remaining))
         await r.expire(lock_key, new_ttl)
-        logger.info(f"Buffer extended for {phone}: TTL now {new_ttl}s (deadline in {remaining:.1f}s)")
+        logger.info(f"Buffer reset for {phone}: TTL now {new_ttl}s (deadline in {remaining:.1f}s)")
     else:
         # First message — record absolute deadline, set lock, start timer
         flush_at = time.time() + settings.buffer_max_timeout

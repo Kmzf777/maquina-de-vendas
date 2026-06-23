@@ -75,3 +75,7 @@ class MockProvider(WhatsAppProvider):
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         _log_entry({"method": "mark_read", "message_id": message_id})
         return {"status": "mock_ok", "method": "mark_read"}
+
+    async def send_typing_indicator(self, message_id: str) -> dict:
+        _log_entry({"method": "send_typing_indicator", "message_id": message_id})
+        return {"status": "mock_ok", "method": "send_typing_indicator"}

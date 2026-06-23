@@ -438,8 +438,11 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         # ctwa_clid (se presente) vincula o lead ao clique do anúncio Meta Ads (CTWA).
         background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid, msg.ctwa_origem)
 
-        if msg.message_id:
-            background_tasks.add_task(_mark_read_bg, channel, msg.message_id)
+        # CA#1: o read receipt (tique azul) NÃO é mais disparado aqui na ingestão — isso
+        # marcava a mensagem como lida instantaneamente (tique de robô). Agora o mark_read
+        # acontece no INÍCIO DO TURNO DA IA, dentro de process_buffered_messages, quando o
+        # debounce do buffer expira e a Valéria vai de fato agir. (_mark_read_bg permanece
+        # disponível como utilitário, mas não é chamado na ingestão.)
 
         if msg.text and msg.text.strip().lower() == "!resetar":
             try:

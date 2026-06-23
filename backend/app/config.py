@@ -46,7 +46,7 @@ if PYDANTIC_V2:
         dev_server_url: Optional[str] = None
         buffer_base_timeout: int = 15
         buffer_extend_timeout: int = 5
-        buffer_max_timeout: int = 45
+        buffer_max_timeout: int = 60
         # Modelo Gemini usado para transcrição de áudio (via generateContent, NÃO
         # /audio/transcriptions — esse endpoint OpenAI-compat não existe no Gemini).
         transcription_model: str = "gemini-2.5-flash"
@@ -82,7 +82,7 @@ else:
         dev_server_url: Optional[str] = None
         buffer_base_timeout: int = 15
         buffer_extend_timeout: int = 5
-        buffer_max_timeout: int = 45
+        buffer_max_timeout: int = 60
         # Modelo Gemini usado para transcrição de áudio (via generateContent, NÃO
         # /audio/transcriptions — esse endpoint OpenAI-compat não existe no Gemini).
         transcription_model: str = "gemini-2.5-flash"

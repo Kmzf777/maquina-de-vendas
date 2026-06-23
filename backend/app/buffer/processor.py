@@ -408,6 +408,15 @@ async def process_buffered_messages(
         logger.warning(f"Duplicate user message detected for {phone} (sem wamid), skipping")
         return
 
+    # CA#1: tique azul SÓ AGORA — o turno da IA está começando (mensagem nova, pós-dedup).
+    # Antes o read receipt era disparado na ingestão do webhook (tique de robô instantâneo).
+    # Marcar a última mensagem como lida é cumulativo no WhatsApp (cobre todo o buffer).
+    if wamid:
+        try:
+            await provider.mark_read(wamid)
+        except Exception as e:
+            logger.warning(f"[READ] falha ao marcar mensagem lida ({wamid}) p/ {phone}: {e}")
+
     # Always save the incoming user message
     try:
         await _save_with_retry(
@@ -655,6 +664,14 @@ async def process_buffered_messages(
     sent_wamids: list[str | None] = []
     for delay, bubble in zip(delays, bubbles):
         if delay > 0:
+            # CA#4: "digitando…" durante a pausa proporcional, ANTES de enviar o balão.
+            # O indicador some sozinho quando o send_text chega. wamid é o id da última
+            # mensagem do lead (necessário pela Cloud API). Best-effort: nunca quebra o envio.
+            if wamid:
+                try:
+                    await provider.send_typing_indicator(wamid)
+                except Exception as e:
+                    logger.debug(f"[TYPING] indicador falhou p/ {send_to}: {e}")
             await asyncio.sleep(delay)
         try:
             send_result = await provider.send_text(send_to, bubble)

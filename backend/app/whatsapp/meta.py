@@ -398,3 +398,18 @@ class MetaCloudClient(WhatsAppProvider):
             "status": "read",
             "message_id": message_id,
         }, request_type="mark_read")
+
+    async def send_typing_indicator(self, message_id: str) -> dict:
+        """Mostra o indicador "digitando…" ao lead.
+
+        Na Cloud API da Meta o typing indicator é acoplado ao read receipt: enviamos
+        status=read + typing_indicator referenciando o wamid da última mensagem recebida.
+        O indicador some sozinho quando uma mensagem é enviada (ou após ~25s). Re-marcar
+        como lida é idempotente, então pode ser chamado antes de cada balão sem efeito colateral.
+        """
+        return await self._post({
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id,
+            "typing_indicator": {"type": "text"},
+        }, request_type="typing_on")
