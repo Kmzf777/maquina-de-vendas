@@ -39,6 +39,30 @@ def test_secretaria_outbound_objecao_origem_abre_porta_de_saida():
     )
 
 
+def test_secretaria_lgpd_vocabulario_natural():
+    """Humanização: a objeção LGPD não pode usar 'base comercial de cadastros' (frio/jurídico)."""
+    from app.agent.prompts.valeria_outbound.secretaria import SECRETARIA_PROMPT
+    assert "base comercial de cadastros" not in SECRETARIA_PROMPT, (
+        "vocabulário corporativo 'base comercial de cadastros' ainda presente na secretaria"
+    )
+    low = SECRETARIA_PROMPT.lower()
+    assert "lista de contatos" in low or "cadastro aqui com a gente" in low or "nossa lista" in low, (
+        "secretaria não usa vocabulário SDR natural para a origem do número"
+    )
+    # Porta de saída deve permanecer
+    assert "registrar_optout" in SECRETARIA_PROMPT
+
+
+def test_base_lgpd_vocabulario_natural():
+    """O reforço de origem no base também deve usar vocabulário natural."""
+    from app.agent.prompts.base import build_base_prompt
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    normalized = " ".join(prompt.split())  # colapsa quebras de linha do prompt
+    assert "base comercial de cadastros" not in normalized, (
+        "vocabulário corporativo 'base comercial de cadastros' ainda presente no base"
+    )
+
+
 def test_base_prompt_nao_inventar_origem_numero():
     """O base deve proibir inventar de onde veio o número do lead."""
     from app.agent.prompts.base import build_base_prompt
@@ -115,6 +139,21 @@ def test_base_prompt_renderiza_regiao_como_hipotese():
     # Deve instruir uso cauteloso, nunca afirmação categórica
     assert "nao confirmad" in low or "não confirmad" in low or "hipotese" in low or "hipótese" in low or "nunca afirme" in low, (
         "render de região não instrui uso cauteloso/não-categórico"
+    )
+
+
+def test_base_prompt_regiao_sem_frase_robotica():
+    """Humanização: a Valéria NÃO pode dizer 'DDD' ao lead (tell de robô)."""
+    from app.agent.prompts.base import build_base_prompt
+    ctx = {"lead_region": "Minas Gerais"}
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now(), lead_context=ctx)
+    assert "seu DDD é de" not in prompt, "exemplo robótico 'seu DDD é de' ainda presente"
+    assert "seu DDD" not in prompt.split("Exemplos CORRETOS")[0] or "pelo número" in prompt, (
+        "render de região deve usar abordagem orgânica ('pelo número...')"
+    )
+    # Abordagem orgânica esperada
+    assert "pelo número" in prompt or "o pessoal de" in prompt, (
+        "render de região não usa abordagem casual/orgânica"
     )
 
 
