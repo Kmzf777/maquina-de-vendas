@@ -51,8 +51,11 @@ def test_anti_preenchimento_global_inbound_e_outbound():
     assert '"perfeito", "entendo", "show", "que bacana", "que legal", "tudo joia"' in s
     # "show" deixou de ser um ack permitido na lista VARIE
     assert '"saquei", "boa", "show", "fechou"' not in s
-    # O vocabulario original compartilhado permanece intacto
-    assert '"perfeito", "com certeza", "entendo", "bacana"' in s
+    # BLACK-LIST 2026-06-24: o vocabulario natural NAO endossa mais as palavras banidas.
+    # A antiga linha de "Vocabulario" que as listava foi removida (era a contradicao que
+    # fazia o modelo usar "perfeito"/"bacana" apesar da regra anti-preenchimento).
+    assert '"perfeito", "com certeza", "entendo", "bacana"' not in s
+    assert '"com certeza", "claro", "fechou", "saquei", "boa"' in s
 
 
 # --- Falha #6: follow-up sem 1h cravado e sem abertura generica ------------

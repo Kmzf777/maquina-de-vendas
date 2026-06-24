@@ -127,11 +127,12 @@ async def test_run_agent_fallback_when_empty_after_tool_iterations():
 
 
 @pytest.mark.asyncio
-async def test_run_agent_empty_no_tool_uses_safety_net_without_extra_llm_call():
-    """Empty turn sem tool iterations: NENHUMA chamada LLM extra de fallback é feita, mas a
-    rede de segurança final (atomicidade) garante que o lead nunca recebe vazio — devolve o
-    stall genérico em vez de "" (regressão Lanny)."""
-    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE
+async def test_run_agent_empty_no_tool_retries_then_aborts_silently():
+    """Empty turn sem tool: faz UM retry silencioso com thinking off. Se ainda vier vazio
+    e não houver contexto coerente (mídia/stage), ABORTA o turno em silêncio (retorna "")
+    em vez de mandar "acho que sua mensagem chegou cortada" (auditoria Anderson 5551984772757,
+    reincidência da Carla — completion_tokens=0 do Gemini)."""
+    from app.agent.orchestrator import run_agent
 
     msg_empty = MagicMock()
     msg_empty.tool_calls = None
@@ -162,8 +163,8 @@ async def test_run_agent_empty_no_tool_uses_safety_net_without_extra_llm_call():
          patch("app.agent.orchestrator._get_client", return_value=mock_client):
         result = await run_agent(conversation, "ola")
 
-    assert result == _SAFETY_FALLBACK_MESSAGE
-    assert call_count["n"] == 1, "Sem tool iterations, não deve fazer chamada extra de LLM (só o helper puro)"
+    assert result == "", "turno vazio sem contexto coerente deve abortar em silêncio, não mandar 'chegou cortada'"
+    assert call_count["n"] == 2, "deve tentar UM retry silencioso (thinking off) antes de desistir"
 
 
 # ---------------------------------------------------------------------------

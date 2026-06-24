@@ -34,16 +34,16 @@ def test_stage_transition_takes_priority_over_media():
     assert result == _STAGE_TRANSITION_FALLBACKS["atacado"]
 
 
-def test_no_transition_falls_back_to_generic():
-    """Backward compatibility: no stage transition + no media → generic stall."""
-    from app.agent.orchestrator import _empty_fallback_text, _SAFETY_FALLBACK_MESSAGE
-    assert _empty_fallback_text(media_tool_used=False, transitioned_to_stage=None) == _SAFETY_FALLBACK_MESSAGE
+def test_no_transition_returns_none_for_silent_abort():
+    """Sem stage transition + sem mídia → None (sinaliza abortar em silêncio; nada de stall)."""
+    from app.agent.orchestrator import _empty_fallback_text
+    assert _empty_fallback_text(media_tool_used=False, transitioned_to_stage=None) is None
 
 
-def test_unmapped_stage_falls_back_to_generic():
-    """A transition to a stage without a dedicated message (e.g. secretaria) → generic."""
-    from app.agent.orchestrator import _empty_fallback_text, _SAFETY_FALLBACK_MESSAGE
-    assert _empty_fallback_text(media_tool_used=False, transitioned_to_stage="secretaria") == _SAFETY_FALLBACK_MESSAGE
+def test_unmapped_stage_returns_none_for_silent_abort():
+    """Transição para stage sem mensagem dedicada (ex.: secretaria) → None (sem stall)."""
+    from app.agent.orchestrator import _empty_fallback_text
+    assert _empty_fallback_text(media_tool_used=False, transitioned_to_stage="secretaria") is None
 
 
 def test_all_commercial_stages_have_distinct_contextual_messages():
@@ -135,11 +135,11 @@ async def test_run_agent_mudar_stage_then_empty_uses_stage_fallback():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_agent_empty_without_tool_never_returns_void():
-    """Reproduces Lanny: an empty user turn (e.g. sticker) yields completion_tokens=0
-    with NO tool call. Previously run_agent returned '' and the lead got silence.
-    The agent must now return the generic stall instead of an empty string."""
-    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE
+async def test_run_agent_empty_without_tool_retries_then_aborts_silently():
+    """Empty user turn (ex.: sticker) com completion_tokens=0 e SEM tool call. O agente faz
+    UM retry silencioso (thinking off); se ainda vazio e sem contexto coerente, retorna ""
+    (abortar em silêncio) — nunca o "chegou cortada" enganoso (auditoria Anderson 5551984772757)."""
+    from app.agent.orchestrator import run_agent
 
     conversation = {
         "id": "conv-void-001",
@@ -147,8 +147,11 @@ async def test_run_agent_empty_without_tool_never_returns_void():
         "leads": {"id": "lead-v01", "name": "Lanny", "phone": "5511943068615", "ai_enabled": True},
     }
 
-    # Single create → empty content, NO tool calls (tool_iterations stays 0)
-    call_responses = [_make_response(content="", tool_calls=None)]
+    # create 1 → empty (initial, thinking on); create 2 → empty (retry, thinking off)
+    call_responses = [
+        _make_response(content="", tool_calls=None),
+        _make_response(content="", tool_calls=None),
+    ]
     call_index = {"i": 0}
 
     async def fake_create(**kwargs):
@@ -168,5 +171,5 @@ async def test_run_agent_empty_without_tool_never_returns_void():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "")
 
-    assert result == _SAFETY_FALLBACK_MESSAGE
-    assert result.strip() != ""
+    assert result == ""
+    assert call_index["i"] == 2, "deve ter feito o retry silencioso antes de abortar"

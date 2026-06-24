@@ -37,11 +37,11 @@ MAX_OUTPUT_TOKENS = 4096
 # (usamos \n\n\n, três quebras), e barra alucinação de turnos/tokens de controle.
 # Via endpoint OpenAI-compat do Gemini isto vira stopSequences (limite 5).
 _STOP_SEQUENCES = ["\n\n\n", "User:", "<|im_end|>"]
-# Resposta de segurança quando, mesmo após o fallback sem tools, a IA não produz texto.
-# Garante que o lead nunca fique mudo (regressão observada: Ademilson, Thainara).
-# NÃO promete um retorno futuro ("já te respondo") — não existe processamento diferido,
-# então a promessa nunca se cumpria e a conversa morria no vácuo (auditoria 2026-06-22:
-# 5 conversas mortas nesse stall). Em vez disso, pede a re-entrada por texto.
+# DEPRECADO (2026-06-24): este stall genérico NÃO é mais enviado. Disparava sobre mensagens
+# perfeitamente válidas quando o gemini devolvia completion_tokens=0 (auditoria leads
+# 5549984064339 / 5551984772757), enganando o cliente ("sua mensagem chegou cortada" sendo
+# que ela chegou inteira). Hoje o turno vazio genérico é abortado em silêncio após um retry
+# sem thinking (ver run_agent). Mantido só como referência/constante de teste.
 _SAFETY_FALLBACK_MESSAGE = (
     "acho que sua mensagem chegou cortada aqui\n\nme manda de novo por texto?"
 )
@@ -80,20 +80,24 @@ _STAGE_TRANSITION_FALLBACKS: dict[str, str] = {
 }
 
 
-def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | None = None) -> str:
-    """Return the appropriate safety fallback message for the empty-response case.
+def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | None = None) -> str | None:
+    """Return a CONTEXTUALLY COHERENT fallback for the empty-response case, or None.
 
-    Priority (mais específico → mais genérico):
-      1. Pergunta de avanço contextual, quando houve um mudar_stage neste turno — o lead
-         nunca pode ficar mudo logo após uma transição silenciosa de funil.
+    Só devolve mensagem quando há um contexto que a torna coerente:
+      1. Pergunta de avanço, quando houve um mudar_stage neste turno (transição silenciosa).
       2. Pergunta de fechamento de mídia, quando uma tool de foto foi usada.
-      3. Stall genérico.
+    Caso GENÉRICO (sem mídia, sem transição) → None: NÃO existe mensagem honesta a enviar.
+    O chamador deve abortar o turno em silêncio em vez de mandar o stall enganoso
+    "acho que sua mensagem chegou cortada" sobre uma mensagem que chegou perfeita
+    (auditoria 2026-06-24, leads 5549984064339 / 5551984772757 — falha de LLM, não de input).
 
     Extracted as a pure helper so it can be unit-tested without running run_agent.
     """
     if transitioned_to_stage and transitioned_to_stage in _STAGE_TRANSITION_FALLBACKS:
         return _STAGE_TRANSITION_FALLBACKS[transitioned_to_stage]
-    return _SAFETY_FALLBACK_MEDIA if media_tool_used else _SAFETY_FALLBACK_MESSAGE
+    if media_tool_used:
+        return _SAFETY_FALLBACK_MEDIA
+    return None
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -582,16 +586,20 @@ async def run_agent(
 
     assistant_text = message.content or ""
 
-    # If the AI returned empty content after tool calls (e.g. after enviar_fotos Gemini
-    # sometimes returns nothing), force one more call without tools to get a text response.
-    if not assistant_text and tool_iterations > 0:
+    # RETRY-ON-EMPTY (unificado — auditoria 2026-06-24, leads 5549984064339 / 5551984772757,
+    # reincidência da Carla). gemini-2.5-flash às vezes queima o budget pensando e devolve
+    # completion_tokens=0, MESMO num input perfeitamente válido. A chamada inicial deste turno
+    # NÃO desliga o thinking, então o vazio é justamente o turno em que o modelo "pensou demais".
+    # Vale para QUALQUER turno vazio (com ou sem tool — antes só reentrávamos após tool, e o turno
+    # normal vazio caía no stall enganoso). Tentamos UM retry silencioso com o thinking 100% off,
+    # que costuma recuperar o texto real. NUNCA derruba o turno por exceção — só loga.
+    if not assistant_text:
         logger.warning(
-            "[AGENT EMPTY AFTER TOOLS] resposta vazia após %d tool iteration(s) para conv %s "
-            "— forçando chamada de texto sem tools",
+            "[AGENT EMPTY] resposta vazia (tool_iterations=%d) para conv %s — retry silencioso sem thinking",
             tool_iterations, conversation_id,
         )
         try:
-            fallback_resp = await _create_with_retry(_get_client(model),
+            retry_resp = await _create_with_retry(_get_client(model),
                 model=model,
                 messages=messages,
                 tools=None,
@@ -600,40 +608,42 @@ async def run_agent(
                 stop=_STOP_SEQUENCES,
                 **_gemini_thinking_off(model),
             )
-            if fallback_resp.usage:
+            if retry_resp.usage:
                 track_token_usage(
                     lead_id=lead_id,
                     stage=stage,
                     model=model,
                     call_type="response",
-                    prompt_tokens=fallback_resp.usage.prompt_tokens,
-                    completion_tokens=fallback_resp.usage.completion_tokens,
+                    prompt_tokens=retry_resp.usage.prompt_tokens,
+                    completion_tokens=retry_resp.usage.completion_tokens,
                 )
-            assistant_text = fallback_resp.choices[0].message.content or ""
-            if not assistant_text:
-                logger.error(
-                    "[AGENT EMPTY AFTER TOOLS] fallback também vazio para conv %s "
-                    "— usando resposta de segurança",
-                    conversation_id,
-                )
+            assistant_text = retry_resp.choices[0].message.content or ""
         except Exception as _exc:
             logger.error(
-                "[AGENT EMPTY AFTER TOOLS] fallback call falhou para conv %s: %s "
-                "— usando resposta de segurança",
-                conversation_id, _exc,
+                "[AGENT EMPTY] retry silencioso falhou para conv %s: %s", conversation_id, _exc,
             )
 
-    # Rede de segurança FINAL (atomicidade — "nunca deixar o lead no vácuo"): cobre tanto
-    # o caso pós-tool (acima) quanto o turno normal vazio sem tool (ex: input vazio/figurinha
-    # → completion_tokens=0, regressão observada: Lanny). Escolhe a mensagem mais contextual:
-    # transição de stage > mídia > genérico.
+    # Ainda vazio após o retry. Só enviamos algo se houver um fallback CONTEXTUALMENTE
+    # coerente (transição de stage > mídia). No caso genérico, _empty_fallback_text devolve
+    # None e ABORTAMOS o turno em silêncio: é uma falha de LLM, não da mensagem do lead, então
+    # mandar "acho que sua mensagem chegou cortada" sobre um texto perfeito engana o cliente
+    # (o erro reincidente desta auditoria). Silêncio > erro esquisito.
     if not assistant_text:
-        assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage)
-        logger.error(
-            "[AGENT EMPTY] resposta final vazia para conv %s (tool_iterations=%d) — "
-            "usando fallback de segurança (stage=%s, media=%s)",
-            conversation_id, tool_iterations, transitioned_to_stage, media_tool_used,
-        )
+        contextual = _empty_fallback_text(media_tool_used, transitioned_to_stage)
+        if contextual:
+            assistant_text = contextual
+            logger.error(
+                "[AGENT EMPTY] vazio após retry para conv %s — usando fallback contextual "
+                "(stage=%s, media=%s)",
+                conversation_id, transitioned_to_stage, media_tool_used,
+            )
+        else:
+            logger.error(
+                "[AGENT EMPTY] vazio após retry e sem contexto coerente para conv %s "
+                "(tool_iterations=%d) — abortando turno em silêncio (não enviar stall enganoso)",
+                conversation_id, tool_iterations,
+            )
+            return ""
 
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."

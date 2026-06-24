@@ -23,10 +23,11 @@ def test_empty_fallback_text_with_media_returns_media_message():
     assert result == _SAFETY_FALLBACK_MEDIA
 
 
-def test_empty_fallback_text_without_media_returns_generic_message():
-    from app.agent.orchestrator import _empty_fallback_text, _SAFETY_FALLBACK_MESSAGE
-    result = _empty_fallback_text(media_tool_used=False)
-    assert result == _SAFETY_FALLBACK_MESSAGE
+def test_empty_fallback_text_without_media_returns_none():
+    """Caso genérico (sem mídia, sem transição de stage): NÃO há fallback coerente.
+    Retorna None para sinalizar 'abortar o turno em silêncio' — nunca o stall enganoso."""
+    from app.agent.orchestrator import _empty_fallback_text
+    assert _empty_fallback_text(media_tool_used=False) is None
 
 
 def test_empty_fallback_text_messages_are_different():
@@ -134,9 +135,10 @@ async def test_run_agent_media_tool_then_empty_uses_media_fallback():
 
 
 @pytest.mark.asyncio
-async def test_run_agent_non_media_tool_then_empty_uses_generic_fallback():
-    """LLM calls a non-media tool then returns empty → _SAFETY_FALLBACK_MESSAGE."""
-    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE
+async def test_run_agent_non_media_tool_then_empty_aborts_silently():
+    """Non-media tool + empty (sem stage transition) → sem contexto coerente → aborta em
+    silêncio (retorna ""), nunca o stall genérico enganoso."""
+    from app.agent.orchestrator import run_agent
 
     conversation = {
         "id": "conv-nonmedia-001",
@@ -187,7 +189,7 @@ async def test_run_agent_non_media_tool_then_empty_uses_generic_fallback():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "quero saber os preços")
 
-    assert result == _SAFETY_FALLBACK_MESSAGE
+    assert result == ""
 
 
 @pytest.mark.asyncio
