@@ -65,3 +65,31 @@ def test_secretaria_outbound_sem_travessao_e_sem_acks_banidos():
 def test_atacado_outbound_sem_ack_perfeito_solto():
     from app.agent.prompts.valeria_outbound.atacado import ATACADO_PROMPT
     assert "perfeito, e otimo que voce ja ta de olho" not in ATACADO_PROMPT
+
+
+# --- Isolamento de escopo: INBOUND não pode contradizer a blacklist global --
+# (a blacklist mora no base.py compartilhado; os exemplos few-shot do inbound que
+#  MODELAVAM a Valéria dizendo "show"/"que bacana" como SUA saída foram corrigidos.
+#  As listas que reconhecem o que o LEAD diz permanecem — não são saída da Valéria.)
+
+def test_inbound_secretaria_nao_modela_valeria_dizendo_banido():
+    from app.agent.prompts.valeria_inbound.secretaria import SECRETARIA_PROMPT
+    assert 'Assistant: "show"' not in SECRETARIA_PROMPT
+    assert '✅ "que bacana"' not in SECRETARIA_PROMPT
+    assert '"show, entao sua demanda' not in SECRETARIA_PROMPT
+
+
+def test_inbound_consumo_despedida_sem_show():
+    from app.agent.prompts.valeria_inbound.consumo import CONSUMO_PROMPT
+    assert '"show, aproveita o cupom"' not in CONSUMO_PROMPT
+
+
+def test_outbound_consumo_despedida_sem_show():
+    from app.agent.prompts.valeria_outbound.consumo import CONSUMO_PROMPT
+    assert '"show, aproveita o cupom"' not in CONSUMO_PROMPT
+
+
+def test_base_exemplo_bolha_curta_sem_show():
+    """base.py não pode citar 'show' como exemplo de bolha curta permitida (contradiz a blacklist)."""
+    p = _p()
+    assert '("boa", "fechou", "show")' not in p
