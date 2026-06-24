@@ -19,6 +19,10 @@ _TAG_ALLOWLIST: frozenset[str] = frozenset({
     "B2B", "B2C", "Revenda", "Marca Própria", "Exportação",
     "Urgente", "Já é Cliente", "Pediu Humano", "Objeção: Preço", "Objeção: Prazo",
 })
+# Tags de ENCERRAMENTO: sinalizam que o lead não deve mais ser auto-prospectado
+# (já é cliente / já pediu para falar com um humano). Aplicá-las cancela os follow-ups
+# standard pendentes — é o gancho de código para o "equivalente da Regra 27".
+_CLOSE_TAGS: frozenset[str] = frozenset({"Já é Cliente", "Pediu Humano"})
 from app.conversations.service import update_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
@@ -465,6 +469,20 @@ async def execute_tool(
         if not validas:
             return "Nenhuma tag válida — use apenas as tags permitidas."
         aplicadas = add_tags_to_lead(lead_id, validas)
+        # Tags de ENCERRAMENTO (equivalente da Regra 27 — cliente já conectado ao time):
+        # "Já é Cliente" / "Pediu Humano" significam "não auto-prospectar mais este lead".
+        # A Valéria encerra sem chamar ferramenta de descarte, então é AQUI que matamos os
+        # follow-ups standard pendentes (auditoria lead 5561984336980 — Daniel recebeu um
+        # follow-up automático depois de dizer que já falava com um humano do time).
+        # Não desativa IA nem marca perdido; só cancela os jobs (handoff_rescue preservado).
+        if any(t in _CLOSE_TAGS for t in (aplicadas or validas)):
+            try:
+                cancel_followups_by_phone(phone, reason="lead_already_served")
+            except Exception as exc:
+                logger.error(
+                    "adicionar_tag_lead: falha ao cancelar follow-ups para lead %s (phone %s): %s",
+                    lead_id, phone, exc,
+                )
         if aplicadas:
             return f"Tags aplicadas: {', '.join(aplicadas)}"
         return "Tags já estavam aplicadas (nenhuma nova)."
@@ -496,6 +514,16 @@ async def execute_tool(
             except Exception:
                 pass
             return f"CRITICAL: erro ao encaminhar para {vendedor} — humano precisa verificar lead manualmente"
+        # Handoff encerra o bot: cancela follow-ups standard pendentes para o lead não
+        # receber uma mensagem automática da Valéria depois de já ter sido passado pro
+        # vendedor (o handoff_rescue é preservado — cancel_followups_by_phone o exclui).
+        try:
+            cancel_followups_by_phone(phone, reason="handoff")
+        except Exception as exc:
+            logger.error(
+                "encaminhar_humano: falha ao cancelar follow-ups para lead %s (phone %s): %s",
+                lead_id, phone, exc,
+            )
         try:
             lead = get_lead(lead_id)
             lead_stage = lead.get("stage") if lead else None

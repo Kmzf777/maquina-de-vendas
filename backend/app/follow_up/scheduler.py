@@ -1,5 +1,6 @@
 # backend/app/follow_up/scheduler.py
 import logging
+import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -294,6 +295,41 @@ _FOLLOWUP_REENGAGE_INSTRUCTION = (
 )
 
 
+# GUARDRAIL DE SANIDADE (auditoria lead 5561984336980, 2026-06-24).
+# O LLM às vezes RECUSA a tarefa de follow-up e devolve um meta-comentário em vez de
+# uma mensagem ("Não é apropriado enviar..."; "Como uma IA, não posso..."; "O lead
+# informou que..."). Antes, `process_due_followups` só barrava resposta VAZIA — o texto
+# cru da recusa ia direto pro cliente. Estes marcadores nunca aparecem numa mensagem
+# real da Valéria (minúscula, casual, sobre o assunto em aberto), então servem de filtro
+# seguro. Normalizamos sem acento + minúsculo antes de casar.
+_META_COMMENT_MARKERS = (
+    "nao e apropriado", "nao seria apropriado",
+    "nao e adequado", "nao seria adequado",
+    "como uma ia", "sou uma ia", "enquanto ia", "como ia,",
+    "desculpe, mas", "desculpe mas",
+    "o lead informou", "o lead disse", "o cliente informou", "o lead afirmou",
+    "nao posso enviar", "nao posso gerar", "nao posso criar", "nao vou enviar",
+    "nao e possivel enviar", "nao faz sentido enviar",
+    "mensagem de follow-up", "mensagem de followup",
+    "follow-up neste caso", "followup neste caso",
+)
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+def _is_meta_comment(text: str) -> bool:
+    """True se o texto tem cara de meta-comentário/recusa do LLM (não uma mensagem real).
+
+    Filtro source-agnostic: pega qualquer recusa, independente do modelo/temperatura.
+    Falso positivo é tolerável (no pior caso cancela um follow-up legítimo raro); um
+    falso negativo vaza a recusa pro cliente — o erro grave que estamos blindando.
+    """
+    norm = _strip_accents((text or "")).lower()
+    return any(marker in norm for marker in _META_COMMENT_MARKERS)
+
+
 def _build_followup_system_prompt(sequence: int) -> str:
     """System prompt do follow-up — usa a persona Valéria (não um prompt genérico).
 
@@ -420,6 +456,18 @@ async def process_due_followups(now: datetime | None = None) -> None:
             _cancel_job(job["id"], "empty_response")
             logger.warning(
                 f"[FOLLOWUP] LLM retornou vazio — cancelando seq={sequence} conversation={conversation_id}"
+            )
+            continue
+
+        # GUARDRAIL: o LLM recusou e devolveu um meta-comentário em vez de mensagem
+        # (ver _is_meta_comment). Aborta SILENCIOSAMENTE — nunca enviar a recusa ao cliente
+        # (auditoria lead 5561984336980: o texto "Não é apropriado enviar..." foi entregue).
+        if _is_meta_comment(message):
+            _cancel_job(job["id"], "meta_comment")
+            logger.warning(
+                "[FOLLOWUP] LLM devolveu meta-comentário/recusa — cancelando sem enviar "
+                "seq=%s conversation=%s: %r",
+                sequence, conversation_id, message[:160],
             )
             continue
 
