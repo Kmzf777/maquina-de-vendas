@@ -308,7 +308,7 @@ def _build_followup_system_prompt(sequence: int) -> str:
         "esta é a última tentativa antes da janela de atendimento expirar: seja mais direta, "
         "crie senso de oportunidade, mas sem ser agressiva"
     )
-    persona = build_base_prompt(lead_name=None, lead_company=None, now=datetime.now(_FOLLOWUP_TZ_BR), is_outbound=True)
+    persona = build_base_prompt(lead_name=None, lead_company=None, now=datetime.now(_FOLLOWUP_TZ_BR))
     return f"{persona}\n\n{_FOLLOWUP_REENGAGE_INSTRUCTION}\nTom desta tentativa: {seq_tone}"
 
 

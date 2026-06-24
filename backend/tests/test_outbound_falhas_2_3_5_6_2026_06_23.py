@@ -17,23 +17,16 @@ def _now():
 
 # --- Falha #2: regra do silencio (LEI UNIVERSAL desde 2026-06-24) ---------
 
-def test_silencio_presente_no_outbound():
+def test_silencio_global_inbound_e_outbound():
+    """A regra do silencio e LEI UNIVERSAL — presente para as duas personas."""
     from app.agent.prompts.base import build_base_prompt
-    s = build_base_prompt(lead_name=None, lead_company=None, now=_now(), is_outbound=True)
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())
     assert "REGRA DO SILENCIO" in s
     low = s.lower()
     assert "fique em silencio" in low or "silencio absoluto" in low
-    # Proibe empilhar ack + afirmacao + pergunta no mesmo turno
     assert "empilhar" in low
-
-
-def test_silencio_agora_global_no_inbound():
-    """A regra do silencio virou LEI UNIVERSAL — deve estar presente TAMBEM no Inbound.
-    O bloco <outbound_voice> (anti-preenchimento) continua exclusivo do Outbound."""
-    from app.agent.prompts.base import build_base_prompt
-    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())  # is_outbound=False (default)
-    assert "REGRA DO SILENCIO" in s, "silencio deveria ser global (inbound tambem)"
-    assert "<outbound_voice>" not in s, "o bloco outbound NAO pode vazar pro inbound"
+    # O mecanismo outbound-only (is_outbound / <outbound_voice>) foi removido
+    assert "<outbound_voice>" not in s
 
 
 # --- Falha #3: entender necessidade antes do produto ----------------------
@@ -48,21 +41,16 @@ def test_atacado_etapa0_entende_necessidade_antes_do_produto():
     assert "nunca abra com justificativa logica" in low or "justificativa logica de venda" in low
 
 
-# --- Falha #5: sem palavras de preenchimento soltas (ESCOPO OUTBOUND) -----
+# --- Falha #5 / D2: anti-preenchimento agora GLOBAL (lei universal) --------
 
-def test_anti_preenchimento_no_outbound():
+def test_anti_preenchimento_global_inbound_e_outbound():
+    """D2: a proibicao de jargao-ack solto vale para TODAS as personas (inbound + outbound),
+    incluindo 'tudo joia'."""
     from app.agent.prompts.base import build_base_prompt
-    s = build_base_prompt(lead_name=None, lead_company=None, now=_now(), is_outbound=True)
-    # Proibicao explicita dos jargoes como bolha-ack solta no bloco outbound
-    assert '"perfeito", "entendo", "show", "que bacana"' in s
-
-
-def test_anti_preenchimento_nao_afeta_inbound():
-    """Isolamento: o Inbound mantem a secao de acks original, sem o reforco outbound."""
-    from app.agent.prompts.base import build_base_prompt
-    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())  # is_outbound=False
-    # A proibicao estrita outbound NAO aparece no inbound
-    assert '"perfeito", "entendo", "show", "que bacana"' not in s
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())  # default = qualquer persona
+    assert '"perfeito", "entendo", "show", "que bacana", "que legal", "tudo joia"' in s
+    # "show" deixou de ser um ack permitido na lista VARIE
+    assert '"saquei", "boa", "show", "fechou"' not in s
     # O vocabulario original compartilhado permanece intacto
     assert '"perfeito", "com certeza", "entendo", "bacana"' in s
 

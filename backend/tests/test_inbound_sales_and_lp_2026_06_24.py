@@ -40,12 +40,26 @@ def test_get_or_create_conversation_seta_agent_profile_na_criacao():
     assert captured["row"].get("agent_profile_id") == "prof-out"
 
 
-def test_lp_usa_profile_outbound():
-    """A LP fixa a persona outbound (mesmo profile do ai_reengage)."""
-    from app.lp_webhook.service import LP_OUTBOUND_PROFILE_ID
-    from app.follow_up.scheduler import AI_REENGAGE_PROFILE_ID
-    assert LP_OUTBOUND_PROFILE_ID == AI_REENGAGE_PROFILE_ID
-    assert LP_OUTBOUND_PROFILE_ID != "674beb13-2e81-426b-aad7-f6712c542f8b"  # nao e o inbound
+def test_lp_resolve_profile_por_prompt_key_env_agnostico():
+    """F1: a LP resolve o profile por prompt_key em runtime (sem UUID hardcoded)."""
+    from app.lp_webhook.service import LP_PROFILE_PROMPT_KEY
+    assert LP_PROFILE_PROMPT_KEY == "valeria_outbound"
+
+    # get_profile_id_by_prompt_key devolve o id do profile com aquela persona
+    from unittest.mock import patch
+    from app.agent_profiles import service as aps
+    sb = MagicMock()
+    sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{"id": "prof-out-env"}]
+    )
+    with patch.object(aps, "get_supabase", return_value=sb):
+        assert aps.get_profile_id_by_prompt_key("valeria_outbound") == "prof-out-env"
+
+    # Sem profile no banco → None (fail-open: cai no default do canal)
+    sb2 = MagicMock()
+    sb2.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+    with patch.object(aps, "get_supabase", return_value=sb2):
+        assert aps.get_profile_id_by_prompt_key("valeria_outbound") is None
 
 
 # --- 3. Inbound atacado: pitch precoce removido + WIIFM ----------------------
@@ -68,15 +82,25 @@ def test_inbound_atacado_tem_wiifm():
 # --- 4. base.py: brush-off global + handoff CTA imperativo ------------------
 
 def test_base_tem_regra_brushoff_global():
-    """Brush-off vale em ambas as personas (regra global no corpo compartilhado)."""
+    """Brush-off vale em todas as personas (regra global no corpo compartilhado)."""
     from app.agent.prompts.base import build_base_prompt
-    inb = build_base_prompt(lead_name=None, lead_company=None, now=_now())
-    out = build_base_prompt(lead_name=None, lead_company=None, now=_now(), is_outbound=True)
-    for s in (inb, out):
-        assert "BRUSH-OFF" in s or "CONTORNO DE DESCULPAS" in s
-        assert "TURNAROUND" in s
-        # Nao aceitar passivamente o "vou pensar" de primeira
-        assert "vou pensar" in s.lower() or "vou analisar" in s.lower()
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    assert "BRUSH-OFF" in s or "CONTORNO DE DESCULPAS" in s
+    assert "TURNAROUND" in s
+    # Nao aceitar passivamente o "vou pensar" de primeira
+    assert "vou pensar" in s.lower() or "vou analisar" in s.lower()
+
+
+def test_d1_rapport_revenda_sem_pitch_de_margem():
+    """D1: o rapport de revenda nao pode mais despejar argumento de margem/fidelizacao
+    (vazava pitch precoce no inbound). Deve focar em curiosidade pelo negocio do lead."""
+    from app.agent.prompts.base import build_base_prompt
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    assert "a margem e boa e o cliente fideliza" not in s
+    assert "diferenca no ticket medio" not in s
+    low = s.lower()
+    # Instrucao de curiosidade no lugar do pitch
+    assert "como o cafe entra no seu negocio hoje" in low or "curiosidade genuina pelo negocio" in low
 
 
 def test_base_handoff_cta_imperativo():
