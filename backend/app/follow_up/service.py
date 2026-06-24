@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 from datetime import datetime, timezone, timedelta, time
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -14,6 +15,11 @@ _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 _SP_TZ = ZoneInfo("America/Sao_Paulo")
 _BUSINESS_START = time(9, 0)
 _BUSINESS_END = time(16, 0)
+
+# 1o follow-up NUNCA "cravado em 1h" (robotico, cara de cobranca de vendas). Sorteia um
+# intervalo natural entre ~1.5h e ~3.5h; o clamp de janela comercial ainda se aplica.
+_SEQ1_MIN_MINUTES = 90
+_SEQ1_MAX_MINUTES = 210
 
 
 def is_within_business_window(target: datetime) -> bool:
@@ -52,7 +58,7 @@ def schedule_followup(
     lead_id: str,
     channel_id: str,
 ) -> None:
-    """Cancela jobs pendentes anteriores e cria 2 novos (1h e 23h)."""
+    """Cancela jobs pendentes anteriores e cria 2 novos (1o com jitter ~1.5-3.5h, 2o em 23h)."""
     sb = get_supabase()
     now = datetime.now(timezone.utc)
 
@@ -99,7 +105,8 @@ def schedule_followup(
     # é NUNCA disparar de madrugada para lead de prospecção. Aceita-se que o seq=2 (23h) possa,
     # ao ser empurrado para o próximo dia útil, eventualmente estourar a janela Meta de 24h
     # (o guard window_expired em process_due_followups cancela com segurança nesse caso).
-    fire_at_seq1 = _clamp_to_business_window(now + timedelta(hours=1))
+    seq1_minutes = random.randint(_SEQ1_MIN_MINUTES, _SEQ1_MAX_MINUTES)
+    fire_at_seq1 = _clamp_to_business_window(now + timedelta(minutes=seq1_minutes))
     fire_at_seq2 = _clamp_to_business_window(now + timedelta(hours=23))
     jobs = [
         {

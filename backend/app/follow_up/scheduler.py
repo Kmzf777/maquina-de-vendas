@@ -283,8 +283,14 @@ _FOLLOWUP_REENGAGE_INSTRUCTION = (
     "Você está retomando o contato com um lead que parou de responder (mensagem de follow-up no "
     "WhatsApp). Com base no histórico, escreva UMA mensagem curta de reengajamento, contextual ao "
     "que já foi conversado. Siga TODAS as regras de voz e formato da persona acima (minúsculas, "
-    "acentos, SEM ponto final, fragmentação em bolhas com \\n\\n, no máximo 3 bolhas, sem emoji). "
-    "Não use saudações formais como 'Olá' ou 'Bom dia'. Faça referência ao que foi discutido."
+    "acentos, SEM ponto final, fragmentação em bolhas com \\n\\n, no máximo 3 bolhas, sem emoji).\n"
+    "PROIBIDO abrir com saudação formal ('Olá', 'Bom dia') NEM com o nome do lead no começo "
+    "('fabrizio, ...') — abrir sempre pelo nome soa como cobrança robótica de vendas.\n"
+    "PROIBIDO abertura ou pergunta vazia de preenchimento: 'tudo joia?', 'tudo bem?', 'tudo certo "
+    "por aí?', 'e aí, sumiu?'. Elas não acrescentam nada e escancaram a automação.\n"
+    "A mensagem DEVE retomar pelo ASSUNTO CONCRETO que ficou em aberto (o produto que ele olhava, a "
+    "dúvida, o interesse que demonstrou) e trazer algo de valor ou uma pergunta específica sobre "
+    "aquilo — nunca um check-in genérico."
 )
 
 
@@ -295,8 +301,8 @@ def _build_followup_system_prompt(sequence: int) -> str:
     normais da Valéria. A diferenciação por sequência (1ª vs última tentativa) é anexada.
     """
     seq_tone = (
-        "esta é a primeira tentativa (1h após o último contato): leve, curiosa e natural, "
-        "sem pressionar — só demonstre interesse genuíno"
+        "esta é a primeira tentativa de retomada: leve, curiosa e natural, sem pressionar — "
+        "retome pelo assunto que ficou em aberto e demonstre interesse genuíno"
         if sequence == 1
         else
         "esta é a última tentativa antes da janela de atendimento expirar: seja mais direta, "
