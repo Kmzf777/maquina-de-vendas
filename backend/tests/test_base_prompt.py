@@ -19,6 +19,16 @@ def test_base_prompt_with_name():
     assert "João" in prompt
 
 
+def test_base_prompt_exige_ponto_de_interrogacao():
+    """A regra 'sem ponto final' nao pode derrubar o '?': perguntas DEVEM terminar com '?'."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    assert "PONTO DE INTERROGACAO OBRIGATORIO" in prompt
+    # a regra de ponto final permanece (so o '.' e banido, intencional)
+    assert "SEM PONTO FINAL" in prompt
+    low = prompt.lower()
+    assert "termina com \"?\"" in low or "terminar com \"?\"" in low or "terminar toda frase interrogativa com \"?\"" in low
+
+
 def test_base_prompt_with_lead_context_name():
     ctx = {"name": "Maria", "company": "Hotel Sol", "previous_stage": "atacado", "notes": "Quer 50kg/mês"}
     prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now(), lead_context=ctx)
