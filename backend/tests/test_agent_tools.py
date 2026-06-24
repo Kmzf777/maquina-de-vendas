@@ -257,11 +257,15 @@ async def test_registrar_optout_nao_chama_create_deal_nem_human_control():
 
 
 def test_registrar_sem_interesse_presente_nos_stages():
-    """registrar_sem_interesse_atual deve estar disponível em todos os stages (igual ao optout)."""
-    for stage in ["secretaria", "atacado", "private_label", "exportacao", "consumo"]:
+    """registrar_sem_interesse_atual disponível nos stages de prospecção. EXCETO consumo:
+    varejo B2C não é 'lead perdido', então consumo nunca auto-descarta (auditoria 5551991295543)."""
+    for stage in ["secretaria", "atacado", "private_label", "exportacao"]:
         tools = get_tools_for_stage(stage)
         names = [t["function"]["name"] for t in tools]
         assert "registrar_sem_interesse_atual" in names, f"ausente no stage '{stage}'"
+    # consumo NÃO tem a ferramenta de descarte
+    consumo_names = [t["function"]["name"] for t in get_tools_for_stage("consumo")]
+    assert "registrar_sem_interesse_atual" not in consumo_names
 
 
 def test_registrar_sem_interesse_schema():

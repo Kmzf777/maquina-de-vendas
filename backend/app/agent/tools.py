@@ -383,7 +383,10 @@ def get_tools_for_stage(stage: str) -> list[dict]:
         "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
         "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
         "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
-        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "adicionar_tag_lead"],
+        # Varejo B2C NÃO é "lead perdido": consumo NUNCA auto-descarta (sem
+        # registrar_sem_interesse_atual). A saída legítima continua sendo opt-out (lead pede
+        # pra parar) — handoff não se aplica ao self-service. (Auditoria lead 5551991295543.)
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse", "adicionar_tag_lead"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
