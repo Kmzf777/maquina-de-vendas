@@ -15,7 +15,7 @@ def _now():
     return datetime.now(TZ_BR)
 
 
-# --- Falha #2: regra do silencio (ESCOPO OUTBOUND) ------------------------
+# --- Falha #2: regra do silencio (LEI UNIVERSAL desde 2026-06-24) ---------
 
 def test_silencio_presente_no_outbound():
     from app.agent.prompts.base import build_base_prompt
@@ -27,12 +27,13 @@ def test_silencio_presente_no_outbound():
     assert "empilhar" in low
 
 
-def test_silencio_ausente_no_inbound():
-    """Isolamento: a regra do silencio NAO pode vazar pro Inbound (base.py e compartilhado)."""
+def test_silencio_agora_global_no_inbound():
+    """A regra do silencio virou LEI UNIVERSAL — deve estar presente TAMBEM no Inbound.
+    O bloco <outbound_voice> (anti-preenchimento) continua exclusivo do Outbound."""
     from app.agent.prompts.base import build_base_prompt
     s = build_base_prompt(lead_name=None, lead_company=None, now=_now())  # is_outbound=False (default)
-    assert "REGRA DO SILENCIO" not in s
-    assert "<outbound_voice>" not in s
+    assert "REGRA DO SILENCIO" in s, "silencio deveria ser global (inbound tambem)"
+    assert "<outbound_voice>" not in s, "o bloco outbound NAO pode vazar pro inbound"
 
 
 # --- Falha #3: entender necessidade antes do produto ----------------------

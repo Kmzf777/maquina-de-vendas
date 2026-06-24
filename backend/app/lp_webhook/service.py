@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 REDIS_CONFIG_KEY = "lp_webhook:config"
 
+# LP é um disparo ATIVO (enviamos o template `lp_*` primeiro) — a conversa deve rodar a
+# persona OUTBOUND (valeria_outbound), não o default inbound do canal. Mesmo profile usado
+# pelo ai_reengage (scheduler.AI_REENGAGE_PROFILE_ID). Em ambientes sem esse profile, o
+# resolve falha-aberto para o default — sem quebrar o fluxo.
+LP_OUTBOUND_PROFILE_ID = "b9930820-2c7e-4f1a-998f-f9531ed12c95"
+
 _DEFAULT_CONFIG: dict[str, Any] = {
     "channel_id": "",
     "template_name": "",
@@ -191,7 +197,7 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
             logger.warning("[LP_WELCOME] channel_id vazio — job NÃO será agendado. Configure em /config > Landing Pages.")
         else:
             try:
-                conv = get_or_create_conversation(lead_id, channel_id)
+                conv = get_or_create_conversation(lead_id, channel_id, agent_profile_id=LP_OUTBOUND_PROFILE_ID)
                 conversation_id = conv["id"]
                 logger.info("[LP_WELCOME] Conversa obtida: conversation_id=%s lead=%s", conversation_id, lead_id)
             except Exception as exc:

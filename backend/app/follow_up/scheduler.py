@@ -655,11 +655,11 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
         _lp_body = f"olá {first_name}\n\n[disparo automático — template {template_name}]" if first_name \
             else f"[disparo automático — template {template_name}]"
         save_message(
-            conversation["id"],
-            lead["id"],
-            "assistant",
-            _lp_body,
+            lead_id=lead["id"],
+            role="assistant",
+            content=_lp_body,
             sent_by="broadcast",
+            conversation_id=conversation["id"],
             wamid=extract_wamid(send_result),
         )
     except Exception as exc:

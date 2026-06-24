@@ -80,12 +80,14 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
     mock_sent.assert_called_once_with("job-lp-1")
     mock_cancel.assert_not_called()
     # 1A: o disparo LP deve ser persistido em messages para reações/replies resolverem.
+    # save_message DEVE ser chamado por KEYWORD (o bug da "mensagem fantasma" era passar
+    # conversation_id no slot posicional de lead_id → violava a FK e a persistência falhava).
     mock_save.assert_called_once()
     _args, _kwargs = mock_save.call_args
-    assert _args[0] == "conv-lp-1"          # conversation_id
-    assert _args[1] == "lead-1"             # lead_id
-    assert _args[2] == "assistant"          # role
-    assert "lp_solicitacao_recebida" in _args[3]
+    assert _kwargs.get("lead_id") == "lead-1"
+    assert _kwargs.get("role") == "assistant"
+    assert "lp_solicitacao_recebida" in _kwargs.get("content", "")
+    assert _kwargs.get("conversation_id") == "conv-lp-1"
     assert _kwargs.get("sent_by") == "broadcast"
     assert _kwargs.get("wamid") == "wamid.lp1"
 

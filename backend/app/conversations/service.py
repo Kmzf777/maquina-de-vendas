@@ -24,8 +24,15 @@ def _compute_window_expiration(conversation: dict[str, Any]) -> str | None:
     return (last_dt + timedelta(hours=24)).isoformat()
 
 
-def get_or_create_conversation(lead_id: str, channel_id: str) -> dict[str, Any]:
-    """Get existing conversation or create new one for lead+channel pair."""
+def get_or_create_conversation(
+    lead_id: str, channel_id: str, agent_profile_id: str | None = None
+) -> dict[str, Any]:
+    """Get existing conversation or create new one for lead+channel pair.
+
+    `agent_profile_id` (opcional) fixa a persona da conversa na CRIAÇÃO — usado por
+    fluxos de disparo ativo (LP, broadcast) para não cair no default inbound do canal.
+    Conversa já existente é retornada como está (não sobrescreve o perfil).
+    """
     sb = get_supabase()
     result = (
         sb.table("conversations")
@@ -44,6 +51,8 @@ def get_or_create_conversation(lead_id: str, channel_id: str) -> dict[str, Any]:
         "stage": "secretaria",
         "status": "active",
     }
+    if agent_profile_id:
+        new_conv["agent_profile_id"] = agent_profile_id
     result = sb.table("conversations").insert(new_conv).execute()
     conversation = result.data[0]
 
