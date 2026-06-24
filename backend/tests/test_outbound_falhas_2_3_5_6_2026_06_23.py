@@ -15,16 +15,24 @@ def _now():
     return datetime.now(TZ_BR)
 
 
-# --- Falha #2: regra do silencio ------------------------------------------
+# --- Falha #2: regra do silencio (ESCOPO OUTBOUND) ------------------------
 
-def test_base_tem_regra_do_silencio():
+def test_silencio_presente_no_outbound():
     from app.agent.prompts.base import build_base_prompt
-    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now(), is_outbound=True)
     assert "REGRA DO SILENCIO" in s
     low = s.lower()
     assert "fique em silencio" in low or "silencio absoluto" in low
     # Proibe empilhar ack + afirmacao + pergunta no mesmo turno
     assert "empilhar" in low
+
+
+def test_silencio_ausente_no_inbound():
+    """Isolamento: a regra do silencio NAO pode vazar pro Inbound (base.py e compartilhado)."""
+    from app.agent.prompts.base import build_base_prompt
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())  # is_outbound=False (default)
+    assert "REGRA DO SILENCIO" not in s
+    assert "<outbound_voice>" not in s
 
 
 # --- Falha #3: entender necessidade antes do produto ----------------------
@@ -39,17 +47,23 @@ def test_atacado_etapa0_entende_necessidade_antes_do_produto():
     assert "nunca abra com justificativa logica" in low or "justificativa logica de venda" in low
 
 
-# --- Falha #5: sem palavras de preenchimento soltas -----------------------
+# --- Falha #5: sem palavras de preenchimento soltas (ESCOPO OUTBOUND) -----
 
-def test_base_acks_nao_endossa_jargao_solto():
+def test_anti_preenchimento_no_outbound():
     from app.agent.prompts.base import build_base_prompt
-    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())
-    # A lista de vocabulario antiga que endossava "perfeito"/"entendo" soltos saiu
-    assert '"perfeito", "com certeza", "entendo", "bacana"' not in s
-    # A regra de acks agora proibe esses jargoes como bolha solta
-    assert '"perfeito", "entendo", "show"' in s
-    # "show" nao e mais endossado como ack varivel livre
-    assert '"saquei", "boa", "show", "fechou"' not in s
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now(), is_outbound=True)
+    # Proibicao explicita dos jargoes como bolha-ack solta no bloco outbound
+    assert '"perfeito", "entendo", "show", "que bacana"' in s
+
+
+def test_anti_preenchimento_nao_afeta_inbound():
+    """Isolamento: o Inbound mantem a secao de acks original, sem o reforco outbound."""
+    from app.agent.prompts.base import build_base_prompt
+    s = build_base_prompt(lead_name=None, lead_company=None, now=_now())  # is_outbound=False
+    # A proibicao estrita outbound NAO aparece no inbound
+    assert '"perfeito", "entendo", "show", "que bacana"' not in s
+    # O vocabulario original compartilhado permanece intacto
+    assert '"perfeito", "com certeza", "entendo", "bacana"' in s
 
 
 # --- Falha #6: follow-up sem 1h cravado e sem abertura generica ------------

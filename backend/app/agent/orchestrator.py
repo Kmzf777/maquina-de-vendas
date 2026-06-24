@@ -304,6 +304,7 @@ def build_system_prompt(
         lead_company=lead.get("company"),
         now=now,
         lead_context=lead_context,
+        is_outbound=(prompt_key == "valeria_outbound"),
     )
     stage_prompts = get_stage_prompts(prompt_key)
     stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
