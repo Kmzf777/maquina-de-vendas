@@ -24,6 +24,7 @@ from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 from app.agent.tools import pop_deferred_media, pop_interest_marked
 from app.utils.geo import ddd_to_region
+from app.buffer.lead_lock import lead_run_lock
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
@@ -129,6 +130,42 @@ async def _sleep_with_typing_renewal(delay: float, provider, wamid: str | None) 
         chunk = min(_TYPING_RENEWAL_INTERVAL, remaining)
         await asyncio.sleep(chunk)
         remaining -= chunk
+
+
+async def _pulse_typing_loop(provider, wamid: str) -> None:
+    """Pulsa "digitando…" imediatamente e a cada _TYPING_RENEWAL_INTERVAL até ser cancelado.
+
+    Roda como task de fundo DURANTE o processamento do LLM/tools (antes da 1ª bolha existir).
+    O 1º pulso é em t=0 (imediato). Best-effort: falha de pulso nunca derruba o turno.
+    """
+    try:
+        while True:
+            try:
+                await provider.send_typing_indicator(wamid)
+            except Exception as e:
+                logger.debug("[TYPING] pulso de processamento falhou: %s", e)
+            await asyncio.sleep(_TYPING_RENEWAL_INTERVAL)
+    except asyncio.CancelledError:
+        pass
+
+
+def _start_typing_pulse(provider, wamid: str | None, is_rehearsal: bool):
+    """Dispara o "digitando…" AGORA e o mantém pulsando enquanto o agente pensa.
+
+    Cobre o vácuo de 30-47s de latência do LLM ANTES da 1ª bolha — sem isso o lead olha
+    pra tela vazia e manda outra mensagem (o gatilho da race condition, auditoria
+    5544991611703). Sem wamid (nada a referenciar na Cloud API) ou em rehearsal → no-op.
+    """
+    if not wamid or is_rehearsal:
+        return None
+    return asyncio.create_task(_pulse_typing_loop(provider, wamid))
+
+
+def _stop_typing_pulse(task) -> None:
+    """Cancela o pulso de digitação (idempotente). A partir daqui o pacing das bolhas
+    assume a renovação do indicador via _sleep_with_typing_renewal."""
+    if task is not None and not task.done():
+        task.cancel()
 
 # Marcador único de falha de áudio — usado tanto no replace do texto quanto na
 # detecção de insistência (escalonamento). Mantido como constante para evitar drift.
@@ -650,153 +687,169 @@ async def process_buffered_messages(
     if personalization:
         lead_context = {**lead_context, **personalization}
 
-    response = None
-    _agent_t0 = time.monotonic()  # latência da LLM → desconta do delay do 1º balão (CA#4)
-    for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
-        try:
-            response = await run_agent(
-                conversation, resolved_text,
-                lead_context=lead_context,
-                agent_profile_id=agent_profile_id,
-            )
-            break
-        except Exception as e:
-            if attempt < _AGENT_MAX_ATTEMPTS:
-                logger.warning(
-                    f"[AGENT RETRY] Tentativa {attempt}/{_AGENT_MAX_ATTEMPTS} falhou para {phone} "
-                    f"(conv={conversation['id']}): {e} — nova tentativa em {_AGENT_RETRY_DELAY}s"
+    # SERIALIZAÇÃO POR LEAD (mutex Redis) + EARLY TYPING — auditoria race condition do
+    # lead 5544991611703 (2026-06-24). A latência de 30-47s do LLM cria um vácuo; o lead
+    # double-texta achando que travou; o 2º flush rodava CONCORRENTE e lia o histórico
+    # antes do 1º persistir as bolhas → saída duplicada/atropelada. O lock serializa o
+    # turno por lead (a RUN 2 espera a RUN 1 liberar); o early typing mostra "digitando…"
+    # imediatamente e pulsa enquanto a IA pensa, fechando o vácuo que dispara o double-text.
+    is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
+    _typing_task = _start_typing_pulse(provider, wamid, is_rehearsal)
+    try:
+        async with lead_run_lock(lead["id"]):
+            response = None
+            _agent_t0 = time.monotonic()  # latência da LLM → desconta do delay do 1º balão (CA#4)
+            for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
+                try:
+                    response = await run_agent(
+                        conversation, resolved_text,
+                        lead_context=lead_context,
+                        agent_profile_id=agent_profile_id,
+                    )
+                    break
+                except Exception as e:
+                    if attempt < _AGENT_MAX_ATTEMPTS:
+                        logger.warning(
+                            f"[AGENT RETRY] Tentativa {attempt}/{_AGENT_MAX_ATTEMPTS} falhou para {phone} "
+                            f"(conv={conversation['id']}): {e} — nova tentativa em {_AGENT_RETRY_DELAY}s"
+                        )
+                        await asyncio.sleep(_AGENT_RETRY_DELAY)
+                    else:
+                        logger.error(
+                            f"[AGENT FAILED] Todas as {_AGENT_MAX_ATTEMPTS} tentativas falharam para {phone} "
+                            f"(conv={conversation['id']}): {e}",
+                            exc_info=True,
+                        )
+                        pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
+                        _update_last_msg(conversation["id"])
+                        return
+
+            # LLM terminou de pensar/resolver tools → encerra o pulso de "digitando…": daqui
+            # o pacing das bolhas (_sleep_with_typing_renewal) assume a renovação do indicador.
+            _stop_typing_pulse(_typing_task)
+
+            # Pop the interest flag once right after the agent attempt — before any early returns
+            # so stale state never leaks into the next turn (handoff, empty-response, or normal path).
+            interest = pop_interest_marked(conversation["id"])
+
+            if response is None:
+                # Intentional: encaminhar_humano was called — handoff message already sent by the tool.
+                logger.info(
+                    "[AGENT HANDOFF] encaminhar_humano executado para %s (conv=%s, stage=%s) — "
+                    "mensagem de handoff enviada pela tool.",
+                    phone, conversation["id"], conversation.get("stage"),
                 )
-                await asyncio.sleep(_AGENT_RETRY_DELAY)
-            else:
-                logger.error(
-                    f"[AGENT FAILED] Todas as {_AGENT_MAX_ATTEMPTS} tentativas falharam para {phone} "
-                    f"(conv={conversation['id']}): {e}",
-                    exc_info=True,
-                )
-                pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
                 _update_last_msg(conversation["id"])
                 return
 
-    # Pop the interest flag once right after the agent attempt — before any early returns
-    # so stale state never leaks into the next turn (handoff, empty-response, or normal path).
-    interest = pop_interest_marked(conversation["id"])
-
-    if response is None:
-        # Intentional: encaminhar_humano was called — handoff message already sent by the tool.
-        logger.info(
-            "[AGENT HANDOFF] encaminhar_humano executado para %s (conv=%s, stage=%s) — "
-            "mensagem de handoff enviada pela tool.",
-            phone, conversation["id"], conversation.get("stage"),
-        )
-        _update_last_msg(conversation["id"])
-        return
-
-    if not response.strip():
-        # Unexpected empty response — the AI returned no text and no handoff tool was called.
-        logger.warning(
-            "[AGENT EMPTY RESPONSE] resposta de texto vazia inesperada para %s "
-            "(conv=%s, stage=%s) — nenhuma mensagem enviada ao lead.",
-            phone, conversation["id"], conversation.get("stage"),
-        )
-        _update_last_msg(conversation["id"])
-        return
-
-    # Send bubbles — persist only after all bubbles are delivered.
-    # Destino de envio = wa_id real do lead quando houver (entregável); senão phone.
-    # Evita 131026 em números BR registrados sem o 9º dígito (ver resolve_send_target).
-    send_to = resolve_send_target(lead, phone)
-    is_rehearsal = os.environ.get("REHEARSAL_MODE", "").lower() == "true"
-    bubbles = split_into_bubbles(response)
-    llm_latency = time.monotonic() - _agent_t0
-    delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
-    send_ok = True
-    sent_wamids: list[str | None] = []
-    # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima.
-    # _sleep_with_typing_renewal pulsa o "digitando…" no início e a cada ~10s durante a
-    # espera, mantendo o status na tela do lead mesmo em delays longos (a Meta expira o
-    # indicador em ~25s). O primeiro pulso é imediato, então — como não há await entre o
-    # send_text de um balão e a entrada no helper do próximo — o "digitando…" reaparece
-    # logo após cada balão, sem lacuna além da latência de rede inerente.
-    for delay, bubble in zip(delays, bubbles):
-        if delay > 0:
-            await _sleep_with_typing_renewal(delay, provider, wamid)
-        try:
-            send_result = await provider.send_text(send_to, bubble)
-            sent_wamids.append(extract_wamid(send_result))
-        except Exception as e:
-            logger.error(f"Failed to send bubble to {send_to}: {e}", exc_info=True)
-            send_ok = False
-            break
-
-    if send_ok:
-        for bubble, bubble_wamid in zip(bubbles, sent_wamids):
-            try:
-                await _save_with_retry(
-                    f"save assistant msg {phone}",
-                    save_message,
-                    conversation["id"], lead["id"], "assistant",
-                    bubble, conversation.get("stage"),
-                    sent_by="agent",
-                    wamid=bubble_wamid,
-                    agent_persona=agent_persona,
+            if not response.strip():
+                # Unexpected empty response — the AI returned no text and no handoff tool was called.
+                logger.warning(
+                    "[AGENT EMPTY RESPONSE] resposta de texto vazia inesperada para %s "
+                    "(conv=%s, stage=%s) — nenhuma mensagem enviada ao lead.",
+                    phone, conversation["id"], conversation.get("stage"),
                 )
-            except Exception as e:
-                logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
+                _update_last_msg(conversation["id"])
+                return
 
-        # Agenda follow-up em dois gatilhos:
-        #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo;
-        #  (2) OUTBOUND "engajou e esfriou": o lead respondeu à abordagem ativa e pode sumir
-        #      em seguida. Agendamos proativamente para resgatar o vácuo (ghosting), mesmo sem
-        #      interesse declarado. schedule_followup é idempotente (cancela+recria), então se o
-        #      lead responder de novo antes do disparo, o ciclo é reagendado.
-        # Guard crítico do gatilho (2): opt-out e soft-rejection desativam a IA no mesmo turno —
-        # nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do banco). Handoff
-        # retorna response=None e já saiu antes deste bloco.
-        is_outbound = agent_persona == "valeria_outbound"
-        if conversation.get("followup_enabled", True) and channel:
-            should_schedule = bool(interest)
-            reason = "interesse comercial" if interest else ""
-            if not should_schedule and is_outbound:
-                fresh = get_lead(lead["id"]) or {}
-                if fresh.get("ai_enabled", True):
-                    should_schedule = True
-                    reason = "outbound engajou-e-esfriou"
-                else:
-                    logger.info(
-                        "[FOLLOWUP] outbound com IA desativada (opt-out/soft) — não agenda p/ %s",
-                        phone,
-                    )
-            if should_schedule:
+            # Send bubbles — persist only after all bubbles are delivered.
+            # Destino de envio = wa_id real do lead quando houver (entregável); senão phone.
+            # Evita 131026 em números BR registrados sem o 9º dígito (ver resolve_send_target).
+            send_to = resolve_send_target(lead, phone)
+            bubbles = split_into_bubbles(response)
+            llm_latency = time.monotonic() - _agent_t0
+            delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
+            send_ok = True
+            sent_wamids: list[str | None] = []
+            # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima.
+            # _sleep_with_typing_renewal pulsa o "digitando…" no início e a cada ~10s durante a
+            # espera, mantendo o status na tela do lead mesmo em delays longos (a Meta expira o
+            # indicador em ~25s). O primeiro pulso é imediato, então — como não há await entre o
+            # send_text de um balão e a entrada no helper do próximo — o "digitando…" reaparece
+            # logo após cada balão, sem lacuna além da latência de rede inerente.
+            for delay, bubble in zip(delays, bubbles):
+                if delay > 0:
+                    await _sleep_with_typing_renewal(delay, provider, wamid)
                 try:
-                    _schedule_followup(
-                        conversation_id=conversation["id"],
-                        lead_id=lead["id"],
-                        channel_id=channel["id"],
-                    )
-                    logger.info("[FOLLOWUP] agendado (%s) para %s", reason, phone)
+                    send_result = await provider.send_text(send_to, bubble)
+                    sent_wamids.append(extract_wamid(send_result))
                 except Exception as e:
-                    logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
-            else:
-                logger.info(
-                    "[FOLLOWUP] sem gatilho de follow-up — não agendado para %s",
-                    phone,
-                )
+                    logger.error(f"Failed to send bubble to {send_to}: {e}", exc_info=True)
+                    send_ok = False
+                    break
 
-        # Dispatch deferred media (enviar_fotos / enviar_foto_produto) after text so
-        # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
-        deferred = pop_deferred_media(conversation["id"])
-        for item in deferred:
-            try:
-                await provider.send_image_base64(
-                    send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
-                )
-                await asyncio.sleep(1)
-            except Exception as _e:
-                logger.error(
-                    "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
-                )
+            if send_ok:
+                for bubble, bubble_wamid in zip(bubbles, sent_wamids):
+                    try:
+                        await _save_with_retry(
+                            f"save assistant msg {phone}",
+                            save_message,
+                            conversation["id"], lead["id"], "assistant",
+                            bubble, conversation.get("stage"),
+                            sent_by="agent",
+                            wamid=bubble_wamid,
+                            agent_persona=agent_persona,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
-    _update_last_msg(conversation["id"])
+                # Agenda follow-up em dois gatilhos:
+                #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo;
+                #  (2) OUTBOUND "engajou e esfriou": o lead respondeu à abordagem ativa e pode sumir
+                #      em seguida. Agendamos proativamente para resgatar o vácuo (ghosting), mesmo sem
+                #      interesse declarado. schedule_followup é idempotente (cancela+recria), então se o
+                #      lead responder de novo antes do disparo, o ciclo é reagendado.
+                # Guard crítico do gatilho (2): opt-out e soft-rejection desativam a IA no mesmo turno —
+                # nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do banco). Handoff
+                # retorna response=None e já saiu antes deste bloco.
+                is_outbound = agent_persona == "valeria_outbound"
+                if conversation.get("followup_enabled", True) and channel:
+                    should_schedule = bool(interest)
+                    reason = "interesse comercial" if interest else ""
+                    if not should_schedule and is_outbound:
+                        fresh = get_lead(lead["id"]) or {}
+                        if fresh.get("ai_enabled", True):
+                            should_schedule = True
+                            reason = "outbound engajou-e-esfriou"
+                        else:
+                            logger.info(
+                                "[FOLLOWUP] outbound com IA desativada (opt-out/soft) — não agenda p/ %s",
+                                phone,
+                            )
+                    if should_schedule:
+                        try:
+                            _schedule_followup(
+                                conversation_id=conversation["id"],
+                                lead_id=lead["id"],
+                                channel_id=channel["id"],
+                            )
+                            logger.info("[FOLLOWUP] agendado (%s) para %s", reason, phone)
+                        except Exception as e:
+                            logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
+                    else:
+                        logger.info(
+                            "[FOLLOWUP] sem gatilho de follow-up — não agendado para %s",
+                            phone,
+                        )
+
+                # Dispatch deferred media (enviar_fotos / enviar_foto_produto) after text so
+                # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
+                deferred = pop_deferred_media(conversation["id"])
+                for item in deferred:
+                    try:
+                        await provider.send_image_base64(
+                            send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
+                        )
+                        await asyncio.sleep(1)
+                    except Exception as _e:
+                        logger.error(
+                            "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
+                        )
+
+            _update_last_msg(conversation["id"])
+    finally:
+        # Rede de segurança: garante que o pulso de digitação nunca vaza (idempotente).
+        _stop_typing_pulse(_typing_task)
 
 
 def _update_last_msg(conversation_id: str) -> None:
