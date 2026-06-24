@@ -46,3 +46,6 @@ docker-compose.override.yml
 # Vercel e arquivos de ambiente (nunca commitar)
 .vercel
 .env*
+
+# Binario do Cloudflare Tunnel baixado localmente (nao versionar — ~50MB)
+cloudflared.exe
