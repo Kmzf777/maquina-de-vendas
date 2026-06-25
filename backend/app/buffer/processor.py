@@ -171,6 +171,30 @@ def _stop_typing_pulse(task) -> None:
 # detecção de insistência (escalonamento). Mantido como constante para evitar drift.
 _AUDIO_FAIL_MARKER = "[audio: nao foi possivel transcrever]"
 
+# B3 (graceful degradation de mídia): mídia visual sem texto vira um marcador legível para
+# o agente (a persona reconhece "[imagem]"/"[documento]" via base.py e não diz "chegou cortada").
+# Os rótulos devem casar com os marcadores citados na seção "TRATAMENTO DE MÍDIA" do base.py.
+_MEDIA_MARKERS = {
+    "image": "[imagem]",
+    "document": "[documento]",
+    "video": "[vídeo]",
+    "sticker": "[figurinha]",
+}
+
+
+def _apply_media_signal(resolved_text: str | None, message_type: str | None) -> str:
+    """Injeta um marcador legível quando a mensagem é mídia visual SEM texto.
+
+    Imagem/documento/vídeo/figurinha são resolvidos para texto vazio (o id é extraído e o
+    conteúdo não é baixado). Sem um sinal textual, o agente recebe "" e divaga. Áudio NÃO entra
+    aqui (tem fluxo próprio de transcrição/_AUDIO_FAIL_MARKER). Texto já presente é preservado
+    (caption de imagem, por exemplo). Fail-safe: tipo desconhecido → retorna o texto original.
+    """
+    text = resolved_text or ""
+    if text.strip():
+        return text
+    return _MEDIA_MARKERS.get(message_type or "", text)
+
 # Transcrição de áudio: o endpoint OpenAI-compat do Gemini NÃO expõe
 # /audio/transcriptions (Whisper) — a chamada antiga falhava 100% (auditoria
 # 2026-06-22: 9 falhas/dia). O caminho suportado é generateContent com inline_data,
@@ -464,6 +488,14 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
+
+    # B3 (graceful degradation de mídia): imagem/documento/vídeo/figurinha são resolvidos para
+    # texto VAZIO (o marcador é removido em _resolve_media e o conteúdo não é baixado). Sem um
+    # sinal textual, o agente recebe "" e divaga ou diz "chegou cortada" — exatamente a cegueira
+    # de imagem da auditoria (lead 5561991573036 mandou a arte e foi ignorada). Injeta um marcador
+    # legível que a persona reconhece (ver "TRATAMENTO DE MÍDIA" no base.py) e que vira preview no
+    # CRM. Áudio tem fluxo próprio (transcrição/_AUDIO_FAIL_MARKER) e não entra aqui.
+    resolved_text = _apply_media_signal(resolved_text, _message_type)
 
     # Dedup (wamid backstop — durable, defense-in-depth): runs FIRST because it is one cheap
     # indexed query with no time-window blind spot, making it the most reliable gate.
