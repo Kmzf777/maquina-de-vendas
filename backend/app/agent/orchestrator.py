@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -98,6 +99,53 @@ def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | Non
     if media_tool_used:
         return _SAFETY_FALLBACK_MEDIA
     return None
+
+
+# ---------------------------------------------------------------------------
+# Rede de segurança contra vazamento de function-call em CÓDIGO (lead 5575992317829)
+# ---------------------------------------------------------------------------
+# O gemini-2.5-flash, via endpoint OpenAI-compat, às vezes serializa o function-call na
+# sua forma de CÓDIGO nativa DENTRO de message.content (em vez de tool_calls), ex.:
+#   <tool_code> print(default_api.encaminhar_humano(mensagem_despedida='...')) </tool_code>
+# Como tool_calls fica vazio, o `while message.tool_calls` nunca executa a tool e o código
+# cru ia direto pro cliente (assistant_text = message.content). A Valéria NUNCA manda
+# código, markdown cercado ou XML pra um lead de café — então qualquer uma destas
+# assinaturas é vazamento e é removida ANTES do envio. Defesa em profundidade junto do
+# guardrail de prompt (base.py): o prompt reduz a frequência; isto garante que o cliente
+# nunca veja código, de forma determinística.
+_TOOL_CODE_BLOCK_RE = re.compile(r"<\s*tool_code\s*>.*?<\s*/\s*tool_code\s*>", re.DOTALL | re.IGNORECASE)
+_FENCED_BLOCK_RE = re.compile(r"```[\w-]*\b.*?```", re.DOTALL)
+_BARE_PRINT_LINE_RE = re.compile(r"^\s*print\s*\(.*\)\s*$")
+
+
+def _strip_leaked_tool_code(text: str) -> str:
+    """Remove vazamentos de function-call em código do texto final, preservando o humano.
+
+    Função pura para ser unit-testada sem rodar run_agent. Remove:
+      - blocos <tool_code>...</tool_code> (com ou sem print/default_api dentro)
+      - blocos markdown cercados por ``` (Valéria nunca manda código ao lead)
+      - tags <tool_code> órfãs (sem par)
+      - linhas que são chamada crua: `print(...)` ou contêm `default_api.<tool>(...)`
+    Colapsa quebras de linha resultantes e apara as bordas.
+    """
+    if not text:
+        return text
+    cleaned = _TOOL_CODE_BLOCK_RE.sub("", text)
+    cleaned = _FENCED_BLOCK_RE.sub("", cleaned)
+    kept: list[str] = []
+    for line in cleaned.splitlines():
+        low = line.strip().lower()
+        if low in ("<tool_code>", "</tool_code>"):
+            continue
+        if "default_api." in low:
+            continue
+        if _BARE_PRINT_LINE_RE.match(line):
+            continue
+        kept.append(line)
+    cleaned = "\n".join(kept)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -597,6 +645,21 @@ async def run_agent(
         message = response.choices[0].message
 
     assistant_text = message.content or ""
+
+    # REDE DE SEGURANÇA ANTI-TOOL_CODE (lead 5575992317829, auditoria 2026-06-25). O gemini
+    # às vezes vaza o function-call como CÓDIGO no content (tool_calls vazio), e o código cru
+    # ia direto pro cliente. Removemos qualquer vazamento ANTES do envio. Se o strip esvaziar
+    # o texto (o turno era SÓ código), caímos no RETRY-ON-EMPTY abaixo (tools=None → o modelo
+    # não consegue emitir tool_code e devolve fala humana real). Determinístico: o cliente
+    # nunca vê código, independente do prompt.
+    _pre_strip = assistant_text
+    assistant_text = _strip_leaked_tool_code(assistant_text)
+    if assistant_text != _pre_strip:
+        logger.error(
+            "[TOOL_CODE LEAK] Gemini vazou function-call como texto em conv %s — sanitizado "
+            "antes do envio (stage=%s). Vazamento: %.200s",
+            conversation_id, stage, _pre_strip,
+        )
 
     # RETRY-ON-EMPTY (unificado — auditoria 2026-06-24, leads 5549984064339 / 5551984772757,
     # reincidência da Carla). gemini-2.5-flash às vezes queima o budget pensando e devolve
