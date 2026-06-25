@@ -15,6 +15,7 @@ from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
 from app.whatsapp.meta import MetaCloudClient, extract_wamid
 from app.agent.prompts.base import build_base_prompt
+from app.agent.token_tracker import track_token_usage
 
 logger = logging.getLogger(__name__)
 
@@ -272,21 +273,40 @@ async def _health_check_via_logs(now: datetime) -> None:
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _FOLLOWUP_MODEL = "gemini-2.5-flash"
-# gemini-2.5-flash conta tokens de thinking + texto no mesmo budget via API de compatibilidade.
-# Com max_tokens baixo, o modelo consome o budget pensando e trunca a saída (ex: "E aí, Rafael! Tudo").
-_FOLLOWUP_MAX_TOKENS = 1024
+# gemini-2.5-flash conta tokens de thinking + texto no MESMO budget via API de compatibilidade.
+# Com max_tokens baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
+# (auditoria leads 5566999975586 / 5531996039118, 2026-06-25: "...o que te fez pensar em").
+# A cura é DUPLA e espelha o orchestrator (MAX_OUTPUT_TOKENS=4096 + _gemini_thinking_off):
+#   1) desligar o thinking na chamada (reasoning_effort="none", via _gemini_thinking_off);
+#   2) dar teto folgado (4096). Mesmo assim, finish_reason="length" é barrado em
+#      process_due_followups — nunca enviamos mensagem pela metade.
+_FOLLOWUP_MAX_TOKENS = 4096
 
 
 _FOLLOWUP_TZ_BR = timezone(timedelta(hours=-3))
 
+# Sentinela de adiamento: quando a ÚLTIMA mensagem do cliente pede para ser contatado depois,
+# o LLM devolve EXATAMENTE esta string (e nada mais) e o scheduler aborta o disparo silenciosamente.
+# Ver auditoria do lead 5566999975586 (2026-06-25): o cliente disse "estou em viagem essa semana,
+# mas na próxima já estarei mais tranquilo" e o follow-up disparou ~1h42 depois, ignorando o pedido.
+_DEFERRAL_MARKER = "[ADIAMENTO_DETECTADO]"
+
 _FOLLOWUP_REENGAGE_INSTRUCTION = (
     "# TAREFA — FOLLOW-UP DE REENGAJAMENTO\n"
-    "Você está retomando o contato com um lead que parou de responder (mensagem de follow-up no "
-    "WhatsApp). Com base no histórico, escreva UMA mensagem curta de reengajamento, contextual ao "
-    "que já foi conversado. Siga TODAS as regras de voz e formato da persona acima (minúsculas, "
-    "acentos, SEM ponto final, fragmentação em bolhas com \\n\\n, no máximo 3 bolhas, sem emoji).\n"
-    "PROIBIDO abrir com saudação formal ('Olá', 'Bom dia') NEM com o nome do lead no começo "
-    "('fabrizio, ...') — abrir sempre pelo nome soa como cobrança robótica de vendas.\n"
+    "OBRIGATÓRIO — VERIFICAÇÃO DE ADIAMENTO (FAÇA ISTO ANTES DE QUALQUER COISA): analise a ÚLTIMA "
+    "mensagem do cliente no histórico. Se o cliente pediu EXPLICITAMENTE para ser contatado depois, "
+    "em outra data ou momento futuro, OU disse que estava viajando / ocupado / sem tempo agora "
+    "(ex.: 'me chama semana que vem', 'depois eu te falo', 'estou em viagem essa semana', 'agora "
+    "não dá', 'mês que vem a gente fala'), então você DEVE responder EXATAMENTE com a string "
+    f"{_DEFERRAL_MARKER} e NADA MAIS — não gere nenhuma mensagem de acompanhamento. Insistir num "
+    "lead que já marcou um retorno é a falha mais grave deste fluxo.\n"
+    "Se NÃO houver adiamento, você está retomando o contato com um lead que parou de responder "
+    "(mensagem de follow-up no WhatsApp). Com base no histórico, escreva UMA mensagem curta de "
+    "reengajamento, contextual ao que já foi conversado. Siga TODAS as regras de voz e formato da "
+    "persona acima (minúsculas, acentos, SEM ponto final, fragmentação em bolhas com \\n\\n, no "
+    "máximo 3 bolhas, sem emoji).\n"
+    "PROIBIDO abrir com saudação formal ('Olá', 'Bom dia'). O uso do nome do lead segue as regras "
+    "de moderação de nome da persona acima.\n"
     "PROIBIDO abertura ou pergunta vazia de preenchimento: 'tudo joia?', 'tudo bem?', 'tudo certo "
     "por aí?', 'e aí, sumiu?'. Elas não acrescentam nada e escancaram a automação.\n"
     "A mensagem DEVE retomar pelo ASSUNTO CONCRETO que ficou em aberto (o produto que ele olhava, a "
@@ -348,8 +368,24 @@ def _build_followup_system_prompt(sequence: int) -> str:
     return f"{persona}\n\n{_FOLLOWUP_REENGAGE_INSTRUCTION}\nTom desta tentativa: {seq_tone}"
 
 
-async def _generate_followup_message(history: list[dict], sequence: int) -> str:
-    """Gera mensagem contextualizada via LLM para o follow-up, na voz da Valéria."""
+async def _generate_followup_message(
+    history: list[dict],
+    sequence: int,
+    lead_id: str | None = None,
+    stage: str | None = None,
+) -> tuple[str, str | None]:
+    """Gera mensagem contextualizada via LLM para o follow-up, na voz da Valéria.
+
+    Retorna `(texto, finish_reason)`. O `finish_reason` é vital: gemini-2.5-flash conta
+    thinking + texto no mesmo budget, então mesmo com o thinking desligado um histórico
+    longo pode estourar o teto — `finish_reason="length"` sinaliza corte e o chamador
+    (process_due_followups) ABORTA o envio em vez de mandar mensagem pela metade.
+
+    `_gemini_thinking_off` é importado tardiamente para evitar o ciclo de import
+    scheduler → orchestrator → tools → scheduler (mesmo motivo do `run_agent` lazy).
+    """
+    from app.agent.orchestrator import _gemini_thinking_off
+
     client = AsyncOpenAI(
         api_key=settings.gemini_api_key,
         base_url=_GEMINI_BASE_URL,
@@ -371,8 +407,27 @@ async def _generate_followup_message(history: list[dict], sequence: int) -> str:
         ],
         max_tokens=_FOLLOWUP_MAX_TOKENS,
         temperature=0.8,
+        # Desliga o thinking do Gemini 2.5 — sem isso o budget é gasto pensando e a saída corta.
+        **_gemini_thinking_off(_FOLLOWUP_MODEL),
     )
-    return (resp.choices[0].message.content or "").strip()
+
+    # Observabilidade: o follow-up nunca rastreava custo (a tabela token_usage só via o
+    # agente principal). Sem isto, cortes/anomalias do follow-up ficam invisíveis no banco.
+    if resp.usage and lead_id:
+        try:
+            track_token_usage(
+                lead_id=lead_id,
+                stage=stage or "followup",
+                model=_FOLLOWUP_MODEL,
+                call_type="followup",
+                prompt_tokens=resp.usage.prompt_tokens,
+                completion_tokens=resp.usage.completion_tokens,
+            )
+        except Exception as exc:
+            logger.error("[FOLLOWUP] falha ao registrar token_usage: %s", exc)
+
+    choice = resp.choices[0]
+    return (choice.message.content or "").strip(), choice.finish_reason
 
 
 async def process_due_followups(now: datetime | None = None) -> None:
@@ -447,7 +502,9 @@ async def process_due_followups(now: datetime | None = None) -> None:
             )
             history = list(reversed(history_result.data or []))
             history = [m for m in history if m.get("role") and m.get("content")]
-            message = await _generate_followup_message(history, sequence)
+            message, finish_reason = await _generate_followup_message(
+                history, sequence, lead_id=job["lead_id"], stage=conversation.get("stage")
+            )
         except Exception as e:
             logger.error(f"[FOLLOWUP] Erro ao gerar mensagem seq={sequence} conversation={conversation_id}: {e}", exc_info=True)
             continue
@@ -456,6 +513,33 @@ async def process_due_followups(now: datetime | None = None) -> None:
             _cancel_job(job["id"], "empty_response")
             logger.warning(
                 f"[FOLLOWUP] LLM retornou vazio — cancelando seq={sequence} conversation={conversation_id}"
+            )
+            continue
+
+        # GUARDRAIL COMPORTAMENTAL: o cliente pediu para ser contatado depois (viagem, "semana
+        # que vem", "agora não dá"). O LLM detecta isso e devolve o sentinela; aqui abortamos
+        # SILENCIOSAMENTE — insistir num lead que marcou retorno é a falha mais grave do fluxo
+        # (auditoria lead 5566999975586: follow-up disparou ~1h42 após o cliente dizer "estou em
+        # viagem essa semana, mas na próxima já estarei mais tranquilo").
+        if _DEFERRAL_MARKER in message:
+            _cancel_job(job["id"], "deferral_detected")
+            logger.info(
+                "[FOLLOWUP] adiamento explícito detectado — cancelando sem enviar "
+                "seq=%s conversation=%s",
+                sequence, conversation_id,
+            )
+            continue
+
+        # GUARDRAIL TÉCNICO: corte por budget. gemini-2.5-flash pode estourar o teto mesmo com
+        # o thinking off (histórico longo), devolvendo finish_reason="length" com a frase pela
+        # metade. NUNCA enviar mensagem truncada ao cliente (auditoria leads 5566999975586 /
+        # 5531996039118: "...o que te fez pensar em"). Cancela; o próximo ciclo tenta de novo.
+        if finish_reason == "length":
+            _cancel_job(job["id"], "length_truncated")
+            logger.warning(
+                "[FOLLOWUP] resposta cortada (finish_reason=length) — cancelando sem enviar "
+                "seq=%s conversation=%s: %r",
+                sequence, conversation_id, message[-80:],
             )
             continue
 

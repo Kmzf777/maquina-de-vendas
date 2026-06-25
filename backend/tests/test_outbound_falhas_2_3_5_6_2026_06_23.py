@@ -83,7 +83,10 @@ def test_followup_instruction_proibe_abertura_generica():
     # Bane abertura/pergunta vazia
     assert "tudo joia" in low
     assert "proibido" in low
-    # Bane abrir pelo nome do lead
-    assert "nome do lead no começo" in low or "nome do lead no comeco" in low
+    # A proibição de "nome no começo" foi REMOVIDA de propósito (2026-06-25): conflitava com
+    # base.py, que permite nome na retomada após pausa. Agora base.py dita a moderação de nome.
+    assert "nome do lead no começo" not in low
+    # Válvula de adiamento: o LLM deve devolver o sentinela quando o cliente pediu retorno depois.
+    assert "[adiamento_detectado]" in low
     # O tom da seq=1 nao referencia mais o "1h" cravado
     assert "(1h após" not in _build_followup_system_prompt(1)
