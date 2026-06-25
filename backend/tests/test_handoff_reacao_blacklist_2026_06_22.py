@@ -24,7 +24,7 @@ async def test_resolve_media_reaction_nao_fica_em_branco():
 def test_base_prompt_cta_handoff_direciona_lead():
     from app.agent.prompts.base import build_base_prompt
     s = build_base_prompt("Edberto", None, datetime(2026, 6, 22, 14, 0))
-    assert "MOTIVE O LEAD A AGIR" in s
+    assert "Direcione a ACAO pro lead AGORA" in s
     assert 'nunca use\n       "vou te conectar"' in s or "nunca use" in s
 
 

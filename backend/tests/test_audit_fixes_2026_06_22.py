@@ -57,7 +57,7 @@ def test_media_fallback_example_segue_humanizacao():
     # Exemplo antigo robótico removido.
     assert "Oi! Acabei não conseguindo abrir" not in s
     # Novo exemplo, sem falsa promessa e em texto humanizado.
-    assert "me manda de novo por texto que eu te ajudo" in s
+    assert "me manda por texto aqui que eu te ajudo na hora" in s
 
 
 # --- Falha 3: contexto outbound de 1º turno com a abertura no histórico ---

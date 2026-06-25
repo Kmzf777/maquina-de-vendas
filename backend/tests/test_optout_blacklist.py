@@ -240,7 +240,7 @@ async def test_registrar_optout_calls_side_effects_after_update_lead():
         )
 
     assert result == "Opt-out registrado."
-    assert call_order[0] == ("update_lead", "lead-order-1", {"ai_enabled": False})
+    assert call_order[0] == ("update_lead", "lead-order-1", {"ai_enabled": False, "opt_out": True})
     assert call_order[1] == ("side_effects", "lead-order-1", "5511111110001", "optout")
 
 
