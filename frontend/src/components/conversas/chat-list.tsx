@@ -2,7 +2,8 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { CONVERSATION_TABS, AGENT_STAGES, UNREAD_TAB_KEY } from "@/lib/constants";
-import type { Conversation, Channel } from "@/lib/types";
+import type { Conversation, Channel, MessageSearchResult } from "@/lib/types";
+import { MessageSearchResults } from "@/components/conversas/message-search-results";
 import { formatRelativeTime } from "@/lib/datetime";
 import { getWindowStatus } from "@/lib/window-status";
 import { businessMinutesElapsed } from "@/lib/business-hours";
@@ -22,6 +23,7 @@ interface ChatListProps {
   listError?: boolean;
   isRefreshing?: boolean;
   onRetry?: () => void;
+  onSelectMessageResult?: (conversationId: string, messageId: string) => void;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -132,8 +134,44 @@ export function ChatList({
   listError,
   isRefreshing,
   onRetry,
+  onSelectMessageResult,
 }: ChatListProps) {
   const [search, setSearch] = useState("");
+  const [msgResults, setMsgResults] = useState<MessageSearchResult[]>([]);
+  const [msgLoading, setMsgLoading] = useState(false);
+  const searchAbortRef = useRef<AbortController | null>(null);
+
+  // Busca server-side de conteúdo (>= 2 chars), debounced, latest-wins.
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) {
+      setMsgResults([]);
+      setMsgLoading(false);
+      searchAbortRef.current?.abort();
+      return;
+    }
+    setMsgLoading(true);
+    const handle = setTimeout(async () => {
+      searchAbortRef.current?.abort();
+      const ac = new AbortController();
+      searchAbortRef.current = ac;
+      try {
+        const url = selectedChannelId
+          ? `/api/conversations/search?q=${encodeURIComponent(q)}&channel_id=${selectedChannelId}`
+          : `/api/conversations/search?q=${encodeURIComponent(q)}`;
+        const res = await fetch(url, { signal: ac.signal });
+        if (!res.ok) { setMsgResults([]); return; }
+        const data = await res.json();
+        setMsgResults(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+        setMsgResults([]);
+      } finally {
+        if (!ac.signal.aborted) setMsgLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search, selectedChannelId]);
 
   // Ticker de 1 minuto para reavaliação do SLA em tempo real
   const [, setTick] = useState(0);
@@ -186,6 +224,140 @@ export function ChatList({
       const phone = conv.leads?.phone || "";
       return name.toLowerCase().includes(q) || phone.includes(q);
     });
+
+  function renderConversationRow(conv: Conversation) {
+    const lead = conv.leads;
+    const channel = conv.channels;
+    const displayName = lead?.name || lead?.phone || "Desconhecido";
+    const stage = lead?.stage;
+    const isActive = selectedConversationId === conv.id;
+    const unreadCount = conv.unread_count ?? 0;
+    const provider = channel?.provider;
+    // Janela 24h POR CANAL: campo da conversa (lead+canal), não o global do lead.
+    const lastCustomerMsgAt = conv.last_customer_message_at;
+    const windowBg = getWindowBgClass(lastCustomerMsgAt, provider);
+    const windowExpiresAt = computeExpiresAt(lastCustomerMsgAt, provider);
+    const breached = isSlaBreached(conv);
+
+    return (
+      <button
+        key={conv.id}
+        onClick={() => handleSelectConversation(conv)}
+        className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-[#ff5600] focus-visible:ring-offset-1 focus-visible:outline-none ${
+          isActive
+            ? "border-l-[3px] border-l-[#ff5600] bg-[#faf9f6] rounded-r-[6px] mx-2 cursor-pointer"
+            : breached
+            ? "border-l-[3px] border-l-[#c2410c] bg-[#fdf6ee] hover:bg-[#faeee0] rounded-[6px] mx-2 cursor-pointer"
+            : `hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent ${windowBg}`
+        }`}
+        style={{ width: "calc(100% - 16px)" }}
+      >
+        {/* Avatar */}
+        <div
+          className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 mt-0.5 ${getStageColor(stage)}`}
+        >
+          {getInitial(displayName)}
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          {/* L1 — Lead name + unread badge */}
+          <div className="flex items-center gap-1">
+            <span
+              className={`text-sm truncate ${
+                unreadCount > 0 ? "font-bold text-[#111111]" : "font-semibold text-[#111111]"
+              }`}
+            >
+              {displayName}
+            </span>
+            {unreadCount > 0 && (
+              <span
+                className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-[#ff5600] px-1.5 py-0.5 text-[10px] font-semibold text-white animate-pulse flex-shrink-0"
+                aria-label={`${unreadCount} mensagens não lidas`}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </div>
+
+          {/* L2 — Last message preview */}
+          {conv.last_message_text && (
+            <p className="text-sm truncate text-[#7b7b78] mt-0.5">
+              {conv.last_message_text}
+            </p>
+          )}
+
+          {/* L3 — Meta row: timestamp · funnel badge · window indicator */}
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            <span className="text-xs text-[#7b7b78]">
+              {formatRelativeTime(conv.last_msg_at)}
+            </span>
+            {channels.length > 1 && (() => {
+              const badge = getChannelBadge(conv.channels?.name);
+              if (!badge) return null;
+              return (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
+                  style={{ backgroundColor: `${badge.color}15`, color: badge.color }}
+                >
+                  {badge.label}
+                </span>
+              );
+            })()}
+            {breached && (
+              <span className="inline-flex items-center gap-0.5 rounded-[3px] bg-[#c2410c]/10 px-1.5 py-px text-[10px] font-semibold text-[#c2410c] leading-none tracking-wide uppercase flex-shrink-0">
+                <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                Atraso
+              </span>
+            )}
+            {(() => {
+              const persona = getAgentPersona(conv);
+              if (!persona) return null;
+              return (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
+                  style={{ backgroundColor: `${persona.color}15`, color: persona.color }}
+                  title={persona.direction === "outbound" ? "Atendimento ativo (outbound)" : "Atendimento receptivo (inbound)"}
+                >
+                  <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    {persona.direction === "outbound" ? (
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    ) : (
+                      <path d="M12 5v14M19 12l-7 7-7-7" />
+                    )}
+                  </svg>
+                  {persona.label}
+                </span>
+              );
+            })()}
+            {conv.deal_stage_label && (
+              <Badge
+                variant="outline"
+                className="h-[18px] px-1.5 text-[10px] font-normal border-[#dedbd6] text-[#7b7b78] gap-1"
+              >
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: conv.deal_stage_dot_color ?? "#9ca3af" }}
+                />
+                {conv.deal_stage_label}
+              </Badge>
+            )}
+            {conv.deal_pipeline_name && (
+              <span className="text-[10px] text-[#9b9b98] truncate max-w-[100px]">
+                {conv.deal_pipeline_name}
+              </span>
+            )}
+            <WhatsappWindowIndicator
+              expiresAt={windowExpiresAt}
+              variant="compact"
+            />
+          </div>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <div className="w-full md:w-[320px] bg-[#f0ede8] border-r border-[#dedbd6] flex flex-col h-full">
@@ -326,146 +498,38 @@ export function ChatList({
         </button>
       </div>
 
-      {/* Chat list */}
+      {/* Lista / resultados de busca */}
       <div className="flex-1 overflow-y-auto py-1">
-        {filteredConversations.length === 0 && (
-          <p className="text-[#7b7b78] text-sm text-center py-8">
-            Nenhuma conversa encontrada.
-          </p>
+        {search.trim().length >= 2 ? (
+          <>
+            <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9b9b98]">
+              Conversas
+            </p>
+            {filteredConversations.length === 0 ? (
+              <p className="text-[#7b7b78] text-xs px-3 py-2">Nenhum contato encontrado.</p>
+            ) : (
+              filteredConversations.map((conv) => renderConversationRow(conv))
+            )}
+            <p className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9b9b98]">
+              Mensagens
+            </p>
+            <MessageSearchResults
+              query={search}
+              results={msgResults}
+              loading={msgLoading}
+              onSelect={(cid, mid) => onSelectMessageResult?.(cid, mid)}
+            />
+          </>
+        ) : (
+          <>
+            {filteredConversations.length === 0 && (
+              <p className="text-[#7b7b78] text-sm text-center py-8">
+                Nenhuma conversa encontrada.
+              </p>
+            )}
+            {filteredConversations.map((conv) => renderConversationRow(conv))}
+          </>
         )}
-        {filteredConversations.map((conv) => {
-          const lead = conv.leads;
-          const channel = conv.channels;
-          const displayName = lead?.name || lead?.phone || "Desconhecido";
-          const stage = lead?.stage;
-          const isActive = selectedConversationId === conv.id;
-          const unreadCount = conv.unread_count ?? 0;
-          const provider = channel?.provider;
-          // Janela 24h POR CANAL: campo da conversa (lead+canal), não o global do lead.
-          const lastCustomerMsgAt = conv.last_customer_message_at;
-          const windowBg = getWindowBgClass(lastCustomerMsgAt, provider);
-          const windowExpiresAt = computeExpiresAt(lastCustomerMsgAt, provider);
-          const breached = isSlaBreached(conv);
-
-          return (
-            <button
-              key={conv.id}
-              onClick={() => handleSelectConversation(conv)}
-              className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-[#ff5600] focus-visible:ring-offset-1 focus-visible:outline-none ${
-                isActive
-                  ? "border-l-[3px] border-l-[#ff5600] bg-[#faf9f6] rounded-r-[6px] mx-2 cursor-pointer"
-                  : breached
-                  ? "border-l-[3px] border-l-[#c2410c] bg-[#fdf6ee] hover:bg-[#faeee0] rounded-[6px] mx-2 cursor-pointer"
-                  : `hover:bg-[#faf9f6] rounded-[6px] mx-2 cursor-pointer border-l-[3px] border-l-transparent ${windowBg}`
-              }`}
-              style={{ width: "calc(100% - 16px)" }}
-            >
-              {/* Avatar */}
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 mt-0.5 ${getStageColor(stage)}`}
-              >
-                {getInitial(displayName)}
-              </div>
-
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                {/* L1 — Lead name + unread badge */}
-                <div className="flex items-center gap-1">
-                  <span
-                    className={`text-sm truncate ${
-                      unreadCount > 0 ? "font-bold text-[#111111]" : "font-semibold text-[#111111]"
-                    }`}
-                  >
-                    {displayName}
-                  </span>
-                  {unreadCount > 0 && (
-                    <span
-                      className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-[#ff5600] px-1.5 py-0.5 text-[10px] font-semibold text-white animate-pulse flex-shrink-0"
-                      aria-label={`${unreadCount} mensagens não lidas`}
-                    >
-                      {unreadCount > 9 ? "9+" : unreadCount}
-                    </span>
-                  )}
-                </div>
-
-                {/* L2 — Last message preview */}
-                {conv.last_message_text && (
-                  <p className="text-sm truncate text-[#7b7b78] mt-0.5">
-                    {conv.last_message_text}
-                  </p>
-                )}
-
-                {/* L3 — Meta row: timestamp · funnel badge · window indicator */}
-                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                  <span className="text-xs text-[#7b7b78]">
-                    {formatRelativeTime(conv.last_msg_at)}
-                  </span>
-                  {channels.length > 1 && (() => {
-                    const badge = getChannelBadge(conv.channels?.name);
-                    if (!badge) return null;
-                    return (
-                      <span
-                        className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
-                        style={{ backgroundColor: `${badge.color}15`, color: badge.color }}
-                      >
-                        {badge.label}
-                      </span>
-                    );
-                  })()}
-                  {breached && (
-                    <span className="inline-flex items-center gap-0.5 rounded-[3px] bg-[#c2410c]/10 px-1.5 py-px text-[10px] font-semibold text-[#c2410c] leading-none tracking-wide uppercase flex-shrink-0">
-                      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                      </svg>
-                      Atraso
-                    </span>
-                  )}
-                  {(() => {
-                    const persona = getAgentPersona(conv);
-                    if (!persona) return null;
-                    return (
-                      <span
-                        className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
-                        style={{ backgroundColor: `${persona.color}15`, color: persona.color }}
-                        title={persona.direction === "outbound" ? "Atendimento ativo (outbound)" : "Atendimento receptivo (inbound)"}
-                      >
-                        <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                          {persona.direction === "outbound" ? (
-                            <path d="M12 19V5M5 12l7-7 7 7" />
-                          ) : (
-                            <path d="M12 5v14M19 12l-7 7-7-7" />
-                          )}
-                        </svg>
-                        {persona.label}
-                      </span>
-                    );
-                  })()}
-                  {conv.deal_stage_label && (
-                    <Badge
-                      variant="outline"
-                      className="h-[18px] px-1.5 text-[10px] font-normal border-[#dedbd6] text-[#7b7b78] gap-1"
-                    >
-                      <span
-                        className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: conv.deal_stage_dot_color ?? "#9ca3af" }}
-                      />
-                      {conv.deal_stage_label}
-                    </Badge>
-                  )}
-                  {conv.deal_pipeline_name && (
-                    <span className="text-[10px] text-[#9b9b98] truncate max-w-[100px]">
-                      {conv.deal_pipeline_name}
-                    </span>
-                  )}
-                  <WhatsappWindowIndicator
-                    expiresAt={windowExpiresAt}
-                    variant="compact"
-                  />
-                </div>
-              </div>
-            </button>
-          );
-        })}
       </div>
     </div>
   );

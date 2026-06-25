@@ -22,6 +22,7 @@ export default function ConversasPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [leadTagsMap, setLeadTagsMap] = useState<Record<string, string[]>>({});
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("");
   const [activeTab, setActiveTab] = useState("todos");
   const [loading, setLoading] = useState(true);
@@ -199,6 +200,15 @@ export default function ConversasPage() {
 
   function handleSelectConversation(conv: Conversation) {
     setSelectedConversation(conv);
+    setPendingScrollMessageId(null);
+    setMobileView("chat");
+  }
+
+  function handleSelectMessageResult(conversationId: string, messageId: string) {
+    const conv = conversations.find((c) => c.id === conversationId);
+    if (!conv) return; // a lista vem completa; ausência => fora do escopo, ignora.
+    setSelectedConversation(conv);
+    setPendingScrollMessageId(messageId);
     setMobileView("chat");
   }
 
@@ -427,6 +437,7 @@ export default function ConversasPage() {
           listError={listError}
           isRefreshing={isRefreshing}
           onRetry={fetchConversations}
+          onSelectMessageResult={handleSelectMessageResult}
         />
       </div>
 
@@ -449,6 +460,8 @@ export default function ConversasPage() {
               const sibling = conversations.find((c) => c.id === id);
               if (sibling) handleSelectConversation(sibling);
             }}
+            targetMessageId={pendingScrollMessageId}
+            onTargetConsumed={() => setPendingScrollMessageId(null)}
           />
         )}
       </div>
@@ -487,6 +500,7 @@ export default function ConversasPage() {
           listError={listError}
           isRefreshing={isRefreshing}
           onRetry={fetchConversations}
+          onSelectMessageResult={handleSelectMessageResult}
         />
         {selectedConversation ? (
           <>
@@ -505,6 +519,8 @@ export default function ConversasPage() {
                 const sibling = conversations.find((c) => c.id === id);
                 if (sibling) handleSelectConversation(sibling);
               }}
+              targetMessageId={pendingScrollMessageId}
+              onTargetConsumed={() => setPendingScrollMessageId(null)}
             />
             <ContactDetail
               conversation={selectedConversation}

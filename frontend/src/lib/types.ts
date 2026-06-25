@@ -418,3 +418,16 @@ export interface TeamUser {
   email: string;
   name: string;
 }
+
+/** Uma conversa com mensagem(ns) do cliente que casaram a busca por conteúdo. */
+export interface MessageSearchResult {
+  conversation_id: string;
+  message_id: string;
+  snippet: string;
+  match_created_at: string;
+  match_count: number;
+  lead_name: string | null;
+  lead_phone: string | null;
+  channel_id: string;
+  channel_name: string | null;
+}
