@@ -33,13 +33,27 @@ interface ChatViewProps {
   onOpenContact?: () => void;
   siblingConversations?: SiblingConversationSummary[];
   onSelectSibling?: (conversationId: string) => void;
+  targetMessageId?: string | null;
+  onTargetConsumed?: () => void;
 }
 
-export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup, onMarkRead, onBack, onOpenContact, siblingConversations, onSelectSibling }: ChatViewProps) {
+export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi, followupEnabled, togglingFollowup, onToggleFollowup, onMarkRead, onBack, onOpenContact, siblingConversations, onSelectSibling, targetMessageId, onTargetConsumed }: ChatViewProps) {
   const lead = conversation.leads;
   const channel = conversation.channels;
 
   const { messages, loading, refetch } = useRealtimeMessages(conversation.id ?? null);
+
+  // Pulo para a mensagem buscada: espera as mensagens carregarem (DOM populado) e
+  // chama o scrollToMessage já existente; dispara uma única vez por alvo.
+  useEffect(() => {
+    if (!targetMessageId || loading) return;
+    const raf = requestAnimationFrame(() => {
+      messageListRef.current?.scrollToMessage(targetMessageId);
+      onTargetConsumed?.();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [targetMessageId, loading, conversation.id, onTargetConsumed]);
+
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const router = useRouter();
