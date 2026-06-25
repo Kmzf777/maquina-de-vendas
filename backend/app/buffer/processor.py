@@ -535,7 +535,7 @@ async def process_buffered_messages(
 
     # Always save the incoming user message
     try:
-        await _save_with_retry(
+        _saved_user = await _save_with_retry(
             f"save user msg {phone}",
             save_message,
             conversation["id"], lead["id"], "user",
@@ -552,6 +552,13 @@ async def process_buffered_messages(
         logger.error(f"Failed to save user message for {phone}: {e}", exc_info=True)
         # Abort: do not run agent without persistence — avoids unlogged AI responses
         return
+
+    # Watermark do turno = created_at (autoritativo do DB) da mensagem que engatilhou ESTE
+    # worker. É a régua do re-coalescing: se aparecer um inbound do cliente MAIS NOVO que
+    # este (ao adquirir o lock OU durante o envio das bolhas), abortamos para o worker
+    # posterior — já na fila do lock — responder o contexto COMPLETO numa única resposta,
+    # em vez de empilhar blocos atropelados (auditoria 5533999429785, 2026-06-25).
+    turn_watermark = _saved_user.get("created_at") if isinstance(_saved_user, dict) else None
 
     # Registrar resposta ao disparo se o lead tiver um broadcast_lead ativo
     try:
@@ -729,6 +736,22 @@ async def process_buffered_messages(
     _typing_task = _start_typing_pulse(provider, wamid, is_rehearsal)
     try:
         async with lead_run_lock(lead["id"]):
+            # RE-COALESCING (stale worker abort): enquanto este worker esperava na fila do
+            # lock, o cliente pode ter mandado OUTRA mensagem — já salva por um worker que
+            # está logo atrás na fila. Esse worker posterior lerá o histórico COMPLETO
+            # (inclusive a mensagem deste turno) e formulará UMA resposta holística. Então
+            # abortamos este turno stale em SILÊNCIO, sem gerar nem enviar nada — evita os
+            # blocos empilhados/contraditórios da auditoria 5533999429785.
+            if _has_newer_inbound(conversation["id"], turn_watermark):
+                logger.info(
+                    "[RECOALESCE] inbound mais novo ao adquirir lock (conv=%s, phone=%s) — "
+                    "abortando turno stale; worker posterior responde o contexto completo.",
+                    conversation["id"], phone,
+                )
+                pop_interest_marked(conversation["id"])  # não vaza flag p/ o próximo turno
+                _update_last_msg(conversation["id"])
+                return
+
             response = None
             _agent_t0 = time.monotonic()  # latência da LLM → desconta do delay do 1º balão (CA#4)
             for attempt in range(1, _AGENT_MAX_ATTEMPTS + 1):
@@ -795,6 +818,12 @@ async def process_buffered_messages(
             # B2: handoff/opt-out concorrente desligou a IA durante o envio → abortamos as
             # bolhas restantes (e a mídia/follow-up abaixo). O handoff é a última ação.
             handoff_aborted = False
+            # RE-COALESCING em voo: cliente mandou inbound novo no meio do envio. Cortamos a
+            # cauda (bolhas restantes + mídia diferida) e liberamos o lock cedo — o worker
+            # posterior responde o contexto completo. Otimiza a cauda do lock só quando ela
+            # empilharia (auditoria 5533999429785). Sem isso, mover a mídia p/ fora do lock
+            # quebraria a ordem (fotos do turno antigo interleavando com o texto do novo).
+            superseded = False
             sent_wamids: list[str | None] = []
             # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima.
             # _sleep_with_typing_renewal pulsa o "digitando…" no início e a cada ~10s durante a
@@ -816,6 +845,17 @@ async def process_buffered_messages(
                         len(sent_wamids), conversation["id"],
                     )
                     break
+                # Trava de re-coalescing in-flight: o cliente falou no meio do envio. Paramos
+                # de despejar o resto deste turno (já há um worker na fila p/ o inbound novo);
+                # ele responderá imagem+texto numa única resposta, sem atropelar este bloco.
+                if _has_newer_inbound(conversation["id"], turn_watermark):
+                    superseded = True
+                    logger.info(
+                        "[RECOALESCE] inbound mais novo durante o envio — abortando %d bolha(s) "
+                        "restante(s) p/ conv %s; worker posterior responde holisticamente.",
+                        len(bubbles) - len(sent_wamids), conversation["id"],
+                    )
+                    break
                 try:
                     send_result = await provider.send_text(send_to, bubble)
                     sent_wamids.append(extract_wamid(send_result))
@@ -824,9 +864,10 @@ async def process_buffered_messages(
                     send_ok = False
                     break
 
-            # Handoff concorrente durante o envio: descarta o catálogo de fotos enfileirado
-            # (não despejar mídia de venda após o transbordo). O follow-up é barrado abaixo.
-            if handoff_aborted:
+            # Handoff concorrente OU re-coalescing in-flight: drena o catálogo de fotos
+            # enfileirado sem enviar (handoff = transbordo; superseded = o worker posterior
+            # reavalia a mídia no contexto completo). Popar evita que vaze ao próximo turno.
+            if handoff_aborted or superseded:
                 pop_deferred_media(conversation["id"])
 
             if send_ok:
@@ -856,7 +897,7 @@ async def process_buffered_messages(
                 is_outbound = agent_persona == "valeria_outbound"
                 # Não agenda follow-up se a IA foi desligada por handoff/opt-out concorrente
                 # durante o envio (B2) — o lead já está com o vendedor humano.
-                if conversation.get("followup_enabled", True) and channel and not handoff_aborted:
+                if conversation.get("followup_enabled", True) and channel and not handoff_aborted and not superseded:
                     should_schedule = bool(interest)
                     reason = "interesse comercial" if interest else ""
                     if not should_schedule and is_outbound:
@@ -889,7 +930,7 @@ async def process_buffered_messages(
                 # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
                 # B2: se o handoff abortou o turno, a fila já foi drenada acima — não despeja
                 # catálogo de fotos sobre o lead transbordado.
-                deferred = [] if handoff_aborted else pop_deferred_media(conversation["id"])
+                deferred = [] if (handoff_aborted or superseded) else pop_deferred_media(conversation["id"])
                 for item in deferred:
                     try:
                         await provider.send_image_base64(
@@ -927,6 +968,41 @@ def _ai_still_enabled(lead_id: str) -> bool:
             lead_id, exc,
         )
         return True
+
+
+def _has_newer_inbound(conversation_id: str, after_created_at: str | None) -> bool:
+    """True se já existe mensagem do cliente (role='user') MAIS NOVA que a que engatilhou
+    este turno (created_at > watermark).
+
+    Régua do re-coalescing (auditoria 5533999429785, 2026-06-25), usada em dois pontos:
+      (a) ao adquirir o lead_run_lock → aborta o turno stale (worker posterior responde tudo);
+      (b) entre as bolhas do envio → corta a cauda quando o cliente fala no meio.
+    Em ambos, a meta é uma ÚNICA resposta holística em vez de blocos empilhados.
+
+    Fail-open: sem watermark (ex.: save não devolveu created_at) ou erro de leitura → False.
+    NUNCA abortamos às cegas — engolir a única resposta de um lead legítimo é pior que o
+    raro empilhamento que esta trava existe para evitar.
+    """
+    if not after_created_at:
+        return False
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("id")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .gt("created_at", after_created_at)
+            .limit(1)
+            .execute()
+        )
+        return bool(result.data)
+    except Exception as exc:
+        logger.warning(
+            "[RECOALESCE] falha ao checar inbound mais novo p/ conv %s: %s — fail-open (não aborta)",
+            conversation_id, exc,
+        )
+        return False
 
 
 def _update_last_msg(conversation_id: str) -> None:
