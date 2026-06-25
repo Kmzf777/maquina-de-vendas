@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveSearchChannelScope } from "./message-search";
+import { resolveSearchChannelScope, highlightSegments } from "./message-search";
 
 describe("resolveSearchChannelScope", () => {
   it("admin sem channel_id => null (sem restrição)", () => {
@@ -19,5 +19,34 @@ describe("resolveSearchChannelScope", () => {
   });
   it("vendedor sem canais => vazio", () => {
     expect(resolveSearchChannelScope([], null)).toEqual({ kind: "empty" });
+  });
+});
+
+describe("highlightSegments", () => {
+  it("sem query => um segmento não-match", () => {
+    expect(highlightSegments("Olá mundo", "")).toEqual([{ text: "Olá mundo", match: false }]);
+  });
+  it("match simples preserva texto original", () => {
+    expect(highlightSegments("Quero um café agora", "cafe")).toEqual([
+      { text: "Quero um ", match: false },
+      { text: "café", match: true },
+      { text: " agora", match: false },
+    ]);
+  });
+  it("case-insensitive", () => {
+    expect(highlightSegments("PRECO bom", "preco")).toEqual([
+      { text: "PRECO", match: true },
+      { text: " bom", match: false },
+    ]);
+  });
+  it("múltiplas ocorrências", () => {
+    expect(highlightSegments("oi oi", "oi")).toEqual([
+      { text: "oi", match: true },
+      { text: " ", match: false },
+      { text: "oi", match: true },
+    ]);
+  });
+  it("sem ocorrência => um segmento", () => {
+    expect(highlightSegments("nada", "xyz")).toEqual([{ text: "nada", match: false }]);
   });
 });
