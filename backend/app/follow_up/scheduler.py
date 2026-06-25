@@ -307,7 +307,9 @@ _FOLLOWUP_REENGAGE_INSTRUCTION = (
     "Você está retomando o contato com um lead que parou de responder (mensagem de follow-up no "
     "WhatsApp). Com base no histórico, escreva UMA mensagem curta de reengajamento, contextual ao "
     "que já foi conversado. Siga TODAS as regras de voz e formato da persona acima (minúsculas, "
-    "acentos, SEM ponto final, fragmentação em bolhas com \\n\\n, no máximo 3 bolhas, sem emoji).\n\n"
+    "acentos, SEM ponto final, no máximo 3 bolhas curtas separadas por uma linha em branco, "
+    "sem emoji). Use quebras de linha REAIS para separar as bolhas — nunca escreva os "
+    "caracteres literais barra-n no texto.\n\n"
     "## 3. Proibições\n"
     "- PROIBIDO abrir com saudação formal ('Olá', 'Bom dia'). O uso do nome do lead segue a "
     "moderação de nome da persona acima.\n"
@@ -353,6 +355,25 @@ def _is_meta_comment(text: str) -> bool:
     """
     norm = _strip_accents((text or "")).lower()
     return any(marker in norm for marker in _META_COMMENT_MARKERS)
+
+
+def _normalize_literal_newlines(text: str) -> str:
+    r"""Converte sequências de quebra de linha LITERAIS (barra-invertida + 'n') em
+    quebras de linha reais.
+
+    O LLM às vezes devolve o texto cru ``\n`` — DOIS caracteres, a barra ``\`` e o ``n`` —
+    em vez de uma quebra de linha de verdade, e o sistema persiste/envia isso tal e qual,
+    fazendo o cliente LER ``\n`` na tela do WhatsApp. Aconteceu nos follow-ups do dia 2
+    (auditoria leads 5511914799202 / 5519998390320 / 5511965704656, 2026-06-25:
+    "...chegam frescos\n\nou se for pro seu negócio..."). Cobre ``\r\n``, ``\n`` e ``\r``.
+    """
+    if not text:
+        return text
+    return (
+        text.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n")
+    )
 
 
 def _build_followup_system_prompt(sequence: int) -> str:
@@ -513,6 +534,10 @@ async def process_due_followups(now: datetime | None = None) -> None:
         except Exception as e:
             logger.error(f"[FOLLOWUP] Erro ao gerar mensagem seq={sequence} conversation={conversation_id}: {e}", exc_info=True)
             continue
+
+        # C1: sanitiza newlines literais ANTES dos guardrails e do envio — o LLM às vezes
+        # devolve "\n" cru (barra + n) e o cliente lê a barra na tela (auditoria 2026-06-25).
+        message = _normalize_literal_newlines(message)
 
         if not message:
             _cancel_job(job["id"], "empty_response")

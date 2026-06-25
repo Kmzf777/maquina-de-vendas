@@ -760,6 +760,9 @@ async def process_buffered_messages(
             llm_latency = time.monotonic() - _agent_t0
             delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
             send_ok = True
+            # B2: handoff/opt-out concorrente desligou a IA durante o envio → abortamos as
+            # bolhas restantes (e a mídia/follow-up abaixo). O handoff é a última ação.
+            handoff_aborted = False
             sent_wamids: list[str | None] = []
             # Fechamento do gap de status (CA#4): os delays já foram TODOS pré-calculados acima.
             # _sleep_with_typing_renewal pulsa o "digitando…" no início e a cada ~10s durante a
@@ -770,6 +773,17 @@ async def process_buffered_messages(
             for delay, bubble in zip(delays, bubbles):
                 if delay > 0:
                     await _sleep_with_typing_renewal(delay, provider, wamid)
+                # Trava anti-race (B2): se um handoff/opt-out concorrente desligou a IA
+                # enquanto pacejávamos, não despeja mais bolha de venda em cima do lead
+                # já transbordado — para imediatamente e preserva só o que já saiu.
+                if not _ai_still_enabled(lead["id"]):
+                    handoff_aborted = True
+                    logger.warning(
+                        "[HANDOFF GUARD] ai_enabled=false durante o envio — abortando bolhas "
+                        "restantes (%d já enviadas) p/ conv %s",
+                        len(sent_wamids), conversation["id"],
+                    )
+                    break
                 try:
                     send_result = await provider.send_text(send_to, bubble)
                     sent_wamids.append(extract_wamid(send_result))
@@ -777,6 +791,11 @@ async def process_buffered_messages(
                     logger.error(f"Failed to send bubble to {send_to}: {e}", exc_info=True)
                     send_ok = False
                     break
+
+            # Handoff concorrente durante o envio: descarta o catálogo de fotos enfileirado
+            # (não despejar mídia de venda após o transbordo). O follow-up é barrado abaixo.
+            if handoff_aborted:
+                pop_deferred_media(conversation["id"])
 
             if send_ok:
                 for bubble, bubble_wamid in zip(bubbles, sent_wamids):
@@ -803,7 +822,9 @@ async def process_buffered_messages(
                 # nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do banco). Handoff
                 # retorna response=None e já saiu antes deste bloco.
                 is_outbound = agent_persona == "valeria_outbound"
-                if conversation.get("followup_enabled", True) and channel:
+                # Não agenda follow-up se a IA foi desligada por handoff/opt-out concorrente
+                # durante o envio (B2) — o lead já está com o vendedor humano.
+                if conversation.get("followup_enabled", True) and channel and not handoff_aborted:
                     should_schedule = bool(interest)
                     reason = "interesse comercial" if interest else ""
                     if not should_schedule and is_outbound:
@@ -834,7 +855,9 @@ async def process_buffered_messages(
 
                 # Dispatch deferred media (enviar_fotos / enviar_foto_produto) after text so
                 # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
-                deferred = pop_deferred_media(conversation["id"])
+                # B2: se o handoff abortou o turno, a fila já foi drenada acima — não despeja
+                # catálogo de fotos sobre o lead transbordado.
+                deferred = [] if handoff_aborted else pop_deferred_media(conversation["id"])
                 for item in deferred:
                     try:
                         await provider.send_image_base64(
@@ -850,6 +873,28 @@ async def process_buffered_messages(
     finally:
         # Rede de segurança: garante que o pulso de digitação nunca vaza (idempotente).
         _stop_typing_pulse(_typing_task)
+
+
+def _ai_still_enabled(lead_id: str) -> bool:
+    """Re-lê ai_enabled fresco do banco — trava anti-race ENTRE gerar e ENVIAR as bolhas.
+
+    B2 (auditoria lead 5544991611703, 2026-06-24): um turno concorrente (ou um guardrail
+    no mesmo lead) chamou encaminhar_humano/registrar_optout e desligou a IA enquanto as
+    bolhas deste turno ainda eram pacejadas — e três bolhas de PREÇO saíram coladas no
+    handoff do João. Antes de cada bolha revalidamos: se a IA já foi desligada, paramos de
+    despejar venda sobre um lead que já foi transbordado. O handoff é a ação definitiva.
+
+    Fail-open: erro de leitura → True (na dúvida, não engole a mensagem do lead legítimo).
+    """
+    try:
+        fresh = get_lead(lead_id) or {}
+        return bool(fresh.get("ai_enabled", True))
+    except Exception as exc:
+        logger.warning(
+            "[HANDOFF GUARD] falha ao reler ai_enabled p/ %s: %s — assume habilitado",
+            lead_id, exc,
+        )
+        return True
 
 
 def _update_last_msg(conversation_id: str) -> None:
