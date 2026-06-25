@@ -66,7 +66,7 @@ async def test_ai_channel_processes_followup_job():
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.save_message"), \
-         patch("app.follow_up.scheduler._generate_followup_message", return_value="Oi, tudo bem?"):
+         patch("app.follow_up.scheduler._generate_followup_message", return_value=("Oi, tudo bem?", "stop")):
 
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock()
@@ -95,7 +95,7 @@ async def test_channel_without_mode_processes_followup_job():
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.save_message"), \
-         patch("app.follow_up.scheduler._generate_followup_message", return_value="Oi!"):
+         patch("app.follow_up.scheduler._generate_followup_message", return_value=("Oi!", "stop")):
 
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock()
