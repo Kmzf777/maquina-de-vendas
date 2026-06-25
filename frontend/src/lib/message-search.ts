@@ -33,34 +33,53 @@ export interface HighlightSegment {
   match: boolean;
 }
 
-/** Remove acentos para comparação (NFD + strip das marcas combinantes U+0300–U+036F),
- *  mantendo o índice 1:1. */
-function stripAccents(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+/**
+ * Constrói uma versão "dobrada" (minúscula, sem acentos) de `s` junto com um mapa
+ * folded-index -> índice (em code units) no `s` ORIGINAL. Iterar por code point e
+ * registrar, para cada unidade do trecho dobrado, a posição inicial do caractere
+ * original que a gerou — assim os slices sempre saem da string original alinhados,
+ * mesmo com acentos antes do match ou pares substitutos (emoji).
+ */
+function buildFolded(s: string): { folded: string; map: number[] } {
+  let folded = "";
+  const map: number[] = [];
+  let unit = 0;
+  for (const ch of s) {
+    const stripped = ch.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const piece = stripped || ch.toLowerCase(); // marca combinante isolada: mantém
+    for (let i = 0; i < piece.length; i++) map.push(unit);
+    folded += piece;
+    unit += ch.length; // code units consumidos no original
+  }
+  map.push(s.length); // sentinela: fim
+  return { folded, map };
 }
 
 /**
  * Quebra `content` em segmentos marcando onde `query` casa (acento/caixa-insensível).
- * O texto de cada segmento é SEMPRE o original (acentos preservados na exibição).
+ * O texto de cada segmento é SEMPRE o original (acentos preservados na exibição) e
+ * os índices ficam alinhados via mapa de posições.
  */
 export function highlightSegments(content: string, query: string): HighlightSegment[] {
   const q = query.trim();
   if (!q) return [{ text: content, match: false }];
 
-  const haystack = stripAccents(content).toLowerCase();
-  const needle = stripAccents(q).toLowerCase();
+  const { folded, map } = buildFolded(content);
+  const needle = buildFolded(q).folded;
   if (!needle) return [{ text: content, match: false }];
 
   const segments: HighlightSegment[] = [];
-  let from = 0;
-  let idx = haystack.indexOf(needle, from);
-  if (idx === -1) return [{ text: content, match: false }];
+  let from = 0; // índice (code units) no content original
+  let fIdx = folded.indexOf(needle, 0);
+  if (fIdx === -1) return [{ text: content, match: false }];
 
-  while (idx !== -1) {
-    if (idx > from) segments.push({ text: content.slice(from, idx), match: false });
-    segments.push({ text: content.slice(idx, idx + needle.length), match: true });
-    from = idx + needle.length;
-    idx = haystack.indexOf(needle, from);
+  while (fIdx !== -1) {
+    const start = map[fIdx];
+    const end = map[fIdx + needle.length];
+    if (start > from) segments.push({ text: content.slice(from, start), match: false });
+    segments.push({ text: content.slice(start, end), match: true });
+    from = end;
+    fIdx = folded.indexOf(needle, fIdx + needle.length);
   }
   if (from < content.length) segments.push({ text: content.slice(from), match: false });
   return segments;

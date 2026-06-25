@@ -49,4 +49,11 @@ describe("highlightSegments", () => {
   it("sem ocorrência => um segmento", () => {
     expect(highlightSegments("nada", "xyz")).toEqual([{ text: "nada", match: false }]);
   });
+  it("acento ANTES do match alinha índices (regressão)", () => {
+    expect(highlightSegments("café café", "cafe")).toEqual([
+      { text: "café", match: true },
+      { text: " ", match: false },
+      { text: "café", match: true },
+    ]);
+  });
 });
