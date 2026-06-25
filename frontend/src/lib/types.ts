@@ -302,8 +302,18 @@ export interface Conversation {
   first_seller_response_at: string | null;
   last_seller_response_at: string | null;
   leads?: Lead;
-  channels?: { id: string; name: string; phone: string; provider: string; agent_profile_id: string | null; mode?: "ai" | "human" } | null;
-  agent_profiles?: { id: string; name: string } | null;
+  channels?: {
+    id: string;
+    name: string;
+    phone: string;
+    provider: string;
+    agent_profile_id: string | null;
+    mode?: "ai" | "human";
+    // Persona default do canal — fallback quando a conversa não fixou agent_profile_id.
+    agent_profiles?: { id: string; name: string; prompt_key: string } | null;
+  } | null;
+  // prompt_key distingue a persona da IA: 'valeria_inbound' (receptiva) vs 'valeria_outbound' (ativa).
+  agent_profiles?: { id: string; name: string; prompt_key?: string } | null;
 }
 
 export interface LeadBroadcastEntry {
