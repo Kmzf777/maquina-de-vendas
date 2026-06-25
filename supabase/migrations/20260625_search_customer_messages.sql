@@ -5,10 +5,14 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
 -- unaccent não é IMMUTABLE por padrão; wrapper imutável permite indexar a expressão.
+-- SET search_path inclui o schema "extensions" porque o Supabase instala a extensão
+-- unaccent lá (não em public); sem isso, unaccent('unaccent', $1) não resolve no build
+-- do índice ("function unaccent(unknown, text) does not exist").
 CREATE OR REPLACE FUNCTION f_unaccent(text)
   RETURNS text
   LANGUAGE sql
   IMMUTABLE PARALLEL SAFE STRICT
+  SET search_path = extensions, public, pg_catalog
 AS $$ SELECT unaccent('unaccent', $1) $$;
 
 -- Índice GIN trigram PARCIAL: só mensagens do cliente (casa com o filtro da busca).
