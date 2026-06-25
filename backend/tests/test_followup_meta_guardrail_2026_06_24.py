@@ -89,7 +89,7 @@ async def test_meta_comment_aborta_e_nao_envia():
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.save_message"), \
-         patch("app.follow_up.scheduler._generate_followup_message", return_value=DANIEL_LEAK):
+         patch("app.follow_up.scheduler._generate_followup_message", return_value=(DANIEL_LEAK, "stop")):
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock()
         mock_provider_fn.return_value = mock_provider
@@ -112,7 +112,7 @@ async def test_followup_legitimo_e_enviado():
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.save_message"), \
-         patch("app.follow_up.scheduler._generate_followup_message", return_value=legit):
+         patch("app.follow_up.scheduler._generate_followup_message", return_value=(legit, "stop")):
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock(return_value={})
         mock_provider_fn.return_value = mock_provider
