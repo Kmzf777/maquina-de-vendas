@@ -795,13 +795,21 @@ def stage_id_by_key(
     return None
 
 
-def advance_cold_deal_on_reply(lead_id: str) -> bool:
-    """REFLEXO DE SISTEMA (sem LLM): card aberto em 'Disparo feito' → 'Respondeu'.
+# Stages de PRÉ-RESPOSTA: a partir de qualquer um deles, uma resposta do lead avança o card
+# para 'respondeu'. Cobre o funil frio ('disparo_feito'/'frio') E os funis de segmento
+# pós-migration 20260626 ('entrada'/'novo'). Stages posteriores (respondeu/qualificado/
+# fechado_ganho/perdido/encerrado) NÃO estão aqui → o reflexo nunca regride o que já avançou.
+_REPLY_ADVANCE_FROM_KEYS: tuple[str, ...] = ("disparo_feito", "frio", "entrada", "novo")
 
-    Disparado quando o lead responde a um disparo. Idempotente e auto-escopado ao funil
-    frio: só age quando o stage ATUAL do card é exatamente o 'disparo_feito' do pipeline
-    dele — nunca regride 'Respondeu'/'Qualificado'/'Encerrado'. Outros funis (vendedor,
-    produto) não têm o par disparo_feito/respondeu → no-op natural.
+
+def advance_deal_on_reply(lead_id: str) -> bool:
+    """REFLEXO DE SISTEMA (sem LLM): card aberto em stage de pré-resposta → 'Respondeu'.
+
+    Disparado quando o lead responde. Generaliza o reflexo do funil frio para QUALQUER funil
+    da Valéria (vocabulário de key unificado, migration 20260626): se o stage ATUAL do card é
+    um de pré-resposta (disparo_feito/frio/entrada/novo), move para 'respondeu'. Idempotente e
+    nunca regride — card já em respondeu/qualificado/ganho/perdido é deixado intacto. Funis que
+    não têm coluna 'respondeu' (ex.: board do vendedor João) → no-op natural.
 
     Fail-soft: nunca levanta (não pode derrubar o processamento do inbound).
     Retorna True só quando moveu o card.
@@ -812,25 +820,29 @@ def advance_cold_deal_on_reply(lead_id: str) -> bool:
         if not deal or not deal.get("pipeline_id") or not deal.get("stage_id"):
             return False
         pipeline_id = deal["pipeline_id"]
-        disparo_id = stage_id_by_key(sb, pipeline_id, COLD_DISPARO_KEY, "Disparo feito")
-        if not disparo_id or deal["stage_id"] != disparo_id:
-            return False  # não está em 'Disparo feito' → nada a fazer (não regride)
         respondeu_id = stage_id_by_key(sb, pipeline_id, COLD_RESPONDEU_KEY, "Respondeu")
-        if not respondeu_id:
-            return False
+        if not respondeu_id or deal["stage_id"] == respondeu_id:
+            return False  # funil sem 'respondeu' OU já está lá → nada a fazer
+        from_ids = {
+            sid
+            for k in _REPLY_ADVANCE_FROM_KEYS
+            if (sid := stage_id_by_key(sb, pipeline_id, k)) is not None
+        }
+        if deal["stage_id"] not in from_ids:
+            return False  # já passou da pré-resposta (qualificado/ganho/perdido) → não regride
         sb.table("deals").update({
             "stage_id": respondeu_id,
             "stage": "respondeu",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", deal["id"]).execute()
         logger.info(
-            "advance_cold_deal_on_reply: card %s movido 'Disparo feito' → 'Respondeu' (lead %s)",
+            "advance_deal_on_reply: card %s movido (pré-resposta) → 'Respondeu' (lead %s)",
             deal["id"], lead_id,
         )
         return True
     except Exception as exc:
         logger.error(
-            "advance_cold_deal_on_reply: falha p/ lead %s: %s", lead_id, exc, exc_info=True
+            "advance_deal_on_reply: falha p/ lead %s: %s", lead_id, exc, exc_info=True
         )
         return False
 
@@ -867,6 +879,63 @@ def move_deal_to_stage_key(
         logger.error(
             "move_deal_to_stage_key: falha p/ lead %s (key %s): %s",
             lead_id, key, exc, exc_info=True,
+        )
+        return False
+
+
+def ensure_segment_deal(
+    lead_id: str, segment: str | None, title: str | None = None
+) -> bool:
+    """CRIAÇÃO ADIADA: garante um card no funil do SEGMENTO, sem duplicar.
+
+    Chamada quando a IA descobre o segmento do lead (mudar_stage). Só age para segmentos
+    conhecidos (CATEGORY_PIPELINE_NAMES: atacado/private_label/exportacao/consumo) — assim o
+    inbound orgânico, que não tinha card até o handoff, passa a aparecer no Kanban assim que é
+    classificado. No-op (False) se já existe deal aberto (LP/broadcast/handoff) ou se o segmento
+    é desconhecido ('pending'/'secretaria' → funil indefinido). Idempotente. Fail-soft: nunca
+    levanta. Retorna True só quando cria o card.
+    """
+    try:
+        if not segment or segment not in CATEGORY_PIPELINE_NAMES:
+            return False
+        if get_open_deal(lead_id):
+            return False
+        lead = get_lead(lead_id) or {}
+        lead_name = lead.get("name") or lead.get("phone") or "Lead"
+        create_deal(
+            lead_id,
+            title=title or f"{lead_name} - Inbound",
+            category=segment,
+            dedupe_open=True,
+        )
+        logger.info(
+            "ensure_segment_deal: card criado no funil de '%s' p/ lead %s", segment, lead_id
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "ensure_segment_deal: falha ao criar card (segmento %s) p/ lead %s: %s",
+            segment, lead_id, exc, exc_info=True,
+        )
+        return False
+
+
+def mark_deal_qualificado(lead_id: str, segment: str | None = None) -> bool:
+    """CREATE-OR-MOVE: leva o card do lead para 'Qualificado' no funil ativo.
+
+    Usada por marcar_interesse. Se o lead ainda NÃO tem card (inbound orgânico que demonstrou
+    interesse antes de qualquer handoff), cria um no funil do segmento e então o move para
+    'qualificado'. Se já tem card, apenas move dentro do funil atual. No-op gracioso quando o
+    segmento é desconhecido e não há card (não há funil onde colocar). Fail-soft: nunca levanta.
+    """
+    try:
+        if not get_open_deal(lead_id):
+            ensure_segment_deal(lead_id, segment)
+        return move_deal_to_stage_key(lead_id, COLD_QUALIFICADO_KEY, "Qualificado")
+    except Exception as exc:
+        logger.error(
+            "mark_deal_qualificado: falha p/ lead %s (segmento %s): %s",
+            lead_id, segment, exc, exc_info=True,
         )
         return False
 

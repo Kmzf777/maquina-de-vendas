@@ -5,13 +5,15 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_marcar_interesse_move_card_para_qualificado(monkeypatch):
-    """marcar_interesse, além do flag de follow-up, move o card aberto p/ 'Qualificado'."""
+    """marcar_interesse, além do flag de follow-up, qualifica o card (create-or-move) usando o
+    segmento do lead."""
     from app.agent.tools import execute_tool, pop_interest_marked
 
+    monkeypatch.setattr("app.agent.tools.get_lead", lambda lid: {"id": lid, "stage": "atacado"})
     calls = []
     monkeypatch.setattr(
-        "app.agent.tools.move_deal_to_stage_key",
-        lambda lead_id, key, label_fallback=None: calls.append((lead_id, key, label_fallback)) or True,
+        "app.agent.tools.mark_deal_qualificado",
+        lambda lead_id, segment=None: calls.append((lead_id, segment)) or True,
     )
 
     result = await execute_tool(
@@ -22,8 +24,8 @@ async def test_marcar_interesse_move_card_para_qualificado(monkeypatch):
         conversation_id="conv-1",
     )
 
-    # Moveu o card para qualificado (key + fallback por label)
-    assert calls == [("lead-1", "qualificado", "Qualificado")]
+    # Qualificou o card com o segmento do lead
+    assert calls == [("lead-1", "atacado")]
     # E o flag de follow-up continua sendo setado (comportamento legado preservado)
     assert pop_interest_marked("conv-1") == {"nivel": "quente", "motivo": "pediu preço e prazo"}
     assert "quente" in result.lower()
@@ -31,13 +33,14 @@ async def test_marcar_interesse_move_card_para_qualificado(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_marcar_interesse_failsoft_quando_move_levanta(monkeypatch):
-    """Falha ao mover o card não derruba a tool (o flag de interesse ainda vale)."""
+    """Falha ao qualificar o card não derruba a tool (o flag de interesse ainda vale)."""
     from app.agent.tools import execute_tool, pop_interest_marked
 
     def boom(*a, **k):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr("app.agent.tools.move_deal_to_stage_key", boom)
+    monkeypatch.setattr("app.agent.tools.get_lead", lambda lid: {"id": lid, "stage": "atacado"})
+    monkeypatch.setattr("app.agent.tools.mark_deal_qualificado", boom)
 
     result = await execute_tool(
         "marcar_interesse",

@@ -9,7 +9,8 @@ from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
-    add_tags_to_lead, move_deal_to_vendor_pipeline, move_deal_to_stage_key,
+    add_tags_to_lead, move_deal_to_vendor_pipeline,
+    ensure_segment_deal, mark_deal_qualificado,
 )
 
 # Vocabulário CONTROLADO de tags que a IA pode aplicar (allowlist). Deve espelhar o seed
@@ -543,6 +544,16 @@ async def execute_tool(
         if conversation_id:
             update_conversation(conversation_id, stage=new_stage)
         update_lead(lead_id, stage=new_stage)
+        # CRIAÇÃO ADIADA: ao classificar o segmento, o lead inbound (que não tinha card) ganha
+        # um no funil correspondente. No-op p/ stage não-segmento ('pending'/'secretaria') ou
+        # se já houver card. Fail-soft: nunca derruba a troca de stage.
+        try:
+            ensure_segment_deal(lead_id, new_stage)
+        except Exception as exc:
+            logger.error(
+                "mudar_stage: falha ao garantir card de segmento (lead %s, stage %s): %s",
+                lead_id, new_stage, exc, exc_info=True,
+            )
         save_message(lead_id, "system", f"stage alterado para: {new_stage}", conversation_id=conversation_id)
         return f"Stage alterado para: {new_stage}"
 
@@ -865,14 +876,17 @@ async def execute_tool(
         motivo = args.get("motivo", "")
         if conversation_id:
             _interest_marked[conversation_id] = {"nivel": nivel, "motivo": motivo}
-        # Autonomia de pipeline: interesse comercial claro = lead QUALIFICADO. Move o card
-        # aberto para o stage 'Qualificado' do funil atual (no-op se o pipeline não tiver —
-        # ex.: lead já no board do vendedor). Fail-soft: nunca derruba o flag de follow-up.
+        # Autonomia de pipeline (CREATE-OR-MOVE): interesse comercial claro = lead QUALIFICADO.
+        # Se o lead inbound ainda não tem card, cria um no funil do seu segmento e o move para
+        # 'Qualificado'; se já tem, apenas move. No-op gracioso sem segmento conhecido nem card.
+        # Fail-soft: nunca derruba o flag de follow-up.
         try:
-            move_deal_to_stage_key(lead_id, "qualificado", "Qualificado")
+            lead = get_lead(lead_id)
+            segment = lead.get("stage") if lead else None
+            mark_deal_qualificado(lead_id, segment)
         except Exception as exc:
             logger.error(
-                "marcar_interesse: falha ao mover card p/ Qualificado (lead %s): %s",
+                "marcar_interesse: falha ao qualificar card (lead %s): %s",
                 lead_id, exc, exc_info=True,
             )
         logger.info(

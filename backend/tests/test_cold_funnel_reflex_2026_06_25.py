@@ -78,13 +78,13 @@ def _stage_resolver(table, filters):
 
 
 def test_advance_moves_disparo_feito_to_respondeu():
-    from app.leads.service import advance_cold_deal_on_reply
+    from app.leads.service import advance_deal_on_reply
 
     deal = {"id": "deal-1", "pipeline_id": PIPELINE_ID, "stage_id": DISPARO_ID}
     updated = []
     with patch("app.leads.service.get_open_deal", return_value=deal), \
          patch("app.leads.service.get_supabase", return_value=FakeSupabase(_stage_resolver, updated)):
-        result = advance_cold_deal_on_reply("lead-1")
+        result = advance_deal_on_reply("lead-1")
 
     assert result is True
     assert len(updated) == 1
@@ -96,13 +96,13 @@ def test_advance_moves_disparo_feito_to_respondeu():
 
 def test_advance_noop_when_already_respondeu():
     """Não regride status conquistado: card já em Respondeu/Qualificado/Encerrado não é tocado."""
-    from app.leads.service import advance_cold_deal_on_reply
+    from app.leads.service import advance_deal_on_reply
 
     deal = {"id": "deal-2", "pipeline_id": PIPELINE_ID, "stage_id": RESPONDEU_ID}
     updated = []
     with patch("app.leads.service.get_open_deal", return_value=deal), \
          patch("app.leads.service.get_supabase", return_value=FakeSupabase(_stage_resolver, updated)):
-        result = advance_cold_deal_on_reply("lead-2")
+        result = advance_deal_on_reply("lead-2")
 
     assert result is False
     assert updated == []
@@ -110,25 +110,25 @@ def test_advance_noop_when_already_respondeu():
 
 def test_advance_noop_outside_cold_funnel():
     """Pipeline sem stage 'disparo_feito' (ex.: funil do vendedor) → no-op."""
-    from app.leads.service import advance_cold_deal_on_reply
+    from app.leads.service import advance_deal_on_reply
 
     deal = {"id": "deal-3", "pipeline_id": "pl-joao-atacado", "stage_id": "st-novo"}
     updated = []
     with patch("app.leads.service.get_open_deal", return_value=deal), \
          patch("app.leads.service.get_supabase", return_value=FakeSupabase(lambda t, f: [], updated)):
-        result = advance_cold_deal_on_reply("lead-3")
+        result = advance_deal_on_reply("lead-3")
 
     assert result is False
     assert updated == []
 
 
 def test_advance_noop_without_open_deal():
-    from app.leads.service import advance_cold_deal_on_reply
+    from app.leads.service import advance_deal_on_reply
 
     updated = []
     with patch("app.leads.service.get_open_deal", return_value=None), \
          patch("app.leads.service.get_supabase", return_value=FakeSupabase(lambda t, f: [], updated)):
-        result = advance_cold_deal_on_reply("lead-4")
+        result = advance_deal_on_reply("lead-4")
 
     assert result is False
     assert updated == []
@@ -136,12 +136,12 @@ def test_advance_noop_without_open_deal():
 
 def test_advance_fail_soft_on_error():
     """Erro de DB nunca levanta (não pode derrubar o processamento do inbound)."""
-    from app.leads.service import advance_cold_deal_on_reply
+    from app.leads.service import advance_deal_on_reply
 
     def boom(lead_id):
         raise RuntimeError("db down")
 
     with patch("app.leads.service.get_open_deal", side_effect=boom):
-        result = advance_cold_deal_on_reply("lead-5")
+        result = advance_deal_on_reply("lead-5")
 
     assert result is False

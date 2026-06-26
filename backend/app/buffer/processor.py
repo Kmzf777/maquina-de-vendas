@@ -11,7 +11,7 @@ import httpx
 
 from app.config import settings
 from app.leads.service import (
-    get_or_create_lead, resolve_send_target, get_lead, advance_cold_deal_on_reply,
+    get_or_create_lead, resolve_send_target, get_lead, advance_deal_on_reply,
 )
 from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
@@ -569,13 +569,14 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning("Failed to record broadcast reply for %s: %s", phone, e)
 
-    # REFLEXO DE SISTEMA (sem LLM): card aberto em 'Disparo feito' do funil frio da Valéria
-    # → 'Respondeu'. A IA não gasta tokens com isso; é um reflexo do backend. Idempotente e
-    # auto-escopado (no-op fora do funil frio), roda mesmo com ai_enabled=false. Fail-soft.
+    # REFLEXO DE SISTEMA (sem LLM): card aberto em stage de pré-resposta (disparo_feito/frio/
+    # entrada/novo) de QUALQUER funil da Valéria → 'Respondeu'. A IA não gasta tokens com isso;
+    # é um reflexo do backend. Idempotente, nunca regride e auto-escopado (no-op em funil sem
+    # 'respondeu'), roda mesmo com ai_enabled=false. Fail-soft.
     try:
-        advance_cold_deal_on_reply(lead["id"])
+        advance_deal_on_reply(lead["id"])
     except Exception as e:
-        logger.warning("[REFLEX] advance_cold_deal_on_reply falhou p/ %s: %s", phone, e)
+        logger.warning("[REFLEX] advance_deal_on_reply falhou p/ %s: %s", phone, e)
 
     # Notify campaign worker of reply
     try:
