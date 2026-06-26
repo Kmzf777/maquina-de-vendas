@@ -121,6 +121,40 @@ def lead_has_active_relationship(lead_id: str) -> bool:
         return False
 
 
+def is_lead_blacklisted(lead_id: str) -> bool:
+    """True se o lead está na BLACKLIST e NÃO pode receber disparo outbound ativo.
+
+    Critério (hard opt-out — proibição definitiva de contato):
+      - leads.opt_out IS TRUE  (canônico — setado por registrar_optout), OU
+      - o lead tem QUALQUER deal no pipeline Blacklist (BLACKLIST_PIPELINE_ID) — cobre o
+        caso de lead movido para a Blacklist sem o flag opt_out (defesa em profundidade).
+
+    NÃO inclui stage='perdido' (SOFT rejection — registrar_sem_interesse_atual mantém
+    opt_out=False e o lead é reativável; excluí-lo aqui quebraria campanhas de reativação).
+
+    Fail-open=False: erro de checagem retorna False (não bloqueia o disparo por causa da
+    checagem), espelhando lead_has_active_relationship. A proteção real vem das DUAS camadas
+    (filtro na criação + guardrail no envio), não de fail-closed.
+    """
+    if not lead_id:
+        return False
+    try:
+        sb = get_supabase()
+        lead = sb.table("leads").select("opt_out").eq("id", lead_id).limit(1).execute()
+        if lead.data and lead.data[0].get("opt_out"):
+            return True
+        deal = (
+            sb.table("deals").select("id")
+            .eq("lead_id", lead_id)
+            .eq("pipeline_id", BLACKLIST_PIPELINE_ID)
+            .limit(1).execute()
+        )
+        return bool(deal.data)
+    except Exception as exc:
+        logger.warning("leads.service: is_lead_blacklisted falhou p/ %s: %s", lead_id, exc)
+        return False
+
+
 # Colunas de atribuição/rastreio persistíveis na criação do lead. Whitelist defensiva:
 # só estas chaves de `tracking` são gravadas, evitando injeção de colunas arbitrárias.
 TRACKING_COLUMNS: tuple[str, ...] = (

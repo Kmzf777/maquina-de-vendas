@@ -19,7 +19,7 @@ from app.broadcast.service import (
     save_broadcast_lead_wamid,
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
-from app.leads.service import update_lead, record_dispatch_note
+from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -324,6 +324,20 @@ def _broadcast_ai_enabled(broadcast: dict, channel: dict | None = None) -> bool:
     return bool(broadcast.get("agent_profile_id"))
 
 
+def _blacklist_guardrail(lead: dict) -> str | None:
+    """CAMADA 2 — guardrail rígido no momento do envio.
+
+    Re-checa a blacklist FRESCA (opt-out / pipeline Blacklist) no milissegundo antes do
+    disparo, pegando o lead que deu opt-out ENTRE a criação da campanha e o envio (a Camada 1
+    filtra na criação, mas a janela pode ser de horas). Retorna o motivo do skip (string) se o
+    lead estiver na blacklist; None se está liberado. Delegação pura a is_lead_blacklisted —
+    unit-testável sem rodar o loop de envio.
+    """
+    if is_lead_blacklisted(lead.get("id")):
+        return "blacklist: opt-out ou pipeline Blacklist"
+    return None
+
+
 def reconcile_broadcast_replies() -> None:
     """Catch-up job: fills first_replied_at for leads that replied but webhook failed.
 
@@ -554,6 +568,18 @@ async def process_single_broadcast(broadcast: dict):
             return
 
         lead = bl["leads"]
+
+        # CAMADA 2 — guardrail rígido: ABORTA o envio se o lead estiver na blacklist AGORA
+        # (opt-out dado entre a criação da campanha e este momento). Marca o job e não envia.
+        block_reason = _blacklist_guardrail(lead)
+        if block_reason:
+            logger.warning(
+                "[BROADCAST][BLACKLIST] lead %s (%s) na blacklist — disparo ABORTADO (%s)",
+                lead.get("id"), lead.get("phone"), block_reason,
+            )
+            mark_broadcast_lead_failed(bl["id"], block_reason)
+            increment_broadcast_failed(broadcast_id)
+            continue
 
         try:
             channel_id = broadcast.get("channel_id")

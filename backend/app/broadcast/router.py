@@ -8,6 +8,7 @@ from app.campaign.importer import parse_csv
 from app.leads.service import (
     get_or_create_lead as _get_or_create_lead,
     lead_has_active_relationship as _lead_has_active_relationship,
+    is_lead_blacklisted as _is_lead_blacklisted,
 )
 
 router = APIRouter(prefix="/api/broadcasts", tags=["broadcasts"])
@@ -115,7 +116,13 @@ async def assign_leads(broadcast_id: str, req: AssignLeadsRequest):
     sb = get_supabase()
     assigned = 0
     skipped_active = 0
+    skipped_blacklist = 0
     for lead_id in req.lead_ids:
+        # CAMADA 1 — filtro de origem: NUNCA enfileirar quem está na blacklist (opt-out /
+        # pipeline Blacklist). Protege o número do WhatsApp de banimento por disparo proibido.
+        if _is_lead_blacklisted(lead_id):
+            skipped_blacklist += 1
+            continue
         # Não enviar disparo frio de prospecção a quem já é cliente / está em tratativa.
         if _lead_has_active_relationship(lead_id):
             skipped_active += 1
@@ -131,7 +138,7 @@ async def assign_leads(broadcast_id: str, req: AssignLeadsRequest):
 
     total = sb.table("broadcast_leads").select("id", count="exact").eq("broadcast_id", broadcast_id).execute().count
     sb.table("broadcasts").update({"total_leads": total or 0}).eq("id", broadcast_id).execute()
-    return {"assigned": assigned, "skipped_active": skipped_active}
+    return {"assigned": assigned, "skipped_active": skipped_active, "skipped_blacklist": skipped_blacklist}
 
 
 @router.post("/{broadcast_id}/import")
@@ -145,12 +152,17 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
     sb = get_supabase()
     created = 0
     skipped_active = 0
+    skipped_blacklist = 0
 
     for phone in result.valid:
         try:
             # get_or_create_lead handles 12→13-digit legacy backfill, preventing
             # duplicate leads that would cause the same person to receive two templates.
             lead = _get_or_create_lead(phone)
+            # CAMADA 1 — filtro de origem: nunca enfileirar blacklist (opt-out / pipeline Blacklist).
+            if _is_lead_blacklisted(lead["id"]):
+                skipped_blacklist += 1
+                continue
             # Não enviar disparo frio de prospecção a quem já é cliente / está em tratativa.
             if _lead_has_active_relationship(lead["id"]):
                 skipped_active += 1
@@ -171,6 +183,7 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
         "invalid": len(result.invalid),
         "invalid_numbers": result.invalid[:20],
         "skipped_active": skipped_active,
+        "skipped_blacklist": skipped_blacklist,
     }
 
 
