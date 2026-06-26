@@ -11,6 +11,13 @@ from app.leads.service import (
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
     add_tags_to_lead, move_deal_to_vendor_pipeline,
     ensure_segment_deal, mark_deal_qualificado,
+    get_relationship_summary,
+)
+from pydantic import ValidationError as _PydanticValidationError
+from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
+from app.agent.pricing import (
+    OrcamentoInput, LineQuote, match_products, parse_brl,
+    resolve_region, compute_quote, format_quote,
 )
 
 # Vocabulário CONTROLADO de tags que a IA pode aplicar (allowlist). Deve espelhar o seed
@@ -422,20 +429,94 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_relacionamento",
+            "description": (
+                "Consulta o histórico de relacionamento do lead no CRM: se já é cliente ativo, "
+                "quando foi a última compra e qual produto. "
+                "CHAME ANTES de qualificar o lead quando: o <crm_data> ou <lead_memory> sugerir "
+                "que pode ser cliente antigo; o lead usar termos de recompra ('repor', 'novo pedido', "
+                "'mais um pedido', 'de novo', 'sempre compro'); ou houver QUALQUER suspeita de cliente "
+                "antigo. Retorna string descritiva — use para decidir se trata como "
+                "reabastecimento/upsell (NÃO rode funil de lead novo com cliente ativo) ou prospecto frio."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calcular_orcamento",
+            "description": (
+                "Calcula o orçamento determinístico do pedido a partir de um carrinho de produtos do setor atacado. "
+                "É OBRIGATÓRIO chamar esta ferramenta para QUALQUER pergunta de preço, valor de pedido, frete, "
+                "total ou pedido mínimo — é PROIBIDO somar, multiplicar, estimar ou inventar qualquer valor de "
+                "cabeça. Nunca calcule de cabeça. "
+                "Se faltar a quantidade ou o estado, pergunte antes de calcular. "
+                "Recebe um carrinho (`itens`: lista de objetos com `produto` e `quantidade`), "
+                "`estado` (sigla UF, ex.: SP) e `cidade` opcionais. "
+                "Retorna orçamento com breakdown item a item, subtotal global, frete e total."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "itens": {
+                        "type": "array",
+                        "description": "Lista de produtos do carrinho com nome e quantidade",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "produto": {
+                                    "type": "string",
+                                    "description": "Nome ou parte do nome do produto desejado",
+                                },
+                                "quantidade": {
+                                    "type": "integer",
+                                    "description": "Quantidade do produto (deve ser > 0)",
+                                },
+                            },
+                            "required": ["produto", "quantidade"],
+                        },
+                    },
+                    "estado": {
+                        "type": "string",
+                        "description": (
+                            "Sigla do estado (UF), ex.: SP, MG, BA. "
+                            "Opcional — pergunte ao lead se não souber."
+                        ),
+                    },
+                    "cidade": {
+                        "type": "string",
+                        "description": (
+                            "Cidade do lead. Opcional — necessário apenas para cidades com "
+                            "frete especial (ex.: Uberlândia, frete flat R$15)."
+                        ),
+                    },
+                },
+                "required": ["itens"],
+            },
+        },
+    },
 ]
 
 
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
         # Varejo B2C NÃO é "lead perdido": consumo NUNCA auto-descarta (sem
         # registrar_sem_interesse_atual). A saída legítima continua sendo opt-out (lead pede
         # pra parar) — handoff não se aplica ao self-service. (Auditoria lead 5551991295543.)
-        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse", "adicionar_tag_lead", "agendar_retorno"],
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
@@ -900,6 +981,104 @@ async def execute_tool(
 
     elif tool_name == "agendar_retorno":
         return await _agendar_retorno(args, lead_id, phone, conversation_id)
+
+    elif tool_name == "consultar_relacionamento":
+        try:
+            return get_relationship_summary(lead_id)
+        except Exception as exc:
+            logger.error(
+                "consultar_relacionamento: erro inesperado p/ lead %s: %s",
+                lead_id, exc, exc_info=True,
+            )
+            return "Não foi possível consultar o relacionamento agora."
+
+    elif tool_name == "calcular_orcamento":
+        try:
+            # 1. Validate args via Pydantic
+            try:
+                orcamento = OrcamentoInput(**args)
+            except _PydanticValidationError as exc:
+                return (
+                    f"Não consegui ler os itens do pedido "
+                    f"({exc.error_count()} erro(s) de validação). "
+                    "Verifique os itens informados (produto e quantidade > 0)."
+                )
+
+            # 2. Fetch active atacado products once (P1: parse_brl só nos matches)
+            try:
+                all_products = _fetch_active_products()
+            except Exception as exc:
+                logger.error(
+                    "calcular_orcamento: falha ao buscar produtos p/ lead %s: %s",
+                    lead_id, exc, exc_info=True,
+                )
+                return (
+                    "Não consegui acessar o catálogo de produtos agora. "
+                    "Encaminhe para o João para calcular manualmente."
+                )
+            products = [
+                p for p in all_products
+                if _normalize_catalog(p.get("sector")) == "atacado"
+            ]
+
+            # 3. Resolve each item — abort on first irresolvable item
+            lines: list[LineQuote] = []
+            for item in orcamento.itens:
+                matches = match_products(item.produto, products)
+                if len(matches) == 0:
+                    return (
+                        f"Produto '{item.produto}' não encontrado no catálogo de atacado. "
+                        "Confirme o nome."
+                    )
+                if len(matches) > 1:
+                    top_names = ", ".join(m["name"] for m in matches)
+                    return f"Para '{item.produto}', especifique qual: {top_names}"
+                # Exactly 1 match — parse_brl ONLY on this match (P1)
+                match = matches[0]
+                try:
+                    preco = parse_brl(match["price_formatted"])
+                except (ValueError, KeyError, TypeError) as exc:
+                    logger.error(
+                        "calcular_orcamento: parse_brl falhou p/ produto '%s' (lead %s): %s",
+                        match.get("name", item.produto), lead_id, exc,
+                    )
+                    return (
+                        f"Não consegui ler o preço do produto '{match.get('name', item.produto)}'. "
+                        "Encaminhe para o João para calcular manualmente."
+                    )
+                lines.append(LineQuote(
+                    produto=match["name"],
+                    quantidade=item.quantidade,
+                    preco_unitario=preco,
+                    subtotal_linha=preco * item.quantidade,
+                ))
+
+            # 4. Resolve region (B2: Uberlândia proceeds even without estado)
+            region_key, is_uberlandia = resolve_region(orcamento.estado, orcamento.cidade)
+
+            # 5. No region AND not Uberlândia override → return subtotal + ask for estado
+            if region_key is None and not is_uberlandia:
+                subtotal = sum(line.subtotal_linha for line in lines)
+                fmt = f"{subtotal:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                return (
+                    f"Subtotal dos produtos: R$ {fmt}. "
+                    "Para calcular o frete e verificar o pedido mínimo, "
+                    "me confirme o estado (sigla UF, ex.: SP)."
+                )
+
+            # 6. Full quote with freight
+            quote = compute_quote(lines, region_key, is_uberlandia)
+            return format_quote(quote)
+
+        except Exception as exc:
+            logger.error(
+                "calcular_orcamento: erro inesperado p/ lead %s: %s",
+                lead_id, exc, exc_info=True,
+            )
+            return (
+                "Ocorreu um problema ao calcular o orçamento. "
+                "Por favor, encaminhe para o João para calcular manualmente."
+            )
 
     return f"Tool {tool_name} nao reconhecida"
 
