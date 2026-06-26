@@ -14,6 +14,7 @@ from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
 from app.whatsapp.meta import MetaCloudClient, extract_wamid
+from app.humanizer.splitter import split_into_bubbles
 from app.agent.prompts.base import build_base_prompt
 from app.agent.token_tracker import track_token_usage
 
@@ -473,6 +474,10 @@ async def process_due_followups(now: datetime | None = None) -> None:
 
         if job.get("job_type") == "ai_reengage":
             await _process_ai_reengage(job, now)
+            continue
+
+        if job.get("job_type") == "ai_scheduled_return":
+            await _process_ai_scheduled_return(job, now)
             continue
 
         conversation_id = job["conversation_id"]
@@ -1006,6 +1011,137 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
 
     _mark_sent(job["id"])
     logger.info("[AI_REENGAGE] Valéria respondeu lead=%s conv=%s", phone, conversation_id)
+
+
+async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
+    """Retorno autônomo agendado pela tool `agendar_retorno` (job_type='ai_scheduled_return').
+
+    No `fire_at`, a Valéria reabre a conversa PROATIVAMENTE com base no motivo/contexto que ela
+    própria salvou (ex.: lead disse "falo sexta"). Diferente do ai_reengage (que responde a uma
+    mensagem órfã do lead), aqui montamos um gatilho interno a partir do metadata.
+
+    - Janela 24h ABERTA → roda o agente real (run_agent, persona outbound) e envia as bolhas.
+    - Janela 24h FECHADA → cancela ('window_expired'): free-text seria rejeitado pela Meta
+      (#131047). Reabertura por template aprovado é um seam futuro (metadata.template_name).
+
+    Guards (qualquer um falha → não envia): canal humano; lead.ai_enabled=False.
+    """
+    from app.agent.orchestrator import run_agent
+
+    channel = job["channels"]
+    conversation = job["conversations"]
+    conversation_id = job["conversation_id"]
+    metadata = job.get("metadata") or {}
+
+    # Guard: canal humano nunca roda IA
+    if channel.get("mode", "ai") == "human":
+        _cancel_job(job["id"], "human_channel")
+        logger.info("[AI_SCHEDULED_RETURN] mode=human — cancelando conv=%s", conversation_id)
+        return
+
+    sb = get_supabase()
+    try:
+        lead_row = (
+            sb.table("leads")
+            .select("id, phone, name, ai_enabled, last_customer_message_at, metadata, wa_id")
+            .eq("id", job["lead_id"])
+            .single()
+            .execute()
+        )
+        lead = lead_row.data
+    except Exception as exc:
+        logger.error(
+            "[AI_SCHEDULED_RETURN] falha ao reler lead %s: %s", job["lead_id"], exc, exc_info=True
+        )
+        return  # transitório → retry no próximo tick
+
+    if not lead or not lead.get("ai_enabled", False):
+        _cancel_job(job["id"], "ai_disabled")
+        logger.info("[AI_SCHEDULED_RETURN] ai_enabled=false — cancelando conv=%s", conversation_id)
+        return
+
+    phone = lead["phone"]
+    send_to = resolve_send_target(lead, phone)
+
+    # Janela 24h POR CANAL (fonte: conversa). Fechada → free-text rejeitado pela Meta.
+    last_msg_str = conversation.get("last_customer_message_at")
+    window_open = False
+    if last_msg_str:
+        last_msg = datetime.fromisoformat(last_msg_str.replace("Z", "+00:00"))
+        window_open = last_msg + timedelta(hours=24) > now
+    if not window_open:
+        _cancel_job(job["id"], "window_expired")
+        logger.warning(
+            "[AI_SCHEDULED_RETURN] janela 24h fechada — cancelando conv=%s "
+            "(retorno multi-dia exige template de reabertura)", conversation_id,
+        )
+        return
+
+    motivo = (metadata.get("motivo") or "").strip() or "retomar o contato combinado"
+    contexto = (metadata.get("contexto") or "").strip()
+    trigger = (
+        "[GATILHO INTERNO — RETORNO AGENDADO] Você combinou de retomar o contato com este "
+        f"lead agora. Combinado/motivo: {motivo}."
+        + (f" Contexto: {contexto}." if contexto else "")
+        + " Reabra a conversa de forma natural, curta e pessoal, retomando esse ponto. "
+        "NÃO diga que é um lembrete automático nem mencione que houve um agendamento."
+    )
+
+    conversation["leads"] = lead
+    lead_context = lead.get("metadata") or {}
+    try:
+        response = await run_agent(
+            conversation, trigger,
+            lead_context=lead_context,
+            agent_profile_id=AI_REENGAGE_PROFILE_ID,
+        )
+    except Exception as exc:
+        logger.error(
+            "[AI_SCHEDULED_RETURN] run_agent falhou conv=%s: %s", conversation_id, exc, exc_info=True
+        )
+        return  # transitório → retry
+
+    if response is None:
+        # encaminhar_humano foi chamado pela tool — mensagem de handoff já enviada.
+        logger.info("[AI_SCHEDULED_RETURN] handoff via tool conv=%s — nada a enviar", conversation_id)
+        _mark_sent(job["id"])
+        return
+    if not response.strip():
+        _cancel_job(job["id"], "empty_response")
+        logger.warning("[AI_SCHEDULED_RETURN] resposta vazia — cancelando conv=%s", conversation_id)
+        return
+
+    provider = get_provider(channel)
+    bubbles = split_into_bubbles(response)
+    sent_wamids: list[str | None] = []
+    for bubble in bubbles:
+        try:
+            send_result = await provider.send_text(send_to, bubble)
+            sent_wamids.append(extract_wamid(send_result))
+        except Exception as exc:
+            logger.error(
+                "[AI_SCHEDULED_RETURN] falha ao enviar bubble conv=%s: %s",
+                conversation_id, exc, exc_info=True,
+            )
+            return  # não marca sent → retry no próximo tick
+
+    for bubble, bubble_wamid in zip(bubbles, sent_wamids):
+        try:
+            save_message(
+                lead_id=job["lead_id"],
+                role="assistant",
+                content=bubble,
+                stage=conversation.get("stage"),
+                sent_by="agent",
+                conversation_id=conversation_id,
+                wamid=bubble_wamid,
+                agent_persona="valeria_outbound",
+            )
+        except Exception as exc:
+            logger.error("[AI_SCHEDULED_RETURN] falha ao salvar bubble conv=%s: %s", conversation_id, exc)
+
+    _mark_sent(job["id"])
+    logger.info("[AI_SCHEDULED_RETURN] Valéria retornou lead=%s conv=%s", phone, conversation_id)
 
 
 def _cancel_job(job_id: str, reason: str) -> None:

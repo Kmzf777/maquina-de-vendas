@@ -9,7 +9,7 @@ from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
-    add_tags_to_lead, move_deal_to_vendor_pipeline,
+    add_tags_to_lead, move_deal_to_vendor_pipeline, move_deal_to_stage_key,
 )
 
 # Vocabulário CONTROLADO de tags que a IA pode aplicar (allowlist). Deve espelhar o seed
@@ -27,7 +27,9 @@ from app.conversations.service import update_conversation, get_history as get_co
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_for_lead
-from app.follow_up.service import schedule_handoff_rescue, cancel_followups_by_phone
+from app.follow_up.service import (
+    schedule_handoff_rescue, cancel_followups_by_phone, schedule_ai_return,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -373,20 +375,66 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "agendar_retorno",
+            "description": (
+                "Agenda VOCE MESMA um retorno futuro a este lead quando ele pede para falar "
+                "depois (ex.: 'me chama sexta', 'volta amanha de manha', 'daqui a 2 horas'). "
+                "No horario combinado voce reabre a conversa automaticamente — NAO dependa do "
+                "follow-up generico nem peca para um humano lembrar. "
+                "REGRAS: passe `data_hora` em ISO 8601 COM fuso (-03:00), ex. "
+                "'2026-06-27T14:00:00-03:00'; calcule a data real a partir de hoje "
+                "(2026) — nunca use datas vagas. Horarios fora do comercial (09h-16h, dias "
+                "uteis) sao automaticamente ajustados para o proximo horario valido. "
+                "Apos agendar, confirme ao lead de forma natural que voce volta a falar nesse "
+                "momento e siga a conversa normalmente (esta tool NAO encerra o atendimento "
+                "nem desativa a IA)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "data_hora": {
+                        "type": "string",
+                        "description": (
+                            "Data e hora do retorno em ISO 8601 com fuso de Brasilia (-03:00). "
+                            "Ex.: '2026-06-27T14:00:00-03:00'. Calcule a partir da data de hoje."
+                        ),
+                    },
+                    "motivo": {
+                        "type": "string",
+                        "description": (
+                            "O que ficou combinado / por que retornar (ex.: 'lead pediu retorno "
+                            "na sexta para fechar pedido de 30kg')."
+                        ),
+                    },
+                    "contexto": {
+                        "type": "string",
+                        "description": (
+                            "Opcional: contexto extra para voce usar na volta (objecao pendente, "
+                            "produto de interesse, volume discutido)."
+                        ),
+                    },
+                },
+                "required": ["data_hora", "motivo"],
+            },
+        },
+    },
 ]
 
 
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno"],
         # Varejo B2C NÃO é "lead perdido": consumo NUNCA auto-descarta (sem
         # registrar_sem_interesse_atual). A saída legítima continua sendo opt-out (lead pede
         # pra parar) — handoff não se aplica ao self-service. (Auditoria lead 5551991295543.)
-        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse", "adicionar_tag_lead"],
+        "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse", "adicionar_tag_lead", "agendar_retorno"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
     return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
@@ -817,6 +865,16 @@ async def execute_tool(
         motivo = args.get("motivo", "")
         if conversation_id:
             _interest_marked[conversation_id] = {"nivel": nivel, "motivo": motivo}
+        # Autonomia de pipeline: interesse comercial claro = lead QUALIFICADO. Move o card
+        # aberto para o stage 'Qualificado' do funil atual (no-op se o pipeline não tiver —
+        # ex.: lead já no board do vendedor). Fail-soft: nunca derruba o flag de follow-up.
+        try:
+            move_deal_to_stage_key(lead_id, "qualificado", "Qualificado")
+        except Exception as exc:
+            logger.error(
+                "marcar_interesse: falha ao mover card p/ Qualificado (lead %s): %s",
+                lead_id, exc, exc_info=True,
+            )
         logger.info(
             "marcar_interesse: nivel=%s motivo=%r lead=%s conv=%s",
             nivel, motivo, lead_id, conversation_id,
@@ -826,7 +884,102 @@ async def execute_tool(
     elif tool_name == "retomar_contato_vendedor":
         return await _retomar_contato_vendedor(args, lead_id, phone, conversation_id)
 
+    elif tool_name == "agendar_retorno":
+        return await _agendar_retorno(args, lead_id, phone, conversation_id)
+
     return f"Tool {tool_name} nao reconhecida"
+
+
+# Horizonte máximo de agendamento autônomo (rede de segurança contra datas absurdas).
+_MAX_RETORNO_HORIZON_DAYS = 30
+
+
+def _format_retorno_when(fire_at: datetime) -> str:
+    """Frase natural (pt-BR) do horário do retorno agendado (já clampado)."""
+    local = fire_at.astimezone(_TZ_BR)
+    today = datetime.now(_TZ_BR).date()
+    delta = (local.date() - today).days
+    hora = local.strftime("%Hh%M") if local.minute else local.strftime("%Hh")
+    if delta <= 0:
+        return f"hoje por volta das {hora}"
+    if delta == 1:
+        return f"amanha por volta das {hora}"
+    return f"em {local.strftime('%d/%m')} por volta das {hora}"
+
+
+async def _agendar_retorno(
+    args: dict[str, Any], lead_id: str, phone: str, conversation_id: str
+) -> str:
+    """Agenda um retorno autônomo da Valéria (job ai_scheduled_return) no horário pedido.
+
+    Valida/parseia a data, rejeita passado e horizonte > 30 dias, resolve o canal e insere o
+    job (clampado p/ janela comercial em schedule_ai_return). NÃO desativa a IA — o lead segue
+    conversando. Retorna a string que a Valéria usa para confirmar o retorno ao lead.
+    """
+    data_hora_raw = (args.get("data_hora") or "").strip()
+    motivo = (args.get("motivo") or "").strip() or "retomar o contato combinado"
+    contexto = (args.get("contexto") or "").strip()
+
+    if not data_hora_raw:
+        return "ERRO: data_hora e obrigatoria (ISO 8601 com fuso, ex.: 2026-06-27T14:00:00-03:00)."
+    try:
+        dt = datetime.fromisoformat(data_hora_raw)
+    except ValueError:
+        return (
+            f"ERRO: data_hora invalida ({data_hora_raw!r}). Use ISO 8601 com fuso, "
+            "ex.: 2026-06-27T14:00:00-03:00."
+        )
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_TZ_BR)  # naïve → assume horário de Brasília
+    fire_at = dt.astimezone(timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    if fire_at <= now:
+        return "ERRO: data_hora no passado. Escolha um horario futuro."
+    if fire_at > now + timedelta(days=_MAX_RETORNO_HORIZON_DAYS):
+        return f"ERRO: horizonte maximo de {_MAX_RETORNO_HORIZON_DAYS} dias para agendamento."
+
+    channel = get_channel_for_lead(lead_id)
+    if not channel:
+        return "ERRO: nenhum canal ativo para agendar o retorno."
+
+    lead = get_lead(lead_id) or {}
+    lead_name = lead.get("name") or ""
+    try:
+        scheduled_at = schedule_ai_return(
+            conversation_id=conversation_id,
+            lead_id=lead_id,
+            channel_id=channel["id"],
+            fire_at=fire_at,
+            metadata={
+                "motivo": motivo,
+                "contexto": contexto,
+                "lead_name": lead_name,
+                "scheduled_by": "agendar_retorno",
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "agendar_retorno: falha ao agendar retorno p/ lead %s: %s", lead_id, exc, exc_info=True
+        )
+        return f"ERRO ao agendar retorno: {exc}"
+
+    when_label = _format_retorno_when(scheduled_at)
+    try:
+        save_message(
+            lead_id, "system",
+            f"[agendar_retorno] retorno agendado p/ {scheduled_at.isoformat()} — {motivo}",
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        pass
+    logger.info(
+        "agendar_retorno: lead %s agendado p/ %s (motivo=%r)", lead_id, scheduled_at.isoformat(), motivo
+    )
+    return (
+        f"Retorno agendado para {when_label}. Confirme ao lead de forma natural que voce "
+        "volta a falar com ele nesse momento e siga a conversa normalmente."
+    )
 
 
 def _format_next_dispatch(fire_at: datetime | None) -> str:

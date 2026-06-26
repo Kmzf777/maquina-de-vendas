@@ -746,6 +746,131 @@ def create_deal(
     return result.data[0]
 
 
+# ── Resolução de stage por key (autoritativa) com fallback por label ─────────
+# Keys estáveis do funil 'Valeria - Importação Leads Frios' (migration
+# 20260625_valeria_coldfunnel_stage_keys). O reflexo de reply e as tools de pipeline
+# resolvem por `key` (robusto a renome no CRM) e caem no label só como rede de segurança.
+COLD_DISPARO_KEY = "disparo_feito"
+COLD_RESPONDEU_KEY = "respondeu"
+COLD_QUALIFICADO_KEY = "qualificado"
+COLD_ENCERRADO_KEY = "encerrado"
+
+
+def stage_id_by_key(
+    sb, pipeline_id: str | None, key: str, label_fallback: str | None = None
+) -> str | None:
+    """Resolve o stage_id por `key` dentro de um pipeline; fallback por `label` exato.
+
+    Fail-soft: erro de consulta → None (o chamador decide o no-op).
+    """
+    if not pipeline_id:
+        return None
+    try:
+        r = (
+            sb.table("pipeline_stages")
+            .select("id")
+            .eq("pipeline_id", pipeline_id)
+            .eq("key", key)
+            .limit(1)
+            .execute()
+        )
+        if r.data:
+            return r.data[0]["id"]
+        if label_fallback:
+            r = (
+                sb.table("pipeline_stages")
+                .select("id")
+                .eq("pipeline_id", pipeline_id)
+                .eq("label", label_fallback)
+                .limit(1)
+                .execute()
+            )
+            if r.data:
+                return r.data[0]["id"]
+    except Exception as exc:
+        logger.error(
+            "stage_id_by_key: falha ao resolver stage key=%s pipeline=%s: %s",
+            key, pipeline_id, exc,
+        )
+    return None
+
+
+def advance_cold_deal_on_reply(lead_id: str) -> bool:
+    """REFLEXO DE SISTEMA (sem LLM): card aberto em 'Disparo feito' → 'Respondeu'.
+
+    Disparado quando o lead responde a um disparo. Idempotente e auto-escopado ao funil
+    frio: só age quando o stage ATUAL do card é exatamente o 'disparo_feito' do pipeline
+    dele — nunca regride 'Respondeu'/'Qualificado'/'Encerrado'. Outros funis (vendedor,
+    produto) não têm o par disparo_feito/respondeu → no-op natural.
+
+    Fail-soft: nunca levanta (não pode derrubar o processamento do inbound).
+    Retorna True só quando moveu o card.
+    """
+    try:
+        sb = get_supabase()
+        deal = get_open_deal(lead_id)
+        if not deal or not deal.get("pipeline_id") or not deal.get("stage_id"):
+            return False
+        pipeline_id = deal["pipeline_id"]
+        disparo_id = stage_id_by_key(sb, pipeline_id, COLD_DISPARO_KEY, "Disparo feito")
+        if not disparo_id or deal["stage_id"] != disparo_id:
+            return False  # não está em 'Disparo feito' → nada a fazer (não regride)
+        respondeu_id = stage_id_by_key(sb, pipeline_id, COLD_RESPONDEU_KEY, "Respondeu")
+        if not respondeu_id:
+            return False
+        sb.table("deals").update({
+            "stage_id": respondeu_id,
+            "stage": "respondeu",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", deal["id"]).execute()
+        logger.info(
+            "advance_cold_deal_on_reply: card %s movido 'Disparo feito' → 'Respondeu' (lead %s)",
+            deal["id"], lead_id,
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "advance_cold_deal_on_reply: falha p/ lead %s: %s", lead_id, exc, exc_info=True
+        )
+        return False
+
+
+def move_deal_to_stage_key(
+    lead_id: str, key: str, label_fallback: str | None = None
+) -> bool:
+    """Move o deal ABERTO do lead para o stage `key` DENTRO do pipeline atual do card.
+
+    Não troca de pipeline — só reposiciona a coluna. No-op (False) se não há deal aberto ou
+    se o pipeline atual não tem aquele stage (ex.: lead já no funil do vendedor). Idempotente.
+    Fail-soft: erro nunca levanta. Usado pelas tools da IA (ex.: marcar_interesse → Qualificado).
+    """
+    try:
+        sb = get_supabase()
+        deal = get_open_deal(lead_id)
+        if not deal or not deal.get("pipeline_id"):
+            return False
+        stage_id = stage_id_by_key(sb, deal["pipeline_id"], key, label_fallback)
+        if not stage_id:
+            return False
+        if deal.get("stage_id") == stage_id:
+            return True  # já está no stage alvo
+        sb.table("deals").update({
+            "stage_id": stage_id,
+            "stage": key,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", deal["id"]).execute()
+        logger.info(
+            "move_deal_to_stage_key: card %s → stage '%s' (lead %s)", deal["id"], key, lead_id
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "move_deal_to_stage_key: falha p/ lead %s (key %s): %s",
+            lead_id, key, exc, exc_info=True,
+        )
+        return False
+
+
 def _first_unprotected_stage_id(sb, pipeline_id: str) -> str | None:
     """Retorna o stage_id da 1ª coluna não-protegida do pipeline (ex.: 'Novo')."""
     s = (
@@ -869,14 +994,20 @@ def move_lead_deals_to_blacklist(lead_id: str) -> None:
 
 
 def _perdido_stage_id(sb, pipeline_id: str | None) -> str | None:
-    """Resolve o stage_id de 'Perdido' dentro de um pipeline (key in perdido/fechado_perdido)."""
+    """Resolve o stage_id de fechamento por perda dentro de um pipeline.
+
+    Aceita as keys 'perdido'/'fechado_perdido' (funis de produto/vendedor) E 'encerrado'
+    (funil 'Importação Leads Frios', que não tem coluna 'Perdido'). Sem essa última, a
+    soft-rejection marcava o card como closed mas o deixava preso em 'Disparo feito'
+    (auditoria 2026-06-25). Pega o maior order_index entre os candidatos.
+    """
     if not pipeline_id:
         return None
     res = (
         sb.table("pipeline_stages")
         .select("id, key")
         .eq("pipeline_id", pipeline_id)
-        .in_("key", ["perdido", "fechado_perdido"])
+        .in_("key", ["perdido", "fechado_perdido", "encerrado"])
         .order("order_index", desc=True)
         .limit(1)
         .execute()

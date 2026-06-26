@@ -271,6 +271,50 @@ def schedule_handoff_rescue(
     return fire_at
 
 
+def schedule_ai_return(
+    conversation_id: str,
+    lead_id: str,
+    channel_id: str,
+    fire_at: datetime,
+    metadata: dict[str, Any] | None = None,
+) -> datetime:
+    """Agenda um RETORNO AUTÔNOMO da IA (job_type='ai_scheduled_return') no `fire_at` pedido.
+
+    Usado pela tool `agendar_retorno`: quando o lead marca um horário ("falo sexta"), a própria
+    Valéria agenda o job, independente do motor genérico de follow-up. O `fire_at` é clampado
+    para a janela comercial (09h-16h, seg-sex). Retorna o `fire_at` efetivo (clampado), para a
+    tool informar ao lead o horário correto. Levanta RuntimeError em falha de insert.
+    """
+    clamped = _clamp_to_business_window(fire_at)
+    if os.environ.get("REHEARSAL_MODE") == "true":
+        logger.info("[AI_SCHEDULED_RETURN] REHEARSAL_MODE ativo — agendamento ignorado")
+        return clamped
+    sb = get_supabase()
+    job = {
+        "conversation_id": conversation_id,
+        "lead_id": lead_id,
+        "channel_id": channel_id,
+        "sequence": 1,
+        "fire_at": clamped.isoformat(),
+        "status": "pending",
+        "env_tag": _ENV_TAG,
+        "job_type": "ai_scheduled_return",
+        "metadata": metadata or {},
+    }
+    try:
+        sb.table("follow_up_jobs").insert(job).execute()
+    except Exception as exc:
+        logger.error(
+            "[AI_SCHEDULED_RETURN] Erro ao inserir job p/ lead %s: %s", lead_id, exc
+        )
+        raise RuntimeError(f"Falha ao agendar retorno para lead {lead_id}") from exc
+    logger.info(
+        "[AI_SCHEDULED_RETURN] Agendado lead=%s conv=%s fire_at=%s",
+        lead_id, conversation_id, clamped.isoformat(),
+    )
+    return clamped
+
+
 def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     """Retorna jobs pending cujo fire_at já passou."""
     sb = get_supabase()
