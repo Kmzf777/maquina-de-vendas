@@ -407,6 +407,10 @@ async def run_worker():
             await check_polling_triggers()
             await process_due_enrollments()
             await process_due_followups()
+            # Gatilho A da Camada de Memória: consolida o Dossiê de leads cuja sessão
+            # acabou de encerrar (debounced por inatividade + lock no banco).
+            from app.agent.memory_manager import process_stale_lead_memories
+            await process_stale_lead_memories()
             reconcile_broadcast_replies()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)

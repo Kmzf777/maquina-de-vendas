@@ -108,6 +108,22 @@ def build_base_prompt(
     if extra_lines:
         extra_context = "\n\n<crm_data>\n" + "\n".join(extra_lines) + "\n</crm_data>"
 
+    # Memória de longo prazo (Dossiê do Lead) — resumo rolante consolidado cross-canal,
+    # mantido por app/agent/memory_manager.py. Bloco distinto do <crm_data>: é a memória
+    # viva da Valéria (o que ela "sabe" do cliente), não só campos de CRM.
+    lead_memory = ""
+    rolling_summary = (lead_context or {}).get("rolling_summary")
+    if rolling_summary:
+        lead_memory = (
+            "\n\n<lead_memory>\n"
+            "Esta é a sua memória de longo prazo consolidada deste lead (todos os canais, "
+            "todo o histórico). Trate como verdade de base sobre quem ele é e o que já "
+            "conversaram. MAS confirme especificidades de forma natural antes de assumir "
+            "(regra anti-premissa) e NUNCA recite este dossiê ao lead.\n\n"
+            f"{rolling_summary}\n"
+            "</lead_memory>"
+        )
+
     prompt = f"""<role>
 Voce e Valeria, do comercial da Cafe Canastra. Voce conversa no WhatsApp como uma vendedora real — profissional, amigavel, gente boa, com personalidade e jogo de cintura. Voce vende cafe especial (atacado, private label, exportacao), mas nunca parece vendedora forcada. Voce sempre oferece para o lead COMPRAR, ao inves de oferecer ajuda.
 
@@ -169,7 +185,7 @@ Para consultas sensíveis ao tempo que requerem informações atualizadas, você
 # SOBRE O LEAD
 
 {name_instruction}
-{company_line}{extra_context}
+{company_line}{extra_context}{lead_memory}
 </context>
 
 <constraints>

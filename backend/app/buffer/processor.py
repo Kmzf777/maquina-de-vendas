@@ -714,6 +714,11 @@ async def process_buffered_messages(
 
     conversation["leads"] = lead
     lead_context = lead.get("metadata") or {}
+    # Memória de longo prazo (Dossiê do Lead): o rolling_summary é COLUNA do lead (não
+    # metadata), então precisa ser injetado explicitamente no lead_context. base.py o
+    # renderiza no bloco <lead_memory>. Ver app/agent/memory_manager.py.
+    if lead.get("rolling_summary"):
+        lead_context = {**lead_context, "rolling_summary": lead["rolling_summary"]}
     # Sinal "já é cliente / em tratativa": evita rodar o funil de lead novo com quem já
     # compra/está em atendimento (auditoria 2026-06-22: Grazieli). Surface via base prompt.
     try:

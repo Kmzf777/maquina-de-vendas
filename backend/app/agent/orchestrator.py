@@ -303,6 +303,19 @@ def get_ai_client(model: str) -> AsyncOpenAI:
     return _get_client(model)
 
 
+def _schedule_memory_refresh(lead_id: str) -> None:
+    """Gatilho B (Camada de Memória): agenda um refresh do Dossiê fire-and-forget após uma
+    mudança de stage (alto sinal). Não bloqueia o turno; o lock no banco resolve a corrida
+    com o Gatilho A (worker). Fail-soft: nunca levanta para o caller."""
+    if not lead_id:
+        return
+    try:
+        from app.agent.memory_manager import refresh_lead_memory
+        asyncio.create_task(refresh_lead_memory(lead_id))
+    except Exception as exc:  # pragma: no cover
+        logger.warning("_schedule_memory_refresh: falha ao agendar refresh p/ lead %s: %s", lead_id, exc)
+
+
 def _resolve_prompt_key(profile: dict | None) -> str:
     """Return the prompt_key for this agent profile, defaulting to valeria_inbound."""
     if not profile:
@@ -620,6 +633,8 @@ async def run_agent(
                     updated_meta = {**current_meta, "previous_stage": old_stage}
                     update_lead(lead_id, metadata=updated_meta)
                     lead["metadata"] = updated_meta
+                    # Gatilho B: consolida o Dossiê do lead após a transição de segmento.
+                    _schedule_memory_refresh(lead_id)
                 break
 
         # Chamada PÓS-TOOL: desliga o thinking do Gemini 2.5 — é aqui que o modelo

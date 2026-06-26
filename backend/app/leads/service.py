@@ -1176,14 +1176,17 @@ def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
             )
 
 
-def get_history(lead_id: str, limit: int = 30) -> list[dict[str, Any]]:
+def get_history(lead_id: str, limit: int = 30, since: str | None = None) -> list[dict[str, Any]]:
+    """Histórico cross-canal do lead (todas as conversas). `since` (ISO) filtra apenas
+    mensagens com created_at > since — usado pela Camada de Memória para buscar só o DELTA
+    desde o último resumo rolante (ver app/agent/memory_manager.py)."""
     sb = get_supabase()
-    result = (
+    query = (
         sb.table("messages")
         .select("role, content, stage, created_at")
         .eq("lead_id", lead_id)
-        .order("created_at", desc=False)
-        .limit(limit)
-        .execute()
     )
+    if since:
+        query = query.gt("created_at", since)
+    result = query.order("created_at", desc=False).limit(limit).execute()
     return result.data
