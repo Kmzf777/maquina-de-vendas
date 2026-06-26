@@ -77,6 +77,12 @@ async def generate_qualification_summary(
         f"Histórico da conversa:\n{history_text}"
     )
 
+    # gemini-2.5-flash conta os tokens de "thinking" no MESMO budget de saída. Com teto baixo
+    # (era 700) o modelo gasta quase tudo pensando e devolve só o cabeçalho + início da data,
+    # cortando o resumo (ex.: lead 5545999367983 → "**Data/Hora:** 26/06/"). Espelha o orchestrator:
+    # desliga o thinking nos modelos 2.5 (reasoning_effort="none") e dá folga de tokens à saída.
+    from app.agent.orchestrator import MAX_OUTPUT_TOKENS, _gemini_thinking_off
+
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -84,8 +90,9 @@ async def generate_qualification_summary(
                 {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
                 {"role": "user", "content": context},
             ],
-            max_tokens=700,
+            max_tokens=MAX_OUTPUT_TOKENS,
             temperature=0.2,
+            **_gemini_thinking_off(model),
         )
         if not response.choices:
             return "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n*Resumo indisponível (resposta vazia do modelo).*"

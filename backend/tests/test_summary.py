@@ -57,6 +57,34 @@ async def test_calls_llm_and_returns_response():
 
 
 @pytest.mark.asyncio
+async def test_gemini_25_disables_thinking_and_has_token_headroom():
+    """Regressão: o resumo era cortado em '26/06/' porque gemini-2.5-flash gastava o
+    budget de saída pensando (max_tokens=700 sem reasoning_effort). Garante que a chamada
+    desliga o thinking e tem folga de tokens, igual ao orchestrator."""
+    history = [{"role": "user", "content": "Quero comprar café no atacado"}]
+    client = _make_client("## NOVO LEAD QUALIFICADO PELA VALÉRIA\n**Data/Hora:** 26/06/2026 11:59")
+
+    await generate_qualification_summary(history, {"name": "João"}, client, "gemini-2.5-flash")
+
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs.get("reasoning_effort") == "none"
+    assert kwargs["max_tokens"] >= 2048
+
+
+@pytest.mark.asyncio
+async def test_non_gemini_does_not_send_reasoning_effort():
+    """Modelos OpenAI e gemini-2.5-pro/3.x rejeitam reasoning_effort='none' (400).
+    Para esses, o kwarg NÃO deve ser enviado."""
+    history = [{"role": "user", "content": "Interesse em private label"}]
+    client = _make_client("## NOVO LEAD QUALIFICADO PELA VALÉRIA")
+
+    await generate_qualification_summary(history, {"name": "Ana"}, client, "gpt-4o-mini")
+
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert "reasoning_effort" not in kwargs
+
+
+@pytest.mark.asyncio
 async def test_llm_failure_returns_graceful_fallback():
     client = MagicMock()
     client.chat.completions.create = AsyncMock(side_effect=Exception("timeout"))
