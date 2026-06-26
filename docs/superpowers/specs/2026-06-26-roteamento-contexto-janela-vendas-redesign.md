@@ -177,6 +177,21 @@ Inserir um bloco universal (inbound + outbound), acionado **antes** de apresenta
 
 Cada item é um incremento testável e isolado; 1–4 resolvem roteamento/contexto (casos 3 e 4 e o frame frio do caso 2), 5–6 resolvem o caso 1, 7 resolve o déficit comercial do caso 2.
 
+## Alinhamento com Gemini 2.5/3 (auditoria pós-implementação)
+
+Cruzamento do bloco de vendas e do `<scratchpad>` com `gemini-prompting-strategies.md`:
+- **Raciocínio interno, não emitido:** o guia diz que Gemini já gera "thinking" interno; não se
+  pede ao modelo para detalhar raciocínio na resposta. O `<scratchpad>` foi reescrito como um
+  device 100% interno (sem exemplo com tags que pudesse vazar) e reforça que a tag NUNCA é escrita
+  na mensagem (alinha com a instrução final e o anti-vazamento existente).
+- **Few-shot obrigatório:** adicionados 2 exemplos `User/Assistant` no bloco de exemplos (sondagem
+  de porte de iniciante; objeção de margem → fazer a conta, não re-cotar), no formato consistente
+  do bloco — o mecanismo que de fato regula o padrão "1 pergunta por turno".
+- **Direto > persuasivo:** a subseção de margem passou a liderar pela ação positiva (faça a conta
+  da revenda) em vez de abrir com proibição.
+- **Sem tokens estruturais no corpo:** removidas menções literais a `<final_instruction>`/`<examples>`
+  no texto do prompt (quebravam a hierarquia/ordem esperada — regressão pega pelo test_catalog).
+
 ## Fora de escopo (registrado, não endereçado aqui)
 - Advisory crítico do Supabase prod: **RLS desabilitado** em 29 tabelas. Decisão de segurança separada (habilitar RLS sem políticas bloqueia acesso).
 - Paridade de 9º dígito `phone` vs `wa_id` (já coberta por memória/feature existente).
