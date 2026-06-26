@@ -100,8 +100,8 @@ def test_with_sale_value_formatted_brazillian():
         result = get_relationship_summary("lead-x")
 
     assert "22/03/2026" in result
-    # Valor deve aparecer de forma legível (R$ 1.169,70 ou similar com vírgula decimal)
-    assert "1.169,70" in result or "1169" in result
+    # Valor deve aparecer no formato BRL (R$ 1.169,70 — ponto milhar, vírgula decimal)
+    assert "1.169,70" in result
 
 
 # ── (b) sem venda mas lead_has_active_relationship True ─────────────────────

@@ -17,7 +17,7 @@ from pydantic import ValidationError as _PydanticValidationError
 from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
 from app.agent.pricing import (
     OrcamentoInput, LineQuote, match_products, parse_brl,
-    resolve_region, compute_quote, format_quote,
+    resolve_region, compute_quote, format_quote, fmt_brl,
 )
 
 # Vocabulário CONTROLADO de tags que a IA pode aplicar (allowlist). Deve espelhar o seed
@@ -1035,6 +1035,18 @@ async def execute_tool(
                     return f"Para '{item.produto}', especifique qual: {top_names}"
                 # Exactly 1 match — parse_brl ONLY on this match (P1)
                 match = matches[0]
+                # Guard: price_formatted None/empty → AttributeError in parse_brl escapes
+                # the (ValueError, KeyError, TypeError) inner handler. Return a precise
+                # message here rather than falling to the generic outer catch.
+                if not match.get("price_formatted"):
+                    logger.error(
+                        "calcular_orcamento: price_formatted ausente p/ produto '%s' (lead %s)",
+                        match.get("name", item.produto), lead_id,
+                    )
+                    return (
+                        f"Não consegui ler o preço do produto '{match.get('name', item.produto)}' "
+                        "— encaminhe para o João Brás."
+                    )
                 try:
                     preco = parse_brl(match["price_formatted"])
                 except (ValueError, KeyError, TypeError) as exc:
@@ -1050,7 +1062,7 @@ async def execute_tool(
                     produto=match["name"],
                     quantidade=item.quantidade,
                     preco_unitario=preco,
-                    subtotal_linha=preco * item.quantidade,
+                    subtotal_linha=round(preco * item.quantidade, 2),
                 ))
 
             # 4. Resolve region (B2: Uberlândia proceeds even without estado)
@@ -1058,10 +1070,9 @@ async def execute_tool(
 
             # 5. No region AND not Uberlândia override → return subtotal + ask for estado
             if region_key is None and not is_uberlandia:
-                subtotal = sum(line.subtotal_linha for line in lines)
-                fmt = f"{subtotal:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                subtotal = round(sum(line.subtotal_linha for line in lines), 2)
                 return (
-                    f"Subtotal dos produtos: R$ {fmt}. "
+                    f"Subtotal dos produtos: {fmt_brl(subtotal)}. "
                     "Para calcular o frete e verificar o pedido mínimo, "
                     "me confirme o estado (sigla UF, ex.: SP)."
                 )

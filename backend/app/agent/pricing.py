@@ -124,12 +124,16 @@ def _normalize_text(value: str | None) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
 
 
-def _fmt_brl(value: float) -> str:
-    """Formata float em string BRL (R$ 1.234,56)."""
+def fmt_brl(value: float) -> str:
+    """Formata float em string BRL (R$ 1.234,56). Versão pública — use esta em código novo."""
     # Python :,.2f usa , como milhar e . como decimal → trocar separadores
     formatted = f"{value:,.2f}"  # e.g. "1,234.56"
     swapped = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {swapped}"
+
+
+# Alias privado mantido para compatibilidade com chamadas internas existentes
+_fmt_brl = fmt_brl
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +214,10 @@ def compute_quote(
     não linha a linha.
     B2: Uberlândia → frete flat R$15, sem pedido mínimo, sem faixa de grátis.
     """
-    subtotal = sum(line.subtotal_linha for line in lines)
+    # Round to 2 decimal places before any boundary comparison to prevent cent-drift:
+    # floating-point accumulation of subtotal_linha values can produce a result like
+    # 899.9999... when the true total is R$900,00, causing frete_gratis to fire incorrectly.
+    subtotal = round(sum(line.subtotal_linha for line in lines), 2)
 
     if is_uberlandia:
         frete = UBERLANDIA_FREIGHT

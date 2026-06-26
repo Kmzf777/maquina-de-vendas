@@ -4,6 +4,7 @@ Spec: docs/superpowers/specs/2026-06-26-perception-and-quoting-tools-design.md �
 Plan: docs/superpowers/plans/2026-06-26-perception-quoting-tools-plan.md Task 1.
 """
 import pytest
+from pydantic import ValidationError
 
 from app.agent.pricing import (
     FREIGHT_TABLE,
@@ -226,6 +227,22 @@ def test_compute_quote_norte_valores_exatos():
     assert q_gratis.frete == pytest.approx(0.0)
 
 
+def test_compute_quote_exact_threshold_boundary_rounds_correctly():
+    """Rounding guard: subtotal at exact gratis_acima boundary (with sub-cent drift) → frete_gratis=True.
+
+    Simulates a LineQuote whose subtotal_linha accumulated to 899.9999... (just below 900.0)
+    due to floating-point arithmetic in tools.py (preco * quantidade without round).
+    Without rounding in compute_quote, the comparison subtotal >= gratis_acima (900.0)
+    evaluates False, incorrectly charging freight.
+    With round(subtotal, 2) before the comparison: 899.9999... → 900.00 → frete_gratis=True.
+    """
+    drifted = 900.0 - 1e-10  # 899.9999999999 — definitely < 900.0, but rounds to 900.00 at 2 dp
+    lines = [LineQuote(produto="Café Drift", quantidade=1, preco_unitario=drifted, subtotal_linha=drifted)]
+    q = compute_quote(lines, "sul_sudeste", False)
+    assert q.frete_gratis is True
+    assert q.subtotal == pytest.approx(900.0)
+
+
 # ---------------------------------------------------------------------------
 # 4. match_products
 # ---------------------------------------------------------------------------
@@ -348,7 +365,7 @@ def test_format_quote_uberlandia_sem_aviso_minimo():
 
     assert q.abaixo_minimo is False
     # Sem aviso de mínimo
-    assert "mínimo" not in text_lower or "15" in text  # R$15 frete pode aparecer
+    assert "mínimo" not in text_lower
 
 
 # ---------------------------------------------------------------------------
@@ -372,13 +389,13 @@ def test_uf_to_region_valores_exatos():
 
 def test_pydantic_pedido_item_quantidade_zero_invalida():
     """quantidade=0 deve ser rejeitado pelo Pydantic (gt=0)."""
-    with pytest.raises(Exception):  # ValidationError
+    with pytest.raises(ValidationError):
         PedidoItem(produto="Café", quantidade=0)
 
 
 def test_pydantic_orcamento_input_itens_vazios_invalido():
     """Lista de itens vazia deve ser rejeitada (min_length=1)."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         OrcamentoInput(itens=[])
 
 

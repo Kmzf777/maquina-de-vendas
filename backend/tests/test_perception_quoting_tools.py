@@ -315,6 +315,57 @@ async def test_fail_soft_on_fetch_products_error():
 
 
 # ===========================================================================
+# Fix #1 — null/empty price_formatted → safe precise message, no exception
+# ===========================================================================
+
+async def test_null_price_formatted_returns_precise_safe_string():
+    """Matched product with price_formatted=None → safe string (no exception, precise message).
+
+    Without the guard, parse_brl(None) raises AttributeError which escapes the inner
+    (ValueError, KeyError, TypeError) handler and falls to the outer generic handler
+    ('Ocorreu um problema'). With the guard we return a precise 'não consegui ler o preço'
+    message that names the product and routes to João.
+    """
+    null_price_products = [
+        {
+            "sector": "atacado",
+            "name": "Café Sem Preço",
+            "price_formatted": None,
+            "min_lot": "10",
+            "description": "",
+            "image_urls": "",
+        }
+    ]
+    args = {"itens": [{"produto": "cafe sem preco", "quantidade": 1}], "estado": "SP"}
+    with patch("app.agent.tools._fetch_active_products", return_value=null_price_products):
+        result = await _exec("calcular_orcamento", args)
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    # Precise handler fires (not the outer "Ocorreu um problema" fallback)
+    assert "não consegui" in result.lower(), f"Expected precise message, got: {result!r}"
+    assert "ocorreu um problema" not in result.lower()
+
+
+# ===========================================================================
+# Fix #7 — consultar_relacionamento fail-soft: get_relationship_summary raises
+# ===========================================================================
+
+async def test_consultar_relacionamento_fail_soft_on_service_exception():
+    """If get_relationship_summary raises, execute_tool returns safe fallback, no exception."""
+    with patch(
+        "app.agent.tools.get_relationship_summary",
+        side_effect=RuntimeError("db is down"),
+    ):
+        result = await _exec("consultar_relacionamento", {}, lead_id="lead-err")
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    # Should contain the safe fallback (not propagate the exception)
+    assert "possível" in result.lower() or "relacionamento" in result.lower()
+
+
+# ===========================================================================
 # 9. get_tools_for_stage — calcular_orcamento somente em atacado
 # ===========================================================================
 
