@@ -41,6 +41,21 @@ lead e (b) uma tool de **orçamento determinístico** que faz o cálculo em cód
 - **D2 — Escopo:** **atacado apenas** (frete e pedido mínimo só existem definidos para
   atacado). Private Label fica para entrega futura.
 
+### Revisão de arquitetura (blockers desta versão)
+
+- **B1 — Paradoxo do carrinho:** orçar **um único produto** quebra a semântica do pedido
+  mínimo (R$300 é do PEDIDO inteiro, não do item). → o input vira um **carrinho**
+  (`list[PedidoItem]`); o subtotal global é somado ANTES de aplicar frete/mínimo.
+- **B2 — Bloqueio de Uberlândia:** "sem estado → trava" é falho. Uberlândia é override de
+  **cidade**. → se `estado` é nulo mas `cidade` é um override válido, o cálculo prossegue
+  (flat R$15) sem exigir o estado. A trava só vale quando NÃO há nem estado nem cidade-override.
+- **B3 — Gatilho da percepção:** a IA não pode depender só do `<crm_data>`. → `base.py`
+  instrui a chamar `consultar_relacionamento` também em termos de recompra ("repor", "novo
+  pedido", etc.) ou em qualquer suspeita de cliente antigo.
+- **P1 — Overhead:** `parse_brl` roda **só** nos produtos que deram match (não na base toda).
+- **P2 — Desambiguação controlada:** >1 match → devolve no máximo **TOP 5** (nunca 50 itens,
+  pra não estourar o contexto do Gemini).
+
 ---
 
 ## 3. Dados de negócio extraídos (a serem movidos para código)
@@ -83,27 +98,41 @@ Novo módulo isolado `app/agent/pricing.py` (lógica de negócio pura + Pydantic
 FREIGHT_TABLE: dict[str, FreightRule]   # as 4 regiões acima
 UF_TO_REGION: dict[str, str]            # UF → key de FREIGHT_TABLE
 UBERLANDIA_FREIGHT = 15.0
+MAX_DISAMBIGUATION = 5                   # P2: TOP 5 no máximo
 
-class OrcamentoInput(BaseModel):         # tipagem (Pydantic)
+class PedidoItem(BaseModel):            # B1: item de carrinho
     produto: str
     quantidade: int = Field(gt=0)
-    estado: str | None = None            # sigla UF (ex. "SP"); opcional
-    cidade: str | None = None            # p/ override Uberlândia
+
+class OrcamentoInput(BaseModel):        # tipagem (Pydantic) — CARRINHO
+    itens: list[PedidoItem] = Field(min_length=1)
+    estado: str | None = None           # sigla UF (ex. "SP"); opcional
+    cidade: str | None = None           # override de cidade (ex. "Uberlândia"); opcional
+
+class LineQuote(BaseModel):            # linha resolvida do carrinho
+    produto: str                        # nome do catálogo (match)
+    quantidade: int
+    preco_unitario: float
+    subtotal_linha: float
 
 def parse_brl(s: str) -> float           # "R$ 97,70" → 97.70  (puro)
 def resolve_region(estado, cidade) -> tuple[str|None, bool]  # (region_key, is_uberlandia) (puro)
 def match_products(produto, products) -> list[dict]          # match normalizado (puro)
-def compute_quote(unit_price, quantidade, region_key, is_uberlandia) -> Quote  # MATH (puro)
-def format_quote(produto_nome, qtd, quote) -> str            # breakdown legível (puro)
+def compute_quote(lines: list[LineQuote], region_key, is_uberlandia) -> Quote  # MATH (puro)
+def format_quote(quote: Quote) -> str    # breakdown legível, item a item (puro)
 ```
 
-`compute_quote` (núcleo determinístico, 100% testável):
-- `subtotal = unit_price * quantidade`
-- `is_uberlandia` → `frete = 15.0`, sem checagem de mínimo
+`compute_quote` (núcleo determinístico, 100% testável — **itera o carrinho, B1**):
+- `subtotal = sum(linha.subtotal_linha for linha in lines)`  ← subtotal GLOBAL do pedido
+- `is_uberlandia` → `frete = 15.0`, **sem** checagem de mínimo
 - senão: `abaixo_minimo = subtotal < rule.pedido_minimo`;
   `frete = 0.0 if subtotal >= rule.gratis_acima else rule.frete`
 - `total = subtotal + frete`
-- retorna `Quote(subtotal, frete, total, frete_gratis, abaixo_minimo, pedido_minimo)`
+- retorna `Quote(lines, subtotal, frete, total, frete_gratis, abaixo_minimo, pedido_minimo, region_key)`
+
+`resolve_region` (B2): normaliza `cidade`; se for override conhecido (Uberlândia) → `(None, True)`
+mesmo com `estado=None`. Senão mapeia `estado`(UF)→região. Sem estado E sem cidade-override →
+`(None, False)` (o caller então pede o estado).
 
 ### 4.2 `tools.consultar_relacionamento` (percepção)
 
@@ -117,23 +146,30 @@ def format_quote(produto_nome, qtd, quote) -> str            # breakdown legíve
   - senão → `"SEM histórico de compra — tratar como lead novo."`
   - fail-soft → string neutra ("não foi possível consultar agora").
 
-### 4.3 `tools.calcular_orcamento` (orçamento determinístico)
+### 4.3 `tools.calcular_orcamento` (orçamento determinístico — CARRINHO)
 
-- Valida args com `OrcamentoInput` (Pydantic) → erro de validação vira string clara p/ a IA.
-- Busca produtos ativos do setor **atacado** (reusa a leitura do `products`); `match_products`:
-  - 0 match → `"Produto não encontrado no catálogo de atacado. Confirme o nome com o lead."`
-  - >1 match → `"Especifique qual: <lista de nomes>."` (NUNCA chuta)
-  - 1 match → segue.
-- `estado` ausente → devolve subtotal + checagem de mínimo + `"me confirme o estado pra eu
-  calcular o frete"` (sem inventar frete).
-- `estado` presente → `resolve_region` + `compute_quote` + `format_quote` (breakdown com
-  subtotal, frete/“grátis”, total e aviso de pedido mínimo).
+- Valida args com `OrcamentoInput` (Pydantic, `itens: list[PedidoItem]`) → erro de validação
+  vira string clara p/ a IA.
+- Busca produtos ativos do setor **atacado** UMA vez; para **cada item** do carrinho roda
+  `match_products`:
+  - 0 match → `"Produto '<x>' não encontrado no catálogo de atacado. Confirme o nome."`
+  - >1 match → `"Para '<x>', especifique qual: <TOP 5 nomes>."` (P2: máx. 5; NUNCA chuta)
+  - 1 match → `parse_brl(price_formatted)` **só nesse match** (P1) → vira `LineQuote`.
+  - qualquer item irresolvido aborta o cálculo e devolve a pergunta de desambiguação.
+- Resolução de região (B2): `resolve_region(estado, cidade)`.
+  - `is_uberlandia=True` (mesmo sem estado) → calcula com frete flat R$15.
+  - sem região E sem override → devolve subtotal global + checagem de mínimo +
+    `"me confirme o estado pra eu calcular o frete"` (sem inventar frete).
+  - região resolvida → `compute_quote(lines, region_key, is_uberlandia)`.
+- `format_quote` → breakdown item a item + subtotal global, frete/“grátis”, total e aviso de
+  pedido mínimo.
 - Fail-soft: qualquer exceção → string segura instruindo a IA a encaminhar pro João.
 
 ### 4.4 Integração de schema e stages
 
 - Adicionar `consultar_relacionamento` e `calcular_orcamento` a `TOOLS_SCHEMA` (JSON schema p/
-  o Gemini; descrições fortes).
+  o Gemini; descrições fortes). `calcular_orcamento` recebe `itens` como **array de objetos**
+  `{produto, quantidade}` (carrinho) + `estado`/`cidade` opcionais.
 - `get_tools_for_stage`:
   - `consultar_relacionamento`: **todos** os stages comerciais (`secretaria`, `atacado`,
     `private_label`, `exportacao`, `consumo`) — pode ser cliente retornando em qualquer um.
@@ -154,9 +190,12 @@ def format_quote(produto_nome, qtd, quote) -> str            # breakdown legíve
   que a tool lê) — só deixa de ser o canal de cálculo.
 
 ### `base.py`
-- Regra universal curta: *"Quando o `<crm_data>`/contexto indicar que o lead pode já ser
-  cliente (ou no início de uma retomada), chame `consultar_relacionamento` ANTES de
-  qualificar."* + reforço de que cálculo de preço é sempre via tool.
+- Regra universal (B3): *"Chame `consultar_relacionamento` ANTES de qualificar se: o
+  `<crm_data>`/`<lead_memory>` indicar que o lead pode já ser cliente; OU o lead usar termos de
+  recompra ('repor', 'novo pedido', 'mais um pedido', 'de novo', 'sempre compro'); OU houver
+  QUALQUER suspeita de cliente antigo. Não rode o funil de lead novo com cliente ativo."*
+  + reforço de que cálculo de preço (total, frete, pedido mínimo) é SEMPRE via
+  `calcular_orcamento` — proibido somar/estimar de cabeça.
 
 ---
 
@@ -165,22 +204,29 @@ def format_quote(produto_nome, qtd, quote) -> str            # breakdown legíve
 `app/agent/pricing.py` (puro, sem rede):
 1. `parse_brl`: `"R$ 97,70"`→97.70; `"R$ 1.169,70"`→1169.70; lixo → erro tratável.
 2. `resolve_region`: `"SP"`→`sul_sudeste`; `"BA"`→`nordeste`; `"GO"`→`centro_oeste`;
-   `"AM"`→`norte`; `cidade="Uberlândia"`→`is_uberlandia=True`; UF inválida → `(None, False)`.
-3. `compute_quote` — **cálculos exatos**:
-   - subtotal abaixo do mínimo → `abaixo_minimo=True`.
+   `"AM"`→`norte`; `cidade="Uberlândia"` **sem estado** → `(None, True)` (B2);
+   sem estado e sem cidade → `(None, False)`; UF inválida → `(None, False)`.
+3. `compute_quote` — **carrinho, cálculos exatos** (B1):
+   - **multi-itens**: subtotal = soma das linhas; mínimo aplicado ao subtotal GLOBAL.
+   - subtotal global abaixo do mínimo → `abaixo_minimo=True`.
    - subtotal ≥ faixa → `frete=0`, `frete_gratis=True`.
    - subtotal < faixa → frete da região; total correto.
    - Uberlândia → frete 15, sem `abaixo_minimo`.
-4. `match_products`: match exato/normalizado (acento/caixa); 0, 1 e >1 matches.
-5. `format_quote`: contém subtotal, frete, total e aviso de mínimo quando aplicável.
+4. `match_products`: match exato/normalizado (acento/caixa); 0, 1 e >1 matches; >5 → corta no
+   TOP 5 (P2).
+5. `format_quote`: item a item + subtotal, frete, total e aviso de mínimo quando aplicável.
 
 `tools` / `leads.service` (fake supabase):
 6. `get_relationship_summary`: com venda → "CLIENTE ATIVO. Última compra…"; sem venda mas
    relacionamento ativo → mensagem de tratativa; nada → "lead novo"; fail-soft.
-7. `execute_tool("calcular_orcamento", …)`: produto ambíguo → desambiguação; sem estado →
-   subtotal + pede estado; caminho feliz → breakdown; valida via Pydantic.
+7. `execute_tool("calcular_orcamento", …)`:
+   - **carrinho multi-itens** → breakdown somado correto.
+   - item ambíguo → desambiguação (máx. 5).
+   - `cidade="Uberlândia"` sem estado → calcula (frete 15), NÃO pede estado (B2).
+   - sem estado e sem cidade → subtotal + pede estado.
+   - valida via Pydantic (`itens` vazio → erro tratável).
 8. `get_tools_for_stage`: `calcular_orcamento` em atacado; `consultar_relacionamento` em todos.
-9. Schemas em `TOOLS_SCHEMA` bem-formados (tipos/required) para o Gemini.
+9. Schemas em `TOOLS_SCHEMA` bem-formados (array `itens` de objetos) para o Gemini.
 
 Rodar a suíte completa (sem regressão em `test_agent_tools`, `test_catalog`, orchestrator).
 
@@ -207,6 +253,10 @@ volume (Feature 4, decisão de negócio).
 | IA ainda calcular de cabeça | Regra dura no prompt + tool obrigatória; frete sai do prompt (não há mais tabela pra ela "ler e somar") |
 | Frete inventado sem região | `estado` ausente → tool pede o estado, não inventa |
 | Exceção quebra o turno | Toda tool é fail-soft (retorna string segura) |
+| Pedido mínimo aplicado por item (B1) | Carrinho `list[PedidoItem]`; mínimo sobre o subtotal GLOBAL |
+| Cliente de Uberlândia travado pedindo estado (B2) | Override de cidade calcula sem exigir estado |
+| Saída da tool estoura contexto do Gemini (P2) | Desambiguação limitada a TOP 5 |
+| Parse caro na base toda (P1) | `parse_brl` só nos matches |
 
 ---
 
