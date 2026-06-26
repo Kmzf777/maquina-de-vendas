@@ -71,6 +71,14 @@ def test_atacado_outbound_proibe_calculo_de_cabeca():
     )
 
 
+def test_atacado_outbound_deflexao_b2c_para_loja():
+    """Cliente de consumo próprio (varejo) deve ser direcionado para a loja online."""
+    from app.agent.prompts.valeria_outbound.atacado import ATACADO_PROMPT
+    assert "loja.cafecanastra.com" in ATACADO_PROMPT, (
+        "Link da loja (deflexão B2C) ausente — varejo deve ser direcionado para loja.cafecanastra.com"
+    )
+
+
 # ===========================================================================
 # base.py — B3: gatilho de percepção (consultar_relacionamento) + reforço de pricing tool
 # ===========================================================================
