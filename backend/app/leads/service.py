@@ -1176,6 +1176,61 @@ def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
             )
 
 
+def get_relationship_summary(lead_id: str) -> str:
+    """Resumo do relacionamento do lead para a tool de percepção (consultar_relacionamento).
+
+    Retorna uma string descritiva sobre o histórico de compras / tratativa do lead:
+    - Com venda registrada → CLIENTE ATIVO com detalhes da última compra.
+    - Sem venda mas em tratativa ativa → mensagem de tratativa.
+    - Sem histórico → indicação de lead novo.
+    - Fail-soft: qualquer exceção → string neutra; nunca levanta.
+    """
+    try:
+        sb = get_supabase()
+        sale = (
+            sb.table("sales")
+            .select("product, value, sold_at")
+            .eq("lead_id", lead_id)
+            .order("sold_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if sale.data:
+            row = sale.data[0]
+            product = row.get("product", "")
+            value = row.get("value", 0) or 0
+            sold_at = row.get("sold_at", "") or ""
+            # Formata data como DD/MM/YYYY
+            try:
+                dt = datetime.fromisoformat(str(sold_at).replace("Z", "+00:00"))
+                date_str = dt.strftime("%d/%m/%Y")
+            except Exception:
+                date_str = str(sold_at)
+            # Formata valor no padrão BRL (ex.: 1.169,70)
+            try:
+                value_float = float(value)
+                # f"{1169.70:,.2f}" → "1,169.70"; troca separadores para pt-BR
+                value_str = f"{value_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            except Exception:
+                value_str = str(value)
+            return (
+                f"CLIENTE ATIVO. Última compra: {product} (R$ {value_str}) em {date_str}. "
+                f"Trate como reabastecimento/upsell — NÃO requalifique."
+            )
+        if lead_has_active_relationship(lead_id):
+            return (
+                "CLIENTE ATIVO / em tratativa (sem venda detalhada registrada). "
+                "NÃO rode funil de lead novo."
+            )
+        return "SEM histórico de compra — tratar como lead novo."
+    except Exception as exc:
+        logger.warning(
+            "get_relationship_summary: falha ao consultar relacionamento p/ %s: %s",
+            lead_id, exc,
+        )
+        return "Não foi possível consultar o relacionamento agora."
+
+
 def get_history(lead_id: str, limit: int = 30, since: str | None = None) -> list[dict[str, Any]]:
     """Histórico cross-canal do lead (todas as conversas). `since` (ISO) filtra apenas
     mensagens com created_at > since — usado pela Camada de Memória para buscar só o DELTA
