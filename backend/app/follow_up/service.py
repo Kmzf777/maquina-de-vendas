@@ -315,6 +315,100 @@ def schedule_ai_return(
     return clamped
 
 
+# Eixo 3B: TTL do contexto de retomada. Após o disparo de reabertura (continuar_conversa),
+# o lead tem 7 dias para responder e a IA retomar o assunto. Passado isso, o contexto é
+# considerado obsoleto (anti-contexto-zumbi) e descartado.
+REOPEN_TTL_DAYS = 7
+
+
+def _update_job_status(job_id: str, status: str, sent_at: datetime | None = None) -> None:
+    payload: dict[str, Any] = {"status": status}
+    if sent_at is not None:
+        payload["sent_at"] = sent_at.isoformat()
+    try:
+        get_supabase().table("follow_up_jobs").update(payload).eq("id", job_id).execute()
+    except Exception as exc:
+        logger.warning("[REOPEN] falha ao atualizar job %s p/ %s: %s", job_id, status, exc)
+
+
+def consume_reopen_context(conversation_id: str, now: datetime) -> str | None:
+    """Retoma um retorno agendado cuja janela havia fechado (Eixo 3B).
+
+    Se há um job `awaiting_reopen` para a conversa e o lead respondeu DENTRO do TTL de 7 dias,
+    marca o job `sent` e devolve um bloco <retorno_agendado> com motivo/contexto p/ a IA retomar.
+    Fora do TTL: marca `expired` e devolve None (trata como inbound orgânico). Fail-open: None.
+    """
+    if not conversation_id:
+        return None
+    try:
+        res = (
+            get_supabase()
+            .table("follow_up_jobs")
+            .select("id, sent_at, fire_at, metadata")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "awaiting_reopen")
+            .order("fire_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("[REOPEN] falha ao buscar awaiting_reopen p/ conv %s: %s", conversation_id, exc)
+        return None
+
+    job = res.data[0] if res.data else None
+    if not job:
+        return None
+
+    ref_str = job.get("sent_at") or job.get("fire_at")
+    try:
+        ref = datetime.fromisoformat(str(ref_str).replace("Z", "+00:00"))
+    except Exception:
+        ref = now
+    if now - ref > timedelta(days=REOPEN_TTL_DAYS):
+        _update_job_status(job["id"], "expired")
+        logger.info("[REOPEN] contexto expirado (TTL %dd) p/ conv %s — tratando como inbound", REOPEN_TTL_DAYS, conversation_id)
+        return None
+
+    _update_job_status(job["id"], "sent", sent_at=now)
+    md = job.get("metadata") or {}
+    motivo = (md.get("motivo") or "").strip()
+    contexto = (md.get("contexto") or "").strip()
+    return (
+        "<retorno_agendado>\n"
+        "Você tinha combinado de retomar este contato e a janela reabriu agora que o lead respondeu. "
+        + (f"Motivo combinado: {motivo}. " if motivo else "")
+        + (f"Contexto: {contexto}. " if contexto else "")
+        + "Retome esse ponto de forma natural e pessoal — NÃO diga que foi um lembrete automático "
+        "nem mencione agendamento.\n"
+        "</retorno_agendado>"
+    )
+
+
+def find_pending_ai_return(conversation_id: str) -> dict[str, Any] | None:
+    """Retorna o job ai_scheduled_return `pending` desta conversa, se houver (Eixo 3A).
+
+    Base da idempotência da tool `agendar_retorno`: se já existe um retorno agendado, a
+    IA não deve criar outro. Fail-open: em erro de DB retorna None (a tool agenda normal).
+    """
+    if not conversation_id:
+        return None
+    try:
+        res = (
+            get_supabase()
+            .table("follow_up_jobs")
+            .select("id, fire_at, metadata")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "pending")
+            .eq("job_type", "ai_scheduled_return")
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as exc:
+        logger.warning("[AI_SCHEDULED_RETURN] falha ao buscar pending p/ conv %s: %s", conversation_id, exc)
+        return None
+
+
 def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     """Retorna jobs pending cujo fire_at já passou."""
     sb = get_supabase()

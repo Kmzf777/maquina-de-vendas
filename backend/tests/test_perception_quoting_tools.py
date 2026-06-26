@@ -369,14 +369,18 @@ async def test_consultar_relacionamento_fail_soft_on_service_exception():
 # 9. get_tools_for_stage — calcular_orcamento somente em atacado
 # ===========================================================================
 
-def test_calcular_orcamento_only_in_atacado():
-    """calcular_orcamento deve aparecer somente no stage atacado."""
+def test_calcular_orcamento_in_atacado_and_private_label():
+    """calcular_orcamento nos stages com cálculo de pedido (atacado e private_label).
+
+    Eixo 4 (harmonização): private_label passou a rotear cálculo pela tool em vez de
+    multiplicar na mão, alinhando com a regra de preço do base.py."""
     from app.agent.tools import get_tools_for_stage
 
-    atacado_names = [t["function"]["name"] for t in get_tools_for_stage("atacado")]
-    assert "calcular_orcamento" in atacado_names
+    for stage in ("atacado", "private_label"):
+        names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
+        assert "calcular_orcamento" in names, f"calcular_orcamento ausente no stage '{stage}'"
 
-    for stage in ("secretaria", "private_label", "exportacao", "consumo"):
+    for stage in ("secretaria", "exportacao", "consumo"):
         names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
         assert "calcular_orcamento" not in names, (
             f"calcular_orcamento não deve estar em stage '{stage}'"

@@ -37,6 +37,7 @@ from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_for_lead
 from app.follow_up.service import (
     schedule_handoff_rescue, cancel_followups_by_phone, schedule_ai_return,
+    find_pending_ai_return,
 )
 
 logger = logging.getLogger(__name__)
@@ -511,7 +512,7 @@ def get_tools_for_stage(stage: str) -> list[dict]:
     stage_tools = {
         "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
         "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
         "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
         # Varejo B2C NÃO é "lead perdido": consumo NUNCA auto-descarta (sem
         # registrar_sem_interesse_atual). A saída legítima continua sendo opt-out (lead pede
@@ -1146,6 +1147,22 @@ async def _agendar_retorno(
     channel = get_channel_for_lead(lead_id)
     if not channel:
         return "ERRO: nenhum canal ativo para agendar o retorno."
+
+    # Idempotência (Eixo 3A): se já há um retorno agendado p/ esta conversa, NÃO crie outro.
+    # Mata o loop em que a IA reagenda o mesmo retorno a cada despedida do lead (bug Walter).
+    existing = find_pending_ai_return(conversation_id)
+    if existing:
+        try:
+            existing_at = datetime.fromisoformat(
+                str(existing.get("fire_at")).replace("Z", "+00:00")
+            )
+            when_existing = _format_retorno_when(existing_at)
+        except Exception:
+            when_existing = "o horario ja combinado"
+        return (
+            f"Voce JA tem um retorno agendado para {when_existing}. NAO chame agendar_retorno "
+            "de novo — apenas confirme ao lead de forma natural e siga a conversa."
+        )
 
     lead = get_lead(lead_id) or {}
     lead_name = lead.get("name") or ""

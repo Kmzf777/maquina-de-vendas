@@ -19,6 +19,7 @@ from app.broadcast.service import (
     save_broadcast_lead_wamid,
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
+from app.templates.intent import dispatch_metadata
 from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
@@ -733,6 +734,7 @@ async def process_single_broadcast(broadcast: dict):
                         rendered_content,
                         sent_by="broadcast",
                         wamid=wamid,
+                        metadata=dispatch_metadata(broadcast["template_name"]),
                     )
                     logger.info(f"[DEBUG-BROADCAST] save_message OK returned={saved}")
                 else:

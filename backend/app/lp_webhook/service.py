@@ -25,12 +25,12 @@ logger = logging.getLogger(__name__)
 
 REDIS_CONFIG_KEY = "lp_webhook:config"
 
-# LP é um disparo ATIVO (enviamos o template `lp_*` primeiro) — a conversa deve rodar a
-# persona OUTBOUND (valeria_outbound), não o default inbound do canal. O profile é resolvido
-# em RUNTIME pela prompt_key (env-agnóstico): UUID fixo divergia entre prod e homolog e fazia
-# o teste de LP em dev cair no inbound (fail-open). Em ambiente sem o profile, retorna None e
-# get_or_create_conversation cai no default do canal — sem quebrar o fluxo.
-LP_PROFILE_PROMPT_KEY = "valeria_outbound"
+# LP é um lead QUENTE: o lead veio até nós por uma landing page e nos pediu informação.
+# A conversa nasce na persona INBOUND (valeria_inbound), não na recuperação fria. A persona
+# efetiva é recomputada por turno em app.agent.persona (Eixo 1): o disparo `lp_*` é classificado
+# como `warm_lp` e nunca dispara o frame frio. Pinar inbound aqui é defesa em profundidade —
+# alinha o estado persistido com a resolução de runtime. Resolvido pela prompt_key (env-agnóstico).
+LP_PROFILE_PROMPT_KEY = "valeria_inbound"
 
 _DEFAULT_CONFIG: dict[str, Any] = {
     "channel_id": "",

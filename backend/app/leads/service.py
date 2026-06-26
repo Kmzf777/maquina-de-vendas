@@ -471,7 +471,7 @@ def purge_dev_lead(phone: str) -> dict:
     return {"purged": True, "lead_id": lead_id, "phone": normalized}
 
 
-def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent", conversation_id: str | None = None, wamid: str | None = None, agent_persona: str | None = None) -> dict[str, Any]:
+def save_message(lead_id: str, role: str, content: str, stage: str | None = None, sent_by: str = "agent", conversation_id: str | None = None, wamid: str | None = None, agent_persona: str | None = None, metadata: dict | None = None) -> dict[str, Any]:
     sb = get_supabase()
     msg = {
         "lead_id": lead_id,
@@ -490,6 +490,9 @@ def save_message(lead_id: str, role: str, content: str, stage: str | None = None
     # Rastreabilidade: persona (prompt_key) que gerou a resposta. NULL p/ não-persona.
     if agent_persona is not None:
         msg["agent_persona"] = agent_persona
+    # metadata.dispatch (Eixo 2a): intenção do disparo lida pela resolução de persona.
+    if metadata is not None:
+        msg["metadata"] = metadata
     result = sb.table("messages").insert(msg).execute()
     return result.data[0]
 

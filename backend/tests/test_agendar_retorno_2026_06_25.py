@@ -168,12 +168,15 @@ async def test_handler_janela_aberta_roda_agente_e_envia(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handler_janela_fechada_cancela(monkeypatch):
+async def test_handler_janela_fechada_dispara_reabertura_em_vez_de_cancelar(monkeypatch):
+    """Eixo 3B: janela fechada NÃO cancela mais em silêncio — dispara template de reabertura
+    e marca awaiting_reopen (ver test_window_reopen_2026_06_26.py p/ cobertura completa)."""
     from app.follow_up import scheduler
 
     now = datetime.now(timezone.utc)
     # última mensagem do cliente há 48h → janela fechada
     job = _job(last_customer_message_at=(now - timedelta(hours=48)).isoformat())
+    job["channels"]["provider_config"] = {"phone_number_id": "pid"}
 
     lead = {"id": "lead-1", "phone": "5511999999999", "name": "Carlos",
             "ai_enabled": True, "last_customer_message_at": (now - timedelta(hours=48)).isoformat(),
@@ -182,17 +185,25 @@ async def test_handler_janela_fechada_cancela(monkeypatch):
     sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=lead)
     monkeypatch.setattr(scheduler, "get_supabase", lambda: sb)
 
-    cancels = []
+    cancels, reopens = [], []
     monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancels.append((jid, reason)))
-
-    provider = AsyncMock()
-    monkeypatch.setattr(scheduler, "get_provider", lambda channel: provider)
+    monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: reopens.append(jid))
     monkeypatch.setattr(scheduler, "resolve_send_target", lambda lead, phone: phone)
+    monkeypatch.setattr(scheduler, "save_message", lambda **k: None)
+
+    class FakeMeta:
+        def __init__(self, cfg):
+            pass
+
+        async def send_template(self, to, name, components=None, language_code=None):
+            return {"messages": [{"id": "wamid.r"}]}
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", FakeMeta)
 
     await scheduler._process_ai_scheduled_return(job, now)
 
-    assert cancels and cancels[0][1] == "window_expired"
-    provider.send_text.assert_not_called()
+    assert reopens == ["job-1"]
+    assert not cancels  # não descarta em silêncio
 
 
 @pytest.mark.asyncio

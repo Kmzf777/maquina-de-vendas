@@ -119,46 +119,57 @@ def test_broadcast_worker_assigns_agent_profile_to_conversation():
     )
 
 
-def test_processor_resolves_agent_profile_from_conversation():
-    """Processor usa agent_profile_id da conversa (prioridade sobre canal)."""
-    conv_agent = "ap-outbound"
-    channel_agent = "ap-inbound"
-
-    conversation = {
-        "id": "conv-1",
-        "stage": "atacado",
-        "status": "active",
-        "agent_profile_id": conv_agent,
-    }
-    channel = {
-        "id": "ch-1",
-        "agent_profiles": {"id": channel_agent, "name": "Inbound"},
-    }
-
-    from app.buffer.processor import _resolve_agent_profile_id
-    result = _resolve_agent_profile_id(conversation, channel)
-    assert result == conv_agent
+def _cold_dispatch():
+    return {"role": "assistant", "sent_by": "broadcast",
+            "metadata": {"dispatch": {"intent": "cold_reactivation"}}}
 
 
-def test_processor_falls_back_to_channel_agent():
-    """Sem agent_profile_id na conversa, usa o agente do canal."""
-    channel_agent = "ap-inbound"
-    conversation = {"id": "conv-1", "stage": "secretaria", "status": "active"}
-    channel = {
-        "id": "ch-1",
-        "agent_profiles": {"id": channel_agent, "name": "Inbound"},
-    }
+def test_processor_cold_open_sem_resposta_resolve_outbound(monkeypatch):
+    """Disparo frio ainda não respondido → persona outbound (1º turno reativo)."""
+    from app.buffer import processor
+    monkeypatch.setattr(processor, "_fetch_persona_messages", lambda cid: [_cold_dispatch()])
+    monkeypatch.setattr(
+        processor, "get_profile_id_by_prompt_key",
+        lambda key: "ap-outbound" if key == "valeria_outbound" else "ap-inbound",
+    )
+    conversation = {"id": "conv-1", "agent_profile_id": "ap-STALE-outbound"}
+    channel = {"id": "ch-1", "agent_profiles": {"id": "ap-channel-inbound"}}
+    assert processor._resolve_agent_profile_id(conversation, channel) == "ap-outbound"
 
-    from app.buffer.processor import _resolve_agent_profile_id
-    result = _resolve_agent_profile_id(conversation, channel)
-    assert result == channel_agent
+
+def test_processor_apos_resposta_resolve_inbound(monkeypatch):
+    """Lead respondeu → ignora o pin outbound e usa o agente inbound do canal."""
+    from app.buffer import processor
+    monkeypatch.setattr(
+        processor, "_fetch_persona_messages",
+        lambda cid: [_cold_dispatch(), {"role": "user", "sent_by": "user", "metadata": {}}],
+    )
+    monkeypatch.setattr(processor, "get_profile_id_by_prompt_key", lambda key: "ap-inbound")
+    conversation = {"id": "conv-1", "agent_profile_id": "ap-STALE-outbound"}
+    channel = {"id": "ch-1", "agent_profiles": {"id": "ap-channel-inbound"}}
+    assert processor._resolve_agent_profile_id(conversation, channel) == "ap-channel-inbound"
 
 
-def test_processor_returns_none_when_no_agent():
-    """Sem agente em conversa nem canal, retorna None (human-only mode)."""
-    conversation = {"id": "conv-1", "stage": "secretaria", "status": "active"}
+def test_processor_intervencao_humana_resolve_inbound(monkeypatch):
+    """Humano interveio → nunca trata como cold-open, cai para inbound."""
+    from app.buffer import processor
+    monkeypatch.setattr(
+        processor, "_fetch_persona_messages",
+        lambda cid: [_cold_dispatch(), {"role": "assistant", "sent_by": "human", "metadata": {}}],
+    )
+    monkeypatch.setattr(processor, "get_profile_id_by_prompt_key", lambda key: "ap-inbound")
+    conversation = {"id": "conv-1", "agent_profile_id": "ap-STALE-outbound"}
+    channel = {"id": "ch-1", "agent_profiles": {"id": "ap-channel-inbound"}}
+    assert processor._resolve_agent_profile_id(conversation, channel) == "ap-channel-inbound"
+
+
+def test_processor_inbound_sem_default_de_canal_usa_lookup(monkeypatch):
+    """Inbound sem agente no canal → resolve via prompt_key (env-agnóstico)."""
+    from app.buffer import processor
+    monkeypatch.setattr(processor, "_fetch_persona_messages",
+                        lambda cid: [{"role": "user", "sent_by": "user", "metadata": {}}])
+    monkeypatch.setattr(processor, "get_profile_id_by_prompt_key",
+                        lambda key: "ap-inbound" if key == "valeria_inbound" else None)
+    conversation = {"id": "conv-1"}
     channel = {"id": "ch-1"}
-
-    from app.buffer.processor import _resolve_agent_profile_id
-    result = _resolve_agent_profile_id(conversation, channel)
-    assert result is None
+    assert processor._resolve_agent_profile_id(conversation, channel) == "ap-inbound"

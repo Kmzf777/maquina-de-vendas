@@ -86,7 +86,14 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
     _args, _kwargs = mock_save.call_args
     assert _kwargs.get("lead_id") == "lead-1"
     assert _kwargs.get("role") == "assistant"
-    assert "lp_solicitacao_recebida" in _kwargs.get("content", "")
+    # Eixo 2a: o conteúdo NÃO pode vazar o placeholder cru do sistema (nome do template
+    # nem "[disparo automático ...]") — isso poluía o CRM e o campaign_message do LLM.
+    _content = _kwargs.get("content", "")
+    assert "lp_solicitacao_recebida" not in _content
+    assert "disparo automático" not in _content
+    assert "Wellington" in _content  # corpo limpo e personalizado
+    # A intenção do disparo é carimbada em metadata.dispatch p/ a resolução de persona.
+    assert _kwargs.get("metadata", {}).get("dispatch", {}).get("intent") == "warm_lp"
     assert _kwargs.get("conversation_id") == "conv-lp-1"
     assert _kwargs.get("sent_by") == "broadcast"
     assert _kwargs.get("wamid") == "wamid.lp1"

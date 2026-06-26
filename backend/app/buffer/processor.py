@@ -18,6 +18,8 @@ from app.conversations.service import (
     update_conversation, save_message,
 )
 from app.agent.orchestrator import run_agent, resolve_prompt_key
+from app.agent.persona import resolve_persona_prompt_key
+from app.agent_profiles.service import get_profile_id_by_prompt_key
 from app.humanizer.splitter import split_into_bubbles
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
@@ -265,21 +267,52 @@ async def _download_media_with_retry(provider, media_ref: str, attempts: int = 3
     raise last_exc
 
 
-def _resolve_agent_profile_id(conversation: dict, channel: dict) -> str | None:
-    """Resolve which agent_profile_id to use for this conversation.
+def _fetch_persona_messages(conversation_id: str) -> list[dict]:
+    """Histórico leve da conversa para resolução dinâmica de persona (Eixo 1).
 
-    Priority:
-    1. conversation.agent_profile_id (set by broadcast worker)
-    2. channel.agent_profiles.id (default channel agent)
-    3. None (human-only mode)
+    Só precisa de role/sent_by/metadata — ordenado por created_at. Fail-open: em
+    qualquer erro de DB retorna [] (→ persona inbound, o default seguro).
     """
-    conv_agent = conversation.get("agent_profile_id")
-    if conv_agent:
-        return conv_agent
+    if not conversation_id:
+        return []
+    try:
+        result = (
+            get_supabase()
+            .table("messages")
+            .select("role, sent_by, metadata")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return result.data or []
+    except Exception as exc:
+        logger.warning("[PERSONA] falha ao buscar mensagens da conv %s: %s", conversation_id, exc)
+        return []
+
+
+def _resolve_agent_profile_id(conversation: dict, channel: dict) -> str | None:
+    """Resolve dinamicamente o agent_profile_id desta conversa (Eixo 1).
+
+    A persona é RECOMPUTADA por turno a partir do histórico (ignora o pin estático da
+    conversa, que pode estar frio por engano — ver lp_webhook). Regra em app.agent.persona:
+    - cold-open frio NÃO respondido e sem humano → valeria_outbound (1º turno reativo);
+    - caso contrário (lead respondeu / disparo quente / inbound orgânico / humano) → inbound.
+
+    Para inbound, prefere o agente default do canal; se ausente, resolve via prompt_key.
+    """
+    messages = _fetch_persona_messages(conversation.get("id"))
+    prompt_key = resolve_persona_prompt_key(messages)
+
+    if prompt_key == "valeria_outbound":
+        outbound_id = get_profile_id_by_prompt_key("valeria_outbound")
+        if outbound_id:
+            return outbound_id
+        # outbound ausente → fail-open para inbound abaixo
+
     channel_profile = channel.get("agent_profiles")
-    if channel_profile:
+    if channel_profile and channel_profile.get("id"):
         return channel_profile.get("id")
-    return None
+    return get_profile_id_by_prompt_key("valeria_inbound")
 
 
 def _wamid_already_processed(wamid: str) -> bool:
@@ -741,6 +774,17 @@ async def process_buffered_messages(
         personalization["company"] = lead["company"]
     if personalization:
         lead_context = {**lead_context, **personalization}
+
+    # Eixo 3B: se um retorno agendado venceu fora da janela e foi reaberto por template, esta
+    # resposta do lead é o gatilho de retomada. Injeta o motivo/contexto salvos (dentro do TTL
+    # de 7 dias; após isso, descarta — anti-contexto-zumbi). Fail-open: nunca derruba o turno.
+    try:
+        from app.follow_up.service import consume_reopen_context
+        _reopen_ctx = consume_reopen_context(conversation["id"], datetime.now(timezone.utc))
+        if _reopen_ctx:
+            lead_context = {**lead_context, "scheduled_return_context": _reopen_ctx}
+    except Exception as exc:
+        logger.debug("[REOPEN] falha ao consumir contexto de retomada p/ conv %s: %s", conversation["id"], exc)
 
     # SERIALIZAÇÃO POR LEAD (mutex Redis) + EARLY TYPING — auditoria race condition do
     # lead 5544991611703 (2026-06-24). A latência de 30-47s do LLM cria um vácuo; o lead

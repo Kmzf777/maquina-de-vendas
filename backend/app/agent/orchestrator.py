@@ -494,20 +494,29 @@ async def run_agent(
     # Fallback: deriva a abertura fixa a partir do próprio template já enviado
     # (broadcast/followup no histórico), já que campaign_message raramente é plumbado
     # via lead_context. Sem isso, build_outbound_first_turn_context nunca dispararia.
+    dispatch_intent = None
     if is_outbound and is_first_turn and not campaign_message:
-        campaign_message = next(
+        dispatch_msg = next(
             (
-                m.get("content")
+                m
                 for m in reversed(history)
                 if m.get("role") == "assistant" and m.get("sent_by") in ("broadcast", "followup")
             ),
             None,
         )
+        if dispatch_msg:
+            campaign_message = dispatch_msg.get("content")
+            # Eixo 2c: a intenção do disparo (warm_lp/cold) muda o frame do 1º turno.
+            dispatch_intent = ((dispatch_msg.get("metadata") or {}).get("dispatch") or {}).get("intent")
 
     if is_outbound and is_first_turn and campaign_message:
         campaign_segment = (lead_context or {}).get("campaign_segment")
         ctx = build_outbound_first_turn_context(
-            campaign_message, lead.get("name"), campaign_segment=campaign_segment
+            campaign_message,
+            lead.get("name"),
+            campaign_segment=campaign_segment,
+            template_intent=dispatch_intent,
+            lp_message=(lead_context or {}).get("lp_message"),
         )
         messages.append({"role": "user", "content": ctx})
 

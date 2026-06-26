@@ -17,6 +17,7 @@ from app.whatsapp.meta import MetaCloudClient, extract_wamid
 from app.humanizer.splitter import split_into_bubbles
 from app.agent.prompts.base import build_base_prompt
 from app.agent.token_tracker import track_token_usage
+from app.templates.intent import dispatch_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 _BILLING_ERROR_CODE = 131042
 _META_API_BASE = "https://graph.facebook.com/v21.0"
+# Eixo 3B: template utility aprovado (pt_BR, param nomeado {{primeiro_nome}}) usado para
+# reabrir a janela 24h de um retorno agendado que venceu fora da janela.
+_REOPEN_TEMPLATE_NAME = "continuar_conversa"
 
 # agent_profile "ValerIA - Outbound / Recuperacao" (prompt_key=valeria_outbound).
 # Todo job ai_reengage é, por definição, uma recuperação outbound — força esta
@@ -817,10 +821,16 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
     # Persiste o disparo LP em `messages` para que reações/replies a ele sejam rastreáveis.
     # Sem isso, o template (wamid outbound) ficava fora da tabela e qualquer reação do lead
     # virava "mensagem fantasma" no CRM (auditoria 2026-06-22, lead 5531985712321).
-    # sent_by="broadcast" alinha com o disparo do broadcast worker (mesma renderização no front).
+    # Eixo 2a: NÃO grava o placeholder cru "[disparo automático — template X]" (vazava no CRM
+    # e envenenava o campaign_message do LLM). Grava um corpo limpo e legível e carimba a
+    # intenção em metadata.dispatch (warm_lp) p/ a resolução de persona (Eixo 1).
     try:
-        _lp_body = f"olá {first_name}\n\n[disparo automático — template {template_name}]" if first_name \
-            else f"[disparo automático — template {template_name}]"
+        _lp_body = (
+            f"olá {first_name}\n\nrecebemos sua solicitação pela nossa landing page e já "
+            "estamos por aqui pra te atender"
+            if first_name
+            else "recebemos sua solicitação pela nossa landing page e já estamos por aqui pra te atender"
+        )
         save_message(
             lead_id=lead["id"],
             role="assistant",
@@ -828,6 +838,7 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
             sent_by="broadcast",
             conversation_id=conversation["id"],
             wamid=extract_wamid(send_result),
+            metadata=dispatch_metadata(template_name),
         )
     except Exception as exc:
         logger.error(
@@ -1070,10 +1081,53 @@ async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
         last_msg = datetime.fromisoformat(last_msg_str.replace("Z", "+00:00"))
         window_open = last_msg + timedelta(hours=24) > now
     if not window_open:
-        _cancel_job(job["id"], "window_expired")
-        logger.warning(
-            "[AI_SCHEDULED_RETURN] janela 24h fechada — cancelando conv=%s "
-            "(retorno multi-dia exige template de reabertura)", conversation_id,
+        # Eixo 3B: NÃO descarta em silêncio. Dispara o template aprovado de reabertura
+        # (continuar_conversa, param nomeado {{primeiro_nome}}) e marca awaiting_reopen; quando
+        # o lead responder dentro do TTL, a IA retoma o motivo/contexto (consume_reopen_context).
+        first_name = (lead.get("name") or "").split()[0] if lead.get("name") else ""
+        components = (
+            [{"type": "body",
+              "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}]}]
+            if first_name else None
+        )
+        try:
+            provider_meta = MetaCloudClient(channel["provider_config"])
+            send_result = await provider_meta.send_template(
+                send_to, _REOPEN_TEMPLATE_NAME, components=components, language_code="pt_BR"
+            )
+        except httpx.HTTPStatusError as http_exc:
+            status = http_exc.response.status_code
+            if 400 <= status < 500:
+                _cancel_job(job["id"], f"reopen_template_error_{status}")
+                logger.error("[AI_SCHEDULED_RETURN] reabertura: erro permanente Meta %s conv=%s", status, conversation_id)
+            else:
+                logger.error("[AI_SCHEDULED_RETURN] reabertura: erro transitório Meta %s conv=%s — retry", status, conversation_id)
+            return
+        except RuntimeError as exc:
+            _cancel_job(job["id"], "reopen_template_rejected")
+            logger.error("[AI_SCHEDULED_RETURN] reabertura: rejeição permanente conv=%s: %s", conversation_id, exc)
+            return
+        except Exception as exc:
+            logger.error("[AI_SCHEDULED_RETURN] reabertura: falha ao enviar template conv=%s: %s", conversation_id, exc, exc_info=True)
+            return  # transitório → retry no próximo tick
+
+        try:
+            save_message(
+                lead_id=job["lead_id"],
+                role="assistant",
+                content="continuar a conversa de onde paramos",
+                sent_by="followup",
+                conversation_id=conversation_id,
+                wamid=extract_wamid(send_result),
+                metadata=dispatch_metadata(_REOPEN_TEMPLATE_NAME),
+            )
+        except Exception as exc:
+            logger.error("[AI_SCHEDULED_RETURN] reabertura: falha ao persistir disparo conv=%s: %s", conversation_id, exc)
+
+        _mark_awaiting_reopen(job["id"])
+        logger.info(
+            "[AI_SCHEDULED_RETURN] janela fechada → template '%s' disparado, awaiting_reopen conv=%s",
+            _REOPEN_TEMPLATE_NAME, conversation_id,
         )
         return
 
@@ -1156,5 +1210,15 @@ def _mark_sent(job_id: str) -> None:
     sb = get_supabase()
     sb.table("follow_up_jobs").update({
         "status": "sent",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", job_id).execute()
+
+
+def _mark_awaiting_reopen(job_id: str) -> None:
+    """Eixo 3B: janela fechada → disparamos o template de reabertura e aguardamos o lead
+    responder. sent_at marca o instante do disparo (base do TTL de retomada)."""
+    sb = get_supabase()
+    sb.table("follow_up_jobs").update({
+        "status": "awaiting_reopen",
         "sent_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", job_id).execute()

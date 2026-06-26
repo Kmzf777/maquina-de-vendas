@@ -41,25 +41,28 @@ def test_get_or_create_conversation_seta_agent_profile_na_criacao():
 
 
 def test_lp_resolve_profile_por_prompt_key_env_agnostico():
-    """F1: a LP resolve o profile por prompt_key em runtime (sem UUID hardcoded)."""
+    """F1: a LP resolve o profile por prompt_key em runtime (sem UUID hardcoded).
+
+    Eixo 1: lead de LP é QUENTE → a conversa nasce em valeria_inbound (a persona efetiva é
+    recomputada por turno em app.agent.persona; o disparo lp_* é classificado warm_lp)."""
     from app.lp_webhook.service import LP_PROFILE_PROMPT_KEY
-    assert LP_PROFILE_PROMPT_KEY == "valeria_outbound"
+    assert LP_PROFILE_PROMPT_KEY == "valeria_inbound"
 
     # get_profile_id_by_prompt_key devolve o id do profile com aquela persona
     from unittest.mock import patch
     from app.agent_profiles import service as aps
     sb = MagicMock()
     sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
-        data=[{"id": "prof-out-env"}]
+        data=[{"id": "prof-in-env"}]
     )
     with patch.object(aps, "get_supabase", return_value=sb):
-        assert aps.get_profile_id_by_prompt_key("valeria_outbound") == "prof-out-env"
+        assert aps.get_profile_id_by_prompt_key("valeria_inbound") == "prof-in-env"
 
     # Sem profile no banco → None (fail-open: cai no default do canal)
     sb2 = MagicMock()
     sb2.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     with patch.object(aps, "get_supabase", return_value=sb2):
-        assert aps.get_profile_id_by_prompt_key("valeria_outbound") is None
+        assert aps.get_profile_id_by_prompt_key("valeria_inbound") is None
 
 
 # --- 3. Inbound atacado: pitch precoce removido + WIIFM ----------------------
