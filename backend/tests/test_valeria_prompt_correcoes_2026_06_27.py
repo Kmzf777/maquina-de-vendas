@@ -34,3 +34,22 @@ def test_outbound_atacado_produtor_excecao_private_label():
     low = _norm(ATACADO_PROMPT)
     # única exceção: lead pede explicitamente private label / marca própria
     assert "private_label" in low or "private label" in low or "marca propria" in low or "marca própria" in low
+
+
+# --- Erro 2: anti-interrogação / reagir antes da pergunta de valor ---
+
+def test_outbound_atacado_regra30_exige_reagir_e_validar():
+    low = _norm(ATACADO_PROMPT)
+    # a regra de valor (WIIFM/regra 30) deve obrigar reagir/validar antes de perguntar
+    assert "anti-interrogacao" in low or "anti-interrogação" in low
+    assert "reaja" in low or "reagir" in low
+    assert "valide" in low or "validar" in low
+    # menciona explicitamente o risco da frase elíptica
+    assert "eliptic" in low or "sou eu mesma" in low
+
+
+def test_inbound_atacado_anti_interrogacao_preservada_sem_regressao():
+    # regressão: o inbound já tinha a anti-interrogação (Etapa 1) e não pode perdê-la
+    low = _norm(INBOUND_ATACADO_PROMPT)
+    assert "anti-interrogacao" in low or "anti-interrogação" in low
+    assert "reaja" in low or "reagir" in low
