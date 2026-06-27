@@ -382,19 +382,27 @@ def _normalize_literal_newlines(text: str) -> str:
     )
 
 
-def _build_followup_system_prompt(sequence: int) -> str:
+def _build_followup_system_prompt(sequence: int, objetivo: str | None = None) -> str:
     """System prompt do follow-up — usa a persona Valéria (não um prompt genérico).
 
     Garante que a mensagem de reengajamento siga as mesmas regras de voz das respostas
-    normais da Valéria. A diferenciação por sequência (1ª vs última tentativa) é anexada.
+    normais da Valéria.
+
+    O TOM segue o OBJETIVO do toque, NÃO o número da sequência. Só o toque que é de fato o
+    último da cadência (objetivo 'ultima_chamada') usa o tom de "última tentativa"; todos os
+    demais usam o tom de reengajamento leve. Isto blinda o lead frio (warm=False): como ele
+    pula o T1 e seu primeiro toque agendado é a sequence=2, keyar o tom em `sequence == 1`
+    jogava esse primeiro contato no ramo de "última tentativa" — a cobrança prematura que o
+    Erro 3 removeu. `sequence` é mantido por compatibilidade/observabilidade.
     """
+    is_last_attempt = objetivo == "ultima_chamada"
     seq_tone = (
-        "esta é a primeira tentativa de retomada: leve, curiosa e natural, sem pressionar — "
-        "retome pelo assunto que ficou em aberto e demonstre interesse genuíno"
-        if sequence == 1
-        else
         "esta é a última tentativa antes da janela de atendimento expirar: seja mais direta, "
         "crie senso de oportunidade, mas sem ser agressiva"
+        if is_last_attempt
+        else
+        "esta é uma retomada de reengajamento: leve, curiosa e natural, sem pressionar — "
+        "retome pelo assunto que ficou em aberto e demonstre interesse genuíno"
     )
     persona = build_base_prompt(lead_name=None, lead_company=None, now=datetime.now(_FOLLOWUP_TZ_BR))
     return f"{persona}\n\n{_FOLLOWUP_REENGAGE_INSTRUCTION}\nTom desta tentativa: {seq_tone}"
@@ -406,6 +414,7 @@ async def _generate_followup_message(
     lead_id: str | None = None,
     stage: str | None = None,
     objective_prompt: str | None = None,
+    objetivo: str | None = None,
 ) -> tuple[str, str | None]:
     """Gera mensagem contextualizada via LLM para o follow-up, na voz da Valéria.
 
@@ -429,7 +438,7 @@ async def _generate_followup_message(
         for m in history
     )
 
-    system_prompt = _build_followup_system_prompt(sequence)
+    system_prompt = _build_followup_system_prompt(sequence, objetivo=objetivo)
     if objective_prompt:
         system_prompt = f"{system_prompt}\n\nOBJETIVO DESTE TOQUE (Next Best Action): {objective_prompt}"
 
@@ -556,9 +565,10 @@ async def process_due_followups(now: datetime | None = None) -> None:
             history = list(reversed(history_result.data or []))
             history = [m for m in history if m.get("role") and m.get("content")]
             objective_prompt = (job.get("metadata") or {}).get("objective_prompt")
+            objetivo = (job.get("metadata") or {}).get("objetivo")
             message, finish_reason = await _generate_followup_message(
                 history, sequence, lead_id=job["lead_id"], stage=conversation.get("stage"),
-                objective_prompt=objective_prompt,
+                objective_prompt=objective_prompt, objetivo=objetivo,
             )
         except Exception as e:
             logger.error(f"[FOLLOWUP] Erro ao gerar mensagem seq={sequence} conversation={conversation_id}: {e}", exc_info=True)

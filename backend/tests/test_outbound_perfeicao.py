@@ -359,9 +359,11 @@ def test_b2_followup_system_prompt_usa_persona_valeria():
     # Regras de voz que o prompt genérico antigo não tinha
     low = sp_seq1.lower()
     assert "ponto final" in low or "fragment" in low, "system prompt do follow-up não carrega as regras de voz"
-    # A diferenciação por sequência deve permanecer
-    sp_seq2 = _build_followup_system_prompt(2)
-    assert sp_seq1 != sp_seq2, "instrução de sequência (1 vs 2) deve diferir"
+    # A diferenciação de TOM agora segue o OBJETIVO do toque (não a sequência crua): só o toque
+    # 'ultima_chamada' usa o tom de última tentativa; os demais usam reengajamento leve.
+    sp_reengage = _build_followup_system_prompt(2, objetivo="reforco_valor")
+    sp_last = _build_followup_system_prompt(4, objetivo="ultima_chamada")
+    assert sp_reengage != sp_last, "o tom deve diferir entre reengajamento e última chamada"
 
 
 def test_b3_schedule_followup_clampa_janela_comercial():

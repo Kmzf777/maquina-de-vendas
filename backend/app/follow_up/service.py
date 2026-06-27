@@ -106,7 +106,8 @@ def schedule_followup(
             f"Falha ao cancelar follow-up jobs pendentes para conversa {conversation_id}"
         ) from exc
 
-    # Cadência multi-touch (4 toques) — config-as-code em follow_up/cadence.py.
+    # Cadência multi-touch — config-as-code em follow_up/cadence.py.
+    # warm=True: 4 toques (T1 same-day). warm=False (lead frio): 3 toques (T1 suprimido, começa no T2).
     # fire_at monotônico (espaçado >= MIN_GAP) e clampado à janela comercial.
     from app.follow_up.cadence import build_touch_jobs
     jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG, warm=warm)
