@@ -55,6 +55,35 @@ async def get_lead_messages(lead_id: str, limit: int = Query(50, le=200)):
     return {"data": result.data}
 
 
+@router.get("/{lead_id}/followups")
+async def get_lead_followups(lead_id: str):
+    """Read-only: cadence/follow-up jobs of a lead for the visibility timeline.
+
+    Flattens metadata.objetivo and omits the heavy objective_prompt. Ordered by fire_at asc.
+    """
+    sb = get_supabase()
+    result = (
+        sb.table("follow_up_jobs")
+        .select("sequence, job_type, status, fire_at, sent_at, cancel_reason, metadata")
+        .eq("lead_id", lead_id)
+        .order("fire_at", desc=False)
+        .execute()
+    )
+    rows = []
+    for j in (result.data or []):
+        md = j.get("metadata") or {}
+        rows.append({
+            "sequence": j.get("sequence"),
+            "job_type": j.get("job_type"),
+            "status": j.get("status"),
+            "fire_at": j.get("fire_at"),
+            "sent_at": j.get("sent_at"),
+            "cancel_reason": j.get("cancel_reason"),
+            "objetivo": md.get("objetivo"),
+        })
+    return {"data": rows}
+
+
 @router.post("/{lead_id}/optout")
 async def optout_lead(lead_id: str):
     """Parar mensagens: desativa IA, move deals para Blacklist e cancela follow-ups."""
