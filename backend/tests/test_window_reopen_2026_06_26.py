@@ -50,6 +50,9 @@ async def test_janela_fechada_dispara_template_e_marca_awaiting_reopen(monkeypat
             return {"messages": [{"id": "wamid.r"}]}
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", FakeMeta)
+    # Guard de compliance (utility-only) faz lookup da categoria do template; em prod
+    # 'continuar_conversa' é UTILITY. Fornecemos isso p/ o guard não bloquear sob mock genérico.
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
 
     await scheduler._process_ai_scheduled_return(job, now)
 

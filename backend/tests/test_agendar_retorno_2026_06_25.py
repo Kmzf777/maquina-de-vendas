@@ -199,6 +199,9 @@ async def test_handler_janela_fechada_dispara_reabertura_em_vez_de_cancelar(monk
             return {"messages": [{"id": "wamid.r"}]}
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", FakeMeta)
+    # Guard de compliance (utility-only) consulta a categoria do template de reabertura;
+    # em prod 'continuar_conversa' é UTILITY. Fornecemos p/ o guard não bloquear sob mock genérico.
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
 
     await scheduler._process_ai_scheduled_return(job, now)
 

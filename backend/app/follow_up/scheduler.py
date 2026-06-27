@@ -18,6 +18,7 @@ from app.humanizer.splitter import split_into_bubbles
 from app.agent.prompts.base import build_base_prompt
 from app.agent.token_tracker import track_token_usage
 from app.templates.intent import dispatch_metadata
+from app.alerts.service import create_system_alert
 
 logger = logging.getLogger(__name__)
 
@@ -1228,6 +1229,28 @@ def _pending_reopen_job(conversation_id: str) -> dict | None:
         return None
 
 
+def _reopen_template_category() -> str | None:
+    """Categoria (lowercase) do template de reabertura em message_templates, ou None.
+
+    None = não foi possível determinar (linha ausente / erro de DB) → o chamador faz
+    fail-open (o template hardcoded _REOPEN_TEMPLATE_NAME é, por construção, UTILITY).
+    """
+    try:
+        res = (
+            get_supabase()
+            .table("message_templates")
+            .select("category")
+            .eq("name", _REOPEN_TEMPLATE_NAME)
+            .limit(1)
+            .execute()
+        )
+        if res.data and res.data[0].get("category"):
+            return str(res.data[0]["category"]).strip().lower()
+    except Exception as exc:
+        logger.warning("[REOPEN] falha ao verificar categoria do template %s: %s", _REOPEN_TEMPLATE_NAME, exc)
+    return None
+
+
 async def fire_reopen_template(
     job: dict, lead: dict, channel: dict, conversation_id: str, *, motivo: str = "", contexto: str = "",
 ) -> bool:
@@ -1236,7 +1259,32 @@ async def fire_reopen_template(
     Helper compartilhado por _process_ai_scheduled_return e pelo follow-up multi-touch.
     Retorna True quando o template foi disparado e o job ficou awaiting_reopen; False em erro
     (4xx/rejeição → cancela o job; transitório → não cancela, retry no próximo tick).
+
+    COMPLIANCE (Meta): o template de reabertura DEVE ser da categoria UTILITY — nunca
+    Marketing. Se a categoria conhecida não for utility, NÃO envia: cancela o job
+    (config error permanente) e levanta um system_alert. Fail-open quando a categoria
+    não pode ser determinada (linha ausente), pois o template padrão é utility por construção.
     """
+    category = _reopen_template_category()
+    if category is not None and category != "utility":
+        _cancel_job(job["id"], "reopen_template_not_utility")
+        logger.error(
+            "[REOPEN] BLOQUEIO DE COMPLIANCE: template '%s' é categoria '%s' (esperado 'utility') "
+            "— reabertura abortada conv=%s", _REOPEN_TEMPLATE_NAME, category, conversation_id,
+        )
+        try:
+            create_system_alert(
+                "reopen_template_not_utility",
+                f"Template de reabertura '{_REOPEN_TEMPLATE_NAME}' não é UTILITY",
+                f"Categoria atual: {category}. O follow-up multi-touch só pode reabrir janela com "
+                "template de UTILIDADE. Ajuste a categoria do template na Meta.",
+                severity="critical",
+                metadata={"template": _REOPEN_TEMPLATE_NAME, "category": category},
+            )
+        except Exception as exc:
+            logger.error("[REOPEN] falha ao criar system_alert de compliance: %s", exc)
+        return False
+
     send_to = resolve_send_target(lead, lead.get("phone", ""))
     first_name = (lead.get("name") or "").split()[0] if lead.get("name") else ""
     components = (

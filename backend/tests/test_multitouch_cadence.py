@@ -116,6 +116,7 @@ async def test_fire_reopen_template_success_marks_awaiting_reopen(monkeypatch):
             return {"messages": [{"id": "wamid-x"}]}
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
     monkeypatch.setattr(scheduler, "save_message", lambda **kw: calls.__setitem__("saved", kw))
     monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: calls.__setitem__("awaiting", jid))
     monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-x")
@@ -149,6 +150,7 @@ async def test_fire_reopen_template_4xx_cancels(monkeypatch):
             raise httpx.HTTPStatusError("bad", request=req, response=resp)
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
     monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
 
     lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
@@ -235,6 +237,7 @@ async def test_fire_reopen_template_5xx_does_not_cancel(monkeypatch):
             raise httpx.HTTPStatusError("service unavailable", request=req, response=resp)
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
     monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancel_calls.append((jid, reason)))
 
     lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
@@ -258,6 +261,7 @@ async def test_fire_reopen_template_runtime_error_cancels_rejected(monkeypatch):
             raise RuntimeError("rejected")
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
     monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
 
     lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
@@ -266,3 +270,64 @@ async def test_fire_reopen_template_runtime_error_cancels_rejected(monkeypatch):
     )
     assert ok is False
     assert cancelled["reason"] == "reopen_template_rejected"
+
+
+# ---------------------------------------------------------------------------
+# Compliance: reopen template MUST be UTILITY (never Marketing)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_blocks_non_utility(monkeypatch):
+    """If the reopen template is not UTILITY, do NOT send: cancel + system_alert."""
+    from app.follow_up import scheduler
+
+    sent = {"called": False}
+    cancelled, alerts = {}, []
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, *a, **k):
+            sent["called"] = True
+            return {"messages": [{"id": "x"}]}
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "marketing")
+    monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
+    monkeypatch.setattr(scheduler, "create_system_alert", lambda *a, **k: alerts.append((a, k)))
+
+    lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(
+        _reopen_job(), lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x"
+    )
+    assert ok is False
+    assert sent["called"] is False, "must NOT send a non-utility template"
+    assert cancelled["reason"] == "reopen_template_not_utility"
+    assert len(alerts) == 1, "must raise a system alert for the compliance block"
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_proceeds_when_category_unverifiable(monkeypatch):
+    """Category can't be determined (None) → fail-open: proceed (hardcoded template is utility)."""
+    from app.follow_up import scheduler
+
+    sent = {"called": False}
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            sent["called"] = True
+            return {"messages": [{"id": "wamid-x"}]}
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: None)
+    monkeypatch.setattr(scheduler, "save_message", lambda **kw: None)
+    monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: None)
+    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda *a: None)
+    monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-x")
+
+    lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(
+        _reopen_job(), lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x"
+    )
+    assert ok is True
+    assert sent["called"] is True
