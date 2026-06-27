@@ -704,6 +704,8 @@ async def process_buffered_messages(
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
     # Persona (prompt_key) usada nesta resposta — persistida para rastreabilidade.
     agent_persona = resolve_prompt_key(agent_profile_id)
+    # Sincroniza a persona efetiva na conversa para o frontend exibir a mesma persona que rodou.
+    _sync_conversation_persona(conversation, agent_persona)
 
     # Frustration guardrail: bypass LLM for unambiguous desistência / explicit human requests.
     if await _check_frustration_guardrail(resolved_text, lead["id"], phone, conversation["id"]):
@@ -1074,6 +1076,26 @@ def _update_last_msg(conversation_id: str) -> None:
         )
     except Exception as e:
         logger.warning(f"Failed to update last_msg_at for {conversation_id}: {e}")
+
+
+def _sync_conversation_persona(conversation: dict, agent_persona: str) -> None:
+    """Persiste a persona EFETIVA resolvida nesta resposta na conversa (display no frontend).
+
+    Elimina a "mentira visual": o frontend lia o pin estático agent_profile_id (escolha do
+    broadcast) e mostrava outbound mesmo quando o backend rodava inbound. Agora a conversa
+    carrega a persona realmente executada. Escreve só quando muda. Fail-soft: erro de escrita
+    (ex.: coluna ainda ausente no schema durante o deploy) nunca interrompe o processamento.
+    """
+    try:
+        if conversation.get("agent_persona") == agent_persona:
+            return
+        update_conversation(conversation["id"], agent_persona=agent_persona)
+        conversation["agent_persona"] = agent_persona
+    except Exception as exc:
+        logger.warning(
+            "[PERSONA] falha ao sincronizar agent_persona conv=%s: %s",
+            conversation.get("id"), exc,
+        )
 
 
 def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: str, ext: str) -> str | None:

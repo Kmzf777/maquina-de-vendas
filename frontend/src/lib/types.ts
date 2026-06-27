@@ -314,6 +314,10 @@ export interface Conversation {
   } | null;
   // prompt_key distingue a persona da IA: 'valeria_inbound' (receptiva) vs 'valeria_outbound' (ativa).
   agent_profiles?: { id: string; name: string; prompt_key?: string } | null;
+  // Persona EFETIVA da última resposta da IA (denormalizada pelo backend a cada turno).
+  // Fonte de verdade do display — reflete a persona que realmente rodou, não o pin estático.
+  // NULL quando a IA ainda não respondeu (cai no fallback do pin/canal).
+  agent_persona?: string | null;
 }
 
 export interface LeadBroadcastEntry {
