@@ -51,3 +51,43 @@ def test_build_touch_jobs_t1_jitter_within_range():
     t1_fire = datetime.fromisoformat(jobs[0]["fire_at"])
     # 09:00 BRT + 90 min = 10:30 BRT = 13:30 UTC, still in window
     assert t1_fire == _utc(2026, 6, 29, 13, 30)
+
+
+def test_schedule_followup_inserts_four_jobs(monkeypatch):
+    from app.follow_up import service
+
+    inserted = {}
+
+    class _Chain:
+        @property
+        def not_(self):
+            return self
+
+        def select(self, *a, **k): return self
+        def eq(self, *a, **k): return self
+        def limit(self, *a, **k): return self
+        def in_(self, *a, **k): return self
+        def update(self, payload): return self
+        def insert(self, payload): inserted["rows"] = payload; return self
+        def execute(self):
+            return type("R", (), {"data": [{"id": "conv-1"}]})() if not inserted else type("R", (), {"data": []})()
+
+    class _Tbl:
+        def __init__(self, name): self.name = name
+        def select(self, *a, **k): return _Chain()
+        def eq(self, *a, **k): return _Chain()
+        def update(self, payload): return _Chain()
+        def insert(self, payload): inserted["rows"] = payload; return _Chain()
+        def execute(self):
+            if self.name == "conversations":
+                return type("R", (), {"data": [{"id": "conv-1"}]})()
+            return type("R", (), {"data": []})()
+
+    class _SB:
+        def table(self, name): return _Tbl(name)
+
+    monkeypatch.setattr(service, "get_supabase", lambda: _SB())
+    service.schedule_followup("conv-1", "lead-1", "chan-1")
+    assert len(inserted["rows"]) == 4
+    assert [r["sequence"] for r in inserted["rows"]] == [1, 2, 3, 4]
+    assert inserted["rows"][3]["metadata"]["objetivo"] == "ultima_chamada"

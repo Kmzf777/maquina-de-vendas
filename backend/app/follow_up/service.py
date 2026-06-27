@@ -101,33 +101,10 @@ def schedule_followup(
             f"Falha ao cancelar follow-up jobs pendentes para conversa {conversation_id}"
         ) from exc
 
-    # Clamp na janela comercial (09h-16h, seg-sex, America/Sao_Paulo): prioridade absoluta
-    # é NUNCA disparar de madrugada para lead de prospecção. Aceita-se que o seq=2 (23h) possa,
-    # ao ser empurrado para o próximo dia útil, eventualmente estourar a janela Meta de 24h
-    # (o guard window_expired em process_due_followups cancela com segurança nesse caso).
-    seq1_minutes = random.randint(_SEQ1_MIN_MINUTES, _SEQ1_MAX_MINUTES)
-    fire_at_seq1 = _clamp_to_business_window(now + timedelta(minutes=seq1_minutes))
-    fire_at_seq2 = _clamp_to_business_window(now + timedelta(hours=23))
-    jobs = [
-        {
-            "conversation_id": conversation_id,
-            "lead_id": lead_id,
-            "channel_id": channel_id,
-            "sequence": 1,
-            "fire_at": fire_at_seq1.isoformat(),
-            "status": "pending",
-            "env_tag": _ENV_TAG,
-        },
-        {
-            "conversation_id": conversation_id,
-            "lead_id": lead_id,
-            "channel_id": channel_id,
-            "sequence": 2,
-            "fire_at": fire_at_seq2.isoformat(),
-            "status": "pending",
-            "env_tag": _ENV_TAG,
-        },
-    ]
+    # Cadência multi-touch (4 toques) — config-as-code em follow_up/cadence.py.
+    # fire_at monotônico (espaçado >= MIN_GAP) e clampado à janela comercial.
+    from app.follow_up.cadence import build_touch_jobs
+    jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG)
     try:
         sb.table("follow_up_jobs").insert(jobs).execute()
     except Exception as exc:
@@ -138,7 +115,7 @@ def schedule_followup(
             f"Falha ao criar follow-up jobs para conversa {conversation_id}"
         ) from exc
 
-    logger.info(f"[FOLLOWUP] Agendado seq=1 e seq=2 conversation={conversation_id}")
+    logger.info(f"[FOLLOWUP] Agendados {len(jobs)} toques de cadência conversation={conversation_id}")
 
 
 def cancel_followups(conversation_id: str, reason: str) -> None:
