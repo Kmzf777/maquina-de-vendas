@@ -165,10 +165,11 @@ async def test_fire_reopen_template_4xx_cancels(monkeypatch):
 async def test_closed_window_no_reopen_fires_template(monkeypatch):
     from app.follow_up import scheduler
 
+    _RICH_PROMPT = "Reforce o valor do produto com urgência moderada — cite diferencial competitivo."
     fired = {}
     monkeypatch.setattr(scheduler, "get_due_followups", lambda now, limit=10: [{
         "id": "job-2", "conversation_id": "conv-1", "lead_id": "lead-1", "sequence": 2,
-        "job_type": None, "metadata": {"objetivo": "reforco_valor", "objective_prompt": "p"},
+        "job_type": None, "metadata": {"objetivo": "reforco_valor", "objective_prompt": _RICH_PROMPT},
         "leads": {"id": "lead-1", "phone": "5511999999999", "name": "Ana",
                   "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
         "channels": {"id": "chan-1", "mode": "ai", "provider_config": {}},
@@ -177,22 +178,24 @@ async def test_closed_window_no_reopen_fires_template(monkeypatch):
     }])
     monkeypatch.setattr(scheduler, "_pending_reopen_job", lambda cid: None)
     async def _fake_fire(job, lead, channel, conv, *, motivo="", contexto=""):
-        fired.update({"job": job["id"], "contexto": contexto}); return True
+        fired.update({"job": job["id"], "motivo": motivo, "contexto": contexto}); return True
     monkeypatch.setattr(scheduler, "fire_reopen_template", _fake_fire)
 
     await scheduler.process_due_followups(now=__import__("datetime").datetime(2026, 6, 29, 12, tzinfo=__import__("datetime").timezone.utc))
     assert fired["job"] == "job-2"
-    assert fired["contexto"] == "reforco_valor"
+    assert fired["motivo"] == "reforco_valor"
+    assert fired["contexto"] == _RICH_PROMPT
 
 
 @pytest.mark.asyncio
 async def test_closed_window_with_pending_reopen_refreshes_context(monkeypatch):
     from app.follow_up import scheduler
 
+    _RICH_PROMPT = "Destaque prova social — mencionar casos de sucesso de clientes similares."
     refreshed, cancelled, fired = {}, {}, {"called": False}
     monkeypatch.setattr(scheduler, "get_due_followups", lambda now, limit=10: [{
         "id": "job-3", "conversation_id": "conv-1", "lead_id": "lead-1", "sequence": 3,
-        "job_type": None, "metadata": {"objetivo": "prova_social", "objective_prompt": "p"},
+        "job_type": None, "metadata": {"objetivo": "prova_social", "objective_prompt": _RICH_PROMPT},
         "leads": {"id": "lead-1", "phone": "5511999999999", "name": "Ana",
                   "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
         "channels": {"id": "chan-1", "mode": "ai", "provider_config": {}},
@@ -200,13 +203,66 @@ async def test_closed_window_with_pending_reopen_refreshes_context(monkeypatch):
                           "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
     }])
     monkeypatch.setattr(scheduler, "_pending_reopen_job", lambda cid: {"id": "job-2"})
-    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda jid, motivo, contexto: refreshed.update({"id": jid, "contexto": contexto}))
+    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda jid, motivo, contexto: refreshed.update({"id": jid, "motivo": motivo, "contexto": contexto}))
     monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
     async def _fake_fire(*a, **k):
         fired["called"] = True; return True
     monkeypatch.setattr(scheduler, "fire_reopen_template", _fake_fire)
 
     await scheduler.process_due_followups(now=__import__("datetime").datetime(2026, 6, 29, 12, tzinfo=__import__("datetime").timezone.utc))
-    assert refreshed == {"id": "job-2", "contexto": "prova_social"}
+    assert refreshed == {"id": "job-2", "motivo": "prova_social", "contexto": _RICH_PROMPT}
     assert cancelled == {"id": "job-3", "reason": "reopen_context_refreshed"}
     assert fired["called"] is False  # no 2nd template
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (safety net): fire_reopen_template error-path contracts
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_5xx_does_not_cancel(monkeypatch):
+    """Transient 5xx must NOT cancel the job — it should retry on the next tick."""
+    import httpx
+    from app.follow_up import scheduler
+
+    cancel_calls = []
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            req = httpx.Request("POST", "https://graph.facebook.com")
+            resp = httpx.Response(503, request=req)
+            raise httpx.HTTPStatusError("service unavailable", request=req, response=resp)
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancel_calls.append((jid, reason)))
+
+    lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(
+        _reopen_job(), lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x"
+    )
+    assert ok is False
+    assert cancel_calls == []
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_runtime_error_cancels_rejected(monkeypatch):
+    """RuntimeError (template rejected) must cancel with reason 'reopen_template_rejected'."""
+    from app.follow_up import scheduler
+
+    cancelled = {}
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            raise RuntimeError("rejected")
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
+
+    lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(
+        _reopen_job(), lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x"
+    )
+    assert ok is False
+    assert cancelled["reason"] == "reopen_template_rejected"

@@ -58,7 +58,7 @@ def schedule_followup(
     lead_id: str,
     channel_id: str,
 ) -> None:
-    """Cancela jobs pendentes anteriores e cria 2 novos (1o com jitter ~1.5-3.5h, 2o em 23h)."""
+    """Cancela jobs pendentes anteriores desta conversa e insere a cadência de 4 toques via build_touch_jobs."""
     sb = get_supabase()
     now = datetime.now(timezone.utc)
 

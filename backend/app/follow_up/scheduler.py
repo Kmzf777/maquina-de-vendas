@@ -525,10 +525,11 @@ async def process_due_followups(now: datetime | None = None) -> None:
         window_closed = last_msg + timedelta(hours=24) <= now
         if window_closed:
             objetivo = (job.get("metadata") or {}).get("objetivo", "")
+            objective_prompt = (job.get("metadata") or {}).get("objective_prompt", "")
             existing = _pending_reopen_job(conversation_id)
             if existing:
                 # R1: não empilha template — escala o contexto do reopen vivo e encerra este toque.
-                _store_reopen_context(existing["id"], objetivo, objetivo)
+                _store_reopen_context(existing["id"], objetivo, objective_prompt)
                 _cancel_job(job["id"], "reopen_context_refreshed")
                 logger.info(
                     "[FOLLOWUP] janela fechada + reopen vivo → contexto atualizado p/ '%s' "
@@ -536,7 +537,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
                 )
             else:
                 await fire_reopen_template(
-                    job, lead, channel, conversation_id, motivo=objetivo, contexto=objetivo
+                    job, lead, channel, conversation_id, motivo=objetivo, contexto=objective_prompt
                 )
             continue
 
