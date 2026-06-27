@@ -137,17 +137,20 @@ def test_processor_cold_open_sem_resposta_resolve_outbound(monkeypatch):
     assert processor._resolve_agent_profile_id(conversation, channel) == "ap-outbound"
 
 
-def test_processor_apos_resposta_resolve_inbound(monkeypatch):
-    """Lead respondeu → ignora o pin outbound e usa o agente inbound do canal."""
+def test_processor_apos_resposta_continua_outbound(monkeypatch):
+    """STICKY (2026-06-27): lead respondeu, mas o disparo foi frio → segue outbound."""
     from app.buffer import processor
     monkeypatch.setattr(
         processor, "_fetch_persona_messages",
         lambda cid: [_cold_dispatch(), {"role": "user", "sent_by": "user", "metadata": {}}],
     )
-    monkeypatch.setattr(processor, "get_profile_id_by_prompt_key", lambda key: "ap-inbound")
+    monkeypatch.setattr(
+        processor, "get_profile_id_by_prompt_key",
+        lambda key: "ap-outbound" if key == "valeria_outbound" else "ap-inbound",
+    )
     conversation = {"id": "conv-1", "agent_profile_id": "ap-STALE-outbound"}
     channel = {"id": "ch-1", "agent_profiles": {"id": "ap-channel-inbound"}}
-    assert processor._resolve_agent_profile_id(conversation, channel) == "ap-channel-inbound"
+    assert processor._resolve_agent_profile_id(conversation, channel) == "ap-outbound"
 
 
 def test_processor_intervencao_humana_resolve_inbound(monkeypatch):

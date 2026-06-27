@@ -473,6 +473,32 @@ async def process_scheduled_broadcasts():
         )
 
 
+def _resolve_broadcast_prompt_key(sb, agent_profile_id: str | None) -> str | None:
+    """prompt_key (persona) do agent_profile escolhido no broadcast — resolvido 1x por batch.
+
+    Propagado a dispatch_metadata: um disparo sob `valeria_outbound` marca o cold-open como
+    cold_reactivation (a escolha do operador é autoridade sobre o nome genérico do template).
+    Fail-open: qualquer erro → None (classificação cai no comportamento legado por nome).
+    """
+    if not agent_profile_id:
+        return None
+    try:
+        res = (
+            sb.table("agent_profiles")
+            .select("prompt_key")
+            .eq("id", agent_profile_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0].get("prompt_key")
+    except Exception as exc:
+        logger.warning(
+            "[BROADCAST] Failed to resolve prompt_key for profile %s: %s", agent_profile_id, exc
+        )
+    return None
+
+
 async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
@@ -536,6 +562,10 @@ async def process_single_broadcast(broadcast: dict):
                 campaign_segment = _pipeline_name_to_segment(pipeline_row.data[0].get("name"))
         except Exception as seg_err:
             logger.warning("[BROADCAST] Failed to derive campaign_segment for broadcast %s: %s", broadcast_id, seg_err)
+
+    # Persona (prompt_key) do disparo — resolvida 1x por batch. Torna a escolha outbound do
+    # operador autoridade na classificação de intent do cold-open (ver dispatch_metadata).
+    broadcast_prompt_key = _resolve_broadcast_prompt_key(sb, broadcast.get("agent_profile_id"))
 
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
@@ -734,7 +764,7 @@ async def process_single_broadcast(broadcast: dict):
                         rendered_content,
                         sent_by="broadcast",
                         wamid=wamid,
-                        metadata=dispatch_metadata(broadcast["template_name"]),
+                        metadata=dispatch_metadata(broadcast["template_name"], broadcast_prompt_key),
                     )
                     logger.info(f"[DEBUG-BROADCAST] save_message OK returned={saved}")
                 else:
