@@ -91,3 +91,67 @@ def test_schedule_followup_inserts_four_jobs(monkeypatch):
     assert len(inserted["rows"]) == 4
     assert [r["sequence"] for r in inserted["rows"]] == [1, 2, 3, 4]
     assert inserted["rows"][3]["metadata"]["objetivo"] == "ultima_chamada"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: fire_reopen_template helper
+# ---------------------------------------------------------------------------
+import pytest
+
+
+def _reopen_job():
+    return {"id": "job-1", "lead_id": "lead-1", "conversation_id": "conv-1", "metadata": {}}
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_success_marks_awaiting_reopen(monkeypatch):
+    from app.follow_up import scheduler
+
+    calls = {"awaiting": None, "saved": None, "meta": None}
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            calls["meta"] = (to, name, language_code)
+            return {"messages": [{"id": "wamid-x"}]}
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "save_message", lambda **kw: calls.__setitem__("saved", kw))
+    monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: calls.__setitem__("awaiting", jid))
+    monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-x")
+    # store-metadata helper writes to DB; stub it to capture
+    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda jid, motivo, contexto: calls.__setitem__("ctx", (jid, motivo, contexto)))
+
+    lead = {"id": "lead-1", "name": "Ana Silva", "phone": "5511999999999"}
+    channel = {"provider_config": {}}
+    ok = await scheduler.fire_reopen_template(
+        _reopen_job(), lead, channel, "conv-1", motivo="ultima_chamada", contexto="ultima_chamada"
+    )
+    assert ok is True
+    assert calls["awaiting"] == "job-1"
+    assert calls["meta"][1] == scheduler._REOPEN_TEMPLATE_NAME
+    assert calls["meta"][2] == "pt_BR"
+    assert calls["ctx"] == ("job-1", "ultima_chamada", "ultima_chamada")
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_4xx_cancels(monkeypatch):
+    import httpx
+    from app.follow_up import scheduler
+
+    cancelled = {}
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            req = httpx.Request("POST", "https://graph.facebook.com")
+            resp = httpx.Response(400, request=req)
+            raise httpx.HTTPStatusError("bad", request=req, response=resp)
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
+
+    lead = {"id": "lead-1", "name": "Ana", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(_reopen_job(), lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x")
+    assert ok is False
+    assert cancelled["reason"] == "reopen_template_error_400"

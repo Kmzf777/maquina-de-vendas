@@ -1081,54 +1081,9 @@ async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
         last_msg = datetime.fromisoformat(last_msg_str.replace("Z", "+00:00"))
         window_open = last_msg + timedelta(hours=24) > now
     if not window_open:
-        # Eixo 3B: NÃO descarta em silêncio. Dispara o template aprovado de reabertura
-        # (continuar_conversa, param nomeado {{primeiro_nome}}) e marca awaiting_reopen; quando
-        # o lead responder dentro do TTL, a IA retoma o motivo/contexto (consume_reopen_context).
-        first_name = (lead.get("name") or "").split()[0] if lead.get("name") else ""
-        components = (
-            [{"type": "body",
-              "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}]}]
-            if first_name else None
-        )
-        try:
-            provider_meta = MetaCloudClient(channel["provider_config"])
-            send_result = await provider_meta.send_template(
-                send_to, _REOPEN_TEMPLATE_NAME, components=components, language_code="pt_BR"
-            )
-        except httpx.HTTPStatusError as http_exc:
-            status = http_exc.response.status_code
-            if 400 <= status < 500:
-                _cancel_job(job["id"], f"reopen_template_error_{status}")
-                logger.error("[AI_SCHEDULED_RETURN] reabertura: erro permanente Meta %s conv=%s", status, conversation_id)
-            else:
-                logger.error("[AI_SCHEDULED_RETURN] reabertura: erro transitório Meta %s conv=%s — retry", status, conversation_id)
-            return
-        except RuntimeError as exc:
-            _cancel_job(job["id"], "reopen_template_rejected")
-            logger.error("[AI_SCHEDULED_RETURN] reabertura: rejeição permanente conv=%s: %s", conversation_id, exc)
-            return
-        except Exception as exc:
-            logger.error("[AI_SCHEDULED_RETURN] reabertura: falha ao enviar template conv=%s: %s", conversation_id, exc, exc_info=True)
-            return  # transitório → retry no próximo tick
-
-        try:
-            save_message(
-                lead_id=job["lead_id"],
-                role="assistant",
-                content="continuar a conversa de onde paramos",
-                sent_by="followup",
-                conversation_id=conversation_id,
-                wamid=extract_wamid(send_result),
-                metadata=dispatch_metadata(_REOPEN_TEMPLATE_NAME),
-            )
-        except Exception as exc:
-            logger.error("[AI_SCHEDULED_RETURN] reabertura: falha ao persistir disparo conv=%s: %s", conversation_id, exc)
-
-        _mark_awaiting_reopen(job["id"])
-        logger.info(
-            "[AI_SCHEDULED_RETURN] janela fechada → template '%s' disparado, awaiting_reopen conv=%s",
-            _REOPEN_TEMPLATE_NAME, conversation_id,
-        )
+        motivo = (metadata.get("motivo") or "").strip()
+        contexto = (metadata.get("contexto") or "").strip()
+        await fire_reopen_template(job, lead, channel, conversation_id, motivo=motivo, contexto=contexto)
         return
 
     motivo = (metadata.get("motivo") or "").strip() or "retomar o contato combinado"
@@ -1222,3 +1177,71 @@ def _mark_awaiting_reopen(job_id: str) -> None:
         "status": "awaiting_reopen",
         "sent_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", job_id).execute()
+
+
+def _store_reopen_context(job_id: str, motivo: str, contexto: str) -> None:
+    """Grava motivo/contexto no metadata do job (origem do <retorno_agendado> na retomada)."""
+    sb = get_supabase()
+    try:
+        cur = sb.table("follow_up_jobs").select("metadata").eq("id", job_id).limit(1).execute()
+        md = (cur.data[0].get("metadata") if cur.data else None) or {}
+        md = {**md, "motivo": motivo, "contexto": contexto}
+        sb.table("follow_up_jobs").update({"metadata": md}).eq("id", job_id).execute()
+    except Exception as exc:
+        logger.warning("[REOPEN] falha ao gravar contexto no job %s: %s", job_id, exc)
+
+
+async def fire_reopen_template(
+    job: dict, lead: dict, channel: dict, conversation_id: str, *, motivo: str = "", contexto: str = "",
+) -> bool:
+    """Janela fechada → dispara o template aprovado de reabertura e marca awaiting_reopen.
+
+    Helper compartilhado por _process_ai_scheduled_return e pelo follow-up multi-touch.
+    Retorna True quando o template foi disparado e o job ficou awaiting_reopen; False em erro
+    (4xx/rejeição → cancela o job; transitório → não cancela, retry no próximo tick).
+    """
+    send_to = resolve_send_target(lead, lead.get("phone", ""))
+    first_name = (lead.get("name") or "").split()[0] if lead.get("name") else ""
+    components = (
+        [{"type": "body",
+          "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}]}]
+        if first_name else None
+    )
+    try:
+        provider_meta = MetaCloudClient(channel["provider_config"])
+        send_result = await provider_meta.send_template(
+            send_to, _REOPEN_TEMPLATE_NAME, components=components, language_code="pt_BR"
+        )
+    except httpx.HTTPStatusError as http_exc:
+        status = http_exc.response.status_code
+        if 400 <= status < 500:
+            _cancel_job(job["id"], f"reopen_template_error_{status}")
+            logger.error("[REOPEN] erro permanente Meta %s conv=%s", status, conversation_id)
+        else:
+            logger.error("[REOPEN] erro transitório Meta %s conv=%s — retry", status, conversation_id)
+        return False
+    except RuntimeError as exc:
+        _cancel_job(job["id"], "reopen_template_rejected")
+        logger.error("[REOPEN] rejeição permanente conv=%s: %s", conversation_id, exc)
+        return False
+    except Exception as exc:
+        logger.error("[REOPEN] falha ao enviar template conv=%s: %s", conversation_id, exc, exc_info=True)
+        return False
+
+    try:
+        save_message(
+            lead_id=job["lead_id"],
+            role="assistant",
+            content="continuar a conversa de onde paramos",
+            sent_by="followup",
+            conversation_id=conversation_id,
+            wamid=extract_wamid(send_result),
+            metadata=dispatch_metadata(_REOPEN_TEMPLATE_NAME),
+        )
+    except Exception as exc:
+        logger.error("[REOPEN] falha ao persistir disparo conv=%s: %s", conversation_id, exc)
+
+    _store_reopen_context(job["id"], motivo, contexto)
+    _mark_awaiting_reopen(job["id"])
+    logger.info("[REOPEN] template '%s' disparado, awaiting_reopen conv=%s", _REOPEN_TEMPLATE_NAME, conversation_id)
+    return True
