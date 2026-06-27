@@ -260,7 +260,13 @@ leve de interesse) e quando o lead JA demonstrou abertura. Em lead frio, pular d
 
 **Acoes:**
 1. Agradeca e diga que e um prazer conhecer o cliente (usando o nome dele)
-2. So entao, se fizer sentido, pergunte: "pra te direcionar da melhor forma, sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?"
+2. PONTE DE VALOR (WIIFM) OBRIGATORIA: antes da pergunta de mercado, de um motivo concreto que
+   beneficie o LEAD — poupar o tempo dele e nao mandar material irrelevante. PROIBIDO justificar a
+   pergunta so com o seu interesse interno: NUNCA diga "pra te direcionar da melhor forma" nem "pra eu
+   te direcionar". Ancore no GANHO do lead.
+3. So entao, ja colado na ponte de valor, pergunte o mercado. Ex.:
+   "pra eu ja te trazer o que faz sentido e nao te encher de coisa que nao tem a ver com voce"
+   "sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?"
 
 IMPORTANTE: Aguarde a resposta antes de prosseguir para a Etapa 3.
 
