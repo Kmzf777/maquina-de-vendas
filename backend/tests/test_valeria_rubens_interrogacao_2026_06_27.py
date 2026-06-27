@@ -19,6 +19,10 @@ def test_nao_mexe_em_declarativa_ou_ja_pontuada():
     assert _ensure_question_mark("deixa eu ver aqui...") == "deixa eu ver aqui..."
     # termina com '!' → não mexe
     assert _ensure_question_mark("que massa!") == "que massa!"
+    # falso-positivo "qual" prefixo de "qualquer" — NÃO vira pergunta (regressão fix/word-boundary)
+    assert _ensure_question_mark("qualquer coisa to por aqui") == "qualquer coisa to por aqui"
+    # falso-positivo "quer" prefixo de "queria" — NÃO vira pergunta
+    assert _ensure_question_mark("queria saber mais sobre o classico") == "queria saber mais sobre o classico"
 
 
 def test_split_into_bubbles_aplica_interrogacao():

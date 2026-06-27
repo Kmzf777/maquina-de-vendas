@@ -93,10 +93,19 @@ def _strip_terminal_period(bubble: str) -> str:
 
 # Palavras/aberturas inequívocas de pergunta (PT-BR informal). Conservador de propósito:
 # só re-adicionamos "?" quando a bolha ABRE com um destes — evita falso-positivo em declarativas.
+# Nota: "que " foi removido — bare "que" é ambíguo ("que bonito!", "que saudade") e a fronteira
+# de palavra não resolve isso; "o que" e "o quê" cobrem o caso interrogativo relevante.
 _QUESTION_STARTERS = (
-    "qual", "quais", "o que", "o quê", "que ", "como", "quando", "onde", "quanto",
+    "qual", "quais", "o que", "o quê", "como", "quando", "onde", "quanto",
     "quantos", "quantas", "quem", "por que", "por quê", "quer", "prefere", "poderia",
     "consegue", "seria", "te interessa", "faz sentido",
+)
+
+# Regex compilada com fronteira de palavra (\b) para evitar falso-positivo em prefixos:
+# "qualquer" NÃO deve bater em "qual"; "queria" NÃO deve bater em "quer".
+_QUESTION_RE = re.compile(
+    r'^(?:' + '|'.join(re.escape(s) for s in _QUESTION_STARTERS) + r')\b',
+    re.IGNORECASE,
 )
 
 
@@ -106,11 +115,14 @@ def _ensure_question_mark(bubble: str) -> str:
     O modelo às vezes derruba o '?' por over-aplicar o 'sem ponto final' (falha real lead
     5531999844461). Só agimos quando a bolha ABRE com uma palavra interrogativa clara e NÃO termina
     em pontuação (., ?, !, …) — conservador para nunca transformar uma declarativa em pergunta.
+
+    O matching usa fronteira de palavra (\b) para que "qualquer" não bata em "qual" e
+    "queria" não bata em "quer".
     """
     b = bubble.rstrip()
     if not b or b[-1] in ".?!…":
         return bubble
     low = b.lower()
-    if low.startswith(_QUESTION_STARTERS):
+    if _QUESTION_RE.match(low):
         return b + "?"
     return bubble
