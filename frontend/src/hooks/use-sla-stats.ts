@@ -225,10 +225,13 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     fetchAndCompute();
 
     const debounced = debounce(fetchAndCompute, 1500);
+    // Escuta apenas `conversations`: ela já é atualizada a cada mensagem
+    // (last_customer_message_at / last_seller_response_at), então cobre o gatilho
+    // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada
+    // operador conectado — contenção de Egress do Realtime.
     const channel = supabase
       .channel("sla-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, debounced)
       .subscribe();
 
     // Recalcula os contadores de tempo localmente (sem fetch): um SLA que estoura

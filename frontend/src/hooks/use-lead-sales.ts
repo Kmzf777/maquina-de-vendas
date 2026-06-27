@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useEffect, useState, useCallback } from "react";
 import type { Sale } from "@/lib/types";
 
 export function useLeadSales(leadId: string | null | undefined) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(false);
-  const supabase = useMemo(() => createClient(), []);
 
   const fetchSales = useCallback(async () => {
     if (!leadId) { setSales([]); return; }
@@ -17,19 +15,12 @@ export function useLeadSales(leadId: string | null | undefined) {
     setLoading(false);
   }, [leadId]);
 
+  // `sales` não está na publicação `supabase_realtime`, então a antiga inscrição
+  // postgres_changes nunca disparava (canal WebSocket ocioso). Mantemos só o
+  // refetch sob demanda; consumidores chamam `refetch` após mutações.
   useEffect(() => {
     fetchSales();
-    if (!leadId) return;
-    const channel = supabase
-      .channel(`sales-lead-${leadId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "sales", filter: `lead_id=eq.${leadId}` },
-        fetchSales
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [fetchSales, leadId, supabase]);
+  }, [fetchSales]);
 
   return { sales, loading, refetch: fetchSales };
 }

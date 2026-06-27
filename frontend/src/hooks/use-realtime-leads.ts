@@ -21,24 +21,12 @@ export function useRealtimeLeads(filter?: { human_control?: boolean }) {
     setLoading(false);
   }, [filter?.human_control]);
 
+  // `leads` não está na publicação `supabase_realtime`, então a antiga inscrição
+  // postgres_changes nunca entregava eventos (canal WebSocket ocioso). A lista já
+  // dependia de refetch/mount; mantemos só isso e expomos `refetch` sob demanda.
   useEffect(() => {
     fetchLeads();
-
-    const channel = supabase
-      .channel("leads-changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "leads" },
-        () => {
-          fetchLeads();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [fetchLeads]);
 
-  return { leads, loading };
+  return { leads, loading, refetch: fetchLeads };
 }
