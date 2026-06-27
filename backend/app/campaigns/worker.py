@@ -60,6 +60,8 @@ def decide_failure_update(exc: Exception, retry_count: int, now: datetime) -> di
         "next_execute_at": iso,
         "last_error": err,
     }
+
+
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
 BRT_OFFSET = timedelta(hours=-3)
