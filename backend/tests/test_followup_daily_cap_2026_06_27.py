@@ -20,6 +20,7 @@ def test_already_touched_today_true_quando_ha_sent_hoje(monkeypatch):
     sb = MagicMock()
     # query de jobs sent hoje retorna 1 linha
     (sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+       .eq.return_value
        .gte.return_value.lt.return_value.limit.return_value.execute.return_value) = MagicMock(
         data=[{"id": "job-sent"}]
     )

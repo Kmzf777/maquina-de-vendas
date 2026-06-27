@@ -13,11 +13,14 @@ from app.follow_up import scheduler
 from app.follow_up.scheduler import _build_followup_system_prompt, _humanize_elapsed
 
 
-def test_humanize_elapsed_horas_e_dias():
-    assert "hora" in _humanize_elapsed(timedelta(hours=2))
-    assert "dia" in _humanize_elapsed(timedelta(days=3))
-    # poucos minutos → "hoje"
-    assert "hoje" in _humanize_elapsed(timedelta(minutes=5)).lower()
+def test_humanize_elapsed_calendario_hoje_ontem_dias():
+    base = datetime(2026, 6, 26, 14, 0, tzinfo=timezone.utc)  # 11h BRT, quinta
+    assert "hoje" in _humanize_elapsed(base, base - timedelta(hours=2)).lower()
+    assert "hora" in _humanize_elapsed(base, base - timedelta(hours=2))
+    assert "ontem" in _humanize_elapsed(base, base - timedelta(days=1)).lower()
+    assert "dia" in _humanize_elapsed(base, base - timedelta(days=3))
+    # poucos minutos no mesmo dia → bucket "hoje"
+    assert "hoje" in _humanize_elapsed(base, base - timedelta(minutes=5)).lower()
 
 
 def test_system_prompt_injeta_ancora_e_proibe_inventar_periodo():

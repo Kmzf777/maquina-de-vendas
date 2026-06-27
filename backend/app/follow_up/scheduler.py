@@ -385,16 +385,24 @@ def _normalize_literal_newlines(text: str) -> str:
     )
 
 
-def _humanize_elapsed(delta: timedelta) -> str:
-    """Humaniza Δt desde a última mensagem, para ancorar o follow-up no tempo real (anti-'outro dia')."""
-    secs = max(0, int(delta.total_seconds()))
-    if secs < 90 * 60:
-        return "hoje mesmo, há pouco tempo (menos de 2 horas)"
-    hours = secs // 3600
-    if hours < 24:
+def _humanize_elapsed(now: datetime, last_ts: datetime) -> str:
+    """Rótulo temporal calendário-consciente para ancorar o follow-up (anti-'outro dia').
+
+    Usa a DATA local (America/Sao_Paulo via _FOLLOWUP_TZ_BR), não horas decorridas: um toque que
+    dispara de manhã sobre uma mensagem da tarde anterior é 'ontem', não 'hoje, há ~20 horas'.
+    """
+    now_local = now.astimezone(_FOLLOWUP_TZ_BR)
+    ts_local = last_ts.astimezone(_FOLLOWUP_TZ_BR)
+    day_diff = (now_local.date() - ts_local.date()).days
+    if day_diff <= 0:
+        secs = max(0, int((now - last_ts).total_seconds()))
+        if secs < 90 * 60:
+            return "hoje mesmo, há pouco tempo"
+        hours = secs // 3600
         return f"hoje, há ~{hours} hora{'s' if hours != 1 else ''}"
-    days = secs // 86400
-    return f"há ~{days} dia{'s' if days != 1 else ''}"
+    if day_diff == 1:
+        return "ontem"
+    return f"há ~{day_diff} dias"
 
 
 def _build_followup_system_prompt(
@@ -471,7 +479,7 @@ async def _generate_followup_message(
         if last_created:
             try:
                 ts = datetime.fromisoformat(str(last_created).replace("Z", "+00:00"))
-                last_msg_age = _humanize_elapsed(now - ts)
+                last_msg_age = _humanize_elapsed(now, ts)
             except Exception:
                 last_msg_age = None
 
