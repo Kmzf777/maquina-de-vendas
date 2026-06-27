@@ -81,7 +81,7 @@ interface CombinedDaily {
 }
 
 export default function EstatisticasPage() {
-  const [selectedPeriod, setSelectedPeriod] = useState(30);
+  const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [appliedCustomStart, setAppliedCustomStart] = useState("");
