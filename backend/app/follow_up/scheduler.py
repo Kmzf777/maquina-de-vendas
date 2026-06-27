@@ -320,7 +320,10 @@ _FOLLOWUP_REENGAGE_INSTRUCTION = (
     "- PROIBIDO abrir com saudação formal ('Olá', 'Bom dia'). O uso do nome do lead segue a "
     "moderação de nome da persona acima.\n"
     "- PROIBIDO abertura ou pergunta vazia de preenchimento: 'tudo joia?', 'tudo bem?', 'tudo certo "
-    "por aí?', 'e aí, sumiu?'. Elas não acrescentam nada e escancaram a automação.\n\n"
+    "por aí?', 'e aí, sumiu?'. Elas não acrescentam nada e escancaram a automação.\n"
+    "- PROIBIDO inventar período de tempo. NAO diga 'outro dia', 'semana passada', 'mes passado' ou "
+    "qualquer intervalo que voce nao tenha certeza. Use APENAS o tempo informado no contexto temporal "
+    "abaixo (se houver). Na duvida, nao cite quando foi a ultima conversa.\n\n"
     "## 4. Conteúdo\n"
     "A mensagem DEVE retomar pelo ASSUNTO CONCRETO que ficou em aberto (o produto que ele olhava, a "
     "dúvida, o interesse que demonstrou) e trazer algo de valor ou uma pergunta específica sobre "
@@ -382,7 +385,21 @@ def _normalize_literal_newlines(text: str) -> str:
     )
 
 
-def _build_followup_system_prompt(sequence: int, objetivo: str | None = None) -> str:
+def _humanize_elapsed(delta: timedelta) -> str:
+    """Humaniza Δt desde a última mensagem, para ancorar o follow-up no tempo real (anti-'outro dia')."""
+    secs = max(0, int(delta.total_seconds()))
+    if secs < 90 * 60:
+        return "hoje mesmo, há pouco tempo (menos de 2 horas)"
+    hours = secs // 3600
+    if hours < 24:
+        return f"hoje, há ~{hours} hora{'s' if hours != 1 else ''}"
+    days = secs // 86400
+    return f"há ~{days} dia{'s' if days != 1 else ''}"
+
+
+def _build_followup_system_prompt(
+    sequence: int, objetivo: str | None = None, last_msg_age: str | None = None
+) -> str:
     """System prompt do follow-up — usa a persona Valéria (não um prompt genérico).
 
     Garante que a mensagem de reengajamento siga as mesmas regras de voz das respostas
@@ -394,6 +411,9 @@ def _build_followup_system_prompt(sequence: int, objetivo: str | None = None) ->
     pula o T1 e seu primeiro toque agendado é a sequence=2, keyar o tom em `sequence == 1`
     jogava esse primeiro contato no ramo de "última tentativa" — a cobrança prematura que o
     Erro 3 removeu. `sequence` é mantido por compatibilidade/observabilidade.
+
+    `last_msg_age`: quando informado, injeta a âncora temporal (Erro 3 / parte 2) para que o
+    LLM não invente intervalos como 'outro dia' quando o contato foi na mesma manhã.
     """
     is_last_attempt = objetivo == "ultima_chamada"
     seq_tone = (
@@ -405,7 +425,12 @@ def _build_followup_system_prompt(sequence: int, objetivo: str | None = None) ->
         "retome pelo assunto que ficou em aberto e demonstre interesse genuíno"
     )
     persona = build_base_prompt(lead_name=None, lead_company=None, now=datetime.now(_FOLLOWUP_TZ_BR))
-    return f"{persona}\n\n{_FOLLOWUP_REENGAGE_INSTRUCTION}\nTom desta tentativa: {seq_tone}"
+    temporal = (
+        f"\nContexto temporal (GROUNDING): a última mensagem desta conversa foi enviada {last_msg_age}. "
+        "Use exatamente essa referência — não invente outro intervalo."
+        if last_msg_age else ""
+    )
+    return f"{persona}\n\n{_FOLLOWUP_REENGAGE_INSTRUCTION}\nTom desta tentativa: {seq_tone}{temporal}"
 
 
 async def _generate_followup_message(
@@ -415,6 +440,7 @@ async def _generate_followup_message(
     stage: str | None = None,
     objective_prompt: str | None = None,
     objetivo: str | None = None,
+    now: datetime | None = None,
 ) -> tuple[str, str | None]:
     """Gera mensagem contextualizada via LLM para o follow-up, na voz da Valéria.
 
@@ -438,7 +464,18 @@ async def _generate_followup_message(
         for m in history
     )
 
-    system_prompt = _build_followup_system_prompt(sequence, objetivo=objetivo)
+    # Âncora temporal (Erro 3): Δt da última mensagem do histórico, para o LLM não inventar 'outro dia'.
+    last_msg_age = None
+    if now is not None and history:
+        last_created = history[-1].get("created_at")
+        if last_created:
+            try:
+                ts = datetime.fromisoformat(str(last_created).replace("Z", "+00:00"))
+                last_msg_age = _humanize_elapsed(now - ts)
+            except Exception:
+                last_msg_age = None
+
+    system_prompt = _build_followup_system_prompt(sequence, objetivo=objetivo, last_msg_age=last_msg_age)
     if objective_prompt:
         system_prompt = f"{system_prompt}\n\nOBJETIVO DESTE TOQUE (Next Best Action): {objective_prompt}"
 
@@ -556,7 +593,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
             sb = get_supabase()
             history_result = (
                 sb.table("messages")
-                .select("role, content")
+                .select("role, content, created_at")
                 .eq("conversation_id", conversation_id)
                 .order("created_at", desc=True)
                 .limit(20)
@@ -568,7 +605,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
             objetivo = (job.get("metadata") or {}).get("objetivo")
             message, finish_reason = await _generate_followup_message(
                 history, sequence, lead_id=job["lead_id"], stage=conversation.get("stage"),
-                objective_prompt=objective_prompt, objetivo=objetivo,
+                objective_prompt=objective_prompt, objetivo=objetivo, now=now,
             )
         except Exception as e:
             logger.error(f"[FOLLOWUP] Erro ao gerar mensagem seq={sequence} conversation={conversation_id}: {e}", exc_info=True)
