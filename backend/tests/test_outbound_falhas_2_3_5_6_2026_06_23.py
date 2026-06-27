@@ -71,6 +71,7 @@ def test_seq1_followup_tem_jitter_nao_cravado_em_1h():
     sb.table.return_value.insert.side_effect = lambda jobs: MagicMock(execute=MagicMock())
 
     with patch.object(service, "get_supabase", return_value=sb), \
+         patch.object(service, "_already_touched_today", return_value=False), \
          patch.object(service.random, "randint", return_value=120) as rnd:
         service.schedule_followup("conv", "lead", "ch")
 

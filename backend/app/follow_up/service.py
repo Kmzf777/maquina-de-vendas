@@ -53,6 +53,38 @@ def _clamp_to_business_window(target: datetime) -> datetime:
     return clamped_local.astimezone(timezone.utc)
 
 
+def _already_touched_today(conversation_id: str, now: datetime) -> bool:
+    """True se esta conversa já recebeu um toque de cadência ENVIADO hoje (America/Sao_Paulo).
+
+    Trava anti-bombardeio (Erro 2): a cadência é re-armada a cada turno do agente (idempotência
+    cancela só os pending e recria), então um lead morno que responde e some várias vezes recebia
+    múltiplos T1 same-day no mesmo dia (produção: lead 5519981518080, toques 11:42 e 14:26).
+    Fail-open: erro de DB → False (nunca bloqueia o agendamento por falha de leitura).
+    """
+    try:
+        local_now = now.astimezone(_SP_TZ)
+        day_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = day_start_local.astimezone(timezone.utc).isoformat()
+        day_end = (day_start_local + timedelta(days=1)).astimezone(timezone.utc).isoformat()
+        res = (
+            get_supabase().table("follow_up_jobs")
+            .select("id")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "sent")
+            .eq("job_type", "standard")
+            .gte("sent_at", day_start)
+            .lt("sent_at", day_end)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:
+        logger.warning(
+            "[FOLLOWUP] falha ao checar toque same-day conv=%s: %s — fail-open", conversation_id, exc
+        )
+        return False
+
+
 def schedule_followup(
     conversation_id: str,
     lead_id: str,
@@ -109,8 +141,11 @@ def schedule_followup(
     # Cadência multi-touch — config-as-code em follow_up/cadence.py.
     # warm=True: 4 toques (T1 same-day). warm=False (lead frio): 3 toques (T1 suprimido, começa no T2).
     # fire_at monotônico (espaçado >= MIN_GAP) e clampado à janela comercial.
+    # Trava de cap same-day (Erro 2): se já houve toque enviado hoje, suprime o novo T1 same-day
+    # (warm efetivo = warm pedido E ainda não tocou hoje). Mantém a supressão do lead frio também.
+    effective_warm = warm and not _already_touched_today(conversation_id, now)
     from app.follow_up.cadence import build_touch_jobs
-    jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG, warm=warm)
+    jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG, warm=effective_warm)
     try:
         sb.table("follow_up_jobs").insert(jobs).execute()
     except Exception as exc:

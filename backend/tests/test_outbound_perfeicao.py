@@ -381,7 +381,8 @@ def test_b3_schedule_followup_clampa_janela_comercial():
         return MagicMock(execute=MagicMock())
     sb.table.return_value.insert.side_effect = _insert
 
-    with patch.object(service, "get_supabase", return_value=sb):
+    with patch.object(service, "get_supabase", return_value=sb), \
+         patch.object(service, "_already_touched_today", return_value=False):
         service.schedule_followup("conv", "lead", "ch")
 
     jobs = captured.get("jobs")
