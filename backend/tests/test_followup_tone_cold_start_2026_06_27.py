@@ -50,7 +50,7 @@ async def test_generate_forwards_objetivo_to_system_prompt(monkeypatch):
 
     seen = {}
 
-    def _fake_build(sequence, objetivo=None):
+    def _fake_build(sequence, objetivo=None, last_msg_age=None):
         seen["seq"] = sequence
         seen["obj"] = objetivo
         return "SYSTEM"
