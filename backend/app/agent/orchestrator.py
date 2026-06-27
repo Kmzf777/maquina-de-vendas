@@ -147,6 +147,25 @@ def _strip_leaked_tool_code(text: str) -> str:
     return cleaned.strip()
 
 
+def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None, source: str) -> str:
+    """Passa QUALQUER texto de saída do agente pela rede anti-tool_code e loga o vazamento.
+
+    Centraliza a defesa em profundidade: toda saída textual de run_agent (resposta inicial,
+    retry-on-empty, despedida de opt-out) passa por aqui antes de ser retornada OU avaliada como
+    vazia — fechando a lacuna do retry (lead 5567996264477), onde o leak reincidente ia cru pro
+    cliente. Se o strip esvaziar, o chamador cai no fluxo de vazio (retry / fallback / silêncio).
+    """
+    pre = text or ""
+    cleaned = _strip_leaked_tool_code(pre)
+    if cleaned != pre:
+        logger.error(
+            "[TOOL_CODE LEAK] Gemini vazou function-call como texto em conv %s "
+            "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, pre,
+        )
+    return cleaned
+
+
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
@@ -618,7 +637,8 @@ async def run_agent(
         # wrote lives in message.content of this same turn — return it now and skip
         # the second API call (there is nothing left to say after opt-out).
         if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
-            return message.content or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
+            return _sanitize_assistant_text(message.content or "", conversation_id, stage, source="optout") \
+                or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
 
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.
@@ -676,14 +696,7 @@ async def run_agent(
     # o texto (o turno era SÓ código), caímos no RETRY-ON-EMPTY abaixo (tools=None → o modelo
     # não consegue emitir tool_code e devolve fala humana real). Determinístico: o cliente
     # nunca vê código, independente do prompt.
-    _pre_strip = assistant_text
-    assistant_text = _strip_leaked_tool_code(assistant_text)
-    if assistant_text != _pre_strip:
-        logger.error(
-            "[TOOL_CODE LEAK] Gemini vazou function-call como texto em conv %s — sanitizado "
-            "antes do envio (stage=%s). Vazamento: %.200s",
-            conversation_id, stage, _pre_strip,
-        )
+    assistant_text = _sanitize_assistant_text(assistant_text, conversation_id, stage, source="initial")
 
     # RETRY-ON-EMPTY (unificado — auditoria 2026-06-24, leads 5549984064339 / 5551984772757,
     # reincidência da Carla). gemini-2.5-flash às vezes queima o budget pensando e devolve
@@ -716,7 +729,9 @@ async def run_agent(
                     prompt_tokens=retry_resp.usage.prompt_tokens,
                     completion_tokens=retry_resp.usage.completion_tokens,
                 )
-            assistant_text = retry_resp.choices[0].message.content or ""
+            assistant_text = _sanitize_assistant_text(
+                retry_resp.choices[0].message.content or "", conversation_id, stage, source="retry"
+            )
         except Exception as _exc:
             logger.error(
                 "[AGENT EMPTY] retry silencioso falhou para conv %s: %s", conversation_id, _exc,
