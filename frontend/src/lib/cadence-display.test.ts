@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { touchStateLabel, objectiveLabel, type FollowupJob } from "@/lib/cadence-display";
+import { touchStateLabel, objectiveLabel, isCadenceTouch, type FollowupJob } from "@/lib/cadence-display";
 
 function job(overrides: Partial<FollowupJob>): FollowupJob {
   return {
@@ -39,5 +39,22 @@ describe("objectiveLabel", () => {
   it("unknown / null → dash", () => {
     expect(objectiveLabel(null)).toBe("—");
     expect(objectiveLabel("xpto")).toBe("—");
+  });
+});
+
+describe("isCadenceTouch", () => {
+  it("job_type null → true", () => {
+    expect(isCadenceTouch(job({ job_type: null }))).toBe(true);
+  });
+  it("job_type undefined → true", () => {
+    const j = job({});
+    delete (j as any).job_type;
+    expect(isCadenceTouch(j)).toBe(true);
+  });
+  it("job_type 'handoff_rescue' → false", () => {
+    expect(isCadenceTouch(job({ job_type: "handoff_rescue" }))).toBe(false);
+  });
+  it("job_type 'lp_welcome' → false", () => {
+    expect(isCadenceTouch(job({ job_type: "lp_welcome" }))).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { touchStateLabel, objectiveLabel, type FollowupJob } from "@/lib/cadence-display";
+import { touchStateLabel, objectiveLabel, isCadenceTouch, type FollowupJob } from "@/lib/cadence-display";
 import { formatDayLabel } from "@/lib/datetime";
 
 const DOT: Record<string, string> = {
@@ -25,7 +25,9 @@ export function CadenceTimeline({ leadId }: { leadId: string }) {
     return () => { active = false; };
   }, [leadId]);
 
-  if (!loaded || jobs.length === 0) return null;
+  const cadenceJobs = jobs.filter(isCadenceTouch);
+
+  if (!loaded || cadenceJobs.length === 0) return null;
 
   return (
     <div className="px-4 py-3 border-t border-[#dedbd6]">
@@ -33,7 +35,7 @@ export function CadenceTimeline({ leadId }: { leadId: string }) {
         Cadência
       </h4>
       <ol className="flex flex-col gap-2">
-        {jobs.map((job, idx) => {
+        {cadenceJobs.map((job, idx) => {
           const state = touchStateLabel(job);
           const when = job.sent_at || job.fire_at;
           return (

@@ -38,3 +38,8 @@ export function objectiveLabel(objetivo: string | null): string {
   if (!objetivo) return "—";
   return OBJECTIVE_LABELS[objetivo] ?? "—";
 }
+
+/** Check if job is a multi-touch cadence job (job_type == null). Specialized jobs like handoff_rescue, lp_welcome, etc. have non-null job_type. */
+export function isCadenceTouch(job: FollowupJob): boolean {
+  return job.job_type == null;
+}
