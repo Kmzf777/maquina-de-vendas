@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { debounce } from "@/lib/debounce";
 import { spDateString, type BusinessWindow } from "@/lib/business-hours";
 import {
   collectRounds,
@@ -169,7 +170,7 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     const cutoff = getCutoff(filter);
 
     const [{ data: cfgData }, { data: ovData }, { data: settingsData }] = await Promise.all([
-      supabase.from("sla_seller_config").select("*").eq("active", true),
+      supabase.from("sla_seller_config").select("user_id, channel_id, display_name, window_start_minute, window_end_minute, active_weekdays, active").eq("active", true),
       supabase.from("sla_overrides").select("user_id, start_date, end_date"),
       supabase.from("sla_settings").select("target_minutes").eq("id", 1).single(),
     ]);
@@ -211,17 +212,16 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     setLoading(true);
     fetchAndCompute();
 
+    const debounced = debounce(fetchAndCompute, 1500);
     const channel = supabase
       .channel("sla-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, fetchAndCompute)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, fetchAndCompute)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, debounced)
       .subscribe();
 
-    const ticker = setInterval(fetchAndCompute, 60_000);
-
     return () => {
+      debounced.cancel();
       supabase.removeChannel(channel);
-      clearInterval(ticker);
     };
   }, [fetchAndCompute]);
 

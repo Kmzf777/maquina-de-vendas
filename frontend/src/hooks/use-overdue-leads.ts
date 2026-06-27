@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { debounce } from "@/lib/debounce";
 import { spDateString, type BusinessWindow } from "@/lib/business-hours";
 import { collectOpenRounds, type SlaConversation } from "@/lib/sla-rounds";
 
@@ -85,6 +86,7 @@ async function fetchConversations(
   channelIds: string[]
 ): Promise<ConvRow[]> {
   if (channelIds.length === 0) return [];
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const PAGE = 1000;
   const all: ConvRow[] = [];
   let offset = 0;
@@ -93,6 +95,7 @@ async function fetchConversations(
       .from("conversations")
       .select("id, channel_id, lead_id, last_seller_response_at, leads(name, phone)")
       .in("channel_id", channelIds)
+      .gte("created_at", cutoff)
       .order("created_at", { ascending: false })
       .range(offset, offset + PAGE - 1);
     if (error || !data || data.length === 0) break;
@@ -145,7 +148,7 @@ export function useOverdueLeads(): OverdueData {
     setIsAdmin(admin);
 
     const [{ data: cfgData }, { data: ovData }, { data: settingsData }] = await Promise.all([
-      supabase.from("sla_seller_config").select("*").eq("active", true),
+      supabase.from("sla_seller_config").select("user_id, channel_id, display_name, window_start_minute, window_end_minute, active_weekdays, active").eq("active", true),
       supabase.from("sla_overrides").select("user_id, start_date, end_date"),
       supabase.from("sla_settings").select("target_minutes").eq("id", 1).single(),
     ]);
@@ -220,17 +223,16 @@ export function useOverdueLeads(): OverdueData {
     setLoading(true);
     fetchAndCompute();
 
+    const debounced = debounce(fetchAndCompute, 1500);
     const channel = supabase
       .channel("overdue-leads-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, fetchAndCompute)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, fetchAndCompute)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, debounced)
       .subscribe();
 
-    const ticker = setInterval(fetchAndCompute, 60_000);
-
     return () => {
+      debounced.cancel();
       supabase.removeChannel(channel);
-      clearInterval(ticker);
     };
   }, [fetchAndCompute]);
 
