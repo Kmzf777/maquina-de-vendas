@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
+import { senderBadge } from "@/lib/sender-badge";
 
 function DeliveryTick({ status }: { status?: "sent" | "delivered" | "read" | null }) {
   const isDouble = status === "delivered" || status === "read";
@@ -29,13 +30,6 @@ interface MessageBubbleProps {
   onReply?: (msg: Message) => void;
   onScrollToMessage?: (messageId: string) => void;
   onContactDispatch?: (phone: string) => void;
-}
-
-function getSenderBadge(message: Message): string | null {
-  if (message.role === "user") return null;
-  if (message.sent_by === "agent") return "IA";
-  if (message.sent_by === "seller") return "Vendedor";
-  return null;
 }
 
 function getMediaLabel(messageType: string | null | undefined): string {
@@ -135,7 +129,7 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
-  const senderBadge = getSenderBadge(message);
+  const badge = senderBadge(message);
 
   const isAudio = message.message_type === "audio";
   const isImage = message.message_type === "image";
@@ -446,13 +440,13 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
           >
             {isTemp ? "Enviando..." : formatTimeOnly(message.created_at)}
           </p>
-          {senderBadge && (
+          {badge && (
             <span
               className={`text-[10px] opacity-60 ${
                 isFromMe ? "text-white" : "text-[#7b7b78]"
               }`}
             >
-              · {senderBadge}
+              · {badge}
             </span>
           )}
           {isFromMe && !isTemp && (
