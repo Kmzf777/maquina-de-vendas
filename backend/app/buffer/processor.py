@@ -1070,7 +1070,6 @@ def _has_newer_inbound(conversation_id: str, after_created_at: str | None) -> bo
         return False
 
 
-import time as _time_buf
 import redis.asyncio as _aioredis_buf
 
 _buffer_redis_client: "_aioredis_buf.Redis | None" = None
@@ -1099,13 +1098,13 @@ async def _has_pending_buffered_inbound(phone: str, channel_id: str) -> bool:
     auditoria 5531999844461). Fail-open: erro/sem conexão → False (nunca engole a única resposta).
     """
     global _buffer_unavailable_until, _buffer_redis_client
-    if _time_buf.monotonic() < _buffer_unavailable_until:
+    if time.monotonic() < _buffer_unavailable_until:
         return False  # Redis em cooldown → fail-open imediato, sem pagar o timeout
     try:
         buf_key = f"buffer:{phone}:{channel_id}"
         return bool(await _get_buffer_redis().llen(buf_key))
     except Exception as exc:
-        _buffer_unavailable_until = _time_buf.monotonic() + _BUFFER_UNAVAILABLE_COOLDOWN
+        _buffer_unavailable_until = time.monotonic() + _BUFFER_UNAVAILABLE_COOLDOWN
         _buffer_redis_client = None  # força reconexão limpa na próxima tentativa pós-cooldown
         logger.warning(
             "[RECOALESCE] falha ao espiar buffer p/ %s:%s: %s — fail-open (não aborta)",
