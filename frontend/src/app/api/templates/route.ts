@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { parseTemplateComponents } from "@/lib/template-parser";
+import { dedupeTemplatesByNameLang } from "@/lib/dedupe-templates";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -17,7 +18,13 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const enriched = (data ?? []).map((t) => {
+  // Listagem global (sem channel_id): os 3 canais compartilham a mesma WABA, então cada
+  // template aparece 2-3x (uma linha-espelho por canal). Dedupe por (name, language) para
+  // a UI — apresentação apenas, não altera o banco. Com channel_id, a visão é por canal
+  // (uma linha por nome/idioma), então a dedupe é inócua mas mantida por consistência.
+  const rows = channelId ? (data ?? []) : dedupeTemplatesByNameLang(data ?? []);
+
+  const enriched = rows.map((t) => {
     const components = Array.isArray(t.components) ? t.components : [];
     const parsed = parseTemplateComponents(components);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
