@@ -56,15 +56,22 @@ def build_touch_jobs(
     lead_id: str,
     channel_id: str,
     env_tag: str,
+    warm: bool = True,
     rng=_random,
 ) -> list[dict]:
-    """Constrói os 4 jobs da cadência com fire_at monotônico (>= MIN_GAP) e clampado.
+    """Constrói os jobs da cadência com fire_at monotônico (>= MIN_GAP) e clampado.
+
+    `warm=True` (default): cadência completa de 4 toques, com T1 same-day (offset 0 + jitter).
+    `warm=False` (lead frio, sem interesse marcado): SUPRIME o T1 same-day — a cadência começa no
+    T2 (dia seguinte). Anti-bombardeio: lead que só engajou (sem sinal de interesse) não recebe
+    cobrança no mesmo dia.
 
     Função pura: sem I/O. `rng` injetável para teste do jitter do T1.
     """
     jobs: list[dict] = []
     prev_fire: datetime | None = None
-    for touch in CADENCE:
+    touches = CADENCE if warm else CADENCE[1:]
+    for touch in touches:
         offset = touch.offset
         if touch.jitter_minutes:
             lo, hi = touch.jitter_minutes

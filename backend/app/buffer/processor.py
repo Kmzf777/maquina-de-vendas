@@ -976,8 +976,9 @@ async def process_buffered_messages(
                                 conversation_id=conversation["id"],
                                 lead_id=lead["id"],
                                 channel_id=channel["id"],
+                                warm=bool(interest),
                             )
-                            logger.info("[FOLLOWUP] agendado (%s) para %s", reason, phone)
+                            logger.info("[FOLLOWUP] agendado (%s, warm=%s) para %s", reason, bool(interest), phone)
                         except Exception as e:
                             logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
                     else:

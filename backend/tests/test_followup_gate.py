@@ -108,6 +108,7 @@ async def test_followup_scheduled_when_interest_marked():
             conversation_id="conv-fg-1",
             lead_id="lead-fg-1",
             channel_id="ch-fg-1",
+            warm=True,
         )
 
 

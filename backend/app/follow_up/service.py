@@ -57,8 +57,13 @@ def schedule_followup(
     conversation_id: str,
     lead_id: str,
     channel_id: str,
+    warm: bool = True,
 ) -> None:
-    """Cancela jobs pendentes anteriores desta conversa e insere a cadência de 4 toques via build_touch_jobs."""
+    """Cancela jobs pendentes anteriores desta conversa e insere a cadência via build_touch_jobs.
+
+    `warm=True` (default): cadência completa (T1 same-day). `warm=False` (lead frio sem interesse):
+    suprime o T1 — cadência começa no T2 (anti-bombardeio).
+    """
     sb = get_supabase()
     now = datetime.now(timezone.utc)
 
@@ -104,7 +109,7 @@ def schedule_followup(
     # Cadência multi-touch (4 toques) — config-as-code em follow_up/cadence.py.
     # fire_at monotônico (espaçado >= MIN_GAP) e clampado à janela comercial.
     from app.follow_up.cadence import build_touch_jobs
-    jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG)
+    jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG, warm=warm)
     try:
         sb.table("follow_up_jobs").insert(jobs).execute()
     except Exception as exc:
