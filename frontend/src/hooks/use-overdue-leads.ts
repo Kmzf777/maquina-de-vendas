@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { debounce } from "@/lib/debounce";
 import { spDateString, type BusinessWindow } from "@/lib/business-hours";
@@ -134,12 +134,49 @@ async function fetchMessages(
   return all;
 }
 
+interface OverdueCache {
+  configs: SellerConfigRow[];
+  overrides: OverrideRow[];
+  target: number;
+  convsByChannel: Map<string, SlaConversation[]>;
+  convById: Map<string, ConvRow>;
+}
+
 export function useOverdueLeads(): OverdueData {
   const [leads, setLeads] = useState<OverdueLead[]>([]);
   const [vendedores, setVendedores] = useState<{ userId: string; name: string }[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
+
+  const cacheRef = useRef<OverdueCache | null>(null);
+
+  const recompute = useCallback((cache: OverdueCache, now: Date) => {
+    const result: OverdueLead[] = [];
+    for (const cfg of cache.configs) {
+      const win = windowFor(cfg, cache.overrides);
+      const channelConvs = cache.convsByChannel.get(cfg.channel_id) ?? [];
+      const open = collectOpenRounds(channelConvs, win, now);
+      for (const o of open) {
+        if (o.elapsedMinutes <= cache.target) continue;
+        const conv = cache.convById.get(o.conversationId);
+        if (!conv || !conv.lead_id) continue;
+        const phone = conv.leads?.phone ?? "";
+        result.push({
+          conversationId: o.conversationId,
+          leadId: conv.lead_id,
+          leadName: conv.leads?.name || phone || "(sem nome)",
+          leadPhone: phone,
+          channelId: cfg.channel_id,
+          userId: cfg.user_id,
+          vendedorName: cfg.display_name || "(sem nome)",
+          elapsedMinutes: o.elapsedMinutes,
+        });
+      }
+    }
+    result.sort((a, b) => b.elapsedMinutes - a.elapsedMinutes);
+    setLeads(result);
+  }, []);
 
   const fetchAndCompute = useCallback(async () => {
     const { data: userData } = await supabase.auth.getUser();
@@ -189,35 +226,11 @@ export function useOverdueLeads(): OverdueData {
       convsByChannel.get(c.channel_id)!.push(slaConv);
     }
 
-    const now = new Date();
-    const result: OverdueLead[] = [];
-
-    for (const cfg of configs) {
-      const win = windowFor(cfg, overrides);
-      const channelConvs = convsByChannel.get(cfg.channel_id) ?? [];
-      const open = collectOpenRounds(channelConvs, win, now);
-      for (const o of open) {
-        if (o.elapsedMinutes <= target) continue;
-        const conv = convById.get(o.conversationId);
-        if (!conv || !conv.lead_id) continue;
-        const phone = conv.leads?.phone ?? "";
-        result.push({
-          conversationId: o.conversationId,
-          leadId: conv.lead_id,
-          leadName: conv.leads?.name || phone || "(sem nome)",
-          leadPhone: phone,
-          channelId: cfg.channel_id,
-          userId: cfg.user_id,
-          vendedorName: cfg.display_name || "(sem nome)",
-          elapsedMinutes: o.elapsedMinutes,
-        });
-      }
-    }
-
-    result.sort((a, b) => b.elapsedMinutes - a.elapsedMinutes);
-    setLeads(result);
+    const cache: OverdueCache = { configs, overrides, target, convsByChannel, convById };
+    cacheRef.current = cache;
+    recompute(cache, new Date());
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, recompute]);
 
   useEffect(() => {
     setLoading(true);
@@ -230,11 +243,17 @@ export function useOverdueLeads(): OverdueData {
       .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, debounced)
       .subscribe();
 
+    // Recalcula localmente (sem fetch) para os contadores de overdue avançarem com o tempo.
+    const ticker = setInterval(() => {
+      if (cacheRef.current) recompute(cacheRef.current, new Date());
+    }, 60_000);
+
     return () => {
       debounced.cancel();
+      clearInterval(ticker);
       supabase.removeChannel(channel);
     };
-  }, [fetchAndCompute]);
+  }, [fetchAndCompute, recompute]);
 
   return { leads, vendedores, isAdmin, loading };
 }

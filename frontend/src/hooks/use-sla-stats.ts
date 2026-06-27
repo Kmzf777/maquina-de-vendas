@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { debounce } from "@/lib/debounce";
 import { spDateString, type BusinessWindow } from "@/lib/business-hours";
@@ -156,6 +156,13 @@ function groupConversations(convs: ConvRow[], msgs: MsgRow[]): Map<string, SlaCo
   return byChannel;
 }
 
+interface SlaCache {
+  configs: SellerConfigRow[];
+  overrides: OverrideRow[];
+  target: number;
+  byChannel: Map<string, SlaConversation[]>;
+}
+
 export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
   const [rows, setRows] = useState<SlaRow[]>([]);
   const [total, setTotal] = useState<SellerSlaResult>({
@@ -165,6 +172,29 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
   });
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
+
+  const cacheRef = useRef<SlaCache | null>(null);
+
+  const recompute = useCallback((cache: SlaCache, now: Date) => {
+    const pooled: SellerRounds = { closed: [], openElapsed: [] };
+    const computedRows: SlaRow[] = [];
+    for (const cfg of cache.configs) {
+      const win = windowFor(cfg, cache.overrides);
+      const convsForChannel = cache.byChannel.get(cfg.channel_id) ?? [];
+      const rounds = collectRounds(convsForChannel, win, now);
+      pooled.closed.push(...rounds.closed);
+      pooled.openElapsed.push(...rounds.openElapsed);
+      const summary = summarizeRounds(rounds, cache.target);
+      computedRows.push({
+        userId: cfg.user_id,
+        displayName: cfg.display_name || "(sem nome)",
+        ...summary,
+      });
+    }
+    computedRows.sort((a, b) => b.overdueCount - a.overdueCount);
+    setRows(computedRows);
+    setTotal(summarizeRounds(pooled, cache.target));
+  }, []);
 
   const fetchAndCompute = useCallback(async () => {
     const cutoff = getCutoff(filter);
@@ -184,29 +214,11 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     const msgs = await fetchMessages(supabase, convs.map((c) => c.id));
     const byChannel = groupConversations(convs, msgs);
 
-    const now = new Date();
-    const pooled: SellerRounds = { closed: [], openElapsed: [] };
-    const computedRows: SlaRow[] = [];
-
-    for (const cfg of configs) {
-      const win = windowFor(cfg, overrides);
-      const convsForChannel = byChannel.get(cfg.channel_id) ?? [];
-      const rounds = collectRounds(convsForChannel, win, now);
-      pooled.closed.push(...rounds.closed);
-      pooled.openElapsed.push(...rounds.openElapsed);
-      const summary = summarizeRounds(rounds, target);
-      computedRows.push({
-        userId: cfg.user_id,
-        displayName: cfg.display_name || "(sem nome)",
-        ...summary,
-      });
-    }
-
-    computedRows.sort((a, b) => b.overdueCount - a.overdueCount);
-    setRows(computedRows);
-    setTotal(summarizeRounds(pooled, target));
+    const cache: SlaCache = { configs, overrides, target, byChannel };
+    cacheRef.current = cache;
+    recompute(cache, new Date());
     setLoading(false);
-  }, [filter]);
+  }, [filter, recompute]);
 
   useEffect(() => {
     setLoading(true);
@@ -219,11 +231,18 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
       .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, debounced)
       .subscribe();
 
+    // Recalcula os contadores de tempo localmente (sem fetch): um SLA que estoura
+    // só pela passagem do tempo precisa acender sem depender de evento no banco.
+    const ticker = setInterval(() => {
+      if (cacheRef.current) recompute(cacheRef.current, new Date());
+    }, 60_000);
+
     return () => {
       debounced.cancel();
+      clearInterval(ticker);
       supabase.removeChannel(channel);
     };
-  }, [fetchAndCompute]);
+  }, [fetchAndCompute, recompute]);
 
   return { rows, total, loading };
 }
