@@ -383,7 +383,8 @@ def test_b3_schedule_followup_clampa_janela_comercial():
         service.schedule_followup("conv", "lead", "ch")
 
     jobs = captured.get("jobs")
-    assert jobs and len(jobs) == 2, f"esperava 2 jobs, recebeu {jobs}"
+    # Task 2: schedule_followup now builds the full 4-touch cadence (was 2 touches).
+    assert jobs and len(jobs) == 4, f"esperava 4 jobs, recebeu {len(jobs) if jobs else None}"
     for job in jobs:
         fire_at = datetime.fromisoformat(job["fire_at"])
         assert is_within_business_window(fire_at), (

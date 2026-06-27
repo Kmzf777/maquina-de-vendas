@@ -155,3 +155,58 @@ async def test_fire_reopen_template_4xx_cancels(monkeypatch):
     ok = await scheduler.fire_reopen_template(_reopen_job(), lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x")
     assert ok is False
     assert cancelled["reason"] == "reopen_template_error_400"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: closed-window branch — template or context refresh
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_closed_window_no_reopen_fires_template(monkeypatch):
+    from app.follow_up import scheduler
+
+    fired = {}
+    monkeypatch.setattr(scheduler, "get_due_followups", lambda now, limit=10: [{
+        "id": "job-2", "conversation_id": "conv-1", "lead_id": "lead-1", "sequence": 2,
+        "job_type": None, "metadata": {"objetivo": "reforco_valor", "objective_prompt": "p"},
+        "leads": {"id": "lead-1", "phone": "5511999999999", "name": "Ana",
+                  "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
+        "channels": {"id": "chan-1", "mode": "ai", "provider_config": {}},
+        "conversations": {"id": "conv-1", "stage": "atacado", "followup_enabled": True,
+                          "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
+    }])
+    monkeypatch.setattr(scheduler, "_pending_reopen_job", lambda cid: None)
+    async def _fake_fire(job, lead, channel, conv, *, motivo="", contexto=""):
+        fired.update({"job": job["id"], "contexto": contexto}); return True
+    monkeypatch.setattr(scheduler, "fire_reopen_template", _fake_fire)
+
+    await scheduler.process_due_followups(now=__import__("datetime").datetime(2026, 6, 29, 12, tzinfo=__import__("datetime").timezone.utc))
+    assert fired["job"] == "job-2"
+    assert fired["contexto"] == "reforco_valor"
+
+
+@pytest.mark.asyncio
+async def test_closed_window_with_pending_reopen_refreshes_context(monkeypatch):
+    from app.follow_up import scheduler
+
+    refreshed, cancelled, fired = {}, {}, {"called": False}
+    monkeypatch.setattr(scheduler, "get_due_followups", lambda now, limit=10: [{
+        "id": "job-3", "conversation_id": "conv-1", "lead_id": "lead-1", "sequence": 3,
+        "job_type": None, "metadata": {"objetivo": "prova_social", "objective_prompt": "p"},
+        "leads": {"id": "lead-1", "phone": "5511999999999", "name": "Ana",
+                  "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
+        "channels": {"id": "chan-1", "mode": "ai", "provider_config": {}},
+        "conversations": {"id": "conv-1", "stage": "atacado", "followup_enabled": True,
+                          "last_customer_message_at": "2026-06-01T00:00:00+00:00"},
+    }])
+    monkeypatch.setattr(scheduler, "_pending_reopen_job", lambda cid: {"id": "job-2"})
+    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda jid, motivo, contexto: refreshed.update({"id": jid, "contexto": contexto}))
+    monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancelled.update({"id": jid, "reason": reason}))
+    async def _fake_fire(*a, **k):
+        fired["called"] = True; return True
+    monkeypatch.setattr(scheduler, "fire_reopen_template", _fake_fire)
+
+    await scheduler.process_due_followups(now=__import__("datetime").datetime(2026, 6, 29, 12, tzinfo=__import__("datetime").timezone.utc))
+    assert refreshed == {"id": "job-2", "contexto": "prova_social"}
+    assert cancelled == {"id": "job-3", "reason": "reopen_context_refreshed"}
+    assert fired["called"] is False  # no 2nd template

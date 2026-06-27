@@ -404,6 +404,7 @@ async def _generate_followup_message(
     sequence: int,
     lead_id: str | None = None,
     stage: str | None = None,
+    objective_prompt: str | None = None,
 ) -> tuple[str, str | None]:
     """Gera mensagem contextualizada via LLM para o follow-up, na voz da Valéria.
 
@@ -427,10 +428,14 @@ async def _generate_followup_message(
         for m in history
     )
 
+    system_prompt = _build_followup_system_prompt(sequence)
+    if objective_prompt:
+        system_prompt = f"{system_prompt}\n\nOBJETIVO DESTE TOQUE (Next Best Action): {objective_prompt}"
+
     resp = await client.chat.completions.create(
         model=_FOLLOWUP_MODEL,
         messages=[
-            {"role": "system", "content": _build_followup_system_prompt(sequence)},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:",
@@ -517,11 +522,22 @@ async def process_due_followups(now: datetime | None = None) -> None:
             continue
 
         last_msg = datetime.fromisoformat(last_msg_str.replace("Z", "+00:00"))
-        if last_msg + timedelta(hours=24) <= now:
-            _cancel_job(job["id"], "window_expired")
-            logger.info(
-                f"[FOLLOWUP] Janela expirada — cancelando seq={sequence} conversation={conversation_id}"
-            )
+        window_closed = last_msg + timedelta(hours=24) <= now
+        if window_closed:
+            objetivo = (job.get("metadata") or {}).get("objetivo", "")
+            existing = _pending_reopen_job(conversation_id)
+            if existing:
+                # R1: não empilha template — escala o contexto do reopen vivo e encerra este toque.
+                _store_reopen_context(existing["id"], objetivo, objetivo)
+                _cancel_job(job["id"], "reopen_context_refreshed")
+                logger.info(
+                    "[FOLLOWUP] janela fechada + reopen vivo → contexto atualizado p/ '%s' "
+                    "seq=%s conv=%s", objetivo, sequence, conversation_id,
+                )
+            else:
+                await fire_reopen_template(
+                    job, lead, channel, conversation_id, motivo=objetivo, contexto=objetivo
+                )
             continue
 
         # Busca histórico e gera mensagem via LLM
@@ -537,8 +553,10 @@ async def process_due_followups(now: datetime | None = None) -> None:
             )
             history = list(reversed(history_result.data or []))
             history = [m for m in history if m.get("role") and m.get("content")]
+            objective_prompt = (job.get("metadata") or {}).get("objective_prompt")
             message, finish_reason = await _generate_followup_message(
-                history, sequence, lead_id=job["lead_id"], stage=conversation.get("stage")
+                history, sequence, lead_id=job["lead_id"], stage=conversation.get("stage"),
+                objective_prompt=objective_prompt,
             )
         except Exception as e:
             logger.error(f"[FOLLOWUP] Erro ao gerar mensagem seq={sequence} conversation={conversation_id}: {e}", exc_info=True)
@@ -1189,6 +1207,24 @@ def _store_reopen_context(job_id: str, motivo: str, contexto: str) -> None:
         sb.table("follow_up_jobs").update({"metadata": md}).eq("id", job_id).execute()
     except Exception as exc:
         logger.warning("[REOPEN] falha ao gravar contexto no job %s: %s", job_id, exc)
+
+
+def _pending_reopen_job(conversation_id: str) -> dict | None:
+    """Job awaiting_reopen vivo desta conversa (R1), ou None. Fail-open: None em erro."""
+    try:
+        res = (
+            get_supabase().table("follow_up_jobs")
+            .select("id, metadata")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "awaiting_reopen")
+            .order("fire_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as exc:
+        logger.warning("[FOLLOWUP] falha ao buscar awaiting_reopen conv=%s: %s", conversation_id, exc)
+        return None
 
 
 async def fire_reopen_template(

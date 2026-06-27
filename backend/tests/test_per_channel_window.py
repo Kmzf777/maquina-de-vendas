@@ -100,14 +100,23 @@ def _make_followup_job(conv_window, lead_window, job_type=None):
 
 @pytest.mark.asyncio
 async def test_followup_cancels_when_channel_window_expired_despite_recent_lead_global():
-    """Per-channel: conversation window expired must cancel the job even when the
-    lead's GLOBAL last_customer_message_at (other channel) is fresh."""
+    """Per-channel: conversation window expired must trigger the reopen path (not free-text)
+    even when the lead's GLOBAL last_customer_message_at (other channel) is fresh.
+
+    Task 4 changed the outcome: instead of cancelling with 'window_expired', the generic
+    branch now fires the reopen template (or refreshes an existing awaiting_reopen job).
+    The core invariant tested here — that the PER-CHANNEL window is used, not the global
+    lead field — still holds.
+    """
     now = datetime.now(timezone.utc)
     job = _make_followup_job(
         conv_window=(now - timedelta(hours=25)).isoformat(),  # this channel: expired
         lead_window=now.isoformat(),                          # other channel: fresh
     )
+    mock_fire = AsyncMock(return_value=True)
     with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler._pending_reopen_job", return_value=None), \
+         patch("app.follow_up.scheduler.fire_reopen_template", mock_fire), \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.get_provider", return_value=AsyncMock()), \
@@ -115,7 +124,9 @@ async def test_followup_cancels_when_channel_window_expired_despite_recent_lead_
         from app.follow_up.scheduler import process_due_followups
         await process_due_followups(now=now)
 
-    mock_cancel.assert_called_once_with("job-1", "window_expired")
+    # Per-channel window expired → reopen template fired (not free-text, not "window_expired" cancel).
+    mock_fire.assert_called_once()
+    mock_cancel.assert_not_called()
     mock_sent.assert_not_called()
 
 
