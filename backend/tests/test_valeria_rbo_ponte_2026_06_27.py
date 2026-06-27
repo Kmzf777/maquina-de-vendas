@@ -70,3 +70,44 @@ def test_base_checklist_tem_item_anti_descarte_precoce():
     low = _base()
     # item de checklist que trava o descarte precoce
     assert "negativa reflexa" in low
+
+
+# --- secretaria (stage do caso real): Ponte de Valor + few-shot de RBO ---
+
+from app.agent.prompts.valeria_inbound.secretaria import SECRETARIA_PROMPT
+
+
+def _sec() -> str:
+    return SECRETARIA_PROMPT.lower()
+
+
+def test_secretaria_etapa2_tem_ponte_de_valor():
+    low = _sec()
+    assert "ponte de valor" in low
+    assert "wiifm" in low
+    # ainda faz a pergunta de mercado (sem regressão) — frase completa e exata,
+    # não a substring frágil "exporta" (que casaria com qualquer "exportacao")
+    assert "sua demanda e pro mercado brasileiro ou pra exportacao/mercado externo?" in low
+
+
+def test_secretaria_tem_fewshot_rbo_anchor_disrupt_ask():
+    low = _sec()
+    # cobre o gatilho exato do caso real e o contorno
+    assert "nao estou comprando" in low or "não estou comprando" in low
+    assert "nao to aqui pra te empurrar" in low or "não to aqui pra te empurrar" in low
+    # não descarta na primeira negativa
+    assert "primeira negativa" in low or "reafirmar" in low
+
+
+def test_secretaria_fewshot_rbo_tem_continuacao_de_aceite():
+    low = _sec()
+    # happy path no few-shot: lead aceita ("pode mandar") e a IA entrega valor + 1 pergunta leve
+    assert "pode mandar" in low
+    assert "negocio ou" in low or "consumo" in low
+
+
+def test_secretaria_preserva_triagem_imediata_sem_regressao():
+    low = _sec()
+    # regressão: a triagem de licitação/laudo e o handoff continuam presentes
+    assert "triagem imediata" in low
+    assert "encaminhar_humano" in low
