@@ -15,8 +15,51 @@ from app.campaigns.service import (
 )
 from app.db.supabase import get_supabase
 from app.config import get_settings
+from app.automation.retry import calculate_next_retry
 
 logger = logging.getLogger(__name__)
+
+# Status HTTP da Meta que não adianta retentar (template/locale/param errados):
+# o disparo nunca vai ser aceito — cancelar a enrollment em vez de re-armar.
+_PERMANENT_STATUS = {400, 403, 404}
+
+
+def _is_permanent_error(exc: Exception) -> bool:
+    """True para rejeições da Meta que não mudam com retry (4xx de template/param).
+
+    Cobre dois formatos: httpx.HTTPStatusError (raise_for_status em 4xx) e o
+    RuntimeError que send_template/send_text levantam quando a Meta devolve HTTP 200
+    com erro embutido ('... rejected (missing messages ...)').
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status in _PERMANENT_STATUS:
+        return True
+    if isinstance(exc, RuntimeError) and "rejected" in str(exc):
+        return True
+    return False
+
+
+def decide_failure_update(exc: Exception, retry_count: int, now: datetime) -> dict:
+    """Pure: kwargs para update_enrollment que SEMPRE tiram a enrollment do estado
+    imediatamente-due — raiz do loop que inflou meta_webhook_logs.
+
+    - Erro permanente (4xx / rejeição embutida): status='cancelled'.
+    - Erro transitório: backoff via calculate_next_retry (1h/4h/24h, teto 3);
+      ao estourar o teto, cancela.
+    """
+    err = str(exc)[:500]
+    if _is_permanent_error(exc):
+        return {"status": "cancelled", "last_error": err}
+    next_at, new_count, final = calculate_next_retry(retry_count, now)
+    if final:
+        return {"status": "cancelled", "last_error": err}
+    iso = next_at.isoformat()
+    return {
+        "retry_count": new_count,
+        "next_retry_at": iso,
+        "next_execute_at": iso,
+        "last_error": err,
+    }
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
 BRT_OFFSET = timedelta(hours=-3)
@@ -150,12 +193,17 @@ async def process_campaign_enrollments(now: datetime | None = None) -> None:
             # Advance to next_node_id
             next_id = node.get("next_node_id")
             if next_id:
-                update_enrollment(enrollment["id"], current_node_id=next_id, next_execute_at=now.isoformat())
+                update_enrollment(enrollment["id"], current_node_id=next_id, next_execute_at=now.isoformat(), retry_count=0)
             else:
                 complete_enrollment(enrollment["id"])
 
         except Exception as e:
             logger.error("[CAMPAIGNS] Error processing enrollment %s node %s: %s", enrollment["id"], node.get("id"), e, exc_info=True)
+            try:
+                upd = decide_failure_update(e, enrollment.get("retry_count") or 0, now)
+                update_enrollment(enrollment["id"], **upd)
+            except Exception as inner:
+                logger.error("[CAMPAIGNS] Failed to record enrollment failure %s: %s", enrollment["id"], inner)
 
         await asyncio.sleep(random.randint(2, 5))
 
