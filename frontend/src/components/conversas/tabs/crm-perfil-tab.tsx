@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
 import type { Lead, Tag, Pipeline, PipelineStage, Sale } from "@/lib/types";
+import { CadenceTimeline } from "@/components/conversas/cadence-timeline";
 
 interface LeadDeal {
   id: string;
@@ -352,6 +353,7 @@ export function CrmPerfilTab({
           )}
         </div>
       </div>
+      <CadenceTimeline leadId={lead.id} />
     </div>
   );
 }
