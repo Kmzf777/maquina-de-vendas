@@ -73,6 +73,9 @@ def split_into_bubbles(text: str) -> list[str]:
     #     que nunca ficam no fim da bolha.
     bubbles = [_strip_terminal_period(b) for b in bubbles]
 
+    # Rede de segurança do "?" — vem DEPOIS do strip do ponto final (que nunca toca em "?").
+    bubbles = [_ensure_question_mark(b) for b in bubbles]
+
     return bubbles
 
 
@@ -86,3 +89,28 @@ def _strip_terminal_period(bubble: str) -> str:
     if b.endswith(".") and not b.endswith(".."):
         b = b[:-1].rstrip()
     return b
+
+
+# Palavras/aberturas inequívocas de pergunta (PT-BR informal). Conservador de propósito:
+# só re-adicionamos "?" quando a bolha ABRE com um destes — evita falso-positivo em declarativas.
+_QUESTION_STARTERS = (
+    "qual", "quais", "o que", "o quê", "que ", "como", "quando", "onde", "quanto",
+    "quantos", "quantas", "quem", "por que", "por quê", "quer", "prefere", "poderia",
+    "consegue", "seria", "te interessa", "faz sentido",
+)
+
+
+def _ensure_question_mark(bubble: str) -> str:
+    """Rede de segurança: re-adiciona '?' em bolha inequivocamente interrogativa sem pontuação final.
+
+    O modelo às vezes derruba o '?' por over-aplicar o 'sem ponto final' (falha real lead
+    5531999844461). Só agimos quando a bolha ABRE com uma palavra interrogativa clara e NÃO termina
+    em pontuação (., ?, !, …) — conservador para nunca transformar uma declarativa em pergunta.
+    """
+    b = bubble.rstrip()
+    if not b or b[-1] in ".?!…":
+        return bubble
+    low = b.lower()
+    if low.startswith(_QUESTION_STARTERS):
+        return b + "?"
+    return bubble
