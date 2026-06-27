@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import logging
+import re as _re_dedup
+import unicodedata as _unicodedata
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -575,6 +577,43 @@ def _looks_like_soft_rejection(motivo: str | None) -> bool:
     return any(s in n for s in _SOFT_REJECTION_SIGNALS)
 
 
+def _normalize_for_dedup(text: str) -> str:
+    """Normaliza p/ comparação de duplicata: minúsculas, sem acentos/pontuação, espaços colapsados."""
+    t = (text or "").lower()
+    t = _unicodedata.normalize("NFD", t)
+    t = "".join(c for c in t if not _unicodedata.combining(c))  # remove diacríticos (ã→a, ã→a)
+    t = _re_dedup.sub(r"[^\w\s]", " ", t)        # remove pontuação/acentos-vizinhos de símbolo
+    t = _re_dedup.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _recent_assistant_texts(conversation_id: str, limit: int = 4) -> list[str]:
+    """Últimas bolhas 'assistant' já enviadas nesta conversa (para dedup do handoff). Fail-open: []."""
+    try:
+        history = get_conversation_history(conversation_id, limit=limit * 3) or []
+        return [m.get("content") or "" for m in history if m.get("role") == "assistant"][-limit:]
+    except Exception:
+        return []
+
+
+def _despedida_ja_enviada(conversation_id: str, despedida: str) -> bool:
+    """True se a despedida do handoff é ~idêntica a uma bolha assistant já enviada (evita reenvio).
+
+    Caso real (lead 5531999844461): a IA verbalizou o pitch de handoff num turno e, no turno seguinte,
+    chamou encaminhar_humano com o MESMO texto → a tool reenviou (sent_by='handoff') = duplicata.
+    Compara o início normalizado (primeiros ~60 chars) — robusto a reticências/truncamento.
+    """
+    target = _normalize_for_dedup(despedida)
+    if not target:
+        return False
+    head = target[:60]
+    for prev in _recent_assistant_texts(conversation_id):
+        prev_n = _normalize_for_dedup(prev)
+        if head and (head in prev_n or prev_n[:60] == head):
+            return True
+    return False
+
+
 async def execute_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -737,14 +776,20 @@ async def execute_tool(
             despedida = (args.get("mensagem_despedida") or "").strip() or _HANDOFF_MSG
             if len(despedida) > _MAX_DESPEDIDA_LEN:
                 despedida = despedida[:_MAX_DESPEDIDA_LEN].rstrip() + "…"
-            try:
-                send_result = await provider.send_text(send_to, despedida)
-                save_message(lead_id, "assistant", despedida, sent_by="handoff", conversation_id=conversation_id, wamid=extract_wamid(send_result))
-            except Exception as exc:
-                logger.error(
-                    "encaminhar_humano: falha ao enviar mensagem de handoff para lead %s: %s",
-                    lead_id, exc, exc_info=True,
+            if _despedida_ja_enviada(conversation_id, despedida):
+                logger.info(
+                    "[HANDOFF DEDUP] despedida ~idêntica a bolha já enviada — pulando send_text "
+                    "(conv=%s); cartão de contato segue normalmente.", conversation_id,
                 )
+            else:
+                try:
+                    send_result = await provider.send_text(send_to, despedida)
+                    save_message(lead_id, "assistant", despedida, sent_by="handoff", conversation_id=conversation_id, wamid=extract_wamid(send_result))
+                except Exception as exc:
+                    logger.error(
+                        "encaminhar_humano: falha ao enviar mensagem de handoff para lead %s: %s",
+                        lead_id, exc, exc_info=True,
+                    )
             # Logo após o texto, envia o cartão de contato do João (agrupamento visual).
             try:
                 await provider.send_contact(
