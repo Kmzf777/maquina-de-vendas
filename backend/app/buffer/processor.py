@@ -804,7 +804,8 @@ async def process_buffered_messages(
             # (inclusive a mensagem deste turno) e formulará UMA resposta holística. Então
             # abortamos este turno stale em SILÊNCIO, sem gerar nem enviar nada — evita os
             # blocos empilhados/contraditórios da auditoria 5533999429785.
-            if _has_newer_inbound(conversation["id"], turn_watermark):
+            if _has_newer_inbound(conversation["id"], turn_watermark) or \
+               await _has_pending_buffered_inbound(phone, channel["id"]):
                 logger.info(
                     "[RECOALESCE] inbound mais novo ao adquirir lock (conv=%s, phone=%s) — "
                     "abortando turno stale; worker posterior responde o contexto completo.",
@@ -910,7 +911,8 @@ async def process_buffered_messages(
                 # Trava de re-coalescing in-flight: o cliente falou no meio do envio. Paramos
                 # de despejar o resto deste turno (já há um worker na fila p/ o inbound novo);
                 # ele responderá imagem+texto numa única resposta, sem atropelar este bloco.
-                if _has_newer_inbound(conversation["id"], turn_watermark):
+                if _has_newer_inbound(conversation["id"], turn_watermark) or \
+                   await _has_pending_buffered_inbound(phone, channel["id"]):
                     superseded = True
                     logger.info(
                         "[RECOALESCE] inbound mais novo durante o envio — abortando %d bolha(s) "
@@ -1064,6 +1066,50 @@ def _has_newer_inbound(conversation_id: str, after_created_at: str | None) -> bo
         logger.warning(
             "[RECOALESCE] falha ao checar inbound mais novo p/ conv %s: %s — fail-open (não aborta)",
             conversation_id, exc,
+        )
+        return False
+
+
+import time as _time_buf
+import redis.asyncio as _aioredis_buf
+
+_buffer_redis_client: "_aioredis_buf.Redis | None" = None
+# Cooldown pós-falha (mesmo padrão do lead_lock): evita pagar o timeout de conexão a cada chamada
+# quando o Redis está fora — degradação graciosa, mantém a suíte rápida e o atendimento responsivo.
+_buffer_unavailable_until: float = 0.0
+_BUFFER_UNAVAILABLE_COOLDOWN = 30.0
+
+
+def _get_buffer_redis() -> "_aioredis_buf.Redis":
+    """Conexão Redis para espiar o buffer do lead (mesma chave do buffer.manager)."""
+    global _buffer_redis_client
+    if _buffer_redis_client is None:
+        _buffer_redis_client = _aioredis_buf.from_url(
+            settings.redis_url, decode_responses=True,
+            socket_connect_timeout=2, socket_timeout=2,
+        )
+    return _buffer_redis_client
+
+
+async def _has_pending_buffered_inbound(phone: str, channel_id: str) -> bool:
+    """True se há mensagem do lead AINDA no buffer Redis (recebida, não flushada → invisível ao DB).
+
+    Fecha a cegueira do `_has_newer_inbound` (só-DB): a irmã fica ~buffer_base_timeout no buffer antes
+    de ir pro DB; sem espiar o buffer, o 1º worker enviava e a irmã virava um 2º turno (bombing,
+    auditoria 5531999844461). Fail-open: erro/sem conexão → False (nunca engole a única resposta).
+    """
+    global _buffer_unavailable_until, _buffer_redis_client
+    if _time_buf.monotonic() < _buffer_unavailable_until:
+        return False  # Redis em cooldown → fail-open imediato, sem pagar o timeout
+    try:
+        buf_key = f"buffer:{phone}:{channel_id}"
+        return bool(await _get_buffer_redis().llen(buf_key))
+    except Exception as exc:
+        _buffer_unavailable_until = _time_buf.monotonic() + _BUFFER_UNAVAILABLE_COOLDOWN
+        _buffer_redis_client = None  # força reconexão limpa na próxima tentativa pós-cooldown
+        logger.warning(
+            "[RECOALESCE] falha ao espiar buffer p/ %s:%s: %s — fail-open (não aborta)",
+            phone, channel_id, exc,
         )
         return False
 
