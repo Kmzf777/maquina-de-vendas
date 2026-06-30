@@ -132,7 +132,7 @@ async def test_handoff_rescue_persists_template_message_in_joao_conversation():
          patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
          patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
          patch("app.follow_up.scheduler.get_or_create_conversation", return_value={"id": "conv-joao-1"}) as mock_goc, \
-         patch("app.follow_up.scheduler.save_message") as mock_save, \
+         patch("app.follow_up.scheduler.save_message_conv") as mock_save, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
 
@@ -141,7 +141,8 @@ async def test_handoff_rescue_persists_template_message_in_joao_conversation():
 
     # Conversa do canal do João é criada/reaproveitada para o lead
     mock_goc.assert_called_once_with("lead-1", "ch-joao-1")
-    # Mensagem do template persistida na conversa do João, com wamid e texto real
+    # Mensagem do template persistida na conversa do João via conversations.service
+    # (save_message_conv), que atualiza last_msg_at e zera unread_count automaticamente.
     assert mock_save.call_count == 1
     _, kwargs = mock_save.call_args
     assert kwargs["conversation_id"] == "conv-joao-1"
@@ -311,7 +312,7 @@ async def test_handoff_rescue_sends_template_when_lead_has_not_contacted_joao():
          patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
          patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
          patch("app.follow_up.scheduler.get_or_create_conversation", return_value={"id": "conv-joao-1"}), \
-         patch("app.follow_up.scheduler.save_message"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
 

@@ -13,6 +13,7 @@ from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
+from app.conversations.service import save_message as save_message_conv
 from app.whatsapp.meta import MetaCloudClient, extract_wamid
 from app.humanizer.splitter import split_into_bubbles
 from app.agent.prompts.base import build_base_prompt
@@ -98,12 +99,12 @@ def _persist_joao_handoff_message(
     """
     try:
         conv = get_or_create_conversation(lead_id, joao_channel_id)
-        save_message(
+        save_message_conv(
+            conversation_id=conv["id"],
             lead_id=lead_id,
             role="assistant",
             content=_render_joao_handoff_text(lead_name),
             sent_by="followup",
-            conversation_id=conv["id"],
             wamid=extract_wamid(send_result),
         )
         logger.info(
