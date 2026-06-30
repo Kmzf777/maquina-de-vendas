@@ -491,8 +491,17 @@ async def run_agent(
     user_text: str,
     lead_context: dict | None = None,
     agent_profile_id: str | None = None,
+    *,
+    suppress_generic_fallback: bool = False,
 ) -> str:
-    """Run the SDR AI agent for a conversation and return the response text."""
+    """Run the SDR AI agent for a conversation and return the response text.
+
+    suppress_generic_fallback (keyword-only): quando True, o ramo de turno vazio NÃO emite o
+    _SAFETY_FALLBACK_GENERIC — retorna "" em vez disso. Usado por gatilhos INTERNOS sem mensagem
+    real do lead (ex.: reabertura proativa ai_scheduled_return no scheduler), onde o re-engajamento
+    genérico "me conta de novo o que você precisa" seria incoerente. Fallbacks contextuais de
+    mídia/transição de stage continuam valendo. Default False preserva todos os outros callers.
+    """
     stage = conversation.get("stage", "secretaria")
     lead = conversation.get("leads", {}) or {}
     lead_id = lead.get("id") or conversation.get("lead_id")
@@ -643,6 +652,10 @@ async def run_agent(
     tool_iterations = 0
     media_tool_used = False
     transitioned_to_stage: str | None = None
+    # Soft rejection (registrar_sem_interesse_atual): o lead foi descartado (stage=perdido,
+    # ai_enabled=False). Se o turno terminar vazio, o silêncio é correto — NÃO o re-engajamento
+    # genérico da Change C, que reabriria a conversa com um lead que acabou de ser descartado.
+    soft_reject_used = False
     while message.tool_calls:
         tool_iterations += 1
         if tool_iterations > MAX_TOOL_ITERATIONS:
@@ -711,6 +724,13 @@ async def run_agent(
         if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
             return _sanitize_assistant_text(message.content or "", conversation_id, stage, source="optout") \
                 or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
+
+        # registrar_sem_interesse_atual (soft rejection): NÃO retornamos aqui — o modelo costuma
+        # gerar um fechamento gracioso na chamada pós-tool. Só marcamos a flag para que, se o turno
+        # terminar EMPTY (modelo mudo), o ramo final caia em silêncio em vez do genérico de
+        # re-engajamento (que reabriria a conversa de um lead recém-descartado).
+        if any(tc.function.name == "registrar_sem_interesse_atual" for tc in message.tool_calls):
+            soft_reject_used = True
 
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.
@@ -877,8 +897,22 @@ async def run_agent(
     # nunca retorna None — o caso genérico agora devolve _SAFETY_FALLBACK_GENERIC em vez de abortar
     # em silêncio. Silêncio total deixa o lead congelado (caso private_label, 21h sem resposta);
     # um recomeço honesto é sempre preferível. O texto NÃO afirma que a mensagem "chegou cortada".
+    #
+    # EXCEÇÕES onde o silêncio (return "") é correto e o genérico seria incoerente (regressões da
+    # Change C corrigidas em 2026-06-30): o fallback CONTEXTUAL (mídia/transição) ainda VENCE; mas
+    # se ele NÃO se aplica (i.e. _empty_fallback_text caiu no genérico), então:
+    #   - soft_reject_used: lead acabou de ser descartado (registrar_sem_interesse_atual) → silêncio.
+    #   - suppress_generic_fallback: gatilho interno sem mensagem real do lead (reabertura proativa
+    #     ai_scheduled_return) → silêncio (o job é cancelado pelo guard `if not response.strip()`).
     if not assistant_text:
         assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage)
+        if assistant_text == _SAFETY_FALLBACK_GENERIC and (soft_reject_used or suppress_generic_fallback):
+            logger.error(
+                "[AGENT EMPTY] vazio após retry para conv %s — silêncio em vez do genérico "
+                "(soft_reject=%s, suppress=%s, tool_iterations=%d)",
+                conversation_id, soft_reject_used, suppress_generic_fallback, tool_iterations,
+            )
+            return ""
         logger.error(
             "[AGENT EMPTY] vazio após retry para conv %s — fallback "
             "(stage=%s, media=%s, tool_iterations=%d)",

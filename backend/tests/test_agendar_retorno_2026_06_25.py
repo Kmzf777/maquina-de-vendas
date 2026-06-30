@@ -156,8 +156,11 @@ async def test_handler_janela_aberta_roda_agente_e_envia(monkeypatch):
     monkeypatch.setattr(scheduler, "_mark_sent", lambda jid: None)
     monkeypatch.setattr(scheduler, "save_message", lambda **k: None)
 
-    async def fake_run_agent(conversation, text, lead_context=None, agent_profile_id=None):
+    async def fake_run_agent(conversation, text, lead_context=None, agent_profile_id=None,
+                             *, suppress_generic_fallback=False):
         assert "RETORNO AGENDADO" in text  # gatilho interno foi montado do metadata
+        # Gatilho interno (reabertura proativa) deve suprimir o fallback genérico de re-engajamento.
+        assert suppress_generic_fallback is True
         return "oi Carlos, voltando como combinamos"
 
     monkeypatch.setattr("app.agent.orchestrator.run_agent", fake_run_agent)

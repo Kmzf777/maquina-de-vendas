@@ -415,3 +415,138 @@ async def test_retry_registrar_sem_interesse_returns_empty_string():
     assert result != _SAFETY_FALLBACK_GENERIC
     assert mock_exec.called
     assert mock_exec.call_args.args[0] == "registrar_sem_interesse_atual"
+
+
+# ---------------------------------------------------------------------------
+# Teste 9 (Regressão Change C #1): registrar_sem_interesse_atual no LOOP PRINCIPAL,
+# seguido de mute pós-tool + mute no retry → "" (silêncio), NÃO o genérico.
+# O lead foi descartado (stage=perdido, ai_enabled=False); re-engajar é incoerente.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_main_loop_sem_interesse_then_mute_returns_empty_not_generic():
+    """O loop principal executa registrar_sem_interesse_atual (descarte), o modelo fica mudo
+    no pós-tool E no retry → run_agent retorna "" em vez do fallback genérico de re-engajamento."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    sem_int_tc = _make_tool_call(
+        "registrar_sem_interesse_atual", {"motivo": "já temos fornecedor fixo"}, "tc-semint-main"
+    )
+
+    call_count = {"n": 0}
+
+    async def fake_create(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Chamada inicial → tool_call de descarte (entra no loop)
+            return _make_response(content=None, tool_calls=[sem_int_tc])
+        # Pós-tool (2) e retry (3) → mudos
+        return _make_response(content="", tool_calls=None)
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock, return_value="descarte registrado") as mock_exec, \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "já temos fornecedor")
+
+    assert result == "", f"esperado '' (silêncio após descarte no loop principal), got {result!r}"
+    assert result != _SAFETY_FALLBACK_GENERIC
+    assert mock_exec.called
+    assert mock_exec.call_args.args[0] == "registrar_sem_interesse_atual"
+
+
+# ---------------------------------------------------------------------------
+# Teste 10 (Regressão Change C #2): suppress_generic_fallback=True → turno todo mudo
+# em secretaria retorna "" (reabertura proativa não deve mandar re-engajamento incoerente).
+# Sem o flag, o MESMO turno retorna o genérico (trava ambos os lados).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_suppress_generic_fallback_returns_empty_on_mute():
+    """run_agent(..., suppress_generic_fallback=True) com turno totalmente mudo → ""."""
+    from app.agent.orchestrator import run_agent
+
+    responses = [
+        _make_response(content="", tool_calls=None),  # inicial mudo
+        _make_response(content="", tool_calls=None),  # retry mudo
+    ]
+    idx = {"i": 0}
+
+    async def fake_create(**kwargs):
+        resp = responses[idx["i"]]
+        idx["i"] += 1
+        return resp
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(
+            _conversation("secretaria"), "[GATILHO INTERNO]",
+            suppress_generic_fallback=True,
+        )
+
+    assert result == "", f"com suppress_generic_fallback=True deve retornar '', got {result!r}"
+
+
+@pytest.mark.asyncio
+async def test_without_suppress_flag_same_mute_turn_returns_generic():
+    """Mesmo turno mudo, SEM o flag → retorna o genérico (lado oposto do par, trava o contrato)."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    responses = [
+        _make_response(content="", tool_calls=None),
+        _make_response(content="", tool_calls=None),
+    ]
+    idx = {"i": 0}
+
+    async def fake_create(**kwargs):
+        resp = responses[idx["i"]]
+        idx["i"] += 1
+        return resp
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "[GATILHO INTERNO]")
+
+    assert result == _SAFETY_FALLBACK_GENERIC, (
+        f"sem o flag, turno mudo normal deve usar o genérico, got {result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_normal_mute_turn_still_returns_generic_regression_guard():
+    """Guarda de regressão: turno mudo NORMAL (sem soft-reject, sem flag) continua devolvendo
+    o genérico honesto — a Change C original não pode ter sido revertida acidentalmente."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    responses = [
+        _make_response(content="", tool_calls=None),
+        _make_response(content="", tool_calls=None),
+    ]
+    idx = {"i": 0}
+
+    async def fake_create(**kwargs):
+        resp = responses[idx["i"]]
+        idx["i"] += 1
+        return resp
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg("oi tudo bem?")), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "oi tudo bem?")
+
+    assert result == _SAFETY_FALLBACK_GENERIC

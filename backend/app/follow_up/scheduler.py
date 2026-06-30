@@ -1178,6 +1178,10 @@ async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
             conversation, trigger,
             lead_context=lead_context,
             agent_profile_id=AI_REENGAGE_PROFILE_ID,
+            # Gatilho INTERNO (sem mensagem real do lead): se o modelo ficar mudo, NÃO mandar o
+            # re-engajamento genérico ("me conta de novo o que você precisa") — seria incoerente
+            # numa reabertura proativa. "" → o job é cancelado pelo guard abaixo (empty_response).
+            suppress_generic_fallback=True,
         )
     except Exception as exc:
         logger.error(
