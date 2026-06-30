@@ -123,12 +123,14 @@ def schedule_followup(
 
     # Cancela pending da mesma conversa (idempotência).
     # Preserva lp_welcome — é independente do ciclo de follow-up manual.
+    # Preserva ai_scheduled_return — agendado explicitamente pela IA via agendar_retorno;
+    # um novo turno do cliente NÃO deve cancelar um retorno que a própria IA prometeu.
     try:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": "rescheduled",
         }).eq("conversation_id", conversation_id).eq("status", "pending").not_.in_(
-            "job_type", ["handoff_rescue", "lp_welcome"]
+            "job_type", ["handoff_rescue", "lp_welcome", "ai_scheduled_return"]
         ).execute()
     except Exception as exc:
         logger.error(
@@ -160,13 +162,21 @@ def schedule_followup(
 
 
 def cancel_followups(conversation_id: str, reason: str) -> None:
-    """Cancela todos os jobs pending de uma conversa."""
+    """Cancela todos os jobs pending de uma conversa.
+
+    Preserva 'handoff_rescue' (gerenciado pelo fluxo de handoff) e
+    'ai_scheduled_return' (agendado explicitamente pela IA via agendar_retorno —
+    quando a IA prometeu retornar ao lead, esse compromisso não deve ser
+    cancelado por um simples evento de conversa).
+    """
     sb = get_supabase()
     try:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": reason,
-        }).eq("conversation_id", conversation_id).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
+        }).eq("conversation_id", conversation_id).eq("status", "pending").not_.in_(
+            "job_type", ["handoff_rescue", "ai_scheduled_return"]
+        ).execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar follow-ups da conversa {conversation_id}: {exc}"
@@ -223,7 +233,9 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
         sb.table("follow_up_jobs").update({
             "status": "cancelled",
             "cancel_reason": reason,
-        }).in_("conversation_id", conv_ids).eq("status", "pending").neq("job_type", "handoff_rescue").execute()
+        }).in_("conversation_id", conv_ids).eq("status", "pending").not_.in_(
+            "job_type", ["handoff_rescue", "ai_scheduled_return"]
+        ).execute()
     except Exception as exc:
         logger.error(
             f"[FOLLOWUP] Erro ao cancelar follow-ups pelo phone {phone}: {exc}"
