@@ -264,3 +264,154 @@ async def test_secretaria_double_empty_yields_generic_fallback_not_empty_string(
     # O texto proibido (auditoria 2026-06-24) não pode ter voltado
     assert "cortada" not in result
     assert idx["i"] == 2, "deve ter feito exatamente 2 chamadas (inicial + retry)"
+
+
+# ---------------------------------------------------------------------------
+# Teste 6 (Important #1): retry com JSON malformado → PULA o tool_call (não chama
+# execute_tool com {}). Mesmo contrato do loop principal — evita corrupção silenciosa.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_retry_malformed_json_skips_tool_call_no_empty_args():
+    """Change B / Important #1: se o tool_call recuperado no retry tem JSON malformado,
+    o tool_call é PULADO (continue) — execute_tool NUNCA é chamado com args vazios."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    # tool_call com arguments inválidos (não-JSON) — simula salvar_nome malformado
+    bad_tc = MagicMock()
+    bad_tc.id = "tc-bad"
+    bad_tc.function.name = "salvar_nome"
+    bad_tc.function.arguments = "{name: 'sem aspas',,}"  # JSON inválido
+
+    call_count = {"n": 0}
+
+    async def fake_create(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_response(content="", tool_calls=None)  # inicial vazia
+        # retry → recupera salvar_nome com JSON quebrado, sem content
+        return _make_response(content="", tool_calls=[bad_tc])
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock, return_value="ok") as mock_exec, \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "Marca própria")
+
+    # execute_tool NUNCA deve ter sido chamado (tool_call malformado pulado)
+    assert not mock_exec.called, "execute_tool não deve ser chamado para tool_call com JSON malformado"
+    # Turno ainda vazio → fallback genérico honesto (não silêncio)
+    assert result == _SAFETY_FALLBACK_GENERIC
+
+
+# ---------------------------------------------------------------------------
+# Teste 7 (Important #2a): retry recupera registrar_optout → retorna despedida,
+# NÃO o fallback genérico (senão lead recebe despedida + re-engajamento no mesmo turno).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_retry_registrar_optout_returns_farewell_not_generic():
+    """Important #2: registrar_optout recuperado no retry → despedida sanitizada do content,
+    nunca o fallback genérico de re-engajamento."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    farewell = "tudo bem, não te mando mais nada por aqui"
+    optout_tc = _make_tool_call("registrar_optout", {"motivo": "pediu pra parar"}, "tc-optout")
+
+    call_count = {"n": 0}
+
+    async def fake_create(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_response(content="", tool_calls=None)  # inicial vazia
+        # retry → recupera registrar_optout COM despedida no content
+        return _make_response(content=farewell, tool_calls=[optout_tc])
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock, return_value="opt-out registrado") as mock_exec, \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "para de me mandar mensagem")
+
+    assert result == farewell, f"esperado a despedida, got {result!r}"
+    assert result != _SAFETY_FALLBACK_GENERIC, "não pode cair no fallback genérico após opt-out"
+    assert mock_exec.called
+    assert mock_exec.call_args.args[0] == "registrar_optout"
+
+
+@pytest.mark.asyncio
+async def test_retry_registrar_optout_empty_content_uses_default_farewell():
+    """Important #2: registrar_optout recuperado sem despedida no content → default do loop
+    principal, nunca o fallback genérico."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    default_farewell = "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
+    optout_tc = _make_tool_call("registrar_optout", {"motivo": "parar"}, "tc-optout-2")
+
+    call_count = {"n": 0}
+
+    async def fake_create(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_response(content="", tool_calls=None)
+        return _make_response(content="", tool_calls=[optout_tc])  # sem despedida
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock, return_value="opt-out registrado"), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "sair")
+
+    assert result == default_farewell
+    assert result != _SAFETY_FALLBACK_GENERIC
+
+
+# ---------------------------------------------------------------------------
+# Teste 8 (Important #2b): retry recupera registrar_sem_interesse_atual → retorna "".
+# Silêncio é correto após soft rejection (a regra "nunca mudo" só vale p/ turnos normais).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_retry_registrar_sem_interesse_returns_empty_string():
+    """Important #2: registrar_sem_interesse_atual recuperado no retry → "" (silêncio),
+    nunca o fallback genérico de re-engajamento."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
+
+    sem_int_tc = _make_tool_call(
+        "registrar_sem_interesse_atual", {"motivo": "fora do ICP"}, "tc-semint"
+    )
+
+    call_count = {"n": 0}
+
+    async def fake_create(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _make_response(content="", tool_calls=None)
+        return _make_response(content="", tool_calls=[sem_int_tc])
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pl-001", "phone": "5511900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock, return_value="descarte registrado") as mock_exec, \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("secretaria"), "já temos fornecedor")
+
+    assert result == "", f"esperado '' (silêncio após soft rejection), got {result!r}"
+    assert result != _SAFETY_FALLBACK_GENERIC
+    assert mock_exec.called
+    assert mock_exec.call_args.args[0] == "registrar_sem_interesse_atual"

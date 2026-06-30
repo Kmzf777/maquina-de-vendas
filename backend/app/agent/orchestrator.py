@@ -41,8 +41,10 @@ _STOP_SEQUENCES = ["\n\n\n", "User:", "<|im_end|>"]
 # DEPRECADO (2026-06-24): este stall genérico NÃO é mais enviado. Disparava sobre mensagens
 # perfeitamente válidas quando o gemini devolvia completion_tokens=0 (auditoria leads
 # 5549984064339 / 5551984772757), enganando o cliente ("sua mensagem chegou cortada" sendo
-# que ela chegou inteira). Hoje o turno vazio genérico é abortado em silêncio após um retry
-# sem thinking (ver run_agent). Mantido só como referência/constante de teste.
+# que ela chegou inteira). Desde a Change C (2026-06-30) o turno vazio genérico NÃO é mais
+# abortado em silêncio: após um retry sem thinking, envia-se _SAFETY_FALLBACK_GENERIC — um
+# recomeço HONESTO que re-engaja o lead sem mentir que a mensagem chegou cortada (ver run_agent).
+# Mantido só como referência/constante de teste.
 _SAFETY_FALLBACK_MESSAGE = (
     "acho que sua mensagem chegou cortada aqui\n\nme manda de novo por texto?"
 )
@@ -757,11 +759,21 @@ async def run_agent(
                     try:
                         _rargs = json.loads(_tc.function.arguments)
                     except json.JSONDecodeError as _je:
+                        # Mesmo contrato do loop principal: JSON malformado → PULA o tool_call.
+                        # NUNCA chama execute_tool com {} — tools como salvar_nome fazem args["name"]
+                        # e estourariam KeyError (engolido pelo except externo) = corrupção silenciosa.
                         logger.error(
-                            "[RETRY TOOL] JSON inválido para %s em conv %s: %s",
+                            "[RETRY TOOL] JSON inválido para %s em conv %s — pulando: %s",
                             _rname, conversation_id, _je,
                         )
-                        _rargs = {}
+                        continue
+                    # mudar_stage recuperado: rastreia o novo stage (Minor #4) para que, se o turno
+                    # ainda terminar vazio, _empty_fallback_text escolha a pergunta de avanço do
+                    # stage em vez do genérico. Mínimo: só guardamos a string, sem rebuild de prompt.
+                    if _rname == "mudar_stage":
+                        _new_stage = _rargs.get("stage")
+                        if _new_stage:
+                            transitioned_to_stage = _new_stage
                     try:
                         await execute_tool(
                             _rname, _rargs, lead_id, lead.get("phone", ""), conversation_id
@@ -771,10 +783,22 @@ async def run_agent(
                             "[RETRY TOOL] %s levantou exceção em conv %s: %s",
                             _rname, conversation_id, _te, exc_info=True,
                         )
-                # encaminhar_humano no retry → mesmo contrato do loop principal (sentinel None)
-                if any(_tc.function.name == "encaminhar_humano" for _tc in retry_msg.tool_calls):
+                # Tools terminais recuperadas no retry — mesma ordem e contrato do loop principal,
+                # ANTES do fallback genérico (senão o lead recebe despedida + re-engajamento juntos).
+                _retry_names = {_tc.function.name for _tc in retry_msg.tool_calls}
+                # encaminhar_humano → sentinel None (handoff; card enviado dentro de execute_tool)
+                if "encaminhar_humano" in _retry_names:
                     return None
-                # Outras tools recuperadas: executadas acima; cai no fallback final (Change C)
+                # registrar_optout → despedida sanitizada (mesmo default do loop principal)
+                if "registrar_optout" in _retry_names:
+                    return _sanitize_assistant_text(
+                        retry_msg.content or "", conversation_id, stage, source="retry-optout"
+                    ) or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
+                # registrar_sem_interesse_atual → silêncio é correto após soft rejection.
+                # A regra "nunca mudo" vale só para turnos normais, não para descarte.
+                if "registrar_sem_interesse_atual" in _retry_names:
+                    return ""
+                # Demais tools recuperadas: executadas acima; cai no fallback final (Change C)
                 # para garantir que o lead receba texto
             assistant_text = _sanitize_assistant_text(
                 retry_msg.content or "", conversation_id, stage, source="retry"
