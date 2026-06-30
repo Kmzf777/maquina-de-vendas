@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.follow_up.service import get_due_followups
-from app.leads.service import save_message, resolve_send_target, create_deal, record_dispatch_note
+from app.leads.service import resolve_send_target, create_deal, record_dispatch_note
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -685,7 +685,7 @@ async def process_due_followups(now: datetime | None = None) -> None:
 
         # Persiste mensagem
         try:
-            save_message(
+            save_message_conv(
                 lead_id=job["lead_id"],
                 role="assistant",
                 content=message,
@@ -907,7 +907,7 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
             if first_name
             else "recebemos sua solicitação pela nossa landing page e já estamos por aqui pra te atender"
         )
-        save_message(
+        save_message_conv(
             lead_id=lead["id"],
             role="assistant",
             content=_lp_body,
@@ -1082,7 +1082,7 @@ async def _process_ai_reengage(job: dict, now: datetime) -> None:
 
     for bubble, bubble_wamid in zip(bubbles, sent_wamids):
         try:
-            save_message(
+            save_message_conv(
                 lead_id=job["lead_id"],
                 role="assistant",
                 content=bubble,
@@ -1216,7 +1216,7 @@ async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
 
     for bubble, bubble_wamid in zip(bubbles, sent_wamids):
         try:
-            save_message(
+            save_message_conv(
                 lead_id=job["lead_id"],
                 role="assistant",
                 content=bubble,
@@ -1374,7 +1374,7 @@ async def fire_reopen_template(
         return False
 
     try:
-        save_message(
+        save_message_conv(
             lead_id=job["lead_id"],
             role="assistant",
             content="continuar a conversa de onde paramos",

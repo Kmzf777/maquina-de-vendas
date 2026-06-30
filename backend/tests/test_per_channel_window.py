@@ -120,7 +120,7 @@ async def test_followup_cancels_when_channel_window_expired_despite_recent_lead_
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.get_provider", return_value=AsyncMock()), \
-         patch("app.follow_up.scheduler.save_message"):
+         patch("app.follow_up.scheduler.save_message_conv"):
         from app.follow_up.scheduler import process_due_followups
         await process_due_followups(now=now)
 
@@ -145,7 +145,7 @@ async def test_followup_proceeds_when_channel_window_open_despite_null_lead_glob
          patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
-         patch("app.follow_up.scheduler.save_message"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._generate_followup_message", return_value=("Oi!", "stop")):
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock()

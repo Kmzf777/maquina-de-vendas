@@ -154,7 +154,7 @@ async def test_handler_janela_aberta_roda_agente_e_envia(monkeypatch):
     monkeypatch.setattr(scheduler, "resolve_send_target", lambda lead, phone: phone)
     monkeypatch.setattr(scheduler, "split_into_bubbles", lambda r: [r], raising=False)
     monkeypatch.setattr(scheduler, "_mark_sent", lambda jid: None)
-    monkeypatch.setattr(scheduler, "save_message", lambda **k: None)
+    monkeypatch.setattr(scheduler, "save_message_conv", lambda **k: None)
 
     async def fake_run_agent(conversation, text, lead_context=None, agent_profile_id=None,
                              *, suppress_generic_fallback=False):
@@ -192,7 +192,7 @@ async def test_handler_janela_fechada_dispara_reabertura_em_vez_de_cancelar(monk
     monkeypatch.setattr(scheduler, "_cancel_job", lambda jid, reason: cancels.append((jid, reason)))
     monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: reopens.append(jid))
     monkeypatch.setattr(scheduler, "resolve_send_target", lambda lead, phone: phone)
-    monkeypatch.setattr(scheduler, "save_message", lambda **k: None)
+    monkeypatch.setattr(scheduler, "save_message_conv", lambda **k: None)
 
     class FakeMeta:
         def __init__(self, cfg):

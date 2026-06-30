@@ -33,7 +33,7 @@ async def test_janela_fechada_dispara_template_e_marca_awaiting_reopen(monkeypat
     sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=lead)
     monkeypatch.setattr(scheduler, "get_supabase", lambda: sb)
     monkeypatch.setattr(scheduler, "resolve_send_target", lambda l, p: p)
-    monkeypatch.setattr(scheduler, "save_message", lambda **k: None)
+    monkeypatch.setattr(scheduler, "save_message_conv", lambda **k: None)
 
     marks, cancels = [], []
     monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: marks.append(jid))

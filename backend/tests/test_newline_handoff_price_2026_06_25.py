@@ -71,7 +71,7 @@ async def test_followup_sends_sanitized_text_without_literal_newline():
          patch("app.follow_up.scheduler.resolve_send_target", return_value="+5511914799202"), \
          patch("app.follow_up.scheduler.extract_wamid", return_value="w1"), \
          patch("app.follow_up.scheduler._mark_sent"), \
-         patch("app.follow_up.scheduler.save_message"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._generate_followup_message",
                return_value=(suja, "stop")):
         mock_provider = AsyncMock()

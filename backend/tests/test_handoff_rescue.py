@@ -483,7 +483,7 @@ async def test_standard_jobs_not_affected_by_handoff_rescue_routing():
          patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
          patch("app.follow_up.scheduler.get_provider", return_value=mock_provider), \
          patch("app.follow_up.scheduler._generate_followup_message", return_value=("Oi, tudo bem?", "stop")), \
-         patch("app.follow_up.scheduler.save_message"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
 

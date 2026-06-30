@@ -62,7 +62,7 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
          patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
          patch("app.follow_up.scheduler.create_deal"), \
          patch("app.follow_up.scheduler.record_dispatch_note"), \
-         patch("app.follow_up.scheduler.save_message") as mock_save, \
+         patch("app.follow_up.scheduler.save_message_conv") as mock_save, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
 
@@ -110,7 +110,7 @@ async def test_lp_welcome_nao_persiste_mensagem_em_rejeicao():
          patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
          patch("app.follow_up.scheduler.create_deal"), \
          patch("app.follow_up.scheduler.record_dispatch_note"), \
-         patch("app.follow_up.scheduler.save_message") as mock_save, \
+         patch("app.follow_up.scheduler.save_message_conv") as mock_save, \
          patch("app.follow_up.scheduler._mark_sent"), \
          patch("app.follow_up.scheduler._cancel_job"):
 

@@ -126,7 +126,7 @@ async def test_length_finish_reason_aborts_and_cancels():
          patch("app.follow_up.scheduler.get_provider") as mock_provider_fn, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
-         patch("app.follow_up.scheduler.save_message"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._generate_followup_message",
                return_value=(truncada, "length")):
         mock_provider = AsyncMock()
@@ -152,7 +152,7 @@ async def test_deferral_marker_cancels_silently_without_send():
          patch("app.follow_up.scheduler.get_provider") as mock_provider_fn, \
          patch("app.follow_up.scheduler._cancel_job") as mock_cancel, \
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
-         patch("app.follow_up.scheduler.save_message"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._generate_followup_message",
                return_value=("[ADIAMENTO_DETECTADO]", "stop")):
         mock_provider = AsyncMock()

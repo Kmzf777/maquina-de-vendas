@@ -117,7 +117,7 @@ async def test_fire_reopen_template_success_marks_awaiting_reopen(monkeypatch):
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
     monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
-    monkeypatch.setattr(scheduler, "save_message", lambda **kw: calls.__setitem__("saved", kw))
+    monkeypatch.setattr(scheduler, "save_message_conv", lambda **kw: calls.__setitem__("saved", kw))
     monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: calls.__setitem__("awaiting", jid))
     monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-x")
     # store-metadata helper writes to DB; stub it to capture
@@ -320,7 +320,7 @@ async def test_fire_reopen_template_proceeds_when_category_unverifiable(monkeypa
 
     monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
     monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: None)
-    monkeypatch.setattr(scheduler, "save_message", lambda **kw: None)
+    monkeypatch.setattr(scheduler, "save_message_conv", lambda **kw: None)
     monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: None)
     monkeypatch.setattr(scheduler, "_store_reopen_context", lambda *a: None)
     monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-x")
