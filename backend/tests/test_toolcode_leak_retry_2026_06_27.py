@@ -1,7 +1,10 @@
 """Vazamento de tool_code no retry (lead 5567996264477): a rede deve cobrir o retry e o optout.
 
 Falha real: 1a resposta = tool_code puro -> strip -> vazio -> retry reincidiu no tool_code ->
-retornado cru (L719 nao sanitizava) -> vazou. Apos a centralizacao, run_agent devolve silencio.
+retornado cru (L719 nao sanitizava) -> vazou. Apos a centralizacao, o codigo cru NUNCA chega
+ao cliente. A partir de 2026-06-30 (Change C), o turno generico vazio NAO aborta mais em
+silencio: devolve o fallback generico honesto (_SAFETY_FALLBACK_GENERIC) em vez de "". O
+invariante critico permanece: o texto entregue jamais contem 'tool_code' nem 'default_api'.
 """
 import json
 import pytest
@@ -38,9 +41,10 @@ def _history():
 
 
 @pytest.mark.asyncio
-async def test_toolcode_leak_inicial_e_retry_devolve_silencio():
-    """tool_code puro na inicial E no retry → run_agent devolve "" (nunca a string crua)."""
-    from app.agent.orchestrator import run_agent
+async def test_toolcode_leak_inicial_e_retry_devolve_fallback_generico():
+    """tool_code puro na inicial E no retry → run_agent devolve o fallback genérico honesto
+    (Change C, 2026-06-30), NUNCA a string crua nem "" (silêncio)."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
     call_responses = [_make_response(content=_LEAK), _make_response(content=_LEAK)]
     idx = {"i": 0}
 
@@ -55,10 +59,12 @@ async def test_toolcode_leak_inicial_e_retry_devolve_silencio():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(_conversation(), "Sim\nJOÃO PAULO NOGUEIRA ALVES")
 
-    assert result == ""
+    assert result == _SAFETY_FALLBACK_GENERIC, (
+        "turno genérico vazio deve cair no fallback honesto, não em silêncio (Change C)"
+    )
     assert "tool_code" not in result
     assert "default_api" not in result
-    assert idx["i"] == 2, "deve ter feito o retry silencioso"
+    assert idx["i"] == 2, "deve ter feito o retry"
 
 
 @pytest.mark.asyncio
