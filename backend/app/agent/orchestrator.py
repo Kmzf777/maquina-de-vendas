@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -172,6 +173,69 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             conversation_id, source, stage, pre,
         )
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Guarda determinística de handoff verbalizado (2026-06-30)
+# ---------------------------------------------------------------------------
+# Defesa em profundidade: quando a Valéria ANUNCIA a transferência no texto comum
+# ("vou te conectar com o João", "vou deixar o contato dele aqui") SEM chamar
+# encaminhar_humano, o lead fica parado — o cartão de contato nunca sai e a IA
+# continua ativa. Este guard detecta o CTA no texto final e força o handoff.
+#
+# Invariante: se o código chegou até _looks_like_handoff_announcement, encaminhar_humano
+# NÃO foi executado neste turno (uma tool call real teria retornado None sentinel mais
+# cedo no loop) — não há risco de double-firing.
+#
+# Frases que NÃO disparam (menções informacionais):
+#   "quem prepara isso é o Joao Bras"
+#   "vou deixar salvo pro Joao dar uma olhada"
+#   "você já tá em boas mãos com o time"
+#   "qualquer coisa é só chamar"
+# O guard é construído em torno do CTA de CONTATO/CONECTAR/TRANSFERIR, nunca do
+# nome "João Bras" isolado.
+
+def _strip_diacritics(text: str) -> str:
+    """Remove diacríticos via NFD + filtro de combining marks (Mn)."""
+    nfd = unicodedata.normalize("NFD", text)
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+
+
+def _normalize_for_handoff_re(text: str) -> str:
+    """Lowercase + remoção de diacríticos para matching acento-insensitivo."""
+    return _strip_diacritics(text.lower())
+
+
+# Padrões compilados uma vez; operam sobre texto já normalizado (lowercase, sem acentos).
+_HANDOFF_ANNOUNCEMENT_RE = re.compile(
+    r"(?:"
+    r"vou te conectar"
+    r"|deixa.{0,10}eu te conectar"   # "deixa eu te conectar" / "deixa-eu te conectar"
+    r"|te conectar com o joao"
+    r"|vou deixar o contato"          # "vou deixar o contato dele aqui"
+    r"|deixando o contato"
+    r"|te passar o contato"
+    r"|contato dele aqui"
+    r"|contato do joao aqui"
+    r"|vou transferir"
+    r"|vou te transferir"
+    r"|vou te passar (?:pro|para o) joao"
+    r")"
+)
+
+
+def _looks_like_handoff_announcement(text: str) -> bool:
+    """Return True ONLY for unambiguous transfer-CTA phrasing.
+
+    Accent- and case-insensitive (via diacritic stripping + lowercase).
+    Returns False for mere informational mentions of the seller that are NOT
+    a transfer CTA — e.g. "quem cuida disso é o Joao Bras", "em boas mãos".
+
+    Função pura — sem I/O, testável sem mocks.
+    """
+    if not text:
+        return False
+    return bool(_HANDOFF_ANNOUNCEMENT_RE.search(_normalize_for_handoff_re(text)))
 
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
@@ -820,6 +884,41 @@ async def run_agent(
             "(stage=%s, media=%s, tool_iterations=%d)",
             conversation_id, transitioned_to_stage, media_tool_used, tool_iterations,
         )
+
+    # -----------------------------------------------------------------------
+    # GUARDA DETERMINÍSTICA DE HANDOFF VERBALIZADO (2026-06-30)
+    # -----------------------------------------------------------------------
+    # Se o texto final contém um CTA de transferência ("vou te conectar",
+    # "vou deixar o contato dele aqui", etc.) mas encaminhar_humano NÃO foi
+    # chamado (caso contrário teríamos retornado None sentinel antes), forçamos
+    # o handoff agora. Invariante: chegar aqui garante que encaminhar_humano
+    # não rodou neste turno — sem risco de double-firing.
+    if _looks_like_handoff_announcement(assistant_text):
+        logger.warning(
+            "[HANDOFF VERBAL GUARD] texto final anuncia transferência sem tool-call "
+            "para conv %s — forçando encaminhar_humano. text=%.200s",
+            conversation_id, assistant_text,
+        )
+        try:
+            await execute_tool(
+                "encaminhar_humano",
+                {
+                    "mensagem_despedida": assistant_text,
+                    "vendedor": "Joao Bras",
+                    "motivo": "handoff verbalizado sem tool-call (guarda deterministica)",
+                },
+                lead_id,
+                lead.get("phone", ""),
+                conversation_id,
+            )
+            return None
+        except Exception as _guard_exc:
+            logger.error(
+                "[HANDOFF VERBAL GUARD] execute_tool falhou para conv %s: %s — "
+                "retornando texto original (fail-soft)",
+                conversation_id, _guard_exc,
+            )
+            # Fail-soft: não derruba o turno; entrega o texto como estava.
 
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
