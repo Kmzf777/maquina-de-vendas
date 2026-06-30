@@ -9,6 +9,7 @@ import { getWindowStatus } from "@/lib/window-status";
 import { businessMinutesElapsed } from "@/lib/business-hours";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { Badge } from "@/components/ui/badge";
+import { AgentPersonaBadge } from "@/components/conversas/agent-persona-badge";
 
 interface ChatListProps {
   conversations: Conversation[];
@@ -53,41 +54,6 @@ function getStagePillColor(stage: string | undefined): string {
 function getInitial(name: string | null | undefined): string {
   if (!name) return "?";
   return name.charAt(0).toUpperCase();
-}
-
-/**
- * Diferenciação Inbound/Outbound da IA no card.
- *
- * Fonte de verdade: `conv.agent_persona` — a persona EFETIVA que o backend realmente rodou
- * no último turno (denormalizada por turno). Isso elimina a "mentira visual" em que o card
- * lia o pin estático `agent_profile_id` (escolha do broadcast) e mostrava outbound enquanto
- * o backend executava inbound. Fallback (só quando ainda não houve resposta da IA, agent_persona
- * NULL): o pin da conversa → agent_profile default do canal.
- *
- * Só renderiza quando a IA é a responsável: canal em modo "human" ou lead com
- * ai_enabled === false significam atendimento humano — nesse caso retorna null
- * (o card "mantém como está", sem tag de persona).
- */
-function getAgentPersona(
-  conv: Conversation,
-): { label: string; direction: "inbound" | "outbound"; color: string } | null {
-  const aiResponsible =
-    conv.channels?.mode !== "human" && (conv.leads?.ai_enabled ?? true) !== false;
-  if (!aiResponsible) return null;
-
-  // Persona efetiva (backend) tem prioridade; pin estático é só fallback pré-1ª-resposta.
-  const promptKey =
-    conv.agent_persona ??
-    conv.agent_profiles?.prompt_key ??
-    conv.channels?.agent_profiles?.prompt_key;
-  if (!promptKey) return null;
-
-  const name =
-    conv.agent_profiles?.name ?? conv.channels?.agent_profiles?.name ?? "Valéria";
-  const direction = promptKey.endsWith("outbound") ? "outbound" : "inbound";
-  return direction === "outbound"
-    ? { label: `${name} (Outbound)`, direction, color: "#b45309" }
-    : { label: `${name} (Inbound)`, direction, color: "#5b8aad" };
 }
 
 function getChannelBadge(channelName: string | undefined): { label: string; color: string } | null {
@@ -317,26 +283,7 @@ export function ChatList({
                 Atraso
               </span>
             )}
-            {(() => {
-              const persona = getAgentPersona(conv);
-              if (!persona) return null;
-              return (
-                <span
-                  className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
-                  style={{ backgroundColor: `${persona.color}15`, color: persona.color }}
-                  title={persona.direction === "outbound" ? "Atendimento ativo (outbound)" : "Atendimento receptivo (inbound)"}
-                >
-                  <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                    {persona.direction === "outbound" ? (
-                      <path d="M12 19V5M5 12l7-7 7 7" />
-                    ) : (
-                      <path d="M12 5v14M19 12l-7 7-7-7" />
-                    )}
-                  </svg>
-                  {persona.label}
-                </span>
-              );
-            })()}
+            <AgentPersonaBadge conversation={conv} />
             {conv.deal_stage_label && (
               <Badge
                 variant="outline"

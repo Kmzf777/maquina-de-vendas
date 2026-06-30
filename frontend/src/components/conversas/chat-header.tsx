@@ -9,6 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { AgentPersonaBadge } from "@/components/conversas/agent-persona-badge";
 
 interface ChatHeaderProps {
   conversation: Conversation;
@@ -110,6 +111,7 @@ export function ChatHeader({
         onClick={onOpenContact}
       >
         <h2 className="text-[#111111] font-medium text-[14px] truncate">{displayName}</h2>
+        <AgentPersonaBadge conversation={conversation} />
       </div>
 
       {/* Valéria IA button — hidden for human-only channels */}
