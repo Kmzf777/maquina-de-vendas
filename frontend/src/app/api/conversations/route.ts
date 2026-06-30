@@ -275,12 +275,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Sort by last_msg_at descending
-  merged.sort((a, b) => {
-    const ta = a.last_msg_at ? new Date(a.last_msg_at).getTime() : 0;
-    const tb = b.last_msg_at ? new Date(b.last_msg_at).getTime() : 0;
-    return tb - ta;
-  });
+  // Sort by last_msg_at descending, falling back to created_at to avoid
+  // proactively-created conversations (null last_msg_at) sinking to 1970.
+  const sortTs = (c: { last_msg_at?: string | null; created_at?: string | null }): number => {
+    const t = c.last_msg_at ?? c.created_at;
+    return t ? new Date(t).getTime() : 0;
+  };
+  merged.sort((a, b) => sortTs(b) - sortTs(a));
 
   return NextResponse.json(merged);
 }
