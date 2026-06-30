@@ -34,16 +34,21 @@ def test_stage_transition_takes_priority_over_media():
     assert result == _STAGE_TRANSITION_FALLBACKS["atacado"]
 
 
-def test_no_transition_returns_none_for_silent_abort():
-    """Sem stage transition + sem mídia → None (sinaliza abortar em silêncio; nada de stall)."""
-    from app.agent.orchestrator import _empty_fallback_text
-    assert _empty_fallback_text(media_tool_used=False, transitioned_to_stage=None) is None
+def test_no_transition_returns_generic_fallback():
+    """Sem stage transition + sem mídia → fallback genérico honesto (Change C 2026-06-30).
+    Nunca mais retorna None: o lead sempre recebe texto de re-engajamento em vez de silêncio."""
+    from app.agent.orchestrator import _empty_fallback_text, _SAFETY_FALLBACK_GENERIC
+    result = _empty_fallback_text(media_tool_used=False, transitioned_to_stage=None)
+    assert result == _SAFETY_FALLBACK_GENERIC
+    assert "cortada" not in result
 
 
-def test_unmapped_stage_returns_none_for_silent_abort():
-    """Transição para stage sem mensagem dedicada (ex.: secretaria) → None (sem stall)."""
-    from app.agent.orchestrator import _empty_fallback_text
-    assert _empty_fallback_text(media_tool_used=False, transitioned_to_stage="secretaria") is None
+def test_unmapped_stage_returns_generic_fallback():
+    """Transição para stage sem mensagem dedicada (ex.: secretaria) → fallback genérico honesto."""
+    from app.agent.orchestrator import _empty_fallback_text, _SAFETY_FALLBACK_GENERIC
+    result = _empty_fallback_text(media_tool_used=False, transitioned_to_stage="secretaria")
+    assert result == _SAFETY_FALLBACK_GENERIC
+    assert "cortada" not in result
 
 
 def test_all_commercial_stages_have_distinct_contextual_messages():
@@ -135,11 +140,11 @@ async def test_run_agent_mudar_stage_then_empty_uses_stage_fallback():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_agent_empty_without_tool_retries_then_aborts_silently():
+async def test_run_agent_empty_without_tool_retries_then_uses_generic_fallback():
     """Empty user turn (ex.: sticker) com completion_tokens=0 e SEM tool call. O agente faz
-    UM retry silencioso (thinking off); se ainda vazio e sem contexto coerente, retorna ""
-    (abortar em silêncio) — nunca o "chegou cortada" enganoso (auditoria Anderson 5551984772757)."""
-    from app.agent.orchestrator import run_agent
+    UM retry silencioso (thinking off); se ainda vazio e sem contexto coerente, retorna o
+    fallback genérico honesto (Change C 2026-06-30) — nunca "" nem "chegou cortada"."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
 
     conversation = {
         "id": "conv-void-001",
@@ -171,5 +176,7 @@ async def test_run_agent_empty_without_tool_retries_then_aborts_silently():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "")
 
-    assert result == ""
-    assert call_index["i"] == 2, "deve ter feito o retry silencioso antes de abortar"
+    # Change C: nunca mais retorna "" para turno com histórico — usa o genérico honesto
+    assert result == _SAFETY_FALLBACK_GENERIC
+    assert "cortada" not in result
+    assert call_index["i"] == 2, "deve ter feito o retry silencioso antes do fallback"

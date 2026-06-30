@@ -23,11 +23,14 @@ def test_empty_fallback_text_with_media_returns_media_message():
     assert result == _SAFETY_FALLBACK_MEDIA
 
 
-def test_empty_fallback_text_without_media_returns_none():
-    """Caso genérico (sem mídia, sem transição de stage): NÃO há fallback coerente.
-    Retorna None para sinalizar 'abortar o turno em silêncio' — nunca o stall enganoso."""
-    from app.agent.orchestrator import _empty_fallback_text
-    assert _empty_fallback_text(media_tool_used=False) is None
+def test_empty_fallback_text_without_media_returns_generic():
+    """Caso genérico (sem mídia, sem transição de stage): retorna o fallback genérico honesto.
+    Change C (2026-06-30): nunca mais retorna None — o lead sempre recebe texto, nunca silêncio."""
+    from app.agent.orchestrator import _empty_fallback_text, _SAFETY_FALLBACK_GENERIC
+    result = _empty_fallback_text(media_tool_used=False)
+    assert result is not None
+    assert result == _SAFETY_FALLBACK_GENERIC
+    assert "cortada" not in result
 
 
 def test_empty_fallback_text_messages_are_different():
@@ -135,10 +138,10 @@ async def test_run_agent_media_tool_then_empty_uses_media_fallback():
 
 
 @pytest.mark.asyncio
-async def test_run_agent_non_media_tool_then_empty_aborts_silently():
-    """Non-media tool + empty (sem stage transition) → sem contexto coerente → aborta em
-    silêncio (retorna ""), nunca o stall genérico enganoso."""
-    from app.agent.orchestrator import run_agent
+async def test_run_agent_non_media_tool_then_empty_uses_generic_fallback():
+    """Non-media tool + empty (sem stage transition) → fallback genérico honesto (Change C).
+    Nunca mais aborta em silêncio: o lead sempre recebe um texto de re-engajamento."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
 
     conversation = {
         "id": "conv-nonmedia-001",
@@ -189,7 +192,9 @@ async def test_run_agent_non_media_tool_then_empty_aborts_silently():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "quero saber os preços")
 
-    assert result == ""
+    # Change C: nunca mais retorna "" para um turno com histórico — usa o genérico honesto
+    assert result == _SAFETY_FALLBACK_GENERIC
+    assert "cortada" not in result
 
 
 @pytest.mark.asyncio

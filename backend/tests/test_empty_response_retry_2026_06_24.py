@@ -70,9 +70,10 @@ async def test_empty_initial_then_retry_recovers_text():
 
 @pytest.mark.asyncio
 async def test_empty_initial_and_empty_retry_never_sends_chegou_cortada():
-    """Os dois tiros vazios → aborta em silêncio. Garante que o texto literal do fallback
-    enganoso NUNCA é devolvido."""
-    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE
+    """Os dois tiros vazios → retorna o fallback genérico honesto (Change C 2026-06-30).
+    Garante que o texto literal do fallback enganoso NUNCA é devolvido E que o lead nunca
+    fica em silêncio total."""
+    from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE, _SAFETY_FALLBACK_GENERIC
 
     call_responses = [_make_response(content=""), _make_response(content="")]
     idx = {"i": 0}
@@ -88,6 +89,9 @@ async def test_empty_initial_and_empty_retry_never_sends_chegou_cortada():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(_conversation(), "oi bom dia sim me chamo Anderson")
 
-    assert result == ""
+    # Change C: genérico honesto em vez de silêncio total
+    assert result == _SAFETY_FALLBACK_GENERIC
+    assert result != ""
     assert result != _SAFETY_FALLBACK_MESSAGE
     assert "chegou cortada" not in result
+    assert "cortada" not in result

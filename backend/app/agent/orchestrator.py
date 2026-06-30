@@ -52,6 +52,13 @@ _SAFETY_FALLBACK_MESSAGE = (
 _SAFETY_FALLBACK_MEDIA = (
     "te mandei as fotos aqui no chat\n\nqual delas chamou mais a sua atenção?"
 )
+# Fallback genérico honesto (Change C, 2026-06-30): usado quando não há contexto coerente
+# (sem transição de stage, sem mídia) e o LLM ficou mudo mesmo após o retry.
+# NÃO afirma que a mensagem "chegou cortada" (proibido — auditoria 2026-06-24).
+# Segue a voz da Valéria: minúsculas, sem ponto final, max 2 bolhas curtas, sem emoji.
+_SAFETY_FALLBACK_GENERIC = (
+    "opa, me embolei aqui por um instante\n\nme conta de novo o que você precisa que eu já te ajudo"
+)
 
 _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
 
@@ -81,16 +88,15 @@ _STAGE_TRANSITION_FALLBACKS: dict[str, str] = {
 }
 
 
-def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | None = None) -> str | None:
-    """Return a CONTEXTUALLY COHERENT fallback for the empty-response case, or None.
+def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | None = None) -> str:
+    """Return a CONTEXTUALLY COHERENT fallback for the empty-response case.
 
-    Só devolve mensagem quando há um contexto que a torna coerente:
+    Priority order (highest first):
       1. Pergunta de avanço, quando houve um mudar_stage neste turno (transição silenciosa).
       2. Pergunta de fechamento de mídia, quando uma tool de foto foi usada.
-    Caso GENÉRICO (sem mídia, sem transição) → None: NÃO existe mensagem honesta a enviar.
-    O chamador deve abortar o turno em silêncio em vez de mandar o stall enganoso
-    "acho que sua mensagem chegou cortada" sobre uma mensagem que chegou perfeita
-    (auditoria 2026-06-24, leads 5549984064339 / 5551984772757 — falha de LLM, não de input).
+      3. Fallback genérico honesto (_SAFETY_FALLBACK_GENERIC): re-engaja o lead sem afirmar
+         que a mensagem "chegou cortada" (proibido — auditoria 2026-06-24). Garante que o
+         lead NUNCA fica em silêncio total após um turno com historico real (Change C 2026-06-30).
 
     Extracted as a pure helper so it can be unit-tested without running run_agent.
     """
@@ -98,7 +104,7 @@ def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | Non
         return _STAGE_TRANSITION_FALLBACKS[transitioned_to_stage]
     if media_tool_used:
         return _SAFETY_FALLBACK_MEDIA
-    return None
+    return _SAFETY_FALLBACK_GENERIC
 
 
 # ---------------------------------------------------------------------------
@@ -705,16 +711,25 @@ async def run_agent(
     # Vale para QUALQUER turno vazio (com ou sem tool — antes só reentrávamos após tool, e o turno
     # normal vazio caía no stall enganoso). Tentamos UM retry silencioso com o thinking 100% off,
     # que costuma recuperar o texto real. NUNCA derruba o turno por exceção — só loga.
+    #
+    # Change A (2026-06-30): o retry mantém as tools do stage, EXCETO quando o vazio veio de um
+    # loop de tools descontrolado (tool_iterations > MAX_TOOL_ITERATIONS), único caso genuinamente
+    # prejudicial — aí sim tools=None. O bug anterior passava tools=None sempre, castrando o agente
+    # quando o turno vazio precisava de encaminhar_humano/mudar_stage: o modelo re-vazava o call
+    # como tool_code, o sanitizer limpava, e o lead ficava 21h em silêncio (lead private_label,
+    # auditoria 2026-06-30).
     if not assistant_text:
         logger.warning(
             "[AGENT EMPTY] resposta vazia (tool_iterations=%d) para conv %s — retry silencioso sem thinking",
             tool_iterations, conversation_id,
         )
+        # Change A: preserva tools salvo em loop descontrolado
+        retry_tools = None if tool_iterations > MAX_TOOL_ITERATIONS else (tools or None)
         try:
             retry_resp = await _create_with_retry(_get_client(model),
                 model=model,
                 messages=messages,
-                tools=None,
+                tools=retry_tools,
                 temperature=0.4,
                 max_tokens=MAX_OUTPUT_TOKENS,
                 stop=_STOP_SEQUENCES,
@@ -729,35 +744,58 @@ async def run_agent(
                     prompt_tokens=retry_resp.usage.prompt_tokens,
                     completion_tokens=retry_resp.usage.completion_tokens,
                 )
+            retry_msg = retry_resp.choices[0].message
+            # Change B (2026-06-30): se o retry recuperou tool_calls (porque tools foram mantidas),
+            # executa a intenção em vez de silenciá-la. Cobre o caso exato do lead private_label:
+            # a intenção era encaminhar_humano mas o retry sem tools re-vazava como tool_code.
+            # Apenas UM nível de recuperação — não re-inicia o ciclo ReAct completo.
+            if retry_msg.tool_calls and retry_tools is not None:
+                for _tc in retry_msg.tool_calls:
+                    _rname = _tc.function.name
+                    if _rname in _MEDIA_TOOL_NAMES:
+                        media_tool_used = True
+                    try:
+                        _rargs = json.loads(_tc.function.arguments)
+                    except json.JSONDecodeError as _je:
+                        logger.error(
+                            "[RETRY TOOL] JSON inválido para %s em conv %s: %s",
+                            _rname, conversation_id, _je,
+                        )
+                        _rargs = {}
+                    try:
+                        await execute_tool(
+                            _rname, _rargs, lead_id, lead.get("phone", ""), conversation_id
+                        )
+                    except Exception as _te:
+                        logger.error(
+                            "[RETRY TOOL] %s levantou exceção em conv %s: %s",
+                            _rname, conversation_id, _te, exc_info=True,
+                        )
+                # encaminhar_humano no retry → mesmo contrato do loop principal (sentinel None)
+                if any(_tc.function.name == "encaminhar_humano" for _tc in retry_msg.tool_calls):
+                    return None
+                # Outras tools recuperadas: executadas acima; cai no fallback final (Change C)
+                # para garantir que o lead receba texto
             assistant_text = _sanitize_assistant_text(
-                retry_resp.choices[0].message.content or "", conversation_id, stage, source="retry"
+                retry_msg.content or "", conversation_id, stage, source="retry"
             )
         except Exception as _exc:
             logger.error(
                 "[AGENT EMPTY] retry silencioso falhou para conv %s: %s", conversation_id, _exc,
             )
 
-    # Ainda vazio após o retry. Só enviamos algo se houver um fallback CONTEXTUALMENTE
-    # coerente (transição de stage > mídia). No caso genérico, _empty_fallback_text devolve
-    # None e ABORTAMOS o turno em silêncio: é uma falha de LLM, não da mensagem do lead, então
-    # mandar "acho que sua mensagem chegou cortada" sobre um texto perfeito engana o cliente
-    # (o erro reincidente desta auditoria). Silêncio > erro esquisito.
+    # Ainda vazio após o retry. Escolhemos o fallback mais contextualmente coerente disponível
+    # (transição de stage > mídia > genérico honesto). Change C (2026-06-30): _empty_fallback_text
+    # nunca retorna None — o caso genérico agora devolve _SAFETY_FALLBACK_GENERIC em vez de abortar
+    # em silêncio. Silêncio total deixa o lead congelado (caso private_label, 21h sem resposta);
+    # um recomeço honesto é sempre preferível. O texto NÃO afirma que a mensagem "chegou cortada".
     if not assistant_text:
-        contextual = _empty_fallback_text(media_tool_used, transitioned_to_stage)
-        if contextual:
-            assistant_text = contextual
-            logger.error(
-                "[AGENT EMPTY] vazio após retry para conv %s — usando fallback contextual "
-                "(stage=%s, media=%s)",
-                conversation_id, transitioned_to_stage, media_tool_used,
-            )
-        else:
-            logger.error(
-                "[AGENT EMPTY] vazio após retry e sem contexto coerente para conv %s "
-                "(tool_iterations=%d) — abortando turno em silêncio (não enviar stall enganoso)",
-                conversation_id, tool_iterations,
-            )
-            return ""
+        assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage)
+        logger.error(
+            "[AGENT EMPTY] vazio após retry para conv %s — fallback "
+            "(stage=%s, media=%s, tool_iterations=%d)",
+            conversation_id, transitioned_to_stage, media_tool_used, tool_iterations,
+        )
 
     logger.info(
         f"SDR agent response for conv {conversation_id} (stage={stage}, prompt_key={prompt_key}): {assistant_text[:100]}..."
