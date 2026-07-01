@@ -1,6 +1,12 @@
 from unittest.mock import patch
 
-from app.webhook.meta_router import _extract_from_number, _extract_statuses, _register_lead
+from app.webhook.meta_router import (
+    _extract_from_number,
+    _extract_statuses,
+    _register_lead,
+    _status_has_backfillable_contact,
+    _track_inbound_message_time,
+)
 
 
 def _msg_payload(message):
@@ -47,3 +53,39 @@ def test_register_lead_stamps_bsuid_on_existing_phone_lead():
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5534999999999", "Ana", bsuid="BR.999")
     assert any(c.args == ("L1",) and c.kwargs.get("bsuid") == "BR.999" for c in upd.call_args_list)
+
+
+def test_track_inbound_message_time_matches_bsuid_column():
+    """A BSUID identity must filter on the bsuid column (BSUID-only leads have phone='')."""
+    captured = {}
+
+    class _Chain:
+        def update(self, *a, **k):
+            return self
+
+        def eq(self, col, val):
+            captured["col"] = col
+            captured["val"] = val
+            return self
+
+        def execute(self):
+            return None
+
+    with patch("app.webhook.meta_router.get_supabase") as gs, \
+         patch("app.webhook.meta_router.run_with_retry", side_effect=lambda fn, label=None: fn()), \
+         patch("app.follow_up.service.cancel_followups_by_phone"):
+        gs.return_value.table.return_value = _Chain()
+        _track_inbound_message_time("US.13491208655302741918")
+    assert captured["col"] == "bsuid"
+    assert captured["val"] == "US.13491208655302741918"
+
+
+def test_status_backfill_predicate():
+    with_pair = {"entry": [{"changes": [{"value": {"contacts": [
+        {"wa_id": "16505551234", "user_id": "US.1349"}
+    ]}}]}]}
+    receipt_only = {"entry": [{"changes": [{"value": {"statuses": [
+        {"recipient_id": "16505551234", "status": "read", "id": "w1"}
+    ]}}]}]}
+    assert _status_has_backfillable_contact(with_pair) is True
+    assert _status_has_backfillable_contact(receipt_only) is False

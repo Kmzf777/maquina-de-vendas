@@ -93,13 +93,19 @@ def _register_lead(
 
 
 def _track_inbound_message_time(phone: str) -> None:
-    """Update last_customer_message_at so the 24h window status stays current."""
+    """Update last_customer_message_at so the 24h window status stays current.
+
+    `phone` is the routing identity — a normalized phone OR a BSUID (username adopter,
+    whose lead row has phone="" and is keyed by the bsuid column). Match on the right
+    column so the 24h window and follow-up cancellation also work for BSUID-only leads.
+    """
     normalized = normalize_phone(phone)
+    id_col = "bsuid" if is_bsuid(normalized) else "phone"
     try:
         run_with_retry(
             lambda: get_supabase().table("leads").update(
                 {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
-            ).eq("phone", normalized).execute(),
+            ).eq(id_col, normalized).execute(),
             label="last_customer_message_at",
         )
     except Exception as e:
@@ -108,8 +114,7 @@ def _track_inbound_message_time(phone: str) -> None:
     # Cancela follow-ups pendentes pois cliente respondeu
     try:
         from app.follow_up.service import cancel_followups_by_phone
-        normalized_for_cancel = normalize_phone(phone)
-        cancel_followups_by_phone(normalized_for_cancel, reason="client_replied")
+        cancel_followups_by_phone(normalized, reason="client_replied")
     except Exception as e:
         logger.warning(f"[FOLLOWUP] Failed to cancel follow-ups for {phone}: {e}")
 
@@ -200,6 +205,20 @@ async def _handle_delivery_status(wamid: str, status: str, errors: list | None =
                 await fire_billing_alert(errors or [])
         except Exception as e:
             logger.warning("[DELIVERY] Failed to process broadcast failure for wamid=%s: %s", wamid, e)
+
+
+def _status_has_backfillable_contact(payload: dict) -> bool:
+    """True if any contacts block carries both wa_id and user_id (a phone worth backfilling).
+
+    Lets the caller skip enqueuing the backfill task on the vast majority of delivery/read
+    receipts, which carry no such pair.
+    """
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            for c in change.get("value", {}).get("contacts", []):
+                if c.get("wa_id") and c.get("user_id"):
+                    return True
+    return False
 
 
 def _backfill_phone_from_status(payload: dict) -> None:
@@ -452,7 +471,7 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         if wamid and status:
             background_tasks.add_task(_handle_delivery_status, wamid, status, errors)
 
-    if _extract_statuses(payload):
+    if _status_has_backfillable_contact(payload):
         background_tasks.add_task(_backfill_phone_from_status, payload)
 
     for msg in messages:
