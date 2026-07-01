@@ -18,6 +18,8 @@ class IncomingMessage:
     quoted_wamid: str | None = None  # wamid of the message being replied to
     ctwa_clid: str | None = None  # Click-to-WhatsApp click id (Meta Ads referral) — base p/ CAPI
     ctwa_origem: str | None = None  # Origem do funil derivada do referral CTWA (atacado/terceirizacao)
+    bsuid: str | None = None       # Business-Scoped User ID (from_user_id) — fallback identity
+    username: str | None = None    # WhatsApp username (contacts.profile.username), if adopted
 
 
 def parse_webhook_payload(payload: dict) -> list[IncomingMessage]:
@@ -106,3 +108,12 @@ def parse_webhook_payload(payload: dict) -> list[IncomingMessage]:
     ))
 
     return messages
+
+
+def webhook_identity(msg: "IncomingMessage") -> str:
+    """Canonical routing key for a message: phone if present, else the BSUID.
+
+    Meta omits the phone number once a user adopts a username, sending only the
+    BSUID. This helper gives every consumer a single non-empty identity to key on.
+    """
+    return msg.from_number or (msg.bsuid or "")
