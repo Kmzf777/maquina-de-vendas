@@ -90,9 +90,13 @@ async def test_run_agent_fallback_when_empty_after_tool_iterations():
     second_response.choices = [MagicMock(message=msg_empty)]
     second_response.usage = None
 
-    # Third response (fallback without tools): proper text
+    # Third response (fallback without tools): proper text.
+    # tool_calls=None explícito: uma resposta de TEXTO PURO real do SDK traz tool_calls=None
+    # (nunca um MagicMock truthy-vazio). Sem isso, o retry entraria no ramo de tools recuperadas
+    # e dispararia uma chamada pós-tool inexistente (IndexError) — artefato de mock, não de lógica.
     msg_fallback = MagicMock()
     msg_fallback.content = "Aqui estao as fotos do private label!"
+    msg_fallback.tool_calls = None
 
     third_response = MagicMock()
     third_response.choices = [MagicMock(message=msg_fallback)]

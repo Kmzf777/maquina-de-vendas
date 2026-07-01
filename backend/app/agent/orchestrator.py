@@ -836,6 +836,11 @@ async def run_agent(
             # a intenção era encaminhar_humano mas o retry sem tools re-vazava como tool_code.
             # Apenas UM nível de recuperação — não re-inicia o ciclo ReAct completo.
             if retry_msg.tool_calls and retry_tools is not None:
+                # Espelha o loop principal: registra o turno do assistente e o resultado de cada
+                # tool nas messages, para que a chamada PÓS-TOOL abaixo tenha o contexto e produza
+                # a fala natural (fechamento do ciclo ReAct). Sem esses appends, a continuação
+                # reprocessaria só o vazio e reincidiria no genérico (caso Karl 2026-07-01).
+                messages.append(retry_msg.model_dump(exclude_none=True))
                 for _tc in retry_msg.tool_calls:
                     _rname = _tc.function.name
                     if _rname in _MEDIA_TOOL_NAMES:
@@ -850,6 +855,11 @@ async def run_agent(
                             "[RETRY TOOL] JSON inválido para %s em conv %s — pulando: %s",
                             _rname, conversation_id, _je,
                         )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": _tc.id,
+                            "content": f"erro: argumentos inválidos para {_rname} — tente novamente",
+                        })
                         continue
                     # mudar_stage recuperado: rastreia o novo stage (Minor #4) para que, se o turno
                     # ainda terminar vazio, _empty_fallback_text escolha a pergunta de avanço do
@@ -859,7 +869,7 @@ async def run_agent(
                         if _new_stage:
                             transitioned_to_stage = _new_stage
                     try:
-                        await execute_tool(
+                        _rresult = await execute_tool(
                             _rname, _rargs, lead_id, lead.get("phone", ""), conversation_id
                         )
                     except Exception as _te:
@@ -867,8 +877,14 @@ async def run_agent(
                             "[RETRY TOOL] %s levantou exceção em conv %s: %s",
                             _rname, conversation_id, _te, exc_info=True,
                         )
+                        _rresult = f"erro ao executar {_rname} — tente novamente"
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": _tc.id,
+                        "content": _rresult,
+                    })
                 # Tools terminais recuperadas no retry — mesma ordem e contrato do loop principal,
-                # ANTES do fallback genérico (senão o lead recebe despedida + re-engajamento juntos).
+                # ANTES da chamada pós-tool (senão o lead recebe despedida + continuação juntos).
                 _retry_names = {_tc.function.name for _tc in retry_msg.tool_calls}
                 # encaminhar_humano → sentinel None (handoff; card enviado dentro de execute_tool)
                 if "encaminhar_humano" in _retry_names:
@@ -882,11 +898,37 @@ async def run_agent(
                 # A regra "nunca mudo" vale só para turnos normais, não para descarte.
                 if "registrar_sem_interesse_atual" in _retry_names:
                     return ""
-                # Demais tools recuperadas: executadas acima; cai no fallback final (Change C)
-                # para garantir que o lead receba texto
-            assistant_text = _sanitize_assistant_text(
-                retry_msg.content or "", conversation_id, stage, source="retry"
-            )
+                # Tools NÃO-terminais recuperadas (ex.: salvar_nome): fecha o ciclo ReAct com UMA
+                # chamada PÓS-TOOL de continuação (espelha a linha ~763 do loop principal). Era a
+                # peça que faltava: o retry executava a tool mas não gerava a fala, e o turno caía
+                # no genérico (thinking-burn + retry incompleto, lead Karl 2026-07-01). Apenas UM
+                # nível — não re-inicia o loop; se ainda vier vazio, cai no fallback final (Change C).
+                post_resp = await _create_with_retry(_get_client(model),
+                    model=model,
+                    messages=messages,
+                    tools=retry_tools,
+                    temperature=0.4,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    stop=_STOP_SEQUENCES,
+                    **_gemini_thinking_off(model),
+                )
+                if post_resp.usage:
+                    track_token_usage(
+                        lead_id=lead_id,
+                        stage=stage,
+                        model=model,
+                        call_type="response",
+                        prompt_tokens=post_resp.usage.prompt_tokens,
+                        completion_tokens=post_resp.usage.completion_tokens,
+                    )
+                assistant_text = _sanitize_assistant_text(
+                    post_resp.choices[0].message.content or "",
+                    conversation_id, stage, source="retry-post-tool",
+                )
+            else:
+                assistant_text = _sanitize_assistant_text(
+                    retry_msg.content or "", conversation_id, stage, source="retry"
+                )
         except Exception as _exc:
             logger.error(
                 "[AGENT EMPTY] retry silencioso falhou para conv %s: %s", conversation_id, _exc,
