@@ -40,8 +40,10 @@ def _register_lead(
 ) -> None:
     """Ensure the lead exists in the CRM the moment they contact us (BackgroundTask).
 
-    Uses resolve_lead_identity so a phone-less (BSUID-only) message still creates/finds a
-    lead, and a later phone reappearance merges onto it.
+    Passa o `bsuid` (Business-Scoped User ID) para o get_or_create_lead: numa mensagem
+    só-BSUID (adotante de username, sem telefone) o lead é criado/achado pela coluna bsuid;
+    numa mensagem com telefone, o bsuid é carimbado no lead (merge) para reencontrá-lo caso
+    o usuário passe a omitir o telefone depois.
 
     Também captura o `wa_id` REAL: `from_number` é o `messages[].from` cru da Meta —
     o endereço que a Meta de fato entrega. Guardamos no lead para usar como destino de
@@ -54,8 +56,9 @@ def _register_lead(
     ctwa_clid=None e NUNCA sobrescrevem um clid já capturado. Base p/ disparos via CAPI.
     """
     try:
-        from app.leads.service import resolve_lead_identity
-        lead = resolve_lead_identity(from_number or None, bsuid, name=push_name)
+        lead = get_or_create_lead(
+            from_number, name=push_name, channel="whatsapp", ctwa_clid=ctwa_clid, bsuid=bsuid
+        )
     except Exception as exc:
         logger.warning("Failed to register lead for %s/%s: %s", from_number, bsuid, exc)
         return
@@ -78,6 +81,15 @@ def _register_lead(
             update_lead(lead["id"], metadata=new_meta)
     except Exception as exc:
         logger.warning("Failed to stamp ctwa origem=%s for lead %s: %s", ctwa_origem, lead.get("id"), exc)
+    # Merge do BSUID: carimba o bsuid num lead já existente que ainda não o tem (get_or_create
+    # só o injeta na criação). Assim, se este usuário passar a omitir o telefone (adoção de
+    # username), continuamos a reencontrá-lo pela coluna bsuid. Fail-soft: uma colisão do
+    # índice único (bsuid já pertence a outro lead) só loga, nunca derruba o registro.
+    try:
+        if lead and is_bsuid(bsuid) and lead.get("bsuid") != bsuid:
+            update_lead(lead["id"], bsuid=bsuid)
+    except Exception as exc:
+        logger.warning("Failed to stamp bsuid=%s for lead %s: %s", bsuid, lead.get("id"), exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:
