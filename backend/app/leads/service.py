@@ -10,15 +10,33 @@ logger = logging.getLogger(__name__)
 _PHONE_RE = re.compile(r"[^\d]+")
 _TZ_BR = timezone(timedelta(hours=-3))
 
+# BSUID (Business-Scoped User ID): two ASCII letters + '.' + alphanumerics,
+# e.g. "US.13491208655302741918". Phones are digits-only, so the letter+dot
+# prefix disambiguates them. Optional "ENT." segment = parent BSUID (also matches).
+_BSUID_RE = re.compile(r"^[A-Za-z]{2}\.(?:ENT\.)?[A-Za-z0-9]+$")
+
+
+def is_bsuid(value: str | None) -> bool:
+    """True if the value is a WhatsApp Business-Scoped User ID (not a phone number)."""
+    if not value:
+        return False
+    return bool(_BSUID_RE.match(value.strip()))
+
 # Autor fixo das observações geradas automaticamente ao disparar um template.
 # Aparece como rótulo na timeline do card de CRM (lead_notes).
 DISPATCH_NOTE_AUTHOR = "sistema-disparo"
 
 
 def normalize_phone(phone: str | None) -> str:
-    """Normalize to E.164 without '+'. Injects the Brazilian 9th digit when missing."""
+    """Normalize to E.164 without '+'. Injects the Brazilian 9th digit when missing.
+
+    If `phone` is a WhatsApp BSUID (e.g. "US.13491208655302741918"), it is returned
+    unchanged — BSUIDs are not phone numbers and must not be stripped of their letters.
+    """
     if not phone:
         return ""
+    if is_bsuid(phone):
+        return phone.strip()
     if phone.startswith("whatsapp:"):
         phone = phone[len("whatsapp:"):]
     digits = _PHONE_RE.sub("", phone)
