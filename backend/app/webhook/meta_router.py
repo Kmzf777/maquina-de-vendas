@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response
 from app.webhook.meta_parser import parse_meta_webhook_payload, extract_phone_number_id
 from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
-from app.leads.service import get_or_create_lead, normalize_phone, reset_lead, purge_dev_lead, update_lead
+from app.leads.service import get_or_create_lead, normalize_phone, reset_lead, purge_dev_lead, update_lead, is_bsuid
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
@@ -36,12 +36,14 @@ def _register_lead(
     push_name: str | None,
     ctwa_clid: str | None = None,
     ctwa_origem: str | None = None,
+    bsuid: str | None = None,
 ) -> None:
-    """Ensure the lead exists in the CRM the moment they contact us.
+    """Ensure the lead exists in the CRM the moment they contact us (BackgroundTask).
 
-    Called as a BackgroundTask so it never delays the webhook response.
-    Runs before the buffer flushes, guaranteeing CRM registration even if
-    the buffer fails (e.g. backend restart during buffering).
+    Passa o `bsuid` (Business-Scoped User ID) para o get_or_create_lead: numa mensagem
+    só-BSUID (adotante de username, sem telefone) o lead é criado/achado pela coluna bsuid;
+    numa mensagem com telefone, o bsuid é carimbado no lead (merge) para reencontrá-lo caso
+    o usuário passe a omitir o telefone depois.
 
     Também captura o `wa_id` REAL: `from_number` é o `messages[].from` cru da Meta —
     o endereço que a Meta de fato entrega. Guardamos no lead para usar como destino de
@@ -54,12 +56,14 @@ def _register_lead(
     ctwa_clid=None e NUNCA sobrescrevem um clid já capturado. Base p/ disparos via CAPI.
     """
     try:
-        lead = get_or_create_lead(from_number, name=push_name, channel="whatsapp", ctwa_clid=ctwa_clid)
+        lead = get_or_create_lead(
+            from_number, name=push_name, channel="whatsapp", ctwa_clid=ctwa_clid, bsuid=bsuid
+        )
     except Exception as exc:
-        logger.warning("Failed to register lead for %s: %s", from_number, exc)
+        logger.warning("Failed to register lead for %s/%s: %s", from_number, bsuid, exc)
         return
     try:
-        if lead and from_number and lead.get("wa_id") != from_number:
+        if lead and from_number and not is_bsuid(from_number) and lead.get("wa_id") != from_number:
             update_lead(lead["id"], wa_id=from_number)
     except Exception as exc:
         logger.warning("Failed to capture wa_id=%s for lead %s: %s", from_number, lead.get("id"), exc)
@@ -77,16 +81,31 @@ def _register_lead(
             update_lead(lead["id"], metadata=new_meta)
     except Exception as exc:
         logger.warning("Failed to stamp ctwa origem=%s for lead %s: %s", ctwa_origem, lead.get("id"), exc)
+    # Merge do BSUID: carimba o bsuid num lead já existente que ainda não o tem (get_or_create
+    # só o injeta na criação). Assim, se este usuário passar a omitir o telefone (adoção de
+    # username), continuamos a reencontrá-lo pela coluna bsuid. Fail-soft: uma colisão do
+    # índice único (bsuid já pertence a outro lead) só loga, nunca derruba o registro.
+    try:
+        if lead and is_bsuid(bsuid) and lead.get("bsuid") != bsuid:
+            update_lead(lead["id"], bsuid=bsuid)
+    except Exception as exc:
+        logger.warning("Failed to stamp bsuid=%s for lead %s: %s", bsuid, lead.get("id"), exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:
-    """Update last_customer_message_at so the 24h window status stays current."""
+    """Update last_customer_message_at so the 24h window status stays current.
+
+    `phone` is the routing identity — a normalized phone OR a BSUID (username adopter,
+    whose lead row has phone="" and is keyed by the bsuid column). Match on the right
+    column so the 24h window and follow-up cancellation also work for BSUID-only leads.
+    """
     normalized = normalize_phone(phone)
+    id_col = "bsuid" if is_bsuid(normalized) else "phone"
     try:
         run_with_retry(
             lambda: get_supabase().table("leads").update(
                 {"last_customer_message_at": datetime.now(timezone.utc).isoformat()}
-            ).eq("phone", normalized).execute(),
+            ).eq(id_col, normalized).execute(),
             label="last_customer_message_at",
         )
     except Exception as e:
@@ -95,8 +114,7 @@ def _track_inbound_message_time(phone: str) -> None:
     # Cancela follow-ups pendentes pois cliente respondeu
     try:
         from app.follow_up.service import cancel_followups_by_phone
-        normalized_for_cancel = normalize_phone(phone)
-        cancel_followups_by_phone(normalized_for_cancel, reason="client_replied")
+        cancel_followups_by_phone(normalized, reason="client_replied")
     except Exception as e:
         logger.warning(f"[FOLLOWUP] Failed to cancel follow-ups for {phone}: {e}")
 
@@ -107,12 +125,17 @@ router = APIRouter()
 
 
 def _extract_from_number(payload: dict) -> str | None:
+    """Routing identity from raw payload: phone (messages[].from) or BSUID (from_user_id).
+
+    Runs on the raw payload before parsing so the Dev Router catches every message type
+    (CLAUDE.md section 2). Returns the phone when present, else the BSUID, else None.
+    """
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             for msg in change.get("value", {}).get("messages", []):
-                from_number = msg.get("from")
-                if from_number:
-                    return from_number
+                identity = msg.get("from") or msg.get("from_user_id")
+                if identity:
+                    return identity
     return None
 
 
@@ -182,6 +205,36 @@ async def _handle_delivery_status(wamid: str, status: str, errors: list | None =
                 await fire_billing_alert(errors or [])
         except Exception as e:
             logger.warning("[DELIVERY] Failed to process broadcast failure for wamid=%s: %s", wamid, e)
+
+
+def _status_has_backfillable_contact(payload: dict) -> bool:
+    """True if any contacts block carries both wa_id and user_id (a phone worth backfilling).
+
+    Lets the caller skip enqueuing the backfill task on the vast majority of delivery/read
+    receipts, which carry no such pair.
+    """
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            for c in change.get("value", {}).get("contacts", []):
+                if c.get("wa_id") and c.get("user_id"):
+                    return True
+    return False
+
+
+def _backfill_phone_from_status(payload: dict) -> None:
+    """When a status/contacts block carries both wa_id and user_id, merge the phone
+    onto the BSUID lead (free phone recovery for username adopters)."""
+    try:
+        from app.leads.service import resolve_lead_identity
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                for c in change.get("value", {}).get("contacts", []):
+                    wa_id = c.get("wa_id")
+                    user_id = c.get("user_id")
+                    if wa_id and user_id:
+                        resolve_lead_identity(wa_id, user_id)
+    except Exception as exc:
+        logger.warning("[DELIVERY] phone backfill failed: %s", exc)
 
 
 def _extract_template_events(payload: dict) -> list[dict]:
@@ -373,7 +426,7 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
             # Delivery/read receipts have no messages[].from — check recipient_id in statuses
             statuses = _extract_statuses(payload)
             if statuses:
-                from_number = statuses[0].get("recipient_id")
+                from_number = statuses[0].get("recipient_id") or statuses[0].get("recipient_user_id")
         if from_number:
             dev_url = await get_dev_route(redis, from_number)
             logger.info(
@@ -418,6 +471,9 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         if wamid and status:
             background_tasks.add_task(_handle_delivery_status, wamid, status, errors)
 
+    if _status_has_backfillable_contact(payload):
+        background_tasks.add_task(_backfill_phone_from_status, payload)
+
     for msg in messages:
         # NOTE: marcamos o wamid como visto na ingestão (antes do processamento). Se o
         # push_to_buffer falhar logo após o SETNX, uma reentrega da Meta seria pulada —
@@ -431,12 +487,13 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
             )
             continue
 
+        identity = msg.from_number or msg.bsuid or ""
         logger.info(f"Meta message from {msg.from_number}: type={msg.type}")
         msg.channel_id = channel["id"]
 
         # Register lead immediately — guarantees CRM entry before buffer flushes.
         # ctwa_clid (se presente) vincula o lead ao clique do anúncio Meta Ads (CTWA).
-        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid, msg.ctwa_origem)
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid, msg.ctwa_origem, msg.bsuid)
 
         # CA#1: o read receipt (tique azul) NÃO é mais disparado aqui na ingestão — isso
         # marcava a mensagem como lida instantaneamente (tique de robô). Agora o mark_read
@@ -446,19 +503,19 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
 
         if msg.text and msg.text.strip().lower() == "!resetar":
             try:
-                result = purge_dev_lead(msg.from_number)
+                result = purge_dev_lead(identity)
                 provider = get_provider(channel)
                 if result.get("purged"):
-                    await provider.send_text(msg.from_number, "Lead removido completamente do CRM. Pode comecar do zero.")
+                    await provider.send_text(identity, "Lead removido completamente do CRM. Pode comecar do zero.")
                 else:
-                    await provider.send_text(msg.from_number, f"Nada a remover: {result.get('reason', 'lead nao encontrado')}.")
+                    await provider.send_text(identity, f"Nada a remover: {result.get('reason', 'lead nao encontrado')}.")
             except ValueError:
                 logger.warning("[RESET] !resetar ignorado: numero %s nao esta na whitelist de dev", msg.from_number)
             except Exception as e:
                 logger.error(f"Failed to purge lead: {e}", exc_info=True)
             continue
 
-        background_tasks.add_task(_track_inbound_message_time, msg.from_number)
+        background_tasks.add_task(_track_inbound_message_time, identity)
         try:
             await push_to_buffer(redis, msg)
         except Exception as exc:

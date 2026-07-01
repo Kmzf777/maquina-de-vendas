@@ -44,15 +44,21 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
 
             for msg in value.get("messages", []):
                 from_number = msg.get("from", "")
+                bsuid = msg.get("from_user_id")
                 message_id = msg.get("id", "")
                 timestamp = msg.get("timestamp", "")
                 msg_type = msg.get("type", "")
 
                 contacts = value.get("contacts", [])
                 push_name = None
+                username = None
                 if contacts:
                     profile = contacts[0].get("profile", {})
                     push_name = profile.get("name")
+                    username = profile.get("username")
+                    # Fallback BSUID from the contacts block if the message lacked from_user_id.
+                    if not bsuid:
+                        bsuid = contacts[0].get("user_id")
 
                 text = None
                 media_url = None
@@ -176,6 +182,8 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     quoted_wamid=quoted_wamid,
                     ctwa_clid=ctwa_clid,
                     ctwa_origem=ctwa_origem,
+                    bsuid=bsuid,
+                    username=username,
                 ))
 
     return messages

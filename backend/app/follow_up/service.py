@@ -188,14 +188,21 @@ def cancel_followups(conversation_id: str, reason: str) -> None:
 
 
 def cancel_followups_by_phone(phone: str, reason: str) -> None:
-    """Cancela follow-ups pending de todas as conversas de um lead pelo phone."""
+    """Cancela follow-ups pending de todas as conversas de um lead pelo phone (ou BSUID).
+
+    `phone` pode ser um BSUID (adotante de username, cujo lead tem phone="" e é keyed
+    pela coluna bsuid). Casa na coluna certa para também cancelar follow-ups de leads
+    só-BSUID.
+    """
+    from app.leads.service import is_bsuid
     sb = get_supabase()
+    id_col = "bsuid" if is_bsuid(phone) else "phone"
 
     try:
         lead_result = (
             sb.table("leads")
             .select("id")
-            .eq("phone", phone)
+            .eq(id_col, phone)
             .limit(1)
             .execute()
         )

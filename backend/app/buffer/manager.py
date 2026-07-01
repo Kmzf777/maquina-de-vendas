@@ -22,7 +22,9 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
     """Push a message to the buffer (or process immediately if buffer is off)."""
     from app.buffer.processor import process_buffered_messages
 
-    phone = normalize_phone(msg.from_number)
+    # Identity = normalized phone, or the BSUID when the phone was omitted (username adopter).
+    # normalize_phone passes a BSUID through unchanged, so the key stays unique per user.
+    phone = normalize_phone(msg.from_number) or (msg.bsuid or "")
     channel_id = msg.channel_id or ""
 
     # Determine text content (will be resolved later for media)

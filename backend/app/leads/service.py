@@ -10,15 +10,33 @@ logger = logging.getLogger(__name__)
 _PHONE_RE = re.compile(r"[^\d]+")
 _TZ_BR = timezone(timedelta(hours=-3))
 
+# BSUID (Business-Scoped User ID): two ASCII letters + '.' + alphanumerics,
+# e.g. "US.13491208655302741918". Phones are digits-only, so the letter+dot
+# prefix disambiguates them. Optional "ENT." segment = parent BSUID (also matches).
+_BSUID_RE = re.compile(r"^[A-Za-z]{2}\.(?:ENT\.)?[A-Za-z0-9]+$")
+
+
+def is_bsuid(value: str | None) -> bool:
+    """True if the value is a WhatsApp Business-Scoped User ID (not a phone number)."""
+    if not value:
+        return False
+    return bool(_BSUID_RE.match(value.strip()))
+
 # Autor fixo das observações geradas automaticamente ao disparar um template.
 # Aparece como rótulo na timeline do card de CRM (lead_notes).
 DISPATCH_NOTE_AUTHOR = "sistema-disparo"
 
 
 def normalize_phone(phone: str | None) -> str:
-    """Normalize to E.164 without '+'. Injects the Brazilian 9th digit when missing."""
+    """Normalize to E.164 without '+'. Injects the Brazilian 9th digit when missing.
+
+    If `phone` is a WhatsApp BSUID (e.g. "US.13491208655302741918"), it is returned
+    unchanged — BSUIDs are not phone numbers and must not be stripped of their letters.
+    """
     if not phone:
         return ""
+    if is_bsuid(phone):
+        return phone.strip()
     if phone.startswith("whatsapp:"):
         phone = phone[len("whatsapp:"):]
     digits = _PHONE_RE.sub("", phone)
@@ -173,10 +191,37 @@ def get_or_create_lead(
     channel: str | None = None,
     ctwa_clid: str | None = None,
     tracking: dict[str, Any] | None = None,
+    bsuid: str | None = None,
 ) -> dict[str, Any]:
     sb = get_supabase()
     # Não persistir handle/username (ex.: push_name "Brunor_barista") como nome do lead.
     name = sanitize_display_name(name)
+
+    # BSUID identity path: phone omitted (username adopter). Look up by BSUID; create a
+    # phone-less lead keyed by BSUID if none exists. Phone is merged later by
+    # resolve_lead_identity when it reappears.
+    incoming_bsuid = bsuid if is_bsuid(bsuid) else (phone if is_bsuid(phone) else None)
+    if incoming_bsuid and (not phone or is_bsuid(phone)):
+        existing = sb.table("leads").select("*").eq("bsuid", incoming_bsuid).limit(1).execute()
+        if existing.data:
+            lead = existing.data[0]
+            if name and not lead.get("name"):
+                try:
+                    sb.table("leads").update({"name": name}).eq("id", lead["id"]).execute()
+                    lead = {**lead, "name": name}
+                except Exception as exc:
+                    logger.warning("leads.service: failed to backfill name for bsuid lead %s: %s", lead["id"], exc)
+            return lead
+        insert = {"phone": "", "bsuid": incoming_bsuid}
+        if name:
+            insert["name"] = name
+        if channel:
+            insert["channel"] = channel
+        if ctwa_clid:
+            insert["ctwa_clid"] = ctwa_clid
+        created = sb.table("leads").insert(insert).execute()
+        return created.data[0]
+
     normalized = normalize_phone(phone)
 
     # Digits-only form without 9th digit injection — matches legacy DB rows stored before normalization
@@ -309,6 +354,8 @@ def get_or_create_lead(
         val = merged_tracking.get(col)
         if val:
             new_lead[col] = val
+    if is_bsuid(bsuid):
+        new_lead["bsuid"] = bsuid
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 
@@ -351,13 +398,49 @@ def resolve_send_target(lead: dict[str, Any] | None, fallback: str | None = None
     (normalizado, que injeta o 9º dígito BR). Alguns números estão no WhatsApp SEM o 9,
     então enviar para o phone normalizado falha com Meta 131026 "Message Undeliverable" —
     o `wa_id` é o endereço que a Meta de fato entrega. NULL/ausente → cai para phone, depois
-    para `fallback`. Ver migration 20260616_leads_wa_id.sql.
+    para `bsuid` (username adopters cujo número não foi revelado pela Meta — o Meta client
+    roteia um BSUID para o campo `recipient` normalmente), depois para `fallback`.
+    Ver migration 20260616_leads_wa_id.sql e 2026-07-01_leads_bsuid.sql.
     """
     if lead:
-        target = lead.get("wa_id") or lead.get("phone")
+        target = lead.get("wa_id") or lead.get("phone") or lead.get("bsuid")
         if target:
             return target
     return fallback or ""
+
+
+def resolve_lead_identity(phone: str | None, bsuid: str | None, name: str | None = None) -> dict[str, Any]:
+    """Resolve (and reconcile) a lead from a phone and/or BSUID.
+
+    - Phone present -> normal phone lookup/create; stamp the BSUID onto the lead.
+    - Phone absent  -> BSUID lookup/create.
+    - Merge: if a phone-lead exists and a separate BSUID-only lead also exists, prefer
+      the phone-lead, stamp the BSUID onto it, and log the duplicate for manual review
+      (never auto-delete a real lead).
+    """
+    sb = get_supabase()
+    real_phone = phone if (phone and not is_bsuid(phone)) else None
+    real_bsuid = bsuid if is_bsuid(bsuid) else (phone if is_bsuid(phone) else None)
+
+    if real_phone:
+        lead = get_or_create_lead(real_phone, name=name)
+        if real_bsuid and lead.get("bsuid") != real_bsuid:
+            try:
+                dup = sb.table("leads").select("id").eq("bsuid", real_bsuid).neq("id", lead["id"]).limit(1).execute()
+                if dup.data:
+                    logger.warning(
+                        "leads.service: BSUID %s already on lead %s while phone-lead is %s — "
+                        "keeping phone-lead, manual reconcile needed",
+                        real_bsuid, dup.data[0]["id"], lead["id"],
+                    )
+                else:
+                    sb.table("leads").update({"bsuid": real_bsuid}).eq("id", lead["id"]).execute()
+                    lead = {**lead, "bsuid": real_bsuid}
+            except Exception as exc:
+                logger.warning("leads.service: failed to stamp bsuid on lead %s: %s", lead["id"], exc)
+        return lead
+
+    return get_or_create_lead("", name=name, bsuid=real_bsuid)
 
 
 def append_lead_observation(lead_id: str, text: str) -> None:

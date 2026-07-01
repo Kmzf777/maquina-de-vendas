@@ -9,8 +9,18 @@ from email.utils import parsedate_to_datetime
 import httpx
 from app.whatsapp.base import WhatsAppProvider
 from app.meta_audit import log_outbound
+from app.leads.service import is_bsuid
 
 META_API_BASE = "https://graph.facebook.com"
+
+
+def _recipient_field(target: str) -> dict:
+    """Meta addressing field for a recipient.
+
+    A BSUID (e.g. "US.1349...") must be sent as `recipient`; a phone number as `to`.
+    The two are format-distinguishable, so callers keep passing a single target string.
+    """
+    return {"recipient": target} if is_bsuid(target) else {"to": target}
 
 # A1 — robustez de envio à Meta:
 # timeout explícito + cliente compartilhado (pool/keep-alive) + retry com backoff.
@@ -192,7 +202,7 @@ class MetaCloudClient(WhatsAppProvider):
                 response=response_data,
                 status_code=status_code,
                 success=success,
-                to_number=payload.get("to"),
+                to_number=payload.get("to") or payload.get("recipient"),
                 phone_number_id=self.phone_number_id,
                 error_message=error_msg,
             )
@@ -200,7 +210,7 @@ class MetaCloudClient(WhatsAppProvider):
     async def send_text(self, to: str, body: str) -> dict:
         result = await self._post({
             "messaging_product": "whatsapp",
-            "to": to,
+            **_recipient_field(to),
             "type": "text",
             "text": {"body": body},
         }, request_type="send_text")
@@ -215,7 +225,7 @@ class MetaCloudClient(WhatsAppProvider):
     async def send_image(self, to: str, image_url: str, caption: str | None = None) -> dict:
         payload: dict = {
             "messaging_product": "whatsapp",
-            "to": to,
+            **_recipient_field(to),
             "type": "image",
             "image": {"link": image_url},
         }
@@ -277,7 +287,7 @@ class MetaCloudClient(WhatsAppProvider):
         media_id = await self.upload_media(image_bytes, mimetype)
         payload: dict = {
             "messaging_product": "whatsapp",
-            "to": to,
+            **_recipient_field(to),
             "type": "image",
             "image": {"id": media_id},
         }
@@ -292,7 +302,7 @@ class MetaCloudClient(WhatsAppProvider):
     async def send_audio(self, to: str, audio_url: str) -> dict:
         return await self._post({
             "messaging_product": "whatsapp",
-            "to": to,
+            **_recipient_field(to),
             "type": "audio",
             "audio": {"link": audio_url},
         }, request_type="send_audio")
@@ -302,7 +312,7 @@ class MetaCloudClient(WhatsAppProvider):
         digits = "".join(ch for ch in contact_phone if ch.isdigit())
         payload = {
             "messaging_product": "whatsapp",
-            "to": to,
+            **_recipient_field(to),
             "type": "contacts",
             "contacts": [
                 {
@@ -324,7 +334,7 @@ class MetaCloudClient(WhatsAppProvider):
     async def send_template(self, to: str, template_name: str, components: list | None = None, language_code: str = "pt_BR") -> dict:
         payload = {
             "messaging_product": "whatsapp",
-            "to": to,
+            **_recipient_field(to),
             "type": "template",
             "template": {
                 "name": template_name,
