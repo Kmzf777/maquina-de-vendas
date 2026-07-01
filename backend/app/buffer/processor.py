@@ -17,7 +17,7 @@ from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
     update_conversation, save_message,
 )
-from app.agent.orchestrator import run_agent, resolve_prompt_key
+from app.agent.orchestrator import run_agent, resolve_prompt_key, LLMUnavailableError
 from app.agent.persona import resolve_persona_prompt_key
 from app.agent_profiles.service import get_profile_id_by_prompt_key
 from app.humanizer.splitter import split_into_bubbles
@@ -487,6 +487,48 @@ def _count_recent_failed_audio(conversation_id: str, window_minutes: int = 30) -
         return 0
 
 
+_LLM_FAILURE_KEY = "llm:consecutive_failures"
+_LLM_DOWN_ALERT_THRESHOLD = 3
+
+
+async def _reset_llm_failures() -> None:
+    """Zera o contador de falhas consecutivas de LLM no 1º sucesso. Fail-soft."""
+    try:
+        await _get_buffer_redis().delete(_LLM_FAILURE_KEY)
+    except Exception as exc:
+        logger.debug("[LLM DOWN] falha ao resetar contador: %s", exc)
+
+
+async def _record_llm_failure() -> int:
+    """INCR do contador de falhas consecutivas de LLM. Fail-open (0 em erro)."""
+    try:
+        return int(await _get_buffer_redis().incr(_LLM_FAILURE_KEY))
+    except Exception as exc:
+        logger.warning("[LLM DOWN] falha ao incrementar contador: %s", exc)
+        return 0
+
+
+async def _handle_llm_down(lead: dict, phone: str, conversation: dict) -> None:
+    """Fallback quando o LLM está fora: encaminha o lead ao humano (cartão do João)
+    em vez de fantasmá-lo. Reutiliza encaminhar_humano (desativa IA, cria deal,
+    cancela follow-ups, envia o cartão de contato do João, agenda rescue). Fail-soft:
+    nenhuma falha aqui pode escalar. Contador/alerta são plugados na Task 3.
+    """
+    try:
+        from app.agent.tools import execute_tool
+        await execute_tool(
+            "encaminhar_humano",
+            {"vendedor": "Joao Bras",
+             "motivo": "IA temporariamente indisponível — atendimento encaminhado ao humano"},
+            lead_id=lead["id"], phone=phone, conversation_id=conversation["id"],
+        )
+    except Exception as exc:
+        logger.error(
+            "[LLM DOWN] falha no handoff automático p/ %s (conv=%s): %s",
+            phone, conversation.get("id"), exc, exc_info=True,
+        )
+
+
 async def process_buffered_messages(
     phone: str, combined_text: str, channel_id: str = "",
     wamid: str | None = None, quoted_wamid: str | None = None,
@@ -824,7 +866,17 @@ async def process_buffered_messages(
                         lead_context=lead_context,
                         agent_profile_id=agent_profile_id,
                     )
+                    await _reset_llm_failures()
                     break
+                except LLMUnavailableError as e:
+                    logger.error(
+                        "[LLM DOWN] LLM indisponível para %s (conv=%s): %s",
+                        phone, conversation["id"], e, exc_info=True,
+                    )
+                    pop_interest_marked(conversation["id"])
+                    await _handle_llm_down(lead, phone, conversation)
+                    _update_last_msg(conversation["id"])
+                    return
                 except Exception as e:
                     if attempt < _AGENT_MAX_ATTEMPTS:
                         logger.warning(
