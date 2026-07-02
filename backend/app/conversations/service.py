@@ -296,8 +296,7 @@ def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
         .execute()
     )
     rows = result.data or []
-    rows.reverse()                        # volta à ordem cronológica ascendente (contrato inalterado)
-    return rows
+    return list(reversed(rows))           # volta à ordem cronológica ascendente (contrato inalterado)
 
 
 def reset_unread_count(conversation_id: str) -> dict[str, Any]:
