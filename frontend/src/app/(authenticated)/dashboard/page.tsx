@@ -10,6 +10,7 @@ import { FunnelMovement } from "@/components/dashboard/funnel-movement";
 import { SlaTable } from "@/components/dashboard/sla-table";
 import { OverdueLeadsSection } from "@/components/dashboard/overdue-leads-section";
 import { OnlineUsersSection } from "@/components/dashboard/online-users-section";
+import { ConversionsSection } from "@/components/dashboard/conversions-section";
 
 const TrendUpIcon = (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -149,6 +150,8 @@ export default function DashboardPage() {
         <div className="mb-8">
           <FunnelMovement deals={deals} />
         </div>
+
+        <ConversionsSection />
       </div>
     </div>
   );
