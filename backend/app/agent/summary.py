@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from openai import AsyncOpenAI
+from app.agent.gemini_native import GeminiNativeClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ Regras obrigatórias:
 async def generate_qualification_summary(
     history: list[dict[str, Any]],
     lead: dict[str, Any],
-    client: AsyncOpenAI,
+    client: GeminiNativeClient,
     model: str,
     motivo: str = "",
     handoff_at: str = "",
@@ -44,7 +44,7 @@ async def generate_qualification_summary(
     Args:
         history: lista de mensagens com campos role, content (de conversations.service.get_history)
         lead: dict do lead com campos name, stage, company
-        client: instância AsyncOpenAI (OpenAI ou Gemini-compat)
+        client: instância GeminiNativeClient (SDK nativo google-genai)
         model: nome do modelo a usar
         motivo: motivo do handoff capturado de encaminhar_humano (opcional)
         handoff_at: data/hora do handoff formatada como "DD/MM/YYYY HH:MM" (opcional)

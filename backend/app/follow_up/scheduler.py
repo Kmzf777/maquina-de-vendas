@@ -4,8 +4,8 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import httpx
-from openai import AsyncOpenAI
 
+from app.agent.gemini_native import get_client as get_gemini_client
 from app.config import settings
 from app.follow_up.service import get_due_followups
 from app.leads.service import resolve_send_target, create_deal, record_dispatch_note
@@ -278,7 +278,6 @@ async def _health_check_via_logs(now: datetime) -> None:
         logger.error("[HEALTH] Falha ao escanear logs por billing errors: %s", exc)
 
 
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _FOLLOWUP_MODEL = "gemini-2.5-flash"
 # gemini-2.5-flash conta tokens de thinking + texto no MESMO budget via API de compatibilidade.
 # Com max_tokens baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
@@ -463,10 +462,7 @@ async def _generate_followup_message(
     """
     from app.agent.orchestrator import _gemini_thinking_off
 
-    client = AsyncOpenAI(
-        api_key=settings.gemini_api_key,
-        base_url=_GEMINI_BASE_URL,
-    )
+    client = get_gemini_client()
 
     messages_text = "\n".join(
         f"{'Cliente' if m['role'] == 'user' else 'Vendedor'}: {m['content']}"
