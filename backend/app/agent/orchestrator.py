@@ -360,7 +360,7 @@ _LLM_RETRY_DELAY = 2  # segundos
 
 
 class LLMUnavailableError(Exception):
-    """LLM persistentemente indisponível após esgotar os retries (conexão/429/5xx).
+    """LLM persistentemente indisponível após esgotar os retries (conexão/403/429/5xx).
 
     Distingue 'LLM fora' de um bug qualquer: o processor usa este tipo para acionar o
     fallback de handoff (encaminhar_humano) em vez de falhar em silêncio.
@@ -371,9 +371,9 @@ async def _create_with_retry(client: AsyncOpenAI, **kwargs):
     """chat.completions.create com retry em indisponibilidade transitória.
 
     Retenta drops de conexão (GOAWAY/timeout) E erros HTTP transitórios do provedor
-    (429 rate-limit/quota, 5xx) com backoff exponencial, honrando Retry-After. Erros
-    não-retentáveis (4xx exceto 429) são relançados na hora. Ao esgotar as tentativas
-    de indisponibilidade → LLMUnavailableError.
+    (429 rate-limit/quota, 403 billing/permissão negada, 5xx) com backoff exponencial,
+    honrando Retry-After. Erros não-retentáveis (4xx exceto 403/429) são relançados na
+    hora. Ao esgotar as tentativas de indisponibilidade → LLMUnavailableError.
     """
     last_exc: Exception | None = None
     for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
@@ -388,8 +388,8 @@ async def _create_with_retry(client: AsyncOpenAI, **kwargs):
             )
         except openai.APIStatusError as exc:
             status = getattr(exc, "status_code", None)
-            if status != 429 and not (isinstance(status, int) and status >= 500):
-                raise  # 4xx não-retentável (400/401/...) → relança cru
+            if status not in (403, 429) and not (isinstance(status, int) and status >= 500):
+                raise  # 4xx não-retentável (400/401/404/...) → relança cru
             last_exc = exc
             try:
                 _retry_after = float(exc.response.headers.get("retry-after", 0) or 0)
