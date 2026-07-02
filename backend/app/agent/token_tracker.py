@@ -46,11 +46,11 @@ def track_token_usage(
     Args:
         lead_id: UUID of the lead
         stage: Agent stage at time of call
-        model: Model name (e.g. 'gpt-4.1')
+        model: Model name (e.g. 'gemini-2.5-flash')
         call_type: One of 'classification', 'response', 'media_description', 'media_transcription'
         prompt_tokens: Input tokens from response.usage
         completion_tokens: Output tokens from response.usage
-        total_cost_override: If set, use this instead of calculating from tokens (for Whisper)
+        total_cost_override: If set, use this instead of calculating from tokens (ex.: custo de transcrição estimado)
     """
     pricing = get_model_pricing(model)
 

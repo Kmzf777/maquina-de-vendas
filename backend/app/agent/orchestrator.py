@@ -26,7 +26,6 @@ from app.leads.service import get_lead, update_lead
 
 logger = logging.getLogger(__name__)
 
-_openai_client: AsyncOpenAI | None = None
 _gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -238,7 +237,6 @@ def _looks_like_handoff_announcement(text: str) -> bool:
     return bool(_HANDOFF_ANNOUNCEMENT_RE.search(_normalize_for_handoff_re(text)))
 
 
-_OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # ---------------------------------------------------------------------------
@@ -319,10 +317,6 @@ def _render_history_content(msg: dict, resolved: dict | None = None) -> str:
         return msg.get("content") or ""
 
 
-def _is_valid_openai_model(model: str) -> bool:
-    return any(model.startswith(p) for p in _OPENAI_MODEL_PREFIXES)
-
-
 def _is_gemini_model(model: str) -> bool:
     return model.startswith("gemini-")
 
@@ -334,18 +328,11 @@ def _gemini_thinking_off(model: str) -> dict:
     completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A doc oficial
     (OpenAI-compat) permite `reasoning_effort="none"` para DESLIGAR o thinking nos modelos
     2.5 — mas NÃO em 2.5-pro nem 3.x, que rejeitam o valor. Por isso retornamos {} nesses
-    casos (e para modelos OpenAI), evitando um 400 em produção.
+    casos (2.5-pro e 3.x), evitando um 400 em produção.
     """
     if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
         return {"reasoning_effort": "none"}
     return {}
-
-
-def _get_openai() -> AsyncOpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-    return _openai_client
 
 
 def _get_gemini() -> AsyncOpenAI:
@@ -361,7 +348,7 @@ def _get_gemini() -> AsyncOpenAI:
 
 
 def _get_client(model: str) -> AsyncOpenAI:
-    return _get_gemini() if _is_gemini_model(model) else _get_openai()
+    return _get_gemini()
 
 
 # Drops de conexão HTTP/2 (GOAWAY) sob concorrência (rajada de disparo) derrubavam
@@ -372,10 +359,25 @@ _LLM_RETRY_ATTEMPTS = 3
 _LLM_RETRY_DELAY = 2  # segundos
 
 
+class LLMUnavailableError(Exception):
+    """LLM persistentemente indisponível após esgotar os retries (conexão/429/5xx).
+
+    Distingue 'LLM fora' de um bug qualquer: o processor usa este tipo para acionar o
+    fallback de handoff (encaminhar_humano) em vez de falhar em silêncio.
+    """
+
+
 async def _create_with_retry(client: AsyncOpenAI, **kwargs):
-    """chat.completions.create com retry em drops de conexão (GOAWAY/timeout)."""
+    """chat.completions.create com retry em indisponibilidade transitória.
+
+    Retenta drops de conexão (GOAWAY/timeout) E erros HTTP transitórios do provedor
+    (429 rate-limit/quota, 5xx) com backoff exponencial, honrando Retry-After. Erros
+    não-retentáveis (4xx exceto 429) são relançados na hora. Ao esgotar as tentativas
+    de indisponibilidade → LLMUnavailableError.
+    """
     last_exc: Exception | None = None
     for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
+        _delay = _LLM_RETRY_DELAY * (2 ** (attempt - 1))
         try:
             return await client.chat.completions.create(**kwargs)
         except (openai.APIConnectionError, openai.APITimeoutError, httpx.TransportError) as exc:
@@ -384,9 +386,25 @@ async def _create_with_retry(client: AsyncOpenAI, **kwargs):
                 "[LLM RETRY] tentativa %d/%d falhou (conexão): %s",
                 attempt, _LLM_RETRY_ATTEMPTS, exc,
             )
-            if attempt < _LLM_RETRY_ATTEMPTS:
-                await asyncio.sleep(_LLM_RETRY_DELAY)
-    raise last_exc
+        except openai.APIStatusError as exc:
+            status = getattr(exc, "status_code", None)
+            if status != 429 and not (isinstance(status, int) and status >= 500):
+                raise  # 4xx não-retentável (400/401/...) → relança cru
+            last_exc = exc
+            try:
+                _retry_after = float(exc.response.headers.get("retry-after", 0) or 0)
+            except Exception:
+                _retry_after = 0.0
+            _delay = max(_delay, _retry_after)
+            logger.warning(
+                "[LLM RETRY] tentativa %d/%d falhou (HTTP %s): %s",
+                attempt, _LLM_RETRY_ATTEMPTS, status, exc,
+            )
+        if attempt < _LLM_RETRY_ATTEMPTS:
+            await asyncio.sleep(_delay)
+    raise LLMUnavailableError(
+        f"LLM indisponível após {_LLM_RETRY_ATTEMPTS} tentativas: {last_exc}"
+    ) from last_exc
 
 
 def get_ai_client(model: str) -> AsyncOpenAI:
@@ -532,10 +550,10 @@ async def run_agent(
 
     prompt_key = _resolve_prompt_key(profile)
     model = profile.get("model", DEFAULT_MODEL) if profile else DEFAULT_MODEL
-    if not (_is_valid_openai_model(model) or _is_gemini_model(model)):
-        logger.warning("Agent profile model '%s' is not a valid model, falling back to %s", model, DEFAULT_MODEL)
+    if not _is_gemini_model(model):
+        logger.warning("Agent profile model '%s' não é Gemini; coagindo para %s", model, DEFAULT_MODEL)
         model = DEFAULT_MODEL
-    elif _is_gemini_model(model):
+    else:
         logger.info("Using Gemini model '%s' via OpenAI-compatible API", model)
 
     tools = get_tools_for_stage(stage)
@@ -836,6 +854,11 @@ async def run_agent(
             # a intenção era encaminhar_humano mas o retry sem tools re-vazava como tool_code.
             # Apenas UM nível de recuperação — não re-inicia o ciclo ReAct completo.
             if retry_msg.tool_calls and retry_tools is not None:
+                # Espelha o loop principal: registra o turno do assistente e o resultado de cada
+                # tool nas messages, para que a chamada PÓS-TOOL abaixo tenha o contexto e produza
+                # a fala natural (fechamento do ciclo ReAct). Sem esses appends, a continuação
+                # reprocessaria só o vazio e reincidiria no genérico (caso Karl 2026-07-01).
+                messages.append(retry_msg.model_dump(exclude_none=True))
                 for _tc in retry_msg.tool_calls:
                     _rname = _tc.function.name
                     if _rname in _MEDIA_TOOL_NAMES:
@@ -850,6 +873,11 @@ async def run_agent(
                             "[RETRY TOOL] JSON inválido para %s em conv %s — pulando: %s",
                             _rname, conversation_id, _je,
                         )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": _tc.id,
+                            "content": f"erro: argumentos inválidos para {_rname} — tente novamente",
+                        })
                         continue
                     # mudar_stage recuperado: rastreia o novo stage (Minor #4) para que, se o turno
                     # ainda terminar vazio, _empty_fallback_text escolha a pergunta de avanço do
@@ -859,7 +887,7 @@ async def run_agent(
                         if _new_stage:
                             transitioned_to_stage = _new_stage
                     try:
-                        await execute_tool(
+                        _rresult = await execute_tool(
                             _rname, _rargs, lead_id, lead.get("phone", ""), conversation_id
                         )
                     except Exception as _te:
@@ -867,8 +895,14 @@ async def run_agent(
                             "[RETRY TOOL] %s levantou exceção em conv %s: %s",
                             _rname, conversation_id, _te, exc_info=True,
                         )
+                        _rresult = f"erro ao executar {_rname} — tente novamente"
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": _tc.id,
+                        "content": _rresult,
+                    })
                 # Tools terminais recuperadas no retry — mesma ordem e contrato do loop principal,
-                # ANTES do fallback genérico (senão o lead recebe despedida + re-engajamento juntos).
+                # ANTES da chamada pós-tool (senão o lead recebe despedida + continuação juntos).
                 _retry_names = {_tc.function.name for _tc in retry_msg.tool_calls}
                 # encaminhar_humano → sentinel None (handoff; card enviado dentro de execute_tool)
                 if "encaminhar_humano" in _retry_names:
@@ -882,11 +916,37 @@ async def run_agent(
                 # A regra "nunca mudo" vale só para turnos normais, não para descarte.
                 if "registrar_sem_interesse_atual" in _retry_names:
                     return ""
-                # Demais tools recuperadas: executadas acima; cai no fallback final (Change C)
-                # para garantir que o lead receba texto
-            assistant_text = _sanitize_assistant_text(
-                retry_msg.content or "", conversation_id, stage, source="retry"
-            )
+                # Tools NÃO-terminais recuperadas (ex.: salvar_nome): fecha o ciclo ReAct com UMA
+                # chamada PÓS-TOOL de continuação (espelha a linha ~763 do loop principal). Era a
+                # peça que faltava: o retry executava a tool mas não gerava a fala, e o turno caía
+                # no genérico (thinking-burn + retry incompleto, lead Karl 2026-07-01). Apenas UM
+                # nível — não re-inicia o loop; se ainda vier vazio, cai no fallback final (Change C).
+                post_resp = await _create_with_retry(_get_client(model),
+                    model=model,
+                    messages=messages,
+                    tools=retry_tools,
+                    temperature=0.4,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    stop=_STOP_SEQUENCES,
+                    **_gemini_thinking_off(model),
+                )
+                if post_resp.usage:
+                    track_token_usage(
+                        lead_id=lead_id,
+                        stage=stage,
+                        model=model,
+                        call_type="response",
+                        prompt_tokens=post_resp.usage.prompt_tokens,
+                        completion_tokens=post_resp.usage.completion_tokens,
+                    )
+                assistant_text = _sanitize_assistant_text(
+                    post_resp.choices[0].message.content or "",
+                    conversation_id, stage, source="retry-post-tool",
+                )
+            else:
+                assistant_text = _sanitize_assistant_text(
+                    retry_msg.content or "", conversation_id, stage, source="retry"
+                )
         except Exception as _exc:
             logger.error(
                 "[AGENT EMPTY] retry silencioso falhou para conv %s: %s", conversation_id, _exc,

@@ -13,7 +13,7 @@ router = APIRouter(
 
 class ProfileCreate(BaseModel):
     name: str
-    model: str = "gpt-4.1"
+    model: str = "gemini-2.5-flash"
     stages: dict
     base_prompt: str
 

@@ -118,6 +118,7 @@ async function fetchEvolutionConversations(channel: {
         _evo_last_message: extractLastMessageContent(chat.lastMessage?.message),
         // Evolution messages have no role info — no "IA:" prefix possible
         last_message_text: extractLastMessageContent(chat.lastMessage?.message) || null,
+        last_message_direction: null, // Evolution não tem info de role (fora de escopo — CLAUDE.md §6)
       };
     })
     .filter(Boolean);
@@ -176,6 +177,7 @@ export async function GET(request: NextRequest) {
     .map((c) => c.id as string);
 
   const lastMsgMap = new Map<string, string>();
+  const lastDirMap = new Map<string, "inbound" | "outbound">();
   if (metaConvIds.length > 0) {
     const { data: lastMsgs } = await supabase.rpc("get_last_messages", {
       conv_ids: metaConvIds,
@@ -186,6 +188,8 @@ export async function GET(request: NextRequest) {
       else if (["broadcast", "campaign", "automation", "followup", "cadence"].includes(row.sent_by)) prefix = "Disparo: ";
       else if (row.role === "assistant") prefix = "IA: ";
       lastMsgMap.set(row.conversation_id, prefix + row.content);
+      // role "user" = lead falou por último → inbound; caso contrário nós falamos → outbound
+      lastDirMap.set(row.conversation_id, row.role === "user" ? "inbound" : "outbound");
     }
   }
 
@@ -259,6 +263,7 @@ export async function GET(request: NextRequest) {
     return {
       ...c,
       last_message_text: lastMsgMap.get(c.id as string) ?? null,
+      last_message_direction: lastDirMap.get(c.id as string) ?? null,
       deal_pipeline_name: deal?.pipeline_name ?? null,
       deal_stage_label: deal?.stage_label ?? null,
       deal_stage_dot_color: deal?.stage_dot_color ?? null,

@@ -1,35 +1,48 @@
 import type { Conversation } from "@/lib/types";
 
 /**
- * Diferenciação Inbound/Outbound da IA no card.
+ * Direção Inbound/Outbound da Valéria no card — resiliente, nunca-nula em contexto Valéria.
  *
- * Fonte de verdade: `conv.agent_persona` — a persona EFETIVA que o backend realmente rodou
- * no último turno (denormalizada por turno). Isso elimina a "mentira visual" em que o card
- * lia o pin estático `agent_profile_id` (escolha do broadcast) e mostrava outbound enquanto
- * o backend executava inbound. Fallback (só quando ainda não houve resposta da IA, agent_persona
- * NULL): o pin da conversa → agent_profile default do canal.
+ * Cascata de fontes (D2): persona efetiva (`agent_persona`, denormalizada por turno pelo
+ * backend) → pin da conversa (`agent_profiles.prompt_key`) → default do canal
+ * (`channels.agent_profiles.prompt_key`) → direção da última mensagem
+ * (`last_message_direction`) → default `inbound`. Isso elimina o card mudo em conversas
+ * outbound recém-disparadas (persona ainda NULL, sem pin/canal).
  *
- * Só renderiza quando a IA é a responsável: canal em modo "human" ou lead com
- * ai_enabled === false significam atendimento humano — nesse caso retorna null
- * (o card "mantém como está", sem tag de persona).
+ * Handoff (`ai_enabled === false`): a IA apenas DESLIGA — o card CONTINUA sendo da Valéria
+ * e mantém a persona (Inbound/Outbound). NÃO vira "Humano": o atendimento humano acontece
+ * em outro número/canal, gerando um card separado.
+ *
+ * Canal humano (`channels.mode === "human"`, ex.: número do João): esse card é do vendedor,
+ * não da Valéria — retorna `null` (sem badge de persona).
  */
-export function getAgentPersona(
-  conv: Conversation,
-): { label: string; direction: "inbound" | "outbound"; color: string } | null {
-  const aiResponsible =
-    conv.channels?.mode !== "human" && (conv.leads?.ai_enabled ?? true) !== false;
-  if (!aiResponsible) return null;
+type PersonaState = {
+  label: string;
+  direction: "inbound" | "outbound";
+  color: string;
+};
 
-  // Persona efetiva (backend) tem prioridade; pin estático é só fallback pré-1ª-resposta.
+export function getAgentPersona(conv: Conversation): PersonaState | null {
+  // Card de canal humano não é atendimento da Valéria — sem badge de persona.
+  if (conv.channels?.mode === "human") return null;
+
   const promptKey =
     conv.agent_persona ??
     conv.agent_profiles?.prompt_key ??
     conv.channels?.agent_profiles?.prompt_key;
-  if (!promptKey) return null;
 
   const name =
     conv.agent_profiles?.name ?? conv.channels?.agent_profiles?.name ?? "Valéria";
-  const direction = promptKey.endsWith("outbound") ? "outbound" : "inbound";
+
+  let direction: "inbound" | "outbound";
+  if (promptKey) {
+    direction = promptKey.endsWith("outbound") ? "outbound" : "inbound";
+  } else if (conv.last_message_direction) {
+    direction = conv.last_message_direction;
+  } else {
+    direction = "inbound"; // default documentado — garante que nenhum card da Valéria fique mudo
+  }
+
   return direction === "outbound"
     ? { label: `${name} (Outbound)`, direction, color: "#b45309" }
     : { label: `${name} (Inbound)`, direction, color: "#5b8aad" };

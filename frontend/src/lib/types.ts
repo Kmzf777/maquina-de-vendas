@@ -323,6 +323,10 @@ export interface Conversation {
   // Fonte de verdade do display — reflete a persona que realmente rodou, não o pin estático.
   // NULL quando a IA ainda não respondeu (cai no fallback do pin/canal).
   agent_persona?: string | null;
+  // Direção derivada da ÚLTIMA mensagem (RPC get_last_messages): "inbound" = lead falou
+  // por último; "outbound" = IA/vendedor/disparo. Fallback de direção quando a persona
+  // não resolve. NULL quando não há mensagens ou provider sem info de role (Evolution).
+  last_message_direction?: "inbound" | "outbound" | null;
 }
 
 export interface LeadBroadcastEntry {

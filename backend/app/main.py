@@ -195,31 +195,26 @@ async def health():
 
 @app.get("/debug/agent")
 async def debug_agent():
-    """Diagnostic endpoint: tests OpenAI connectivity and agent pipeline."""
+    """Diagnostic endpoint: tests Gemini connectivity and agent pipeline."""
     import traceback
-    from openai import AsyncOpenAI
 
-    oai_key = settings.openai_api_key or ""
-    result = {
-        "openai_key_set": bool(oai_key),
-        "openai_key_length": len(oai_key),
-        "openai_key_prefix": oai_key[:8] + "..." if len(oai_key) > 8 else "(empty)",
-        "gemini_key_set": bool(settings.gemini_api_key),
-    }
+    result = {"gemini_key_set": bool(settings.gemini_api_key)}
 
     try:
-        client = AsyncOpenAI(api_key=oai_key)
+        from app.agent.orchestrator import get_ai_client
+
+        client = get_ai_client("gemini-2.5-flash")
         resp = await client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gemini-2.5-flash",
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
         )
-        result["openai_test"] = "ok"
-        result["openai_response"] = resp.choices[0].message.content
+        result["gemini_test"] = "ok"
+        result["gemini_response"] = resp.choices[0].message.content
     except Exception as e:
-        result["openai_test"] = "error"
-        result["openai_error"] = str(e)
-        result["openai_traceback"] = traceback.format_exc()
+        result["gemini_test"] = "error"
+        result["gemini_error"] = str(e)
+        result["gemini_traceback"] = traceback.format_exc()
 
     try:
         from app.agent.orchestrator import run_agent
