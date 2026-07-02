@@ -27,6 +27,9 @@ export interface Lead {
   ai_enabled: boolean;
   notes: string | null;
   metadata?: Record<string, unknown> | null;
+  traffic_type?: "paid" | "organic" | null;
+  utm_source?: string | null;
+  utm_campaign?: string | null;
 }
 
 export interface Pipeline {
