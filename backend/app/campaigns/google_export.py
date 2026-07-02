@@ -89,3 +89,61 @@ def export_google_csv(include_all: bool = False, mark: bool = True) -> tuple[str
     if mark and not include_all:
         mark_exported([r["id"] for r in rows if r.get("id")])
     return csv_text, len(rows)
+
+
+def _has_gclid(row: dict[str, Any]) -> bool:
+    val = row.get("gclid")
+    return bool(val.strip()) if isinstance(val, str) else bool(val)
+
+
+def aggregate_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Agrega os eventos de conversão em métricas p/ o Dashboard (função pura, testável).
+
+    - total: total de eventos registrados
+    - meta_sent: quantos foram enviados à Meta (CAPI)
+    - google_pending / google_exported: eventos com gclid ainda-não / já baixados no CSV
+    - by_event: contagem por etapa canônica
+    - purchase_value: soma do valor das vendas (event='purchase')
+    """
+    stats: dict[str, Any] = {
+        "total": len(rows),
+        "meta_sent": 0,
+        "google_pending": 0,
+        "google_exported": 0,
+        "by_event": {"lead": 0, "qualified": 0, "opportunity": 0, "purchase": 0},
+        "purchase_value": 0.0,
+    }
+    for r in rows:
+        if r.get("sent_meta"):
+            stats["meta_sent"] += 1
+        if _has_gclid(r):
+            if r.get("exported_at"):
+                stats["google_exported"] += 1
+            else:
+                stats["google_pending"] += 1
+        event = r.get("event")
+        if event in stats["by_event"]:
+            stats["by_event"][event] += 1
+        if event == "purchase" and r.get("value") is not None:
+            try:
+                stats["purchase_value"] += float(r.get("value"))
+            except (TypeError, ValueError):
+                pass
+    return stats
+
+
+def conversion_stats() -> dict[str, Any]:
+    """Lê os eventos de conversão e devolve as métricas agregadas. Fail-soft (zeros em erro)."""
+    try:
+        sb = get_supabase()
+        rows = (
+            sb.table("conversion_events")
+            .select("event, sent_meta, exported_at, gclid, value")
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        logger.error("conversion_stats falhou: %s", exc)
+        rows = []
+    return aggregate_stats(rows)
