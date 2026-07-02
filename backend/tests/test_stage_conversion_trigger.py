@@ -4,7 +4,7 @@ from app.automation import triggers
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_deal_stage_enter_fires_stage_conversion_when_stage_mapped():

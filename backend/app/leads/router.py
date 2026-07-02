@@ -114,7 +114,7 @@ async def mark_lead_won(lead_id: str, body: WonSalePayload, background_tasks: Ba
     """
     from app.leads.service import get_lead
     from app.campaigns.sales import mark_deal_won
-    from app.campaigns.capi_dispatcher import dispatch_purchase_conversion
+    from app.campaigns.conversions import fire_stage_conversion
 
     if not get_lead(lead_id):
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -122,9 +122,11 @@ async def mark_lead_won(lead_id: str, body: WonSalePayload, background_tasks: Ba
     result = mark_deal_won(lead_id, value=body.value, currency=body.currency, deal_id=body.deal_id)
 
     # Disparo da conversão fora do caminho crítico (latência da Meta/Google).
-    background_tasks.add_task(
-        dispatch_purchase_conversion, result["lead"], body.value, body.currency
-    )
+    if result.get("deal_id"):
+        background_tasks.add_task(
+            fire_stage_conversion, result["lead"], result["deal_id"], "purchase",
+            body.value, body.currency,
+        )
 
     logger.info("mark_lead_won: lead %s marcado como Ganho (%d deal(s))", lead_id, result["deals_updated"])
     return {"status": "ok", "deals_updated": result["deals_updated"]}
