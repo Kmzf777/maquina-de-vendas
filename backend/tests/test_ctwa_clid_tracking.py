@@ -104,7 +104,7 @@ def test_register_lead_updates_ctwa_clid_when_new_click_arrives():
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": "old_clid"}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid="new_clid")
-    upd.assert_called_once_with("L1", ctwa_clid="new_clid")
+    upd.assert_called_once_with("L1", ctwa_clid="new_clid", traffic_type="paid")
 
 
 def test_register_lead_skips_ctwa_update_when_unchanged():
