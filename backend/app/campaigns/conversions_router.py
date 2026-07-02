@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Response
 
 from app.campaigns.google_export import export_google_csv, conversion_stats
+from app.campaigns.conversion_analytics import conversion_dashboard
 
 router = APIRouter(prefix="/api/conversions", tags=["conversions"])
 
@@ -9,6 +10,12 @@ router = APIRouter(prefix="/api/conversions", tags=["conversions"])
 async def conversion_stats_endpoint():
     """Métricas agregadas dos eventos de conversão p/ a seção do Dashboard."""
     return conversion_stats()
+
+
+@router.get("/dashboard")
+async def conversion_dashboard_endpoint():
+    """Analytics agregados p/ a seção 'Conversões (Ads)' do Dashboard (admin-only na UI)."""
+    return conversion_dashboard()
 
 
 @router.get("/google-export.csv")
