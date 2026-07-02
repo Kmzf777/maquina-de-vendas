@@ -24,6 +24,29 @@ def test_build_google_csv_format():
     assert lines[3] == "g2,Venda_Fechada,2026-07-02 18:30:00,,BRL"
 
 
+def test_aggregate_stats_counts_meta_google_and_events():
+    rows = [
+        {"event": "qualified", "sent_meta": True, "exported_at": None, "gclid": "g1", "value": 50},
+        {"event": "opportunity", "sent_meta": False, "exported_at": "2026-07-02T10:00:00Z", "gclid": "g2", "value": 150},
+        {"event": "purchase", "sent_meta": True, "exported_at": None, "gclid": "g3", "value": 500},
+        {"event": "purchase", "sent_meta": True, "exported_at": None, "gclid": "", "value": 300},  # sem gclid
+    ]
+    stats = google_export.aggregate_stats(rows)
+    assert stats["total"] == 4
+    assert stats["meta_sent"] == 3
+    assert stats["google_pending"] == 2   # g1 e g3 (não exportados, com gclid)
+    assert stats["google_exported"] == 1  # g2
+    assert stats["by_event"] == {"lead": 0, "qualified": 1, "opportunity": 1, "purchase": 2}
+    assert stats["purchase_value"] == 800.0
+
+
+def test_aggregate_stats_empty():
+    stats = google_export.aggregate_stats([])
+    assert stats["total"] == 0 and stats["meta_sent"] == 0
+    assert stats["google_pending"] == 0 and stats["google_exported"] == 0
+    assert stats["purchase_value"] == 0.0
+
+
 def test_export_marks_pending_but_not_when_include_all():
     rows = [{"id": "1", "gclid": "g1", "event": "qualified", "value": 50, "currency": "BRL",
              "created_at": "2026-07-02T19:00:00+00:00"}]

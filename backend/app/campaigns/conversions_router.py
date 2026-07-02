@@ -1,8 +1,14 @@
 from fastapi import APIRouter, Response
 
-from app.campaigns.google_export import export_google_csv
+from app.campaigns.google_export import export_google_csv, conversion_stats
 
 router = APIRouter(prefix="/api/conversions", tags=["conversions"])
+
+
+@router.get("/stats")
+async def conversion_stats_endpoint():
+    """Métricas agregadas dos eventos de conversão p/ a seção do Dashboard."""
+    return conversion_stats()
 
 
 @router.get("/google-export.csv")

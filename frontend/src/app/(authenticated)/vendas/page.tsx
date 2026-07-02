@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Download } from "lucide-react";
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent,
@@ -243,10 +242,6 @@ export default function VendasPage() {
     setSelectedDealId(null);
   }
 
-  function handleDownloadConversions() {
-    window.location.href = "/api/conversions/google-export";
-  }
-
   const loading = pipelinesLoading || dealsLoading;
 
   if (loading && pipelines.length === 0) {
@@ -293,14 +288,6 @@ export default function VendasPage() {
           onDelete={handleDeletePipeline}
         />
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownloadConversions}
-            className="border border-[#dedbd6] bg-white text-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-colors hover:bg-[#f7f5f1] active:bg-[#f0ede8] flex items-center gap-2"
-            title="Baixar conversões Google Ads (CSV)"
-          >
-            <Download size={14} strokeWidth={2} />
-            Baixar conversões Google (CSV)
-          </button>
           <button
             onClick={() => setShowCreate(true)}
             className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2"

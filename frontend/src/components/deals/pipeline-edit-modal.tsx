@@ -54,7 +54,7 @@ function SortableStageRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id });
 
   const convEvent = stage.conversion_event ?? null;
-  const hasEvent = convEvent !== null && convEvent !== "";
+  const hasEvent = convEvent !== null;
 
   return (
     <div
