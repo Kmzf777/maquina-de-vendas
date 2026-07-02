@@ -1,6 +1,14 @@
 import { type NextRequest } from "next/server";
+import { getCurrentUser } from "@/lib/supabase/pipeline-access";
 
 export async function GET(request: NextRequest) {
+  try {
+    const { role } = await getCurrentUser();
+    if (role !== "admin") return Response.json({ error: "forbidden" }, { status: 403 });
+  } catch {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const all = request.nextUrl.searchParams.get("all") === "true";
   const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
   const url = `${backendUrl}/api/conversions/google-export.csv${all ? "?all=true" : ""}`;
