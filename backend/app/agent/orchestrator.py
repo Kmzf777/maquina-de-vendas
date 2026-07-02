@@ -372,10 +372,25 @@ _LLM_RETRY_ATTEMPTS = 3
 _LLM_RETRY_DELAY = 2  # segundos
 
 
+class LLMUnavailableError(Exception):
+    """LLM persistentemente indisponível após esgotar os retries (conexão/429/5xx).
+
+    Distingue 'LLM fora' de um bug qualquer: o processor usa este tipo para acionar o
+    fallback de handoff (encaminhar_humano) em vez de falhar em silêncio.
+    """
+
+
 async def _create_with_retry(client: AsyncOpenAI, **kwargs):
-    """chat.completions.create com retry em drops de conexão (GOAWAY/timeout)."""
+    """chat.completions.create com retry em indisponibilidade transitória.
+
+    Retenta drops de conexão (GOAWAY/timeout) E erros HTTP transitórios do provedor
+    (429 rate-limit/quota, 5xx) com backoff exponencial, honrando Retry-After. Erros
+    não-retentáveis (4xx exceto 429) são relançados na hora. Ao esgotar as tentativas
+    de indisponibilidade → LLMUnavailableError.
+    """
     last_exc: Exception | None = None
     for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
+        _delay = _LLM_RETRY_DELAY * (2 ** (attempt - 1))
         try:
             return await client.chat.completions.create(**kwargs)
         except (openai.APIConnectionError, openai.APITimeoutError, httpx.TransportError) as exc:
@@ -384,9 +399,25 @@ async def _create_with_retry(client: AsyncOpenAI, **kwargs):
                 "[LLM RETRY] tentativa %d/%d falhou (conexão): %s",
                 attempt, _LLM_RETRY_ATTEMPTS, exc,
             )
-            if attempt < _LLM_RETRY_ATTEMPTS:
-                await asyncio.sleep(_LLM_RETRY_DELAY)
-    raise last_exc
+        except openai.APIStatusError as exc:
+            status = getattr(exc, "status_code", None)
+            if status != 429 and not (isinstance(status, int) and status >= 500):
+                raise  # 4xx não-retentável (400/401/...) → relança cru
+            last_exc = exc
+            try:
+                _retry_after = float(exc.response.headers.get("retry-after", 0) or 0)
+            except Exception:
+                _retry_after = 0.0
+            _delay = max(_delay, _retry_after)
+            logger.warning(
+                "[LLM RETRY] tentativa %d/%d falhou (HTTP %s): %s",
+                attempt, _LLM_RETRY_ATTEMPTS, status, exc,
+            )
+        if attempt < _LLM_RETRY_ATTEMPTS:
+            await asyncio.sleep(_delay)
+    raise LLMUnavailableError(
+        f"LLM indisponível após {_LLM_RETRY_ATTEMPTS} tentativas: {last_exc}"
+    ) from last_exc
 
 
 def get_ai_client(model: str) -> AsyncOpenAI:
