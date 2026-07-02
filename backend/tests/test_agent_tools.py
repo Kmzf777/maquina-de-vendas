@@ -95,12 +95,12 @@ async def test_encaminhar_humano_logs_when_update_lead_fails(caplog):
 
 
 @pytest.mark.asyncio
-async def test_enviar_fotos_reenvia_mesmo_se_ja_enviado():
-    """enviar_fotos REENVIA a pedido do cliente, mesmo com marca de envio anterior.
+async def test_enviar_fotos_nao_reenfileira_quando_ja_enviado():
+    """enviar_fotos ABORTA reenvio quando marca [enviar_fotos] já existe no histórico.
 
-    Contrato atual (commit b7703cc, 'corrigir envio de fotos'): o dedup-block foi
-    removido de enviar_fotos — ele apenas loga e reenfileira. O bloqueio por dedup
-    permanece apenas em enviar_foto_produto.
+    Contrato atualizado: o dedup-block foi reintroduzido em enviar_fotos
+    (issue: "photo batches sent twice"). Adota o padrão de early-return do
+    enviar_foto_produto para eliminar duplicatas.
     """
     from app.agent.tools import _deferred_media
 
@@ -113,8 +113,7 @@ async def test_enviar_fotos_reenvia_mesmo_se_ja_enviado():
         {"role": "system", "content": "[enviar_fotos] Fotos de private_label enviadas (4/4)"},
     ]
 
-    with patch("app.agent.tools.get_history", return_value=history_com_fotos), \
-         patch("app.agent.tools.save_message") as mock_save:
+    with patch("app.agent.tools.get_history", return_value=history_com_fotos):
 
         result = await execute_tool(
             "enviar_fotos",
@@ -124,13 +123,12 @@ async def test_enviar_fotos_reenvia_mesmo_se_ja_enviado():
             conversation_id=conversation_id,
         )
 
-    # Reenvia: enfileira as fotos novamente e retorna a contagem (não bloqueia por dedup).
-    assert "enfileiradas" in result.lower(), (
-        f"Deveria reenfileirar as fotos, mas retornou: '{result}'"
+    # Aborta: não enfileira, não grava nova marca, retorna string de no-op.
+    assert "ja" in result.lower() or "nao reenviar" in result.lower(), (
+        f"Deveria abortar, mas retornou: '{result}'"
     )
     queued = _deferred_media.get(conversation_id, [])
-    assert len(queued) == 4, f"Esperava 4 fotos reenfileiradas, mas havia {len(queued)}"
-    mock_save.assert_called_once()  # grava nova marca [enviar_fotos] no histórico
+    assert queued in (None, []), f"Esperava fila vazia, mas havia {len(queued) if queued else 0} fotos"
     _deferred_media.pop(conversation_id, None)
 
 
