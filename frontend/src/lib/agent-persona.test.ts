@@ -63,7 +63,7 @@ describe("getAgentPersona", () => {
     expect(result!.color).toBe("#5b8aad");
   });
 
-  it("null when ai_enabled === false", () => {
+  it("ai_enabled === false → estado humano (não some)", () => {
     const result = getAgentPersona(
       makeConv({
         agent_persona: "valeria_outbound",
@@ -72,10 +72,12 @@ describe("getAgentPersona", () => {
         leads: { ai_enabled: false } as any,
       }),
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.direction).toBe("human");
+    expect(result!.label).toBe("Humano");
   });
 
-  it("null when channels.mode === 'human'", () => {
+  it("canal em modo humano → estado humano (não some)", () => {
     const result = getAgentPersona(
       makeConv({
         agent_persona: "valeria_outbound",
@@ -84,7 +86,9 @@ describe("getAgentPersona", () => {
         leads: { ai_enabled: true } as any,
       }),
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.direction).toBe("human");
+    expect(result!.label).toBe("Humano");
   });
 
   it("fallback to channel agent_profiles.prompt_key when agent_persona is null", () => {
@@ -104,5 +108,62 @@ describe("getAgentPersona", () => {
     expect(result).not.toBeNull();
     expect(result!.direction).toBe("outbound");
     expect(result!.label).toBe("Valéria (Outbound)");
+  });
+
+  it("fallback: sem persona/pin/canal, usa last_message_direction outbound", () => {
+    const result = getAgentPersona(
+      makeConv({
+        agent_persona: null,
+        agent_profiles: null,
+        channels: aiChannel, // sem agent_profiles default
+        last_message_direction: "outbound",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        leads: { ai_enabled: true } as any,
+      }),
+    );
+    expect(result!.direction).toBe("outbound");
+    expect(result!.label).toBe("Valéria (Outbound)");
+  });
+
+  it("fallback: last_message_direction inbound", () => {
+    const result = getAgentPersona(
+      makeConv({
+        agent_persona: null,
+        agent_profiles: null,
+        channels: aiChannel,
+        last_message_direction: "inbound",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        leads: { ai_enabled: true } as any,
+      }),
+    );
+    expect(result!.direction).toBe("inbound");
+  });
+
+  it("default inbound quando não há nenhuma fonte (nunca card mudo)", () => {
+    const result = getAgentPersona(
+      makeConv({
+        agent_persona: null,
+        agent_profiles: null,
+        channels: aiChannel,
+        last_message_direction: null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        leads: { ai_enabled: true } as any,
+      }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.direction).toBe("inbound");
+  });
+
+  it("persona tem prioridade sobre last_message_direction", () => {
+    const result = getAgentPersona(
+      makeConv({
+        agent_persona: "valeria_outbound",
+        channels: aiChannel,
+        last_message_direction: "inbound", // deve ser ignorado
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        leads: { ai_enabled: true } as any,
+      }),
+    );
+    expect(result!.direction).toBe("outbound");
   });
 });
