@@ -170,8 +170,10 @@ TAREFA:
      function getParam(name){var m=window.location.href.match(new RegExp(name+'=([^&]*)'));return m?decodeURIComponent(m[1]):'';}
    Preencher: gclid, fbclid, utm_source, utm_medium, utm_campaign.
 
-3. No submit, faça POST application/json para:
-     https://api.canastrainteligencia.com/webhook/landing-page
+3. No submit, faça POST application/json para o webhook de PRODUÇÃO que as LPs já usam:
+     https://webhook.canastrainteligencia.com/webhook/landing-page
+   (NÃO use api.canastrainteligencia.com — as LPs já postam no host `webhook.`; ver o handoff
+   detalhado em docs/handoff/lp-utm-attribution.md, que é a fonte autoritativa deste contrato)
    com EXATAMENTE este shape (nomes de campo são contrato — não renomear):
    {
      "nome": "<nome>",
