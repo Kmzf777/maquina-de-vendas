@@ -28,10 +28,18 @@ CREATE TABLE IF NOT EXISTS conversion_events (
     gclid        text NULL,
     ctwa_clid    text NULL,
     sent_meta    boolean NOT NULL DEFAULT false,
-    sheet_synced boolean NOT NULL DEFAULT false,
+    exported_at  timestamptz NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT conversion_events_deal_event_unique UNIQUE (deal_id, event)
 );
 
 COMMENT ON TABLE conversion_events IS
     'Auditoria + dedup de eventos de conversão de anúncio. UNIQUE(deal_id,event) evita redisparo.';
+
+COMMENT ON COLUMN conversion_events.exported_at IS
+    'Quando o evento foi incluído num CSV baixado p/ importar no Google Ads. NULL = ainda não exportado.';
+
+-- Acelera a busca dos eventos Google pendentes de exportação (têm gclid e não exportados).
+CREATE INDEX IF NOT EXISTS conversion_events_pending_google
+    ON conversion_events (created_at)
+    WHERE gclid IS NOT NULL AND exported_at IS NULL;

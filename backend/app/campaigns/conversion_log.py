@@ -28,12 +28,11 @@ def already_fired(deal_id: str, event: str) -> bool:
 
 def record_conversion_event(*, lead_id: str, deal_id: str, event: str, value: float | None,
                             currency: str, gclid: str | None, ctwa_clid: str | None,
-                            sent_meta: bool, sheet_synced: bool) -> None:
-    """Grava a linha de auditoria. Fail-soft."""
+                            sent_meta: bool) -> None:
+    """Grava a linha de auditoria. Fail-soft. exported_at fica NULL (default) até baixar o CSV."""
     row: dict[str, Any] = {
         "lead_id": lead_id, "deal_id": deal_id, "event": event, "value": value,
-        "currency": currency, "gclid": gclid, "ctwa_clid": ctwa_clid,
-        "sent_meta": sent_meta, "sheet_synced": sheet_synced,
+        "currency": currency, "gclid": gclid, "ctwa_clid": ctwa_clid, "sent_meta": sent_meta,
     }
     try:
         get_supabase().table("conversion_events").insert(row).execute()

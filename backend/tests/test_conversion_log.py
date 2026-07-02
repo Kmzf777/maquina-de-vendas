@@ -26,8 +26,8 @@ def test_record_conversion_event_inserts_row():
     with patch("app.campaigns.conversion_log.get_supabase", return_value=sb):
         conversion_log.record_conversion_event(
             lead_id="L1", deal_id="D1", event="qualified", value=50.0,
-            currency="BRL", gclid="g", ctwa_clid="c", sent_meta=True, sheet_synced=False,
+            currency="BRL", gclid="g", ctwa_clid="c", sent_meta=True,
         )
     args = sb.table.return_value.insert.call_args[0][0]
     assert args["deal_id"] == "D1" and args["event"] == "qualified"
-    assert args["sent_meta"] is True and args["sheet_synced"] is False
+    assert args["sent_meta"] is True
