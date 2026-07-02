@@ -142,6 +142,11 @@ async def test_processor_marks_read_at_turn_start_and_types_before_bubbles():
     provider.send_typing_indicator = AsyncMock(side_effect=lambda mid: events.append(("typing", mid)))
     provider.send_text = AsyncMock(side_effect=lambda ph, txt: events.append(("text", txt)))
 
+    # Stub em _start_typing_pulse: o pulso de "digitando…" de fundo (_pulse_typing_loop) é um
+    # `while True` que só encerra no cancelamento. Com asyncio.sleep mockado (não cede ao event
+    # loop), essa task de fundo gira sem fim e inunda `events` (MemoryError) sempre que algum
+    # await do fluxo cede antes do _stop_typing_pulse. Este teste valida o read + typing POR
+    # BOLHA, não o pulso de fundo (coberto pelos test_sleep_with_typing_renewal_*).
     with patch("app.buffer.processor.get_or_create_lead", return_value=lead_data), \
          patch("app.buffer.processor.get_channel_by_id", return_value=channel_data), \
          patch("app.buffer.processor.get_or_create_conversation", return_value=conv_data), \
@@ -155,6 +160,7 @@ async def test_processor_marks_read_at_turn_start_and_types_before_bubbles():
          patch("app.buffer.processor._resolve_media", new=AsyncMock(side_effect=lambda t, p: (t, None, None, None, None))), \
          patch("app.buffer.processor.split_into_bubbles", return_value=["Oi tudo bem", "Como posso ajudar"]), \
          patch("app.buffer.processor.asyncio.sleep", new=AsyncMock()), \
+         patch("app.buffer.processor._start_typing_pulse", return_value=None), \
          patch("app.buffer.processor.settings") as mock_settings:
         mock_settings.ai_phone_number_ids = []
         mock_settings.valeria_enabled = True

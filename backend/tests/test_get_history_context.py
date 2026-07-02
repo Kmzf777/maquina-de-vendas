@@ -70,8 +70,10 @@ def test_get_history_select_includes_new_columns():
 
 
 def test_get_history_returns_rows_with_new_fields():
-    """get_history deve retornar as linhas exatamente como vêm do Supabase,
-    incluindo os novos campos."""
+    """get_history busca as mais recentes (desc) e reverte para ordem cronológica
+    ascendente; deve retornar as linhas nessa ordem, com os novos campos preservados.
+    O mock simula o fetch real (desc = mais novo primeiro), então alimentamos as linhas
+    em ordem decrescente; após o reverse interno, o resultado volta a `sample_rows`."""
     from app.conversations.service import get_history
 
     sample_rows = [
@@ -97,13 +99,14 @@ def test_get_history_returns_rows_with_new_fields():
         },
     ]
 
-    sb = _make_sb_mock(sample_rows)
+    # DB com desc=True devolve o mais novo primeiro; get_history reverte p/ ascendente.
+    sb = _make_sb_mock(list(reversed(sample_rows)))
 
     with patch("app.conversations.service.get_supabase", return_value=sb):
         result = get_history("conv-test-002", limit=10)
 
     assert result == sample_rows, (
-        "get_history deveria retornar as linhas do Supabase sem modificação"
+        "get_history deveria retornar as linhas em ordem cronológica ascendente"
     )
     assert result[0]["wamid"] == "wamid.HBgLNTUxMTk5OTk="
     assert result[1]["quoted_wamid"] == "wamid.HBgLNTUxMTk5OTk="
