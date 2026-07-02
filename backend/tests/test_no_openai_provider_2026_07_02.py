@@ -25,7 +25,10 @@ Forbidden markers (case-sensitive except where noted) and why they're specific:
 
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent.parent / "app"
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+# Scan both the runtime package and the operational scripts (seed_valeria_profile, etc.),
+# so a reintroduced `model="gpt-..."` in a seed script is caught too.
+SCAN_DIRS = [_BACKEND_DIR / "app", _BACKEND_DIR / "scripts"]
 
 FORBIDDEN_MARKERS = [
     "openai_api_key",
@@ -40,11 +43,14 @@ FORBIDDEN_MARKERS = [
 def test_no_openai_provider_markers_in_app():
     violations = []
 
-    for path in sorted(APP_DIR.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        for marker in FORBIDDEN_MARKERS:
-            if marker in text:
-                violations.append(f"{path}: found forbidden marker {marker!r}")
+    for scan_dir in SCAN_DIRS:
+        if not scan_dir.is_dir():
+            continue
+        for path in sorted(scan_dir.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for marker in FORBIDDEN_MARKERS:
+                if marker in text:
+                    violations.append(f"{path}: found forbidden marker {marker!r}")
 
     assert not violations, (
         "Found OpenAI-provider markers that should not be reintroduced:\n"

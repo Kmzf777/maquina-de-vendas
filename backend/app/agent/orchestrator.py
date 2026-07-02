@@ -328,7 +328,7 @@ def _gemini_thinking_off(model: str) -> dict:
     completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A doc oficial
     (OpenAI-compat) permite `reasoning_effort="none"` para DESLIGAR o thinking nos modelos
     2.5 — mas NÃO em 2.5-pro nem 3.x, que rejeitam o valor. Por isso retornamos {} nesses
-    casos (e para modelos OpenAI), evitando um 400 em produção.
+    casos (2.5-pro e 3.x), evitando um 400 em produção.
     """
     if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
         return {"reasoning_effort": "none"}
