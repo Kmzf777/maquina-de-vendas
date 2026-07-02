@@ -23,27 +23,27 @@ base_prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime.
 stages = {
     "secretaria": {
         "prompt": SECRETARIA_PROMPT,
-        "model": "gpt-4.1",
+        "model": "gemini-2.5-flash",
         "tools": ["salvar_nome", "mudar_stage"],
     },
     "atacado": {
         "prompt": ATACADO_PROMPT,
-        "model": "gpt-4.1",
+        "model": "gemini-2.5-flash",
         "tools": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos"],
     },
     "private_label": {
         "prompt": PRIVATE_LABEL_PROMPT,
-        "model": "gpt-4.1",
+        "model": "gemini-2.5-flash",
         "tools": ["salvar_nome", "mudar_stage", "encaminhar_humano", "enviar_fotos"],
     },
     "exportacao": {
         "prompt": EXPORTACAO_PROMPT,
-        "model": "gpt-4.1-mini",
+        "model": "gemini-2.5-flash",
         "tools": ["salvar_nome", "mudar_stage", "encaminhar_humano"],
     },
     "consumo": {
         "prompt": CONSUMO_PROMPT,
-        "model": "gpt-4.1-mini",
+        "model": "gemini-2.5-flash",
         "tools": ["salvar_nome"],
     },
 }
@@ -51,7 +51,7 @@ stages = {
 sb = get_supabase()
 result = sb.table("agent_profiles").insert({
     "name": "ValerIA Cafe Canastra",
-    "model": "gpt-4.1",
+    "model": "gemini-2.5-flash",
     "stages": stages,
     "base_prompt": base_prompt,
 }).execute()

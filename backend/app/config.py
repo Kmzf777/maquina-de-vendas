@@ -34,7 +34,6 @@ _load_env_file(Path(__file__).resolve().parent.parent / '.env')
 
 if PYDANTIC_V2:
     class Settings(BaseSettings):
-        openai_api_key: Optional[str] = None
         gemini_api_key: Optional[str] = None
         supabase_url: str = ""
         supabase_service_key: str = ""
@@ -70,7 +69,6 @@ if PYDANTIC_V2:
 
 else:
     class Settings(BaseSettings):
-        openai_api_key: Optional[str] = None
         gemini_api_key: Optional[str] = None
         supabase_url: str = ""
         supabase_service_key: str = ""

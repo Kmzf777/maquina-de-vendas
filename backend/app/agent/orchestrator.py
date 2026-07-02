@@ -26,7 +26,6 @@ from app.leads.service import get_lead, update_lead
 
 logger = logging.getLogger(__name__)
 
-_openai_client: AsyncOpenAI | None = None
 _gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -238,7 +237,6 @@ def _looks_like_handoff_announcement(text: str) -> bool:
     return bool(_HANDOFF_ANNOUNCEMENT_RE.search(_normalize_for_handoff_re(text)))
 
 
-_OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # ---------------------------------------------------------------------------
@@ -319,10 +317,6 @@ def _render_history_content(msg: dict, resolved: dict | None = None) -> str:
         return msg.get("content") or ""
 
 
-def _is_valid_openai_model(model: str) -> bool:
-    return any(model.startswith(p) for p in _OPENAI_MODEL_PREFIXES)
-
-
 def _is_gemini_model(model: str) -> bool:
     return model.startswith("gemini-")
 
@@ -334,18 +328,11 @@ def _gemini_thinking_off(model: str) -> dict:
     completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A doc oficial
     (OpenAI-compat) permite `reasoning_effort="none"` para DESLIGAR o thinking nos modelos
     2.5 — mas NÃO em 2.5-pro nem 3.x, que rejeitam o valor. Por isso retornamos {} nesses
-    casos (e para modelos OpenAI), evitando um 400 em produção.
+    casos (2.5-pro e 3.x), evitando um 400 em produção.
     """
     if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
         return {"reasoning_effort": "none"}
     return {}
-
-
-def _get_openai() -> AsyncOpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-    return _openai_client
 
 
 def _get_gemini() -> AsyncOpenAI:
@@ -361,7 +348,7 @@ def _get_gemini() -> AsyncOpenAI:
 
 
 def _get_client(model: str) -> AsyncOpenAI:
-    return _get_gemini() if _is_gemini_model(model) else _get_openai()
+    return _get_gemini()
 
 
 # Drops de conexão HTTP/2 (GOAWAY) sob concorrência (rajada de disparo) derrubavam
@@ -563,10 +550,10 @@ async def run_agent(
 
     prompt_key = _resolve_prompt_key(profile)
     model = profile.get("model", DEFAULT_MODEL) if profile else DEFAULT_MODEL
-    if not (_is_valid_openai_model(model) or _is_gemini_model(model)):
-        logger.warning("Agent profile model '%s' is not a valid model, falling back to %s", model, DEFAULT_MODEL)
+    if not _is_gemini_model(model):
+        logger.warning("Agent profile model '%s' não é Gemini; coagindo para %s", model, DEFAULT_MODEL)
         model = DEFAULT_MODEL
-    elif _is_gemini_model(model):
+    else:
         logger.info("Using Gemini model '%s' via OpenAI-compatible API", model)
 
     tools = get_tools_for_stage(stage)
