@@ -9,23 +9,22 @@ import type { Conversation } from "@/lib/types";
  * (`last_message_direction`) → default `inbound`. Isso elimina o card mudo em conversas
  * outbound recém-disparadas (persona ainda NULL, sem pin/canal).
  *
- * Handoff/canal humano (D1): não some — retorna estado neutro `human` ("Humano"),
- * comunicando explicitamente que a Valéria não é a responsável no momento.
+ * Handoff (`ai_enabled === false`): a IA apenas DESLIGA — o card CONTINUA sendo da Valéria
+ * e mantém a persona (Inbound/Outbound). NÃO vira "Humano": o atendimento humano acontece
+ * em outro número/canal, gerando um card separado.
+ *
+ * Canal humano (`channels.mode === "human"`, ex.: número do João): esse card é do vendedor,
+ * não da Valéria — retorna `null` (sem badge de persona).
  */
 type PersonaState = {
   label: string;
-  direction: "inbound" | "outbound" | "human";
+  direction: "inbound" | "outbound";
   color: string;
 };
 
-const HUMAN_COLOR = "#7b7b78";
-
 export function getAgentPersona(conv: Conversation): PersonaState | null {
-  const isHumanChannel = conv.channels?.mode === "human";
-  const aiDisabled = (conv.leads?.ai_enabled ?? true) === false;
-  if (isHumanChannel || aiDisabled) {
-    return { label: "Humano", direction: "human", color: HUMAN_COLOR };
-  }
+  // Card de canal humano não é atendimento da Valéria — sem badge de persona.
+  if (conv.channels?.mode === "human") return null;
 
   const promptKey =
     conv.agent_persona ??
@@ -41,7 +40,7 @@ export function getAgentPersona(conv: Conversation): PersonaState | null {
   } else if (conv.last_message_direction) {
     direction = conv.last_message_direction;
   } else {
-    direction = "inbound"; // default documentado — garante que nenhum card fique mudo
+    direction = "inbound"; // default documentado — garante que nenhum card da Valéria fique mudo
   }
 
   return direction === "outbound"

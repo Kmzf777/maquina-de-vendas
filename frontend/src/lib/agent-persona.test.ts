@@ -63,7 +63,8 @@ describe("getAgentPersona", () => {
     expect(result!.color).toBe("#5b8aad");
   });
 
-  it("ai_enabled === false → estado humano (não some)", () => {
+  it("ai_enabled === false (handoff) → mantém persona da Valéria, não vira Humano", () => {
+    // Handoff apenas DESLIGA a IA; o card segue sendo da Valéria e mantém a persona.
     const result = getAgentPersona(
       makeConv({
         agent_persona: "valeria_outbound",
@@ -73,11 +74,27 @@ describe("getAgentPersona", () => {
       }),
     );
     expect(result).not.toBeNull();
-    expect(result!.direction).toBe("human");
-    expect(result!.label).toBe("Humano");
+    expect(result!.direction).toBe("outbound");
+    expect(result!.label).toBe("Valéria (Outbound)");
   });
 
-  it("canal em modo humano → estado humano (não some)", () => {
+  it("handoff (ai_enabled=false) sem persona/pin/canal → fallback pela última mensagem", () => {
+    const result = getAgentPersona(
+      makeConv({
+        agent_persona: null,
+        agent_profiles: null,
+        channels: aiChannel,
+        last_message_direction: "inbound",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        leads: { ai_enabled: false } as any,
+      }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.direction).toBe("inbound");
+    expect(result!.label).toBe("Valéria (Inbound)");
+  });
+
+  it("null quando o canal é humano (card do vendedor, ex.: João — não é card da Valéria)", () => {
     const result = getAgentPersona(
       makeConv({
         agent_persona: "valeria_outbound",
@@ -86,9 +103,7 @@ describe("getAgentPersona", () => {
         leads: { ai_enabled: true } as any,
       }),
     );
-    expect(result).not.toBeNull();
-    expect(result!.direction).toBe("human");
-    expect(result!.label).toBe("Humano");
+    expect(result).toBeNull();
   });
 
   it("fallback to channel agent_profiles.prompt_key when agent_persona is null", () => {
