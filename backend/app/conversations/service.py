@@ -291,11 +291,13 @@ def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
         sb.table("messages")
         .select("role, content, stage, created_at, wamid, quoted_wamid, message_type, metadata, sent_by")
         .eq("conversation_id", conversation_id)
-        .order("created_at", desc=False)
+        .order("created_at", desc=True)   # 60 MAIS RECENTES
         .limit(limit)
         .execute()
     )
-    return result.data
+    rows = result.data or []
+    rows.reverse()                        # volta à ordem cronológica ascendente (contrato inalterado)
+    return rows
 
 
 def reset_unread_count(conversation_id: str) -> dict[str, Any]:
