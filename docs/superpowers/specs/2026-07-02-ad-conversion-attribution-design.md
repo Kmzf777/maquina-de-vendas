@@ -22,7 +22,7 @@ Oportunidade → Venda), comprovando ROI e alimentando o smart bidding.
 
 | Decisão | Escolha |
 |---|---|
-| **Entrega** | **Híbrida** — Meta direto via CAPI (já vivo); Google via **Planilha Google → Data Manager / Make** (evita aprovação de dev-token do Google Ads) |
+| **Entrega** | **Híbrida** — Meta direto via CAPI (já vivo); Google via **exportação MANUAL de CSV** (o operador baixa o CSV no CRM e sobe no Google Ads → Conversões → Importar → De um arquivo). Evita o dev-token do Google Ads E a Planilha ao vivo. *(Decisão revisada em 2026-07-02: substituiu a Planilha Google API pela exportação CSV manual.)* |
 | **Etapas** | **As 4** — Lead Captado, Qualificado, Oportunidade, Venda Fechada |
 | **Mapeamento etapa→evento** | **Colunas em `pipeline_stages`** (`conversion_event` + `conversion_value`), marcadas na UI de config do Kanban |
 
@@ -215,8 +215,37 @@ quando o lead avança no funil.
 
 ## 10. Fora de escopo (explícito)
 
-- Wire real da Google Ads API via SDK (dev-token) — substituído pela rota da Planilha.
-- Importação da Planilha → Google Ads (feita por Data Manager / Make, fora do código).
+- Wire real da Google Ads API via SDK (dev-token) — substituído pela exportação CSV manual.
+- Importação do CSV → Google Ads (upload manual no Conversões → Importar → De um arquivo).
 - Criação de Conversões Personalizadas no Gerenciador da Meta (config manual).
 - Qualquer alteração nos repos de LP (só entregamos os prompts de handoff — §9).
 - Backfill retroativo de eventos para leads/deals antigos.
+- Enhanced Conversions por email/telefone (leads sem `gclid`) — o CSV é por clique (gclid).
+
+## 11. Revisão 2026-07-02 — Google via CSV manual (substitui a Planilha ao vivo)
+
+Decisão do usuário: **remover a integração com a Planilha Google API** e, no lugar, o CRM
+**acumula os eventos e gera um CSV sob demanda** para upload manual no Google Ads. Meta CAPI
+permanece 100% automática.
+
+**O que mudou no código:**
+- `conversion_events.sheet_synced` (boolean) → **`exported_at`** (timestamptz; NULL = ainda não baixado).
+- Removidos: `campaigns/sheets_export.py` + deps `google-api-python-client`/`google-auth`.
+- Orquestrador (`campaigns/conversions.py`): só Meta CAPI + gravação em `conversion_events`
+  (sem escrita ao vivo). O lado Google é 100% via export.
+- Novo: `campaigns/google_export.py` (monta o CSV no template de conversões offline por clique)
+  + endpoint **`GET /api/conversions/google-export.csv`** (registrado no `main.py`). Por padrão
+  baixa só os pendentes (`exported_at IS NULL` e `gclid` presente) e marca `exported_at`;
+  `?all=true` baixa tudo sem marcar (reprocesso).
+- Frontend: botão **"Baixar conversões Google (CSV)"** na página de vendas (Kanban) + proxy
+  Next.js `/api/conversions/google-export`.
+
+**Formato do CSV** (upload em Google Ads → Conversões → Importar → De um arquivo):
+```
+Parameters:TimeZone=America/Sao_Paulo
+Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency
+<gclid>,Lead_Qualificado,2026-07-02 16:00:00,50,BRL
+```
+
+**Env vars:** o lado Google **não precisa mais** de `GOOGLE_SHEETS_CONV_ID`/`GOOGLE_SA_JSON`.
+Meta segue com `META_CAPI_*`. O CSV é gerado só a partir do banco.
