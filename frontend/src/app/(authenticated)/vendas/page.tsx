@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { Download } from "lucide-react";
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent,
@@ -242,6 +243,10 @@ export default function VendasPage() {
     setSelectedDealId(null);
   }
 
+  function handleDownloadConversions() {
+    window.location.href = "/api/conversions/google-export";
+  }
+
   const loading = pipelinesLoading || dealsLoading;
 
   if (loading && pipelines.length === 0) {
@@ -287,15 +292,25 @@ export default function VendasPage() {
           onEdit={() => setShowPipelineEdit(true)}
           onDelete={handleDeletePipeline}
         />
-        <button
-          onClick={() => setShowCreate(true)}
-          className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2"
-        >
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDownloadConversions}
+            className="border border-[#dedbd6] bg-white text-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-colors hover:bg-[#f7f5f1] active:bg-[#f0ede8] flex items-center gap-2"
+            title="Baixar conversões Google Ads (CSV)"
+          >
+            <Download size={14} strokeWidth={2} />
+            Baixar conversões Google (CSV)
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2"
+          >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
           </svg>
           Novo Card
-        </button>
+          </button>
+        </div>
       </div>
 
       {/* Kanban content area */}

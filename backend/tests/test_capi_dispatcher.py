@@ -13,6 +13,8 @@ from app.campaigns.capi_dispatcher import (
     build_google_offline_conversion,
     dispatch_purchase_conversion,
     dispatch_purchase_conversion_background,
+    meta_event_name,
+    dispatch_conversion,
 )
 
 
@@ -150,3 +152,46 @@ def test_background_dispatch_runs_in_thread_without_blocking():
         assert done.wait(timeout=2.0), "dispatch em background não executou"
 
     assert captured["args"] == ({"id": "L1"}, 5.0, "USD")
+
+
+# --------------------------------------------------------------------------- #
+# meta_event_name — canonical mapping + env override
+# --------------------------------------------------------------------------- #
+
+def test_meta_event_name_defaults():
+    assert meta_event_name("purchase") == "Purchase"
+    assert meta_event_name("qualified") == "Lead"
+    assert meta_event_name("opportunity") == "Oportunidade_Criada"
+    assert meta_event_name("lead") == "Lead"
+
+
+def test_meta_event_name_env_override():
+    with patch.dict("os.environ", {"META_EVENT_NAME_OPPORTUNITY": "MQL"}, clear=True):
+        assert meta_event_name("opportunity") == "MQL"
+
+
+def test_dispatch_conversion_sends_event_name_to_meta():
+    lead = {"id": "L1", "ctwa_clid": "clid", "phone": "5534996652412"}
+    env = {"META_CAPI_PIXEL_ID": "PIX1", "META_CAPI_ACCESS_TOKEN": "TOK1"}
+    with patch.dict("os.environ", env, clear=True), \
+         patch("app.campaigns.capi_dispatcher.httpx.Client") as client_cls:
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value.status_code = 200
+        client.post.return_value.raise_for_status.return_value = None
+        result = dispatch_conversion(lead, "opportunity", value=150.0)
+    assert result["meta"]["sent"] is True
+    _, kwargs = client.post.call_args
+    assert kwargs["json"]["data"][0]["event_name"] == "Oportunidade_Criada"
+
+
+def test_dispatch_purchase_conversion_still_uses_purchase_event():
+    lead = {"id": "L2", "ctwa_clid": "clid", "phone": "5534996652412"}
+    env = {"META_CAPI_PIXEL_ID": "PIX1", "META_CAPI_ACCESS_TOKEN": "TOK1"}
+    with patch.dict("os.environ", env, clear=True), \
+         patch("app.campaigns.capi_dispatcher.httpx.Client") as client_cls:
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value.status_code = 200
+        client.post.return_value.raise_for_status.return_value = None
+        dispatch_purchase_conversion(lead, value=99.0)
+        _, kwargs = client.post.call_args
+    assert kwargs["json"]["data"][0]["event_name"] == "Purchase"

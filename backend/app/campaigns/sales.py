@@ -50,6 +50,7 @@ def mark_deal_won(
     sb = get_supabase()
     now_iso = datetime.now(timezone.utc).isoformat()
     deals_updated = 0
+    won_deal_id: str | None = None
 
     try:
         if deal_id:
@@ -73,9 +74,10 @@ def mark_deal_won(
                 update["value"] = float(value)
             sb.table("deals").update(update).eq("id", deal["id"]).execute()
             deals_updated += 1
+            won_deal_id = deal["id"]
         logger.info("mark_deal_won: %d deal(s) marcados como Ganho para lead %s", deals_updated, lead_id)
     except Exception as exc:
         logger.error("mark_deal_won: falha ao marcar deal como Ganho para lead %s: %s", lead_id, exc, exc_info=True)
 
     lead = get_lead(lead_id) or {}
-    return {"lead": lead, "deals_updated": deals_updated, "value": value, "currency": currency}
+    return {"lead": lead, "deals_updated": deals_updated, "value": value, "currency": currency, "deal_id": won_deal_id}

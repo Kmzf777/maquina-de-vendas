@@ -58,15 +58,20 @@ def test_persist_lead_tracking_updates_only_changed_truthy_fields():
             {"utm_source": "facebook", "gclid": "g_new", "utm_medium": ""},
         )
     # utm_source mudou e gclid novo → atualiza; utm_medium vazio → ignorado
+    # gclid presente → traffic_type="paid" também é incluído no update
     upd.assert_called_once()
     _, kwargs = upd.call_args
-    assert kwargs == {"utm_source": "facebook", "gclid": "g_new"}
+    assert kwargs == {"utm_source": "facebook", "gclid": "g_new", "traffic_type": "paid"}
 
 
 def test_persist_lead_tracking_noop_when_no_new_data():
     with patch("app.leads.service.update_lead") as upd:
         persist_lead_tracking({"id": "L1", "utm_source": "google"}, {})
-        persist_lead_tracking({"id": "L1", "utm_source": "google"}, {"utm_source": "google"})
+        # utm_source unchanged AND traffic_type already "organic" → no update
+        persist_lead_tracking(
+            {"id": "L1", "utm_source": "google", "traffic_type": "organic"},
+            {"utm_source": "google"},
+        )
         persist_lead_tracking({"id": "L1"}, None)
     upd.assert_not_called()
 

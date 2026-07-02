@@ -27,6 +27,9 @@ export interface Lead {
   ai_enabled: boolean;
   notes: string | null;
   metadata?: Record<string, unknown> | null;
+  traffic_type?: "paid" | "organic" | null;
+  utm_source?: string | null;
+  utm_campaign?: string | null;
 }
 
 export interface Pipeline {
@@ -48,6 +51,8 @@ export interface PipelineStage {
   order_index: number;
   is_protected: boolean;
   created_at: string;
+  conversion_event?: "lead" | "qualified" | "opportunity" | "purchase" | null;
+  conversion_value?: number | null;
 }
 
 export interface Deal {
