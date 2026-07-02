@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
 import type { Lead, Tag, Pipeline, PipelineStage, Sale } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 import { CadenceTimeline } from "@/components/conversas/cadence-timeline";
 
 interface LeadDeal {
@@ -158,7 +159,24 @@ export function CrmPerfilTab({
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-3">
-        <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Identificacao</h4>
+        <div className="flex items-center gap-2">
+          <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Identificacao</h4>
+          {lead.traffic_type === "paid" && (
+            <Badge
+              className="h-[18px] px-1.5 text-[10px] font-medium rounded-[4px] border-0 bg-[#111111] text-white"
+            >
+              Pago{lead.utm_source ? ` · ${lead.utm_source}` : ""}
+            </Badge>
+          )}
+          {lead.traffic_type === "organic" && (
+            <Badge
+              variant="outline"
+              className="h-[18px] px-1.5 text-[10px] font-normal rounded-[4px] border-[#dedbd6] text-[#7b7b78]"
+            >
+              Orgânico{lead.utm_source ? ` · ${lead.utm_source}` : ""}
+            </Badge>
+          )}
+        </div>
         <EditableField
           label="Nome"
           value={lead.name}

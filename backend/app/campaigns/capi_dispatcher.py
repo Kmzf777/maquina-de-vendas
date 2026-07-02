@@ -37,6 +37,20 @@ _HTTP_TIMEOUT = 10.0
 
 _DIGITS_RE = re.compile(r"\D+")
 
+# Mapa canônico → nome de evento na Meta. Override por env META_EVENT_NAME_<EVENTO>.
+_DEFAULT_META_EVENT_NAMES = {
+    "lead": "Lead",
+    "qualified": "Lead",
+    "opportunity": "Oportunidade_Criada",
+    "purchase": "Purchase",
+}
+
+
+def meta_event_name(event: str) -> str:
+    """Nome do evento na Meta para um evento canônico do funil (env-overridable)."""
+    default = _DEFAULT_META_EVENT_NAMES.get(event, event)
+    return os.environ.get(f"META_EVENT_NAME_{event.upper()}", default)
+
 
 # --------------------------------------------------------------------------- #
 # Hashing & normalização (funções puras)
@@ -190,7 +204,12 @@ def _meta_credentials() -> tuple[str, str, str] | None:
     return pixel_id, access_token, api_version
 
 
-def _send_meta_capi(lead: dict[str, Any], value: float | None, currency: str) -> dict[str, Any]:
+def _send_meta_capi(
+    lead: dict[str, Any],
+    value: float | None,
+    currency: str,
+    event_name: str = "Purchase",
+) -> dict[str, Any]:
     """Envia o evento para a Meta CAPI se houver credenciais. Fail-soft."""
     creds = _meta_credentials()
     if not creds:
@@ -203,12 +222,12 @@ def _send_meta_capi(lead: dict[str, Any], value: float | None, currency: str) ->
 
     pixel_id, access_token, api_version = creds
     url = f"{META_API_BASE}/{api_version}/{pixel_id}/events"
-    payload = build_meta_capi_payload(lead, value, currency)
+    payload = build_meta_capi_payload(lead, value, currency, event_name=event_name)
     try:
         with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
             resp = client.post(url, params={"access_token": access_token}, json=payload)
             resp.raise_for_status()
-        logger.info("[CAPI] Meta Purchase enviado para lead %s (HTTP %s)", lead.get("id"), resp.status_code)
+        logger.info("[CAPI] Meta %s enviado para lead %s (HTTP %s)", event_name, lead.get("id"), resp.status_code)
         return {"sent": True, "status_code": resp.status_code}
     except Exception as exc:
         logger.error("[CAPI] Falha ao enviar evento Meta para lead %s: %s", lead.get("id"), exc, exc_info=True)
@@ -234,21 +253,35 @@ def _send_google_conversion(lead: dict[str, Any], value: float | None, currency:
     return {"sent": False, "reason": "sdk_pending", "payload": conv}
 
 
+def dispatch_conversion(
+    lead: dict[str, Any],
+    event: str,
+    value: float | None = None,
+    currency: str = "BRL",
+) -> dict[str, Any]:
+    """Dispara UM evento de conversão canônico (lead|qualified|opportunity|purchase) p/ Meta+Google.
+
+    Fail-soft de ponta a ponta. Retorna {"meta": {...}, "google": {...}}.
+    """
+    if not lead:
+        return {"meta": {"sent": False, "reason": "no_lead"}, "google": {"sent": False, "reason": "no_lead"}}
+    meta_result = _send_meta_capi(lead, value, currency, event_name=meta_event_name(event))
+    google_result = _send_google_conversion(lead, value, currency)
+    return {"meta": meta_result, "google": google_result}
+
+
 def dispatch_purchase_conversion(
     lead: dict[str, Any],
     value: float | None = None,
     currency: str = "BRL",
 ) -> dict[str, Any]:
-    """Orquestra o disparo da conversão de COMPRA para Meta e Google a partir de um lead.
+    """Compat: dispara a conversão de COMPRA (event='purchase').
 
+    Orquestra o disparo da conversão de COMPRA para Meta e Google a partir de um lead.
     Fail-soft de ponta a ponta: cada canal é independente e nunca levanta. Retorna um
     resumo {"meta": {...}, "google": {...}} para logging/observabilidade.
     """
-    if not lead:
-        return {"meta": {"sent": False, "reason": "no_lead"}, "google": {"sent": False, "reason": "no_lead"}}
-    meta_result = _send_meta_capi(lead, value, currency)
-    google_result = _send_google_conversion(lead, value, currency)
-    return {"meta": meta_result, "google": google_result}
+    return dispatch_conversion(lead, "purchase", value, currency)
 
 
 def dispatch_purchase_conversion_background(

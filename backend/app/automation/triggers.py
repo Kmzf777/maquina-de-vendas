@@ -8,6 +8,8 @@ from app.campaigns.service import (
     create_enrollment,
 )
 from app.automation import engine as _engine
+from app.leads.service import get_lead
+from app.campaigns.conversions import fire_stage_conversion_background
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,46 @@ def _get_env_tag() -> str:
         return "production"
 
 
+def _maybe_fire_stage_conversion(lead_id: str, data: dict) -> None:
+    """Se a etapa que o deal entrou estiver marcada com conversion_event, dispara a conversão.
+
+    Resolve o evento/valor pelo stage_id ATUAL do deal (autoritativo), não pela key do payload.
+    purchase usa o valor real do deal; demais usam conversion_value fixo da etapa. Fail-soft.
+    """
+    deal_id = data.get("deal_id")
+    if not deal_id:
+        return
+    try:
+        sb = get_supabase()
+        rows = sb.table("deals").select("id, lead_id, stage_id, value").eq("id", deal_id).limit(1).execute().data
+        if not rows:
+            return
+        deal = rows[0]
+        stage = (
+            sb.table("pipeline_stages").select("conversion_event, conversion_value")
+            .eq("id", deal.get("stage_id")).single().execute().data
+        )
+        event = (stage or {}).get("conversion_event")
+        if not event:
+            return
+        if event == "purchase":
+            value = deal.get("value") if deal.get("value") is not None else (stage or {}).get("conversion_value")
+        else:
+            value = (stage or {}).get("conversion_value")
+        lead = get_lead(lead_id) or {"id": lead_id}
+        fire_stage_conversion_background(lead, deal_id, event, value=value)
+    except Exception as exc:
+        logger.error("[CONV] _maybe_fire_stage_conversion(lead=%s, deal=%s) falhou: %s", lead_id, deal_id, exc)
+
+
 async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) -> None:
     """Event-driven: enroll lead in all active campaigns with matching trigger."""
     try:
         data = data or {}
         now = datetime.now(timezone.utc)
+
+        if event_type == "deal_stage_enter":
+            _maybe_fire_stage_conversion(lead_id, data)
 
         if event_type == "message_received":
             message_body = (data.get("body") or "").lower()

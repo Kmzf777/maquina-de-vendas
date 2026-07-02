@@ -184,6 +184,35 @@ TRACKING_COLUMNS: tuple[str, ...] = (
     "utm_campaign",
 )
 
+# utm_medium que caracteriza tráfego PAGO. Fora desta lista (mas com sinal de UTM) => orgânico.
+_PAID_MEDIUMS: frozenset[str] = frozenset({
+    "cpc", "ppc", "paid", "paid_social", "paidsocial", "paid_search", "display", "cpm",
+})
+
+
+def derive_traffic_type(tracking: dict[str, Any] | None) -> str | None:
+    """Classifica a origem do lead a partir do bag de rastreio.
+
+    'paid'    se houver click-id (gclid/fbclid/ctwa_clid) OU utm_medium pago;
+    'organic' se houver qualquer sinal de UTM (source/medium/campaign) sem ser pago;
+    None      se não houver sinal algum (não classifica — evita rotular leads sem origem).
+    """
+    if not tracking:
+        return None
+
+    def _v(key: str) -> str:
+        val = tracking.get(key)
+        return val.strip().lower() if isinstance(val, str) else ("" if val is None else str(val).lower())
+
+    if _v("gclid") or _v("fbclid") or _v("ctwa_clid"):
+        return "paid"
+    medium = _v("utm_medium")
+    if medium in _PAID_MEDIUMS:
+        return "paid"
+    if _v("utm_source") or medium or _v("utm_campaign"):
+        return "organic"
+    return None
+
 
 def get_or_create_lead(
     phone: str,
@@ -354,6 +383,9 @@ def get_or_create_lead(
         val = merged_tracking.get(col)
         if val:
             new_lead[col] = val
+    traffic_type = derive_traffic_type(merged_tracking)
+    if traffic_type:
+        new_lead["traffic_type"] = traffic_type
     if is_bsuid(bsuid):
         new_lead["bsuid"] = bsuid
     result = sb.table("leads").insert(new_lead).execute()
@@ -383,6 +415,9 @@ def persist_lead_tracking(lead: dict[str, Any], tracking: dict[str, Any] | None)
             val = val.strip()
         if val and lead.get(col) != val:
             updates[col] = val
+    tt = derive_traffic_type(tracking)
+    if tt and lead.get("traffic_type") != tt:
+        updates["traffic_type"] = tt
     if not updates:
         return
     try:

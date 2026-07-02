@@ -12,14 +12,23 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { PipelineStage } from "@/lib/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const COLOR_PALETTE = [
   "#e07a7a", "#d4a04a", "#d4b84a", "#5aad65",
   "#5b8aad", "#9b7abf", "#9ca3af", "#111111",
 ];
 
-interface EditableStage extends PipelineStage {
+interface EditableStage extends Omit<PipelineStage, "conversion_value"> {
   _dirty?: boolean;
+  // conversion_value may be held as a string while the user is typing
+  conversion_value?: number | string | null;
 }
 
 
@@ -39,57 +48,111 @@ function SortableStageRow({
   stage, onChange, onDelete,
 }: {
   stage: EditableStage;
-  onChange: (id: string, field: keyof EditableStage, value: string) => void;
+  onChange: (id: string, field: keyof EditableStage, value: string | null) => void;
   onDelete: (id: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id });
+
+  const convEvent = stage.conversion_event ?? null;
+  const hasEvent = convEvent !== null && convEvent !== "";
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
-      className="flex items-center gap-3 py-2.5 px-3 bg-white border border-[#dedbd6] rounded-[6px] mb-2"
+      className="flex flex-col gap-2 py-2.5 px-3 bg-white border border-[#dedbd6] rounded-[6px] mb-2"
     >
-      {/* Drag handle */}
-      <div
-        {...{ ...listeners, ...attributes }}
-        className="flex-shrink-0 cursor-grab active:cursor-grabbing"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="#7b7b78">
-          <circle cx="5" cy="4" r="1.2" /><circle cx="11" cy="4" r="1.2" />
-          <circle cx="5" cy="8" r="1.2" /><circle cx="11" cy="8" r="1.2" />
-          <circle cx="5" cy="12" r="1.2" /><circle cx="11" cy="12" r="1.2" />
-        </svg>
-      </div>
-
-      {/* Color picker */}
-      <div className="relative flex-shrink-0 group">
-        <div className="w-4 h-4 rounded-full border border-[#dedbd6] cursor-pointer" style={{ backgroundColor: stage.dot_color }} />
-        <div className="absolute left-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] p-2 z-10 hidden group-hover:grid grid-cols-4 gap-1 w-[88px] shadow-sm">
-          {COLOR_PALETTE.map((c) => (
-            <button key={c} type="button" onClick={() => onChange(stage.id, "dot_color", c)}
-              className={`w-4 h-4 rounded-full border ${stage.dot_color === c ? "border-[#111111]" : "border-transparent"}`}
-              style={{ backgroundColor: c }}
-            />
-          ))}
+      {/* Top row: drag handle + color + label + delete */}
+      <div className="flex items-center gap-3">
+        {/* Drag handle */}
+        <div
+          {...{ ...listeners, ...attributes }}
+          className="flex-shrink-0 cursor-grab active:cursor-grabbing"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="#7b7b78">
+            <circle cx="5" cy="4" r="1.2" /><circle cx="11" cy="4" r="1.2" />
+            <circle cx="5" cy="8" r="1.2" /><circle cx="11" cy="8" r="1.2" />
+            <circle cx="5" cy="12" r="1.2" /><circle cx="11" cy="12" r="1.2" />
+          </svg>
         </div>
+
+        {/* Color picker */}
+        <div className="relative flex-shrink-0 group">
+          <div className="w-4 h-4 rounded-full border border-[#dedbd6] cursor-pointer" style={{ backgroundColor: stage.dot_color }} />
+          <div className="absolute left-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] p-2 z-10 hidden group-hover:grid grid-cols-4 gap-1 w-[88px] shadow-sm">
+            {COLOR_PALETTE.map((c) => (
+              <button key={c} type="button" onClick={() => onChange(stage.id, "dot_color", c)}
+                className={`w-4 h-4 rounded-full border ${stage.dot_color === c ? "border-[#111111]" : "border-transparent"}`}
+                style={{ backgroundColor: c }}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Label input */}
+        <input
+          value={stage.label}
+          onChange={(e) => onChange(stage.id, "label", e.target.value)}
+          className="flex-1 text-[13px] text-[#111111] bg-transparent focus:outline-none min-w-0"
+        />
+
+        {/* Delete button */}
+        <button type="button" onClick={() => onDelete(stage.id)}
+          className="flex-shrink-0 text-[#7b7b78] hover:text-[#e07a7a] transition-colors"
+        >
+          <svg width="14" height="14" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
       </div>
 
-      {/* Label input */}
-      <input
-        value={stage.label}
-        onChange={(e) => onChange(stage.id, "label", e.target.value)}
-        className="flex-1 text-[13px] text-[#111111] bg-transparent focus:outline-none min-w-0"
-      />
+      {/* Conversion event + value row */}
+      <div className="flex items-end gap-2 pl-[26px]">
+        {/* Evento de conversão */}
+        <div className="flex-1 min-w-0">
+          <label className="block text-[10px] uppercase tracking-[0.5px] text-[#7b7b78] mb-1">
+            Evento de conversão
+          </label>
+          <Select
+            value={convEvent ?? "__none__"}
+            onValueChange={(v) =>
+              onChange(stage.id, "conversion_event", v === "__none__" ? null : v)
+            }
+          >
+            <SelectTrigger className="w-full h-[30px] bg-white border border-[#dedbd6] rounded-[4px] px-2 text-[12px] text-[#111111] focus:border-[#111111] focus:ring-0">
+              <SelectValue placeholder="Nenhum" />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectItem value="__none__">Nenhum</SelectItem>
+              <SelectItem value="lead">Lead Captado</SelectItem>
+              <SelectItem value="qualified">Qualificado</SelectItem>
+              <SelectItem value="opportunity">Oportunidade</SelectItem>
+              <SelectItem value="purchase">Venda</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-      {/* Delete button */}
-      <button type="button" onClick={() => onDelete(stage.id)}
-        className="flex-shrink-0 text-[#7b7b78] hover:text-[#e07a7a] transition-colors"
-      >
-        <svg width="14" height="14" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="M4 4l8 8M12 4l-8 8" />
-        </svg>
-      </button>
+        {/* Valor — só aparece quando há evento selecionado */}
+        {hasEvent && (
+          <div className="w-[100px] flex-shrink-0">
+            <label className="block text-[10px] uppercase tracking-[0.5px] text-[#7b7b78] mb-1">
+              Valor
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder={convEvent === "purchase" ? "Real" : "0,00"}
+              value={stage.conversion_value ?? ""}
+              onChange={(e) => onChange(stage.id, "conversion_value", e.target.value)}
+              className="w-full h-[30px] bg-white border border-[#dedbd6] rounded-[4px] px-2 text-[12px] text-[#111111] placeholder:text-[#9ca3af] focus:border-[#111111] focus:outline-none"
+            />
+            {convEvent === "purchase" && (
+              <p className="text-[10px] text-[#7b7b78] mt-0.5 leading-tight">Usa o valor real da venda</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -118,7 +181,7 @@ export function PipelineEditModal({
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  function handleChange(id: string, field: keyof EditableStage, value: string) {
+  function handleChange(id: string, field: keyof EditableStage, value: string | null) {
     setStages((prev) => prev.map((s) => s.id === id ? { ...s, [field]: value, _dirty: true } : s));
   }
 
@@ -210,7 +273,18 @@ export function PipelineEditModal({
           fetch(`/api/pipelines/${pipelineId}/stages/${s.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ label: s.label, dot_color: s.dot_color, order_index: s.order_index }),
+            body: JSON.stringify({
+              label: s.label,
+              dot_color: s.dot_color,
+              order_index: s.order_index,
+              conversion_event: s.conversion_event ?? null,
+              conversion_value:
+                s.conversion_value === "" || s.conversion_value === undefined
+                  ? null
+                  : s.conversion_value === null
+                  ? null
+                  : Number(s.conversion_value),
+            }),
           }).then(async (r) => {
             if (!r.ok) {
               const d = await r.json().catch(() => ({}));

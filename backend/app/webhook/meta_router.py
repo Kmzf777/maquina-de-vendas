@@ -69,7 +69,7 @@ def _register_lead(
         logger.warning("Failed to capture wa_id=%s for lead %s: %s", from_number, lead.get("id"), exc)
     try:
         if lead and ctwa_clid and lead.get("ctwa_clid") != ctwa_clid:
-            update_lead(lead["id"], ctwa_clid=ctwa_clid)
+            update_lead(lead["id"], ctwa_clid=ctwa_clid, traffic_type="paid")
     except Exception as exc:
         logger.warning("Failed to capture ctwa_clid=%s for lead %s: %s", ctwa_clid, lead.get("id"), exc)
     # Atribuição do funil (Opção B): carimba origem do anúncio CTWA quando ainda não há

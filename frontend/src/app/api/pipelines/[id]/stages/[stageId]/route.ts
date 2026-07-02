@@ -27,6 +27,19 @@ export async function PATCH(
   }
   if (body.dot_color !== undefined) updates.dot_color = body.dot_color;
   if (body.order_index !== undefined) updates.order_index = body.order_index;
+  if (body.conversion_event !== undefined) {
+    const allowed = ["lead", "qualified", "opportunity", "purchase", null, ""];
+    if (!allowed.includes(body.conversion_event)) {
+      return NextResponse.json({ error: "conversion_event inválido." }, { status: 400 });
+    }
+    updates.conversion_event = body.conversion_event || null;
+  }
+  if (body.conversion_value !== undefined) {
+    updates.conversion_value =
+      body.conversion_value === "" || body.conversion_value === null
+        ? null
+        : Number(body.conversion_value);
+  }
   const { data, error } = await supabase
     .from("pipeline_stages")
     .update(updates)
