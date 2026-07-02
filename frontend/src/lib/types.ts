@@ -48,6 +48,8 @@ export interface PipelineStage {
   order_index: number;
   is_protected: boolean;
   created_at: string;
+  conversion_event?: "lead" | "qualified" | "opportunity" | "purchase" | null;
+  conversion_value?: number | null;
 }
 
 export interface Deal {
