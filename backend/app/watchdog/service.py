@@ -13,6 +13,12 @@ bug matou o turno):
     sem controle humano assumido — ninguem e dono da conversa.
   - Check 3 `followup_jobs_stuck`: jobs de follow-up pendentes com fire_at muito no
     passado — o scheduler parou de rodar.
+  - Check 5 `handoff_sla_breach` (caso Juliana, 02/07): lead mandou mensagem no
+    canal humano (pos-handoff, vendedor ja assumiu) e ficou mais de 20min sem
+    resposta do vendedor. Fecha a lacuna que o Check 2 deixa por design
+    (human_control=true e o estado ESPERADO pos-handoff, fora do escopo de
+    orphan_lead_reply) — sem este check, "o Joao visualiza e nao responde" fica
+    1h46 invisivel, como aconteceu com a Juliana.
 
 Roda como task asyncio no lifespan de main.py, espelhando o padrao de run_flusher
 (app/buffer/flusher.py): loop infinito, sleep entre ticks, cancelado no shutdown.
@@ -23,8 +29,9 @@ try/except por item.
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from app.alerts.service import create_system_alert
 from app.buffer.recovery import recover_orphaned_buffers
@@ -66,6 +73,24 @@ ID_CHUNK_SIZE = 100
 REPLIES_FETCH_LIMIT = 1000
 # Teto de jobs presos por tick (Check 3) — mesma logica de limitar cada query.
 STUCK_JOB_LIMIT = 50
+
+# --- Check 5 (handoff_sla_breach, caso Juliana 02/07) ---------------------------
+# SLA de resposta HUMANA pos-handoff: quanto tempo uma msg do lead no canal humano
+# pode ficar sem resposta do vendedor antes de virar alerta.
+HANDOFF_SLA_MINUTES = 20
+# Mesma logica do lookback dos Checks 1/2: limita a janela de deteccao para nao
+# re-alertar violacoes antiquissimas (o dedup por conversa ja cobre re-alertas
+# recentes; o lookback cobre o caso de uma conversa esquecida ha dias).
+HANDOFF_SLA_LOOKBACK_HOURS = 24
+# Dedup POR CONVERSA (nao global como ALERT_DEDUP_HOURS/_alert_recently_fired) —
+# ver _handoff_sla_alerted_conversation_ids.
+HANDOFF_SLA_DEDUP_HOURS = 2
+# Janela util do check (8h-20h, America/Sao_Paulo): fora dela o vendedor humano nao
+# esta necessariamente de plantao — o check retorna 0 SEM consultar o banco (evita
+# ruido fora de hora e round-trips desnecessarios de madrugada).
+SLA_WINDOW_START = time(8, 0)
+SLA_WINDOW_END = time(20, 0)
+_SP_TZ = ZoneInfo("America/Sao_Paulo")
 
 # Mesmo padrao de app/follow_up/service.py:13 — escopa Check 3 ao ambiente atual
 # (dev/production) para nao misturar jobs de teste com os reais.
@@ -159,7 +184,13 @@ def _find_unanswered_conversations(
             .eq("role", "user")
             .gte("created_at", lookback_cutoff)
             .lte("created_at", grace_cutoff)
+            # Tiebreaker (review P3 minor): duas mensagens com o MESMO created_at
+            # (comum em bursts inseridos no mesmo milissegundo) nao tem ordem
+            # garantida so por created_at — sem uma chave secundaria deterministica,
+            # a mesma linha pode aparecer em duas paginas OU sumir entre elas quando
+            # o offset avanca. `id` (PK, unico) fecha o empate de forma estavel.
             .order("created_at", desc=True)
+            .order("id", desc=True)
             .range(offset, offset + CANDIDATE_PAGE_SIZE - 1)
             .execute()
         )
@@ -321,6 +352,124 @@ def check_stuck_followup_jobs(now: datetime) -> int:
     return n
 
 
+def _within_sla_window(now: datetime) -> bool:
+    """True se `now` (UTC) cai na janela util do Check 5 (SLA_WINDOW_START-
+    SLA_WINDOW_END, America/Sao_Paulo). Fora dela, `check_handoff_sla` retorna 0 SEM
+    tocar o banco — fora desse horario o vendedor humano nao esta necessariamente de
+    plantao, e alertar so geraria ruido (alem de round-trips desnecessarios ao
+    Supabase de madrugada).
+    """
+    local = now.astimezone(_SP_TZ)
+    return SLA_WINDOW_START <= local.time() < SLA_WINDOW_END
+
+
+def _handoff_sla_alerted_conversation_ids(now: datetime) -> set:
+    """Conversation_ids ja cobertos por um alerta `handoff_sla_breach` criado nas
+    ultimas HANDOFF_SLA_DEDUP_HOURS horas — QUALQUER `resolved` (diferente do dedup
+    global dos outros checks, `_alert_recently_fired`, que so olha resolved=False e
+    trata o alerta inteiro como uma unidade). Aqui o dedup e POR CONVERSA: uma
+    conversa ja alertada recentemente (resolvida ou nao) nao deve re-alertar a cada
+    tick, mas isso nao pode silenciar uma conversa NOVA que viola no mesmo tick —
+    foi exatamente esse tipo de silencio (1h46 sem nenhum alerta) que deixou o caso
+    Juliana (02/07) invisivel. Fail-open: erro na leitura -> conjunto vazio (nunca
+    suprime um alerta por falha de infra).
+    """
+    try:
+        sb = get_supabase()
+        cutoff = (now - timedelta(hours=HANDOFF_SLA_DEDUP_HOURS)).isoformat()
+        existing = (
+            sb.table("system_alerts")
+            .select("metadata")
+            .eq("type", "handoff_sla_breach")
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        ids: set = set()
+        for row in existing.data or []:
+            md = row.get("metadata") or {}
+            ids.update(md.get("conversation_ids") or [])
+        return ids
+    except Exception as exc:
+        logger.warning(
+            "[WATCHDOG] falha ao checar dedup por conversa de handoff_sla_breach: %s", exc
+        )
+        return set()
+
+
+def check_handoff_sla(now: datetime) -> int:
+    """Check 5 (caso Juliana, 02/07) — SLA de resposta HUMANA pos-handoff.
+
+    Juliana mandou mensagem no canal do Joao (pos-handoff, vendedor ja assumiu a
+    conversa) e ficou 1h46 sem resposta — "o Joao visualiza e nao responde" — e
+    ZERO alertas dispararam. O Check 2 (orphan_lead_reply) nao cobre esse caso por
+    design: human_control=true tira a conversa do escopo (e o estado ESPERADO
+    pos-handoff, a ponte da Frente B1). Este check fecha a lacuna observando
+    diretamente as colunas `conversations.last_customer_message_at`/
+    `last_seller_response_at` (mantidas por fluxo/trigger ja existentes — nao
+    precisa ler `messages`).
+
+    So roda dentro da janela util (ver `_within_sla_window`) — fora dela retorna 0
+    sem consultar o banco. Retorna o total de conversas em violacao (dedup por
+    conversa so decide o que entra no ALERTA, nao o que e reportado aqui — mesmo
+    contrato dos Checks 1/2/`_alert_recently_fired`).
+    """
+    if not _within_sla_window(now):
+        return 0
+
+    sb = get_supabase()
+    res = (
+        sb.table("conversations")
+        .select(
+            "id, lead_id, last_customer_message_at, last_seller_response_at, "
+            "channels!inner(mode), leads!inner(name)"
+        )
+        .eq("channels.mode", "human")
+        .execute()
+    )
+
+    lookback_floor = now - timedelta(hours=HANDOFF_SLA_LOOKBACK_HOURS)
+    sla_threshold = timedelta(minutes=HANDOFF_SLA_MINUTES)
+
+    violated: list[str] = []
+    lead_names: dict[str, str] = {}
+    for row in res.data or []:
+        raw_customer_ts = row.get("last_customer_message_at")
+        if not raw_customer_ts:
+            continue
+        customer_ts = _parse_ts(raw_customer_ts)
+        if customer_ts < lookback_floor:
+            continue
+        if now - customer_ts <= sla_threshold:
+            continue
+        raw_seller_ts = row.get("last_seller_response_at")
+        if raw_seller_ts and _parse_ts(raw_seller_ts) >= customer_ts:
+            continue  # vendedor respondeu DEPOIS da ultima msg do lead — ok
+        conv_id = row["id"]
+        violated.append(conv_id)
+        lead_names[conv_id] = ((row.get("leads") or {}).get("name") or "").strip()
+
+    n = len(violated)
+    if n:
+        logger.warning("[WATCHDOG] handoff_sla_breach: %d conversa(s) em violacao", n)
+        already_alerted = _handoff_sla_alerted_conversation_ids(now)
+        new_violations = [cid for cid in violated if cid not in already_alerted]
+        if new_violations:
+            first_names = [
+                lead_names[cid].split()[0] for cid in new_violations if lead_names.get(cid)
+            ]
+            example = ", ".join(first_names[:3]) if first_names else "sem nome"
+            create_system_alert(
+                "handoff_sla_breach",
+                "Lead aguardando resposta humana pós-handoff",
+                f"{len(new_violations)} conversa(s) no canal humano com mensagem do "
+                f"lead sem resposta há mais de {HANDOFF_SLA_MINUTES}min (ex.: {example}). "
+                "Casos reais: Juliana 02/07 ('o João visualiza e não responde').",
+                severity="warning",
+                metadata={"conversation_ids": new_violations[:10]},
+            )
+    return n
+
+
 async def run_watchdog(app) -> None:
     """Loop de background iniciado pelo lifespan (main.py). Roda ate ser cancelado.
 
@@ -368,6 +517,13 @@ async def run_watchdog(app) -> None:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_stuck_followup_jobs falhou: %s", exc, exc_info=True)
+
+        try:
+            await asyncio.to_thread(check_handoff_sla, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[WATCHDOG] check check_handoff_sla falhou: %s", exc, exc_info=True)
 
         try:
             await recover_orphaned_buffers(app.state.redis, require_no_deadline=True, source="watchdog")

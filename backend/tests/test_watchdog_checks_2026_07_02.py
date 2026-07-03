@@ -39,6 +39,35 @@ def _ts(value) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+def _order_sort_key(value):
+    """Chave de ordenacao generica p/ `FakeQuery.order()`/`execute()`: tenta parsear
+    `value` como timestamp (colunas created_at/fire_at, a maioria dos `.order()` do
+    watchdog); se nao for parseavel (ex.: coluna `id`, usada so como tiebreaker
+    secundario na paginacao — ver `test_watchdog_handoff_sla_2026_07_03.py`), cai
+    pro valor bruto. O wrapper em tupla `(0, ...)`/`(1, ...)` evita comparar
+    datetime com string diretamente quando um `.sort()` mistura linhas com e sem o
+    campo (ex.: linha sem `id`) — timestamps sempre ordenam antes de nao-timestamps.
+    """
+    try:
+        return (0, _ts(value))
+    except (ValueError, TypeError):
+        return (1, str(value))
+
+
+def _dotted_get(row: dict, dotted_key: str):
+    """Le uma chave `"a.b"` (ex.: `"channels.mode"`) em um dict com embeds
+    aninhados — suporta o padrao PostgREST `.eq("embed.coluna", valor)` (filtra pela
+    tabela embedada via `!inner`, usado pelo Check 5). Chaves sem ponto continuam
+    identicas a `row.get(key)` (comportamento anterior, retrocompativel).
+    """
+    node = row
+    for part in dotted_key.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
 class _Resp:
     def __init__(self, data):
         self.data = data
@@ -57,6 +86,12 @@ class FakeQuery:
     order, range, limit) — usado pelos testes de paginacao/chunking/embeds enxutos
     (test_watchdog_pagination_2026_07_03.py) para inspecionar COMO o passo foi
     construido, nao so o resultado.
+
+    `eq()` aceita chaves com ponto (`"channels.mode"`) para filtrar por um embed
+    `!inner` (Check 5). `order()` aceita chamadas encadeadas (`.order(a).order(b)`)
+    — cada uma empilha em `_order_calls` e `execute()` aplica um sort estavel
+    multi-chave (primaria primeiro, seguintes so desempatam) — usado pelo tiebreaker
+    `.order("id")` da paginacao (ver test_watchdog_handoff_sla_2026_07_03.py).
     """
 
     def __init__(self, rows: list, table_name: str = "", call_log: list | None = None):
@@ -66,6 +101,7 @@ class FakeQuery:
         self._call_log = call_log
         self._order_key = None
         self._order_desc = False
+        self._order_calls: list = []  # [(key, desc), ...] na ordem das chamadas .order() encadeadas
         self._limit_n = None
         self._range = None  # (start, end) inclusive, no estilo supabase-py
         self._select_cols = None
@@ -78,7 +114,7 @@ class FakeQuery:
         return self
 
     def eq(self, key, value):
-        self._filtered = [r for r in self._filtered if r.get(key) == value]
+        self._filtered = [r for r in self._filtered if _dotted_get(r, key) == value]
         return self
 
     def gte(self, key, value):
@@ -99,8 +135,17 @@ class FakeQuery:
         return self
 
     def order(self, key, desc=False):
+        """Encadeavel: `.order("created_at", desc=True).order("id", desc=True)`
+        empilha AMBAS as chamadas em `_order_calls` (aplicadas em `execute()` como
+        sort estavel multi-chave). `_order_key`/`_order_desc` continuam refletindo
+        so a ULTIMA chamada — mantem `call_log["order"]` retrocompativel para quem
+        so faz uma chamada (ex.: o `order desc + limit` do passo 3 de
+        `_find_unanswered_conversations`, inspecionado por
+        test_watchdog_pagination_2026_07_03.py).
+        """
         self._order_key = key
         self._order_desc = desc
+        self._order_calls.append((key, desc))
         return self
 
     def limit(self, n):
@@ -125,8 +170,13 @@ class FakeQuery:
             return _Resp(list(rows))
 
         rows = list(self._filtered)
-        if self._order_key:
-            rows.sort(key=lambda r: _ts(r[self._order_key]), reverse=self._order_desc)
+        # Sort estavel multi-chave: aplica as chamadas em ordem REVERSA (da ultima
+        # p/ a primeira) — o sort do Python e estavel, entao a chave aplicada por
+        # ULTIMO (a PRIMEIRA pedida) domina o resultado final; as anteriores
+        # (aplicadas antes, ou seja pedidas DEPOIS) so sobrevivem como desempate.
+        # Mesma semantica de `.order(a).order(b)` do PostgREST -> `ORDER BY a, b`.
+        for key, desc in reversed(self._order_calls):
+            rows.sort(key=lambda r, k=key: _order_sort_key(r.get(k)), reverse=desc)
         if self._range is not None:
             start, end = self._range
             rows = rows[start:end + 1]
@@ -139,6 +189,7 @@ class FakeQuery:
                 "select": self._select_cols,
                 "in_": list(self._in_calls),
                 "order": (self._order_key, self._order_desc),
+                "order_calls": list(self._order_calls),
                 "range": self._range,
                 "limit": self._limit_n,
                 "result_count": len(rows),
@@ -208,8 +259,16 @@ def fake_db(monkeypatch):
 
 # --- Helpers de fixture --------------------------------------------------------
 
-def _seed_message(fake, conversation_id, role, created_at):
+def _seed_message(fake, conversation_id, role, created_at, msg_id=None):
+    """`msg_id` (opcional): id unico da mensagem, usado como tiebreaker secundario
+    na paginacao real (`.order("id", desc=True)` — P3 minor do review de paginacao,
+    ver test_watchdog_handoff_sla_2026_07_03.py). Default auto-incremental
+    deterministico (baseado no tamanho atual da tabela) quando o chamador nao
+    precisa controlar o valor explicitamente — retrocompativel com todo call site
+    existente (nenhum passava um 5o argumento).
+    """
     fake.tables["messages"].append({
+        "id": msg_id if msg_id is not None else f"msg-{len(fake.tables['messages'])}",
         "conversation_id": conversation_id,
         "role": role,
         "created_at": _iso(created_at),
@@ -443,7 +502,14 @@ async def test_run_watchdog_rehearsal_mode_skips_all_checks(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_failure(monkeypatch):
-    """Tick normal: chama os 3 checks + recover_orphaned_buffers mesmo se o 1o check lancar."""
+    """Tick normal: chama os 4 checks + recover_orphaned_buffers mesmo se o 1o check lancar.
+
+    Os 4 checks (incluindo o novo Check 5 `check_handoff_sla`, registrado como o 4o
+    do loop) sao monkeypatchados — sem isso, `check_handoff_sla` real bateria no
+    Supabase de verdade (URL fake do conftest, `https://test.supabase.co`) sempre
+    que o horario real da maquina de teste cair dentro da janela util (8h-20h
+    America/Sao_Paulo), tornando o teste dependente de hora do dia (flaky).
+    """
     monkeypatch.setenv("REHEARSAL_MODE", "false")
     calls = []
 
@@ -454,6 +520,7 @@ async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_
     monkeypatch.setattr(W, "check_ai_unresponsive", _boom)
     monkeypatch.setattr(W, "check_orphan_lead_reply", lambda now: calls.append("check2") or 0)
     monkeypatch.setattr(W, "check_stuck_followup_jobs", lambda now: calls.append("check3") or 0)
+    monkeypatch.setattr(W, "check_handoff_sla", lambda now: calls.append("check5") or 0)
 
     recovery_calls = []
 
@@ -470,5 +537,5 @@ async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_
         with pytest.raises(asyncio.CancelledError):
             await run_watchdog(app_mock)
 
-    assert calls == ["check1", "check2", "check3"]
+    assert calls == ["check1", "check2", "check3", "check5"]
     assert recovery_calls == [("fake-redis-marker", {"require_no_deadline": True, "source": "watchdog"})]
