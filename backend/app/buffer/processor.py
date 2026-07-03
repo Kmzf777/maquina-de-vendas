@@ -782,15 +782,6 @@ async def process_buffered_messages(
         logger.warning(f"Duplicate user message detected for {phone} (sem wamid), skipping")
         return
 
-    # CA#1: tique azul SÓ AGORA — o turno da IA está começando (mensagem nova, pós-dedup).
-    # Antes o read receipt era disparado na ingestão do webhook (tique de robô instantâneo).
-    # Marcar a última mensagem como lida é cumulativo no WhatsApp (cobre todo o buffer).
-    if wamid:
-        try:
-            await provider.mark_read(wamid)
-        except Exception as e:
-            logger.warning(f"[READ] falha ao marcar mensagem lida ({wamid}) p/ {phone}: {e}")
-
     # Always save the incoming user message
     try:
         _saved_user = await _save_with_retry(
@@ -969,6 +960,17 @@ async def process_buffered_messages(
                 )
             _update_last_msg(conversation["id"])
             return
+
+    # CA#1 (movido pós-gates): tique azul SÓ quando a Valéria REALMENTE vai responder — após
+    # todos os gates de handoff/canal-humano/kill-switch/allowlist/escalação. Em atendimento
+    # humano (mode=human ou ai_enabled=false), NÃO marcamos lido aqui: o recibo passa a ser
+    # disparado quando o vendedor humano responde pela plataforma (endpoint /read-receipt).
+    # Regra "nunca lido sem resposta". Marcar a última msg é cumulativo na Meta (cobre o buffer).
+    if wamid:
+        try:
+            await provider.mark_read(wamid)
+        except Exception as e:
+            logger.warning(f"[READ] falha ao marcar mensagem lida ({wamid}) p/ {phone}: {e}")
 
     # Run AI agent — up to 3 attempts with 5s backoff between failures
     _AGENT_MAX_ATTEMPTS = 3
