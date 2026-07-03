@@ -54,6 +54,7 @@ from app.agent.orchestrator import build_system_prompt
 from app.agent.prompts.base import build_base_prompt
 from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
 from app.agent.prompts.valeria_inbound.consumo import CONSUMO_PROMPT
+from app.agent.prompts.valeria_inbound.private_label import PRIVATE_LABEL_PROMPT
 from app.agent.prompts.valeria_inbound.secretaria import SECRETARIA_PROMPT
 
 
@@ -445,3 +446,185 @@ def test_base_ramo_sem_nome_trata_saudacao_como_nome_ausente():
     prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
     assert "Se o cadastro tiver um nome que parece saudacao" in prompt
     assert "descubra o nome real e chame salvar_nome" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (C-5) — reforco do marcar_interesse no momento-preco
+# ---------------------------------------------------------------------------
+# Declaracao: fluxo ambos-via-base (checklist, no base.py compartilhado) + few-shots fluxo
+# inbound, perfis atacado (valeria_inbound/atacado.py) e private_label
+# (valeria_inbound/private_label.py).
+#
+# Motivacao (janela 01-02/07): marcar_interesse NAO foi chamado NENHUMA vez (0 follow-ups
+# agendados) apesar de 8 conversas chegarem ao momento-preco. A Frente B3 ja criou a rede
+# DETERMINISTICA (gatilho pos-preco no processor: quote_flag OU "R$" na resposta final —
+# ver test_processor_price_followup_2026_07_03.py) e essa e a rede PRIMARIA, valendo
+# independente do LLM chamar ou nao a tool. As mudancas desta task (C-5) sao REFORCO DE
+# PROMPT: fazem o sinal RICO (nivel="quente"/"morno" + motivo analitico via
+# marcar_interesse, regra 18b) voltar a fluir — sinal que o gatilho deterministico sozinho
+# nao entrega (ele so sabe "cotou preco", nao o nivel de interesse nem o motivo qualificado
+# pro vendedor humano). A regra 19 do base ("MARCAR_INTERESSE — SOMENTE INTERESSE COMERCIAL
+# GENUINO") NAO foi alterada nesta task — C-5 so ADICIONA pressao de checklist + exemplos
+# que apontam pra ela, nunca modifica seu texto.
+
+
+def test_base_checklist_contem_item_26_marcar_interesse_no_momento_preco():
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    assert (
+        "26. O lead perguntou preco/condicoes ou pediu orcamento NESTE turno? "
+        "Se sim: ja chamei marcar_interesse? (regra 19 — sem isso o follow-up automatico nao arma)"
+        in prompt
+    )
+
+
+def test_base_item_26_vem_depois_do_item_25_dentro_do_checklist_sem_colidir():
+    # Escopado AO CHECKLIST: ha uma regra 26 pre-existente em <constraints> ("26. LEAD QUE JA
+    # E NOSSO CLIENTE"), numeracao independente da lista do checklist — nao e colisao real,
+    # mas a contagem so faz sentido restrita ao bloco do checklist.
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    checklist_start = prompt.index("# CHECKLIST ANTES DE RESPONDER")
+    instructions_end = prompt.index("</instructions>")
+    checklist_block = prompt[checklist_start:instructions_end]
+    item_25 = checklist_block.index("25. Prometi enviar/passar algo")
+    item_26 = checklist_block.index("26. O lead perguntou preco/condicoes")
+    assert item_25 < item_26
+    assert checklist_block.count("\n26. ") == 1
+
+
+def test_base_regra_19_marcar_interesse_intocada():
+    # C-5 e reforco de PROMPT (checklist + few-shots) — a regra 19 em si (constraints) nao
+    # pode ter sido alterada, duplicada ou movida.
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    assert prompt.count("19. MARCAR_INTERESSE — SOMENTE INTERESSE COMERCIAL GENUINO") == 1
+    regra_19 = prompt.index("19. MARCAR_INTERESSE — SOMENTE INTERESSE COMERCIAL GENUINO")
+    regra_20 = prompt.index("20. CORRECAO DE IDENTIDADE — ATUALIZAR NOME IMEDIATAMENTE")
+    block = prompt[regra_19:regra_20]
+    assert "Sem esse sinal, o follow-up automatico nao e agendado." in block
+
+
+def test_base_nada_de_existente_foi_removido_na_task_5():
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    for marker in (
+        "25. Prometi enviar/passar algo NESTA mensagem?",
+        "24. O lead deu uma negativa REFLEXA",
+        "32. PROMESSA DE ENVIO = ENTREGA NO MESMO TURNO",
+        "31. LIMITADOR DE HANDOFF",
+        "26. LEAD QUE JA E NOSSO CLIENTE",
+        "# CHECKLIST ANTES DE RESPONDER",
+        "<constraints>",
+        "</constraints>",
+        "<instructions>",
+        "</instructions>",
+    ):
+        assert marker in prompt, f"marcador removido/alterado: {marker!r}"
+
+
+# --- atacado.py: Exemplo 9 (calcular_orcamento + marcar_interesse no mesmo turno) --------
+
+def test_atacado_few_shot_marcar_interesse_no_momento_preco():
+    few_shot_start = ATACADO_PROMPT.index("<few_shot_examples>")
+    few_shot_end = ATACADO_PROMPT.index("</few_shot_examples>")
+    block = ATACADO_PROMPT[few_shot_start:few_shot_end]
+    assert "Exemplo 9" in block
+    assert "marcar_interesse" in block
+    assert 'nivel="quente"' in block
+    assert "calcular_orcamento" in block
+    # motivo analitico (regra 18b), nao generico — e referencia explicita a regra 19
+    assert "regra 18b" in block
+    assert "regra 19" in block
+
+
+def test_atacado_few_shot_9_cita_rede_b3_como_primaria_e_isto_como_reforco():
+    few_shot_start = ATACADO_PROMPT.index("<few_shot_examples>")
+    block = ATACADO_PROMPT[few_shot_start:]
+    exemplo_9 = block.index("Exemplo 9")
+    trecho = block[exemplo_9:]
+    assert "B3" in trecho
+    assert "rede primaria" in trecho
+    assert "reforco" in trecho
+
+
+def test_atacado_exemplo_9_mantem_a_voz_da_valeria():
+    few_shot_start = ATACADO_PROMPT.index("<few_shot_examples>")
+    exemplo_9 = ATACADO_PROMPT.index("## Exemplo 9")
+    exemplo_end = ATACADO_PROMPT.index("</few_shot_examples>")
+    assert few_shot_start < exemplo_9 < exemplo_end
+    trecho = ATACADO_PROMPT[exemplo_9:exemplo_end]
+    # qualificador de preco aprovado do atacado (secao "Apresentacao de precos" do arquivo)
+    assert "gira em torno de" in trecho or "fica por volta de" in trecho
+    # a bolha de resposta ao lead termina em pergunta (1 pergunta, regra do silencio)
+    assert "?" in trecho
+
+
+def test_atacado_nada_de_existente_foi_removido_na_task_5():
+    for marker in (
+        "## Exemplo 1 ", "## Exemplo 2 ", "## Exemplo 3 ", "## Exemplo 3b ",
+        "## Exemplo 4 ", "## Exemplo 5 ", "## Exemplo 6 ", "## Exemplo 7 ", "## Exemplo 8 ",
+        "o cliente NUNCA ve a cozinha",
+        "<critical_constraints>", "</critical_constraints>",
+        "<few_shot_examples>", "</few_shot_examples>",
+    ):
+        assert marker in ATACADO_PROMPT, f"marcador removido/alterado: {marker!r}"
+
+
+# --- private_label.py: few-shot analogo (primeira cobertura desta frente p/ este arquivo) -
+
+def test_private_label_few_shot_marcar_interesse_no_momento_preco():
+    few_shot_start = PRIVATE_LABEL_PROMPT.index("<few_shot_examples>")
+    few_shot_end = PRIVATE_LABEL_PROMPT.index("</few_shot_examples>")
+    block = PRIVATE_LABEL_PROMPT[few_shot_start:few_shot_end]
+    assert "Exemplo 5" in block
+    assert "marcar_interesse" in block
+    assert 'nivel="quente"' in block
+    assert "regra 18b" in block
+    assert "regra 19" in block
+    assert "B3" in block
+    assert "rede primaria" in block
+
+
+def test_private_label_segue_formato_local_sem_marcadores_do_atacado():
+    # private_label.py NAO usa "## Exemplo N" (formato do atacado.py) nem blocos "Nota:" —
+    # usa "Exemplo N — titulo", separador "---" e anotacoes entre colchetes (ex.: "[para e
+    # aguarda resposta do cliente]"). O exemplo novo segue ESSE formato local, nao o do
+    # arquivo vizinho (constraint da frente: few-shots no MESMO formato dos vizinhos).
+    assert "## Exemplo 5" not in PRIVATE_LABEL_PROMPT
+    assert "Exemplo 5 —" in PRIVATE_LABEL_PROMPT
+
+
+def test_private_label_nada_de_existente_foi_removido():
+    # Primeira cobertura estrutural deste arquivo na Frente C (nao foi tocado em C1-C4) —
+    # trava os marcadores pre-existentes pra qualquer edicao futura da frente.
+    for marker in (
+        "## Regra Prioritaria — Pergunta Direta",
+        "## Vocabulario Proibido",
+        "## Circuit Breaker — 8 Turnos",
+        "## Regra Anti-Loop — Confirmacao",
+        "## Regra de Handoff Limpo",
+        "## Limitador de Handoff — Anti-Spam (regra 31)",
+        "## Regras Absolutas de Fechamento",
+        "<critical_constraints>", "</critical_constraints>",
+        "<instructions>", "</instructions>",
+        "<few_shot_examples>", "</few_shot_examples>",
+        "Exemplo 1 —", "Exemplo 2 —", "Exemplo 3 —", "Exemplo 4 —",
+    ):
+        assert marker in PRIVATE_LABEL_PROMPT, f"marcador removido/alterado: {marker!r}"
+
+
+def test_build_system_prompt_private_label_monta_sem_erro_e_final_instruction_e_ultima():
+    lead = {"name": "Arthur", "company": None}
+    prompt = build_system_prompt(lead, "private_label")
+    assert prompt.rstrip().endswith("</final_instruction>")
+    assert "marcar_interesse" in prompt
+    assert 'nivel="quente"' in prompt
+    assert prompt.index("Exemplo 5") < prompt.index("<final_instruction>")
+
+
+def test_build_system_prompt_atacado_c5_reforco_antes_do_final_instruction():
+    lead = {"name": "Edgar", "company": None}
+    prompt = build_system_prompt(lead, "atacado")
+    assert prompt.rstrip().endswith("</final_instruction>")
+    assert "Exemplo 9" in prompt
+    assert prompt.index("Exemplo 9") < prompt.index("<final_instruction>")
+    # o item 26 do checklist (base.py) tambem precisa estar presente na montagem final
+    assert "26. O lead perguntou preco/condicoes" in prompt
+    assert prompt.index("26. O lead perguntou preco/condicoes") < prompt.index("<final_instruction>")

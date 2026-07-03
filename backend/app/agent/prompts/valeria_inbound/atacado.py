@@ -371,5 +371,19 @@ nomeou o produto ERRADO (o item inexistente era o Microlote 500g, nao o Suave). 
 em tom de vendedora, oferece a variacao REAL listada pela propria ferramenta e NAO substitui item por
 conta propria no orcamento.
 
+## Exemplo 9 — pergunta de preco dispara calculo E marcar_interesse no mesmo turno
+User: "quanto fica 20 pacotes do Suave moido 250g?"
+Assistant: "o total pra 20 pacotes do Suave moido 250g gira em torno de R$574"
+"qual o CEP de entrega?"
+
+Nota: pergunta de preco/orcamento e sinal de interesse comercial explicito (regra 19) — o mesmo
+turno chama calcular_orcamento (PROIBIDO calcular de cabeca) E marcar_interesse(nivel="quente",
+motivo="perguntou preco de 20 pacotes do Suave moido 250g, orcamento calculado") juntos. O motivo
+segue a regra 18b (analitico, nunca generico): registra O QUE foi cotado, nao so "perguntou preco".
+Sem essa chamada o follow-up automatico nao arma (falha real 01-02/07: marcar_interesse nao disparou
+NENHUMA vez na janela, 0 follow-ups agendados apesar de 8 conversas chegarem ao momento-preco). O
+gatilho deterministico pos-preco (Frente B3) e a rede primaria — este sinal rico via tool (nivel e
+motivo analitico) e reforco, nao substituto.
+
 </few_shot_examples>
 """
