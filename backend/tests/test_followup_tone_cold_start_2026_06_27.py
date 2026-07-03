@@ -65,7 +65,7 @@ async def test_generate_forwards_objetivo_to_system_prompt(monkeypatch):
     resp.usage = None
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(return_value=resp)
-    monkeypatch.setattr(scheduler, "AsyncOpenAI", lambda **k: mock_client)
+    monkeypatch.setattr(scheduler, "get_gemini_client", lambda *a, **k: mock_client)
 
     msg, finish_reason = await scheduler._generate_followup_message(
         [{"role": "user", "content": "oi"}],

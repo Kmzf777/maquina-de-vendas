@@ -6,9 +6,10 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import httpx
-import openai
-from openai import AsyncOpenAI
+from google.genai import errors as genai_errors
 
+from app.agent import gemini_native
+from app.agent.gemini_native import GeminiNativeClient
 from app.config import settings
 from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
 from app.agent.prompts import get_stage_prompts
@@ -26,7 +27,6 @@ from app.leads.service import get_lead, update_lead
 
 logger = logging.getLogger(__name__)
 
-_gemini_client: AsyncOpenAI | None = None
 TZ_BR = timezone(timedelta(hours=-3))
 DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_TOOL_ITERATIONS = 5
@@ -237,8 +237,6 @@ def _looks_like_handoff_announcement(text: str) -> bool:
     return bool(_HANDOFF_ANNOUNCEMENT_RE.search(_normalize_for_handoff_re(text)))
 
 
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
 # ---------------------------------------------------------------------------
 # Helpers for reply/reaction context enrichment (prompt-only, never persisted)
 # ---------------------------------------------------------------------------
@@ -335,19 +333,12 @@ def _gemini_thinking_off(model: str) -> dict:
     return {}
 
 
-def _get_gemini() -> AsyncOpenAI:
-    global _gemini_client
-    if _gemini_client is None:
-        if not settings.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is not configured — set it in .env to use Gemini models")
-        _gemini_client = AsyncOpenAI(
-            api_key=settings.gemini_api_key,
-            base_url=_GEMINI_BASE_URL,
-        )
-    return _gemini_client
+def _get_gemini() -> GeminiNativeClient:
+    """Cliente Gemini nativo (SDK google-genai). Singleton mantido em gemini_native."""
+    return gemini_native.get_client()
 
 
-def _get_client(model: str) -> AsyncOpenAI:
+def _get_client(model: str) -> GeminiNativeClient:
     return _get_gemini()
 
 
@@ -367,32 +358,41 @@ class LLMUnavailableError(Exception):
     """
 
 
-async def _create_with_retry(client: AsyncOpenAI, **kwargs):
-    """chat.completions.create com retry em indisponibilidade transitória.
+def _genai_status_code(exc: genai_errors.APIError) -> int | None:
+    """Extrai o status HTTP de um erro do google-genai (APIError.code)."""
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, int) else None
 
-    Retenta drops de conexão (GOAWAY/timeout) E erros HTTP transitórios do provedor
-    (429 rate-limit/quota, 403 billing/permissão negada, 5xx) com backoff exponencial,
-    honrando Retry-After. Erros não-retentáveis (4xx exceto 403/429) são relançados na
-    hora. Ao esgotar as tentativas de indisponibilidade → LLMUnavailableError.
+
+async def _create_with_retry(client: GeminiNativeClient, **kwargs):
+    """generate_content (via fachada .chat.completions.create) com retry transitório.
+
+    Retenta drops de conexão (GOAWAY/timeout via httpx) E erros HTTP transitórios do
+    provedor (429 rate-limit/quota, 403 billing/permissão negada, 5xx) com backoff
+    exponencial, honrando Retry-After quando presente. Erros não-retentáveis (4xx exceto
+    403/429) são relançados na hora. Ao esgotar as tentativas → LLMUnavailableError.
+
+    Exceções do SDK nativo: google.genai.errors.APIError (ClientError=4xx, ServerError=5xx),
+    com o status em `.code`. Timeouts/quedas de conexão sobem como httpx.TransportError.
     """
     last_exc: Exception | None = None
     for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
         _delay = _LLM_RETRY_DELAY * (2 ** (attempt - 1))
         try:
             return await client.chat.completions.create(**kwargs)
-        except (openai.APIConnectionError, openai.APITimeoutError, httpx.TransportError) as exc:
+        except httpx.TransportError as exc:
             last_exc = exc
             logger.warning(
                 "[LLM RETRY] tentativa %d/%d falhou (conexão): %s",
                 attempt, _LLM_RETRY_ATTEMPTS, exc,
             )
-        except openai.APIStatusError as exc:
-            status = getattr(exc, "status_code", None)
+        except genai_errors.APIError as exc:
+            status = _genai_status_code(exc)
             if status not in (403, 429) and not (isinstance(status, int) and status >= 500):
                 raise  # 4xx não-retentável (400/401/404/...) → relança cru
             last_exc = exc
             try:
-                _retry_after = float(exc.response.headers.get("retry-after", 0) or 0)
+                _retry_after = float(getattr(exc, "response", None).headers.get("retry-after", 0) or 0)
             except Exception:
                 _retry_after = 0.0
             _delay = max(_delay, _retry_after)
@@ -407,7 +407,7 @@ async def _create_with_retry(client: AsyncOpenAI, **kwargs):
     ) from last_exc
 
 
-def get_ai_client(model: str) -> AsyncOpenAI:
+def get_ai_client(model: str) -> GeminiNativeClient:
     """Public accessor — returns the appropriate AI client for the given model."""
     return _get_client(model)
 
@@ -554,7 +554,7 @@ async def run_agent(
         logger.warning("Agent profile model '%s' não é Gemini; coagindo para %s", model, DEFAULT_MODEL)
         model = DEFAULT_MODEL
     else:
-        logger.info("Using Gemini model '%s' via OpenAI-compatible API", model)
+        logger.info("Using Gemini model '%s' via native Google GenAI SDK", model)
 
     tools = get_tools_for_stage(stage)
     catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)

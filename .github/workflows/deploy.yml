@@ -112,7 +112,6 @@ jobs:
         if: steps.backend_changed.outputs.changed == 'true'
         working-directory: backend
         env:
-          OPENAI_API_KEY: ci-dummy-openai-key
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_KEY: ci-dummy-supabase-service-key
         run: |
