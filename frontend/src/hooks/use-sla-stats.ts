@@ -199,13 +199,20 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
   const fetchAndCompute = useCallback(async () => {
     const cutoff = getCutoff(filter);
 
-    const [{ data: cfgData }, { data: ovData }, { data: settingsData }] = await Promise.all([
+    const [{ data: userData }, { data: cfgData }, { data: ovData }, { data: settingsData }] = await Promise.all([
+      supabase.auth.getUser(),
       supabase.from("sla_seller_config").select("user_id, channel_id, display_name, window_start_minute, window_end_minute, active_weekdays, active").eq("active", true),
       supabase.from("sla_overrides").select("user_id, start_date, end_date"),
       supabase.from("sla_settings").select("target_minutes").eq("id", 1).single(),
     ]);
 
-    const configs = (cfgData ?? []) as SellerConfigRow[];
+    // Mesmo escopo do use-overdue-leads: vendedor vê só a própria linha.
+    // Com RLS em conversations/messages, os dados dos outros canais nem
+    // retornam — sem este filtro a tabela mostraria vendedores zerados.
+    const user = userData.user;
+    const admin = user?.app_metadata?.role === "admin";
+    const allConfigs = (cfgData ?? []) as SellerConfigRow[];
+    const configs = admin ? allConfigs : allConfigs.filter((c) => c.user_id === user?.id);
     const overrides = (ovData ?? []) as OverrideRow[];
     const target = (settingsData?.target_minutes ?? 20) as number;
 
