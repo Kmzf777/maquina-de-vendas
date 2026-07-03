@@ -231,7 +231,12 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     setLoading(true);
     fetchAndCompute();
 
-    const debounced = debounce(fetchAndCompute, 1500);
+    // 30s (era 1,5s): cada refetch baixa conversas de 30d + TODAS as mensagens
+    // delas para recalcular no browser (~0,5MB) — com eventos de `conversations`
+    // a cada mensagem do sistema, o debounce curto multiplicava Egress por aba
+    // aberta. Estatística tolera 30s de atraso; os contadores continuam
+    // avançando ao vivo pelo recompute local de 60s (sem fetch) abaixo.
+    const debounced = debounce(fetchAndCompute, 30_000);
     // Escuta apenas `conversations`: ela já é atualizada a cada mensagem
     // (last_customer_message_at / last_seller_response_at), então cobre o gatilho
     // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada
