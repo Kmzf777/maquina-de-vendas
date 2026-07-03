@@ -290,6 +290,42 @@ def test_check5_dedup_sobra_zero_sem_alerta(monkeypatch):
     assert len(fake.tables["system_alerts"]) == 1  # so o seed -- nenhum alerta novo
 
 
+def test_check5_query_pushes_down_not_null_lookback_and_limit(monkeypatch):
+    """Item 3 (review final B): sem predicado server-side em
+    last_customer_message_at, o max-rows do PostgREST (~1000) truncaria
+    silenciosamente sob volume alto. A query emitida pro fake precisa carregar
+    `.not_.is_("last_customer_message_at", "null")`, `.gte()` com o MESMO piso de
+    lookback usado no filtro Python e `.limit(HANDOFF_SLA_FETCH_LIMIT)` explicito —
+    os filtros Python (lookback/SLA/dedup) continuam intactos como defesa em
+    profundidade."""
+    fake = _fake_db(monkeypatch)
+    now = _local(2026, 7, 2, 14, 0)
+    _seed_conversation_check5(
+        fake, "conv-juliana",
+        last_customer_message_at=now - timedelta(minutes=30),
+        last_seller_response_at=None,
+        name="Juliana",
+    )
+
+    result = check_handoff_sla(now)
+
+    assert result == 1  # nao-regressao: a violacao real continua sendo detectada
+    conv_calls = [c for c in fake.calls if c["table"] == "conversations"]
+    assert len(conv_calls) == 1
+    call = conv_calls[0]
+
+    assert call["not_is_null"] == ["last_customer_message_at"]
+    assert call["limit"] == W.HANDOFF_SLA_FETCH_LIMIT
+
+    gte_by_key = dict(call["gte"])
+    assert "last_customer_message_at" in gte_by_key
+    expected_floor = now - timedelta(hours=W.HANDOFF_SLA_LOOKBACK_HOURS)
+    actual_floor = datetime.fromisoformat(
+        str(gte_by_key["last_customer_message_at"]).replace("Z", "+00:00")
+    )
+    assert abs((actual_floor - expected_floor).total_seconds()) < 1
+
+
 # ── Tiebreaker (P3 minor): .order("id") na paginacao do passo 1 ────────────────
 
 def test_pagination_tiebreaker_orders_by_id_after_created_at(monkeypatch):

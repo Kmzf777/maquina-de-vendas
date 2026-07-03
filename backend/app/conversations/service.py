@@ -207,13 +207,19 @@ def save_message(
         logger.error(f"[DEBUG-SAVE_MESSAGE] insert returned empty data — NADA SALVO (payload={msg})")
         return {}
 
-    # Keep conversations.last_msg_at current; zero unread badge on outbound.
+    # Keep conversations.last_msg_at current; zero unread badge quando o VENDEDOR
+    # responde (não a ponte — ver guard sent_by != "bridge" abaixo).
     # Janela 24h POR CANAL: mensagens do cliente (role='user') carimbam
     # conversations.last_customer_message_at — fonte da verdade da janela deste canal.
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         update_fields: dict = {"last_msg_at": now_iso}
-        if role == "assistant":
+        # A ponte pós-handoff (sent_by="bridge", ver buffer/processor.py
+        # _maybe_send_handoff_bridge) é sinalização ESTÁTICA de roteamento, não
+        # atendimento — zerar o badge aqui apagaria a notificação que a própria
+        # mensagem do lead acabou de incrementar (caso real: Maycon manda 1 áudio
+        # pós-handoff → ponte responde → vendedor nunca veria nada em "Não lidas").
+        if role == "assistant" and sent_by != "bridge":
             update_fields["unread_count"] = 0
         if role == "user":
             update_fields["last_customer_message_at"] = now_iso

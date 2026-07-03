@@ -73,12 +73,30 @@ class _Resp:
         self.data = data
 
 
+class _FakeNotAccessor:
+    """Devolvido pela property `FakeQuery.not_` — captura `.is_(key, "null")`
+    (equivalente a `IS NOT NULL`) e retorna o FakeQuery original pra manter o
+    encadeamento (`.not_.is_(...).gte(...)`), mesmo padrao de `_NotAccessor` em
+    test_scheduler_preserves_ai_scheduled_return_2026_06_30.py (que cobre `.in_()`
+    em vez de `.is_()`).
+    """
+
+    def __init__(self, query: "FakeQuery"):
+        self._query = query
+
+    def is_(self, key, value):
+        if value == "null":
+            self._query._not_is_null_keys.append(key)
+            self._query._filtered = [r for r in self._query._filtered if r.get(key) is not None]
+        return self._query
+
+
 class FakeQuery:
     """Query encadeavel sobre uma lista de dicts (uma tabela fake), no estilo do repo.
 
     Suporta exatamente o subconjunto usado pelo watchdog: select/eq/gte/lte/in_/
-    order/limit/range/insert/execute. gte/lte comparam por timestamp parseado (nunca
-    por string) — mesma disciplina exigida da implementacao real.
+    not_.is_/order/limit/range/insert/execute. gte/lte comparam por timestamp
+    parseado (nunca por string) — mesma disciplina exigida da implementacao real.
 
     `table_name`/`call_log` sao opcionais (retrocompativeis com instanciacao antiga
     `FakeQuery(rows)`): quando um `call_log` e passado, cada `execute()` de LEITURA
@@ -92,6 +110,13 @@ class FakeQuery:
     — cada uma empilha em `_order_calls` e `execute()` aplica um sort estavel
     multi-chave (primaria primeiro, seguintes so desempatam) — usado pelo tiebreaker
     `.order("id")` da paginacao (ver test_watchdog_handoff_sla_2026_07_03.py).
+
+    `.not_.is_(key, "null")` (property `not_` devolvendo um accessor com `.is_()`)
+    filtra `IS NOT NULL` e volta a encadear no proprio FakeQuery — mesmo padrao real
+    do supabase-py usado em app/automation/triggers.py e app/campaigns/google_export.py.
+    `gte()`/`not_.is_()` tambem registram suas chamadas (`_gte_calls`/
+    `_not_is_null_keys`) no `call_log`, usado pelo pushdown server-side do Check 5
+    (ver test_watchdog_handoff_sla_2026_07_03.py::test_check5_query_pushes_down_not_null_lookback_and_limit).
     """
 
     def __init__(self, rows: list, table_name: str = "", call_log: list | None = None):
@@ -106,6 +131,8 @@ class FakeQuery:
         self._range = None  # (start, end) inclusive, no estilo supabase-py
         self._select_cols = None
         self._in_calls: list = []  # [(key, values_list), ...] na ordem de chamada
+        self._gte_calls: list = []  # [(key, value_bruto), ...] na ordem de chamada
+        self._not_is_null_keys: list = []  # keys filtradas via .not_.is_(key, "null")
         self._insert_payload = None
 
     def select(self, *cols, **_k):
@@ -118,9 +145,14 @@ class FakeQuery:
         return self
 
     def gte(self, key, value):
+        self._gte_calls.append((key, value))
         bound = _ts(value)
         self._filtered = [r for r in self._filtered if key in r and _ts(r[key]) >= bound]
         return self
+
+    @property
+    def not_(self):
+        return _FakeNotAccessor(self)
 
     def lte(self, key, value):
         bound = _ts(value)
@@ -188,6 +220,8 @@ class FakeQuery:
                 "table": self._table_name,
                 "select": self._select_cols,
                 "in_": list(self._in_calls),
+                "gte": list(self._gte_calls),
+                "not_is_null": list(self._not_is_null_keys),
                 "order": (self._order_key, self._order_desc),
                 "order_calls": list(self._order_calls),
                 "range": self._range,

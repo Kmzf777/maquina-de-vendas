@@ -91,6 +91,14 @@ HANDOFF_SLA_DEDUP_HOURS = 2
 SLA_WINDOW_START = time(8, 0)
 SLA_WINDOW_END = time(20, 0)
 _SP_TZ = ZoneInfo("America/Sao_Paulo")
+# Teto explicito do fetch de conversas candidatas (Check 5 e uma unica query, sem a
+# paginacao de 3 passos dos Checks 1/2 — ver _find_unanswered_conversations). Sem um
+# predicado server-side em last_customer_message_at, o max-rows DEFAULT do PostgREST
+# (~1000) truncaria silenciosamente sob volume alto — corte invisivel, nao um erro
+# (review final da Etapa 1/Frente B). Os filtros `.not_.is_`/`.gte` abaixo reduzem o
+# resultado ANTES desse teto (defesa primaria); os filtros Python de lookback/SLA/
+# dedup permanecem como defesa em profundidade.
+HANDOFF_SLA_FETCH_LIMIT = 1000
 
 # Mesmo padrao de app/follow_up/service.py:13 — escopa Check 3 ao ambiente atual
 # (dev/production) para nao misturar jobs de teste com os reais.
@@ -416,6 +424,17 @@ def check_handoff_sla(now: datetime) -> int:
     if not _within_sla_window(now):
         return 0
 
+    lookback_floor = now - timedelta(hours=HANDOFF_SLA_LOOKBACK_HOURS)
+    sla_threshold = timedelta(minutes=HANDOFF_SLA_MINUTES)
+
+    # Push-down server-side (review final da Etapa 1/Frente B, Item 3): sem estes
+    # filtros a query trazia TODA conversa em canal humano, sujeita ao corte
+    # silencioso do max-rows do PostgREST (~1000) sob volume alto — ver
+    # HANDOFF_SLA_FETCH_LIMIT. `.not_.is_` descarta quem nunca recebeu mensagem do
+    # cliente (equivalente ao `if not raw_customer_ts: continue` abaixo, so que
+    # antes do limit) e `.gte` aplica o MESMO piso de lookback usado no filtro
+    # Python logo a seguir — os filtros Python continuam rodando (defesa em
+    # profundidade: nunca dependa so do predicado do banco).
     sb = get_supabase()
     res = (
         sb.table("conversations")
@@ -424,11 +443,11 @@ def check_handoff_sla(now: datetime) -> int:
             "channels!inner(mode), leads!inner(name)"
         )
         .eq("channels.mode", "human")
+        .not_.is_("last_customer_message_at", "null")
+        .gte("last_customer_message_at", lookback_floor.isoformat())
+        .limit(HANDOFF_SLA_FETCH_LIMIT)
         .execute()
     )
-
-    lookback_floor = now - timedelta(hours=HANDOFF_SLA_LOOKBACK_HOURS)
-    sla_threshold = timedelta(minutes=HANDOFF_SLA_MINUTES)
 
     violated: list[str] = []
     lead_names: dict[str, str] = {}

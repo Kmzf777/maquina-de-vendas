@@ -317,6 +317,33 @@ async def test_bridge_cartao_em_cooldown_so_texto_sem_cartao():
     assert mock_save.call_args.kwargs["sent_by"] == "bridge"
 
 
+@pytest.mark.asyncio
+async def test_bridge_falha_ao_enviar_texto_retorna_false():
+    """Item 4 (review final B): `send_text` falhando não pode retornar True — isso
+    contrariaria a própria docstring ("Retorna True se o texto da ponte foi
+    enviado"). Fail-soft continua intacto (sem propagar exceção, cartão ainda tenta
+    ir independentemente); só o retorno passa a refletir a falha real."""
+    lead = _make_lead()
+    conversation = _make_conversation()
+    channel = _make_channel()
+    provider = _make_provider()
+    provider.send_text = AsyncMock(side_effect=RuntimeError("falha de rede"))
+    fake_redis = _BridgeFakeRedis()
+
+    with patch("app.buffer.processor._get_buffer_redis", return_value=fake_redis), \
+         patch("app.buffer.processor.save_message") as mock_save:
+        sent = await P._maybe_send_handoff_bridge(
+            lead, lead["phone"], conversation, channel, provider,
+        )
+
+    assert sent is False
+    provider.send_text.assert_awaited_once_with(lead["phone"], P._BRIDGE_TEXT)
+    # O save_message do TEXTO (role="assistant") só roda dentro do try, após o envio
+    # confirmado -- nunca acontece aqui (o do cartão, bônus independente, pode ainda
+    # ter ido, mas nenhum com sent_by/role do texto que falhou).
+    assert all(call.args[2] != "assistant" for call in mock_save.call_args_list)
+
+
 # --- Integration tests: wiring dentro do gate ai_enabled ----------------------
 
 

@@ -641,7 +641,11 @@ async def _maybe_send_handoff_bridge(
                 f"bridge:{conversation_id}", "1", nx=True, ex=_BRIDGE_COOLDOWN_SECONDS,
             )
         except Exception as exc:
-            logger.debug(
+            # WARNING (não debug): em prod (log level INFO) uma queda de Redis
+            # desligava a ponte inteira sem deixar rastro nenhum — o caminho já é
+            # por-mensagem (cooldown natural do próprio fluxo), então 1 linha por
+            # falha não vira spam.
+            logger.warning(
                 "[BRIDGE] Redis indisponível — fail-closed (não envia) conv=%s: %s",
                 conversation_id, exc,
             )
@@ -651,6 +655,10 @@ async def _maybe_send_handoff_bridge(
             return False
 
         send_to = resolve_send_target(lead, phone)
+        # Rastreia se o texto de fato saiu — o retorno da função tem que refletir isso
+        # (ver docstring: "Retorna True se o texto da ponte foi enviado"), não apenas
+        # que chegamos até aqui sem exceção não-tratada.
+        text_sent = False
         try:
             send_result = await provider.send_text(send_to, _BRIDGE_TEXT)
             save_message(
@@ -661,6 +669,7 @@ async def _maybe_send_handoff_bridge(
                 "[BRIDGE] texto enviado conv=%s channel=%s phone=%s",
                 conversation_id, channel.get("id"), phone,
             )
+            text_sent = True
         except Exception as exc:
             logger.warning("[BRIDGE] falha ao enviar texto conv=%s: %s", conversation_id, exc)
 
@@ -692,7 +701,7 @@ async def _maybe_send_handoff_bridge(
                     "[BRIDGE] falha ao reenviar cartão conv=%s: %s", conversation_id, exc,
                 )
 
-        return True
+        return text_sent
     except Exception as exc:
         logger.warning(
             "[BRIDGE] falha inesperada — fail-soft conv=%s: %s",
