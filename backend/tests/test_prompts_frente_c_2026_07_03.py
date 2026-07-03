@@ -230,15 +230,33 @@ def test_consumo_regra_atomica_esta_na_etapa_1_dentro_de_instructions():
 
 def test_consumo_regra_atomica_preserva_conteudo_original_da_etapa_1():
     # A regra atomica so TORNA indivisivel o que ja existia — nao pode ter apagado
-    # nenhuma das frases/dados originais da Etapa 1 (link/cupom/frases).
+    # nenhuma das frases/dados originais da Etapa 1. Fix review C2: link e cupom agora
+    # vivem na BOLHA MESCLADA ("o link é ... e o cupom é ...") — a informacao (URL da
+    # loja + codigo ESPECIAL10) continua integralmente presente, so mudou a renderizacao.
     for marker in (
         "que bom, vou te passar um cupom de 10% de desconto pra usar na nossa loja online",
         "vale a pena conhecer, vou te passar um cupom de 10% de desconto pra nossa loja online",
-        "link: https://loja.cafecanastra.com",
-        "cupom: ESPECIAL10",
+        '"o link é loja.cafecanastra.com e o cupom é ESPECIAL10"',
         "qualquer duvida sobre os cafes, me chama aqui",
     ):
         assert marker in CONSUMO_PROMPT, f"conteudo original da Etapa 1 removido: {marker!r}"
+
+
+def test_consumo_renderizacao_unica_do_script_do_cupom():
+    # Fix review C2: havia 4 formas divergentes do script do cupom no arquivo (bolha com
+    # \n\n interno na regra atomica; link/cupom em bolhas separadas na secao "Mensagem com
+    # link e cupom"; Exemplo 1; Exemplo 4). Deve sobrar UMA forma — a bolha mesclada — nas
+    # 4 renderizacoes (regra atomica, secao do script, Exemplo 1, Exemplo 4).
+    assert CONSUMO_PROMPT.count('"o link é loja.cafecanastra.com e o cupom é ESPECIAL10"') == 4
+    # as formas antigas sumiram: link com https em bolha propria e cupom em bolha propria
+    assert "link: https" not in CONSUMO_PROMPT
+    assert '"cupom: ESPECIAL10"' not in CONSUMO_PROMPT
+    # a regra atomica proibe empilhar \n\n dentro de uma bolha (mesma linguagem do
+    # precedente do base.py, regra 29b: "nao empilhe \n\n dentro de um passo")
+    assert "nao empilhe \\n\\n dentro de nenhuma" in CONSUMO_PROMPT
+    # brinde autorizado da review: "que bom." com ponto final (violava a regra 22 do base,
+    # pre-existente no Exemplo 1) sumiu — virou quebra de bolha
+    assert "que bom." not in CONSUMO_PROMPT
 
 
 def test_consumo_few_shot_negativo_usa_frase_real_da_melina():
