@@ -1,8 +1,5 @@
-import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-
-os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
 
 
 @pytest.mark.asyncio
