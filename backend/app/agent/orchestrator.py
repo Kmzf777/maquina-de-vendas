@@ -756,6 +756,16 @@ async def run_agent(
 
     tool_iterations = 0
     media_tool_used = False
+    # Falha de EXECUÇÃO de mídia (follow-up review E2, 2026-07-03): media_tool_used marca
+    # INTENÇÃO — setado antes do try/except que chama execute_tool, independente do
+    # resultado. Se execute_tool LEVANTAR exceção para uma tool de mídia, a intenção nunca
+    # foi cumprida de fato (o lead não recebeu nada). Sem esta flag, o guard same-turn do
+    # Change B (abaixo) usava só media_tool_used e bloqueava a RE-EXECUÇÃO LEGÍTIMA no
+    # retry após uma falha real. Usada SÓ pelo guard — o fallback de mídia
+    # (_empty_fallback_text/_SAFETY_FALLBACK_MEDIA) continua usando media_tool_used
+    # (intenção), como antes: mudar essa semântica do fallback foi explicitamente ADIADA
+    # pelo review, não faz parte deste follow-up.
+    media_exec_failed = False
     transitioned_to_stage: str | None = None
     # Soft rejection (registrar_sem_interesse_atual): o lead foi descartado (stage=perdido,
     # ai_enabled=False). Se o turno terminar vazio, o silêncio é correto — NÃO o re-engajamento
@@ -811,6 +821,11 @@ async def run_agent(
                     func_name, conversation_id, exc, exc_info=True,
                 )
                 result = f"erro ao executar {func_name} — tente novamente"
+                # media_exec_failed (follow-up review E2): a intenção (media_tool_used, acima)
+                # não virou execução de fato — libera o guard same-turn do Change B pra
+                # re-executar esta tool no retry, em vez de bloquear achando que já foi enviada.
+                if func_name in _MEDIA_TOOL_NAMES:
+                    media_exec_failed = True
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -961,7 +976,13 @@ async def run_agent(
                     # O dedup por histórico (DB, tools.py::enviar_fotos/enviar_foto_produto,
                     # ver test_enviar_fotos_idempotente.py) continua como 2ª camada, cross-turn
                     # — este guard é a 1ª camada, same-turn, e não depende de read-after-write.
-                    if _rname in _MEDIA_TOOL_NAMES and media_tool_used:
+                    #
+                    # Ciente de falha (media_exec_failed, follow-up review E2, 2026-07-03):
+                    # media_tool_used marca INTENÇÃO, não sucesso — se a execução no loop
+                    # principal LEVANTOU exceção, o lead não recebeu nada de fato, e bloquear
+                    # a re-execução aqui deixaria a falha sem recuperação nenhuma. Só bloqueia
+                    # quando a execução anterior teve sucesso de verdade.
+                    if _rname in _MEDIA_TOOL_NAMES and media_tool_used and not media_exec_failed:
                         logger.info(
                             "[RETRY TOOL] %s ja executado neste turno (loop principal) — "
                             "Change B pulando re-execucao para conv %s",
@@ -1008,6 +1029,11 @@ async def run_agent(
                             _rname, conversation_id, _te, exc_info=True,
                         )
                         _rresult = f"erro ao executar {_rname} — tente novamente"
+                        # Mesmo contrato do loop principal: marca a falha REAL de execução
+                        # (não só a intenção) pra manter o guard same-turn ciente caso uma
+                        # tool de mídia recuperada aqui também falhe.
+                        if _rname in _MEDIA_TOOL_NAMES:
+                            media_exec_failed = True
                     messages.append({
                         "role": "tool",
                         "tool_call_id": _tc.id,
@@ -1077,8 +1103,10 @@ async def run_agent(
     #
     # Quando soft_reject_used (descarte via registrar_sem_interesse_atual) ou
     # suppress_generic_fallback (gatilho interno sem mensagem real do lead), o destino do
-    # turno já é o silêncio ("") independentemente do que o retry2 devolvesse — por isso NÃO
-    # gastamos a chamada aqui (custo/latência sem nenhum efeito no resultado final).
+    # turno já é silêncio ("") OU um fallback contextual estático (mídia/transição de stage)
+    # que não depende do retry2 (ver _empty_fallback_text/_is_last_resort_fallback abaixo:
+    # fallback CONTEXTUAL vence a exceção de silêncio) — por isso NÃO gastamos a chamada
+    # aqui (custo/latência sem nenhum efeito no resultado final, em nenhum dos dois casos).
     if not assistant_text and not soft_reject_used and not suppress_generic_fallback:
         logger.warning(
             "[AGENT EMPTY] retry silencioso também vazio (tool_iterations=%d) para conv %s — "
@@ -1135,13 +1163,13 @@ async def run_agent(
         assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage, current_stage=stage)
         if _is_last_resort_fallback(assistant_text, stage) and (soft_reject_used or suppress_generic_fallback):
             logger.error(
-                "[AGENT EMPTY] vazio após retry para conv %s — silêncio em vez do último recurso "
+                "[AGENT EMPTY] vazio após todos os retries para conv %s — silêncio em vez do último recurso "
                 "(soft_reject=%s, suppress=%s, tool_iterations=%d)",
                 conversation_id, soft_reject_used, suppress_generic_fallback, tool_iterations,
             )
             return ""
         logger.error(
-            "[AGENT EMPTY] vazio após retry para conv %s — fallback "
+            "[AGENT EMPTY] vazio após todos os retries para conv %s — fallback "
             "(stage=%s, media=%s, tool_iterations=%d)",
             conversation_id, transitioned_to_stage, media_tool_used, tool_iterations,
         )
