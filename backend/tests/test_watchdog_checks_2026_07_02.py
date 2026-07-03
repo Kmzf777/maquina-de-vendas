@@ -125,6 +125,32 @@ class FakeSupabase:
         return FakeQuery(rows)
 
 
+class _DedupBoomQuery(FakeQuery):
+    """FakeQuery que lança SOMENTE na leitura (select ... execute) — simula uma falha
+    transiente na query de dedup do watchdog (`_alert_recently_fired`) sem impedir o
+    insert do alerta feito logo em seguida por `create_system_alert`. As duas funções
+    batem na MESMA tabela `system_alerts` mas são interações distintas (1 select + 1
+    insert) — por isso o fake precisa diferenciar: `_insert_payload is None` identifica
+    uma query de leitura (select nunca seta `_insert_payload`).
+    """
+
+    def execute(self):
+        if self._insert_payload is None:
+            raise RuntimeError("system_alerts indisponível (falha simulada na leitura de dedup)")
+        return super().execute()
+
+
+class _DedupBoomSupabase(FakeSupabase):
+    """FakeSupabase cujo `table("system_alerts")` devolve `_DedupBoomQuery` — as demais
+    tabelas mantêm o comportamento normal do `FakeQuery`."""
+
+    def table(self, name):
+        if name == "system_alerts":
+            rows = self.tables.setdefault(name, [])
+            return _DedupBoomQuery(rows)
+        return super().table(name)
+
+
 @pytest.fixture
 def fake_db(monkeypatch):
     """FakeSupabase compartilhado pelo watchdog E por create_system_alert (mesmo backing
@@ -234,6 +260,29 @@ def test_check1_dedup_skips_second_insert_but_still_reports_violation(fake_db):
 
     assert result == 1  # ainda detecta a violacao
     assert len(fake_db.tables["system_alerts"]) == 1  # mas nao duplica o alerta (so o seed)
+
+
+def test_check1_dedup_read_falha_ainda_assim_insere_alerta_fail_open(monkeypatch):
+    """Fail-open do plano ("falha no check de dedup → loga e cria o alerta mesmo
+    assim"): se a QUERY de dedup (`_alert_recently_fired` lendo `system_alerts`) lança,
+    o check não pode engolir a violação em silêncio — foi justamente o silêncio, não um
+    alerta duplicado, que deixou o apagão de 01-02/07 invisível. O fake diferencia a
+    leitura (lança) do insert (aceita), já que ambos batem na mesma tabela.
+    """
+    fake = _DedupBoomSupabase()
+    monkeypatch.setattr("app.watchdog.service.get_supabase", lambda: fake)
+    monkeypatch.setattr("app.alerts.service.get_supabase", lambda: fake)
+
+    now = datetime.now(timezone.utc)
+    _seed_conversation_check1(fake, "conv-welita", mode="ai", ai_enabled=True, name="Welita")
+    _seed_message(fake, "conv-welita", "user", now - timedelta(hours=21))
+
+    result = check_ai_unresponsive(now)
+
+    assert result == 1  # violacao detectada normalmente (candidatas/escopo/respostas nao mexem em system_alerts)
+    alerts = fake.tables["system_alerts"]
+    assert len(alerts) == 1  # fail-open: insere mesmo com a leitura de dedup quebrada
+    assert alerts[0]["type"] == "ai_unresponsive"
 
 
 def test_check1_human_channel_out_of_scope(fake_db):

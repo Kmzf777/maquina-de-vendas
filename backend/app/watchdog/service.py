@@ -265,6 +265,17 @@ async def run_watchdog(app) -> None:
     padrao de `schedule_handoff_rescue`/`schedule_ai_return`). Caso contrario, cada
     check roda em try/except proprio (isolamento de falha: um check quebrado NAO
     impede os demais nem a recovery de buffers orfaos de rodarem no mesmo tick).
+
+    Cada check e uma funcao SINCRONA que faz 2-4 round-trips HTTP via supabase-py —
+    chamada direta bloquearia o event loop INTEIRO (webhooks, typing, timers de
+    buffer) pela duracao da chamada; com o Supabase degradado (timeout de ate 120s),
+    um unico tick travaria o processo por minutos e ate o shutdown ficaria preso
+    esperando essa chamada sincrona retornar. `asyncio.to_thread` roda o check numa
+    thread do executor default — o event loop nunca bloqueia em I/O de check, e o
+    cancelamento (`asyncio.CancelledError`) e entregue no proprio `await`, entao o
+    `except asyncio.CancelledError: raise` abaixo volta a ser significativo (uma
+    chamada sincrona direta nunca seria cancelada no meio). `get_supabase()` ja e
+    thread-local por design (app/db/supabase.py) — nao precisa de guarda extra aqui.
     """
     logger.info("[WATCHDOG] iniciado (intervalo=%ds)", WATCHDOG_INTERVAL_SECONDS)
     while True:
@@ -275,21 +286,21 @@ async def run_watchdog(app) -> None:
         now = datetime.now(timezone.utc)
 
         try:
-            check_ai_unresponsive(now)
+            await asyncio.to_thread(check_ai_unresponsive, now)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_ai_unresponsive falhou: %s", exc, exc_info=True)
 
         try:
-            check_orphan_lead_reply(now)
+            await asyncio.to_thread(check_orphan_lead_reply, now)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_orphan_lead_reply falhou: %s", exc, exc_info=True)
 
         try:
-            check_stuck_followup_jobs(now)
+            await asyncio.to_thread(check_stuck_followup_jobs, now)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

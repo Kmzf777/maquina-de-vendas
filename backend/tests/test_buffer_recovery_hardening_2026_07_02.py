@@ -12,6 +12,7 @@ rodava no startup (`main.py`). Este arquivo cobre:
    reutilizável pelo futuro watchdog periódico via `require_no_deadline=True` —
    nesse modo, não pode brigar com um timer vivo (deadline ainda não expirou).
 """
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -68,10 +69,17 @@ class FakeRedis:
 # --- Caso 1: timer morto não propaga e limpa _active_timers ---
 
 async def test_wait_and_flush_timer_morto_nao_propaga_e_limpa_active_timers(caplog):
-    """Se o Redis falhar dentro do loop de polling, o timer não pode morrer em silêncio."""
+    """Se o Redis falhar dentro do loop de polling, o timer não pode morrer em silêncio.
+
+    Espelha produção: o objeto registrado em `_active_timers` É a própria task que
+    roda `_wait_and_flush` (push_to_buffer usa `asyncio.create_task`). O pop no
+    `finally` agora tem guard de identidade (`_pop_own_timer` — Item 1 do review
+    final): só remove a entrada se ela `is asyncio.current_task()`. Rodar via
+    `asyncio.create_task` (em vez de um `await` direto na coroutine, como antes) é
+    o que faz esse guard bater com a própria task no happy path deste teste.
+    """
     phone, channel_id = "5511888880001", "chan-dead-timer"
     timer_key = f"{phone}:{channel_id}"
-    _active_timers[timer_key] = MagicMock()  # simula a task viva registrada pelo caller
 
     r = FakeRedis()
 
@@ -81,12 +89,49 @@ async def test_wait_and_flush_timer_morto_nao_propaga_e_limpa_active_timers(capl
     with patch("app.buffer.manager.asyncio.sleep", new=AsyncMock()), \
          patch.object(r, "exists", side_effect=_boom), \
          caplog.at_level(logging.ERROR, logger="app.buffer.manager"):
-        await _wait_and_flush(r, phone, channel_id)  # não deve levantar RuntimeError
+        task = asyncio.create_task(_wait_and_flush(r, phone, channel_id))
+        _active_timers[timer_key] = task  # registrado pelo "caller", igual a push_to_buffer
+        await task  # não deve levantar RuntimeError
 
     assert "[BUFFER TIMER DIED]" in caplog.text
     assert f"phone={phone}" in caplog.text
     assert f"channel={channel_id}" in caplog.text
     assert timer_key not in _active_timers
+
+
+async def test_wait_and_flush_nao_evicta_timer_sucessor_quando_registro_e_de_outra_task(caplog):
+    """Guard de identidade (_pop_own_timer, Item 1 do review final): se `_active_timers`
+    já foi sobrescrito por um timer SUCESSOR (outra task, registrada por uma mensagem
+    nova chegando enquanto ESTE timer ainda rodava), o pop deste timer — mesmo no
+    caminho de exceção, dentro do `finally` — NÃO pode evictar a referência viva do
+    sucessor. Só a própria task pode se remover de `_active_timers`.
+    """
+    phone, channel_id = "5511888880006", "chan-successor-guard"
+    timer_key = f"{phone}:{channel_id}"
+
+    successor_task = MagicMock()  # representa a task de OUTRO timer (sucessor) já registrada
+    _active_timers[timer_key] = successor_task
+
+    r = FakeRedis()
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("redis indisponivel durante polling do lock")
+
+    try:
+        with patch("app.buffer.manager.asyncio.sleep", new=AsyncMock()), \
+             patch.object(r, "exists", side_effect=_boom), \
+             caplog.at_level(logging.ERROR, logger="app.buffer.manager"):
+            # Chamado diretamente (não via create_task): a task corrente aqui é a da
+            # própria função de teste — nunca `successor_task` — então o guard de
+            # identidade em _pop_own_timer nunca deve bater.
+            await _wait_and_flush(r, phone, channel_id)  # não deve levantar
+
+        assert "[BUFFER TIMER DIED]" in caplog.text
+        assert _active_timers.get(timer_key) is successor_task, (
+            "pop do antecessor não pode evictar a entrada viva do timer sucessor"
+        )
+    finally:
+        _active_timers.pop(timer_key, None)  # não vazar estado entre testes
 
 
 # --- Casos 2-5: recover_orphaned_buffers ---

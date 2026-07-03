@@ -138,3 +138,8 @@ Atualizar o comentário do `_LLM_FAILURE_KEY` mencionando que o contador cobre a
 - [ ] **Step 3: Implementar** (bloco acima + comentário).
 - [ ] **Step 4: Rodar e ver passar** + regressão: `python -m pytest tests/test_processor_agent_failed_llm_counter_2026_07_02.py tests/test_processor_llm_down_handoff_2026_07_01.py tests/test_llm_retry_resilience_2026_07_01.py -q`.
 - [ ] **Step 5: Commit** — `fix(processor): [AGENT FAILED] generico agora conta no llm_down (buraco do apagao 01-02/07) (Etapa1 A1)`.
+
+## Follow-ups pós-review final (rastreados, NÃO bloqueiam este merge)
+- [ ] check_ai_unresponsive: janela candidata `limit(500)` order-desc pode gerar MISS completo de conversa fantasma sob rajada >500 msgs respondidas/24h — fix correto é paginação/chunking do passo 1 + `.in_()` em lotes (review final, Issue 3).
+- [ ] passo 3 (fetch de respostas) sem `.order`/`.limit` explícitos — adicionar junto da paginação acima (Issue 5).
+- [ ] `leads(name)`/`opt_out` buscados e não usados nos embeds dos checks — enxugar na próxima passada (Issue 6).

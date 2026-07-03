@@ -73,11 +73,14 @@ def _agent_failed_scenario(record_failure_return=0, record_failure_side_effect=N
 
 @pytest.mark.asyncio
 async def test_agent_failed_registra_contador_e_dispara_alerta_no_limiar():
-    """3 falhas esgotam as tentativas; contador retorna 3 (>= threshold) → alerta dispara."""
+    """3 falhas esgotam as tentativas; contador retorna 3 (>= threshold) → alerta dispara
+    com handoff_ativo=False (Item 3 do review final): este ramo NUNCA aciona
+    encaminhar_humano, então a mensagem do alerta não pode afirmar que os leads
+    foram encaminhados automaticamente — ver test_agent_failed_nao_aciona_handoff_automatico."""
     with _agent_failed_scenario(record_failure_return=3) as (mock_record, mock_alert, mock_exec):
         await P.process_buffered_messages("5511999999999", "oi", "chan-uuid")
     mock_record.assert_awaited_once()
-    mock_alert.assert_called_once_with(3)
+    mock_alert.assert_called_once_with(3, handoff_ativo=False)
 
 
 @pytest.mark.asyncio

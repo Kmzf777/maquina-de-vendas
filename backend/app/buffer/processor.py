@@ -543,11 +543,21 @@ async def _handle_llm_down(lead: dict, phone: str, conversation: dict) -> None:
         )
 
 
-def _fire_llm_down_alert(count: int) -> None:
+def _fire_llm_down_alert(count: int, *, handoff_ativo: bool = True) -> None:
     """Grava 1 alerta llm_down em system_alerts (dedup: 1 não-resolvido por hora).
 
     Espelha o padrão de fire_billing_alert. Transforma o apagão silencioso do LLM em
     incidente visível no CRM (o caso Welita passou sem qualquer alerta). Fail-soft.
+
+    `handoff_ativo` distingue os DOIS ramos que alimentam o mesmo contador/alerta
+    (ver `_LLM_FAILURE_KEY`):
+    - True (default) — ramo `except LLMUnavailableError` via `_handle_llm_down`: o
+      handoff automático ao humano (João) JÁ foi disparado, então a frase de
+      encaminhamento é verdadeira.
+    - False — ramo genérico `[AGENT FAILED]` (decisão de plano: SEM handoff
+      automático aqui). Afirmar "encaminhado ao humano" seria FALSO e faria o
+      operador despriorizar o alerta achando os leads cobertos — a mensagem diz
+      explicitamente que NÃO há encaminhamento automático nesse ramo.
     """
     try:
         sb = get_supabase()
@@ -561,11 +571,18 @@ def _fire_llm_down_alert(count: int) -> None:
             return
     except Exception as exc:
         logger.warning("[LLM DOWN] falha ao checar alerta existente: %s", exc)
+    if handoff_ativo:
+        encaminhamento = "Leads estão sendo encaminhados automaticamente ao humano (João)."
+    else:
+        encaminhamento = (
+            "Leads NÃO estão sendo encaminhados automaticamente — falha genérica "
+            "sem handoff (ver logs [AGENT FAILED])."
+        )
     create_system_alert(
         "llm_down",
         "IA (Valéria) indisponível — LLM fora",
-        f"{count} turnos consecutivos falharam ao chamar o LLM. Leads estão sendo "
-        "encaminhados automaticamente ao humano (João). Verifique quota/saúde do provedor.",
+        f"{count} turnos consecutivos falharam ao chamar o LLM. {encaminhamento} "
+        "Verifique quota/saúde do provedor.",
         severity="critical",
     )
 
@@ -934,7 +951,12 @@ async def process_buffered_messages(
                         try:
                             _count = await _record_llm_failure()
                             if _count >= _LLM_DOWN_ALERT_THRESHOLD:
-                                _fire_llm_down_alert(_count)
+                                # handoff_ativo=False: este ramo (diferente de
+                                # LLMUnavailableError/_handle_llm_down) NÃO aciona
+                                # encaminhar_humano — decisão de plano. O alerta precisa
+                                # dizer isso explicitamente para o operador não achar
+                                # que os leads já estão cobertos pelo handoff.
+                                _fire_llm_down_alert(_count, handoff_ativo=False)
                         except Exception as _exc:
                             logger.warning("[LLM DOWN] falha ao registrar contador pós-AGENT FAILED: %s", _exc)
                         pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
