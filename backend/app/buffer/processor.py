@@ -488,6 +488,12 @@ def _count_recent_failed_audio(conversation_id: str, window_minutes: int = 30) -
         return 0
 
 
+# Contador de falhas consecutivas do LLM — cobre AMBOS os ramos de esgotamento do
+# retry em process_buffered_messages: `except LLMUnavailableError` (via _handle_llm_down)
+# E o `else` genérico [AGENT FAILED] (assinatura do apagão 01-02/07: 400/401 relançado
+# cru pelo orchestrator, ou exceção pré-API, morria ali em silêncio sem incrementar
+# nada). O limiar (_LLM_DOWN_ALERT_THRESHOLD) dispara o alerta llm_down independente
+# de qual dos dois ramos o esgotou.
 _LLM_FAILURE_KEY = "llm:consecutive_failures"
 _LLM_DOWN_ALERT_THRESHOLD = 3
 
@@ -925,6 +931,12 @@ async def process_buffered_messages(
                             f"(conv={conversation['id']}): {e}",
                             exc_info=True,
                         )
+                        try:
+                            _count = await _record_llm_failure()
+                            if _count >= _LLM_DOWN_ALERT_THRESHOLD:
+                                _fire_llm_down_alert(_count)
+                        except Exception as _exc:
+                            logger.warning("[LLM DOWN] falha ao registrar contador pós-AGENT FAILED: %s", _exc)
                         pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
                         _update_last_msg(conversation["id"])
                         return
