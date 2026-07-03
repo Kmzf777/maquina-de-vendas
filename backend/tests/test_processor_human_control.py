@@ -29,6 +29,8 @@ async def test_human_control_skips_agent():
         "status": "active",
     }
 
+    # Este lead satisfaz as condições da ponte pós-handoff (B1); Redis estourando força o
+    # caminho fail-closed determinístico — o teste fica hermético (não depende de Redis local).
     with patch("app.buffer.processor.get_or_create_lead", return_value=lead), \
          patch("app.buffer.processor.get_channel_by_id", return_value=channel), \
          patch("app.buffer.processor.get_provider") as mock_provider_fn, \
@@ -37,6 +39,7 @@ async def test_human_control_skips_agent():
          patch("app.buffer.processor.save_message") as mock_save, \
          patch("app.buffer.processor.run_agent") as mock_agent, \
          patch("app.buffer.processor._is_recent_duplicate", return_value=False), \
+         patch("app.buffer.processor._get_buffer_redis", side_effect=RuntimeError("sem redis no teste")), \
          patch("app.buffer.processor.update_conversation"):
 
         mock_provider = AsyncMock()
