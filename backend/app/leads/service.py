@@ -66,18 +66,71 @@ _IMPORT_GARBAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Task C-4 (higiene de nome): widgets de chat de LP e o push_name do WhatsApp às vezes
+# entregam uma SAUDACAO no campo nome ("Olá, boa tarde", "Boa tarde.... Luiz", "Boa
+# tarde."). Sem tratamento, isso vaza pro CRM e cascateia pros templates — casos reais
+# 01-02/07: o disparo de LP saudou "olá Olá," e o resgate do João abriu "Olá, Olá,!"
+# porque `lead_name.split()[0]` pegou a palavra da saudacao como se fosse o nome.
+# Case/acento-insensitivo na DETECCAO (ex.: "OLÁ"/"ola" casam); o RESTANTE devolvido
+# preserva a grafia original (nao forca title-case) — "josé" continua "josé".
+_GREETING_WORD_RE = re.compile(
+    # Acentos listados em ambas as caixas explicitamente (nao confia so no re.IGNORECASE
+    # para casefold de acentuados) — "á"/"Á" e "í"/"Í" cobertos sem depender de tabela
+    # Unicode implicita.
+    r"^(?:ol[aáAÁ]|oi|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|e\s+a[iíIÍ])\b",
+    re.IGNORECASE,
+)
+# Pontuacao/reticencias que tipicamente separam a saudacao do resto do texto
+# ("Boa tarde.... Luiz", "Olá, boa tarde"): virgula, ponto, reticencias (".", "..." e o
+# caractere unico "…"), exclamacao, interrogacao, ponto-e-virgula, dois-pontos, hifen e
+# espacos em geral.
+_LEADING_NOISE_RE = re.compile(r"^[\s,.…!?;:\-]+")
+
+
+def strip_greeting_prefix(name: str | None) -> str | None:
+    """Remove um prefixo de saudação (e a pontuação/reticências que o acompanha) do
+    início de `name`, de forma ITERATIVA — cobre saudações compostas ("Olá, boa tarde"
+    remove "Olá" e depois "boa tarde").
+
+    Retorna o restante — preservando a grafia/caixa original (não força title-case) —
+    ou None se sobrar vazio, ou seja, se `name` era SÓ saudação.
+
+    Casos reais (auditoria 01-02/07): "Boa tarde.... Luiz" -> "Luiz" (recupera o nome
+    real colado após a saudação); "Olá, boa tarde" -> None; "Boa tarde." -> None;
+    "Maycon" -> "Maycon" (intocado, sem saudação para remover).
+    """
+    if not name:
+        return None
+    remainder = name.strip()
+    while True:
+        remainder = _LEADING_NOISE_RE.sub("", remainder)
+        match = _GREETING_WORD_RE.match(remainder)
+        if not match:
+            break
+        remainder = remainder[match.end():]
+    remainder = remainder.strip()
+    return remainder or None
+
 
 def sanitize_display_name(name: str | None) -> str | None:
-    """Retorna o nome se parecer um nome real; None se parecer handle/username ou lixo de import.
+    """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username
+    ou lixo de import.
 
     None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez de
     chamar o lead por um handle; o template do disparo usa "você"). Conservador: só descarta
-    com sinal claro — handle (dígito/underscore) ou marcador de lixo de importação/CRM —
-    pra não derrubar nomes legítimos como "João Silva".
+    com sinal claro — saudação pura (ex.: "Olá, boa tarde"), handle (dígito/underscore) ou
+    marcador de lixo de importação/CRM — pra não derrubar nomes legítimos como "João Silva".
+
+    Task C-4: o strip de saudação roda ANTES das checagens de handle/import, e sobre o
+    RESULTADO do strip — assim "Boa tarde.... Luiz" vira "Luiz" antes de ser validado (e
+    passa), em vez de vazar a saudação inteira como se fosse o nome do lead.
     """
     if not name:
         return None
     n = name.strip()
+    if not n:
+        return None
+    n = strip_greeting_prefix(n)
     if not n:
         return None
     if _HANDLE_CHAR_RE.search(n):

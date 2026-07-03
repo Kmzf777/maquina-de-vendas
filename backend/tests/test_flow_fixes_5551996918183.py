@@ -172,7 +172,9 @@ async def test_run_agent_empty_no_tool_retries_then_uses_generic_fallback():
         f"turno vazio sem contexto coerente deve usar fallback genérico, got {result!r}"
     )
     assert "cortada" not in result
-    assert call_count["n"] == 2, "deve tentar UM retry silencioso (thinking off) antes do fallback"
+    # Etapa 2: retry silencioso (thinking off) + retry2 (temperatura elevada) — ambos vazios
+    # aqui (fake_create sempre devolve o mesmo response mudo) — antes do fallback final.
+    assert call_count["n"] == 3, "deve tentar o retry silencioso e o retry2 antes do fallback"
 
 
 # ---------------------------------------------------------------------------

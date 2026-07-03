@@ -18,7 +18,7 @@ from app.leads.service import (
 from pydantic import ValidationError as _PydanticValidationError
 from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
 from app.agent.pricing import (
-    OrcamentoInput, LineQuote, match_products, parse_brl,
+    MAX_DISAMBIGUATION, OrcamentoInput, LineQuote, match_products, parse_brl,
     resolve_region, compute_quote, format_quote, fmt_brl,
 )
 
@@ -71,6 +71,18 @@ def pop_interest_marked(conversation_id: str) -> dict | None:
     return _interest_marked.pop(conversation_id, None)
 
 
+# Sinal determinístico "este turno cotou preço" (Frente B3 — casos Samuel/Angelo 01-02/07:
+# leads receberam preço, sumiram e NENHUM follow-up foi agendado porque o gatilho dependia
+# do LLM chamar marcar_interesse). Setado quando calcular_orcamento resolve valores;
+# consumido pelo processor no bloco de agendamento.
+_quote_executed: dict[str, bool] = {}
+
+
+def pop_quote_executed(conversation_id: str) -> bool:
+    """Return and clear the quote-executed signal for a conversation (False if not set)."""
+    return _quote_executed.pop(conversation_id, False)
+
+
 PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
     "atacado": {
         "foto_1": "Classico — torra media-escura, notas achocolatadas",
@@ -114,8 +126,13 @@ _HANDOFF_MSG = (
 
 # Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é
 # enviado automaticamente logo após a mensagem de despedida no encaminhar_humano.
-_SUPERVISOR_NAME = "João - Café Canastra"
-_SUPERVISOR_PHONE = "553491461669"
+# Públicas (Frente B1): a ponte pós-handoff do buffer/processor.py também consome estas
+# constantes (reenvio do cartão do João). Aliases privados mantidos por retrocompatibilidade
+# (ex.: test_encaminhar_humano_pipeline.py importa _SUPERVISOR_NAME/_SUPERVISOR_PHONE).
+SUPERVISOR_NAME = "João - Café Canastra"
+SUPERVISOR_PHONE = "553491461669"
+_SUPERVISOR_NAME = SUPERVISOR_NAME
+_SUPERVISOR_PHONE = SUPERVISOR_PHONE
 # Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
 _MAX_DESPEDIDA_LEN = 600
 
@@ -793,11 +810,11 @@ async def execute_tool(
             # Logo após o texto, envia o cartão de contato do João (agrupamento visual).
             try:
                 await provider.send_contact(
-                    send_to, contact_name=_SUPERVISOR_NAME, contact_phone=_SUPERVISOR_PHONE
+                    send_to, contact_name=SUPERVISOR_NAME, contact_phone=SUPERVISOR_PHONE
                 )
                 save_message(
                     lead_id, "system",
-                    f"[encaminhar_humano] cartão de contato de {_SUPERVISOR_NAME} enviado",
+                    f"[encaminhar_humano] cartão de contato de {SUPERVISOR_NAME} enviado",
                     conversation_id=conversation_id,
                 )
             except Exception as exc:
@@ -1072,6 +1089,18 @@ async def execute_tool(
             for item in orcamento.itens:
                 matches = match_products(item.produto, products)
                 if len(matches) == 0:
+                    # Frente C3 (caso real Edgar, 02/07 17:14): 0 matches agora LISTA as
+                    # opções reais do catálogo. Antes devolvia só "confirme o nome" e a
+                    # Valéria improvisava ("o sistema não achou o Suave em grãos de 500g"
+                    # — produto ERRADO, 2x) e chegou a substituir item em silêncio no
+                    # orçamento. Nomes em ordem ESTÁVEL (ordem do catálogo), cap P2.
+                    nomes = [p["name"] for p in products if p.get("name")]
+                    if nomes:
+                        return (
+                            f"Produto '{item.produto}' não encontrado no catálogo de "
+                            f"atacado. Disponíveis: {', '.join(nomes[:MAX_DISAMBIGUATION])}. "
+                            "Confirme com o cliente qual ele quer."
+                        )
                     return (
                         f"Produto '{item.produto}' não encontrado no catálogo de atacado. "
                         "Confirme o nome."
@@ -1117,6 +1146,10 @@ async def execute_tool(
             # 5. No region AND not Uberlândia override → return subtotal + ask for estado
             if region_key is None and not is_uberlandia:
                 subtotal = round(sum(line.subtotal_linha for line in lines), 2)
+                # Frente B3: valores já foram resolvidos (subtotal real) mesmo faltando UF —
+                # sinaliza "cotou preço" para o gatilho de follow-up do processor.
+                if conversation_id:
+                    _quote_executed[conversation_id] = True
                 return (
                     f"Subtotal dos produtos: {fmt_brl(subtotal)}. "
                     "Para calcular o frete e verificar o pedido mínimo, "
@@ -1125,6 +1158,9 @@ async def execute_tool(
 
             # 6. Full quote with freight
             quote = compute_quote(lines, region_key, is_uberlandia)
+            # Frente B3: orçamento completo resolvido — idem acima.
+            if conversation_id:
+                _quote_executed[conversation_id] = True
             return format_quote(quote)
 
         except Exception as exc:
@@ -1249,18 +1285,32 @@ async def _agendar_retorno(
 
 
 def _format_next_dispatch(fire_at: datetime | None) -> str:
-    """Frase natural (pt-BR) para quando o João vai chamar o lead, a partir do fire_at agendado."""
+    """Frase natural (pt-BR) para quando o João vai chamar o lead, a partir do fire_at agendado.
+
+    O período do dia é derivado da HORA real do fire_at (fix review B2): antes era
+    "de manha" HARDCODED, válido só sob a invariante antiga de o clamp devolver
+    sempre 09h — se a janela mudar de novo, um fire_at vespertino diria "de manha
+    (por volta das 17h22)". Output idêntico ao anterior para os casos atuais
+    (clamp comercial devolve 09h → "de manha").
+    """
     if fire_at is None:
         return "o proximo horario comercial"
     local = fire_at.astimezone(_TZ_BR)
     today_local = datetime.now(_TZ_BR).date()
     delta_days = (local.date() - today_local).days
     hora = local.strftime("%Hh%M") if local.minute else local.strftime("%Hh")
+    # Período pela hora real, nunca hardcode: manhã < 12h; tarde 12h-17h59; >= 18h fim do dia.
+    if local.hour < 12:
+        periodo = "de manha"
+    elif local.hour < 18:
+        periodo = "a tarde"
+    else:
+        periodo = "no fim do dia"
     if delta_days <= 0:
-        return f"hoje de manha (por volta das {hora})"
+        return f"hoje {periodo} (por volta das {hora})"
     if delta_days == 1:
-        return f"amanha de manha (por volta das {hora})"
-    return f"no proximo dia util ({local.strftime('%d/%m')} de manha, por volta das {hora})"
+        return f"amanha {periodo} (por volta das {hora})"
+    return f"no proximo dia util ({local.strftime('%d/%m')} {periodo}, por volta das {hora})"
 
 
 def _lead_had_prior_handoff(lead_id: str, lead: dict | None = None) -> bool:
@@ -1430,6 +1480,13 @@ def _safe_schedule_reengage(
             channel_id=channel["id"],
             delay_minutes=0,
             lead_name=lead_name,
+            # Janela COMERCIAL (09h-16h), NAO a ampliada do rescue (fix review B2):
+            # este caminho e o fallback de retomar_contato_vendedor, onde a Valeria
+            # PROMETE verbalmente ao lead quando o Joao vai chamar — a Global
+            # Constraint do plano manda o retomar continuar em 09h-16h. Sem isto, a
+            # janela de 20h vazava transitivamente e as 17:22 o lead ouvia "o Joao
+            # vai te chamar hoje de manha (por volta das 17h22)".
+            use_rescue_window=False,
         )
     except Exception as exc:
         logger.error(

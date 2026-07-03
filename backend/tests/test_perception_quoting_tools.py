@@ -45,7 +45,10 @@ _FAKE_PRODUCTS = [
     },
     {
         "sector": "atacado",
-        "name": "Café Suave Premium 500g",
+        # 250g (era 500g): com o match por tokens (Frente C3), "suave 500" casaria também este
+        # decoy token-superset — o peso distinto preserva o breakdown determinístico do carrinho
+        # sem perder o par ambíguo ("suave") usado pelo teste de desambiguação.
+        "name": "Café Suave Premium 250g",
         "price_formatted": "R$ 120,00",
         "min_lot": "5",
         "description": "Microlote suave",
@@ -107,7 +110,7 @@ async def test_consultar_relacionamento_lead_novo():
 async def test_multi_item_cart_correct_breakdown():
     """Carrinho com dois produtos → subtotal = soma, frete correto, total certo (estado SP)."""
     # "classico" → único match "Café Clássico 500g" (R$100)
-    # "suave 500" → único match "Café Suave 500g" (R$80)  [não bate em "Suave Premium"]
+    # "suave 500" → único match "Café Suave 500g" (R$80)  [não bate em "Suave Premium 250g" — peso distinto]
     # SP = sul_sudeste, pedido_minimo=300, frete=55, gratis_acima=900
     # subtotal = 2*100 + 3*80 = 200 + 240 = 440 → frete=55, total=495
     args = {
@@ -151,7 +154,7 @@ async def test_single_item_cart_with_region():
 # ===========================================================================
 
 async def test_ambiguous_item_returns_disambiguation():
-    """'suave' bate em Café Suave 500g E Café Suave Premium 500g → pede especificação."""
+    """'suave' bate em Café Suave 500g E Café Suave Premium 250g → pede especificação."""
     args = {"itens": [{"produto": "suave", "quantidade": 1}]}
     with patch("app.agent.tools._fetch_active_products", return_value=_FAKE_PRODUCTS):
         result = await _exec("calcular_orcamento", args)

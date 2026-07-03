@@ -16,7 +16,13 @@ from typing import Any
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
-from app.leads.service import normalize_phone, get_or_create_lead, persist_lead_tracking, TRACKING_COLUMNS
+from app.leads.service import (
+    normalize_phone,
+    get_or_create_lead,
+    persist_lead_tracking,
+    strip_greeting_prefix,
+    TRACKING_COLUMNS,
+)
 from app.conversations.service import get_or_create_conversation
 from app.agent_profiles.service import get_profile_id_by_prompt_key
 from app.lp_webhook.phone import normalize_lp_phone
@@ -58,20 +64,33 @@ def _sanitize_lead_name(raw_name: str | None) -> tuple[str | None, str | None, s
       - lp_message: o texto cru preservado (vai para metadata.lp_message), quando o
         valor não é um nome — assim não se perde a pergunta/contexto do lead.
       - email_from_name: e-mail extraído quando o cliente digitou o e-mail no nome.
+
+    Task C-4: `strip_greeting_prefix` roda ANTES das heurísticas de "dirty" abaixo —
+    widgets de chat de LP às vezes mandam só uma saudação no campo nome ("Olá, boa
+    tarde", "Boa tarde."), que não é um nome. Quando sobra um nome real depois da
+    saudação ("Boa tarde.... Luiz"), ele é aproveitado como clean_name. Quando não sobra
+    nada (só saudação), cai no mesmo caminho "dirty" de sempre — preserva o texto CRU
+    original (não o fragmento pós-strip) em lp_message.
     """
     if not raw_name:
         return None, None, None
     name = raw_name.strip()
     if not name:
         return None, None, None
+
+    stripped = strip_greeting_prefix(name)
+    if stripped is None:
+        email_match = _EMAIL_RE.search(name)
+        return None, name, (email_match.group(0) if email_match else None)
+
     looks_dirty = (
-        "?" in name
-        or "\n" in name
-        or "@" in name
-        or len(name.split()) > _MAX_NAME_WORDS
+        "?" in stripped
+        or "\n" in stripped
+        or "@" in stripped
+        or len(stripped.split()) > _MAX_NAME_WORDS
     )
     if not looks_dirty:
-        return name, None, None
+        return stripped, None, None
     email_match = _EMAIL_RE.search(name)
     return None, name, (email_match.group(0) if email_match else None)
 

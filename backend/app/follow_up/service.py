@@ -53,6 +53,46 @@ def _clamp_to_business_window(target: datetime) -> datetime:
     return clamped_local.astimezone(timezone.utc)
 
 
+# Janela PROPRIA do rescue de handoff — mais ampla que a comercial (09h-16h) usada
+# pelo resto do follow-up (schedule_followup/build_touch_jobs/schedule_ai_return,
+# via _clamp_to_business_window acima, que continua INTOCADA). Casos reais (Frente B,
+# Task 2): Edgar mandou msg as 17:22 e Davi as 15:47 — ambos DEPOIS do fim da janela
+# comercial (16h) mas em horario em que um vendedor humano tipicamente ainda esta
+# ativo; o aviso ao Joao (`schedule_handoff_rescue`) empurrava os dois pro dia
+# seguinte as 09h, um atraso artificial de horas. O rescue e uma notificacao pontual
+# ao vendedor (nao uma cadencia automatica de mensagens ao lead) — pode se dar ao
+# luxo de uma janela mais ampla sem contaminar a comercial.
+_RESCUE_START = time(9, 0)
+_RESCUE_END = time(20, 0)
+
+
+def _clamp_to_rescue_window(target: datetime) -> datetime:
+    """Garante que `target` (UTC) caia na janela do rescue de handoff (09h-20h,
+    seg-sex, America/Sao_Paulo). Mesma mecanica de `_clamp_to_business_window`
+    (empurra pro mesmo dia 09h se for antes da janela; proximo dia util 09h se for
+    depois ou fim de semana) — so o fim muda, de 16h para 20h. Usada exclusivamente
+    por `schedule_handoff_rescue`; NAO afeta `_clamp_to_business_window` nem quem
+    a chama.
+    """
+    local = target.astimezone(_SP_TZ)
+
+    if local.weekday() < 5 and _RESCUE_START <= local.time() < _RESCUE_END:
+        return target
+
+    if local.weekday() < 5 and local.time() < _RESCUE_START:
+        clamped_local = local.replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
+        return clamped_local.astimezone(timezone.utc)
+
+    # Fora da janela (>= 20h) ou fim de semana: avanca para o proximo dia util as 09h.
+    next_day = local + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    clamped_local = next_day.replace(hour=9, minute=0, second=0, microsecond=0)
+    return clamped_local.astimezone(timezone.utc)
+
+
 def _already_touched_today(conversation_id: str, now: datetime) -> bool:
     """True se esta conversa já recebeu um toque de cadência ENVIADO hoje (America/Sao_Paulo).
 
@@ -261,19 +301,36 @@ def schedule_handoff_rescue(
     channel_id: str,
     delay_minutes: int = 15,
     lead_name: str = "",
+    use_rescue_window: bool = True,
 ) -> datetime | None:
     """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes.
 
-    Retorna o `fire_at` (UTC) efetivamente agendado — clampado para a janela comercial —
-    ou None quando o agendamento é ignorado (REHEARSAL_MODE). O retorno permite ao chamador
-    informar ao lead quando o vendedor entrará em contato.
+    Retorna o `fire_at` (UTC) efetivamente agendado — clampado para a janela PROPRIA
+    do rescue (09h-20h, seg-sex, ver `_clamp_to_rescue_window`) — ou None quando o
+    agendamento é ignorado (REHEARSAL_MODE). O retorno permite ao chamador informar
+    ao lead quando o vendedor entrará em contato.
+
+    Janela mais ampla que a comercial (09h-16h) usada pelo resto do follow-up: casos
+    Edgar (17:22) e Davi (15:47) mandavam o aviso ao João para o dia seguinte às 09h
+    só por estarem depois das 16h, mesmo com o vendedor tipicamente ainda ativo até
+    as 20h (ver `_clamp_to_rescue_window`). `_clamp_to_business_window` continua
+    intocada para schedule_followup/build_touch_jobs/schedule_ai_return.
+
+    `use_rescue_window=False` (fix review B2): clampa com a janela COMERCIAL
+    (09h-16h) em vez da ampliada. Existe para o fallback fora-de-horário de
+    `retomar_contato_vendedor` (tools._safe_schedule_reengage), que herdou a janela
+    de 20h TRANSITIVAMENTE quando ela foi criada — mas ali a Valéria PROMETE
+    verbalmente ao lead quando o João vai chamar, e a Global Constraint do plano da
+    Frente B manda esse fluxo continuar na janela comercial 09h-16h. Os handoffs
+    genuínos (encaminhar_humano) continuam no default True (janela até 20h).
     """
     if os.environ.get("REHEARSAL_MODE") == "true":
         logger.info("[HANDOFF_RESCUE] REHEARSAL_MODE ativo — rescue ignorado")
         return None
     sb = get_supabase()
     now = datetime.now(timezone.utc)
-    fire_at = _clamp_to_business_window(now + timedelta(minutes=delay_minutes))
+    clamp = _clamp_to_rescue_window if use_rescue_window else _clamp_to_business_window
+    fire_at = clamp(now + timedelta(minutes=delay_minutes))
     job = {
         "conversation_id": conversation_id,
         "lead_id": lead_id,

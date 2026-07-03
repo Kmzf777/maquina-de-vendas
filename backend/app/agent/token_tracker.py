@@ -47,7 +47,16 @@ def track_token_usage(
         lead_id: UUID of the lead
         stage: Agent stage at time of call
         model: Model name (e.g. 'gemini-2.5-flash')
-        call_type: One of 'classification', 'response', 'media_description', 'media_transcription'
+        call_type: Free-form text (no DB enum/CHECK constraint). Values actually emitted
+            today — verified via grep for `call_type=` across the repo; re-grep before
+            adding a new one, 2026-07-03: 'response' (initial call and the main tool-loop's
+            post-tool call, both in orchestrator.py run_agent), 'response_retry' (1st
+            retry-on-empty rung and its Change B post-tool continuation), 'response_retry2'
+            (2nd retry-on-empty rung, elevated temperature) — all three in orchestrator.py;
+            'followup' (proactive re-engagement dispatch, follow_up/scheduler.py).
+            'classification' / 'media_description' / 'media_transcription' only exist in the
+            original design doc (docs/superpowers/specs/2026-03-30-estatisticas-token-costs-
+            design.md) — no call site wires them up yet, so don't assume they're live.
         prompt_tokens: Input tokens from response.usage
         completion_tokens: Output tokens from response.usage
         total_cost_override: If set, use this instead of calculating from tokens (ex.: custo de transcrição estimado)

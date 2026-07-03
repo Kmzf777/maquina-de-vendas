@@ -6,7 +6,18 @@ import { createClient } from "@/lib/supabase/client";
 import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView, type SiblingConversationSummary } from "@/components/conversas/chat-view";
 import { ContactDetail } from "@/components/conversas/contact-detail";
+import { debounce } from "@/lib/debounce";
+import {
+  mergeConversationRow,
+  sortByLastMsgDesc,
+  previewFromMessage,
+  type ConversationRow,
+} from "@/lib/conversations-live";
 import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
+
+// Espera do refetch integral disparado por eventos que o patch local não cobre
+// (conversa nova/desconhecida). Rajadas colapsam em 1 chamada ao /api/conversations.
+const REFETCH_DEBOUNCE_MS = 3_000;
 
 export default function ConversasPage() {
   const supabase = createClient();
@@ -42,6 +53,12 @@ export default function ConversasPage() {
   const recentlyToggledAiRef = useRef<Map<string, boolean>>(new Map());
   // Same protection for followup_enabled toggles.
   const recentlyToggledFollowupRef = useRef<Map<string, boolean>>(new Map());
+  // Espelho síncrono da lista para o handler Realtime decidir patch × refetch
+  // sem depender do timing do setState.
+  const conversationsRef = useRef<Conversation[]>([]);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   const applyRecentlyMarkedOverride = useCallback((list: Conversation[]): Conversation[] => {
     const now = Date.now();
@@ -134,23 +151,87 @@ export default function ConversasPage() {
     }
   }, [conversations, loading, searchParams, router]);
 
-  // Realtime: re-sort list when any conversation's last_msg_at changes
+  // Realtime SEM refetch integral por evento (corte de Egress): o payload do
+  // UPDATE já traz a linha nova de `conversations` — aplicamos o delta local
+  // (ordenação, unread, janela, persona) e o preview vem do INSERT de
+  // `messages`. O refetch integral (debounced) fica reservado para o que o
+  // delta não cobre: conversa nova/desconhecida (precisa dos joins da API).
+  // Antes, cada mensagem do sistema puxava a lista inteira (~1,5-2,5MB) em
+  // cada aba aberta — o maior consumidor de Egress do frontend.
   useEffect(() => {
+    const debouncedRefetch = debounce(fetchConversations, REFETCH_DEBOUNCE_MS);
+
+    const applyRowPatch = (row: ConversationRow) => {
+      const overrides = {
+        forceUnreadZero: recentlyMarkedRef.current.has(row.id),
+        pendingFollowup: recentlyToggledFollowupRef.current.get(row.id),
+      };
+      setConversations((prev) =>
+        sortByLastMsgDesc(
+          prev.map((c) => (c.id === row.id ? mergeConversationRow(c, row, overrides) : c)),
+        ),
+      );
+      setSelectedConversation((prev) =>
+        prev && prev.id === row.id ? mergeConversationRow(prev, row, overrides) : prev,
+      );
+    };
+
     const realtimeChannel = supabase
       .channel("conversations-updates")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "conversations" },
-        () => {
-          fetchConversations();
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const oldId = (payload.old as { id?: string } | null)?.id;
+            if (!oldId) return;
+            setConversations((prev) => prev.filter((c) => c.id !== oldId));
+            return;
+          }
+          const row = payload.new as ConversationRow;
+          // Filtro de canal ativo: eventos de outros canais não pertencem à lista.
+          if (selectedChannelId && row.channel_id !== selectedChannelId) return;
+          if (payload.eventType === "INSERT") {
+            debouncedRefetch(); // linha crua não tem lead/channel — precisa da API
+            return;
+          }
+          if (!conversationsRef.current.some((c) => c.id === row.id)) {
+            debouncedRefetch(); // conversa fora da lista atual (ex.: fetch anterior falhou)
+            return;
+          }
+          applyRowPatch(row);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          // Atualiza só o preview da conversa afetada — paridade com a RPC
+          // get_last_messages (última mensagem vence, com prefixo por autor).
+          const msg = payload.new as {
+            conversation_id?: string | null;
+            role?: string | null;
+            sent_by?: string | null;
+            content?: string | null;
+          };
+          if (!msg.conversation_id) return;
+          const preview = previewFromMessage(msg);
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === msg.conversation_id
+                ? { ...c, last_message_text: preview.text, last_message_direction: preview.direction }
+                : c,
+            ),
+          );
         }
       )
       .subscribe();
 
     return () => {
+      debouncedRefetch.cancel();
       supabase.removeChannel(realtimeChannel);
     };
-  }, [fetchConversations]);
+  }, [fetchConversations, selectedChannelId, supabase]);
 
   async function loadData() {
     setLoading(true);

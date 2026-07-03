@@ -75,7 +75,11 @@ async def test_empty_initial_and_empty_retry_never_sends_chegou_cortada():
     fica em silêncio total."""
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MESSAGE, _SAFETY_FALLBACK_GENERIC
 
-    call_responses = [_make_response(content=""), _make_response(content="")]
+    # Etapa 2: inicial + retry1 vazios ainda disparam o retry2 (temperatura elevada) antes
+    # do fallback final — também vazio aqui, para o teste chegar ao fallback genérico.
+    call_responses = [
+        _make_response(content=""), _make_response(content=""), _make_response(content=""),
+    ]
     idx = {"i": 0}
 
     async def fake_create(**kwargs):

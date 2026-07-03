@@ -108,7 +108,11 @@ def test_record_reply_only_updates_null_first_replied_at():
 # ─── reconcile_broadcast_replies ─────────────────────────────────────────────
 
 def _reconcile_sb(bl_rows, msg_rows):
-    """Mock com table side-effect: broadcast_leads vs messages."""
+    """Mock com table side-effect: broadcast_leads vs messages.
+
+    A busca de messages é em LOTE (`in_("lead_id", chunk)`), uma query por
+    chunk — as linhas de msg_rows precisam de `lead_id` para o rateio em Python.
+    """
     mock_bl = MagicMock()
     mock_msg = MagicMock()
 
@@ -124,10 +128,10 @@ def _reconcile_sb(bl_rows, msg_rows):
         .data
     ) = bl_rows
 
-    # SELECT messages
+    # SELECT messages (lote por chunk de lead_ids)
     (
         mock_msg.select.return_value
-        .eq.return_value
+        .in_.return_value
         .eq.return_value
         .gt.return_value
         .lte.return_value
@@ -149,7 +153,7 @@ def test_reconcile_updates_first_replied_at_when_message_exists():
     msg_created_at = (now - timedelta(hours=4)).isoformat()
 
     bl = {"id": "bl-uuid", "lead_id": "lead-uuid", "sent_at": sent_at}
-    message = {"id": "msg-uuid", "created_at": msg_created_at}
+    message = {"id": "msg-uuid", "lead_id": "lead-uuid", "created_at": msg_created_at}
 
     mock_sb, mock_bl, _ = _reconcile_sb([bl], [message])
 
@@ -187,3 +191,50 @@ def test_reconcile_no_op_when_no_pending_leads():
         reconcile_broadcast_replies()
 
     mock_msg.select.assert_not_called()
+
+
+def test_reconcile_batches_leads_in_single_query():
+    """N leads pendentes → 1 query de messages (lote), não 1 por lead (padrão N+1)."""
+    now = datetime.now(timezone.utc)
+    bls = [
+        {"id": f"bl-{i}", "lead_id": f"lead-{i}", "sent_at": (now - timedelta(hours=5)).isoformat()}
+        for i in range(50)
+    ]
+    mock_sb, _, mock_msg = _reconcile_sb(bls, [])
+
+    with patch("app.broadcast.worker.get_supabase", return_value=mock_sb):
+        from app.broadcast.worker import reconcile_broadcast_replies
+        reconcile_broadcast_replies()
+
+    assert mock_msg.select.call_count == 1, "50 leads cabem em 1 chunk → exatamente 1 query"
+    in_call = mock_msg.select.return_value.in_.call_args
+    assert in_call[0][0] == "lead_id"
+    assert len(in_call[0][1]) == 50
+
+
+def test_reconcile_respects_individual_reply_window():
+    """No lote, uma resposta só conta para o lead cuja janela (sent_at→+48h) a contém.
+
+    A query em lote usa piso/teto GLOBAIS; o corte por lead é em Python — este
+    teste pina que uma mensagem anterior ao sent_at de um lead não vira
+    first_replied_at dele.
+    """
+    now = datetime.now(timezone.utc)
+    reply_at = (now - timedelta(hours=10)).isoformat()
+    bl_early = {"id": "bl-early", "lead_id": "lead-early", "sent_at": (now - timedelta(hours=20)).isoformat()}
+    bl_late = {"id": "bl-late", "lead_id": "lead-late", "sent_at": (now - timedelta(hours=5)).isoformat()}
+    messages = [
+        {"id": "m1", "lead_id": "lead-early", "created_at": reply_at},  # dentro da janela do early
+        {"id": "m2", "lead_id": "lead-late", "created_at": reply_at},   # ANTES do sent_at do late → fora
+    ]
+    mock_sb, mock_bl, _ = _reconcile_sb([bl_early, bl_late], messages)
+
+    with patch("app.broadcast.worker.get_supabase", return_value=mock_sb):
+        from app.broadcast.worker import reconcile_broadcast_replies
+        reconcile_broadcast_replies()
+
+    assert mock_bl.update.call_count == 1, "só o lead com resposta dentro da própria janela atualiza"
+    payload = mock_bl.update.call_args[0][0]
+    assert payload["first_replied_at"] == reply_at
+    eq_call = mock_bl.update.return_value.eq.call_args
+    assert eq_call[0] == ("id", "bl-early")

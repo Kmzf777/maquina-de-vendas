@@ -27,6 +27,19 @@ _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 _BILLING_ERROR_CODE = 131042
 
+# Cadência do loop principal. Era 5s — com ~8-12 queries REST por tick, 24/7,
+# o polling ocioso respondia por boa parte do estouro de Egress do Supabase
+# (cota Free de 5GB/mês). Nenhum job do loop exige latência de segundos:
+# broadcasts agendados, cadência, follow-ups e memórias têm granularidade de
+# minutos/horas; o envio em si roda DENTRO de process_single_broadcast com
+# sleep próprio por lead. Ao adicionar jobs novos ao loop (ex.: Etapa 3-4 do
+# watchdog/Frente B), dimensionar para esta latência base.
+WORKER_TICK_SECONDS = 30
+
+# Lotes de lead_ids por query no reconcile (limite prático de URL do PostgREST
+# com UUIDs em `in.(...)`).
+_RECONCILE_ID_CHUNK = 100
+
 logger = logging.getLogger(__name__)
 
 
@@ -339,11 +352,22 @@ def _blacklist_guardrail(lead: dict) -> str | None:
     return None
 
 
+def _parse_ts(value: str) -> datetime:
+    """Timestamp do Supabase → datetime aware (sufixo `Z` ou `+00:00`)."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def reconcile_broadcast_replies() -> None:
     """Catch-up job: fills first_replied_at for leads that replied but webhook failed.
 
     Scans broadcast_leads sent in the last 48h (minus the last 2min to avoid
     racing with the webhook). Limit 200 leads per tick.
+
+    As respostas são buscadas em LOTE (uma query de `messages` por chunk de
+    lead_ids) e o corte por janela individual (sent_at → sent_at+48h) é feito
+    em Python. O padrão anterior — 1 query por lead pendente, a cada tick —
+    era o maior consumidor isolado de Egress do banco (5,8M chamadas/trimestre
+    no pg_stat_statements de produção).
     """
     sb = get_supabase()
     now = datetime.now(timezone.utc)
@@ -363,27 +387,53 @@ def reconcile_broadcast_replies() -> None:
     if not pending.data:
         return
 
+    # Piso/teto globais do lote: menor sent_at e maior sent_at+48h entre os
+    # pendentes. O refinamento por lead acontece em Python, abaixo.
+    sent_dts = {bl["id"]: _parse_ts(bl["sent_at"]) for bl in pending.data}
+    batch_floor = min(sent_dts.values()).isoformat()
+    batch_ceil = (max(sent_dts.values()) + timedelta(hours=48)).isoformat()
+
+    # Mensagens de user desses leads, ordenadas asc — a PRIMEIRA resposta na
+    # janela é o valor gravado. O limit é a defesa explícita contra o teto
+    # server-side do PostgREST; ordenar asc é a direção segura: truncar só
+    # atrasa a reconciliação de respostas mais novas para o próximo tick.
+    lead_ids = sorted({bl["lead_id"] for bl in pending.data})
+    replies_by_lead: dict[str, list[str]] = {}
+    for i in range(0, len(lead_ids), _RECONCILE_ID_CHUNK):
+        chunk = lead_ids[i : i + _RECONCILE_ID_CHUNK]
+        try:
+            rows = (
+                sb.table("messages")
+                .select("lead_id, created_at")
+                .in_("lead_id", chunk)
+                .eq("role", "user")
+                .gt("created_at", batch_floor)
+                .lte("created_at", batch_ceil)
+                .order("created_at")
+                .limit(1000)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as e:
+            logger.warning("[BROADCAST] reconcile: falha no lote de replies: %s", e)
+            continue
+        for row in rows:
+            replies_by_lead.setdefault(row["lead_id"], []).append(row["created_at"])
+
     reconciled = 0
     for bl in pending.data:
         try:
-            sent_at_dt = datetime.fromisoformat(bl["sent_at"].replace("Z", "+00:00"))
-            reply_window_end = (sent_at_dt + timedelta(hours=48)).isoformat()
-            reply = (
-                sb.table("messages")
-                .select("id, created_at")
-                .eq("lead_id", bl["lead_id"])
-                .eq("role", "user")
-                .gt("created_at", bl["sent_at"])
-                .lte("created_at", reply_window_end)
-                .order("created_at")
-                .limit(1)
-                .execute()
-            )
-            if reply.data:
-                sb.table("broadcast_leads").update({
-                    "first_replied_at": reply.data[0]["created_at"],
-                }).eq("id", bl["id"]).execute()
-                reconciled += 1
+            sent_at_dt = sent_dts[bl["id"]]
+            reply_window_end = sent_at_dt + timedelta(hours=48)
+            for created_at in replies_by_lead.get(bl["lead_id"], []):
+                created_dt = _parse_ts(created_at)
+                if sent_at_dt < created_dt <= reply_window_end:
+                    sb.table("broadcast_leads").update({
+                        "first_replied_at": created_at,
+                    }).eq("id", bl["id"]).execute()
+                    reconciled += 1
+                    break
         except Exception as e:
             logger.warning("[BROADCAST] reconcile error for bl=%s: %s", bl.get("id"), e)
 
@@ -416,7 +466,7 @@ async def run_worker():
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(WORKER_TICK_SECONDS)
 
 
 async def process_broadcasts():

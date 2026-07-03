@@ -1,7 +1,7 @@
 """Orçamento determinístico para o setor atacado.
 
 Módulo puro (sem rede, sem banco): matematica do carrinho, tabela de frete por região,
-mapa UF→macrorregião, normalização de preços BRL e match de produtos por substring.
+mapa UF→macrorregião, normalização de preços BRL e match de produtos por tokens.
 
 Consumido por tools.py — não importar de lá diretamente.
 
@@ -124,6 +124,26 @@ def _normalize_text(value: str | None) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
 
 
+# Stopwords de preposição/artigo removidas SOMENTE da consulta do lead — NUNCA do nome
+# do produto (o nome não é tokenizado nem podado: é verificado por substring inteira).
+# Caso real Edgar (02/07 17:14): "Suave em grãos 500g" não casava o nome real do catálogo
+# porque o "em" e a ordem das palavras quebravam a substring literal.
+_QUERY_STOPWORDS: frozenset[str] = frozenset({"de", "em", "com", "do", "da", "o", "a"})
+
+# Normalização de peso: "500 g" → "500g", "1 kg" → "1kg". Aplicada aos DOIS lados
+# (consulta e nome) antes da tokenização, para "suave 500 g" casar "Café Suave 500g".
+# \b impede colapsar unidades que são prefixo de outra palavra (ex.: "500 gramas").
+_WEIGHT_RE = re.compile(r"(\d+)\s+(kg|g)\b")
+
+
+def _canonicalize_product_text(value: str | None) -> str:
+    """Forma canônica para matching de produto: sem acento, caixa baixa, pesos colados
+    ("500 g"→"500g") e espaços colapsados."""
+    text = _normalize_text(value)
+    text = _WEIGHT_RE.sub(r"\1\2", text)
+    return " ".join(text.split())
+
+
 def fmt_brl(value: float) -> str:
     """Formata float em string BRL (R$ 1.234,56). Versão pública — use esta em código novo."""
     # Python :,.2f usa , como milhar e . como decimal → trocar separadores
@@ -187,19 +207,48 @@ def resolve_region(
 
 
 def match_products(produto: str, products: list[dict]) -> list[dict]:
-    """Busca produtos por substring normalizada (sem acento, caixa baixa).
+    """Busca produtos por TOKENS (AND, ordem livre) sobre o nome canonicalizado.
+
+    Motivação (Frente C3 — caso real Edgar, 02/07 17:14): a versão anterior exigia a
+    consulta INTEIRA como substring contígua do nome; "Suave em grãos 500g" não casava
+    "Café Suave 500g (grãos)" (preposição + ordem das palavras), a tool devolvia
+    "não encontrado" e a Valéria improvisava com produto errado.
+
+    Regras:
+    1. Consulta e nome são canonicalizados (_canonicalize_product_text: sem acento,
+       caixa baixa, "500 g"→"500g", espaços colapsados).
+    2. Stopwords de preposição/artigo (de, em, com, do, da, o, a) saem SÓ da consulta —
+       nunca do nome. "Suave em grãos 500g" → tokens {suave, graos, 500g}.
+    3. Produto casa se TODOS os tokens da consulta aparecem (substring) no nome
+       canonicalizado — AND, ordem livre.
+    4. EXACT-MATCH-WINS (adjudicação 03/07): se a consulta canonicalizada for IGUAL ao
+       nome canonicalizado de algum produto, retorna só ele(s) — cobre o lead que fala
+       o nome exato num catálogo com nomes token-superset ("Café Suave 500g" vs
+       "Café Suave Premium 500g": a consulta exata não vira desambiguação). Consultas
+       PARCIAIS ambíguas entre nomes-superset ("suave 500") retornam os dois de
+       propósito: confirmar a variação com o cliente > chutar por adjacência textual.
+    5. Consulta vazia (ou só de stopwords) → [].
 
     Retorna até MAX_DISAMBIGUATION resultados (P2 — nunca devolve 50+ itens ao LLM).
     Considera apenas o campo "name" de cada dicionário de produto.
     """
-    needle = _normalize_text(produto)
-    if not needle:
+    query_canonical = _canonicalize_product_text(produto)
+    tokens = [t for t in query_canonical.split(" ") if t and t not in _QUERY_STOPWORDS]
+    if not tokens:
         return []
 
-    matches = [
-        p for p in products
-        if needle in _normalize_text(p.get("name", ""))
-    ]
+    exact_matches: list[dict] = []
+    token_matches: list[dict] = []
+    for p in products:
+        name_canonical = _canonicalize_product_text(p.get("name", ""))
+        if not name_canonical:
+            continue
+        if name_canonical == query_canonical:
+            exact_matches.append(p)
+        if all(token in name_canonical for token in tokens):
+            token_matches.append(p)
+
+    matches = exact_matches if exact_matches else token_matches
     return matches[:MAX_DISAMBIGUATION]
 
 

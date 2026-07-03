@@ -103,9 +103,10 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
 async def test_lp_welcome_sends_named_param_even_without_name():
     """Lead SEM nome (import de atacado com lead_name="" e name=None).
     O template lp_solicitacao_recebida exige 1 param ({{primeiro_nome}}). O handler
-    DEVE emitir o param nomeado com text="" — degradar components para None manda 0
-    params e a Meta rejeita com #132000 (localizable_params (0) != expected (1)),
-    fazendo o welcome nunca ser entregue (caso 5541999736060, 03/07)."""
+    DEVE emitir o param nomeado com o fallback neutro _NAME_FALLBACK ("tudo bem") —
+    degradar components para None manda 0 params e a Meta rejeita com #132000
+    (localizable_params (0) != expected (1)), fazendo o welcome nunca ser entregue
+    (caso 5541999736060, 03/07)."""
     job = _make_lp_welcome_job(
         leads={
             "id": "lead-1",
@@ -141,7 +142,7 @@ async def test_lp_welcome_sends_named_param_even_without_name():
         "5541999736060", "lp_solicitacao_recebida",
         components=[{
             "type": "body",
-            "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": ""}],
+            "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": "tudo bem"}],
         }],
         language_code="pt_BR",
     )

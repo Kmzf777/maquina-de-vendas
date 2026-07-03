@@ -91,6 +91,7 @@ export interface ReactionTarget {
 export interface Message {
   id: string;
   lead_id: string;
+  conversation_id?: string | null;
   role: string;       // "user" | "assistant" | "system"
   content: string;
   stage: string | null;
