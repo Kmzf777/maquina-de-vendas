@@ -805,6 +805,10 @@ async def run_agent(
                     "Malformed JSON args for tool %s in conv %s: %s",
                     func_name, conversation_id, exc,
                 )
+                # args malformados = mídia NÃO executou — re-execução no retry é legítima,
+                # mesma classe do except de execute_tool (fast-follow review 2026-07-03).
+                if func_name in _MEDIA_TOOL_NAMES:
+                    media_exec_failed = True
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -1006,6 +1010,10 @@ async def run_agent(
                             "[RETRY TOOL] JSON inválido para %s em conv %s — pulando: %s",
                             _rname, conversation_id, _je,
                         )
+                        # args malformados = mídia NÃO executou — re-execução no retry é legítima,
+                        # mesma classe do except de execute_tool (fast-follow review 2026-07-03).
+                        if _rname in _MEDIA_TOOL_NAMES:
+                            media_exec_failed = True
                         messages.append({
                             "role": "tool",
                             "tool_call_id": _tc.id,

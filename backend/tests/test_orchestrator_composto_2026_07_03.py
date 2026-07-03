@@ -30,6 +30,13 @@ Cobertura (Task 2 do plano):
   (c) NOVO comportamento: mídia FALHA no loop principal (execute_tool levanta exceção) →
       retry1 recupera a MESMA tool → guard NÃO bloqueia (media_exec_failed=True) → executa
       de verdade (execute_tool chamado 2x) — RED antes do fix, GREEN depois.
+  (d) fast-follow (Important reproduzido pela review desta task): mídia com args JSON
+      MALFORMADOS no loop principal — media_tool_used vira True ANTES do parse, a tool
+      NUNCA executa (continue) e, sem o fix, media_exec_failed não era setada → o guard
+      bloqueava a re-execução legítima no retry e o turno fechava com execute_tool chamado
+      0x (o modelo "acha" que as fotos saíram). Com o fix, o ramo JSONDecodeError também
+      seta media_exec_failed (mesma classe do except de execute_tool) → retry1 com args
+      VÁLIDOS executa 1x — RED antes do fix, GREEN depois.
 """
 import json
 import pytest
@@ -265,3 +272,86 @@ async def test_media_exec_fails_then_retry_recovers_and_guard_does_not_block():
         "não o bloqueio sintético do guard"
     )
     assert tc2_results[0]["content"] == "5 fotos de atacado enfileiradas para envio após o texto"
+
+
+# ---------------------------------------------------------------------------
+# Caso (d) — fast-follow (review desta task): mídia com args JSON MALFORMADOS no loop
+# principal → tool nunca executou → retry1 recupera com args VÁLIDOS → guard NÃO bloqueia
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_media_malformed_json_args_then_retry_with_valid_args_executes():
+    """No loop principal, enviar_fotos chega com argumentos que NÃO são JSON válido:
+    media_tool_used vira True antes do parse, o ramo JSONDecodeError anexa o result de
+    erro e dá continue — execute_tool NUNCA roda (mesma classe de 'intenção sem execução'
+    do caso (c), só que a falha é no parse, não na tool). Quando o retry1 recupera a MESMA
+    tool com args válidos, o guard same-turn NÃO deve bloquear: execute_tool deve rodar
+    exatamente 1x (a re-execução legítima) e o result real — não o bloqueio sintético
+    'não reenviar' — deve chegar à continuação do Change B."""
+    from app.agent.orchestrator import run_agent
+
+    bad_tc = MagicMock()
+    bad_tc.id = "tc-fotos-d1"
+    bad_tc.function.name = "enviar_fotos"
+    bad_tc.function.arguments = '{"categoria": "atacado"'  # JSON truncado — malformado de propósito
+    good_tc = _make_tool_call("enviar_fotos", {"categoria": "atacado"}, "tc-fotos-d2")
+    final_text = "te mandei as fotos aqui no chat, qual chamou mais atenção?"
+    captured_calls: list[dict] = []
+
+    async def fake_create(**kwargs):
+        captured_calls.append(kwargs)
+        idx = len(captured_calls)
+        if idx == 1:
+            return _make_response(content=None, tool_calls=[bad_tc])  # loop principal: args malformados
+        if idx == 2:
+            return _make_response(content="", tool_calls=None)  # pós-tool (loop principal): vazio
+        if idx == 3:
+            return _make_response(content="", tool_calls=[good_tc])  # retry1: MESMA tool, args válidos
+        return _make_response(content=final_text, tool_calls=None)  # continuação Change B: texto natural
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-composto-001", "phone": "5531900000099", "ai_enabled": True
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock,
+               return_value="5 fotos de atacado enfileiradas para envio após o texto") as mock_exec, \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+        result = await run_agent(_conversation("atacado"), "manda as fotos")
+
+    assert result == final_text, f"esperado o texto final da re-execução, got {result!r}"
+    assert len(captured_calls) == 4, f"esperado 4 chamadas ao LLM, got {len(captured_calls)}"
+    assert mock_exec.call_count == 1, (
+        f"a re-execução no retry é a ÚNICA execução do turno (o parse malformado nunca "
+        f"chegou a execute_tool); guard não deve bloquear — esperado 1 chamada, "
+        f"got {mock_exec.call_count}"
+    )
+    assert mock_exec.call_args.args[0] == "enviar_fotos"
+    assert mock_exec.call_args.args[1] == {"categoria": "atacado"}, (
+        "a execução deve usar os args VÁLIDOS recuperados pelo retry"
+    )
+
+    # A continuação Change B (4ª chamada) deve receber o result REAL da execução para
+    # tc-fotos-d2 — não o bloqueio sintético do guard nem o erro de args do loop principal.
+    post_tool_messages = captured_calls[3]["messages"]
+    tc2_results = [
+        m for m in post_tool_messages
+        if isinstance(m, dict) and m.get("role") == "tool" and m.get("tool_call_id") == "tc-fotos-d2"
+    ]
+    assert len(tc2_results) == 1, f"esperado 1 tool result para tc-fotos-d2, got {tc2_results}"
+    assert "não reenviar" not in tc2_results[0]["content"], (
+        "guard não deve sintetizar bloqueio: a mídia nunca executou neste turno"
+    )
+    assert tc2_results[0]["content"] == "5 fotos de atacado enfileiradas para envio após o texto"
+
+    # E o result de ERRO de args do loop principal (tc-fotos-d1) continua registrado nas
+    # messages — o contrato do ramo JSONDecodeError (mensagem role=tool com tool_call_id)
+    # não muda com o fix.
+    tc1_results = [
+        m for m in post_tool_messages
+        if isinstance(m, dict) and m.get("role") == "tool" and m.get("tool_call_id") == "tc-fotos-d1"
+    ]
+    assert len(tc1_results) == 1, f"esperado 1 tool result de erro para tc-fotos-d1, got {tc1_results}"
+    assert "argumentos inválidos" in tc1_results[0]["content"]
