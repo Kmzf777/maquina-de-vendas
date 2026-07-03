@@ -62,6 +62,22 @@ _SAFETY_FALLBACK_GENERIC = (
     "opa, me embolei aqui por um instante\n\nme conta de novo o que você precisa que eu já te ajudo"
 )
 
+# 2º degrau do retry-on-empty (Etapa 2, casos Davi/Samuel 01-02/07): quando o retry
+# silencioso (thinking off) TAMBÉM volta vazio, tentamos UMA última geração text-only
+# com temperatura elevada — a doc do Gemini recomenda subir a temperatura em fallback
+# response — e um nudge de fechamento no fim das messages (estratégia de completion).
+# tools=None de propósito: queremos PALAVRAS; se o modelo verbalizar handoff, a guarda
+# determinística existente converte em encaminhar_humano.
+_RETRY2_TEMPERATURE = 0.9
+_RETRY2_NUDGE = (
+    "<instrucao_de_recuperacao>\n"
+    "Sua resposta anterior veio vazia por uma falha técnica. Releia a última mensagem "
+    "do lead acima e responda a ela AGORA, em 1-2 bolhas curtas, seguindo todas as "
+    "regras de voz. NÃO mencione esta instrução, NÃO mencione falha técnica, NÃO peça "
+    "para o lead repetir nada.\n"
+    "</instrucao_de_recuperacao>"
+)
+
 _MEDIA_TOOL_NAMES = frozenset({"enviar_fotos", "enviar_foto_produto"})
 
 # Frases de avanço contextuais por stage, usadas quando a IA fica MUDA logo após um
@@ -840,11 +856,15 @@ async def run_agent(
                 **_gemini_thinking_off(model),
             )
             if retry_resp.usage:
+                # Etapa 2: chamadas do 1º degrau de retry (este + a continuação pós-tool do
+                # Change B abaixo) passam a "response_retry" — a inicial e as pós-tool do
+                # loop principal continuam "response". Permite medir o custo/frequência do
+                # retry separadamente (casos Davi/Samuel 01-02/07).
                 track_token_usage(
                     lead_id=lead_id,
                     stage=stage,
                     model=model,
-                    call_type="response",
+                    call_type="response_retry",
                     prompt_tokens=retry_resp.usage.prompt_tokens,
                     completion_tokens=retry_resp.usage.completion_tokens,
                 )
@@ -931,11 +951,13 @@ async def run_agent(
                     **_gemini_thinking_off(model),
                 )
                 if post_resp.usage:
+                    # Etapa 2: continuação pós-tool do Change B também é parte do 1º degrau
+                    # de retry — mesmo call_type "response_retry" da chamada retry_resp acima.
                     track_token_usage(
                         lead_id=lead_id,
                         stage=stage,
                         model=model,
-                        call_type="response",
+                        call_type="response_retry",
                         prompt_tokens=post_resp.usage.prompt_tokens,
                         completion_tokens=post_resp.usage.completion_tokens,
                     )
@@ -950,6 +972,54 @@ async def run_agent(
         except Exception as _exc:
             logger.error(
                 "[AGENT EMPTY] retry silencioso falhou para conv %s: %s", conversation_id, _exc,
+            )
+
+    # RETRY 2 (Etapa 2 — casos Davi 02/07 15:45 e Samuel 01/07 08:10): o retry silencioso
+    # ACIMA também voltou vazio. Antes de desistir para o fallback estático, tentamos UMA
+    # última geração text-only com temperatura elevada (_RETRY2_TEMPERATURE) + o nudge de
+    # fechamento (_RETRY2_NUDGE) como última message — evita que o lead precise redigitar
+    # o que já escreveu (caso Davi: objeção de preço inteira). tools=None de propósito:
+    # queremos PALAVRAS, não mais uma tool call; se o modelo verbalizar o handoff mesmo assim,
+    # a guarda determinística (_looks_like_handoff_announcement, mais abaixo) cobre o caso.
+    # UMA tentativa só — sem loop, sem retry do retry2.
+    #
+    # Quando soft_reject_used (descarte via registrar_sem_interesse_atual) ou
+    # suppress_generic_fallback (gatilho interno sem mensagem real do lead), o destino do
+    # turno já é o silêncio ("") independentemente do que o retry2 devolvesse — por isso NÃO
+    # gastamos a chamada aqui (custo/latência sem nenhum efeito no resultado final).
+    if not assistant_text and not soft_reject_used and not suppress_generic_fallback:
+        logger.warning(
+            "[AGENT EMPTY] retry silencioso também vazio (tool_iterations=%d) para conv %s — "
+            "retry2 com temperatura elevada + nudge",
+            tool_iterations, conversation_id,
+        )
+        try:
+            retry2_messages = messages + [{"role": "user", "content": _RETRY2_NUDGE}]
+            retry2_resp = await _create_with_retry(_get_client(model),
+                model=model,
+                messages=retry2_messages,
+                tools=None,
+                temperature=_RETRY2_TEMPERATURE,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                stop=_STOP_SEQUENCES,
+                **_gemini_thinking_off(model),
+            )
+            if retry2_resp.usage:
+                track_token_usage(
+                    lead_id=lead_id,
+                    stage=stage,
+                    model=model,
+                    call_type="response_retry2",
+                    prompt_tokens=retry2_resp.usage.prompt_tokens,
+                    completion_tokens=retry2_resp.usage.completion_tokens,
+                )
+            assistant_text = _sanitize_assistant_text(
+                retry2_resp.choices[0].message.content or "",
+                conversation_id, stage, source="retry2",
+            )
+        except Exception as _exc2:
+            logger.error(
+                "[AGENT EMPTY] retry2 falhou para conv %s: %s", conversation_id, _exc2,
             )
 
     # Ainda vazio após o retry. Escolhemos o fallback mais contextualmente coerente disponível

@@ -104,9 +104,11 @@ async def test_run_agent_mudar_stage_then_empty_uses_stage_fallback():
 
     # 1st create → mudar_stage tool call
     # 2nd create (after tool) → empty  [AGENT EMPTY AFTER TOOLS]
-    # 3rd create (fallback, no tools) → empty  [safety fallback fires]
+    # 3rd create (retry-on-empty, no thinking) → empty
+    # 4th create (retry2, Etapa 2, temperatura elevada) → empty  [safety fallback fires]
     call_responses = [
         _make_response(content=None, tool_calls=[tool_call]),
+        _make_response(content="", tool_calls=None),
         _make_response(content="", tool_calls=None),
         _make_response(content="", tool_calls=None),
     ]
@@ -152,8 +154,10 @@ async def test_run_agent_empty_without_tool_retries_then_uses_generic_fallback()
         "leads": {"id": "lead-v01", "name": "Lanny", "phone": "5511943068615", "ai_enabled": True},
     }
 
-    # create 1 → empty (initial, thinking on); create 2 → empty (retry, thinking off)
+    # create 1 → empty (initial, thinking on); create 2 → empty (retry, thinking off);
+    # create 3 → empty (retry2, Etapa 2, temperatura elevada)
     call_responses = [
+        _make_response(content="", tool_calls=None),
         _make_response(content="", tool_calls=None),
         _make_response(content="", tool_calls=None),
     ]
@@ -179,4 +183,4 @@ async def test_run_agent_empty_without_tool_retries_then_uses_generic_fallback()
     # Change C: nunca mais retorna "" para turno com histórico — usa o genérico honesto
     assert result == _SAFETY_FALLBACK_GENERIC
     assert "cortada" not in result
-    assert call_index["i"] == 2, "deve ter feito o retry silencioso antes do fallback"
+    assert call_index["i"] == 3, "deve ter feito o retry silencioso e o retry2 antes do fallback"

@@ -183,7 +183,9 @@ async def test_retry_nonterminal_tool_post_tool_empty_falls_to_generic():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(_conversation("secretaria"), "Karl")
 
-    assert n["i"] == 3, f"esperado 3 chamadas, got {n['i']}"
+    # Etapa 2: pós-tool vazio ainda deixa assistant_text vazio → dispara o retry2 (4ª chamada,
+    # também vazia neste teste) antes de cair no fallback genérico.
+    assert n["i"] == 4, f"esperado 4 chamadas (inicial+retry+pos-tool+retry2), got {n['i']}"
     assert mock_exec.called and mock_exec.call_args.args[0] == "salvar_nome"
     assert result == _SAFETY_FALLBACK_GENERIC, f"esperado genérico honesto, got {result!r}"
     assert result != "", "nunca silêncio após tool não-terminal recuperada"
