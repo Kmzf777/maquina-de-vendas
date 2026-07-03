@@ -18,7 +18,7 @@ from app.leads.service import (
 from pydantic import ValidationError as _PydanticValidationError
 from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
 from app.agent.pricing import (
-    OrcamentoInput, LineQuote, match_products, parse_brl,
+    MAX_DISAMBIGUATION, OrcamentoInput, LineQuote, match_products, parse_brl,
     resolve_region, compute_quote, format_quote, fmt_brl,
 )
 
@@ -1089,6 +1089,18 @@ async def execute_tool(
             for item in orcamento.itens:
                 matches = match_products(item.produto, products)
                 if len(matches) == 0:
+                    # Frente C3 (caso real Edgar, 02/07 17:14): 0 matches agora LISTA as
+                    # opções reais do catálogo. Antes devolvia só "confirme o nome" e a
+                    # Valéria improvisava ("o sistema não achou o Suave em grãos de 500g"
+                    # — produto ERRADO, 2x) e chegou a substituir item em silêncio no
+                    # orçamento. Nomes em ordem ESTÁVEL (ordem do catálogo), cap P2.
+                    nomes = [p["name"] for p in products if p.get("name")]
+                    if nomes:
+                        return (
+                            f"Produto '{item.produto}' não encontrado no catálogo de "
+                            f"atacado. Disponíveis: {', '.join(nomes[:MAX_DISAMBIGUATION])}. "
+                            "Confirme com o cliente qual ele quer."
+                        )
                     return (
                         f"Produto '{item.produto}' não encontrado no catálogo de atacado. "
                         "Confirme o nome."

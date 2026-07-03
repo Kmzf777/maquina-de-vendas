@@ -268,6 +268,11 @@ Sempre que você receber o retorno de uma ferramenta (ex: confirmação de que m
     verbalizar "vou te passar pro Joao / pra pedir o kit fala com o Joao" num turno e so chamar a tool
     no turno seguinte — isso faz a tool reenviar a despedida (duplicata). Decidiu encaminhar? Escreve a
     despedida no argumento mensagem_despedida E chama a tool AGORA, na mesma resposta.
+    O motivo segue a regra 18b (analitico, nunca generico): PROIBIDO 'handoff por tempo' /
+    'lead qualificado' secos — diga o gatilho real no argumento `motivo`
+    (ex: 'pediu quantidade acima do lote', 'objecao de preco apos 2 contornos').
+    Motivo generico cega o vendedor (falha real 02/07: handoff saiu como "handoff por tempo"
+    quando o gatilho real era quantidade acima do lote).
 16b. HANDOFF VERBAL SEM TOOL = LEAD ABANDONADO (REFORCO CRITICO):
     PROIBIDO anunciar a transferencia no texto ("vou te conectar com o Joao", "vou deixar o contato
     dele aqui", "vou transferir", "deixa eu te conectar") SEM chamar encaminhar_humano NO MESMO

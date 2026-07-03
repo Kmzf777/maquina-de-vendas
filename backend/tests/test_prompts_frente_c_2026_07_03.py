@@ -33,11 +33,26 @@ Casos reais que motivam a mudanca (janela 01-02/07):
   recebeu a MESMA despedida "bom café pra você" de novo (eco). O Javier do cupom, em
   contraste, recebeu o dele inline no mesmo turno (link + ESPECIAL10) — mostra que o
   padrao correto ja existia mas nao era garantido/obrigatorio no prompt.
+
+Task 3 (C-3) — reacao a erro de ferramenta no atacado ("o cliente NUNCA ve a cozinha")
++ emenda da regra 16 no base (motivo analitico do handoff). Declaracao: codigo
+transversal (pricing.py/tools.py — comportamento testado em
+test_match_products_tokens_2026_07_03.py) + prompt fluxo inbound, perfil atacado
+(valeria_inbound/atacado.py) + 1 emenda no base (vale ambos os fluxos).
+
+Casos reais que motivam a mudanca (janela 02/07):
+- Edgar, 02/07 17:14-17:22: calcular_orcamento devolveu "não encontrado" sem opções e
+  a Valeria improvisou "opa, parece que o sistema não achou o Suave em grãos de 500g"
+  (produto ERRADO — o item inexistente era o Microlote 500g, nao o Suave), 2x, expondo
+  "o sistema" ao cliente e substituindo item em silencio no orcamento.
+- "Boa tarde.... Luiz", 02/07: o handoff saiu com motivo "handoff por tempo" quando o
+  gatilho real era quantidade acima do lote — motivo generico cega o vendedor.
 """
 from datetime import datetime
 
 from app.agent.orchestrator import build_system_prompt
 from app.agent.prompts.base import build_base_prompt
+from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
 from app.agent.prompts.valeria_inbound.consumo import CONSUMO_PROMPT
 from app.agent.prompts.valeria_inbound.secretaria import SECRETARIA_PROMPT
 
@@ -317,3 +332,102 @@ def test_build_system_prompt_consumo_monta_sem_erro_e_final_instruction_e_ultima
     assert "PROMESSA DE ENVIO = ENTREGA NO MESMO TURNO" in prompt
     assert prompt.index("REGRA ATOMICA DO CUPOM") < prompt.index("<final_instruction>")
     assert prompt.index("PROMESSA DE ENVIO") < prompt.index("<final_instruction>")
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (C-3) — "o cliente NUNCA ve a cozinha" em atacado.py (inbound)
+# ---------------------------------------------------------------------------
+
+def test_atacado_contem_constraint_cliente_nunca_ve_a_cozinha():
+    assert "o cliente NUNCA ve a cozinha" in ATACADO_PROMPT
+    # dentro de <critical_constraints> e ANTES das <instructions> (instrucao critica
+    # no inicio da secao correta, pratica do guia de prompting da frente)
+    cc_start = ATACADO_PROMPT.index("<critical_constraints>")
+    cc_end = ATACADO_PROMPT.index("</critical_constraints>")
+    pos = ATACADO_PROMPT.index("o cliente NUNCA ve a cozinha")
+    instructions_start = ATACADO_PROMPT.index("<instructions>")
+    assert cc_start < pos < cc_end < instructions_start
+
+
+def test_atacado_constraint_proibe_expor_sistema_e_substituir_item():
+    cc_start = ATACADO_PROMPT.index("<critical_constraints>")
+    cc_end = ATACADO_PROMPT.index("</critical_constraints>")
+    block = ATACADO_PROMPT[cc_start:cc_end]
+    # proibicoes nucleares do bloco: vazar "o sistema", substituir item em silencio,
+    # e o limite de persistencia com motivo especifico no handoff
+    assert '"o sistema nao achou"' in block
+    assert "PROIBIDO substituir silenciosamente" in block
+    assert "usando os nomes DISPONIVEIS que a propria ferramenta listou" in block
+    assert "2a falha consecutiva" in block
+    assert "nunca motivo generico" in block
+
+
+def test_atacado_few_shot_edgar_com_marcadores_e_frase_real():
+    few_shot_start = ATACADO_PROMPT.index("<few_shot_examples>")
+    few_shot_end = ATACADO_PROMPT.index("</few_shot_examples>")
+    block = ATACADO_PROMPT[few_shot_start:few_shot_end]
+    assert "❌" in block
+    assert "✅" in block
+    # frase EXATA que o Edgar recebeu de verdade (02/07 17:15) — produto errado + "o sistema"
+    assert '"opa, parece que o sistema não achou o Suave em grãos de 500g"' in block
+    # resposta correta: tom de vendedora com a variacao real do catalogo
+    assert "o Microlote em grãos vem só em pacotes de 250g" in block
+    assert "Exemplo 8" in block
+
+
+def test_atacado_nada_de_existente_foi_removido():
+    for marker in (
+        "## Pergunta direta tem prioridade absoluta",
+        "## Circuit breaker",
+        "## Stage lock — nao retornar para consumo apos PJ confirmado",
+        "## Frete — nunca assuma regiao sem CEP",
+        "## Apresentacao de precos — qualificadores obrigatorios",
+        "## Kit Amostra — regra de preco fixo",
+        "## Enviar fotos antes de encaminhar",
+        "## Handoff para fechamento — regras",
+        "## Objecao de preco — maximo 2 tentativas",
+        "## Anti-interrogacao — Etapa 1",
+        "<critical_constraints>",
+        "</critical_constraints>",
+        "<instructions>",
+        "</instructions>",
+        "<few_shot_examples>",
+        "</few_shot_examples>",
+        "## Exemplo 7 ",
+    ):
+        assert marker in ATACADO_PROMPT, f"marcador removido/alterado: {marker!r}"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (C-3) — emenda da regra 16 em base.py (motivo analitico, regra 18b)
+# ---------------------------------------------------------------------------
+
+def test_base_regra_16_emenda_motivo_analitico():
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    assert "O motivo segue a regra 18b" in prompt
+    assert "PROIBIDO 'handoff por tempo'" in prompt
+    assert "pediu quantidade acima do lote" in prompt
+    assert "objecao de preco apos 2 contornos" in prompt
+
+
+def test_base_emenda_do_motivo_esta_dentro_da_regra_16_sem_renumerar():
+    # A emenda mora DENTRO do bloco 16 (entre "16. ENCAMINHAR_HUMANO" e "16b."),
+    # sem criar numero novo nem renumerar nada.
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    regra_16 = prompt.index("16. ENCAMINHAR_HUMANO")
+    regra_16b = prompt.index("16b. HANDOFF VERBAL SEM TOOL")
+    emenda = prompt.index("O motivo segue a regra 18b")
+    assert regra_16 < emenda < regra_16b
+    # invariantes de numeracao: 16b/17/18b continuam existindo uma unica vez
+    assert prompt.count("16b. HANDOFF VERBAL SEM TOOL") == 1
+    assert prompt.count("18b. OBSERVACOES ANALITICAS") == 1
+
+
+def test_build_system_prompt_atacado_monta_sem_erro_e_final_instruction_e_ultima():
+    lead = {"name": "Edgar", "company": None}
+    prompt = build_system_prompt(lead, "atacado")
+    assert prompt.rstrip().endswith("</final_instruction>")
+    assert "o cliente NUNCA ve a cozinha" in prompt
+    assert "O motivo segue a regra 18b" in prompt
+    assert prompt.index("o cliente NUNCA ve a cozinha") < prompt.index("<final_instruction>")
+    assert prompt.index("O motivo segue a regra 18b") < prompt.index("<final_instruction>")
