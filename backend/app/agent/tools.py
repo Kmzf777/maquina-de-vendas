@@ -71,6 +71,18 @@ def pop_interest_marked(conversation_id: str) -> dict | None:
     return _interest_marked.pop(conversation_id, None)
 
 
+# Sinal determinístico "este turno cotou preço" (Frente B3 — casos Samuel/Angelo 01-02/07:
+# leads receberam preço, sumiram e NENHUM follow-up foi agendado porque o gatilho dependia
+# do LLM chamar marcar_interesse). Setado quando calcular_orcamento resolve valores;
+# consumido pelo processor no bloco de agendamento.
+_quote_executed: dict[str, bool] = {}
+
+
+def pop_quote_executed(conversation_id: str) -> bool:
+    """Return and clear the quote-executed signal for a conversation (False if not set)."""
+    return _quote_executed.pop(conversation_id, False)
+
+
 PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
     "atacado": {
         "foto_1": "Classico — torra media-escura, notas achocolatadas",
@@ -1122,6 +1134,10 @@ async def execute_tool(
             # 5. No region AND not Uberlândia override → return subtotal + ask for estado
             if region_key is None and not is_uberlandia:
                 subtotal = round(sum(line.subtotal_linha for line in lines), 2)
+                # Frente B3: valores já foram resolvidos (subtotal real) mesmo faltando UF —
+                # sinaliza "cotou preço" para o gatilho de follow-up do processor.
+                if conversation_id:
+                    _quote_executed[conversation_id] = True
                 return (
                     f"Subtotal dos produtos: {fmt_brl(subtotal)}. "
                     "Para calcular o frete e verificar o pedido mínimo, "
@@ -1130,6 +1146,9 @@ async def execute_tool(
 
             # 6. Full quote with freight
             quote = compute_quote(lines, region_key, is_uberlandia)
+            # Frente B3: orçamento completo resolvido — idem acima.
+            if conversation_id:
+                _quote_executed[conversation_id] = True
             return format_quote(quote)
 
         except Exception as exc:

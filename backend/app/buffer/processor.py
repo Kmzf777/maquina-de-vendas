@@ -27,7 +27,9 @@ from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
-from app.agent.tools import pop_deferred_media, pop_interest_marked, SUPERVISOR_NAME, SUPERVISOR_PHONE
+from app.agent.tools import (
+    pop_deferred_media, pop_interest_marked, pop_quote_executed, SUPERVISOR_NAME, SUPERVISOR_PHONE,
+)
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -1028,6 +1030,7 @@ async def process_buffered_messages(
                     conversation["id"], phone,
                 )
                 pop_interest_marked(conversation["id"])  # não vaza flag p/ o próximo turno
+                pop_quote_executed(conversation["id"])  # idem (Frente B3)
                 _update_last_msg(conversation["id"])
                 return
 
@@ -1048,6 +1051,7 @@ async def process_buffered_messages(
                         phone, conversation["id"], e, exc_info=True,
                     )
                     pop_interest_marked(conversation["id"])
+                    pop_quote_executed(conversation["id"])  # idem (Frente B3)
                     await _handle_llm_down(lead, phone, conversation)
                     _update_last_msg(conversation["id"])
                     return
@@ -1076,6 +1080,7 @@ async def process_buffered_messages(
                         except Exception as _exc:
                             logger.warning("[LLM DOWN] falha ao registrar contador pós-AGENT FAILED: %s", _exc)
                         pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
+                        pop_quote_executed(conversation["id"])  # idem (Frente B3)
                         _update_last_msg(conversation["id"])
                         return
 
@@ -1086,6 +1091,9 @@ async def process_buffered_messages(
             # Pop the interest flag once right after the agent attempt — before any early returns
             # so stale state never leaks into the next turn (handoff, empty-response, or normal path).
             interest = pop_interest_marked(conversation["id"])
+            # Frente B3: mesmo ponto/mesma razão — a flag de "cotou preço" (calcular_orcamento)
+            # também não pode vazar para o próximo turno.
+            quote_flag = pop_quote_executed(conversation["id"])
 
             if response is None:
                 # Intentional: encaminhar_humano was called — handoff message already sent by the tool.
@@ -1186,20 +1194,33 @@ async def process_buffered_messages(
                     except Exception as e:
                         logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
-                # Agenda follow-up em dois gatilhos:
-                #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo;
+                # Agenda follow-up em três gatilhos:
+                #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo, tem precedência;
                 #  (2) OUTBOUND "engajou e esfriou": o lead respondeu à abordagem ativa e pode sumir
                 #      em seguida. Agendamos proativamente para resgatar o vácuo (ghosting), mesmo sem
-                #      interesse declarado. schedule_followup é idempotente (cancela+recria), então se o
-                #      lead responder de novo antes do disparo, o ciclo é reagendado.
-                # Guard crítico do gatilho (2): opt-out e soft-rejection desativam a IA no mesmo turno —
-                # nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do banco). Handoff
-                # retorna response=None e já saiu antes deste bloco.
+                #      interesse declarado.
+                #  (3) INBOUND "cotou preço" (Frente B3 — casos Samuel/Angelo/Welita 01-02/07): o
+                #      turno executou calcular_orcamento e/ou a resposta final contém "R$", mas o
+                #      lead pode sumir sem o LLM chamar marcar_interesse — o gatilho (1) dependia
+                #      100% disso e não disparou nenhuma vez na janela desses casos. Preço cotado já
+                #      é sinal comercial forte o bastante para justificar o resgate proativo.
+                # schedule_followup é idempotente (cancela+recria) e já tem cap de T1 same-day
+                # (_already_touched_today); a cadência é cancelada em handoff/opt-out/descarte via
+                # cancel_followups_by_phone — nada disso muda com os gatilhos (2)/(3).
+                # Guard crítico dos gatilhos (2) e (3): opt-out e soft-rejection desativam a IA no
+                # mesmo turno — nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do
+                # banco). Handoff retorna response=None e já saiu antes deste bloco.
                 is_outbound = agent_persona == "valeria_outbound"
+                # Sinal "este turno cotou preço": tool executada (determinístico) OU "R$" no texto
+                # final (cobre o LLM parafraseando o valor sem re-chamar a tool). Por este ponto
+                # `response` já passou pelos early-returns de None/vazio acima, mas usamos
+                # `response or ""` por segurança contra futuras reordenações do bloco.
+                price_signal = quote_flag or ("R$" in (response or ""))
                 # Não agenda follow-up se a IA foi desligada por handoff/opt-out concorrente
                 # durante o envio (B2) — o lead já está com o vendedor humano.
                 if conversation.get("followup_enabled", True) and channel and not handoff_aborted and not superseded:
                     should_schedule = bool(interest)
+                    warm = bool(interest)
                     reason = "interesse comercial" if interest else ""
                     if not should_schedule and is_outbound:
                         fresh = get_lead(lead["id"]) or {}
@@ -1211,15 +1232,27 @@ async def process_buffered_messages(
                                 "[FOLLOWUP] outbound com IA desativada (opt-out/soft) — não agenda p/ %s",
                                 phone,
                             )
+                    if not should_schedule and agent_persona == "valeria_inbound" and price_signal:
+                        fresh = get_lead(lead["id"]) or {}
+                        if fresh.get("ai_enabled", True):
+                            should_schedule = True
+                            reason = "inbound cotou preço"
+                            warm = True
+                        else:
+                            logger.info(
+                                "[FOLLOWUP] inbound cotou preço mas IA desativada (opt-out/soft) — "
+                                "não agenda p/ %s",
+                                phone,
+                            )
                     if should_schedule:
                         try:
                             _schedule_followup(
                                 conversation_id=conversation["id"],
                                 lead_id=lead["id"],
                                 channel_id=channel["id"],
-                                warm=bool(interest),
+                                warm=warm,
                             )
-                            logger.info("[FOLLOWUP] agendado (%s, warm=%s) para %s", reason, bool(interest), phone)
+                            logger.info("[FOLLOWUP] agendado (%s, warm=%s) para %s", reason, warm, phone)
                         except Exception as e:
                             logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
                     else:
