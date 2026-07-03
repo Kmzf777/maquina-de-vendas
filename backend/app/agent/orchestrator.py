@@ -952,6 +952,27 @@ async def run_agent(
                 messages.append(retry_msg.model_dump(exclude_none=True))
                 for _tc in retry_msg.tool_calls:
                     _rname = _tc.function.name
+                    # Guarda de idempotência POR TURNO (Etapa 2 Task 3, caso Samuel 01/07
+                    # 08:11-08:12): o Change B roda DEPOIS do loop principal, no MESMO turno —
+                    # se uma tool de mídia já executou lá (media_tool_used == True chegando
+                    # aqui), o retry recuperou a MESMA intenção após o thinking-burn, e
+                    # executá-la de novo manda o catálogo de fotos 2x pro lead. NÃO chama
+                    # execute_tool; anexa um tool result sintético e segue o fluxo normalmente.
+                    # O dedup por histórico (DB, tools.py::enviar_fotos/enviar_foto_produto,
+                    # ver test_enviar_fotos_idempotente.py) continua como 2ª camada, cross-turn
+                    # — este guard é a 1ª camada, same-turn, e não depende de read-after-write.
+                    if _rname in _MEDIA_TOOL_NAMES and media_tool_used:
+                        logger.info(
+                            "[RETRY TOOL] %s ja executado neste turno (loop principal) — "
+                            "Change B pulando re-execucao para conv %s",
+                            _rname, conversation_id,
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": _tc.id,
+                            "content": "fotos já processadas neste turno — não reenviar",
+                        })
+                        continue
                     if _rname in _MEDIA_TOOL_NAMES:
                         media_tool_used = True
                     try:
