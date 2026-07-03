@@ -111,36 +111,57 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
 
 
 async def _wait_and_flush(r: aioredis.Redis, phone: str, channel_id: str):
-    """Wait for the buffer to expire, then flush."""
+    """Wait for the buffer to expire, then flush.
+
+    Timer supervisionado: o corpo inteiro roda sob try/except para que uma falha
+    (ex.: Redis fora do ar durante o polling do lock) nunca mate a task em
+    silêncio — sem isso, a mensagem fica presa no buffer indefinidamente e só
+    seria recuperada por um recover_orphaned_buffers futuro (startup/watchdog).
+    """
     from app.buffer.processor import process_buffered_messages
 
     lock_key = f"buffer:{phone}:{channel_id}:lock"
     buf_key = f"buffer:{phone}:{channel_id}"
     timer_key = f"{phone}:{channel_id}"
 
-    while True:
-        await asyncio.sleep(1)
-        exists = await r.exists(lock_key)
-        if not exists:
-            break
+    try:
+        while True:
+            await asyncio.sleep(1)
+            exists = await r.exists(lock_key)
+            if not exists:
+                break
 
-    # Get all messages
-    messages = await r.lrange(buf_key, 0, -1)
-    await r.delete(buf_key)
+        # Get all messages
+        messages = await r.lrange(buf_key, 0, -1)
+        await r.delete(buf_key)
 
-    # Clean up timer reference
-    _active_timers.pop(timer_key, None)
+        # Limpa a referência do timer ANTES do processamento (que pode ser lento —
+        # chamada ao LLM/WhatsApp). Se uma mensagem nova chegar durante esse
+        # processamento, push_to_buffer não deve encontrar esta task em
+        # _active_timers e tentar cancelá-la no meio do envio (perderia a resposta
+        # do turno atual). O `finally` abaixo garante a limpeza mesmo se o timer
+        # morrer ANTES de chegar aqui.
+        _active_timers.pop(timer_key, None)
 
-    pending_wamid = await r.get(f"pending_wamid:{phone}:{channel_id}")
-    pending_quoted = await r.get(f"pending_quoted:{phone}:{channel_id}")
-    await r.delete(f"pending_wamid:{phone}:{channel_id}")
-    await r.delete(f"pending_quoted:{phone}:{channel_id}")
+        pending_wamid = await r.get(f"pending_wamid:{phone}:{channel_id}")
+        pending_quoted = await r.get(f"pending_quoted:{phone}:{channel_id}")
+        await r.delete(f"pending_wamid:{phone}:{channel_id}")
+        await r.delete(f"pending_quoted:{phone}:{channel_id}")
 
-    if messages:
-        combined = "\n".join(messages)
-        logger.info(f"Buffer flushed for {phone}: {len(messages)} messages")
-        await process_buffered_messages(
-            phone, combined, channel_id,
-            wamid=pending_wamid,
-            quoted_wamid=pending_quoted,
+        if messages:
+            combined = "\n".join(messages)
+            logger.info(f"Buffer flushed for {phone}: {len(messages)} messages")
+            await process_buffered_messages(
+                phone, combined, channel_id,
+                wamid=pending_wamid,
+                quoted_wamid=pending_quoted,
+            )
+    except Exception as exc:
+        logger.error(
+            "[BUFFER TIMER DIED] phone=%s channel=%s: %s",
+            phone, channel_id, exc, exc_info=True,
         )
+    finally:
+        # Rede de segurança: garante que a task morta nunca vaze em _active_timers,
+        # mesmo se a exceção tiver acontecido antes do pop acima (ex.: no polling).
+        _active_timers.pop(timer_key, None)
