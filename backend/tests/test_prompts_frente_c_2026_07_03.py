@@ -431,3 +431,17 @@ def test_build_system_prompt_atacado_monta_sem_erro_e_final_instruction_e_ultima
     assert "O motivo segue a regra 18b" in prompt
     assert prompt.index("o cliente NUNCA ve a cozinha") < prompt.index("<final_instruction>")
     assert prompt.index("O motivo segue a regra 18b") < prompt.index("<final_instruction>")
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (C-4) — higiene de nome: ramo sem-nome trata saudacao como nome ausente
+# ---------------------------------------------------------------------------
+
+def test_base_ramo_sem_nome_trata_saudacao_como_nome_ausente():
+    # Defesa em profundidade (base.py): mesmo que um nome-saudacao ("Olá, boa tarde")
+    # escape da sanitizacao em leads.service.sanitize_display_name, a instrucao do
+    # ramo "sem nome" manda a Valeria tratar como SEM nome e chamar salvar_nome — casos
+    # reais 01-02/07 ("Olá, boa tarde", "Boa tarde.... Luiz") motivaram a emenda.
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    assert "Se o cadastro tiver um nome que parece saudacao" in prompt
+    assert "descubra o nome real e chame salvar_nome" in prompt

@@ -62,7 +62,9 @@ def build_base_prompt(
         name_instruction = (
             "Voce NAO sabe o nome do lead. Nao invente ou assuma. "
             "Descubra naturalmente durante a conversa, como 'com quem eu estou falando?' ou 'qual seu nome?'. "
-            "Use a ferramenta salvar_nome assim que descobrir."
+            "Use a ferramenta salvar_nome assim que descobrir. "
+            "Se o cadastro tiver um nome que parece saudacao ('Olá, boa tarde'), trate como SEM nome — "
+            "descubra o nome real e chame salvar_nome."
         )
 
     company_line = f"Empresa do lead: {lead_company}" if lead_company else ""

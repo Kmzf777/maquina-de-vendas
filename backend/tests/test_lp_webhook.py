@@ -270,8 +270,16 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
 
         await _process_lp_welcome(job, now)
 
+    # Task C-4: o param NOMEADO primeiro_nome e OBRIGATORIO no template — sem nome real
+    # (nem em metadata.lead_name, nem em leads.name), o handler SEMPRE envia o componente
+    # com o fallback neutro "tudo bem" (nunca omite components nem manda texto vazio).
     mock_provider.send_template.assert_awaited_once_with(
-        "5534999999999", "boas_vindas", components=None, language_code="pt_BR"
+        "5534999999999", "boas_vindas",
+        components=[{
+            "type": "body",
+            "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": "tudo bem"}],
+        }],
+        language_code="pt_BR",
     )
     # Cenário A: card de CRM criado no momento do disparo (lead não respondeu).
     mock_create_deal.assert_called_once()
