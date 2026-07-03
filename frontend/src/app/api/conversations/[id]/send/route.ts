@@ -156,6 +156,17 @@ export async function POST(
       { method: "POST", signal: AbortSignal.timeout(5_000) }
     ).catch(() => {/* ignorado intencionalmente */});
 
+    // Recibo de leitura (tique azul) — só APÓS envio humano bem-sucedido.
+    // Regra de negócio: em atendimento humano/handoff, o cliente só vê "lido" quando o
+    // vendedor de fato responde ("nunca lido sem resposta"). O backend resolve qual wamid
+    // inbound marcar. Best-effort; falha aqui nunca afeta o envio já concluído.
+    if (channel.provider === "meta_cloud") {
+      fetch(
+        `${backendUrl}/api/conversations/${conversationId}/read-receipt`,
+        { method: "POST", signal: AbortSignal.timeout(5_000) }
+      ).catch(() => {/* ignorado intencionalmente */});
+    }
+
     return NextResponse.json({ status: "sent" });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to send";
