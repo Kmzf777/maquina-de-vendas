@@ -236,7 +236,11 @@ export function useOverdueLeads(): OverdueData {
     setLoading(true);
     fetchAndCompute();
 
-    const debounced = debounce(fetchAndCompute, 1500);
+    // 30s (era 1,5s): mesmo racional do use-sla-stats — refetch integral de
+    // conversas+mensagens de 30d por evento de `conversations` era um dos
+    // maiores consumidores de Egress; o ticker local de 60s mantém os
+    // contadores de overdue avançando sem fetch.
+    const debounced = debounce(fetchAndCompute, 30_000);
     // Escuta apenas `conversations`: ela já é atualizada a cada mensagem
     // (last_customer_message_at / last_seller_response_at), então cobre o gatilho
     // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada

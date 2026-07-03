@@ -199,13 +199,20 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
   const fetchAndCompute = useCallback(async () => {
     const cutoff = getCutoff(filter);
 
-    const [{ data: cfgData }, { data: ovData }, { data: settingsData }] = await Promise.all([
+    const [{ data: userData }, { data: cfgData }, { data: ovData }, { data: settingsData }] = await Promise.all([
+      supabase.auth.getUser(),
       supabase.from("sla_seller_config").select("user_id, channel_id, display_name, window_start_minute, window_end_minute, active_weekdays, active").eq("active", true),
       supabase.from("sla_overrides").select("user_id, start_date, end_date"),
       supabase.from("sla_settings").select("target_minutes").eq("id", 1).single(),
     ]);
 
-    const configs = (cfgData ?? []) as SellerConfigRow[];
+    // Mesmo escopo do use-overdue-leads: vendedor vê só a própria linha.
+    // Com RLS em conversations/messages, os dados dos outros canais nem
+    // retornam — sem este filtro a tabela mostraria vendedores zerados.
+    const user = userData.user;
+    const admin = user?.app_metadata?.role === "admin";
+    const allConfigs = (cfgData ?? []) as SellerConfigRow[];
+    const configs = admin ? allConfigs : allConfigs.filter((c) => c.user_id === user?.id);
     const overrides = (ovData ?? []) as OverrideRow[];
     const target = (settingsData?.target_minutes ?? 20) as number;
 
@@ -224,7 +231,12 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     setLoading(true);
     fetchAndCompute();
 
-    const debounced = debounce(fetchAndCompute, 1500);
+    // 30s (era 1,5s): cada refetch baixa conversas de 30d + TODAS as mensagens
+    // delas para recalcular no browser (~0,5MB) — com eventos de `conversations`
+    // a cada mensagem do sistema, o debounce curto multiplicava Egress por aba
+    // aberta. Estatística tolera 30s de atraso; os contadores continuam
+    // avançando ao vivo pelo recompute local de 60s (sem fetch) abaixo.
+    const debounced = debounce(fetchAndCompute, 30_000);
     // Escuta apenas `conversations`: ela já é atualizada a cada mensagem
     // (last_customer_message_at / last_seller_response_at), então cobre o gatilho
     // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada
