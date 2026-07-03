@@ -48,19 +48,33 @@ class FakeQuery:
     """Query encadeavel sobre uma lista de dicts (uma tabela fake), no estilo do repo.
 
     Suporta exatamente o subconjunto usado pelo watchdog: select/eq/gte/lte/in_/
-    order/limit/insert/execute. gte/lte comparam por timestamp parseado (nunca por
-    string) — mesma disciplina exigida da implementacao real.
+    order/limit/range/insert/execute. gte/lte comparam por timestamp parseado (nunca
+    por string) — mesma disciplina exigida da implementacao real.
+
+    `table_name`/`call_log` sao opcionais (retrocompativeis com instanciacao antiga
+    `FakeQuery(rows)`): quando um `call_log` e passado, cada `execute()` de LEITURA
+    (nao-insert) registra nele um snapshot da query (tabela, select, filtros in_,
+    order, range, limit) — usado pelos testes de paginacao/chunking/embeds enxutos
+    (test_watchdog_pagination_2026_07_03.py) para inspecionar COMO o passo foi
+    construido, nao so o resultado.
     """
 
-    def __init__(self, rows: list):
+    def __init__(self, rows: list, table_name: str = "", call_log: list | None = None):
         self._rows = rows  # referencia direta a lista da tabela (insert deve mutar)
         self._filtered = list(rows)
+        self._table_name = table_name
+        self._call_log = call_log
         self._order_key = None
         self._order_desc = False
         self._limit_n = None
+        self._range = None  # (start, end) inclusive, no estilo supabase-py
+        self._select_cols = None
+        self._in_calls: list = []  # [(key, values_list), ...] na ordem de chamada
         self._insert_payload = None
 
-    def select(self, *_a, **_k):
+    def select(self, *cols, **_k):
+        if cols:
+            self._select_cols = cols[0]
         return self
 
     def eq(self, key, value):
@@ -78,7 +92,9 @@ class FakeQuery:
         return self
 
     def in_(self, key, values):
-        values_set = set(values)
+        values_list = list(values)
+        self._in_calls.append((key, values_list))
+        values_set = set(values_list)
         self._filtered = [r for r in self._filtered if r.get(key) in values_set]
         return self
 
@@ -89,6 +105,13 @@ class FakeQuery:
 
     def limit(self, n):
         self._limit_n = n
+        return self
+
+    def range(self, start, end):
+        """`.range(start, end)` inclusive — mesma semantica do supabase-py
+        (offset=start, limit=end-start+1). Usado pela paginacao do passo 1.
+        """
+        self._range = (start, end)
         return self
 
     def insert(self, payload):
@@ -104,13 +127,32 @@ class FakeQuery:
         rows = list(self._filtered)
         if self._order_key:
             rows.sort(key=lambda r: _ts(r[self._order_key]), reverse=self._order_desc)
-        if self._limit_n is not None:
+        if self._range is not None:
+            start, end = self._range
+            rows = rows[start:end + 1]
+        elif self._limit_n is not None:
             rows = rows[: self._limit_n]
+
+        if self._call_log is not None:
+            self._call_log.append({
+                "table": self._table_name,
+                "select": self._select_cols,
+                "in_": list(self._in_calls),
+                "order": (self._order_key, self._order_desc),
+                "range": self._range,
+                "limit": self._limit_n,
+                "result_count": len(rows),
+            })
         return _Resp(rows)
 
 
 class FakeSupabase:
-    """Fake por tabela. `tables` fica acessivel para seed/assert nos testes."""
+    """Fake por tabela. `tables` fica acessivel para seed/assert nos testes.
+
+    `calls` registra cada `execute()` de leitura feito por QUALQUER FakeQuery emitido
+    por esta instancia (ver `FakeQuery.execute`) — usado pelos testes de paginacao/
+    chunking/embeds para inspecionar as queries reais emitidas pelo watchdog.
+    """
 
     def __init__(self):
         self.tables: dict = {
@@ -119,10 +161,11 @@ class FakeSupabase:
             "follow_up_jobs": [],
             "system_alerts": [],
         }
+        self.calls: list = []
 
     def table(self, name):
         rows = self.tables.setdefault(name, [])
-        return FakeQuery(rows)
+        return FakeQuery(rows, table_name=name, call_log=self.calls)
 
 
 class _DedupBoomQuery(FakeQuery):

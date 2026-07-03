@@ -42,9 +42,29 @@ AI_UNRESPONSIVE_LOOKBACK_HOURS = 24
 ORPHAN_REPLY_GRACE_MINUTES = 30
 STUCK_JOB_HOURS = 2
 ALERT_DEDUP_HOURS = 1
-# Teto de mensagens candidatas por tick (passo 1 dos Checks 1/2) e de jobs presos
-# por tick (Check 3) — mantem as queries limitadas mesmo sob volume alto.
-CANDIDATE_MESSAGE_LIMIT = 500
+# Tamanho de cada pagina do passo 1 (candidatas) dos Checks 1/2 — mantem cada query
+# individual limitada mesmo sob volume alto.
+CANDIDATE_PAGE_SIZE = 500
+# Teto de seguranca de PAGINAS do passo 1 (ver _find_unanswered_conversations):
+# CANDIDATE_MAX_PAGES * CANDIDATE_PAGE_SIZE = 5.000 msgs/24h, uma ordem de grandeza
+# acima do volume atual. Antes da paginacao, uma UNICA pagina de 500 podia dar MISS
+# completo — sob rajada, 500+ mensagens mais novas (de conversas ja respondidas)
+# ocupavam toda a janela e uma conversa fantasma mais antiga (ainda sem resposta)
+# nunca aparecia (finding do review final da Etapa 1). Se o teto de paginas for
+# atingido, loga um warning — falso negativo aceito (mensagens mais antigas que o
+# teto ficam de fora) em troca de nunca paginar sem fim.
+CANDIDATE_MAX_PAGES = 10
+# Tamanho de lote para .in_("id"/"conversation_id", ids) nos passos 2/3 — evita URL
+# gigante quando a janela candidata tem 500+ conversation_ids distintos.
+ID_CHUNK_SIZE = 100
+# Teto de respostas buscadas POR CHUNK no passo 3 (replies). Direcao segura por
+# construcao: combinado com `.order("created_at", desc=True)`, as respostas mais
+# NOVAS ficam no topo — sao elas que CLAREIAM violacoes (timestamp > candidata).
+# Truncar as mais antigas (fora do limit) so pode gerar falso positivo (alerta a
+# mais para uma conversa que na verdade tem uma resposta antiga irrelevante), nunca
+# esconder uma violacao real.
+REPLIES_FETCH_LIMIT = 1000
+# Teto de jobs presos por tick (Check 3) — mesma logica de limitar cada query.
 STUCK_JOB_LIMIT = 50
 
 # Mesmo padrao de app/follow_up/service.py:13 — escopa Check 3 ao ambiente atual
@@ -58,6 +78,16 @@ def _parse_ts(value) -> datetime:
     offset e precisao de microsegundos variam entre linhas; sempre parseie antes.
     """
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def _chunked(seq: list, n: int):
+    """Divide `seq` em fatias de tamanho `n` (a ultima fatia pode ser menor).
+
+    Usado pelos passos 2/3 de `_find_unanswered_conversations` para evitar um unico
+    `.in_()` com centenas/milhares de UUIDs (URL gigante).
+    """
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
 
 
 def _alert_recently_fired(alert_type: str) -> bool:
@@ -98,11 +128,20 @@ def _find_unanswered_conversations(
     1. Candidatas: ultima mensagem `role=user` por conversation_id, na janela
        [now-lookback, now-grace]. O grace evita falso-positivo em mensagem
        recem-chegada que ainda pode estar dentro da janela de buffer/processamento.
+       Paginado em blocos de CANDIDATE_PAGE_SIZE (ate CANDIDATE_MAX_PAGES) — uma
+       unica pagina podia dar MISS completo sob rajada (ver docstring da constante).
+       A reducao "ultima msg por conversation_id" e feita em Python por max de
+       `_parse_ts` sobre TODAS as paginas agregadas — e order-independent, entao a
+       ordem de chegada das paginas nao afeta o resultado.
     2. Escopo: embeda conversations->channels/leads via `embed_select`; `scope_ok`
        decide se a conversa cai no escopo do check (ex.: canal de IA + IA ligada).
+       `.in_("id", ids)` e feito em chunks de ID_CHUNK_SIZE (helper `_chunked`) para
+       nao montar uma URL gigante quando ha centenas de candidatas.
     3. Respostas: ultima mensagem assistant/system por conversation_id dentro do
-       escopo restante. Uma conversa esta violada quando NAO existe resposta com
-       timestamp maior que o da sua mensagem candidata.
+       escopo restante, tambem em chunks de ID_CHUNK_SIZE, cada chunk com
+       `order desc + limit(REPLIES_FETCH_LIMIT)` (ver docstring da constante para a
+       justificativa da direcao ser segura). Uma conversa esta violada quando NAO
+       existe resposta com timestamp maior que o da sua mensagem candidata.
 
     Retorna a lista de `conversation_id` em violacao.
     """
@@ -110,56 +149,76 @@ def _find_unanswered_conversations(
     lookback_cutoff = (now - timedelta(hours=AI_UNRESPONSIVE_LOOKBACK_HOURS)).isoformat()
     grace_cutoff = (now - timedelta(minutes=grace_minutes)).isoformat()
 
-    # Passo 1 — candidatas.
-    candidates_res = (
-        sb.table("messages")
-        .select("conversation_id, created_at")
-        .eq("role", "user")
-        .gte("created_at", lookback_cutoff)
-        .lte("created_at", grace_cutoff)
-        .order("created_at", desc=True)
-        .limit(CANDIDATE_MESSAGE_LIMIT)
-        .execute()
-    )
+    # Passo 1 — candidatas, paginado.
     last_user_msg: dict = {}
-    for row in candidates_res.data or []:
-        conv_id = row["conversation_id"]
-        ts = row["created_at"]
-        if conv_id not in last_user_msg or _parse_ts(ts) > _parse_ts(last_user_msg[conv_id]):
-            last_user_msg[conv_id] = ts
+    offset = 0
+    for _ in range(CANDIDATE_MAX_PAGES):
+        page_res = (
+            sb.table("messages")
+            .select("conversation_id, created_at")
+            .eq("role", "user")
+            .gte("created_at", lookback_cutoff)
+            .lte("created_at", grace_cutoff)
+            .order("created_at", desc=True)
+            .range(offset, offset + CANDIDATE_PAGE_SIZE - 1)
+            .execute()
+        )
+        page_rows = page_res.data or []
+        for row in page_rows:
+            conv_id = row["conversation_id"]
+            ts = row["created_at"]
+            if conv_id not in last_user_msg or _parse_ts(ts) > _parse_ts(last_user_msg[conv_id]):
+                last_user_msg[conv_id] = ts
+        if len(page_rows) < CANDIDATE_PAGE_SIZE:
+            break  # pagina parcial/vazia = fim natural da janela
+        offset += CANDIDATE_PAGE_SIZE
+    else:
+        # Consumiu as CANDIDATE_MAX_PAGES sem achar pagina parcial/vazia — pode
+        # haver candidatas mais antigas ainda nao lidas (ver docstring da constante).
+        logger.warning("[WATCHDOG] janela candidata truncada em %d páginas", CANDIDATE_MAX_PAGES)
 
     if not last_user_msg:
         return []
 
-    # Passo 2 — escopo.
+    # Passo 2 — escopo, em chunks.
     ids = list(last_user_msg.keys())
-    scope_res = (
-        sb.table("conversations")
-        .select(embed_select)
-        .in_("id", ids)
-        .execute()
-    )
-    ids_restantes = [row["id"] for row in (scope_res.data or []) if scope_ok(row)]
+    scope_rows: list = []
+    for chunk in _chunked(ids, ID_CHUNK_SIZE):
+        chunk_res = (
+            sb.table("conversations")
+            .select(embed_select)
+            .in_("id", chunk)
+            .execute()
+        )
+        scope_rows.extend(chunk_res.data or [])
+    ids_restantes = [row["id"] for row in scope_rows if scope_ok(row)]
 
     if not ids_restantes:
         return []
 
-    # Passo 3 — respostas (so precisa olhar a partir da candidata mais antiga).
+    # Passo 3 — respostas, em chunks (so precisa olhar a partir da candidata mais
+    # antiga). Direcao segura por construcao: dentro de CADA chunk, `order desc +
+    # limit(REPLIES_FETCH_LIMIT)` mantem as respostas mais NOVAS (as que clareiam
+    # violacoes); truncar as mais antigas so pode gerar falso positivo, nunca
+    # esconder uma violacao real (ver docstring de REPLIES_FETCH_LIMIT).
     min_candidate_ts = min((last_user_msg[cid] for cid in ids_restantes), key=_parse_ts)
-    replies_res = (
-        sb.table("messages")
-        .select("conversation_id, created_at")
-        .in_("conversation_id", ids_restantes)
-        .in_("role", ["assistant", "system"])
-        .gte("created_at", min_candidate_ts)
-        .execute()
-    )
     latest_reply: dict = {}
-    for row in replies_res.data or []:
-        conv_id = row["conversation_id"]
-        ts = row["created_at"]
-        if conv_id not in latest_reply or _parse_ts(ts) > _parse_ts(latest_reply[conv_id]):
-            latest_reply[conv_id] = ts
+    for chunk in _chunked(ids_restantes, ID_CHUNK_SIZE):
+        replies_res = (
+            sb.table("messages")
+            .select("conversation_id, created_at")
+            .in_("conversation_id", chunk)
+            .in_("role", ["assistant", "system"])
+            .gte("created_at", min_candidate_ts)
+            .order("created_at", desc=True)
+            .limit(REPLIES_FETCH_LIMIT)
+            .execute()
+        )
+        for row in replies_res.data or []:
+            conv_id = row["conversation_id"]
+            ts = row["created_at"]
+            if conv_id not in latest_reply or _parse_ts(ts) > _parse_ts(latest_reply[conv_id]):
+                latest_reply[conv_id] = ts
 
     violated = []
     for conv_id in ids_restantes:
@@ -174,7 +233,9 @@ def check_ai_unresponsive(now: datetime) -> int:
     violated = _find_unanswered_conversations(
         now,
         grace_minutes=AI_UNRESPONSIVE_GRACE_MINUTES,
-        embed_select="id, channels!inner(mode), leads!inner(ai_enabled, opt_out, name)",
+        # Embed enxuto: scope_ok so le channels.mode e leads.ai_enabled — name/opt_out
+        # nunca sao consumidos aqui (payload desnecessario sob paginacao/chunking).
+        embed_select="id, channels!inner(mode), leads!inner(ai_enabled)",
         scope_ok=lambda row: (
             (row.get("channels") or {}).get("mode") == "ai"
             and (row.get("leads") or {}).get("ai_enabled") is True
@@ -205,7 +266,9 @@ def check_orphan_lead_reply(now: datetime) -> int:
     violated = _find_unanswered_conversations(
         now,
         grace_minutes=ORPHAN_REPLY_GRACE_MINUTES,
-        embed_select="id, leads!inner(ai_enabled, human_control, opt_out, name)",
+        # Embed enxuto: scope_ok so le ai_enabled/human_control/opt_out — name nunca
+        # e consumido aqui.
+        embed_select="id, leads!inner(ai_enabled, human_control, opt_out)",
         scope_ok=lambda row: (
             (row.get("leads") or {}).get("ai_enabled") is False
             and (row.get("leads") or {}).get("human_control") is False
