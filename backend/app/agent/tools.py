@@ -1254,18 +1254,32 @@ async def _agendar_retorno(
 
 
 def _format_next_dispatch(fire_at: datetime | None) -> str:
-    """Frase natural (pt-BR) para quando o João vai chamar o lead, a partir do fire_at agendado."""
+    """Frase natural (pt-BR) para quando o João vai chamar o lead, a partir do fire_at agendado.
+
+    O período do dia é derivado da HORA real do fire_at (fix review B2): antes era
+    "de manha" HARDCODED, válido só sob a invariante antiga de o clamp devolver
+    sempre 09h — se a janela mudar de novo, um fire_at vespertino diria "de manha
+    (por volta das 17h22)". Output idêntico ao anterior para os casos atuais
+    (clamp comercial devolve 09h → "de manha").
+    """
     if fire_at is None:
         return "o proximo horario comercial"
     local = fire_at.astimezone(_TZ_BR)
     today_local = datetime.now(_TZ_BR).date()
     delta_days = (local.date() - today_local).days
     hora = local.strftime("%Hh%M") if local.minute else local.strftime("%Hh")
+    # Período pela hora real, nunca hardcode: manhã < 12h; tarde 12h-17h59; >= 18h fim do dia.
+    if local.hour < 12:
+        periodo = "de manha"
+    elif local.hour < 18:
+        periodo = "a tarde"
+    else:
+        periodo = "no fim do dia"
     if delta_days <= 0:
-        return f"hoje de manha (por volta das {hora})"
+        return f"hoje {periodo} (por volta das {hora})"
     if delta_days == 1:
-        return f"amanha de manha (por volta das {hora})"
-    return f"no proximo dia util ({local.strftime('%d/%m')} de manha, por volta das {hora})"
+        return f"amanha {periodo} (por volta das {hora})"
+    return f"no proximo dia util ({local.strftime('%d/%m')} {periodo}, por volta das {hora})"
 
 
 def _lead_had_prior_handoff(lead_id: str, lead: dict | None = None) -> bool:
@@ -1435,6 +1449,13 @@ def _safe_schedule_reengage(
             channel_id=channel["id"],
             delay_minutes=0,
             lead_name=lead_name,
+            # Janela COMERCIAL (09h-16h), NAO a ampliada do rescue (fix review B2):
+            # este caminho e o fallback de retomar_contato_vendedor, onde a Valeria
+            # PROMETE verbalmente ao lead quando o Joao vai chamar — a Global
+            # Constraint do plano manda o retomar continuar em 09h-16h. Sem isto, a
+            # janela de 20h vazava transitivamente e as 17:22 o lead ouvia "o Joao
+            # vai te chamar hoje de manha (por volta das 17h22)".
+            use_rescue_window=False,
         )
     except Exception as exc:
         logger.error(

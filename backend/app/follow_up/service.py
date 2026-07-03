@@ -301,6 +301,7 @@ def schedule_handoff_rescue(
     channel_id: str,
     delay_minutes: int = 15,
     lead_name: str = "",
+    use_rescue_window: bool = True,
 ) -> datetime | None:
     """Agenda um job de resgate de handoff (job_type='handoff_rescue') para fire em delay_minutes.
 
@@ -314,13 +315,22 @@ def schedule_handoff_rescue(
     só por estarem depois das 16h, mesmo com o vendedor tipicamente ainda ativo até
     as 20h (ver `_clamp_to_rescue_window`). `_clamp_to_business_window` continua
     intocada para schedule_followup/build_touch_jobs/schedule_ai_return.
+
+    `use_rescue_window=False` (fix review B2): clampa com a janela COMERCIAL
+    (09h-16h) em vez da ampliada. Existe para o fallback fora-de-horário de
+    `retomar_contato_vendedor` (tools._safe_schedule_reengage), que herdou a janela
+    de 20h TRANSITIVAMENTE quando ela foi criada — mas ali a Valéria PROMETE
+    verbalmente ao lead quando o João vai chamar, e a Global Constraint do plano da
+    Frente B manda esse fluxo continuar na janela comercial 09h-16h. Os handoffs
+    genuínos (encaminhar_humano) continuam no default True (janela até 20h).
     """
     if os.environ.get("REHEARSAL_MODE") == "true":
         logger.info("[HANDOFF_RESCUE] REHEARSAL_MODE ativo — rescue ignorado")
         return None
     sb = get_supabase()
     now = datetime.now(timezone.utc)
-    fire_at = _clamp_to_rescue_window(now + timedelta(minutes=delay_minutes))
+    clamp = _clamp_to_rescue_window if use_rescue_window else _clamp_to_business_window
+    fire_at = clamp(now + timedelta(minutes=delay_minutes))
     job = {
         "conversation_id": conversation_id,
         "lead_id": lead_id,
