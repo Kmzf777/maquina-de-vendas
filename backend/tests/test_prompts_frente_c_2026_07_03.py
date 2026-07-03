@@ -628,3 +628,104 @@ def test_build_system_prompt_atacado_c5_reforco_antes_do_final_instruction():
     # o item 26 do checklist (base.py) tambem precisa estar presente na montagem final
     assert "26. O lead perguntou preco/condicoes" in prompt
     assert prompt.index("26. O lead perguntou preco/condicoes") < prompt.index("<final_instruction>")
+
+
+# ---------------------------------------------------------------------------
+# Fix wave (2026-07-03) — minors do per-task review da Frente C, item C1.
+# ---------------------------------------------------------------------------
+# C1-2: a ETAPA 0.5 listava "quero saca de 60kg" como exemplo de demanda concreta
+# generica, o que fazia essa mensagem SOZINHA (sem outra intencao junto) rodar os
+# passos 1-3 do fast-path (reconhecimento + pergunta de classificacao + mudar_stage)
+# em vez de ir direto pro Joao Bras. A regra PRECEDENCIA SACA/GRAO VERDE pre-existente
+# so cobria o caso multi-intencao (saca + outra demanda na mesma mensagem) — o base.py
+# ("## Cliente quer comprar grao cru ou saca de cafe") sempre trata saca como handoff
+# direto, sem classificacao nenhuma. Fix: acrescenta ao FINAL do bloco PRECEDENCIA a
+# regra de intencao UNICA (nao mexe no paragrafo multi-intencao existente).
+#
+# C1-1: a pergunta de classificacao do Exemplo 8 (Javier) vinha seca, sem a ponte de
+# valor (WIIFM) que a regra 17b do base marca como OBRIGATORIA pra toda pergunta de
+# qualificacao/triagem. Fix: prefixa a pergunta do Exemplo 8 com uma ponte de valor
+# curta. O Exemplo 9 (Melina) fica como esta — variedade e desejavel, nem todo turno
+# precisa da ponte explicita (anti-formula).
+
+
+def test_secretaria_precedencia_saca_contem_regra_intencao_unica():
+    # (a) String-chave estavel da regra nova — nao pina o paragrafo inteiro, so o
+    # marcador que precisa sobreviver a qualquer reescrita futura do texto ao redor.
+    precedencia_start = SECRETARIA_PROMPT.index("PRECEDENCIA SACA/GRAO VERDE")
+    etapa_1 = SECRETARIA_PROMPT.index("ETAPA 1: APRESENTACAO")
+    block = SECRETARIA_PROMPT[precedencia_start:etapa_1]
+    assert "UNICA demanda" in block
+
+
+def test_secretaria_precedencia_saca_unica_vai_direto_pro_joao_sem_classificar():
+    # A regra de intencao unica precisa mandar pular a classificacao (pergunta +
+    # mudar_stage) e chamar encaminhar_humano pro Joao Bras na mesma resposta —
+    # mesmo fluxo do base ("Cliente quer comprar grao cru ou saca de cafe").
+    precedencia_start = SECRETARIA_PROMPT.index("PRECEDENCIA SACA/GRAO VERDE")
+    etapa_1 = SECRETARIA_PROMPT.index("ETAPA 1: APRESENTACAO")
+    block = SECRETARIA_PROMPT[precedencia_start:etapa_1]
+    assert "UNICA demanda" in block
+    unica_pos = block.index("UNICA demanda")
+    resto = block[unica_pos:]
+    assert "pule" in resto.lower()
+    assert 'encaminhar_humano(vendedor="Joao Bras"' in resto
+    # intencao unica NAO roteia — mudar_stage so pode ser citado como o passo que se
+    # pula, nunca como instrucao de executar
+    assert "execute mudar_stage" not in resto
+    assert "mudar_stage(" not in resto
+
+
+def test_secretaria_precedencia_multi_intencao_continua_intacta():
+    # Regressao: o paragrafo multi-intencao pre-existente (caso saimon) nao pode ter
+    # sido alterado por esta fix wave — cada fragmento abaixo vive numa linha fisica
+    # unica do arquivo-fonte, entao a checagem e robusta a como o texto novo foi
+    # encaixado ao redor dele.
+    assert (
+        "PRECEDENCIA SACA/GRAO VERDE (multi-intencao): se o lead menciona saca/grao verde JUNTO de"
+        in SECRETARIA_PROMPT
+    )
+    assert (
+        'outra demanda (ex: "saca de 60kg OU cafe com minha marca"), NUNCA ignore a parte da saca:'
+        in SECRETARIA_PROMPT
+    )
+    assert (
+        "diga em uma bolha que saca/grao verde e direto com o Joao Bras, e ENTAO conduza a outra"
+        in SECRETARIA_PROMPT
+    )
+    assert "demanda. Nenhuma das duas intencoes pode ficar sem resposta." in SECRETARIA_PROMPT
+
+
+def test_secretaria_exemplo_8_pergunta_leva_ponte_de_valor_wiifm():
+    # (b) A pergunta de classificacao do Exemplo 8 (Javier) agora leva uma ponte de
+    # valor (WIIFM) curta ANTES da pergunta, per regra 17b do base. Continua com 1
+    # unica pergunta na bolha (regra do silencio) e nao usa a muleta "me diz uma coisa".
+    exemplo_8 = SECRETARIA_PROMPT.index("Exemplo 8")
+    exemplo_9 = SECRETARIA_PROMPT.index("Exemplo 9")
+    block = SECRETARIA_PROMPT[exemplo_8:exemplo_9]
+    assistant_pos = block.index("Assistant:")
+    nota_pos = block.index("Nota:")
+    dialogue = block[assistant_pos:nota_pos]
+    assert "sem te encher de coisa que nao e pra voce" in dialogue
+    assert "essa compra e pro seu negocio, consumo proprio ou pra colocar sua marca no pacote?" in dialogue
+    assert dialogue.count("?") == 1
+    assert "me diz uma coisa" not in block.lower()
+
+
+def test_secretaria_exemplo_9_permanece_inalterado():
+    # Regressao: Exemplo 9 (Melina) fica como esta — anti-formula, nem todo turno
+    # precisa da ponte de valor explicita.
+    exemplo_9 = SECRETARIA_PROMPT.index("Exemplo 9")
+    exemplo_10 = SECRETARIA_PROMPT.index("Exemplo 10")
+    block = SECRETARIA_PROMPT[exemplo_9:exemplo_10]
+    assert '"desconto por volume muda direto conforme a quantidade que voce fecha"' in block
+    assert '"essa compra e pro seu negocio ou consumo proprio?"' in block
+
+
+def test_build_system_prompt_secretaria_fix_wave_c1_monta_sem_erro():
+    lead = {"name": "Saca-Unica", "company": None}
+    prompt = build_system_prompt(lead, "secretaria")
+    assert prompt.rstrip().endswith("</final_instruction>")
+    assert "UNICA demanda" in prompt
+    assert prompt.index("UNICA demanda") < prompt.index("<final_instruction>")
+    assert "sem te encher de coisa que nao e pra voce" in prompt
