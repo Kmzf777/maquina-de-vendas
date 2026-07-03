@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse
 from app.config import settings
 from app.buffer.flusher import run_flusher
 from app.buffer.recovery import recover_orphaned_buffers
+from app.watchdog.service import run_watchdog
 from app.whatsapp.meta import close_shared_client
 
 logging.basicConfig(
@@ -69,12 +70,19 @@ async def lifespan(app: FastAPI):
     await recover_orphaned_buffers(app.state.redis, require_no_deadline=False, source="startup")
 
     flusher_task = asyncio.create_task(run_flusher(app))
+    watchdog_task = asyncio.create_task(run_watchdog(app))
 
     yield
 
     flusher_task.cancel()
     try:
         await flusher_task
+    except asyncio.CancelledError:
+        pass
+
+    watchdog_task.cancel()
+    try:
+        await watchdog_task
     except asyncio.CancelledError:
         pass
 
