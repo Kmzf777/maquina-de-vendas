@@ -8,6 +8,9 @@ export async function GET() {
       .from("system_alerts")
       .select("*")
       .eq("resolved", false)
+      // handoff_sla_breach não é exibido no CRM (decisão 03/07): o registro continua
+      // em system_alerts para auditoria, mas fica fora do banner para TODOS os usuários.
+      .neq("type", "handoff_sla_breach")
       .order("created_at", { ascending: false })
       .limit(20);
 

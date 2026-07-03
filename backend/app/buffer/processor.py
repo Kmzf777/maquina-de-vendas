@@ -27,7 +27,9 @@ from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
-from app.agent.tools import pop_deferred_media, pop_interest_marked
+from app.agent.tools import (
+    pop_deferred_media, pop_interest_marked, pop_quote_executed, SUPERVISOR_NAME, SUPERVISOR_PHONE,
+)
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -488,6 +490,12 @@ def _count_recent_failed_audio(conversation_id: str, window_minutes: int = 30) -
         return 0
 
 
+# Contador de falhas consecutivas do LLM — cobre AMBOS os ramos de esgotamento do
+# retry em process_buffered_messages: `except LLMUnavailableError` (via _handle_llm_down)
+# E o `else` genérico [AGENT FAILED] (assinatura do apagão 01-02/07: 400/401 relançado
+# cru pelo orchestrator, ou exceção pré-API, morria ali em silêncio sem incrementar
+# nada). O limiar (_LLM_DOWN_ALERT_THRESHOLD) dispara o alerta llm_down independente
+# de qual dos dois ramos o esgotou.
 _LLM_FAILURE_KEY = "llm:consecutive_failures"
 _LLM_DOWN_ALERT_THRESHOLD = 3
 
@@ -537,11 +545,21 @@ async def _handle_llm_down(lead: dict, phone: str, conversation: dict) -> None:
         )
 
 
-def _fire_llm_down_alert(count: int) -> None:
+def _fire_llm_down_alert(count: int, *, handoff_ativo: bool = True) -> None:
     """Grava 1 alerta llm_down em system_alerts (dedup: 1 não-resolvido por hora).
 
     Espelha o padrão de fire_billing_alert. Transforma o apagão silencioso do LLM em
     incidente visível no CRM (o caso Welita passou sem qualquer alerta). Fail-soft.
+
+    `handoff_ativo` distingue os DOIS ramos que alimentam o mesmo contador/alerta
+    (ver `_LLM_FAILURE_KEY`):
+    - True (default) — ramo `except LLMUnavailableError` via `_handle_llm_down`: o
+      handoff automático ao humano (João) JÁ foi disparado, então a frase de
+      encaminhamento é verdadeira.
+    - False — ramo genérico `[AGENT FAILED]` (decisão de plano: SEM handoff
+      automático aqui). Afirmar "encaminhado ao humano" seria FALSO e faria o
+      operador despriorizar o alerta achando os leads cobertos — a mensagem diz
+      explicitamente que NÃO há encaminhamento automático nesse ramo.
     """
     try:
         sb = get_supabase()
@@ -555,13 +573,141 @@ def _fire_llm_down_alert(count: int) -> None:
             return
     except Exception as exc:
         logger.warning("[LLM DOWN] falha ao checar alerta existente: %s", exc)
+    if handoff_ativo:
+        encaminhamento = "Leads estão sendo encaminhados automaticamente ao humano (João)."
+    else:
+        encaminhamento = (
+            "Leads NÃO estão sendo encaminhados automaticamente — falha genérica "
+            "sem handoff (ver logs [AGENT FAILED])."
+        )
     create_system_alert(
         "llm_down",
         "IA (Valéria) indisponível — LLM fora",
-        f"{count} turnos consecutivos falharam ao chamar o LLM. Leads estão sendo "
-        "encaminhados automaticamente ao humano (João). Verifique quota/saúde do provedor.",
+        f"{count} turnos consecutivos falharam ao chamar o LLM. {encaminhamento} "
+        "Verifique quota/saúde do provedor.",
         severity="critical",
     )
+
+
+# Ponte pós-handoff (Frente B — casos Maycon/Juliana 01-02/07): depois do handoff a IA
+# fica muda no canal da Valéria e o lead que continua escrevendo aqui cai no vácuo.
+# A ponte é uma sinalização ESTÁTICA de roteamento (sem LLM — handoff encerra a conversa
+# automática por contrato), com cooldown pra nunca virar spam.
+_BRIDGE_COOLDOWN_SECONDS = 4 * 3600      # 1 ponte a cada 4h por conversa
+_BRIDGE_CARD_COOLDOWN_SECONDS = 24 * 3600  # cartão do João no máx 1x/24h por conversa
+_BRIDGE_TEXT = (
+    "seu atendimento tá com o João agora\n\n"
+    "se preferir, chama ele direto no contato que te mandei aqui em cima que ele te responde por lá"
+)
+
+
+async def _maybe_send_handoff_bridge(
+    lead: dict, phone: str, conversation: dict, channel: dict, provider,
+) -> bool:
+    """Ponte estática pós-handoff: avisa o lead que o atendimento já é com o João.
+
+    Casos reais (auditoria 01-02/07): Maycon mandou um áudio reclamando e Juliana
+    escreveu 4x seguidas ("Tem algum problema vocês responderem?") depois de já
+    terem sido passados pro humano — o gate ai_enabled só logava e retornava,
+    deixando os dois no vácuo. Esta ponte fecha esse vácuo SEM rodar a IA (o
+    handoff encerra a conversa automática por contrato — isto é só um roteamento).
+
+    Condições (todas): handoff formal — `human_control=True` (distingue de um órfão
+    tipo Rafael, sem handoff de verdade, que o watchdog Check 2 cobre) —, sem
+    opt-out, não descartado (`stage != 'perdido'`) e fora de rehearsal
+    (testes/automação nunca devem gerar tráfego real).
+
+    Cooldown Redis fail-CLOSED: se a chave já existe OU o Redis falhar, NÃO envia.
+    Na dúvida, silêncio — martelar o lead de ponte em ponte é pior que um vácuo raro.
+
+    SEMPRE fail-soft: nenhuma falha desta função pode escalar para o processor.
+    Retorna True se o texto da ponte foi enviado (o cartão é um bônus dentro dela).
+    """
+    try:
+        if not (
+            lead.get("human_control") is True
+            and not lead.get("opt_out")
+            and lead.get("stage") != "perdido"
+            and os.environ.get("REHEARSAL_MODE") != "true"
+        ):
+            return False
+
+        conversation_id = conversation.get("id")
+        lead_id = lead.get("id")
+        redis = _get_buffer_redis()
+
+        try:
+            acquired = await redis.set(
+                f"bridge:{conversation_id}", "1", nx=True, ex=_BRIDGE_COOLDOWN_SECONDS,
+            )
+        except Exception as exc:
+            # WARNING (não debug): em prod (log level INFO) uma queda de Redis
+            # desligava a ponte inteira sem deixar rastro nenhum — o caminho já é
+            # por-mensagem (cooldown natural do próprio fluxo), então 1 linha por
+            # falha não vira spam.
+            logger.warning(
+                "[BRIDGE] Redis indisponível — fail-closed (não envia) conv=%s: %s",
+                conversation_id, exc,
+            )
+            return False
+        if not acquired:
+            logger.debug("[BRIDGE] cooldown ativo — não reenvia conv=%s", conversation_id)
+            return False
+
+        send_to = resolve_send_target(lead, phone)
+        # Rastreia se o texto de fato saiu — o retorno da função tem que refletir isso
+        # (ver docstring: "Retorna True se o texto da ponte foi enviado"), não apenas
+        # que chegamos até aqui sem exceção não-tratada.
+        text_sent = False
+        try:
+            send_result = await provider.send_text(send_to, _BRIDGE_TEXT)
+            save_message(
+                conversation_id, lead_id, "assistant", _BRIDGE_TEXT,
+                conversation.get("stage"), sent_by="bridge", wamid=extract_wamid(send_result),
+            )
+            logger.info(
+                "[BRIDGE] texto enviado conv=%s channel=%s phone=%s",
+                conversation_id, channel.get("id"), phone,
+            )
+            text_sent = True
+        except Exception as exc:
+            logger.warning("[BRIDGE] falha ao enviar texto conv=%s: %s", conversation_id, exc)
+
+        # Cartão do João: cooldown bem mais longo (24h) — reenviar o texto a cada 4h não
+        # deve martelar o vCard junto (redundante depois da 1ª vez no período).
+        try:
+            card_acquired = await redis.set(
+                f"bridge_card:{conversation_id}", "1", nx=True, ex=_BRIDGE_CARD_COOLDOWN_SECONDS,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[BRIDGE] Redis indisponível p/ cooldown de cartão conv=%s: %s",
+                conversation_id, exc,
+            )
+            card_acquired = False
+        if card_acquired:
+            try:
+                await provider.send_contact(
+                    send_to, contact_name=SUPERVISOR_NAME, contact_phone=SUPERVISOR_PHONE,
+                )
+                save_message(
+                    conversation_id, lead_id, "system",
+                    "[ponte] cartão de contato de João - Café Canastra reenviado",
+                    conversation.get("stage"), sent_by="bridge",
+                )
+                logger.info("[BRIDGE] cartão de contato reenviado conv=%s", conversation_id)
+            except Exception as exc:
+                logger.warning(
+                    "[BRIDGE] falha ao reenviar cartão conv=%s: %s", conversation_id, exc,
+                )
+
+        return text_sent
+    except Exception as exc:
+        logger.warning(
+            "[BRIDGE] falha inesperada — fail-soft conv=%s: %s",
+            conversation.get("id") if isinstance(conversation, dict) else None, exc,
+        )
+        return False
 
 
 async def process_buffered_messages(
@@ -761,6 +907,10 @@ async def process_buffered_messages(
         logger.info(
             f"[AI DISABLED] lead.ai_enabled=false — conv={conversation['id']} phone={phone}"
         )
+        # Ponte pós-handoff (Frente B1): sem isso, um lead já transbordado pro João que
+        # continua escrevendo NESTE número cai no vácuo (casos reais Maycon/Juliana,
+        # 01-02/07) — a IA está muda por contrato, mas ninguém avisa o lead disso.
+        await _maybe_send_handoff_bridge(lead, phone, conversation, channel, provider)
         _update_last_msg(conversation["id"])
         return
 
@@ -889,6 +1039,7 @@ async def process_buffered_messages(
                     conversation["id"], phone,
                 )
                 pop_interest_marked(conversation["id"])  # não vaza flag p/ o próximo turno
+                pop_quote_executed(conversation["id"])  # idem (Frente B3)
                 _update_last_msg(conversation["id"])
                 return
 
@@ -909,6 +1060,7 @@ async def process_buffered_messages(
                         phone, conversation["id"], e, exc_info=True,
                     )
                     pop_interest_marked(conversation["id"])
+                    pop_quote_executed(conversation["id"])  # idem (Frente B3)
                     await _handle_llm_down(lead, phone, conversation)
                     _update_last_msg(conversation["id"])
                     return
@@ -925,7 +1077,19 @@ async def process_buffered_messages(
                             f"(conv={conversation['id']}): {e}",
                             exc_info=True,
                         )
+                        try:
+                            _count = await _record_llm_failure()
+                            if _count >= _LLM_DOWN_ALERT_THRESHOLD:
+                                # handoff_ativo=False: este ramo (diferente de
+                                # LLMUnavailableError/_handle_llm_down) NÃO aciona
+                                # encaminhar_humano — decisão de plano. O alerta precisa
+                                # dizer isso explicitamente para o operador não achar
+                                # que os leads já estão cobertos pelo handoff.
+                                _fire_llm_down_alert(_count, handoff_ativo=False)
+                        except Exception as _exc:
+                            logger.warning("[LLM DOWN] falha ao registrar contador pós-AGENT FAILED: %s", _exc)
                         pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
+                        pop_quote_executed(conversation["id"])  # idem (Frente B3)
                         _update_last_msg(conversation["id"])
                         return
 
@@ -936,6 +1100,9 @@ async def process_buffered_messages(
             # Pop the interest flag once right after the agent attempt — before any early returns
             # so stale state never leaks into the next turn (handoff, empty-response, or normal path).
             interest = pop_interest_marked(conversation["id"])
+            # Frente B3: mesmo ponto/mesma razão — a flag de "cotou preço" (calcular_orcamento)
+            # também não pode vazar para o próximo turno.
+            quote_flag = pop_quote_executed(conversation["id"])
 
             if response is None:
                 # Intentional: encaminhar_humano was called — handoff message already sent by the tool.
@@ -1036,20 +1203,33 @@ async def process_buffered_messages(
                     except Exception as e:
                         logger.error(f"Failed to save assistant message for {phone}: {e}", exc_info=True)
 
-                # Agenda follow-up em dois gatilhos:
-                #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo;
+                # Agenda follow-up em três gatilhos:
+                #  (1) interesse comercial claro (marcar_interesse) — qualquer fluxo, tem precedência;
                 #  (2) OUTBOUND "engajou e esfriou": o lead respondeu à abordagem ativa e pode sumir
                 #      em seguida. Agendamos proativamente para resgatar o vácuo (ghosting), mesmo sem
-                #      interesse declarado. schedule_followup é idempotente (cancela+recria), então se o
-                #      lead responder de novo antes do disparo, o ciclo é reagendado.
-                # Guard crítico do gatilho (2): opt-out e soft-rejection desativam a IA no mesmo turno —
-                # nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do banco). Handoff
-                # retorna response=None e já saiu antes deste bloco.
+                #      interesse declarado.
+                #  (3) INBOUND "cotou preço" (Frente B3 — casos Samuel/Angelo/Welita 01-02/07): o
+                #      turno executou calcular_orcamento e/ou a resposta final contém "R$", mas o
+                #      lead pode sumir sem o LLM chamar marcar_interesse — o gatilho (1) dependia
+                #      100% disso e não disparou nenhuma vez na janela desses casos. Preço cotado já
+                #      é sinal comercial forte o bastante para justificar o resgate proativo.
+                # schedule_followup é idempotente (cancela+recria) e já tem cap de T1 same-day
+                # (_already_touched_today); a cadência é cancelada em handoff/opt-out/descarte via
+                # cancel_followups_by_phone — nada disso muda com os gatilhos (2)/(3).
+                # Guard crítico dos gatilhos (2) e (3): opt-out e soft-rejection desativam a IA no
+                # mesmo turno — nesses casos NÃO se agenda follow-up (re-checa ai_enabled fresco do
+                # banco). Handoff retorna response=None e já saiu antes deste bloco.
                 is_outbound = agent_persona == "valeria_outbound"
+                # Sinal "este turno cotou preço": tool executada (determinístico) OU "R$" no texto
+                # final (cobre o LLM parafraseando o valor sem re-chamar a tool). Por este ponto
+                # `response` já passou pelos early-returns de None/vazio acima, mas usamos
+                # `response or ""` por segurança contra futuras reordenações do bloco.
+                price_signal = quote_flag or ("R$" in (response or ""))
                 # Não agenda follow-up se a IA foi desligada por handoff/opt-out concorrente
                 # durante o envio (B2) — o lead já está com o vendedor humano.
                 if conversation.get("followup_enabled", True) and channel and not handoff_aborted and not superseded:
                     should_schedule = bool(interest)
+                    warm = bool(interest)
                     reason = "interesse comercial" if interest else ""
                     if not should_schedule and is_outbound:
                         fresh = get_lead(lead["id"]) or {}
@@ -1061,15 +1241,27 @@ async def process_buffered_messages(
                                 "[FOLLOWUP] outbound com IA desativada (opt-out/soft) — não agenda p/ %s",
                                 phone,
                             )
+                    if not should_schedule and agent_persona == "valeria_inbound" and price_signal:
+                        fresh = get_lead(lead["id"]) or {}
+                        if fresh.get("ai_enabled", True):
+                            should_schedule = True
+                            reason = "inbound cotou preço"
+                            warm = True
+                        else:
+                            logger.info(
+                                "[FOLLOWUP] inbound cotou preço mas IA desativada (opt-out/soft) — "
+                                "não agenda p/ %s",
+                                phone,
+                            )
                     if should_schedule:
                         try:
                             _schedule_followup(
                                 conversation_id=conversation["id"],
                                 lead_id=lead["id"],
                                 channel_id=channel["id"],
-                                warm=bool(interest),
+                                warm=warm,
                             )
-                            logger.info("[FOLLOWUP] agendado (%s, warm=%s) para %s", reason, bool(interest), phone)
+                            logger.info("[FOLLOWUP] agendado (%s, warm=%s) para %s", reason, warm, phone)
                         except Exception as e:
                             logger.warning(f"[FOLLOWUP] Falha ao agendar follow-up para {phone}: {e}")
                     else:

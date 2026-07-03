@@ -8,7 +8,7 @@ import httpx
 from app.agent.gemini_native import get_client as get_gemini_client
 from app.config import settings
 from app.follow_up.service import get_due_followups
-from app.leads.service import resolve_send_target, create_deal, record_dispatch_note
+from app.leads.service import resolve_send_target, create_deal, record_dispatch_note, strip_greeting_prefix
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -49,15 +49,28 @@ JOAO_TEMPLATE_LANG = "en"
 # Nome do vendedor injetado no template (param nomeado nome_do_vendedor).
 JOAO_VENDEDOR_NAME = "João"
 
+# Task C-4 (higiene de nome): fallback neutro para {{primeiro_nome}}/nome_do_lead quando
+# não há nome real — nem antes (lead_name vazio), nem depois de strip_greeting_prefix
+# remover uma saudação que tinha vazado pro campo nome ("Olá, boa tarde", "Boa tarde.").
+# Decisão DELIBERADA (não acidental): a Meta REJEITA parâmetro de template com texto
+# vazio (""), e omitir o componente inteiro arrisca rejeição por parâmetro nomeado
+# ausente (o template exige o param). "tudo bem" é uma leitura natural no WhatsApp tanto
+# como saudação própria ("Olá, tudo bem!") quanto como abertura ("olá tudo bem, recebemos
+# sua solicitação..."). Sem isso, "Olá, boa tarde" virava o nome "Olá," e cascateava pros
+# templates: o disparo de LP saudou "olá Olá," e o resgate do João abriu "Olá, Olá,!".
+_NAME_FALLBACK = "tudo bem"
+
 
 def _build_joao_handoff_components(lead_name: str, vendedor: str = JOAO_VENDEDOR_NAME) -> list:
     """Componentes BODY do template automacao_valeria_to_joao.
 
     O template aprovado usa DOIS params NOMEADOS (`nome_do_lead`, `nome_do_vendedor`) —
     enviar 1 param posicional (como o código antigo fazia) causa erro de parâmetros na Meta.
-    Usa o primeiro nome do lead; `vendedor` default João.
+    Usa o primeiro nome do lead (após strip_greeting_prefix); cai no fallback
+    _NAME_FALLBACK quando não sobra nome real. `vendedor` default João.
     """
-    first_name = lead_name.split()[0] if lead_name else ""
+    stripped = strip_greeting_prefix(lead_name)
+    first_name = stripped.split()[0] if stripped else _NAME_FALLBACK
     return [{
         "type": "body",
         "parameters": [
@@ -80,8 +93,14 @@ _JOAO_TEMPLATE_BODY = (
 
 
 def _render_joao_handoff_text(lead_name: str, vendedor: str = JOAO_VENDEDOR_NAME) -> str:
-    """Renderiza o corpo do template do João com os params, para persistência no histórico."""
-    first_name = lead_name.split()[0] if lead_name else ""
+    """Renderiza o corpo do template do João com os params, para persistência no histórico.
+
+    Mesma lógica de nome de _build_joao_handoff_components (strip_greeting_prefix +
+    fallback _NAME_FALLBACK) — o texto PERSISTIDO precisa renderizar o MESMO nome/fallback
+    que foi de fato ENVIADO à Meta, senão o histórico no CRM diverge do que o lead recebeu.
+    """
+    stripped = strip_greeting_prefix(lead_name)
+    first_name = stripped.split()[0] if stripped else _NAME_FALLBACK
     return _JOAO_TEMPLATE_BODY.format(nome_do_lead=first_name, nome_do_vendedor=vendedor)
 
 
@@ -845,15 +864,24 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
         return
 
     lead_name = metadata.get("lead_name") or (job.get("leads") or {}).get("name") or ""
-    first_name = lead_name.split()[0] if lead_name else ""
+    # Task C-4: strip_greeting_prefix antes de usar como nome — sem isso, um lead gravado
+    # como "Olá, boa tarde" (widget de chat de LP) virava o nome "Olá," e o disparo saudava
+    # "olá Olá,". Cai no fallback _NAME_FALLBACK quando não sobra nome real.
+    stripped_lp_name = strip_greeting_prefix(lead_name)
+    first_name = stripped_lp_name.split()[0] if stripped_lp_name else _NAME_FALLBACK
     # Os templates lp_* aprovados (lp_solicitacao_recebida, lp_confirmacao_pendente,
-    # lp_cadastro_registrado) usam o param NOMEADO {{primeiro_nome}}. Enviar posicional
-    # faz a Meta rejeitar (causa do loop infinito de 02/06). Espelha o padrão de
+    # lp_cadastro_registrado) usam o param NOMEADO {{primeiro_nome}}, OBRIGATÓRIO. Enviar
+    # posicional faz a Meta rejeitar (causa do loop infinito de 02/06). Espelha o padrão de
     # _build_joao_handoff_components. Verificar em message_templates antes de mudar o template.
+    # O param é SEMPRE enviado (nunca omitido) — first_name carrega o fallback neutro
+    # (_NAME_FALLBACK) quando não há nome real, evitando tanto texto vazio quanto o
+    # parâmetro nomeado ausente: o template exige o param e degradar para components=None
+    # manda 0 params → Meta rejeita com #132000 "localizable_params (0) != expected (1)"
+    # (caso 5541999736060, 03/07 — conversa importada ficava em branco no CRM).
     components = [{
         "type": "body",
         "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}],
-    }] if first_name else None
+    }]
     # Destino entregável: wa_id real quando houver (LP lead normalmente não tem → usa lead_phone).
     send_to = resolve_send_target(job.get("leads"), lead_phone)
 
@@ -897,11 +925,12 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
     # e envenenava o campaign_message do LLM). Grava um corpo limpo e legível e carimba a
     # intenção em metadata.dispatch (warm_lp) p/ a resolução de persona (Eixo 1).
     try:
+        # first_name já carrega o fallback _NAME_FALLBACK quando não há nome real —
+        # persistência coerente com o que foi de fato enviado no template (mesmo
+        # princípio de _render_joao_handoff_text).
         _lp_body = (
             f"olá {first_name}\n\nrecebemos sua solicitação pela nossa landing page e já "
             "estamos por aqui pra te atender"
-            if first_name
-            else "recebemos sua solicitação pela nossa landing page e já estamos por aqui pra te atender"
         )
         save_message_conv(
             lead_id=lead["id"],
@@ -1176,8 +1205,9 @@ async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
             lead_context=lead_context,
             agent_profile_id=AI_REENGAGE_PROFILE_ID,
             # Gatilho INTERNO (sem mensagem real do lead): se o modelo ficar mudo, NÃO mandar o
-            # re-engajamento genérico ("me conta de novo o que você precisa") — seria incoerente
-            # numa reabertura proativa. "" → o job é cancelado pelo guard abaixo (empty_response).
+            # fallback estático de último recurso (_SAFETY_FALLBACK_GENERIC ou o reengajamento
+            # por stage — orchestrator.py) — seria incoerente numa reabertura proativa. ""
+            # → o job é cancelado pelo guard abaixo (empty_response).
             suppress_generic_fallback=True,
         )
     except Exception as exc:
@@ -1342,12 +1372,14 @@ async def fire_reopen_template(
         return False
 
     send_to = resolve_send_target(lead, lead.get("phone", ""))
-    first_name = (lead.get("name") or "").split()[0] if lead.get("name") else ""
-    components = (
-        [{"type": "body",
-          "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}]}]
-        if first_name else None
-    )
+    # Task C-4: mesmo tratamento de nome dos demais renderizadores deste módulo —
+    # strip_greeting_prefix + fallback _NAME_FALLBACK, param SEMPRE enviado (nunca omitido).
+    stripped_name = strip_greeting_prefix(lead.get("name"))
+    first_name = stripped_name.split()[0] if stripped_name else _NAME_FALLBACK
+    components = [{
+        "type": "body",
+        "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}],
+    }]
     try:
         provider_meta = MetaCloudClient(channel["provider_config"])
         send_result = await provider_meta.send_template(

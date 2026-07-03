@@ -156,7 +156,7 @@ async def test_retry_strips_tools_when_runaway_loop():
         if idx == 3:
             # Loop guard faz sua própria chamada com tools=None → retorna vazio
             return _make_response(content="", tool_calls=None)
-        # Retry-on-empty → vazio (para o teste chegar ao fallback)
+        # Retry-on-empty (idx 4) e retry2 (idx 5) → vazios (para o teste chegar ao fallback)
         return _make_response(content="", tool_calls=None)
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
@@ -170,12 +170,14 @@ async def test_retry_strips_tools_when_runaway_loop():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(_conversation("secretaria"), "Marca própria")
 
-    # Deve ter feito 4 chamadas: inicial, pós-tool, loop-guard, retry-on-empty
-    assert len(captured_calls) == 4, f"esperado 4 chamadas, got {len(captured_calls)}"
+    # Deve ter feito 5 chamadas: inicial, pós-tool, loop-guard, retry-on-empty, retry2 (Etapa 2)
+    assert len(captured_calls) == 5, f"esperado 5 chamadas, got {len(captured_calls)}"
     # Call #3 = loop guard (tools=None)
     assert captured_calls[2].get("tools") is None, "loop guard deve ter tools=None"
     # Call #4 = retry-on-empty com tool_iterations=2 > MAX=1 → retry_tools=None
     assert captured_calls[3].get("tools") is None, "retry deve ter tools=None em loop runaway"
+    # Call #5 = retry2 (Etapa 2) → tools=None sempre, por design
+    assert captured_calls[4].get("tools") is None, "retry2 deve ter tools=None"
     # Com fallback genérico (Change C) o resultado nunca é ""
     from app.agent.orchestrator import _SAFETY_FALLBACK_GENERIC
     assert result == _SAFETY_FALLBACK_GENERIC
@@ -241,6 +243,7 @@ async def test_secretaria_double_empty_yields_generic_fallback_not_empty_string(
     responses = [
         _make_response(content="", tool_calls=None),  # chamada inicial vazia
         _make_response(content="", tool_calls=None),  # retry vazio
+        _make_response(content="", tool_calls=None),  # retry2 (Etapa 2) também vazio
     ]
     idx = {"i": 0}
 
@@ -263,7 +266,7 @@ async def test_secretaria_double_empty_yields_generic_fallback_not_empty_string(
     assert result == _SAFETY_FALLBACK_GENERIC, f"esperado genérico, got {result!r}"
     # O texto proibido (auditoria 2026-06-24) não pode ter voltado
     assert "cortada" not in result
-    assert idx["i"] == 2, "deve ter feito exatamente 2 chamadas (inicial + retry)"
+    assert idx["i"] == 3, "deve ter feito exatamente 3 chamadas (inicial + retry + retry2)"
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +506,7 @@ async def test_without_suppress_flag_same_mute_turn_returns_generic():
     responses = [
         _make_response(content="", tool_calls=None),
         _make_response(content="", tool_calls=None),
+        _make_response(content="", tool_calls=None),  # retry2 (Etapa 2) também mudo
     ]
     idx = {"i": 0}
 
@@ -533,6 +537,7 @@ async def test_normal_mute_turn_still_returns_generic_regression_guard():
     responses = [
         _make_response(content="", tool_calls=None),
         _make_response(content="", tool_calls=None),
+        _make_response(content="", tool_calls=None),  # retry2 (Etapa 2) também mudo
     ]
     idx = {"i": 0}
 

@@ -97,12 +97,14 @@ async def test_run_agent_media_tool_then_empty_uses_media_fallback():
     # Call sequence:
     # 1st create → tool call (enviar_fotos)
     # 2nd create (after tool result) → empty text  [triggers AGENT EMPTY AFTER TOOLS]
-    # 3rd create (fallback without tools) → empty   [triggers safety fallback]
+    # 3rd create (retry-on-empty, no thinking) → empty
+    # 4th create (retry2, Etapa 2, temperatura elevada) → empty  [triggers safety fallback]
     resp_with_tool = _make_response(content=None, tool_calls=[tool_call])
     resp_empty_after_tool = _make_response(content="", tool_calls=None)
+    resp_empty_retry1 = _make_response(content="", tool_calls=None)
     resp_empty_fallback = _make_response(content="", tool_calls=None)
 
-    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_fallback]
+    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_retry1, resp_empty_fallback]
     call_index = {"i": 0}
 
     async def fake_create(**kwargs):
@@ -158,9 +160,10 @@ async def test_run_agent_non_media_tool_then_empty_uses_generic_fallback():
 
     resp_with_tool = _make_response(content=None, tool_calls=[tool_call])
     resp_empty_after_tool = _make_response(content="", tool_calls=None)
-    resp_empty_fallback = _make_response(content="", tool_calls=None)
+    resp_empty_retry1 = _make_response(content="", tool_calls=None)
+    resp_empty_fallback = _make_response(content="", tool_calls=None)  # retry2 (Etapa 2) também vazio
 
-    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_fallback]
+    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_retry1, resp_empty_fallback]
     call_index = {"i": 0}
 
     async def fake_create(**kwargs):
@@ -217,9 +220,10 @@ async def test_run_agent_enviar_foto_produto_also_triggers_media_fallback():
 
     resp_with_tool = _make_response(content=None, tool_calls=[tool_call])
     resp_empty_after_tool = _make_response(content="", tool_calls=None)
-    resp_empty_fallback = _make_response(content="", tool_calls=None)
+    resp_empty_retry1 = _make_response(content="", tool_calls=None)
+    resp_empty_fallback = _make_response(content="", tool_calls=None)  # retry2 (Etapa 2) também vazio
 
-    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_fallback]
+    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_retry1, resp_empty_fallback]
     call_index = {"i": 0}
 
     async def fake_create(**kwargs):

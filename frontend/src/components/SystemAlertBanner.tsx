@@ -92,23 +92,28 @@ export default function SystemAlertBanner() {
         <div className="bg-red-950 px-6 py-5">
           <p className="text-red-100 text-sm leading-relaxed">{alert.message}</p>
 
-          <div className="mt-4 rounded-lg bg-red-900/60 border border-red-700 px-4 py-3">
-            <p className="text-red-300 text-xs font-semibold uppercase tracking-wider mb-1">
-              O que fazer agora
-            </p>
-            <p className="text-red-100 text-sm">
-              Acesse o{" "}
-              <a
-                href="https://business.facebook.com/billing_hub/accounts/details/?business_id=1338125734024745&asset_id=1399531671927018&wizard_name=PAY_NOW&account_type=whatsapp-business-account"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline font-bold text-white hover:text-red-200"
-              >
-                Business Manager da Meta
-              </a>{" "}
-              e quite o débito para retomar os envios.
-            </p>
-          </div>
+          {/* Bloco de remediação escrito para o alerta de billing — só faz sentido nele.
+              Renderizá-lo em outros tipos misturava instruções erradas (ex.: SLA de handoff
+              com "quite o débito"). */}
+          {alert.type === "billing_payment_issue" && (
+            <div className="mt-4 rounded-lg bg-red-900/60 border border-red-700 px-4 py-3">
+              <p className="text-red-300 text-xs font-semibold uppercase tracking-wider mb-1">
+                O que fazer agora
+              </p>
+              <p className="text-red-100 text-sm">
+                Acesse o{" "}
+                <a
+                  href="https://business.facebook.com/billing_hub/accounts/details/?business_id=1338125734024745&asset_id=1399531671927018&wizard_name=PAY_NOW&account_type=whatsapp-business-account"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline font-bold text-white hover:text-red-200"
+                >
+                  Business Manager da Meta
+                </a>{" "}
+                e quite o débito para retomar os envios.
+              </p>
+            </div>
+          )}
 
           {alerts.length > 1 && (
             <p className="mt-3 text-red-400 text-xs text-center">

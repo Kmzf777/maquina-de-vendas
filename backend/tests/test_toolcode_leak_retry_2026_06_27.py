@@ -45,7 +45,11 @@ async def test_toolcode_leak_inicial_e_retry_devolve_fallback_generico():
     """tool_code puro na inicial E no retry → run_agent devolve o fallback genérico honesto
     (Change C, 2026-06-30), NUNCA a string crua nem "" (silêncio)."""
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
-    call_responses = [_make_response(content=_LEAK), _make_response(content=_LEAK)]
+    # Etapa 2: inicial + retry1 vazando tool_code (ambos sanitizados para "") ainda disparam
+    # o retry2 (temperatura elevada) — também vaza aqui, para o teste chegar ao fallback.
+    call_responses = [
+        _make_response(content=_LEAK), _make_response(content=_LEAK), _make_response(content=_LEAK),
+    ]
     idx = {"i": 0}
 
     async def fake_create(**kwargs):
@@ -64,7 +68,7 @@ async def test_toolcode_leak_inicial_e_retry_devolve_fallback_generico():
     )
     assert "tool_code" not in result
     assert "default_api" not in result
-    assert idx["i"] == 2, "deve ter feito o retry"
+    assert idx["i"] == 3, "deve ter feito o retry e o retry2 (Etapa 2)"
 
 
 @pytest.mark.asyncio
