@@ -114,8 +114,13 @@ _HANDOFF_MSG = (
 
 # Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é
 # enviado automaticamente logo após a mensagem de despedida no encaminhar_humano.
-_SUPERVISOR_NAME = "João - Café Canastra"
-_SUPERVISOR_PHONE = "553491461669"
+# Públicas (Frente B1): a ponte pós-handoff do buffer/processor.py também consome estas
+# constantes (reenvio do cartão do João). Aliases privados mantidos por retrocompatibilidade
+# (ex.: test_encaminhar_humano_pipeline.py importa _SUPERVISOR_NAME/_SUPERVISOR_PHONE).
+SUPERVISOR_NAME = "João - Café Canastra"
+SUPERVISOR_PHONE = "553491461669"
+_SUPERVISOR_NAME = SUPERVISOR_NAME
+_SUPERVISOR_PHONE = SUPERVISOR_PHONE
 # Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
 _MAX_DESPEDIDA_LEN = 600
 
@@ -793,11 +798,11 @@ async def execute_tool(
             # Logo após o texto, envia o cartão de contato do João (agrupamento visual).
             try:
                 await provider.send_contact(
-                    send_to, contact_name=_SUPERVISOR_NAME, contact_phone=_SUPERVISOR_PHONE
+                    send_to, contact_name=SUPERVISOR_NAME, contact_phone=SUPERVISOR_PHONE
                 )
                 save_message(
                     lead_id, "system",
-                    f"[encaminhar_humano] cartão de contato de {_SUPERVISOR_NAME} enviado",
+                    f"[encaminhar_humano] cartão de contato de {SUPERVISOR_NAME} enviado",
                     conversation_id=conversation_id,
                 )
             except Exception as exc:

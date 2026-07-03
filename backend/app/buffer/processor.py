@@ -27,7 +27,7 @@ from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_by_id
 from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
-from app.agent.tools import pop_deferred_media, pop_interest_marked
+from app.agent.tools import pop_deferred_media, pop_interest_marked, SUPERVISOR_NAME, SUPERVISOR_PHONE
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -587,6 +587,118 @@ def _fire_llm_down_alert(count: int, *, handoff_ativo: bool = True) -> None:
     )
 
 
+# Ponte pós-handoff (Frente B — casos Maycon/Juliana 01-02/07): depois do handoff a IA
+# fica muda no canal da Valéria e o lead que continua escrevendo aqui cai no vácuo.
+# A ponte é uma sinalização ESTÁTICA de roteamento (sem LLM — handoff encerra a conversa
+# automática por contrato), com cooldown pra nunca virar spam.
+_BRIDGE_COOLDOWN_SECONDS = 4 * 3600      # 1 ponte a cada 4h por conversa
+_BRIDGE_CARD_COOLDOWN_SECONDS = 24 * 3600  # cartão do João no máx 1x/24h por conversa
+_BRIDGE_TEXT = (
+    "seu atendimento tá com o João agora\n\n"
+    "se preferir, chama ele direto no contato que te mandei aqui em cima que ele te responde por lá"
+)
+
+
+async def _maybe_send_handoff_bridge(
+    lead: dict, phone: str, conversation: dict, channel: dict, provider,
+) -> bool:
+    """Ponte estática pós-handoff: avisa o lead que o atendimento já é com o João.
+
+    Casos reais (auditoria 01-02/07): Maycon mandou um áudio reclamando e Juliana
+    escreveu 4x seguidas ("Tem algum problema vocês responderem?") depois de já
+    terem sido passados pro humano — o gate ai_enabled só logava e retornava,
+    deixando os dois no vácuo. Esta ponte fecha esse vácuo SEM rodar a IA (o
+    handoff encerra a conversa automática por contrato — isto é só um roteamento).
+
+    Condições (todas): handoff formal — `human_control=True` (distingue de um órfão
+    tipo Rafael, sem handoff de verdade, que o watchdog Check 2 cobre) —, sem
+    opt-out, não descartado (`stage != 'perdido'`) e fora de rehearsal
+    (testes/automação nunca devem gerar tráfego real).
+
+    Cooldown Redis fail-CLOSED: se a chave já existe OU o Redis falhar, NÃO envia.
+    Na dúvida, silêncio — martelar o lead de ponte em ponte é pior que um vácuo raro.
+
+    SEMPRE fail-soft: nenhuma falha desta função pode escalar para o processor.
+    Retorna True se o texto da ponte foi enviado (o cartão é um bônus dentro dela).
+    """
+    try:
+        if not (
+            lead.get("human_control") is True
+            and not lead.get("opt_out")
+            and lead.get("stage") != "perdido"
+            and os.environ.get("REHEARSAL_MODE") != "true"
+        ):
+            return False
+
+        conversation_id = conversation.get("id")
+        lead_id = lead.get("id")
+        redis = _get_buffer_redis()
+
+        try:
+            acquired = await redis.set(
+                f"bridge:{conversation_id}", "1", nx=True, ex=_BRIDGE_COOLDOWN_SECONDS,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[BRIDGE] Redis indisponível — fail-closed (não envia) conv=%s: %s",
+                conversation_id, exc,
+            )
+            return False
+        if not acquired:
+            logger.debug("[BRIDGE] cooldown ativo — não reenvia conv=%s", conversation_id)
+            return False
+
+        send_to = resolve_send_target(lead, phone)
+        try:
+            send_result = await provider.send_text(send_to, _BRIDGE_TEXT)
+            save_message(
+                conversation_id, lead_id, "assistant", _BRIDGE_TEXT,
+                conversation.get("stage"), sent_by="bridge", wamid=extract_wamid(send_result),
+            )
+            logger.info(
+                "[BRIDGE] texto enviado conv=%s channel=%s phone=%s",
+                conversation_id, channel.get("id"), phone,
+            )
+        except Exception as exc:
+            logger.warning("[BRIDGE] falha ao enviar texto conv=%s: %s", conversation_id, exc)
+
+        # Cartão do João: cooldown bem mais longo (24h) — reenviar o texto a cada 4h não
+        # deve martelar o vCard junto (redundante depois da 1ª vez no período).
+        try:
+            card_acquired = await redis.set(
+                f"bridge_card:{conversation_id}", "1", nx=True, ex=_BRIDGE_CARD_COOLDOWN_SECONDS,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[BRIDGE] Redis indisponível p/ cooldown de cartão conv=%s: %s",
+                conversation_id, exc,
+            )
+            card_acquired = False
+        if card_acquired:
+            try:
+                await provider.send_contact(
+                    send_to, contact_name=SUPERVISOR_NAME, contact_phone=SUPERVISOR_PHONE,
+                )
+                save_message(
+                    conversation_id, lead_id, "system",
+                    "[ponte] cartão de contato de João - Café Canastra reenviado",
+                    conversation.get("stage"), sent_by="bridge",
+                )
+                logger.info("[BRIDGE] cartão de contato reenviado conv=%s", conversation_id)
+            except Exception as exc:
+                logger.warning(
+                    "[BRIDGE] falha ao reenviar cartão conv=%s: %s", conversation_id, exc,
+                )
+
+        return True
+    except Exception as exc:
+        logger.warning(
+            "[BRIDGE] falha inesperada — fail-soft conv=%s: %s",
+            conversation.get("id") if isinstance(conversation, dict) else None, exc,
+        )
+        return False
+
+
 async def process_buffered_messages(
     phone: str, combined_text: str, channel_id: str = "",
     wamid: str | None = None, quoted_wamid: str | None = None,
@@ -784,6 +896,10 @@ async def process_buffered_messages(
         logger.info(
             f"[AI DISABLED] lead.ai_enabled=false — conv={conversation['id']} phone={phone}"
         )
+        # Ponte pós-handoff (Frente B1): sem isso, um lead já transbordado pro João que
+        # continua escrevendo NESTE número cai no vácuo (casos reais Maycon/Juliana,
+        # 01-02/07) — a IA está muda por contrato, mas ninguém avisa o lead disso.
+        await _maybe_send_handoff_bridge(lead, phone, conversation, channel, provider)
         _update_last_msg(conversation["id"])
         return
 
