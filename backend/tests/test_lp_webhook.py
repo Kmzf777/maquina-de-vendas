@@ -270,8 +270,16 @@ async def test_process_lp_welcome_dispatches_template_and_marks_sent():
 
         await _process_lp_welcome(job, now)
 
+    # Lead sem nome: o param nomeado {{primeiro_nome}} ainda é enviado com text=""
+    # (templates lp_* exigem 1 param; components=None mandaria 0 e a Meta rejeita com
+    # #132000 — regressão do caso 5541999736060, 03/07).
     mock_provider.send_template.assert_awaited_once_with(
-        "5534999999999", "boas_vindas", components=None, language_code="pt_BR"
+        "5534999999999", "boas_vindas",
+        components=[{
+            "type": "body",
+            "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": ""}],
+        }],
+        language_code="pt_BR",
     )
     # Cenário A: card de CRM criado no momento do disparo (lead não respondeu).
     mock_create_deal.assert_called_once()

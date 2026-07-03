@@ -100,6 +100,56 @@ async def test_lp_welcome_sends_named_primeiro_nome_param():
 
 
 @pytest.mark.asyncio
+async def test_lp_welcome_sends_named_param_even_without_name():
+    """Lead SEM nome (import de atacado com lead_name="" e name=None).
+    O template lp_solicitacao_recebida exige 1 param ({{primeiro_nome}}). O handler
+    DEVE emitir o param nomeado com text="" — degradar components para None manda 0
+    params e a Meta rejeita com #132000 (localizable_params (0) != expected (1)),
+    fazendo o welcome nunca ser entregue (caso 5541999736060, 03/07)."""
+    job = _make_lp_welcome_job(
+        leads={
+            "id": "lead-1",
+            "phone": "5541999736060",
+            "name": None,
+            "wa_id": None,
+            "last_customer_message_at": None,
+        },
+        metadata={
+            "lead_phone": "5541999736060",
+            "lead_name": "",
+            "template_name": "lp_solicitacao_recebida",
+            "language_code": "pt_BR",
+            "origem": "atacado",
+        },
+    )
+
+    mock_meta = AsyncMock()
+    mock_meta.send_template = AsyncMock(return_value={"messages": [{"id": "wamid.lp2"}]})
+
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
+         patch("app.follow_up.scheduler.create_deal"), \
+         patch("app.follow_up.scheduler.record_dispatch_note"), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
+         patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
+         patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
+
+        from app.follow_up.scheduler import process_due_followups
+        await process_due_followups(now=datetime.now(timezone.utc))
+
+    mock_meta.send_template.assert_called_once_with(
+        "5541999736060", "lp_solicitacao_recebida",
+        components=[{
+            "type": "body",
+            "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": ""}],
+        }],
+        language_code="pt_BR",
+    )
+    mock_sent.assert_called_once_with("job-lp-1")
+    mock_cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_lp_welcome_nao_persiste_mensagem_em_rejeicao():
     """Se a Meta rejeita (RuntimeError), NÃO deve persistir mensagem (o disparo não ocorreu)."""
     job = _make_lp_welcome_job()

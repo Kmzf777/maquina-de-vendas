@@ -850,10 +850,14 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
     # lp_cadastro_registrado) usam o param NOMEADO {{primeiro_nome}}. Enviar posicional
     # faz a Meta rejeitar (causa do loop infinito de 02/06). Espelha o padrão de
     # _build_joao_handoff_components. Verificar em message_templates antes de mudar o template.
+    # O param é SEMPRE enviado (com text="" quando o lead não tem nome — import de atacado
+    # etc.): o template exige 1 param, então degradar para components=None manda 0 params e a
+    # Meta rejeita com #132000 "localizable_params (0) != expected (1)" (caso 5541999736060,
+    # 03/07) — o welcome nunca era entregue e a conversa importada ficava em branco no CRM.
     components = [{
         "type": "body",
         "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}],
-    }] if first_name else None
+    }]
     # Destino entregável: wa_id real quando houver (LP lead normalmente não tem → usa lead_phone).
     send_to = resolve_send_target(job.get("leads"), lead_phone)
 
