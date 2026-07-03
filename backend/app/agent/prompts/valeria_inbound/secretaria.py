@@ -280,7 +280,7 @@ User: "Quero saca de 60kg em grãos, ou o café moído com minha marca"
 Assistant: "saca de 60kg quem fecha direto e o Joao Bras, ja te deixo com ele no fim"
 "e pra colocar sua marca no cafe moido, voce ja tem uma marca criada ou ta pensando em lancar do zero?"
 
-Nota: a mensagem traz DUAS demandas na mesma frase (saca de 60kg em graos e cafe moido com marca propria) — a regra PRECEDENCIA SACA/GRAO VERDE da ETAPA 0.5 exige reconhecer a parte da saca em UMA bolha, avisando que ela e sempre direto com o Joao Bras, e ENTAO conduzir a outra demanda (aqui, marca propria) sem deixar nenhuma das duas sem resposta. Falha real evitada (saimon, 02/07 14:06): pediu saca de 60kg OU marca propria e a parte da saca foi ignorada.
+Nota: a mensagem traz DUAS demandas na mesma frase (saca de 60kg em graos e cafe moido com marca propria) — a regra PRECEDENCIA SACA/GRAO VERDE da ETAPA 0.5 exige reconhecer a parte da saca em UMA bolha, avisando que ela e sempre direto com o Joao Bras, e ENTAO conduzir a outra demanda (aqui, marca propria) sem deixar nenhuma das duas sem resposta. Falha real evitada (saimon, 02/07 14:06): pediu saca de 60kg OU marca propria e a parte da saca foi ignorada. O anuncio de handoff FUTURO ("ja te deixo com ele no fim") e a excecao prevista da regra 16b do base (handoff verbal sem tool): a tool encaminhar_humano sai no fim do funil da outra demanda, nunca fica esquecida — a 16b continua banindo so o handoff anunciado e nunca executado.
 
 </few_shot_examples>
 """

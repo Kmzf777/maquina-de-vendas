@@ -23,7 +23,7 @@ from app.conversations.service import (
 )
 from app.agent.token_tracker import track_token_usage
 from app.agent_profiles.service import get_agent_profile
-from app.leads.service import get_lead, update_lead
+from app.leads.service import get_lead, sanitize_display_name, update_lead
 
 logger = logging.getLogger(__name__)
 
@@ -540,12 +540,18 @@ def _build_catalog_block(catalog_text: str) -> str:
     Injetado entre o prompt de estágio e o FINAL_INSTRUCTION para servir de fonte
     de verdade de produtos/preços/imagens — substituindo o grounding estático.
     """
+    # Harmonizado com a constraint do atacado.py (critical_constraints, "o cliente NUNCA
+    # ve a cozinha"): variacao inexistente do MESMO produto (peso/moagem) != produto que
+    # a Cafe Canastra nao trabalha — cada caso tem uma saida diferente.
     return (
         "<catalogo_de_produtos>\n"
         "ATENÇÃO: Você DEVE usar EXCLUSIVAMENTE os produtos, preços e links de "
         "imagens listados abaixo. NUNCA invente preços, pacotes ou imagens que não "
-        "estejam nesta lista. Se o cliente pedir um produto que não está aqui, diga "
-        "que vai verificar com o time e, se fizer sentido, encaminhe para o Joao Bras.\n\n"
+        "estejam nesta lista. Se o pedido for uma VARIAÇÃO de um produto listado "
+        "(peso ou moagem diferente do catálogo), diga que essa variação não existe "
+        "e ofereça a mais próxima da lista. Se for um produto que a Cafe Canastra "
+        "não trabalha, diga que vai verificar com o time e, se fizer sentido, "
+        "encaminhe para o Joao Bras.\n\n"
         "## PREÇOS — REGRA ABSOLUTA (tabela fixa)\n"
         "Os valores abaixo são TABELADOS e EXATOS. Você está ESTRITAMENTE PROIBIDA de "
         "inventar, arredondar ou alterar qualquer valor ou centavo. Informe o preço "
@@ -716,9 +722,13 @@ async def run_agent(
 
     if is_outbound and is_first_turn and campaign_message:
         campaign_segment = (lead_context or {}).get("campaign_segment")
+        # Lead antigo (pre-C4, commit 119232e) pode ter nome-saudacao gravado no
+        # cadastro ("Olá, boa tarde") — sanitiza no call site pra nao vazar pro
+        # contexto outbound do 1o turno (mesma defesa ja aplicada em build_base_prompt
+        # e no scheduler de follow-up).
         ctx = build_outbound_first_turn_context(
             campaign_message,
-            lead.get("name"),
+            sanitize_display_name(lead.get("name")),
             campaign_segment=campaign_segment,
             template_intent=dispatch_intent,
             lp_message=(lead_context or {}).get("lp_message"),

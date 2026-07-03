@@ -216,3 +216,44 @@ async def test_outbound_sem_campaign_message_nao_injeta():
 
     messages = _capture_messages(create_mock)
     assert len(messages) == 2  # system + user_text apenas
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — harmonizacao pos-review Frente C (item 5, codigo em orchestrator.py):
+# sanitize_display_name no call site do contexto outbound de 1o turno (~L721).
+# Leads antigos (pre-C4, ver commit 119232e) podem ter nome-saudacao gravado no
+# cadastro ("Olá, boa tarde"); sem o sanitize no call site, esse nome cru vazava
+# pro contexto outbound do primeiro turno via build_outbound_first_turn_context.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_outbound_primeiro_turno_nome_saudacao_nao_vaza_para_contexto():
+    """Lead com nome-saudacao no cadastro (lead antigo pre-C4): o contexto outbound
+    do primeiro turno nao pode carregar a saudacao crua como se fosse nome real."""
+    from app.agent.orchestrator import run_agent
+
+    conversation = {
+        "id": "conv-out-greeting",
+        "stage": "secretaria",
+        "leads": {"id": "lead-out-greeting", "name": "Olá, boa tarde", "phone": "5511900000005"},
+    }
+    lead_context = {"campaign_message": "Ola, aqui e a Valeria."}
+
+    create_mock = AsyncMock(return_value=_mock_openai_response())
+
+    with patch("app.agent.orchestrator.get_lead", return_value={
+            "id": "lead-out-greeting", "name": "Olá, boa tarde", "phone": "5511900000005", "ai_enabled": True,
+         }), \
+         patch("app.agent.orchestrator.get_history", return_value=[]), \
+         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
+         patch("app.agent.orchestrator._get_client") as mock_client:
+
+        mock_client.return_value.chat.completions.create = create_mock
+        await run_agent(conversation, "sim", lead_context=lead_context, agent_profile_id="profile-out")
+
+    messages = _capture_messages(create_mock)
+    # messages[0] = system, messages[1] = contexto campanha, messages[2] = user_text
+    assert len(messages) == 3
+    assert messages[1]["role"] == "user"
+    assert "Olá, boa tarde" not in messages[1]["content"]
+    assert "O lead se chama" not in messages[1]["content"]

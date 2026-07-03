@@ -50,7 +50,7 @@ Casos reais que motivam a mudanca (janela 02/07):
 """
 from datetime import datetime
 
-from app.agent.orchestrator import build_system_prompt
+from app.agent.orchestrator import _build_catalog_block, build_system_prompt
 from app.agent.prompts.base import build_base_prompt
 from app.agent.prompts.valeria_inbound.atacado import ATACADO_PROMPT
 from app.agent.prompts.valeria_inbound.consumo import CONSUMO_PROMPT
@@ -729,3 +729,72 @@ def test_build_system_prompt_secretaria_fix_wave_c1_monta_sem_erro():
     assert "UNICA demanda" in prompt
     assert prompt.index("UNICA demanda") < prompt.index("<final_instruction>")
     assert "sem te encher de coisa que nao e pra voce" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Harmonizacao pos-review (2026-07-03) — mini-wave de 5 itens recomendada pelo
+# review final da Frente C. Declaracao: fluxo inbound (secretaria) + ambos-via-base
+# (base) + codigo (orchestrator.py). Todos os 5 itens sao clausulas de escopo/excecao
+# — nenhuma regra existente foi removida.
+#
+# Item 1 — secretaria.py Exemplo 10: o anuncio de handoff FUTURO da saca ("ja te
+# deixo com ele no fim") e superficie que a regra 16b do base (handoff verbal sem
+# tool) bane na letra fria — precisa da excecao explicita: a tool sai no fim do
+# funil da OUTRA demanda, nunca fica esquecida.
+# Item 2 — base.py circuit breaker "desconto": escopado aos stages comerciais
+# (atacado/private_label/exportacao); na SECRETARIA (lead ainda nao classificado)
+# vale primeiro a ETAPA 0.5 (reconhecer + classificar).
+# Item 3 — base.py ORDEM DE EXECUCAO: se o catalogo/ferramentas do novo estagio
+# ainda nao estiverem disponiveis NESTE turno, o hook sai e a pergunta concreta e
+# respondida no turno seguinte — nunca inventar valor.
+# Item 4 — orchestrator.py _build_catalog_block: harmoniza a frase de produto-fora-
+# da-lista com a constraint do atacado (variacao inexistente != produto que nao
+# trabalhamos).
+# Item 5 (teste em test_outbound_prompt_separation.py, nao aqui — e codigo puro de
+# orchestrator, nao pin estrutural de prompt) — sanitize_display_name no call site
+# do contexto outbound de 1o turno (orchestrator.py ~L721).
+# ---------------------------------------------------------------------------
+
+
+def test_secretaria_exemplo_10_declara_excecao_regra_16b():
+    # Item 1: a Nota do Exemplo 10 declara que o anuncio de handoff FUTURO da saca
+    # e a excecao prevista da regra 16b — nao o handoff abandonado que a 16b bane.
+    exemplo_10 = SECRETARIA_PROMPT.index("Exemplo 10")
+    few_shot_end = SECRETARIA_PROMPT.index("</few_shot_examples>")
+    block = SECRETARIA_PROMPT[exemplo_10:few_shot_end]
+    assert "excecao prevista da regra 16b do base" in block
+    assert "encaminhar_humano sai no fim do funil da outra demanda" in block
+
+
+def test_base_circuit_breaker_desconto_escopado_por_stage():
+    # Item 2: o handoff imediato de desconto vale nos stages comerciais; na
+    # secretaria, a ETAPA 0.5 roda primeiro (reconhecer + classificar).
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    situacoes_start = prompt.index("SITUACOES COMERCIAIS")
+    proxima_bullet = prompt.index("Lead repetiu a MESMA objecao")
+    block = prompt[situacoes_start:proxima_bullet]
+    assert "atacado, private_label, exportacao" in block
+    assert "ETAPA 0.5" in block
+    assert "SECRETARIA" in block
+    # regressao: o exemplo do <examples> (contexto de stage comercial) NAO foi tocado
+    assert '"tem desconto pra pedido grande?"' in prompt
+
+
+def test_base_ordem_execucao_contempla_dados_indisponiveis_do_novo_estagio():
+    # Item 3: meia-frase nova na ORDEM DE EXECUCAO, dentro da secao certa.
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
+    ordem_inicio = prompt.index("# ORDEM DE EXECU")
+    modelo_escrita = prompt.index("# MODELO DE ESCRITA")
+    dados_indisponiveis = prompt.index("dados do novo estágio ainda não estiverem disponíveis")
+    assert ordem_inicio < dados_indisponiveis < modelo_escrita
+    assert "NUNCA invente valor" in prompt
+
+
+def test_catalog_block_harmoniza_variacao_vs_produto_fora_da_lista():
+    # Item 4: _build_catalog_block diferencia VARIACAO (peso/moagem) de PRODUTO que
+    # a Cafe Canastra nao trabalha, espelhando a constraint do atacado.py.
+    block = _build_catalog_block("X")
+    assert "VARIAÇÃO de um produto listado" in block
+    assert "diga que essa variação não existe e ofereça a mais próxima" in block
+    assert "não trabalha" in block
+    assert "encaminhe para o Joao Bras" in block
