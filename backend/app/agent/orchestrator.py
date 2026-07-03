@@ -55,11 +55,16 @@ _SAFETY_FALLBACK_MEDIA = (
     "te mandei as fotos aqui no chat\n\nqual delas chamou mais a sua atenção?"
 )
 # Fallback genérico honesto (Change C, 2026-06-30): usado quando não há contexto coerente
-# (sem transição de stage, sem mídia) e o LLM ficou mudo mesmo após o retry.
+# (sem transição de stage, sem mídia, sem stage comercial mapeado em _STAGE_REENGAGE_FALLBACKS)
+# e o LLM ficou mudo mesmo após TODOS os retries (incluindo o retry2, Etapa 2).
 # NÃO afirma que a mensagem "chegou cortada" (proibido — auditoria 2026-06-24).
+# Etapa 2 (2026-07-02, caso Davi): NÃO pede mais pro lead repetir o que já digitou — o texto
+# antigo ("me conta de novo o que você precisa") fez o lead redigitar uma objeção de preço
+# inteira. Agora é uma pergunta de avanço genérica, não um pedido de recall.
 # Segue a voz da Valéria: minúsculas, sem ponto final, max 2 bolhas curtas, sem emoji.
 _SAFETY_FALLBACK_GENERIC = (
-    "opa, me embolei aqui por um instante\n\nme conta de novo o que você precisa que eu já te ajudo"
+    "opa, me embolei aqui por um instante\n\n"
+    "pode continuar de onde você parou que eu te acompanho daqui"
 )
 
 # 2º degrau do retry-on-empty (Etapa 2, casos Davi/Samuel 01-02/07): quando o retry
@@ -106,15 +111,57 @@ _STAGE_TRANSITION_FALLBACKS: dict[str, str] = {
 }
 
 
-def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | None = None) -> str:
+# Reengajamento de último recurso por stage ATUAL (Etapa 2, 2026-07-02): usado quando o turno
+# ficou vazio após TODOS os retries (incluindo o retry2) e NÃO houve transição de stage nem
+# mídia neste turno — diferente de _STAGE_TRANSITION_FALLBACKS, que são aberturas pós-transição
+# e continuam intocadas. Só cobre os 4 stages comerciais; 'secretaria' fica de fora de propósito
+# (mesmo motivo de _STAGE_TRANSITION_FALLBACKS: é o stage de entrada, não um avanço) e cai no
+# fallback genérico. Caso Davi (02/07): o genérico antigo pedia pro lead repetir o que já tinha
+# digitado (uma objeção de preço inteira) — estes textos NUNCA pedem recall, só perguntam se dá
+# pra seguir em frente.
+_STAGE_REENGAGE_FALLBACKS: dict[str, str] = {
+    "atacado": (
+        "opa, me embolei aqui por um instante\n\n"
+        "ficou alguma dúvida sobre os cafés ou valores que eu possa resolver agora?"
+    ),
+    "private_label": (
+        "opa, me embolei aqui por um instante\n\n"
+        "quer que eu siga com o próximo passo do seu projeto de marca própria?"
+    ),
+    "exportacao": (
+        "opa, me embolei aqui por um instante\n\n"
+        "quer que eu siga com os detalhes da exportação?"
+    ),
+    "consumo": (
+        "opa, me embolei aqui por um instante\n\n"
+        "ficou alguma dúvida sobre os cafés ou a loja que eu possa resolver agora?"
+    ),
+}
+
+
+def _empty_fallback_text(
+    media_tool_used: bool,
+    transitioned_to_stage: str | None = None,
+    current_stage: str | None = None,
+) -> str:
     """Return a CONTEXTUALLY COHERENT fallback for the empty-response case.
 
     Priority order (highest first):
       1. Pergunta de avanço, quando houve um mudar_stage neste turno (transição silenciosa).
       2. Pergunta de fechamento de mídia, quando uma tool de foto foi usada.
-      3. Fallback genérico honesto (_SAFETY_FALLBACK_GENERIC): re-engaja o lead sem afirmar
-         que a mensagem "chegou cortada" (proibido — auditoria 2026-06-24). Garante que o
-         lead NUNCA fica em silêncio total após um turno com historico real (Change C 2026-06-30).
+      3. Reengajamento de último recurso do stage ATUAL (_STAGE_REENGAGE_FALLBACKS, Etapa 2):
+         sem transição nem mídia neste turno, mas o lead já está num stage comercial mapeado.
+         Pergunta de avanço coerente com esse stage — NUNCA pede pro lead repetir o que já
+         disse (caso Davi 02/07: lead redigitou a objeção de preço inteira).
+      4. Fallback genérico honesto (_SAFETY_FALLBACK_GENERIC): último recurso quando nem
+         transição, nem mídia, nem stage comercial mapeado se aplicam (ex.: secretaria).
+         NÃO afirma que a mensagem "chegou cortada" (proibido — auditoria 2026-06-24) e,
+         desde a Etapa 2, também NÃO pede pra repetir. Garante que o lead NUNCA fica em
+         silêncio total após um turno com historico real (Change C 2026-06-30).
+
+    Os itens 3 e 4 são ambos "último recurso" para fins da exceção de silêncio em run_agent —
+    ver _is_last_resort_fallback logo abaixo. Só os itens 1 e 2 são fallbacks CONTEXTUAIS de
+    verdade e continuam vencendo mesmo quando essa exceção se aplicaria.
 
     Extracted as a pure helper so it can be unit-tested without running run_agent.
     """
@@ -122,7 +169,30 @@ def _empty_fallback_text(media_tool_used: bool, transitioned_to_stage: str | Non
         return _STAGE_TRANSITION_FALLBACKS[transitioned_to_stage]
     if media_tool_used:
         return _SAFETY_FALLBACK_MEDIA
+    if current_stage and current_stage in _STAGE_REENGAGE_FALLBACKS:
+        return _STAGE_REENGAGE_FALLBACKS[current_stage]
     return _SAFETY_FALLBACK_GENERIC
+
+
+def _is_last_resort_fallback(text: str, current_stage: str | None) -> bool:
+    """True quando `text` é um fallback de ÚLTIMO RECURSO (reengajamento por stage OU
+    genérico) — os dois casos em que a exceção de silêncio de run_agent (soft_reject_used /
+    suppress_generic_fallback) deve vencer e o turno terminar em "" em vez de reabrir a
+    conversa. Fallbacks CONTEXTUAIS (transição de stage, mídia) NUNCA são "último recurso" e
+    continuam vencendo a exceção — comportamento preservado da Change C (2026-06-30).
+
+    Por quê uma função separada em vez de `_empty_fallback_text` devolver uma tupla: o
+    contrato atual de `_empty_fallback_text` (retorna só `str`) já é testado diretamente por
+    vários testes existentes (test_post_media_closing.py, test_post_stage_transition_closing.py,
+    test_orchestrator_retry_no_silence_2026_06_30.py) — mudar pra tupla quebraria todos eles
+    sem necessidade. A comparação antiga `assistant_text == _SAFETY_FALLBACK_GENERIC` (bloco
+    final de run_agent) ficaria cega ao novo _STAGE_REENGAGE_FALLBACKS: cada stage comercial
+    tem um texto DIFERENTE, então a igualdade direta com a constante genérica nunca bateria
+    pra esses casos (Etapa 2, Task 2) — daí este helper, que sabe reconhecer os dois formatos.
+    """
+    if text == _SAFETY_FALLBACK_GENERIC:
+        return True
+    return current_stage is not None and _STAGE_REENGAGE_FALLBACKS.get(current_stage) == text
 
 
 # ---------------------------------------------------------------------------
@@ -530,11 +600,12 @@ async def run_agent(
 ) -> str:
     """Run the SDR AI agent for a conversation and return the response text.
 
-    suppress_generic_fallback (keyword-only): quando True, o ramo de turno vazio NÃO emite o
-    _SAFETY_FALLBACK_GENERIC — retorna "" em vez disso. Usado por gatilhos INTERNOS sem mensagem
-    real do lead (ex.: reabertura proativa ai_scheduled_return no scheduler), onde o re-engajamento
-    genérico "me conta de novo o que você precisa" seria incoerente. Fallbacks contextuais de
-    mídia/transição de stage continuam valendo. Default False preserva todos os outros callers.
+    suppress_generic_fallback (keyword-only): quando True, o ramo de turno vazio NÃO emite nenhum
+    fallback de ÚLTIMO RECURSO — nem _SAFETY_FALLBACK_GENERIC nem o reengajamento por stage de
+    _STAGE_REENGAGE_FALLBACKS (Etapa 2) — retorna "" em vez disso. Usado por gatilhos INTERNOS
+    sem mensagem real do lead (ex.: reabertura proativa ai_scheduled_return no scheduler), onde
+    reabrir a conversa sozinho seria incoerente. Fallbacks contextuais de mídia/transição de
+    stage continuam valendo. Default False preserva todos os outros callers.
     """
     stage = conversation.get("stage", "secretaria")
     lead = conversation.get("leads", {}) or {}
@@ -1023,22 +1094,27 @@ async def run_agent(
             )
 
     # Ainda vazio após o retry. Escolhemos o fallback mais contextualmente coerente disponível
-    # (transição de stage > mídia > genérico honesto). Change C (2026-06-30): _empty_fallback_text
-    # nunca retorna None — o caso genérico agora devolve _SAFETY_FALLBACK_GENERIC em vez de abortar
-    # em silêncio. Silêncio total deixa o lead congelado (caso private_label, 21h sem resposta);
-    # um recomeço honesto é sempre preferível. O texto NÃO afirma que a mensagem "chegou cortada".
+    # (transição de stage > mídia > reengajamento do stage ATUAL > genérico honesto — Etapa 2
+    # acrescentou o 3º degrau). Change C (2026-06-30): _empty_fallback_text nunca retorna None —
+    # o último degrau sempre devolve algum texto em vez de abortar em silêncio. Silêncio total
+    # deixa o lead congelado (caso private_label, 21h sem resposta); um recomeço honesto é
+    # sempre preferível. O texto NÃO afirma que a mensagem "chegou cortada" e, desde a Etapa 2
+    # (caso Davi 02/07: lead redigitou a objeção de preço inteira), NÃO pede pro lead repetir o
+    # que já disse — nem o reengajamento por stage nem o genérico.
     #
-    # EXCEÇÕES onde o silêncio (return "") é correto e o genérico seria incoerente (regressões da
-    # Change C corrigidas em 2026-06-30): o fallback CONTEXTUAL (mídia/transição) ainda VENCE; mas
-    # se ele NÃO se aplica (i.e. _empty_fallback_text caiu no genérico), então:
+    # EXCEÇÕES onde o silêncio (return "") é correto e reabrir a conversa seria incoerente
+    # (regressões da Change C corrigidas em 2026-06-30, estendidas ao reengajamento por stage na
+    # Etapa 2): o fallback CONTEXTUAL (mídia/transição) ainda VENCE; mas se ele NÃO se aplica
+    # (i.e. _empty_fallback_text caiu no reengajamento por stage OU no genérico — ambos são
+    # "último recurso", ver _is_last_resort_fallback), então:
     #   - soft_reject_used: lead acabou de ser descartado (registrar_sem_interesse_atual) → silêncio.
     #   - suppress_generic_fallback: gatilho interno sem mensagem real do lead (reabertura proativa
     #     ai_scheduled_return) → silêncio (o job é cancelado pelo guard `if not response.strip()`).
     if not assistant_text:
-        assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage)
-        if assistant_text == _SAFETY_FALLBACK_GENERIC and (soft_reject_used or suppress_generic_fallback):
+        assistant_text = _empty_fallback_text(media_tool_used, transitioned_to_stage, current_stage=stage)
+        if _is_last_resort_fallback(assistant_text, stage) and (soft_reject_used or suppress_generic_fallback):
             logger.error(
-                "[AGENT EMPTY] vazio após retry para conv %s — silêncio em vez do genérico "
+                "[AGENT EMPTY] vazio após retry para conv %s — silêncio em vez do último recurso "
                 "(soft_reject=%s, suppress=%s, tool_iterations=%d)",
                 conversation_id, soft_reject_used, suppress_generic_fallback, tool_iterations,
             )
