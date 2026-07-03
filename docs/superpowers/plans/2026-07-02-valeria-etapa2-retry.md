@@ -162,3 +162,9 @@ _SAFETY_FALLBACK_GENERIC = (
 - [ ] **Step 3: Implementar** (guard de ~6 linhas no Change B).
 - [ ] **Step 4: Rodar e ver passar** + regressão: `python -m pytest tests -q -m "not integration" -k "orchestrator or enviar_fotos or retry"`.
 - [ ] **Step 5: Commit** — `fix(orchestrator): tool de midia nao re-executa no retry do mesmo turno (caso Samuel) (Etapa2 A2)`.
+
+## Follow-ups pós-review final (rastreados, NÃO bloqueiam este merge)
+- [ ] Comentários imprecisos, corrigir na próxima passada nos arquivos: skip do retry2 overclaims "destino é silêncio" (orchestrator ~L1078 — na borda suppress+mídia o destino é o fallback contextual, comportamento pré-existente correto); docstring de track_token_usage sem os call_types novos (token_tracker.py:50, já faltava followup); comentário obsoleto citando texto antigo do fallback (follow_up/scheduler.py:1179).
+- [ ] `media_tool_used` marca INTENÇÃO, não sucesso (pré-existente): se a execução de mídia do loop principal levantar exceção, o guard same-turn bloqueia a re-execução legítima no retry. Composto raríssimo; ao corrigir, avaliar flag de sucesso separada (afeta também o fallback de mídia — não fazer às pressas).
+- [ ] 2 testes de composto nice-to-have: (a) mídia no loop principal → retries vazios → retry2 devolve TEXTO (texto vence fallback de mídia); (b) guard do Change B dispara → continuação vazia → retry2 roda.
+- Métrica pós-deploy (objetivo da etapa): `SELECT call_type, count(*), count(*) FILTER (WHERE completion_tokens=0) FROM token_usage WHERE call_type LIKE 'response_retry%' GROUP BY 1` — mede quantos turnos o retry2 recuperou vs caíram no estático (baseline da janela 01–02/07: 8/185 chamadas vazias chegando ao fallback).
