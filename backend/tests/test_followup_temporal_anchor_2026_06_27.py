@@ -55,7 +55,7 @@ async def test_generate_computa_e_repassa_last_msg_age(monkeypatch):
     resp.usage = None
     client = MagicMock()
     client.chat.completions.create = AsyncMock(return_value=resp)
-    monkeypatch.setattr(scheduler, "AsyncOpenAI", lambda **k: client)
+    monkeypatch.setattr(scheduler, "get_gemini_client", lambda *a, **k: client)
 
     now = datetime(2026, 6, 26, 14, 47, tzinfo=timezone.utc)
     history = [{"role": "user", "content": "oi", "created_at": "2026-06-26T12:47:00+00:00"}]

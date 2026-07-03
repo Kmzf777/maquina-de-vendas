@@ -79,7 +79,7 @@ async def test_generate_followup_disables_thinking_and_raises_cap():
     mock_client = MagicMock()
     mock_client.chat.completions.create = create
 
-    with patch("app.follow_up.scheduler.AsyncOpenAI", return_value=mock_client), \
+    with patch("app.follow_up.scheduler.get_gemini_client", return_value=mock_client), \
          patch("app.follow_up.scheduler.track_token_usage"):
         from app.follow_up.scheduler import _generate_followup_message
         text, finish = await _generate_followup_message(
@@ -101,7 +101,7 @@ async def test_generate_followup_records_token_usage():
         return_value=_Resp("oi", "stop", _Usage(123, 45))
     )
 
-    with patch("app.follow_up.scheduler.AsyncOpenAI", return_value=mock_client), \
+    with patch("app.follow_up.scheduler.get_gemini_client", return_value=mock_client), \
          patch("app.follow_up.scheduler.track_token_usage") as mock_track:
         from app.follow_up.scheduler import _generate_followup_message
         await _generate_followup_message(
