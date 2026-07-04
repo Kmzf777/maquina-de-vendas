@@ -201,6 +201,12 @@ async def _handle_delivery_status(wamid: str, status: str, errors: list | None =
                 logger.warning("[DELIVERY] Failed to clean up conversation for wamid=%s: %s", wamid, cleanup_exc)
 
             if 131042 in error_codes:
+                # Meta ACEITA o send (HTTP 200 + wamid) e só reporta o débito aqui,
+                # de forma assíncrona — por isso o pause síncrono no worker é código
+                # morto. Pausa o broadcast dono deste wamid ANTES de alertar, para que
+                # o worker pare de disparar os leads restantes já no próximo tick.
+                from app.broadcast.service import pause_broadcast_for_billing
+                pause_broadcast_for_billing(bl["broadcast_id"])
                 from app.alerts.service import fire_billing_alert
                 await fire_billing_alert(errors or [])
         except Exception as e:

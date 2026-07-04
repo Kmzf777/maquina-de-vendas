@@ -549,9 +549,39 @@ def _resolve_broadcast_prompt_key(sb, agent_profile_id: str | None) -> str | Non
     return None
 
 
+def _has_open_billing_alert(sb) -> bool:
+    """True se há um alerta de billing (131042) aberto — mesmo sinal do guard de /start."""
+    try:
+        res = (
+            sb.table("system_alerts")
+            .select("id")
+            .eq("type", "billing_payment_issue")
+            .eq("resolved", False)
+            .limit(1)
+            .execute()
+        )
+        # PostgREST sempre devolve lista; só um resultado não-vazio é alerta real.
+        return isinstance(res.data, list) and len(res.data) > 0
+    except Exception as exc:
+        logger.warning("[BROADCAST] Falha ao checar alerta de billing: %s", exc)
+        return False
+
+
 async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
+
+    # Defense-in-depth: o 131042 chega assíncrono (webhook), então entre o 1º débito e o
+    # webhook pausar o broadcast há uma janela onde o worker seguiria disparando. Aqui,
+    # a cada lote, se já existe alerta de billing aberto, auto-aborta e pausa — fechando
+    # essa janela sem depender de o webhook por-wamid ter chegado. Paridade com /start.
+    if _has_open_billing_alert(sb):
+        logger.critical(
+            "[BROADCAST][BILLING] Alerta de billing aberto — pausando broadcast %s (lote não enviado)",
+            broadcast_id,
+        )
+        sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
+        return
 
     # Pre-flight: live check on Meta API — auto-resolves stale billing alerts when channel is OK.
     # Billing issues not detectable via GET are caught in real-time during per-lead send (below).

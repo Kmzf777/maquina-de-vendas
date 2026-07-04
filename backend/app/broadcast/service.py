@@ -26,6 +26,33 @@ def get_pending_broadcast_leads(broadcast_id: str, limit: int = 10) -> list[dict
     return result.data
 
 
+def pause_broadcast_for_billing(broadcast_id: str) -> bool:
+    """Pausa um broadcast por falha de billing (131042). Idempotente e não-destrutivo.
+
+    Filtra por status ativo (running/scheduled) para nunca reverter um broadcast já
+    completed/failed/paused. Retorna True se alguma linha foi efetivamente pausada.
+
+    Chamado pelo webhook de delivery-status (meta_router) porque a Meta ACEITA o send
+    do template com HTTP 200 e só reporta o débito depois, de forma assíncrona — o
+    pause síncrono no worker nunca dispara para esse caso.
+    """
+    sb = get_supabase()
+    result = (
+        sb.table("broadcasts")
+        .update({"status": "paused"})
+        .eq("id", broadcast_id)
+        .in_("status", ["running", "scheduled"])
+        .execute()
+    )
+    paused = bool(result.data)
+    if paused:
+        logger.critical(
+            "[BROADCAST][BILLING] broadcast %s PAUSADO automaticamente — erro 131042",
+            broadcast_id,
+        )
+    return paused
+
+
 def mark_broadcast_lead_sent(bl_id: str) -> None:
     sb = get_supabase()
     sb.table("broadcast_leads").update({
