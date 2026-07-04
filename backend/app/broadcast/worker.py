@@ -20,7 +20,7 @@ from app.broadcast.service import (
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.templates.intent import dispatch_metadata
-from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted
+from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -687,15 +687,19 @@ async def process_single_broadcast(broadcast: dict):
                 broadcast.get("template_variables") or {},
                 lead,
             )
+            # Endereço ENTREGÁVEL: prefere wa_id (from real do inbound) sobre o phone
+            # normalizado (que injeta o 9º dígito e falha com Meta 131026 em números
+            # registrados sem o 9). Paridade com follow-up/LP; cai para phone se frio.
+            send_target = resolve_send_target(lead, fallback=lead["phone"])
             logger.info(
                 "[BROADCAST] sending template '%s' (%s) to %s — components: %s",
                 broadcast["template_name"],
                 broadcast.get("template_language_code", "pt_BR"),
-                lead["phone"],
+                send_target,
                 components,
             )
             send_response = await provider.send_template(
-                to=lead["phone"],
+                to=send_target,
                 template_name=broadcast["template_name"],
                 components=components,
                 language_code=broadcast.get("template_language_code", "pt_BR"),
