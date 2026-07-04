@@ -37,22 +37,8 @@ def test_claim_retorna_false_quando_outro_worker_ja_pegou():
         assert S._claim_followup_job("job-1") is False
 
 
-# ─── _recover_stale_followup_jobs: crash-recovery ────────────────────────────
-
-def test_recover_devolve_processing_antigo_para_pending():
-    """Jobs presos em 'processing' há > stale_minutes voltam para 'pending'."""
-    mock_sb = MagicMock()
-    mock_sb.table.return_value.update.return_value.eq.return_value.eq.return_value.lt.return_value.execute.return_value.data = [
-        {"id": "job-a"}, {"id": "job-b"}
-    ]
-    now = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
-    with patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb):
-        n = S._recover_stale_followup_jobs(now, stale_minutes=5)
-
-    assert n == 2
-    payload = mock_sb.table.return_value.update.call_args[0][0]
-    assert payload["status"] == "pending"
-    assert payload["claimed_at"] is None
+# A crash-recovery (que agora é ciente do wamid: 'sent' se despachado, 'pending' se não)
+# é coberta em test_followup_wamid_idempotencia_2026_07_04.py.
 
 
 # ─── process_due_followups: claim antes de processar ─────────────────────────

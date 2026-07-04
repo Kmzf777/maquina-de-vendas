@@ -709,6 +709,11 @@ async def process_due_followups(now: datetime | None = None) -> None:
             # Intencional per spec: em caso de falha no envio, não atualiza status — job será retentado no próximo tick
             continue
 
+        # Idempotência: grava o wamid no job ANTES de persistir/marcar sent. Se o worker
+        # morrer daqui até o _mark_sent, a crash-recovery vê o wamid e conclui como 'sent'
+        # em vez de reenviar (fecha a janela residual de envio duplicado multi-worker).
+        _save_followup_wamid(job["id"], extract_wamid(send_result))
+
         # Persiste mensagem
         try:
             save_message_conv(
@@ -827,6 +832,9 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
         )
         return  # erro transitório → retry no próximo tick
 
+    # Idempotência: persiste o wamid no job antes de marcar sent (ver _save_followup_wamid).
+    _save_followup_wamid(job["id"], extract_wamid(send_result))
+
     # Persiste a mensagem do template na conversa do canal do João (senão o histórico
     # mostra só a resposta do lead — "como se ele tivesse iniciado do nada").
     _persist_joao_handoff_message(job["lead_id"], joao_channel["id"], lead_name, send_result)
@@ -939,6 +947,9 @@ async def _process_lp_welcome(job: dict, now: datetime) -> None:
             "[LP_WELCOME] Falha ao enviar template para %s: %s", lead_phone, exc, exc_info=True
         )
         return  # erro transitório (rede etc.) → retry no próximo tick
+
+    # Idempotência: persiste o wamid no job antes de marcar sent (ver _save_followup_wamid).
+    _save_followup_wamid(job["id"], extract_wamid(send_result))
 
     # Persiste o disparo LP em `messages` para que reações/replies a ele sejam rastreáveis.
     # Sem isso, o template (wamid outbound) ficava fora da tabela e qualquer reação do lead
@@ -1313,33 +1324,65 @@ def _claim_followup_job(job_id: str) -> bool:
         return False
 
 
-def _recover_stale_followup_jobs(now: datetime, *, stale_minutes: int = 5) -> int:
-    """Crash-recovery: devolve para 'pending' jobs presos em 'processing' há mais de
-    `stale_minutes` (worker morreu após reivindicar, ou uma falha transitória que não
-    chegou a marcar estado terminal). Escopado ao env atual. Espelha a crash-recovery de
-    broadcast_leads. Fail-soft: erro → 0 (o watchdog Check 3 ainda observa jobs presos).
+def _save_followup_wamid(job_id: str, wamid: str | None) -> None:
+    """Persiste o wamid do envio no job ANTES de marcá-lo terminal (espelha
+    save_broadcast_lead_wamid). É a chave de idempotência: se o worker morrer entre o
+    envio à Meta e o _mark_sent, a crash-recovery vê o wamid e conclui o job como 'sent'
+    (mensagem já despachada) em vez de reenviar cegamente. No-op se wamid vazio (provider
+    sem id → não há o que deduplicar). Fail-soft: nunca derruba o turno."""
+    if not wamid:
+        return
+    try:
+        sb = get_supabase()
+        sb.table("follow_up_jobs").update({"wamid": wamid}).eq("id", job_id).execute()
+    except Exception as exc:
+        logger.warning("[FOLLOWUP] falha ao persistir wamid do job %s: %s", job_id, exc)
 
-    Como o job só é marcado terminal (sent/cancelled) DEPOIS do envio, um job requeueado
-    aqui em geral ainda não enviou nada; a janela residual (enviou mas caiu antes de
-    marcar) é a mesma do broadcast e limitada pelo cutoff de `stale_minutes`."""
+
+def _recover_stale_followup_jobs(now: datetime, *, stale_minutes: int = 5) -> int:
+    """Crash-recovery ciente de idempotência: dois ramos, espelhando broadcast_leads.
+
+    Jobs presos em 'processing' há mais de `stale_minutes` (worker morreu após reivindicar
+    ou falha transitória sem estado terminal) são resolvidos pelo wamid:
+
+    - COM wamid → a mensagem JÁ foi despachada à Meta antes do crash: conclui o job como
+      'sent' (idempotência) em vez de reenviar. Fecha a janela residual de envio duplicado.
+    - SEM wamid → nunca chegou a enviar: devolve p/ 'pending' para o próximo tick retentar.
+
+    Escopado ao env atual. Fail-soft: erro → 0 (o watchdog Check 3 ainda observa presos).
+    Retorna o total de jobs recuperados (ambos os ramos)."""
     try:
         sb = get_supabase()
         cutoff = (now - timedelta(minutes=stale_minutes)).isoformat()
-        res = (
+        # Ramo idempotente: wamid presente → já despachado → 'sent' (NÃO reenvia).
+        sent_res = (
+            sb.table("follow_up_jobs")
+            .update({"status": "sent", "sent_at": now.isoformat()})
+            .eq("status", "processing")
+            .eq("env_tag", _ENV_TAG)
+            .lt("claimed_at", cutoff)
+            .filter("wamid", "not.is", "null")
+            .execute()
+        )
+        # Ramo de retry: wamid nulo → nunca enviou → devolve p/ 'pending'.
+        requeue_res = (
             sb.table("follow_up_jobs")
             .update({"status": "pending", "claimed_at": None})
             .eq("status", "processing")
             .eq("env_tag", _ENV_TAG)
             .lt("claimed_at", cutoff)
+            .filter("wamid", "is", "null")
             .execute()
         )
-        n = len(res.data or [])
-        if n:
+        n_sent = len(sent_res.data or [])
+        n_requeue = len(requeue_res.data or [])
+        if n_sent or n_requeue:
             logger.warning(
-                "[FOLLOWUP] recuperados %d job(s) presos em 'processing' há >%dmin (env=%s)",
-                n, stale_minutes, _ENV_TAG,
+                "[FOLLOWUP] crash-recovery: %d concluído(s) como 'sent' (wamid presente, "
+                "sem reenvio), %d requeue p/ 'pending' (sem envio) — env=%s",
+                n_sent, n_requeue, _ENV_TAG,
             )
-        return n
+        return n_sent + n_requeue
     except Exception as exc:
         logger.warning("[FOLLOWUP] falha na crash-recovery de jobs 'processing': %s", exc)
         return 0
