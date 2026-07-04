@@ -421,6 +421,46 @@ def test_check1_dedup_read_falha_ainda_assim_insere_alerta_fail_open(monkeypatch
     assert alerts[0]["type"] == "ai_unresponsive"
 
 
+def test_check1_detects_violation_when_embed_returns_list_shape(fake_db):
+    """REGRESSÃO (auditoria 04/07): o Check 1 nunca disparou em produção (0 alertas)
+    apesar de violações reais (Alessandro, IA ligada, 4h sem resposta). Causa provável:
+    o PostgREST devolve um embed to-one (`channels!inner(mode)`) ora como objeto, ora
+    como LISTA de 1 elemento; o `scope_ok` fazia `(row.get('channels') or {}).get('mode')`
+    — que estoura AttributeError num shape de lista, derrubando o check inteiro a cada
+    tick (engolido pelo try/except do loop). O teste existente só semeava DICT, então
+    nunca pegava isso. Aqui os embeds vêm como LISTA — o check deve detectar a violação
+    e alertar mesmo assim."""
+    now = datetime.now(timezone.utc)
+    # Embeds como lista de 1 elemento (shape alternativo do PostgREST).
+    fake_db.tables["conversations"].append({
+        "id": "conv-alessandro",
+        "channels": [{"mode": "ai"}],
+        "leads": [{"ai_enabled": True, "opt_out": False, "name": "Alessandro"}],
+    })
+    _seed_message(fake_db, "conv-alessandro", "user", now - timedelta(hours=4))
+
+    result = check_ai_unresponsive(now)
+
+    assert result == 1
+    alerts = fake_db.tables["system_alerts"]
+    assert len(alerts) == 1
+    assert alerts[0]["type"] == "ai_unresponsive"
+
+
+def test_check2_detects_violation_when_embed_returns_list_shape(fake_db):
+    """Mesma robustez de shape para o Check 2 (orphan_lead_reply): leads embed como lista."""
+    now = datetime.now(timezone.utc)
+    fake_db.tables["conversations"].append({
+        "id": "conv-rafael-list",
+        "leads": [{"ai_enabled": False, "human_control": False, "opt_out": False, "name": "Rafael"}],
+    })
+    _seed_message(fake_db, "conv-rafael-list", "user", now - timedelta(minutes=40))
+
+    assert check_orphan_lead_reply(now) == 1
+    assert len(fake_db.tables["system_alerts"]) == 1
+    assert fake_db.tables["system_alerts"][0]["type"] == "orphan_lead_reply"
+
+
 def test_check1_human_channel_out_of_scope(fake_db):
     now = datetime.now(timezone.utc)
     _seed_conversation_check1(fake_db, "conv-human", mode="human", ai_enabled=True)

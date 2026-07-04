@@ -1,14 +1,16 @@
-"""TDD do contador llm_down no ramo genérico [AGENT FAILED] (2026-07-02).
+"""TDD do ramo genérico [AGENT FAILED] (2026-07-02, atualizado 2026-07-04).
 
 Apagão 01-02/07: run_agent falhou rápido 3× por turno com uma exceção genérica
 (400/401 relançado cru pelo orchestrator, ou exceção pré-API) — não LLMUnavailableError.
 O processor esgotava as _AGENT_MAX_ATTEMPTS tentativas e caía no `else` → log
-"[AGENT FAILED]" → return silencioso, SEM incrementar o contador Redis
-llm:consecutive_failures nem disparar o alerta llm_down (que hoje só rodam no ramo
-`except LLMUnavailableError`, via _handle_llm_down). Este teste fecha esse buraco de
-observabilidade: mesmo contador/alerta do ramo LLMUnavailableError, MAS SEM handoff
-automático — decisão de plano: o ramo genérico [AGENT FAILED] fica só com contador +
-alerta; o handoff automático continua exclusivo de LLMUnavailableError.
+"[AGENT FAILED]" → return silencioso.
+
+Correção 07/02: passou a incrementar o contador Redis llm:consecutive_failures e
+disparar o alerta llm_down. Correção 07/04 (auditoria — fantasma do Alessandro, IA
+ligada e 4h sem resposta): o ramo terminal agora TAMBÉM encaminha ao humano, pela
+MESMA rede do LLMUnavailableError (`_handle_agent_exhausted` → `_handle_llm_down` →
+encaminhar_humano). Não há mais o ramo "só contador + alerta, sem handoff": 400/401 e
+qualquer exceção genérica que esgote as tentativas viram handoff, nunca silêncio.
 """
 import logging
 from contextlib import ExitStack, contextmanager
@@ -73,14 +75,14 @@ def _agent_failed_scenario(record_failure_return=0, record_failure_side_effect=N
 
 @pytest.mark.asyncio
 async def test_agent_failed_registra_contador_e_dispara_alerta_no_limiar():
-    """3 falhas esgotam as tentativas; contador retorna 3 (>= threshold) → alerta dispara
-    com handoff_ativo=False (Item 3 do review final): este ramo NUNCA aciona
-    encaminhar_humano, então a mensagem do alerta não pode afirmar que os leads
-    foram encaminhados automaticamente — ver test_agent_failed_nao_aciona_handoff_automatico."""
+    """3 falhas esgotam as tentativas; contador retorna 3 (>= threshold) → alerta dispara.
+    Como agora HÁ handoff automático (via _handle_llm_down), o alerta é gravado com
+    handoff_ativo=True (default) — os leads REALMENTE estão sendo encaminhados."""
     with _agent_failed_scenario(record_failure_return=3) as (mock_record, mock_alert, mock_exec):
         await P.process_buffered_messages("5511999999999", "oi", "chan-uuid")
     mock_record.assert_awaited_once()
-    mock_alert.assert_called_once_with(3, handoff_ativo=False)
+    mock_alert.assert_called_once_with(3)
+    mock_exec.assert_awaited()  # encaminhar_humano disparado
 
 
 @pytest.mark.asyncio
@@ -93,12 +95,16 @@ async def test_agent_failed_nao_dispara_alerta_abaixo_do_limiar():
 
 
 @pytest.mark.asyncio
-async def test_agent_failed_nao_aciona_handoff_automatico():
-    """Diferença central vs. o ramo LLMUnavailableError: [AGENT FAILED] genérico NUNCA
-    chama encaminhar_humano/execute_tool — só contador + alerta (decisão de plano)."""
+async def test_agent_failed_aciona_handoff_automatico():
+    """Correção 07/04: o [AGENT FAILED] genérico agora ACIONA encaminhar_humano (mesma
+    rede do LLMUnavailableError), fechando o fantasma silencioso — em vez de deixar o
+    lead no vácuo (caso Alessandro, IA ligada e 4h sem resposta)."""
     with _agent_failed_scenario(record_failure_return=3) as (mock_record, mock_alert, mock_exec):
         await P.process_buffered_messages("5511999999999", "oi", "chan-uuid")
-    mock_exec.assert_not_called()
+    mock_exec.assert_awaited()
+    # A 1ª chamada é o handoff ao humano.
+    args, kwargs = mock_exec.await_args_list[0]
+    assert args[0] == "encaminhar_humano"
 
 
 @pytest.mark.asyncio
@@ -111,4 +117,6 @@ async def test_agent_failed_fail_soft_quando_contador_explode(caplog):
         with caplog.at_level(logging.WARNING, logger="app.buffer.processor"):
             await P.process_buffered_messages("5511999999999", "oi", "chan-uuid")  # não deve levantar
     mock_alert.assert_not_called()
-    assert "falha ao registrar contador pós-AGENT FAILED" in caplog.text
+    # A falha do contador é engolida por _handle_llm_down (fail-soft) com este warning,
+    # e o handoff ao humano ainda é tentado a seguir.
+    assert "falha ao registrar/alertar contador" in caplog.text

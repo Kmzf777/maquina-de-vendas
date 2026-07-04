@@ -396,8 +396,9 @@ async def test_handoff_rescue_cancels_when_joao_channel_not_found():
 
 
 @pytest.mark.asyncio
-async def test_handoff_rescue_does_not_mark_sent_if_template_send_fails():
-    """Falha no send_template → job NÃO é marcado sent (será retentado no próximo tick)."""
+async def test_handoff_rescue_transient_send_error_retries_without_cancel():
+    """Erro TRANSITÓRIO no send_template (ex.: queda de rede) → job NÃO é marcado sent
+    nem cancelado (será retentado no próximo tick)."""
     job = _make_rescue_job()
     joao_channel = {
         "id": "ch-joao-1",
@@ -409,7 +410,8 @@ async def test_handoff_rescue_does_not_mark_sent_if_template_send_fails():
     mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
 
     mock_meta = AsyncMock()
-    mock_meta.send_template = AsyncMock(side_effect=RuntimeError("Meta API error"))
+    # ConnectionError = falha transitória (rede) — NÃO é RuntimeError de rejeição permanente.
+    mock_meta.send_template = AsyncMock(side_effect=ConnectionError("connection reset"))
 
     with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
          patch("app.follow_up.scheduler.get_channel_by_provider_config", return_value=joao_channel), \
@@ -423,6 +425,42 @@ async def test_handoff_rescue_does_not_mark_sent_if_template_send_fails():
 
     mock_sent.assert_not_called()
     mock_cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handoff_rescue_cancels_on_runtime_error_permanent_rejection():
+    """Rejeição PERMANENTE da Meta (HTTP 200 com erro embutido → MetaCloudClient levanta
+    RuntimeError) deve CANCELAR o job, não retentá-lo para sempre a cada tick.
+
+    Sem o ramo `except RuntimeError` (que _process_lp_welcome já tinha e o rescue não),
+    um template com parâmetro inválido ficava pending e re-disparava indefinidamente —
+    o "manual_audit_cancel_loop_infinito" apontado na auditoria de agendadores.
+    """
+    job = _make_rescue_job()
+    joao_channel = {
+        "id": "ch-joao-1",
+        "provider": "meta_cloud",
+        "provider_config": {"phone_number_id": "1049315514934778", "access_token": "joao_tok"},
+    }
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+
+    mock_meta = AsyncMock()
+    mock_meta.send_template = AsyncMock(side_effect=RuntimeError("Meta 200 com erro embutido: param inválido"))
+
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler.get_channel_by_provider_config", return_value=joao_channel), \
+         patch("app.follow_up.scheduler.get_supabase", return_value=mock_sb), \
+         patch("app.follow_up.scheduler.MetaCloudClient", return_value=mock_meta), \
+         patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
+         patch("app.follow_up.scheduler._cancel_job") as mock_cancel:
+
+        from app.follow_up.scheduler import process_due_followups
+        await process_due_followups(now=datetime.now(timezone.utc))
+
+    mock_sent.assert_not_called()
+    mock_cancel.assert_called_once_with("job-rescue-1", "meta_rejected")
 
 
 def test_schedule_handoff_rescue_skipped_in_rehearsal_mode(monkeypatch):

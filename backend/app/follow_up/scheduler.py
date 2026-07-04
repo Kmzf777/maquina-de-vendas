@@ -798,6 +798,17 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
                 exc_info=True,
             )
         return
+    except RuntimeError as exc:
+        # MetaCloudClient.send_template levanta RuntimeError quando a Meta responde HTTP 200
+        # COM erro embutido (ex.: parâmetro inválido) — rejeição PERMANENTE. Sem cancelar
+        # aqui, o job ficava pending e era re-tentado a cada tick para sempre (o
+        # "manual_audit_cancel_loop_infinito"). Espelha o ramo já existente em
+        # _process_lp_welcome / fire_reopen_template.
+        _cancel_job(job["id"], "meta_rejected")
+        logger.error(
+            f"[HANDOFF_RESCUE] Rejeição permanente Meta para {lead_phone} — job cancelado: {exc}"
+        )
+        return
     except Exception as exc:
         logger.error(
             f"[HANDOFF_RESCUE] Falha ao enviar template para {lead_phone}: {exc}",

@@ -113,6 +113,23 @@ def _parse_ts(value) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+def _embed_one(value) -> dict:
+    """Normaliza um embed to-one do PostgREST que pode voltar como dict OU como lista de
+    1 elemento (a cardinalidade inferida varia entre relacionamentos/versões). Sempre
+    devolve o dict subjacente (ou {} quando ausente/vazio) para o acesso `.get(...)` do
+    scope_ok NUNCA estourar `AttributeError` num shape de lista.
+
+    Bug real (auditoria 04/07): o Check 1 (`ai_unresponsive`) fazia
+    `(row.get("channels") or {}).get("mode")`; quando `channels` voltava como
+    `[{"mode": "ai"}]`, o `.get` estourava e derrubava o check INTEIRO a cada tick
+    (engolido pelo try/except do loop) — por isso ele nunca disparou em produção (0
+    alertas) apesar de violações reais como a do Alessandro (IA ligada, 4h sem resposta).
+    """
+    if isinstance(value, list):
+        return value[0] if value else {}
+    return value or {}
+
+
 def _chunked(seq: list, n: int):
     """Divide `seq` em fatias de tamanho `n` (a ultima fatia pode ser menor).
 
@@ -276,8 +293,8 @@ def check_ai_unresponsive(now: datetime) -> int:
         # nunca sao consumidos aqui (payload desnecessario sob paginacao/chunking).
         embed_select="id, channels!inner(mode), leads!inner(ai_enabled)",
         scope_ok=lambda row: (
-            (row.get("channels") or {}).get("mode") == "ai"
-            and (row.get("leads") or {}).get("ai_enabled") is True
+            _embed_one(row.get("channels")).get("mode") == "ai"
+            and _embed_one(row.get("leads")).get("ai_enabled") is True
         ),
     )
     n = len(violated)
@@ -309,9 +326,9 @@ def check_orphan_lead_reply(now: datetime) -> int:
         # e consumido aqui.
         embed_select="id, leads!inner(ai_enabled, human_control, opt_out)",
         scope_ok=lambda row: (
-            (row.get("leads") or {}).get("ai_enabled") is False
-            and (row.get("leads") or {}).get("human_control") is False
-            and (row.get("leads") or {}).get("opt_out") is False
+            _embed_one(row.get("leads")).get("ai_enabled") is False
+            and _embed_one(row.get("leads")).get("human_control") is False
+            and _embed_one(row.get("leads")).get("opt_out") is False
         ),
     )
     n = len(violated)

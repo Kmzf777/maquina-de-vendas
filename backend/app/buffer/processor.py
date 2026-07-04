@@ -491,11 +491,12 @@ def _count_recent_failed_audio(conversation_id: str, window_minutes: int = 30) -
 
 
 # Contador de falhas consecutivas do LLM — cobre AMBOS os ramos de esgotamento do
-# retry em process_buffered_messages: `except LLMUnavailableError` (via _handle_llm_down)
-# E o `else` genérico [AGENT FAILED] (assinatura do apagão 01-02/07: 400/401 relançado
-# cru pelo orchestrator, ou exceção pré-API, morria ali em silêncio sem incrementar
-# nada). O limiar (_LLM_DOWN_ALERT_THRESHOLD) dispara o alerta llm_down independente
-# de qual dos dois ramos o esgotou.
+# retry em process_buffered_messages: AMBOS os ramos agora encaminham ao humano via
+# _handle_llm_down — `except LLMUnavailableError` (403/429/5xx/conexão) e o `else`
+# genérico [AGENT FAILED] (400/401 do Gemini relançado cru pelo orchestrator, ou exceção
+# pré-API, que ANTES morria ali em silêncio sem handoff — assinatura do apagão 01-02/07
+# e do fantasma do Alessandro 04/07). Ver _handle_agent_exhausted. O limiar
+# (_LLM_DOWN_ALERT_THRESHOLD) dispara o alerta llm_down independente de qual ramo esgotou.
 _LLM_FAILURE_KEY = "llm:consecutive_failures"
 _LLM_DOWN_ALERT_THRESHOLD = 3
 
@@ -545,21 +546,47 @@ async def _handle_llm_down(lead: dict, phone: str, conversation: dict) -> None:
         )
 
 
+async def _handle_agent_exhausted(lead: dict, phone: str, conversation: dict) -> None:
+    """Ramo terminal do loop de retry do agente ([AGENT FAILED]).
+
+    Antes: quando `run_agent` esgotava as tentativas por uma exceção genérica (400/401
+    do Gemini relançado cru por `_create_with_retry`, erro pré-API, ou qualquer bug
+    inesperado), este ramo só INCREMENTAVA o contador e, no limiar, disparava um alerta
+    llm_down SEM handoff (handoff_ativo=False) — o lead ficava no vácuo. Era a mesma
+    assinatura do apagão 01-02/07 ("400/401 relançado cru morria em silêncio") e a causa
+    do fantasma do lead Alessandro (04/07: IA ligada, nenhuma resposta, humano pegou 4h
+    depois).
+
+    Agora encaminha ao humano pela MESMA rede do `LLMUnavailableError`
+    (`encaminhar_humano` via `_handle_llm_down`, que também registra o contador e dispara
+    o alerta llm_down no limiar). Fail-soft de ponta a ponta: nada aqui pode escalar — é
+    o último anteparo do turno.
+    """
+    conv_id = conversation["id"]
+    pop_interest_marked(conv_id)  # não vaza flag p/ o próximo turno
+    pop_quote_executed(conv_id)  # idem (Frente B3)
+    try:
+        await _handle_llm_down(lead, phone, conversation)
+    except Exception as exc:  # _handle_llm_down já é fail-soft; guarda extra de segurança
+        logger.error(
+            "[AGENT FAILED] handoff terminal falhou p/ %s (conv=%s): %s",
+            phone, conv_id, exc, exc_info=True,
+        )
+    _update_last_msg(conv_id)
+
+
 def _fire_llm_down_alert(count: int, *, handoff_ativo: bool = True) -> None:
     """Grava 1 alerta llm_down em system_alerts (dedup: 1 não-resolvido por hora).
 
     Espelha o padrão de fire_billing_alert. Transforma o apagão silencioso do LLM em
     incidente visível no CRM (o caso Welita passou sem qualquer alerta). Fail-soft.
 
-    `handoff_ativo` distingue os DOIS ramos que alimentam o mesmo contador/alerta
-    (ver `_LLM_FAILURE_KEY`):
-    - True (default) — ramo `except LLMUnavailableError` via `_handle_llm_down`: o
-      handoff automático ao humano (João) JÁ foi disparado, então a frase de
-      encaminhamento é verdadeira.
-    - False — ramo genérico `[AGENT FAILED]` (decisão de plano: SEM handoff
-      automático aqui). Afirmar "encaminhado ao humano" seria FALSO e faria o
-      operador despriorizar o alerta achando os leads cobertos — a mensagem diz
-      explicitamente que NÃO há encaminhamento automático nesse ramo.
+    `handoff_ativo` (default True) controla a frase de encaminhamento do alerta. Desde
+    04/07 AMBOS os ramos (LLMUnavailableError e o terminal [AGENT FAILED], via
+    `_handle_agent_exhausted`) encaminham ao humano antes de alertar, então o valor
+    efetivo é sempre True — o handoff automático (João) JÁ foi disparado quando este
+    alerta grava. O parâmetro `handoff_ativo=False` é mantido por compatibilidade mas
+    não é mais usado por nenhum caller (não há mais ramo "sem handoff").
     """
     try:
         sb = get_supabase()
@@ -1076,23 +1103,14 @@ async def process_buffered_messages(
                     else:
                         logger.error(
                             f"[AGENT FAILED] Todas as {_AGENT_MAX_ATTEMPTS} tentativas falharam para {phone} "
-                            f"(conv={conversation['id']}): {e}",
+                            f"(conv={conversation['id']}): {e} — encaminhando ao humano",
                             exc_info=True,
                         )
-                        try:
-                            _count = await _record_llm_failure()
-                            if _count >= _LLM_DOWN_ALERT_THRESHOLD:
-                                # handoff_ativo=False: este ramo (diferente de
-                                # LLMUnavailableError/_handle_llm_down) NÃO aciona
-                                # encaminhar_humano — decisão de plano. O alerta precisa
-                                # dizer isso explicitamente para o operador não achar
-                                # que os leads já estão cobertos pelo handoff.
-                                _fire_llm_down_alert(_count, handoff_ativo=False)
-                        except Exception as _exc:
-                            logger.warning("[LLM DOWN] falha ao registrar contador pós-AGENT FAILED: %s", _exc)
-                        pop_interest_marked(conversation["id"])  # evita leak do flag para o próximo turno
-                        pop_quote_executed(conversation["id"])  # idem (Frente B3)
-                        _update_last_msg(conversation["id"])
+                        # Fecha o fantasma silencioso: 400/401 do Gemini (relançado cru por
+                        # _create_with_retry) e qualquer exceção genérica agora encaminham
+                        # ao humano pela MESMA rede do LLMUnavailableError, em vez de só
+                        # alertar sem handoff. Ver _handle_agent_exhausted.
+                        await _handle_agent_exhausted(lead, phone, conversation)
                         return
 
             # LLM terminou de pensar/resolver tools → encerra o pulso de "digitando…": daqui
