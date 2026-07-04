@@ -4,7 +4,13 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from app.db.supabase import get_supabase
-from app.conversations.service import reset_unread_count, save_message
+from app.conversations.service import (
+    get_latest_inbound_wamid,
+    reset_unread_count,
+    save_message,
+)
+from app.channels.service import get_channel_by_id
+from app.whatsapp.registry import get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -85,3 +91,60 @@ async def mark_conversation_read(conversation_id: str):
     if not result:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return Response(status_code=204)
+
+
+@router.post("/{conversation_id}/read-receipt")
+async def send_read_receipt(conversation_id: str):
+    """Dispara o recibo de leitura (tique azul) da ÚLTIMA mensagem inbound do cliente.
+
+    Regra de negócio (atendimento humano / handoff): o recibo de leitura só deve ser
+    enviado DEPOIS que um vendedor humano responde a conversa pela plataforma — nunca
+    antes. Garante o princípio "nunca lido sem resposta": o cliente só vê o tique azul
+    quando já existe uma resposta a caminho. É chamado fire-and-forget pelo frontend logo
+    após o envio bem-sucedido da resposta humana.
+
+    Marcar a última inbound como lida é CUMULATIVO no WhatsApp (cobre todas as pendentes
+    anteriores da mesma conversa). Toda a lógica é fail-soft: qualquer falha de
+    Meta/provider responde 200 com marked=False, nunca 500 — o recibo é acessório e não
+    pode quebrar o fluxo de envio da resposta.
+    """
+    sb = get_supabase()
+
+    # 1. Resolve o canal da conversa (necessário para instanciar o provider Meta correto).
+    conv = (
+        sb.table("conversations")
+        .select("channel_id")
+        .eq("id", conversation_id)
+        .single()
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    channel_id = conv.data["channel_id"]
+
+    # 2. Última inbound pendente. Sem inbound com wamid → no-op (nada a marcar como lido).
+    wamid = get_latest_inbound_wamid(conversation_id)
+    if not wamid:
+        return {"marked": False, "wamid": None}
+
+    # 3. Canal → provider. Canal ausente é fail-soft: a resposta humana já foi enviada.
+    channel = get_channel_by_id(channel_id)
+    if not channel:
+        logger.warning(
+            "send_read_receipt: canal %s não encontrado (conv=%s); recibo não enviado",
+            channel_id, conversation_id,
+        )
+        return {"marked": False, "wamid": wamid}
+
+    # 4. Dispara o recibo via provider. Fail-soft: erro de Meta/rede nunca vira 500.
+    try:
+        provider = get_provider(channel)
+        await provider.mark_read(wamid)
+    except Exception as exc:
+        logger.warning(
+            "send_read_receipt: falha ao marcar wamid=%s como lido (conv=%s): %s",
+            wamid, conversation_id, exc,
+        )
+        return {"marked": False, "wamid": wamid}
+
+    return {"marked": True, "wamid": wamid}

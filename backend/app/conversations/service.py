@@ -291,6 +291,37 @@ def resolve_message_texts_by_wamids(wamids: list[str]) -> dict[str, str]:
         return {}
 
 
+def get_latest_inbound_wamid(conversation_id: str) -> str | None:
+    """Retorna o wamid da mensagem inbound (role='user') mais recente da conversa, ou None.
+
+    Usado para enviar o recibo de leitura (tique azul) sob demanda quando um vendedor humano
+    responde pela plataforma. Marcar a última inbound como lida é CUMULATIVO no WhatsApp
+    (cobre todas as pendentes). Fail-open: retorna None em qualquer erro.
+    """
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("wamid")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .not_.is_("wamid", "null")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if rows:
+            return rows[0]["wamid"]
+        return None
+    except Exception as exc:
+        logger.warning(
+            "get_latest_inbound_wamid: falha ao buscar última inbound da conversa %s: %s",
+            conversation_id, exc,
+        )
+        return None
+
+
 def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (
