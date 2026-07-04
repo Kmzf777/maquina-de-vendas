@@ -1,4 +1,6 @@
 import os
+from unittest.mock import MagicMock
+
 import pytest
 
 # Set required env vars before any app imports trigger Settings validation
@@ -35,6 +37,27 @@ def _stub_catalog(monkeypatch):
     monkeypatch.setattr(
         "app.agent.orchestrator.get_products_by_funnel",
         lambda *_a, **_k: "",
+        raising=False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _default_followup_claim_db(monkeypatch):
+    """Default do Supabase do scheduler p/ a reivindicação atômica de follow-up.
+
+    Desde o claim atômico (scheduler._claim_followup_job), process_due_followups faz
+    um UPDATE guardado no banco ANTES de despachar cada job. O claim é fail-CLOSED: erro
+    na query → pula o job (correto em produção — não processa sem serializar). Muitos
+    testes que dirigem process_due_followups por caminhos de early-return não mockavam
+    get_supabase (não precisavam), e com claim real contra a URL fake o claim falharia e
+    o job seria pulado. Este autouse dá um cliente MagicMock por padrão (claim vence,
+    crash-recovery no-op), espelhando o padrão de `_stub_catalog`. Testes que asseguram
+    comportamento específico de claim/DB sobrescrevem via `patch(...get_supabase)` ou
+    `patch(..._claim_followup_job)` no próprio corpo (o with-patch vence durante o teste).
+    """
+    monkeypatch.setattr(
+        "app.follow_up.scheduler.get_supabase",
+        lambda: MagicMock(),
         raising=False,
     )
 

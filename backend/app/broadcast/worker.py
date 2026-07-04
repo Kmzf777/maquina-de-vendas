@@ -17,6 +17,7 @@ from app.broadcast.service import (
     increment_broadcast_sent,
     increment_broadcast_failed,
     save_broadcast_lead_wamid,
+    requeue_broadcast_lead,
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.templates.intent import dispatch_metadata
@@ -912,6 +913,17 @@ async def process_single_broadcast(broadcast: dict):
                 except Exception:
                     pass
                 return
+        except httpx.TransportError as transport_err:
+            # Queda TRANSITÓRIA de conexão (GOAWAY/RemoteProtocolError/ConnectError) que
+            # esgotou os retries HTTP do _request_with_retry. NÃO é uma rejeição da Meta —
+            # o número provavelmente está OK, a rede é que caiu. Requeue p/ 'pending' (o
+            # próximo tick retenta) em vez de queimar o lead como falha permanente. Não
+            # incrementa o contador de falhas. Paridade com o retry de GOAWAY do processor.
+            logger.warning(
+                "[BROADCAST] Erro transitório de conexão p/ %s: %s — requeue (não é falha permanente)",
+                lead["phone"], transport_err,
+            )
+            requeue_broadcast_lead(bl["id"])
         except Exception as e:
             logger.error(f"Failed to send to {lead['phone']}: {e}")
             mark_broadcast_lead_failed(bl["id"], str(e))

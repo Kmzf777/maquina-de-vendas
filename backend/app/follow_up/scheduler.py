@@ -7,7 +7,7 @@ import httpx
 
 from app.agent.gemini_native import get_client as get_gemini_client
 from app.config import settings
-from app.follow_up.service import get_due_followups
+from app.follow_up.service import get_due_followups, _ENV_TAG
 from app.leads.service import resolve_send_target, create_deal, record_dispatch_note, strip_greeting_prefix
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
@@ -540,9 +540,20 @@ async def _generate_followup_message(
 async def process_due_followups(now: datetime | None = None) -> None:
     """Processa jobs de follow-up vencidos. Chamado pelo worker a cada tick."""
     now = now or datetime.now(timezone.utc)
+    # Crash-recovery: devolve p/ 'pending' jobs presos em 'processing' (worker morreu
+    # após reivindicar, ou falha transitória sem estado terminal) ANTES de buscar os
+    # devidos — assim eles reentram na fila deste tick. Espelha broadcast/worker.py.
+    _recover_stale_followup_jobs(now)
     jobs = get_due_followups(now)
 
     for job in jobs:
+        # Reivindicação atômica (anti-duplicidade multi-worker): só ESTE processo segue
+        # com o job. Se outro worker já o pegou (claim perdido), pula sem processar —
+        # evita template/mensagem duplicados caso o worker seja escalado para N réplicas.
+        if not _claim_followup_job(job["id"]):
+            logger.info("[FOLLOWUP] job %s já reivindicado por outro worker — pulando", job["id"])
+            continue
+
         # Rota jobs de resgate de handoff para handler dedicado (antes de qualquer guard padrão)
         if job.get("job_type") == "handoff_rescue":
             await _process_handoff_rescue(job, now)
@@ -1276,6 +1287,62 @@ def _cancel_job(job_id: str, reason: str) -> None:
         "status": "cancelled",
         "cancel_reason": reason,
     }).eq("id", job_id).execute()
+
+
+def _claim_followup_job(job_id: str) -> bool:
+    """Reivindicação atômica de um follow-up job: pending→processing guardado por status.
+
+    Retorna True apenas se ESTE processo venceu a corrida (o UPDATE guardado por
+    `.eq("status","pending")` só afeta a linha se ela ainda estiver pendente; sob N
+    workers, somente um obtém a linha). Blinda contra envio duplicado quando o worker de
+    follow-up for escalado para múltiplas réplicas no Swarm — espelha o claim atômico de
+    broadcast_leads (broadcast/worker.py). Fail-open: erro na query → False (não processa,
+    o próximo tick tenta de novo) para nunca arriscar um envio não-serializado."""
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("follow_up_jobs")
+            .update({"status": "processing", "claimed_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", job_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:
+        logger.warning("[FOLLOWUP] falha ao reivindicar job %s: %s", job_id, exc)
+        return False
+
+
+def _recover_stale_followup_jobs(now: datetime, *, stale_minutes: int = 5) -> int:
+    """Crash-recovery: devolve para 'pending' jobs presos em 'processing' há mais de
+    `stale_minutes` (worker morreu após reivindicar, ou uma falha transitória que não
+    chegou a marcar estado terminal). Escopado ao env atual. Espelha a crash-recovery de
+    broadcast_leads. Fail-soft: erro → 0 (o watchdog Check 3 ainda observa jobs presos).
+
+    Como o job só é marcado terminal (sent/cancelled) DEPOIS do envio, um job requeueado
+    aqui em geral ainda não enviou nada; a janela residual (enviou mas caiu antes de
+    marcar) é a mesma do broadcast e limitada pelo cutoff de `stale_minutes`."""
+    try:
+        sb = get_supabase()
+        cutoff = (now - timedelta(minutes=stale_minutes)).isoformat()
+        res = (
+            sb.table("follow_up_jobs")
+            .update({"status": "pending", "claimed_at": None})
+            .eq("status", "processing")
+            .eq("env_tag", _ENV_TAG)
+            .lt("claimed_at", cutoff)
+            .execute()
+        )
+        n = len(res.data or [])
+        if n:
+            logger.warning(
+                "[FOLLOWUP] recuperados %d job(s) presos em 'processing' há >%dmin (env=%s)",
+                n, stale_minutes, _ENV_TAG,
+            )
+        return n
+    except Exception as exc:
+        logger.warning("[FOLLOWUP] falha na crash-recovery de jobs 'processing': %s", exc)
+        return 0
 
 
 def _mark_sent(job_id: str) -> None:

@@ -351,10 +351,15 @@ def check_stuck_followup_jobs(now: datetime) -> int:
     """Check 3 — jobs de follow-up pendentes com fire_at muito no passado (scheduler parado)."""
     sb = get_supabase()
     cutoff = (now - timedelta(hours=STUCK_JOB_HOURS)).isoformat()
+    # Inclui 'processing' além de 'pending': desde o claim atômico do follow-up
+    # (scheduler._claim_followup_job) um job pode ficar preso em 'processing' se o worker
+    # morrer após reivindicar. A crash-recovery devolve p/ 'pending' após 5min, MAS se o
+    # próprio worker estiver morto ela não roda — então 'processing' antigo também sinaliza
+    # scheduler parado e não pode ficar invisível a este check.
     res = (
         sb.table("follow_up_jobs")
         .select("id, job_type, fire_at")
-        .eq("status", "pending")
+        .in_("status", ["pending", "processing"])
         .eq("env_tag", _ENV_TAG)
         .lte("fire_at", cutoff)
         .limit(STUCK_JOB_LIMIT)

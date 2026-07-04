@@ -69,6 +69,21 @@ def mark_broadcast_lead_failed(bl_id: str, error: str) -> None:
     }).eq("id", bl_id).execute()
 
 
+def requeue_broadcast_lead(bl_id: str) -> None:
+    """Devolve um lead reivindicado ('processing') para 'pending' após uma falha
+    TRANSITÓRIA de conexão (GOAWAY/RemoteProtocolError/ConnectError) que escapou dos
+    retries HTTP do _request_with_retry — em vez de queimá-lo como falha permanente.
+
+    Guardado por status='processing' (idempotente): nunca reverte um lead já sent/failed
+    nem toca um pending. O próximo tick (ou a crash-recovery de 'processing' órfão)
+    retenta o envio. Não incrementa o contador de falhas — não foi uma falha real."""
+    sb = get_supabase()
+    sb.table("broadcast_leads").update({
+        "status": "pending",
+        "claimed_at": None,
+    }).eq("id", bl_id).eq("status", "processing").execute()
+
+
 def increment_broadcast_sent(broadcast_id: str) -> None:
     sb = get_supabase()
     sb.rpc("increment_broadcast_sent", {"broadcast_id_param": broadcast_id}).execute()
