@@ -11,7 +11,7 @@ from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
-    add_tags_to_lead, move_deal_to_vendor_pipeline,
+    add_tags_to_lead, move_deal_to_vendor_pipeline, vendor_user_id_for_segment,
     ensure_segment_deal, mark_deal_qualificado,
     get_relationship_summary,
 )
@@ -211,6 +211,31 @@ TOOLS_SCHEMA = [
                     "motivo": {"type": "string", "description": "Motivo do encaminhamento ou encerramento"},
                 },
                 "required": ["mensagem_despedida"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "qualificar_lead",
+            "description": (
+                "Registra as ÂNCORAS de qualificação do lead à medida que voce as descobre na "
+                "conversa. Chame assim que captar cada uma — NAO espere o lead pedir pra comprar. "
+                "Âncoras: finalidade (para que o lead quer o cafe: revenda, cafeteria, restaurante, "
+                "marca propria, etc.), volume (quanto pretende: kg, pacotes, fardos, pedido mensal), "
+                "urgencia (quando pretende comprar/decidir). Passe apenas as que ja souber; pode "
+                "chamar de novo depois pra completar. Quando finalidade E volume ja estiverem "
+                "definidos, o sistema transfere o lead pro vendedor automaticamente — voce NAO "
+                "precisa chamar encaminhar_humano nesse caso."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "finalidade": {"type": "string", "description": "Para que o lead quer o cafe (revenda, cafeteria, restaurante, marca propria, etc.)"},
+                    "volume": {"type": "string", "description": "Volume/quantidade pretendida (kg, pacotes, fardos, pedido mensal)"},
+                    "urgencia": {"type": "string", "description": "Prazo/urgencia da compra ou decisao (opcional)"},
+                },
+                "required": [],
             },
         },
     },
@@ -530,9 +555,9 @@ def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
         "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
-        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
+        "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
         # Varejo B2C NÃO é "lead perdido": consumo NUNCA auto-descarta (sem
         # registrar_sem_interesse_atual). A saída legítima continua sendo opt-out (lead pede
         # pra parar) — handoff não se aplica ao self-service. (Auditoria lead 5551991295543.)
@@ -695,11 +720,66 @@ async def execute_tool(
         save_message(lead_id, "system", f"stage alterado para: {new_stage}", conversation_id=conversation_id)
         return f"Stage alterado para: {new_stage}"
 
+    elif tool_name == "qualificar_lead":
+        # Item 3: persiste as âncoras de qualificação e, quando finalidade E volume já estão
+        # definidos, dispara o handoff PROATIVAMENTE — a decisão sai do julgamento do modelo e
+        # passa pro código (o modelo só relata âncoras). Rescata o "caso Joabe".
+        _q_in = {
+            "finalidade": (args.get("finalidade") or "").strip(),
+            "volume": (args.get("volume") or "").strip(),
+            "urgencia": (args.get("urgencia") or "").strip(),
+        }
+        try:
+            _cur = get_lead(lead_id) or {}
+            _meta = dict(_cur.get("metadata") or {})
+            _anchors = dict(_meta.get("qualificacao") or {})
+            for _k, _v in _q_in.items():
+                if _v:
+                    _anchors[_k] = _v
+            _meta["qualificacao"] = _anchors
+            update_lead(lead_id, metadata=_meta)
+        except Exception as _q_exc:
+            logger.error("qualificar_lead: falha ao persistir âncoras p/ lead %s: %s", lead_id, _q_exc)
+            _anchors = {k: v for k, v in _q_in.items() if v}
+        save_message(
+            lead_id, "system",
+            f"[qualificar_lead] finalidade={_anchors.get('finalidade')} "
+            f"volume={_anchors.get('volume')} urgencia={_anchors.get('urgencia')}",
+            conversation_id=conversation_id,
+        )
+        if _anchors.get("finalidade") and _anchors.get("volume"):
+            logger.info("qualificar_lead: âncoras completas → handoff proativo (lead %s)", lead_id)
+            return await execute_tool(
+                "encaminhar_humano",
+                {
+                    "vendedor": "João Brás",
+                    "motivo": (
+                        f"handoff proativo — âncoras: finalidade={_anchors.get('finalidade')} / "
+                        f"volume={_anchors.get('volume')}"
+                    ),
+                },
+                lead_id=lead_id,
+                phone=phone,
+                conversation_id=conversation_id,
+            )
+        return "Âncoras de qualificação registradas."
+
     elif tool_name == "encaminhar_humano":
         motivo = args.get("motivo", "lead qualificado")
         vendedor = args.get("vendedor", "Vendedor")
+        # Item 1: resolve o responsável ANTES de desligar a IA, para gravar assigned_to no
+        # mesmo update — o lead nunca fica órfão. Fonte de verdade = owner do pipeline do
+        # segmento (consumo/secretaria → None, self-service). Fail-soft.
         try:
-            update_lead(lead_id, status="converted", human_control=True, ai_enabled=False)
+            _seg = (get_lead(lead_id) or {}).get("stage")
+            _assigned_to = vendor_user_id_for_segment(_seg)
+        except Exception:
+            _assigned_to = None
+        _disable_fields = {"status": "converted", "human_control": True, "ai_enabled": False}
+        if _assigned_to:
+            _disable_fields["assigned_to"] = _assigned_to
+        try:
+            update_lead(lead_id, **_disable_fields)
         except Exception as exc:
             logger.error(
                 "CRITICAL: encaminhar_humano failed to set ai_enabled=False for lead %s: %s",
@@ -742,6 +822,24 @@ async def execute_tool(
                 lead_id, exc, exc_info=True,
             )
         save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
+        # Item 2: carimbo ESTRUTURADO do handoff (legível por máquina), independente do LLM de
+        # resumo. Torna a cascata Qualificados/Aceites contável por evento real de handoff, sem
+        # depender do estágio do kanban (contaminado por desqualificações suaves).
+        try:
+            _cur_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
+            _cur_meta["handoff"] = {
+                "vendedor_id": _assigned_to,
+                "vendedor": vendedor,
+                "segmento": _seg,
+                "motivo": motivo,
+                "at": datetime.now(_TZ_BR).isoformat(),
+            }
+            update_lead(lead_id, metadata=_cur_meta)
+        except Exception as _stamp_exc:
+            logger.error(
+                "encaminhar_humano: falha ao gravar carimbo metadata.handoff p/ lead %s: %s",
+                lead_id, _stamp_exc,
+            )
         # Gera e armazena resumo estruturado da qualificação
         try:
             from app.agent.summary import generate_qualification_summary
@@ -982,6 +1080,17 @@ async def execute_tool(
             queue.append({"b64": b64, "mimetype": mimetype, "caption": caption})
 
         save_message(lead_id, "system", f"[enviar_fotos] Fotos de {categoria} enviadas ({len(photos)}/{len(photos)})", conversation_id=conversation_id)
+        # Item 3 (backstop): marca que o catálogo foi apresentado. A rede de segurança de
+        # follow-up usa essa flag para entregar ao João o lead qualificado que viu catálogo e
+        # ficou inativo (padrão dominante do vazamento — "caso Joabe").
+        try:
+            _cf_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
+            if not _cf_meta.get("catalog_shown"):
+                _cf_meta["catalog_shown"] = True
+                _cf_meta["catalog_shown_at"] = datetime.now(_TZ_BR).isoformat()
+                update_lead(lead_id, metadata=_cf_meta)
+        except Exception as _cf_exc:
+            logger.error("enviar_fotos: falha ao marcar catalog_shown p/ lead %s: %s", lead_id, _cf_exc)
         return f"{len(photos)} fotos de {categoria} enfileiradas para envio após o texto"
 
     elif tool_name == "enviar_foto_produto":

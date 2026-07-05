@@ -752,6 +752,41 @@ def move_deal_to_vendor_pipeline(
         return None
 
 
+# Fallback conhecido: João é dono dos pipelines de atacado/private_label. Usado quando o
+# owner_user_id do pipeline de destino vier nulo (fonte de verdade continua sendo o pipeline).
+JOAO_USER_ID = "1c3c78ed-ef47-4dca-9a63-2052f28e8fd6"
+
+
+def vendor_user_id_for_segment(segment: str | None) -> str | None:
+    """Resolve o user_id do vendedor responsável por um segmento de handoff.
+
+    Fonte de verdade: `pipelines.owner_user_id` do destino mapeado em SEGMENT_HANDOFF_PIPELINE
+    (mesma origem que roteia o card). Fallback para o ID conhecido do João em atacado/
+    private_label quando o owner vier nulo. Retorna None para segmentos sem vendedor dedicado
+    (consumo/secretaria) — o lead permanece self-service, sem responsável atribuído.
+    Fail-soft: erro é logado e cai no fallback/None (nunca derruba o handoff).
+    """
+    seg = (segment or "").strip()
+    dest_name = SEGMENT_HANDOFF_PIPELINE.get(seg)
+    if not dest_name:
+        return None
+    try:
+        sb = get_supabase()
+        row = (
+            sb.table("pipelines").select("owner_user_id").eq("name", dest_name).limit(1).execute()
+        )
+        owner = (row.data[0].get("owner_user_id") if row.data else None)
+        if owner:
+            return owner
+    except Exception as exc:
+        logger.error(
+            "vendor_user_id_for_segment: falha ao resolver owner p/ segmento %s: %s", seg, exc
+        )
+    if seg in ("atacado", "private_label"):
+        return JOAO_USER_ID
+    return None
+
+
 # ── Tags (etiquetas de CRM aplicadas pela IA) ───────────────────────────────
 def add_tags_to_lead(lead_id: str, names: list[str]) -> list[str]:
     """Aplica tags (por NOME) a um lead, gravando em lead_tags com dedupe.
