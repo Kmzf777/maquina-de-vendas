@@ -503,6 +503,40 @@ def find_pending_ai_return(conversation_id: str) -> dict[str, Any] | None:
         return None
 
 
+# Rede de segurança (backstop) pós-catálogo: segmentos em que "já viu o catálogo e sumiu"
+# significa lead qualificado o bastante para não ficar preso na cadência genérica.
+_PROACTIVE_HANDOFF_STAGES = {"atacado", "private_label"}
+
+
+def should_proactive_handoff(lead: dict[str, Any] | None) -> bool:
+    """True quando um lead inativo deve ser entregue PROATIVAMENTE ao vendedor humano,
+    em vez de receber o próximo toque genérico da cadência de follow-up.
+
+    Elegível quando, simultaneamente:
+    - `lead.stage` está em {atacado, private_label} (segmentos com catálogo/preço reais,
+      onde "sumir depois do catálogo" é o sinal mais forte de intenção que o funil produz);
+    - `lead.metadata.catalog_shown` é verdadeiro (a IA já apresentou o catálogo via a tool
+      `enviar_fotos` — carimbo de outro workstream, ver `metadata.catalog_shown_at`);
+    - `lead.metadata.handoff` está AUSENTE (ainda não houve um handoff real — se já houve,
+      o lead já foi entregue e cabe ao vendedor, não a este backstop).
+
+    Função PURA e sem efeitos colaterais: só decide. Quem chama decide o que fazer com o
+    resultado (ex.: disparar `encaminhar_humano` via `execute_tool` e pular o follow-up
+    padrão deste lead). `lead=None` (falha ao reler o registro, lead inexistente) → False,
+    fail-safe: na dúvida, o lead segue na cadência normal em vez de ganhar um handoff.
+    """
+    if not lead:
+        return False
+    if lead.get("stage") not in _PROACTIVE_HANDOFF_STAGES:
+        return False
+    metadata = lead.get("metadata") or {}
+    if not metadata.get("catalog_shown"):
+        return False
+    if metadata.get("handoff"):
+        return False
+    return True
+
+
 def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
     """Retorna jobs pending cujo fire_at já passou."""
     sb = get_supabase()

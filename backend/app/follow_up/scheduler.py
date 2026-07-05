@@ -7,7 +7,7 @@ import httpx
 
 from app.agent.gemini_native import get_client as get_gemini_client
 from app.config import settings
-from app.follow_up.service import get_due_followups, _ENV_TAG
+from app.follow_up.service import get_due_followups, should_proactive_handoff, _ENV_TAG
 from app.leads.service import resolve_send_target, create_deal, record_dispatch_note, strip_greeting_prefix
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
@@ -593,6 +593,28 @@ async def process_due_followups(now: datetime | None = None) -> None:
             )
             continue
 
+        # REDE DE SEGURANÇA (backstop pós-catálogo): lead atacado/private_label que já viu
+        # o catálogo e ainda não teve handoff real fica preso na cadência genérica de
+        # follow-up indefinidamente — o próximo toque "seria" só mais uma mensagem
+        # automática da Valéria quando o sinal real já indica entregar ao vendedor. Roda
+        # ANTES do follow-up padrão (guards de janela/LLM abaixo) e nunca colide com o
+        # cancelamento de jobs pendentes que o próprio handoff faz (cancel_followups_by_phone
+        # dentro de encaminhar_humano só afeta jobs 'pending'; este job já está 'processing'
+        # por _claim_followup_job, por isso cancelamos explicitamente no fim).
+        # Fail-soft: qualquer erro aqui é logado e o ciclo segue para o follow-up padrão —
+        # nunca derruba o tick por causa deste backstop.
+        try:
+            fresh_lead = _fetch_lead_for_backstop(job["lead_id"])
+            if should_proactive_handoff(fresh_lead):
+                await _fire_proactive_handoff(job, fresh_lead, phone=lead.get("phone", ""))
+                continue
+        except Exception as exc:
+            logger.error(
+                "[FOLLOWUP] falha na rede de segurança pos-catalogo (lead %s) — seguindo "
+                "para o follow-up padrão: %s",
+                job["lead_id"], exc, exc_info=True,
+            )
+
         # Guard: janela de 24h POR CANAL — fonte é a conversa (lead+canal), não o
         # campo global do lead. A janela pode estar aberta em outro canal e expirada aqui.
         last_msg_str = conversation.get("last_customer_message_at")
@@ -730,6 +752,64 @@ async def process_due_followups(now: datetime | None = None) -> None:
 
         _mark_sent(job["id"])
         logger.info(f"[FOLLOWUP] Enviado seq={sequence} lead={lead['phone']}")
+
+
+def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
+    """Relê o lead com `stage`/`metadata` para a decisão `should_proactive_handoff`.
+
+    O select de `get_due_followups` (join `leads!inner(...)`) não traz `stage` nem
+    `metadata` — só id/phone/name/last_customer_message_at/wa_id — então a decisão
+    precisa reler o lead à parte, mesmo padrão de `_process_ai_reengage`/
+    `_process_ai_scheduled_return`. Fail-soft: erro de DB → None (`should_proactive_handoff`
+    trata `None` como não-elegível, então o lead segue para o follow-up padrão).
+    """
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("leads")
+            .select("id, phone, stage, metadata")
+            .eq("id", lead_id)
+            .single()
+            .execute()
+        )
+        return res.data
+    except Exception as exc:
+        logger.warning(
+            "[FOLLOWUP] falha ao reler lead %s p/ backstop pos-catalogo: %s", lead_id, exc
+        )
+        return None
+
+
+async def _fire_proactive_handoff(job: dict, lead: dict, phone: str) -> None:
+    """Dispara o handoff proativo (via `execute_tool("encaminhar_humano", ...)`) para um
+    lead qualificado/inativo pós-catálogo, e encerra ESTE job de follow-up.
+
+    `execute_tool` é importado tardiamente (mesmo motivo do `run_agent` lazy: evita o
+    ciclo de import scheduler → orchestrator → tools → scheduler). `encaminhar_humano`
+    já cancela os jobs 'pending' do lead (cancel_followups_by_phone) e envia a mensagem
+    de despedida + cartão de contato — aqui só fechamos o job ATUAL, que já está
+    'processing' (reivindicado por `_claim_followup_job` antes deste ponto) e por isso
+    não é alcançado por aquele cancelamento (que só mira jobs 'pending').
+    """
+    from app.agent.tools import execute_tool
+
+    lead_id = job["lead_id"]
+    conversation_id = job["conversation_id"]
+    logger.info(
+        "[FOLLOWUP] handoff proativo pos-catalogo — lead=%s stage=%s conv=%s",
+        lead_id, lead.get("stage"), conversation_id,
+    )
+    await execute_tool(
+        "encaminhar_humano",
+        {
+            "vendedor": "João Brás",
+            "motivo": "handoff proativo — qualificado inativo pos-catalogo",
+        },
+        lead_id=lead_id,
+        phone=phone or lead.get("phone", ""),
+        conversation_id=conversation_id,
+    )
+    _cancel_job(job["id"], "proactive_handoff_pos_catalogo")
 
 
 async def _process_handoff_rescue(job: dict, now: datetime) -> None:

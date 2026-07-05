@@ -16,6 +16,7 @@ from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.catalog import get_products_by_funnel
 from app.agent.tools import get_tools_for_stage, execute_tool
+from app.agent.adherence import strip_prohibited_phrases
 from app.conversations.service import (
     get_history,
     resolve_message_text_by_wamid,
@@ -257,7 +258,17 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
             conversation_id, source, stage, pre,
         )
-    return cleaned
+    # Guarda de aderência (2026-07-04): remove frases proibidas de jargão de
+    # call-center ("pra te direcionar da melhor forma") que fogem da voz da
+    # Valéria. Função pura, testada isoladamente em app.agent.adherence.
+    after_phrase_strip = strip_prohibited_phrases(cleaned)
+    if after_phrase_strip != cleaned:
+        logger.info(
+            "[ADHERENCE GUARD] frase proibida removida do texto final em conv %s "
+            "(source=%s, stage=%s)",
+            conversation_id, source, stage,
+        )
+    return after_phrase_strip
 
 
 # ---------------------------------------------------------------------------
