@@ -71,7 +71,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
       )}
 
       <main
-        className={`flex-1 relative flex flex-col pt-14 md:pt-0 ${
+        className={`flex-1 min-w-0 relative flex flex-col pt-14 md:pt-0 ${
           isConversas ? "overflow-hidden" : "overflow-auto"
         }`}
       >
