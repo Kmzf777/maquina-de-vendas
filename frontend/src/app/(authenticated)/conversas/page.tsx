@@ -501,10 +501,10 @@ export default function ConversasPage() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-[#faf9f6]">
+    <div className="flex h-full min-w-0 overflow-hidden bg-[#faf9f6]">
 
       {/* Mobile: one panel at a time */}
-      <div className={`md:hidden flex-1 flex-col h-full ${mobileView === "list" ? "flex" : "hidden"}`}>
+      <div className={`md:hidden flex-1 min-w-0 flex-col h-full ${mobileView === "list" ? "flex" : "hidden"}`}>
         <ChatList
           conversations={conversations}
           channels={channels}
@@ -522,7 +522,7 @@ export default function ConversasPage() {
         />
       </div>
 
-      <div className={`md:hidden flex-1 flex-col h-full ${mobileView === "chat" && selectedConversation ? "flex" : "hidden"}`}>
+      <div className={`md:hidden flex-1 min-w-0 flex-col h-full ${mobileView === "chat" && selectedConversation ? "flex" : "hidden"}`}>
         {selectedConversation && (
           <ChatView
             conversation={selectedConversation}
@@ -547,7 +547,7 @@ export default function ConversasPage() {
         )}
       </div>
 
-      <div className={`md:hidden flex-1 flex-col h-full overflow-y-auto ${mobileView === "contact" && selectedConversation ? "flex" : "hidden"}`}>
+      <div className={`md:hidden flex-1 min-w-0 flex-col h-full overflow-y-auto ${mobileView === "contact" && selectedConversation ? "flex" : "hidden"}`}>
         {selectedConversation && (
           <ContactDetail
             conversation={selectedConversation}
