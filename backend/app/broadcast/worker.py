@@ -22,10 +22,7 @@ from app.broadcast.service import (
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.templates.intent import dispatch_metadata
-from app.leads.service import (
-    update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
-    is_bsuid,
-)
+from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -600,29 +597,6 @@ def _alert_silent_channel(sb, channel_id: str, count: int) -> None:
         logger.warning("[DELIVERY] falha ao criar alerta de canal silencioso: %s", e)
 
 
-def _capture_canonical_wa_id(lead: dict, send_response: dict) -> None:
-    """Persiste o `contacts[0].wa_id` da resposta de envio como wa_id CONFIRMADO do lead.
-
-    É o endereço que a Meta resolveu para o destino — o mais autoritativo que temos sem
-    depender de inbound. Grava (com `wa_id_confirmed_at`) só quando difere do atual ou
-    quando ainda não havia procedência, e ignora BSUIDs. Assim o próximo disparo frio a
-    este lead já usa o endereço canônico via resolve_send_target(strict).
-    """
-    contacts = send_response.get("contacts") or []
-    canonical = (contacts[0].get("wa_id") if contacts else None) or None
-    if not canonical or is_bsuid(canonical):
-        return
-    already = lead.get("wa_id") == canonical and lead.get("wa_id_confirmed_at")
-    if already:
-        return
-    update_lead(
-        lead["id"],
-        wa_id=canonical,
-        wa_id_confirmed_at=datetime.now(timezone.utc).isoformat(),
-    )
-    logger.info("[BROADCAST] wa_id canônico capturado p/ lead %s: %s", lead.get("id"), canonical)
-
-
 def _toggle_br_ninth_digit(number: str | None) -> str | None:
     """Alterna a presença do 9º dígito de um móvel BR em E.164 (sem '+').
 
@@ -1063,15 +1037,11 @@ async def process_single_broadcast(broadcast: dict):
                     save_broadcast_lead_wamid(bl["id"], wamid)
             except Exception as wamid_err:
                 logger.warning("[BROADCAST] Could not save wamid for lead %s: %s", lead["phone"], wamid_err)
-            # Aprendizado do endereço canônico: a Meta devolve em contacts[0].wa_id o
-            # endereço que ela RESOLVEU para este destino. Persistimos como wa_id confirmado
-            # (com procedência), de modo que os próximos disparos frios a este lead já usem o
-            # endereço autoritativo — sem depender de o lead nos escrever antes. Não sobrescreve
-            # um wa_id de inbound igual; grava só quando muda ou ainda não havia procedência.
-            try:
-                _capture_canonical_wa_id(lead, send_response)
-            except Exception as cap_err:
-                logger.warning("[BROADCAST] Could not capture canonical wa_id for lead %s: %s", lead.get("id"), cap_err)
+            # NB: NÃO carimbamos procedência a partir da resposta SÍNCRONA do envio. A Meta
+            # devolve contacts[0].wa_id (e HTTP 200 "accepted") mesmo para endereços que ela
+            # NÃO entrega — foi o que recriou a poluição do wa_id. A procedência (wa_id_confirmed_at)
+            # passa a vir só de prova ASSÍNCRONA de tráfego real: webhook delivered/read ou inbound
+            # (ver _handle_delivery_status e o captura de wa_id do inbound em meta_router).
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
 

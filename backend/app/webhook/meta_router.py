@@ -63,8 +63,17 @@ def _register_lead(
         logger.warning("Failed to register lead for %s/%s: %s", from_number, bsuid, exc)
         return
     try:
-        if lead and from_number and not is_bsuid(from_number) and lead.get("wa_id") != from_number:
-            update_lead(lead["id"], wa_id=from_number)
+        # Inbound REAL = prova de tráfego. Captura o wa_id entregável E carimba a procedência
+        # (wa_id_confirmed_at) — só a prova assíncrona/real confere o selo; a resposta síncrona
+        # do envio não (ver worker: captura síncrona removida).
+        if lead and from_number and not is_bsuid(from_number):
+            wa_updates: dict = {}
+            if lead.get("wa_id") != from_number:
+                wa_updates["wa_id"] = from_number
+            if not lead.get("wa_id_confirmed_at"):
+                wa_updates["wa_id_confirmed_at"] = datetime.now(timezone.utc).isoformat()
+            if wa_updates:
+                update_lead(lead["id"], **wa_updates)
     except Exception as exc:
         logger.warning("Failed to capture wa_id=%s for lead %s: %s", from_number, lead.get("id"), exc)
     try:
@@ -148,7 +157,9 @@ def _extract_statuses(payload: dict) -> list[dict]:
     return statuses
 
 
-async def _handle_delivery_status(wamid: str, status: str, errors: list | None = None) -> None:
+async def _handle_delivery_status(
+    wamid: str, status: str, errors: list | None = None, recipient_id: str | None = None
+) -> None:
     """Handle Meta delivery status events: updates messages.delivery_status and broadcast counters."""
     if status not in ("sent", "delivered", "read", "failed"):
         return
@@ -157,6 +168,21 @@ async def _handle_delivery_status(wamid: str, status: str, errors: list | None =
         sb.table("messages").update({"delivery_status": status}).eq("wamid", wamid).execute()
     except Exception as e:
         logger.warning("[DELIVERY] Failed to update message delivery_status for wamid=%s: %s", wamid, e)
+
+    # Prova de tráfego REAL: delivered/read comprova que a Meta trafega dados por este
+    # endereço. É AQUI (e no inbound), não na resposta síncrona do envio, que o wa_id ganha
+    # o selo de procedência. Adota o recipient_id como wa_id canônico entregável (comprovado).
+    if status in ("delivered", "read"):
+        try:
+            msg = sb.table("messages").select("lead_id").eq("wamid", wamid).limit(1).execute()
+            lead_id = msg.data[0]["lead_id"] if msg.data else None
+            if lead_id:
+                confirm_updates: dict = {"wa_id_confirmed_at": datetime.now(timezone.utc).isoformat()}
+                if recipient_id and not is_bsuid(recipient_id):
+                    confirm_updates["wa_id"] = recipient_id
+                update_lead(lead_id, **confirm_updates)
+        except Exception as e:
+            logger.warning("[DELIVERY] Failed to confirm wa_id provenance for wamid=%s: %s", wamid, e)
 
     if status == "delivered":
         try:
@@ -474,8 +500,9 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         wamid = status_event.get("id")
         status = status_event.get("status")
         errors = status_event.get("errors") or []
+        recipient_id = status_event.get("recipient_id")
         if wamid and status:
-            background_tasks.add_task(_handle_delivery_status, wamid, status, errors)
+            background_tasks.add_task(_handle_delivery_status, wamid, status, errors, recipient_id)
 
     if _status_has_backfillable_contact(payload):
         background_tasks.add_task(_backfill_phone_from_status, payload)

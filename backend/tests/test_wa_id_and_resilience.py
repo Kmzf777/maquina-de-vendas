@@ -78,20 +78,40 @@ def test_run_with_retry_does_not_mask_application_errors():
 # Webhook captures the real wa_id (messages[].from) onto the lead
 # --------------------------------------------------------------------------- #
 
-def test_register_lead_captures_wa_id_from_raw_number():
+def test_register_lead_captures_wa_id_and_stamps_provenance():
+    """Inbound real = prova de tráfego: grava o wa_id E carimba wa_id_confirmed_at."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
-               return_value={"id": "L1", "wa_id": None}) as goc, \
+               return_value={"id": "L1", "wa_id": None, "wa_id_confirmed_at": None}) as goc, \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("553432262600", "Arthur")
     goc.assert_called_once()
-    upd.assert_called_once_with("L1", wa_id="553432262600")
+    assert upd.called
+    args, kwargs = upd.call_args
+    assert args[0] == "L1"
+    assert kwargs["wa_id"] == "553432262600"
+    assert kwargs["wa_id_confirmed_at"]
 
 
-def test_register_lead_skips_update_when_wa_id_unchanged():
+def test_register_lead_stamps_provenance_when_confirmed_missing():
+    """wa_id igual, mas sem procedência ainda: o inbound carimba wa_id_confirmed_at (sem tocar wa_id)."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "553432262600"}), \
+         patch("app.webhook.meta_router.update_lead") as upd:
+        _register_lead("553432262600", None)
+    assert upd.called
+    kwargs = upd.call_args.kwargs
+    assert "wa_id" not in kwargs
+    assert kwargs["wa_id_confirmed_at"]
+
+
+def test_register_lead_skips_update_when_already_confirmed():
+    """wa_id igual E já confirmado: nada a fazer, nenhum update."""
+    from app.webhook.meta_router import _register_lead
+    with patch("app.webhook.meta_router.get_or_create_lead",
+               return_value={"id": "L1", "wa_id": "553432262600",
+                             "wa_id_confirmed_at": "2026-07-01T00:00:00+00:00"}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("553432262600", None)
     upd.assert_not_called()

@@ -8,8 +8,10 @@ e a alternância do 9º dígito da dupla tentativa.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.leads.service import resolve_send_target, has_wa_id_provenance
-from app.broadcast.worker import _toggle_br_ninth_digit, _capture_canonical_wa_id
+from app.broadcast.worker import _toggle_br_ninth_digit
 
 
 # ─── resolve_send_target: gate de procedência ────────────────────────────────
@@ -69,30 +71,38 @@ def test_toggle_non_br_returns_none():
     assert _toggle_br_ninth_digit(None) is None
 
 
-# ─── _capture_canonical_wa_id ────────────────────────────────────────────────
+# ─── procedência SÓ por prova assíncrona (webhook delivered/read) ─────────────
 
-def test_capture_persists_canonical_wa_id():
-    lead = {"id": "L1", "wa_id": None, "wa_id_confirmed_at": None}
-    resp = {"contacts": [{"input": "5534996652412", "wa_id": "553496652412"}],
-            "messages": [{"id": "wamid.x"}]}
-    with patch("app.broadcast.worker.update_lead") as upd:
-        _capture_canonical_wa_id(lead, resp)
+def _delivery_sb(lead_id="L1"):
+    sb = MagicMock()
+    sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{"lead_id": lead_id}] if lead_id else []
+    )
+    return sb
+
+
+@pytest.mark.asyncio
+async def test_delivered_webhook_stamps_provenance_and_adopts_recipient():
+    """delivered comprova tráfego → carimba wa_id_confirmed_at e adota o recipient_id."""
+    from app.webhook.meta_router import _handle_delivery_status
+    sb = _delivery_sb("L1")
+    with patch("app.webhook.meta_router.get_supabase", return_value=sb), \
+         patch("app.webhook.meta_router.update_lead") as upd, \
+         patch("app.broadcast.service.find_broadcast_lead_by_wamid", return_value=None):
+        await _handle_delivery_status("wamid.x", "delivered", [], "553496652412")
     assert upd.called
     kwargs = upd.call_args.kwargs
     assert kwargs["wa_id"] == "553496652412"
     assert kwargs["wa_id_confirmed_at"]
 
 
-def test_capture_noop_when_already_confirmed_same():
-    lead = {"id": "L1", "wa_id": "553496652412", "wa_id_confirmed_at": "2026-07-06T00:00:00+00:00"}
-    resp = {"contacts": [{"wa_id": "553496652412"}]}
-    with patch("app.broadcast.worker.update_lead") as upd:
-        _capture_canonical_wa_id(lead, resp)
-    assert not upd.called
-
-
-def test_capture_ignores_missing_contacts():
-    lead = {"id": "L1", "wa_id": None}
-    with patch("app.broadcast.worker.update_lead") as upd:
-        _capture_canonical_wa_id(lead, {"messages": [{"id": "wamid.x"}]})
+@pytest.mark.asyncio
+async def test_accepted_or_sent_status_does_not_confirm():
+    """Status 'sent' (aceite/roteamento) NÃO confere procedência — só delivered/read."""
+    from app.webhook.meta_router import _handle_delivery_status
+    sb = _delivery_sb("L1")
+    with patch("app.webhook.meta_router.get_supabase", return_value=sb), \
+         patch("app.webhook.meta_router.update_lead") as upd:
+        await _handle_delivery_status("wamid.x", "sent", [], "553496652412")
     assert not upd.called
