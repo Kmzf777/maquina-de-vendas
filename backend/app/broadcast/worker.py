@@ -41,6 +41,20 @@ WORKER_TICK_SECONDS = 30
 # com UUIDs em `in.(...)`).
 _RECONCILE_ID_CHUNK = 100
 
+# Confirmação de entrega assíncrona. A Meta aceita o send (HTTP 200 + wamid,
+# message_status="accepted") e só confirma a entrega física depois, via webhook de
+# status. Uma mensagem que fica em "accepted" além deste limite provavelmente nunca
+# recebeu callback — o canal está "silencioso" (sem webhook de status assinado para o
+# phone_number_id). O corte é folgado: callbacks reais chegam em segundos.
+DELIVERY_CONFIRMATION_TIMEOUT_MINUTES = 30
+# Janela de varredura (piso) — evita reprocessar histórico antigo a cada tick.
+_DELIVERY_LIMBO_LOOKBACK_HOURS = 24
+# Teto de linhas por tick (defesa de Egress; paridade com reconcile_broadcast_replies).
+_DELIVERY_LIMBO_LIMIT = 200
+# A partir de quantas mensagens não confirmadas no MESMO canal, num tick, disparamos
+# o alerta de "canal silencioso" (webhook de status quebrado).
+_SILENT_CHANNEL_ALERT_THRESHOLD = 3
+
 logger = logging.getLogger(__name__)
 
 
@@ -445,6 +459,143 @@ def reconcile_broadcast_replies() -> None:
         )
 
 
+def reconcile_delivery_timeouts() -> None:
+    """Varre mensagens presas em "accepted" (aceitas pela Meta, sem callback de entrega).
+
+    A Meta responde ao send com HTTP 200 + wamid e message_status="accepted" — só um
+    aviso de que a mensagem entrou na fila. A confirmação de entrega vem depois, num
+    webhook de status que promove delivery_status accepted→sent→delivered→read (ou
+    failed). Quando esse webhook NUNCA chega — porque o phone_number_id não tem a
+    assinatura de status ativa (canal "silencioso") — a mensagem ficaria eternamente
+    como "accepted", mascarando uma não-entrega como se fosse sucesso.
+
+    Esta rotina fecha o limbo: mensagens em "accepted" há mais de
+    DELIVERY_CONFIRMATION_TIMEOUT_MINUTES (e dentro da janela de lookback) são marcadas
+    como "undelivered" (entrega não confirmada). Se um mesmo canal acumula várias, um
+    alerta de canal silencioso é criado (dedup 1/h) para a gestão religar o webhook.
+
+    Não toca broadcast_leads nem os contadores do broadcast: o estado de fila
+    (sent/delivered/failed) e a idempotência de reenvio continuam intactos. A verdade
+    visível ao operador vive em messages.delivery_status + no alerta.
+    """
+    sb = get_supabase()
+    now = datetime.now(timezone.utc)
+    timeout_ceil = (now - timedelta(minutes=DELIVERY_CONFIRMATION_TIMEOUT_MINUTES)).isoformat()
+    window_floor = (now - timedelta(hours=_DELIVERY_LIMBO_LOOKBACK_HOURS)).isoformat()
+
+    try:
+        stuck = (
+            sb.table("messages")
+            .select("id, wamid, conversation_id, created_at")
+            .eq("delivery_status", "accepted")
+            .filter("wamid", "not.is", "null")
+            .gte("created_at", window_floor)
+            .lt("created_at", timeout_ceil)
+            .limit(_DELIVERY_LIMBO_LIMIT)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        logger.warning("[DELIVERY] reconcile_delivery_timeouts: falha ao buscar limbo: %s", e)
+        return
+
+    if not stuck:
+        return
+
+    msg_ids = [m["id"] for m in stuck]
+    try:
+        sb.table("messages").update({"delivery_status": "undelivered"}).in_("id", msg_ids).execute()
+    except Exception as e:
+        logger.warning("[DELIVERY] reconcile_delivery_timeouts: falha ao marcar undelivered: %s", e)
+        return
+
+    logger.warning(
+        "[DELIVERY] %d mensagem(ns) sem confirmação de entrega após %dmin → undelivered",
+        len(msg_ids), DELIVERY_CONFIRMATION_TIMEOUT_MINUTES,
+    )
+
+    # Atribui cada mensagem ao seu canal (via conversation) para detectar canal silencioso.
+    conv_ids = sorted({m["conversation_id"] for m in stuck if m.get("conversation_id")})
+    if not conv_ids:
+        return
+    channel_by_conv: dict[str, str] = {}
+    for i in range(0, len(conv_ids), _RECONCILE_ID_CHUNK):
+        chunk = conv_ids[i : i + _RECONCILE_ID_CHUNK]
+        try:
+            rows = (
+                sb.table("conversations")
+                .select("id, channel_id")
+                .in_("id", chunk)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as e:
+            logger.warning("[DELIVERY] reconcile: falha ao mapear conversa→canal: %s", e)
+            continue
+        for r in rows:
+            if r.get("channel_id"):
+                channel_by_conv[r["id"]] = r["channel_id"]
+
+    per_channel: dict[str, int] = {}
+    for m in stuck:
+        ch = channel_by_conv.get(m.get("conversation_id"))
+        if ch:
+            per_channel[ch] = per_channel.get(ch, 0) + 1
+
+    for channel_id, count in per_channel.items():
+        if count >= _SILENT_CHANNEL_ALERT_THRESHOLD:
+            _alert_silent_channel(sb, channel_id, count)
+
+
+def _alert_silent_channel(sb, channel_id: str, count: int) -> None:
+    """Cria alerta de canal silencioso (webhook de status ausente). Dedup: 1/h por canal."""
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        existing = (
+            sb.table("system_alerts")
+            .select("id")
+            .eq("type", "channel_delivery_silent")
+            .eq("resolved", False)
+            .gte("created_at", cutoff)
+            .contains("metadata", {"channel_id": channel_id})
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            return
+    except Exception as e:
+        logger.warning("[DELIVERY] falha ao checar alerta de canal silencioso: %s", e)
+
+    channel_name = channel_id
+    try:
+        ch = get_channel_by_id(channel_id)
+        if ch:
+            channel_name = ch.get("name") or channel_id
+    except Exception:
+        pass
+
+    try:
+        from app.alerts.service import create_system_alert
+        create_system_alert(
+            "channel_delivery_silent",
+            f"Canal sem confirmação de entrega — {channel_name}",
+            (
+                f"{count} mensagem(ns) enviadas pelo canal '{channel_name}' foram aceitas pela "
+                f"Meta mas nunca receberam webhook de status (entrega não confirmada). "
+                f"Provável assinatura de webhook de status inativa para este phone_number_id. "
+                f"Rode backend/scripts/resubscribe_webhook_phone.py e verifique o override de "
+                f"webhook no Meta App Dashboard."
+            ),
+            severity="critical",
+            metadata={"channel_id": channel_id, "stuck_count": count},
+        )
+        logger.critical("[DELIVERY][SILENT] Canal %s silencioso — %d mensagens não confirmadas", channel_name, count)
+    except Exception as e:
+        logger.warning("[DELIVERY] falha ao criar alerta de canal silencioso: %s", e)
+
+
 async def run_worker():
     """Main worker loop: broadcasts, automation engine, follow-ups."""
     logger.info("Worker started")
@@ -464,6 +615,7 @@ async def run_worker():
             from app.agent.memory_manager import process_stale_lead_memories
             await process_stale_lead_memories()
             reconcile_broadcast_replies()
+            reconcile_delivery_timeouts()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
 

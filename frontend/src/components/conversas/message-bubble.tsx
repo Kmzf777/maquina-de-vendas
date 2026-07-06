@@ -3,7 +3,32 @@ import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
 
-function DeliveryTick({ status }: { status?: "sent" | "delivered" | "read" | null }) {
+function DeliveryTick({
+  status,
+}: {
+  status?: "accepted" | "sent" | "delivered" | "read" | "failed" | "undelivered" | null;
+}) {
+  // "accepted": aceito pela fila da Meta, entrega ainda não confirmada → relógio (pendente),
+  // nunca um tick — para não mascarar não-entrega como sucesso.
+  if (status === "accepted") {
+    return (
+      <svg className="inline-block flex-shrink-0 text-white/50" width="10" height="10" viewBox="0 0 24 24" fill="none" aria-label="Aguardando confirmação de entrega">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+        <path d="M12 7.5V12L15 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  // "failed"/"undelivered": Meta reportou falha OU nunca confirmou entrega (canal silencioso).
+  if (status === "failed" || status === "undelivered") {
+    return (
+      <svg className="inline-block flex-shrink-0 text-[#e5484d]" width="11" height="11" viewBox="0 0 24 24" fill="none" aria-label="Entrega não confirmada">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+        <path d="M12 7.5V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="12" cy="16.5" r="1.1" fill="currentColor" />
+      </svg>
+    );
+  }
+
   const isDouble = status === "delivered" || status === "read";
   const isRead = status === "read";
   const color = isRead ? "text-[#53bdeb]" : "text-white/50";

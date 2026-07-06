@@ -131,7 +131,9 @@ export async function POST(
     };
     if (sentWamid) {
       insertData.wamid = sentWamid;
-      insertData.delivery_status = "sent";
+      // "accepted" = aceito pela fila da Meta (HTTP 200 + wamid), NÃO entregue. O webhook
+      // de status promove para sent/delivered/read. Ver save_message no backend.
+      insertData.delivery_status = "accepted";
     }
     if (quoted_wamid) {
       insertData.quoted_wamid = quoted_wamid;

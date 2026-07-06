@@ -187,7 +187,13 @@ def save_message(
         msg["message_type"] = message_type
     if wamid is not None:
         msg["wamid"] = wamid
-        msg["delivery_status"] = "sent"
+        # A Meta responde HTTP 200 + wamid com message_status="accepted" — isso é ACEITE
+        # na fila, NÃO entrega. Gravar "sent" aqui era o falso positivo: a mensagem parecia
+        # entregue (tick) enquanto só havia sido enfileirada. O estado real só avança via
+        # webhook de status (_handle_delivery_status: accepted→sent→delivered→read/failed).
+        # Mensagens presas em "accepted" além do timeout são varridas por
+        # reconcile_delivery_timeouts (canal sem webhook de status = silencioso).
+        msg["delivery_status"] = "accepted"
     if document_name is not None:
         msg["document_name"] = document_name
     if media_mime is not None:
