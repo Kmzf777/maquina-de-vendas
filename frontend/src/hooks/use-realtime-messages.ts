@@ -4,6 +4,19 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Message, QuotedMessage } from "@/lib/types";
 
+/**
+ * Deduplica por id e ordena por created_at ascendente. INSERTs de tempo real chegam
+ * fora de ordem (e podem colidir com o refetch), então normalizamos aqui para evitar
+ * mensagens no lugar errado / duplicadas na thread.
+ */
+function normalizeOrder(raw: Message[]): Message[] {
+  const byId = new Map<string, Message>();
+  for (const m of raw) byId.set(m.id, m);
+  return [...byId.values()].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+}
+
 function enrichWithQuotedMessages(raw: Message[]): Message[] {
   const wamidMap = new Map<string, Message>();
   const idMap = new Map<string, Message>();
@@ -65,7 +78,7 @@ export function useRealtimeMessages(conversationId: string | null) {
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
-          setMessages((prev) => enrichWithQuotedMessages([...prev, payload.new as Message]));
+          setMessages((prev) => enrichWithQuotedMessages(normalizeOrder([...prev, payload.new as Message])));
         }
       )
       .subscribe();

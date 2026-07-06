@@ -14,8 +14,8 @@ interface CampaignTrendChartProps {
 
 export function CampaignTrendChart({ data, period, onPeriodChange }: CampaignTrendChartProps) {
   return (
-    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 md:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h3 style={{ letterSpacing: '-0.3px' }} className="text-[18px] font-medium text-[#111111]">
           Respostas ao longo do tempo
         </h3>

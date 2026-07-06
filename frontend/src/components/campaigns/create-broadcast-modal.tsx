@@ -616,7 +616,7 @@ export function CreateBroadcastModal({
                         {isCompleted ? "✓" : stepNum}
                       </div>
                       <span
-                        className={`text-[10px] uppercase tracking-[0.5px] whitespace-nowrap ${
+                        className={`hidden md:block text-[10px] uppercase tracking-[0.5px] whitespace-nowrap ${
                           isCurrent ? "text-[#111111]" : "text-[#7b7b78]"
                         }`}
                       >
@@ -634,6 +634,9 @@ export function CreateBroadcastModal({
                 );
               })}
             </div>
+            <p className="md:hidden text-center text-[11px] uppercase tracking-[0.5px] text-[#111111] mt-2">
+              Passo {step} de {STEPS.length} · {STEPS[step - 1]}
+            </p>
           </div>
 
           {/* ── Body (scrollable) ── */}
@@ -828,9 +831,9 @@ export function CreateBroadcastModal({
                 </div>
 
                 {leadTab === "crm" ? (
-                  <div className="grid grid-cols-[220px_1fr] gap-4 min-h-[300px]">
+                  <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4 min-h-[300px]">
                     {/* Filter panel */}
-                    <div className="border-r border-[#dedbd6] pr-4 overflow-y-auto max-h-[400px]">
+                    <div className="border-b md:border-b-0 md:border-r border-[#dedbd6] pb-4 md:pb-0 md:pr-4 overflow-y-auto max-h-[240px] md:max-h-[400px]">
                       <LeadFilterPanel onApply={handleApplyLeadFilters} loading={loadingLeads} />
                     </div>
 
