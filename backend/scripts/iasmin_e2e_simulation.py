@@ -26,6 +26,28 @@ from dotenv import load_dotenv
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env.local")
 
+
+def _guard_not_production() -> None:
+    """Impede o harness de ensaio de escrever em PRODUÇÃO (poluição de leads.wa_id via
+    webhook sintético). Aborta se o ambiente apontar para prod. Override: REHEARSAL_ALLOW_PROD=1."""
+    if os.environ.get("REHEARSAL_ALLOW_PROD") == "1":
+        return
+    haystack = " ".join([
+        os.environ.get("SUPABASE_URL", ""),
+        os.environ.get("DEV_BACKEND_URL", ""),
+        os.environ.get("DEV_SERVER_URL", ""),
+    ]).lower()
+    hit = next((m for m in ("tshmvxxxyxgctrdkqvam", "api.canastrainteligencia.com") if m in haystack), None)
+    if hit:
+        raise SystemExit(
+            f"[GUARD] Ensaio abortado: ambiente aponta para PRODUÇÃO ('{hit}'). Harness de "
+            f"simulação nunca deve escrever em prod. Use .env.local de homolog/dev, ou defina "
+            f"REHEARSAL_ALLOW_PROD=1 se for realmente intencional."
+        )
+
+
+_guard_not_production()
+
 from app.config import settings  # noqa: E402
 from scripts.rehearsal import supabase_io  # noqa: E402
 

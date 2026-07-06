@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -21,7 +22,10 @@ from app.broadcast.service import (
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.templates.intent import dispatch_metadata
-from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target
+from app.leads.service import (
+    update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
+    is_bsuid,
+)
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -596,6 +600,165 @@ def _alert_silent_channel(sb, channel_id: str, count: int) -> None:
         logger.warning("[DELIVERY] falha ao criar alerta de canal silencioso: %s", e)
 
 
+def _capture_canonical_wa_id(lead: dict, send_response: dict) -> None:
+    """Persiste o `contacts[0].wa_id` da resposta de envio como wa_id CONFIRMADO do lead.
+
+    É o endereço que a Meta resolveu para o destino — o mais autoritativo que temos sem
+    depender de inbound. Grava (com `wa_id_confirmed_at`) só quando difere do atual ou
+    quando ainda não havia procedência, e ignora BSUIDs. Assim o próximo disparo frio a
+    este lead já usa o endereço canônico via resolve_send_target(strict).
+    """
+    contacts = send_response.get("contacts") or []
+    canonical = (contacts[0].get("wa_id") if contacts else None) or None
+    if not canonical or is_bsuid(canonical):
+        return
+    already = lead.get("wa_id") == canonical and lead.get("wa_id_confirmed_at")
+    if already:
+        return
+    update_lead(
+        lead["id"],
+        wa_id=canonical,
+        wa_id_confirmed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    logger.info("[BROADCAST] wa_id canônico capturado p/ lead %s: %s", lead.get("id"), canonical)
+
+
+def _toggle_br_ninth_digit(number: str | None) -> str | None:
+    """Alterna a presença do 9º dígito de um móvel BR em E.164 (sem '+').
+
+    13 díg. com 9  → remove o 9 (12 díg.);  12 díg. sem 9 → injeta o 9 (13 díg.).
+    Retorna None se não for um móvel BR reconhecível (não há forma alternativa a tentar).
+    """
+    if not number:
+        return None
+    d = re.sub(r"\D", "", number)
+    if len(d) == 13 and d.startswith("55") and d[4] == "9":
+        return d[:4] + d[5:]
+    if len(d) == 12 and d.startswith("55"):
+        return d[:4] + "9" + d[4:]
+    return None
+
+
+async def retry_undelivered_cold_sends() -> None:
+    """Dupla tentativa ESTRUTURADA: uma única retentativa alternando o 9º dígito.
+
+    Quando reconcile_delivery_timeouts vira uma mensagem de disparo de 'accepted' para
+    'undelivered' (a Meta aceitou mas nunca confirmou entrega), este job reenvia UMA vez
+    para a forma alternada do número — cobrindo o caso em que a registration real do
+    destino difere do formato que tentamos. Trava dupla contra duplicação: só age quando
+    `delivered_at IS NULL` e claima atomicamente `delivery_retried` (false→true), de modo
+    que jamais há mais de uma retentativa nem reenvio a quem já recebeu.
+    """
+    sb = get_supabase()
+    floor = (datetime.now(timezone.utc) - timedelta(hours=_DELIVERY_LIMBO_LOOKBACK_HOURS)).isoformat()
+
+    try:
+        undelivered = (
+            sb.table("messages")
+            .select("wamid")
+            .eq("delivery_status", "undelivered")
+            .filter("wamid", "not.is", "null")
+            .gte("created_at", floor)
+            .limit(100)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        logger.warning("[DELIVERY][RETRY] falha ao buscar undelivered: %s", e)
+        return
+    wamids = sorted({m["wamid"] for m in undelivered if m.get("wamid")})
+    if not wamids:
+        return
+
+    for i in range(0, len(wamids), _RECONCILE_ID_CHUNK):
+        chunk = wamids[i : i + _RECONCILE_ID_CHUNK]
+        try:
+            bls = (
+                sb.table("broadcast_leads")
+                .select(
+                    "id, broadcast_id, lead_id, wamid, "
+                    "leads!inner(id, phone, wa_id), "
+                    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables)"
+                )
+                .in_("wamid", chunk)
+                .eq("delivery_retried", False)
+                .is_("delivered_at", "null")
+                .execute()
+                .data
+                or []
+            )
+        except Exception as e:
+            logger.warning("[DELIVERY][RETRY] falha ao buscar broadcast_leads: %s", e)
+            continue
+
+        for bl in bls:
+            await _retry_single_undelivered(sb, bl)
+
+
+async def _retry_single_undelivered(sb, bl: dict) -> None:
+    lead = bl.get("leads") or {}
+    broadcast = bl.get("broadcasts") or {}
+
+    alt_target = _toggle_br_ninth_digit(lead.get("phone"))
+    if not alt_target:
+        return
+
+    # Claim atômico: false→true guardado por delivered_at IS NULL. Se não afetar linha,
+    # outro tick já retentou ou a entrega foi confirmada nesse meio-tempo — aborta.
+    claim = (
+        sb.table("broadcast_leads")
+        .update({"delivery_retried": True})
+        .eq("id", bl["id"])
+        .eq("delivery_retried", False)
+        .is_("delivered_at", "null")
+        .execute()
+    )
+    if not claim.data:
+        return
+
+    channel_id = broadcast.get("channel_id")
+    channel = get_channel_by_id(channel_id) if channel_id else None
+    if not channel:
+        logger.warning("[DELIVERY][RETRY] canal %s ausente — retry abortado p/ bl %s", channel_id, bl["id"])
+        return
+
+    try:
+        provider = get_provider(channel)
+        components = _build_template_components(broadcast.get("template_variables") or {}, lead)
+        logger.warning(
+            "[DELIVERY][RETRY] reenviando '%s' p/ forma alternada %s (bl=%s, lead=%s)",
+            broadcast.get("template_name"), alt_target, bl["id"], lead.get("id"),
+        )
+        send_response = await provider.send_template(
+            to=alt_target,
+            template_name=broadcast["template_name"],
+            components=components,
+            language_code=broadcast.get("template_language_code", "pt_BR"),
+        )
+        new_wamid = (send_response.get("messages") or [{}])[0].get("id")
+        if new_wamid:
+            # Reaponta o broadcast_lead para o novo wamid: o callback de entrega desta
+            # tentativa passa a mapear aqui (delivered_at ainda NULL → contável).
+            sb.table("broadcast_leads").update({"wamid": new_wamid}).eq("id", bl["id"]).execute()
+        # Registra a retentativa na conversa (fail-soft) para visibilidade no CRM.
+        try:
+            conversation = get_or_create_conversation(lead["id"], channel_id)
+            if conversation:
+                rendered = await _render_template_body(
+                    broadcast["template_name"], broadcast.get("template_variables") or {}, lead, channel
+                )
+                save_message(
+                    conversation["id"], lead["id"], "assistant", rendered,
+                    sent_by="broadcast", wamid=new_wamid,
+                    metadata=dispatch_metadata(broadcast["template_name"], None),
+                )
+        except Exception as msg_err:
+            logger.warning("[DELIVERY][RETRY] falha ao registrar msg da retentativa (bl %s): %s", bl["id"], msg_err)
+    except Exception as e:
+        logger.warning("[DELIVERY][RETRY] reenvio falhou p/ bl %s (%s): %s", bl["id"], alt_target, e)
+
+
 async def run_worker():
     """Main worker loop: broadcasts, automation engine, follow-ups."""
     logger.info("Worker started")
@@ -616,6 +779,7 @@ async def run_worker():
             await process_stale_lead_memories()
             reconcile_broadcast_replies()
             reconcile_delivery_timeouts()
+            await retry_undelivered_cold_sends()
         except Exception as e:
             logger.error(f"Worker error: {e}", exc_info=True)
 
@@ -870,10 +1034,13 @@ async def process_single_broadcast(broadcast: dict):
                 broadcast.get("template_variables") or {},
                 lead,
             )
-            # Endereço ENTREGÁVEL: prefere wa_id (from real do inbound) sobre o phone
-            # normalizado (que injeta o 9º dígito e falha com Meta 131026 em números
-            # registrados sem o 9). Paridade com follow-up/LP; cai para phone se frio.
-            send_target = resolve_send_target(lead, fallback=lead["phone"])
+            # Endereço ENTREGÁVEL do DISPARO FRIO. Modo estrito: só confia no wa_id se ele
+            # tiver procedência (from real de inbound / captura pós-envio). Lead frio sem
+            # histórico → phone de 13 dígitos (E.164 com o 9), a forma canônica que a Meta
+            # espera. Evita o descarte silencioso de um wa_id de 12 dígitos poluído.
+            send_target = resolve_send_target(
+                lead, fallback=lead["phone"], require_inbound_provenance=True
+            )
             logger.info(
                 "[BROADCAST] sending template '%s' (%s) to %s — components: %s",
                 broadcast["template_name"],
@@ -896,6 +1063,15 @@ async def process_single_broadcast(broadcast: dict):
                     save_broadcast_lead_wamid(bl["id"], wamid)
             except Exception as wamid_err:
                 logger.warning("[BROADCAST] Could not save wamid for lead %s: %s", lead["phone"], wamid_err)
+            # Aprendizado do endereço canônico: a Meta devolve em contacts[0].wa_id o
+            # endereço que ela RESOLVEU para este destino. Persistimos como wa_id confirmado
+            # (com procedência), de modo que os próximos disparos frios a este lead já usem o
+            # endereço autoritativo — sem depender de o lead nos escrever antes. Não sobrescreve
+            # um wa_id de inbound igual; grava só quando muda ou ainda não havia procedência.
+            try:
+                _capture_canonical_wa_id(lead, send_response)
+            except Exception as cap_err:
+                logger.warning("[BROADCAST] Could not capture canonical wa_id for lead %s: %s", lead.get("id"), cap_err)
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
 

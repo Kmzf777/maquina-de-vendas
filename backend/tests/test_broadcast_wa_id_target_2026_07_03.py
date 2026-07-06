@@ -94,18 +94,39 @@ async def _run_single_send(lead: dict):
 
 
 @pytest.mark.asyncio
-async def test_worker_sends_to_wa_id_when_present():
-    """Lead com wa_id ≠ phone: o envio vai para o wa_id (endereço entregável)."""
+async def test_worker_sends_to_wa_id_when_confirmed():
+    """Lead com wa_id CONFIRMADO (procedência) ≠ phone: envia para o wa_id entregável."""
     lead = {
         "id": "lead-uuid",
         "phone": "5511999998888",   # normalizado (com 9º dígito)
         "wa_id": "551188887777",    # from real do inbound — endereço entregável
+        "last_customer_message_at": "2026-07-01T10:00:00+00:00",  # procedência de inbound
         "name": "Teste",
     }
     provider = await _run_single_send(lead)
 
     to_arg = provider.send_template.call_args.kwargs["to"]
-    assert to_arg == "551188887777", f"deveria enviar para o wa_id; enviou para {to_arg!r}"
+    assert to_arg == "551188887777", f"deveria enviar para o wa_id confirmado; enviou para {to_arg!r}"
+
+
+@pytest.mark.asyncio
+async def test_worker_ignores_unconfirmed_wa_id_cold():
+    """Lead FRIO com wa_id SEM procedência (poluído): ignora o wa_id e envia ao phone de 13 díg.
+
+    É o caso do descarte silencioso — um wa_id de 12 dígitos plantado por harness/obsoleto,
+    sem inbound que o confirme. O disparo frio (estrito) não pode confiar nele."""
+    lead = {
+        "id": "lead-uuid",
+        "phone": "5534996652412",   # 13 díg. com o 9º dígito (E.164 canônico)
+        "wa_id": "553496652412",    # 12 díg. sem procedência — não confiável
+        "wa_id_confirmed_at": None,
+        "last_customer_message_at": None,
+        "name": "K",
+    }
+    provider = await _run_single_send(lead)
+
+    to_arg = provider.send_template.call_args.kwargs["to"]
+    assert to_arg == "5534996652412", f"wa_id sem procedência deveria cair para phone; enviou para {to_arg!r}"
 
 
 @pytest.mark.asyncio
