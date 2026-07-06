@@ -386,7 +386,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Page header */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 py-4 md:py-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href="/campanhas?tab=disparos"
@@ -397,7 +397,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
           <span className="text-[#dedbd6] flex-shrink-0">/</span>
           <h1
             style={{ letterSpacing: "-0.96px", lineHeight: "1.00" }}
-            className="text-[32px] font-normal text-[#111111] truncate"
+            className="text-[22px] md:text-[32px] font-normal text-[#111111] truncate"
           >
             {broadcast.name}
           </h1>
@@ -411,7 +411,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         </div>
 
         {/* Action buttons */}
-        <div className="flex gap-2 flex-shrink-0">
+        <div className="flex flex-wrap gap-2 md:flex-shrink-0">
           {broadcast.status === "draft" && (
             <>
               <button
@@ -497,7 +497,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
 
       {/* Schedule picker inline panel */}
       {showSchedulePicker && (
-        <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-8 py-4 flex-shrink-0">
+        <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-4 md:px-8 py-4 flex-shrink-0">
           <div className="flex items-end gap-4 flex-wrap">
             <div>
               <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
@@ -543,16 +543,16 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       )}
 
       {/* Main content */}
-      <div className="flex-1 overflow-auto px-8 py-6 bg-[#faf9f6] space-y-6">
+      <div className="flex-1 overflow-auto px-4 md:px-8 py-4 md:py-6 bg-[#faf9f6] space-y-6">
         {/* Metric cards */}
-        <div className="grid grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
           {metrics.map(({ label, value, color }) => (
             <div
               key={label}
               className="bg-white border border-[#dedbd6] rounded-[8px] p-4 flex flex-col items-center justify-center text-center"
             >
               <span
-                className="text-[36px] font-normal leading-none"
+                className="text-[28px] md:text-[36px] font-normal leading-none"
                 style={{ color, letterSpacing: "-0.5px" }}
               >
                 {value}
@@ -640,7 +640,7 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         {/* Tab filter + lead table */}
         <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
           {/* Filter tabs */}
-          <div className="border-b border-[#dedbd6] px-5 flex">
+          <div className="border-b border-[#dedbd6] px-5 flex overflow-x-auto">
             {filters.map(({ key, label }) => (
               <button
                 key={key}

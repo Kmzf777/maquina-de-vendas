@@ -62,15 +62,15 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
 
   return (
     <div className="bg-[#faf9f6]">
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-col gap-3 mb-4 md:flex-row md:items-center">
         <input
           type="text"
           placeholder="Buscar disparo..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-64"
+          className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full md:w-64"
         />
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {filters.map((f) => (
             <button
               key={f.key}
@@ -88,7 +88,7 @@ export function BroadcastList({ broadcasts, onRefresh }: BroadcastListProps) {
       {filtered.length === 0 ? (
         <p className="text-[#7b7b78] text-center py-8">Nenhum disparo encontrado</p>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filtered.map((b) => (
             <BroadcastCard
               key={b.id}

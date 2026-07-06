@@ -104,9 +104,9 @@ function CampanhasPageInner() {
 
   if (bLoading || cLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 px-4 md:px-8 py-4 md:py-8">
         <div className="h-8 w-48 rounded-[4px] animate-pulse bg-[#dedbd6]" />
-        <div className="grid grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 h-20 animate-pulse" />
           ))}
@@ -118,29 +118,29 @@ function CampanhasPageInner() {
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 py-5 flex items-center justify-between flex-shrink-0">
+      <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 py-4 md:py-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0">
         <div>
-          <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[32px] font-normal text-[#111111]">
+          <h1 style={{ letterSpacing: '-0.96px', lineHeight: '1.00' }} className="text-[24px] md:text-[32px] font-normal text-[#111111]">
             Campanhas
           </h1>
-          <p className="text-[14px] text-[#7b7b78] mt-0.5">Disparos e cadências de follow-up</p>
+          <p className="text-[13px] md:text-[14px] text-[#7b7b78] mt-0.5">Disparos e cadências de follow-up</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setShowQuickSendModal(true)}
-            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
           >
             + Disparo Rápido
           </button>
           <button
             onClick={() => setShowBroadcastModal(true)}
-            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
+            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85]"
           >
             + Disparo
           </button>
           <button
             onClick={() => setShowCadenceModal(true)}
-            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
           >
             + Cadencia
           </button>
@@ -148,13 +148,13 @@ function CampanhasPageInner() {
       </div>
 
       {/* Tab nav */}
-      <div className="border-b border-[#dedbd6] bg-white px-8 flex-shrink-0">
-        <div className="flex">
+      <div className="border-b border-[#dedbd6] bg-white px-4 md:px-8 flex-shrink-0">
+        <div className="flex overflow-x-auto">
           {(VALID_TABS).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-3 text-[14px] border-b-2 transition-colors ${
+              className={`px-4 py-3 text-[14px] border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab
                   ? "border-[#111111] text-[#111111]"
                   : "border-transparent text-[#7b7b78] hover:text-[#111111]"
