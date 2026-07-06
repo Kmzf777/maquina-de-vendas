@@ -33,6 +33,33 @@ from dotenv import load_dotenv
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env.local")
 
+
+def _guard_not_production() -> None:
+    """Impede o harness de ensaio de escrever em PRODUÇÃO.
+
+    O ensaio injeta webhooks sintéticos (contacts[].wa_id = phone) que o backend persiste
+    no lead — rodar isso contra o backend/banco de produção corrompe endereços de envio
+    reais (foi a origem do wa_id de 12 dígitos poluído). Aborta se o ambiente apontar para
+    produção. Override consciente: REHEARSAL_ALLOW_PROD=1.
+    """
+    if os.environ.get("REHEARSAL_ALLOW_PROD") == "1":
+        return
+    haystack = " ".join([
+        os.environ.get("SUPABASE_URL", ""),
+        os.environ.get("DEV_BACKEND_URL", ""),
+        os.environ.get("DEV_SERVER_URL", ""),
+    ]).lower()
+    hit = next((m for m in ("tshmvxxxyxgctrdkqvam", "api.canastrainteligencia.com") if m in haystack), None)
+    if hit:
+        raise SystemExit(
+            f"[GUARD] Ensaio abortado: ambiente aponta para PRODUÇÃO ('{hit}'). Harness de "
+            f"simulação nunca deve escrever em prod (poluição de leads.wa_id). Use .env.local "
+            f"de homolog/dev, ou defina REHEARSAL_ALLOW_PROD=1 se for realmente intencional."
+        )
+
+
+_guard_not_production()
+
 from app.config import settings  # noqa: E402
 from scripts.rehearsal import supabase_io, logger as rlogger, gemini_actor, verifier  # noqa: E402
 from scripts.rehearsal.archetypes import ALL_ARCHETYPES, Archetype  # noqa: E402

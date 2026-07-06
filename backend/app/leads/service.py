@@ -479,19 +479,48 @@ def persist_lead_tracking(lead: dict[str, Any], tracking: dict[str, Any] | None)
         logger.warning("persist_lead_tracking: falha ao gravar rastreio para lead %s: %s", lead.get("id"), exc)
 
 
-def resolve_send_target(lead: dict[str, Any] | None, fallback: str | None = None) -> str:
+def has_wa_id_provenance(lead: dict[str, Any] | None) -> bool:
+    """True se o `wa_id` do lead tem PROCEDÊNCIA confirmada — veio de um `from` real de
+    inbound ou do `contacts[0].wa_id` devolvido pela Meta no envio.
+
+    Um `from` real de inbound sempre carimba `last_customer_message_at` junto do `wa_id`
+    (ver meta_router: captura o wa_id e atualiza a janela de 24h no mesmo evento), então
+    qualquer um dos dois marcadores comprova procedência. `wa_id_confirmed_at` é o marcador
+    explícito setado também pela captura pós-envio (aprendizado do endereço canônico).
+    """
+    if not lead:
+        return False
+    return bool(lead.get("wa_id_confirmed_at")) or bool(lead.get("last_customer_message_at"))
+
+
+def resolve_send_target(
+    lead: dict[str, Any] | None,
+    fallback: str | None = None,
+    *,
+    require_inbound_provenance: bool = False,
+) -> str:
     """Endereço WhatsApp ENTREGÁVEL do lead para envio.
 
-    Prefere `wa_id` (o `from` real que a Meta entregou no inbound) sobre `phone`
-    (normalizado, que injeta o 9º dígito BR). Alguns números estão no WhatsApp SEM o 9,
-    então enviar para o phone normalizado falha com Meta 131026 "Message Undeliverable" —
-    o `wa_id` é o endereço que a Meta de fato entrega. NULL/ausente → cai para phone, depois
-    para `bsuid` (username adopters cujo número não foi revelado pela Meta — o Meta client
-    roteia um BSUID para o campo `recipient` normalmente), depois para `fallback`.
-    Ver migration 20260616_leads_wa_id.sql e 2026-07-01_leads_bsuid.sql.
+    O `wa_id` (o `from` real que a Meta entregou no inbound, ou o endereço canônico
+    devolvido no envio) é o destino preferido: alguns números BR estão registrados SEM o
+    9º dígito, e enviar para o `phone` normalizado (que injeta o 9) faz a Meta ACEITAR
+    (HTTP 200) mas FALHAR a entrega com 131026.
+
+    PORÉM, um `wa_id` sem procedência (ex.: plantado por harness de simulação, ou obsoleto)
+    é uma armadilha: a Meta o aceita e descarta silenciosamente. Por isso, quando
+    `require_inbound_provenance=True` (uso no DISPARO FRIO, onde o lead pode nunca ter
+    interagido), o `wa_id` só é usado se `has_wa_id_provenance` — caso contrário roteamos
+    para o `phone` de 13 dígitos em E.164 (com o 9), que é a forma canônica que a Meta
+    espera de um número frio. O caminho QUENTE (default) mantém o comportamento anterior:
+    confia no `wa_id` presente, pois um lead que já respondeu tem procedência de qualquer
+    forma. Ordem de fallback: phone → bsuid (username adopters) → fallback.
+    Ver migrations 20260616_leads_wa_id.sql, 20260706_wa_id_provenance_and_retry.sql.
     """
     if lead:
-        target = lead.get("wa_id") or lead.get("phone") or lead.get("bsuid")
+        wa_id = lead.get("wa_id")
+        if wa_id and (not require_inbound_provenance or has_wa_id_provenance(lead)):
+            return wa_id
+        target = lead.get("phone") or lead.get("bsuid")
         if target:
             return target
     return fallback or ""
