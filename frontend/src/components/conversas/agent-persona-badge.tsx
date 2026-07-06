@@ -12,16 +12,16 @@ export function AgentPersonaBadge({ conversation }: AgentPersonaBadgeProps) {
   if (!persona) return null;
   return (
     <span
-      className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide flex-shrink-0"
+      className="inline-flex items-center gap-0.5 rounded-[3px] px-1.5 py-px text-[10px] font-semibold leading-none tracking-wide max-w-[180px] min-w-0"
       style={{ backgroundColor: `${persona.color}15`, color: persona.color }}
       title={
         persona.direction === "outbound"
-          ? "Atendimento ativo (outbound)"
-          : "Atendimento receptivo (inbound)"
+          ? `Atendimento ativo (outbound) — ${persona.label}`
+          : `Atendimento receptivo (inbound) — ${persona.label}`
       }
     >
       <svg
-        className="w-2.5 h-2.5"
+        className="w-2.5 h-2.5 flex-shrink-0"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -35,7 +35,7 @@ export function AgentPersonaBadge({ conversation }: AgentPersonaBadgeProps) {
           <path d="M12 5v14M19 12l-7 7-7-7" />
         )}
       </svg>
-      {persona.label}
+      <span className="truncate">{persona.label}</span>
     </span>
   );
 }
