@@ -48,19 +48,25 @@ jobs:
       - name: Deploy CRM via SSH
         if: steps.crm_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASSWORD }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GH_TOKEN
           script_stop: true
           script: |
             set -e
             cd "/srv/Maquinadevendascanastra"
             rm -f .git/index.lock
+            git config --global --add safe.directory "/srv/Maquinadevendascanastra"
+            # Repo agora é privado: fetch anônimo via HTTPS falha com exit 128.
+            # Autentica o fetch com o GITHUB_TOKEN efêmero do job (Contents: read).
+            git fetch --prune -f "https://x-access-token:${GH_TOKEN}@github.com/Kmzf777/maquina-de-vendas.git" master
             git clean -fd
-            git reset --hard origin/master
-            git config --global --add safe.directory "/srv/Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
+            git reset --hard FETCH_HEAD
 
             if [ -f "frontend/.env.build" ]; then source frontend/.env.build; elif [ -f "crm/.env.build" ]; then source crm/.env.build; cp crm/.env.build frontend/.env.build || true; else echo ".env.build not found!"; exit 1; fi
             sg docker -c "docker build \
@@ -121,16 +127,23 @@ jobs:
       - name: Deploy Backend via SSH
         if: steps.backend_changed.outputs.changed == 'true'
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASSWORD }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GH_TOKEN
           script_stop: true
           script: |
             set -e
             cd "/srv/Maquinadevendascanastra"
-            git config --global --add safe.directory "/srv/Maquinadevendascanastra" && git fetch --prune -f origin && git reset --hard origin/master
+            git config --global --add safe.directory "/srv/Maquinadevendascanastra"
+            # Repo agora é privado: fetch anônimo via HTTPS falha com exit 128.
+            # Autentica o fetch com o GITHUB_TOKEN efêmero do job (Contents: read).
+            git fetch --prune -f "https://x-access-token:${GH_TOKEN}@github.com/Kmzf777/maquina-de-vendas.git" master
+            git reset --hard FETCH_HEAD
             sg docker -c "docker build -t canastra-api:latest ./backend"
             sg docker -c "docker stack deploy -c backend/docker-compose.yml canastra"
             sg docker -c "docker service update --force canastra_api"
