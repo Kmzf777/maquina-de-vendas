@@ -97,33 +97,50 @@ def test_register_lead_passes_ctwa_clid_to_get_or_create():
     assert kwargs.get("ctwa_clid") == "clid_x"
 
 
+# NOTA (merge wa_id_confirmed_at): além da lógica de CTWA, _register_lead agora carimba a
+# procedência do wa_id — quando o lead ainda não tem wa_id_confirmed_at, dispara um
+# update_lead(id, wa_id_confirmed_at=<timestamp>) ANTES da lógica de CTWA. Por isso update_lead
+# pode ser chamado mais de uma vez. Estes testes validam o CONTRATO de CTWA especificamente
+# (via assert_any_call / ausência de kwarg ctwa_clid), tolerando a chamada extra de wa_id sem
+# se acoplar ao timestamp não-determinístico dela.
+
+def _has_ctwa_call(upd) -> bool:
+    return any("ctwa_clid" in c.kwargs for c in upd.call_args_list)
+
+
 def test_register_lead_updates_ctwa_clid_when_new_click_arrives():
-    """Returning lead clicks a new ad → ctwa_clid should be refreshed (last-touch)."""
+    """Returning lead clicks a new ad → ctwa_clid should be refreshed (last-touch).
+
+    update_lead é chamado DUAS vezes: uma para o selo de wa_id, outra para o CTWA."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": "old_clid"}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid="new_clid")
-    upd.assert_called_once_with("L1", ctwa_clid="new_clid", traffic_type="paid")
+    assert upd.call_count == 2
+    upd.assert_any_call("L1", ctwa_clid="new_clid", traffic_type="paid")
+    assert any("wa_id_confirmed_at" in c.kwargs for c in upd.call_args_list)
 
 
 def test_register_lead_skips_ctwa_update_when_unchanged():
+    """CTWA inalterado → NENHUM update_lead carrega ctwa_clid (a chamada existente é só a de wa_id)."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": "same_clid"}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid="same_clid")
-    upd.assert_not_called()
+    assert not _has_ctwa_call(upd)
 
 
 def test_register_lead_organic_does_not_overwrite_existing_clid():
-    """An organic message (ctwa_clid=None) must NOT wipe a previously captured clid."""
+    """An organic message (ctwa_clid=None) must NOT wipe a previously captured clid —
+    nenhum update_lead carrega ctwa_clid (a chamada existente é só a de wa_id)."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": "kept_clid"}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid=None)
-    upd.assert_not_called()
+    assert not _has_ctwa_call(upd)
 
 
 # --------------------------------------------------------------------------- #

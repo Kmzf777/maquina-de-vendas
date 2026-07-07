@@ -70,31 +70,48 @@ def test_parse_organic_message_has_no_ctwa_origem():
 
 # ── _register_lead carimba metadata.origem ──────────────────────────────────
 
+# NOTA (merge wa_id_confirmed_at): _register_lead também carimba a procedência do wa_id —
+# quando o lead ainda não tem wa_id_confirmed_at, dispara um update_lead(id,
+# wa_id_confirmed_at=<timestamp>) além da lógica de origem. Estes testes validam o contrato de
+# ORIGEM especificamente (via assert_any_call / ausência de kwarg metadata), tolerando a chamada
+# extra de wa_id sem se acoplar ao timestamp não-determinístico dela.
+
+def _has_origem_call(upd) -> bool:
+    return any("metadata" in c.kwargs for c in upd.call_args_list)
+
+
 def test_register_lead_stamps_origem_when_absent():
-    """CTWA de atacado num lead sem origem → grava metadata.origem='atacado'."""
+    """CTWA de atacado num lead sem origem → grava metadata.origem='atacado'.
+
+    update_lead é chamado DUAS vezes: uma para o selo de wa_id, outra para a origem."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": None, "metadata": {}}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid=None, ctwa_origem="atacado")
-    upd.assert_called_once_with("L1", metadata={"origem": "atacado"})
+    assert upd.call_count == 2
+    upd.assert_any_call("L1", metadata={"origem": "atacado"})
+    assert any("wa_id_confirmed_at" in c.kwargs for c in upd.call_args_list)
 
 
 def test_register_lead_does_not_overwrite_existing_origem():
-    """Origem já definida (first-touch vence) → não sobrescreve."""
+    """Origem já definida (first-touch vence) → não sobrescreve; nenhum update_lead carrega
+    metadata (a chamada existente é só a de wa_id)."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": None,
                              "metadata": {"origem": "terceirizacao"}}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid=None, ctwa_origem="atacado")
-    upd.assert_not_called()
+    assert not _has_origem_call(upd)
 
 
 def test_register_lead_no_origem_signal_is_noop():
+    """Sem sinal de CTWA/origem → nenhum update_lead carrega ctwa_clid nem metadata
+    (a chamada existente é só a de wa_id_confirmed_at)."""
     from app.webhook.meta_router import _register_lead
     with patch("app.webhook.meta_router.get_or_create_lead",
                return_value={"id": "L1", "wa_id": "5511999999999", "ctwa_clid": None, "metadata": {}}), \
          patch("app.webhook.meta_router.update_lead") as upd:
         _register_lead("5511999999999", None, ctwa_clid=None, ctwa_origem=None)
-    upd.assert_not_called()
+    assert not any("ctwa_clid" in c.kwargs or "metadata" in c.kwargs for c in upd.call_args_list)
