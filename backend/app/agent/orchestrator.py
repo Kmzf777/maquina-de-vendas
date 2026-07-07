@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import unicodedata
 from datetime import datetime, timezone, timedelta
@@ -9,6 +10,7 @@ import httpx
 from google.genai import errors as genai_errors
 
 from app.agent import gemini_native
+from app.agent import budget_guard
 from app.agent.gemini_native import GeminiNativeClient
 from app.config import settings
 from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
@@ -455,6 +457,28 @@ class LLMUnavailableError(Exception):
     """
 
 
+class LLMBudgetExceededError(LLMUnavailableError):
+    """Teto diário de gasto atingido (kill-switch). Subclasse de LLMUnavailableError para
+    reusar o MESMO fallback de handoff — o lead cai no João em vez de ser fantasmado, e o
+    sistema para de queimar cota até a virada do dia (UTC). Ver app/agent/budget_guard.py."""
+
+
+def _initial_thinking_kwargs(model: str) -> dict:
+    """Thinking da PRIMEIRA chamada (raciocínio inicial / escolha de tools).
+
+    Por design endurecido por incidentes, o thinking já fica DESLIGADO em todas as chamadas
+    mecânicas (pós-tool, follow-up, summary, memória) e LIGADO só nesta, a de alto esforço.
+    Este knob permite desligá-lo TAMBÉM aqui via env, trocando qualidade de raciocínio por
+    custo, sem deploy:
+        LLM_INITIAL_THINKING=off  → reasoning_effort="none" também na 1ª chamada.
+    Default (ausente/qualquer outro valor) = LIGADO — preserva o comportamento atual e a
+    decisão testada em test_gemini_thinking_off_post_tool.py.
+    """
+    if os.environ.get("LLM_INITIAL_THINKING", "on").strip().lower() == "off":
+        return _gemini_thinking_off(model)
+    return {}
+
+
 def _genai_status_code(exc: genai_errors.APIError) -> int | None:
     """Extrai o status HTTP de um erro do google-genai (APIError.code)."""
     code = getattr(exc, "code", None)
@@ -471,7 +495,17 @@ async def _create_with_retry(client: GeminiNativeClient, **kwargs):
 
     Exceções do SDK nativo: google.genai.errors.APIError (ClientError=4xx, ServerError=5xx),
     com o status em `.code`. Timeouts/quedas de conexão sobem como httpx.TransportError.
+
+    Kill-switch: antes de qualquer tentativa, checa o teto diário de gasto (budget_guard).
+    Se estourado, levanta LLMBudgetExceededError (→ handoff) sem sequer chamar o provedor.
     """
+    if budget_guard.is_exceeded():
+        raise LLMBudgetExceededError(
+            f"Teto diário de gasto do LLM atingido (US${budget_guard.today_spend_usd():.2f} "
+            f">= US${budget_guard.daily_cost_limit_usd():.2f}) — chamadas bloqueadas ate a "
+            f"virada do dia (UTC)."
+        )
+
     last_exc: Exception | None = None
     for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
         _delay = _LLM_RETRY_DELAY * (2 ** (attempt - 1))
@@ -761,6 +795,7 @@ async def run_agent(
         temperature=0.4,
         max_tokens=MAX_OUTPUT_TOKENS,
         stop=_STOP_SEQUENCES,
+        **_initial_thinking_kwargs(model),
     )
 
     if response.usage:

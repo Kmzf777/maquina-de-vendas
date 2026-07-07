@@ -64,6 +64,9 @@ class _ToolCall:
 class _Usage:
     prompt_tokens: int
     completion_tokens: int
+    # Tokens de "thinking" (thoughts_token_count). Já estão SOMADOS em completion_tokens
+    # — o Gemini 2.5 os cobra como output. Exposto à parte só para observabilidade/log.
+    reasoning_tokens: int = 0
 
 
 class _Message:
@@ -219,9 +222,16 @@ def _parse_response(resp: Any) -> _Response:
     usage = None
     um = getattr(resp, "usage_metadata", None)
     if um is not None:
+        visible = getattr(um, "candidates_token_count", 0) or 0
+        # gemini-2.5 cobra os tokens de "thinking" (thoughts_token_count) como OUTPUT, mas
+        # eles NÃO vêm em candidates_token_count. Somamos aqui para que completion_tokens
+        # reflita o custo de saída REALMENTE faturado pelo provedor (antes ficava oculto,
+        # subestimando o token_usage e mascarando o gasto — auditoria 07/2026).
+        thoughts = getattr(um, "thoughts_token_count", 0) or 0
         usage = _Usage(
             prompt_tokens=getattr(um, "prompt_token_count", 0) or 0,
-            completion_tokens=getattr(um, "candidates_token_count", 0) or 0,
+            completion_tokens=visible + thoughts,
+            reasoning_tokens=thoughts,
         )
 
     # Coerência de finish_reason: se houve tool call e o modelo não cortou por tamanho,

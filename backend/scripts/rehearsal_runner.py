@@ -338,8 +338,10 @@ async def _run_with_jitter(
 
 
 async def main():
-    if not os.environ.get("GEMINI_API_KEY"):
-        raise SystemExit("GEMINI_API_KEY nao definido em .env.local")
+    # Trava rígida: exige chave Gemini de DEV isolada da produção (nunca drenar a cota de prod).
+    gemini_actor.require_isolated_gemini_key()
+    if not os.environ.get(gemini_actor.DEV_API_KEY_ENV) and not os.environ.get("GEMINI_API_KEY"):
+        raise SystemExit(f"{gemini_actor.DEV_API_KEY_ENV} nao definido em .env.local")
 
     only = os.environ.get("REHEARSAL_ONLY")
     archetypes = [a for a in ALL_ARCHETYPES if (not only or a.id == only)]

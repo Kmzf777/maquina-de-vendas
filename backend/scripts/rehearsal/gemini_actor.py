@@ -16,17 +16,51 @@ JUDGE_MODEL_NAME = "gemini-2.5-pro"
 MODEL_NAME = JUDGE_MODEL_NAME  # backward-compat for rehearsal_runner.py run.json
 MAX_RETRIES = 3
 
+# Chave Gemini DEDICADA de desenvolvimento. O rehearsal consome cota; usar a mesma chave
+# da produção drena o saldo de produção (incidente 1-6/jul/2026: R$149 de output off-book
+# gerado por simulações na chave compartilhada). O harness EXIGE esta chave, isolada da prod.
+DEV_API_KEY_ENV = "GEMINI_API_KEY_DEV"
+
 
 class GeminiFailure(Exception):
     """Raised when Gemini calls fail after max retries."""
 
 
+def require_isolated_gemini_key() -> None:
+    """Aborta o harness se não houver uma chave Gemini de DEV isolada da produção.
+
+    Regras: `GEMINI_API_KEY_DEV` precisa estar definida e ser DIFERENTE de `GEMINI_API_KEY`
+    (a de produção). Override consciente e explícito: `REHEARSAL_ALLOW_PROD=1`. Chamado no
+    startup dos runners (runtime, não no import — para não quebrar a coleta de testes)."""
+    if os.environ.get("REHEARSAL_ALLOW_PROD") == "1":
+        return
+    dev = os.environ.get(DEV_API_KEY_ENV)
+    prod = os.environ.get("GEMINI_API_KEY")
+    if not dev:
+        raise SystemExit(
+            f"[GUARD] {DEV_API_KEY_ENV} não definido — o rehearsal exige uma chave Gemini "
+            f"ISOLADA de dev (nunca a de produção). Crie uma chave separada no Google AI "
+            f"Studio e exporte {DEV_API_KEY_ENV} no .env.local. "
+            f"Override consciente: REHEARSAL_ALLOW_PROD=1."
+        )
+    if prod and dev == prod:
+        raise SystemExit(
+            f"[GUARD] {DEV_API_KEY_ENV} é IGUAL a GEMINI_API_KEY (produção) — use uma chave "
+            f"DISTINTA para não drenar a cota de produção. "
+            f"Override consciente: REHEARSAL_ALLOW_PROD=1."
+        )
+
+
 def _get_model(model_name: str = JUDGE_MODEL_NAME):
-    """Lazy-build the Gemini model. Overridable in tests via monkeypatch."""
+    """Lazy-build the Gemini model. Overridable in tests via monkeypatch.
+
+    Usa a chave de DEV (GEMINI_API_KEY_DEV) por padrão; só cai na GEMINI_API_KEY quando a de
+    dev está ausente — o que, fora de REHEARSAL_ALLOW_PROD=1, é barrado por
+    require_isolated_gemini_key() no startup do runner."""
     import google.generativeai as genai
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get(DEV_API_KEY_ENV) or os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise GeminiFailure("GEMINI_API_KEY not set in environment")
+        raise GeminiFailure(f"{DEV_API_KEY_ENV} not set in environment")
     genai.configure(api_key=api_key)
     return genai.GenerativeModel(model_name)
 
