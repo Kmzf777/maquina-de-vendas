@@ -23,7 +23,22 @@ export default function LoginPage() {
     });
 
     if (error) {
-      setError("Email ou senha incorretos");
+      // Erro bruto no console para diagnóstico (status/code/message do GoTrue).
+      console.error("[login] signInWithPassword falhou:", error);
+      // GoTrue devolve 400 + code invalid_credentials/invalid_grant quando o
+      // e-mail ou a senha estão errados. Qualquer outro caso — status 0/CORS,
+      // 401 (apikey ausente/ inválida), 429 (rate limit) ou 5xx — é falha de
+      // configuração ou rede, não credencial. Não mascarar as duas como a mesma.
+      const isInvalidCredential =
+        error.status === 400 &&
+        (error.code === "invalid_credentials" ||
+          error.code === "invalid_grant" ||
+          !error.code);
+      setError(
+        isInvalidCredential
+          ? "Email ou senha incorretos"
+          : "Erro de conexão com o servidor de autenticação"
+      );
       setLoading(false);
       return;
     }
