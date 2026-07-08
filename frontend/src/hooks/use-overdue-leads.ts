@@ -240,7 +240,15 @@ export function useOverdueLeads(): OverdueData {
     // conversas+mensagens de 30d por evento de `conversations` era um dos
     // maiores consumidores de Egress; o ticker local de 60s mantém os
     // contadores de overdue avançando sem fetch.
-    const debounced = debounce(fetchAndCompute, 30_000);
+    // Guarda de aba em background (mesmo racional do use-sla-stats): não refazer o
+    // fetch pesado de 30d numa aba oculta — adia e recupera uma vez ao refocar.
+    let staleWhileHidden = false;
+    const isHidden = () => typeof document !== "undefined" && document.hidden;
+    const guardedRefetch = () => {
+      if (isHidden()) { staleWhileHidden = true; return; }
+      fetchAndCompute();
+    };
+    const debounced = debounce(guardedRefetch, 30_000);
     // Escuta apenas `conversations`: ela já é atualizada a cada mensagem
     // (last_customer_message_at / last_seller_response_at), então cobre o gatilho
     // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada
@@ -250,6 +258,14 @@ export function useOverdueLeads(): OverdueData {
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
       .subscribe();
 
+    const onVisible = () => {
+      if (!isHidden() && staleWhileHidden) {
+        staleWhileHidden = false;
+        fetchAndCompute();
+      }
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
+
     // Recalcula localmente (sem fetch) para os contadores de overdue avançarem com o tempo.
     const ticker = setInterval(() => {
       if (cacheRef.current) recompute(cacheRef.current, new Date());
@@ -258,6 +274,7 @@ export function useOverdueLeads(): OverdueData {
     return () => {
       debounced.cancel();
       clearInterval(ticker);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
       supabase.removeChannel(channel);
     };
   }, [fetchAndCompute, recompute]);

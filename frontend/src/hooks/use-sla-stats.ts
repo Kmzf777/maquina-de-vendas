@@ -236,7 +236,16 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     // a cada mensagem do sistema, o debounce curto multiplicava Egress por aba
     // aberta. Estatística tolera 30s de atraso; os contadores continuam
     // avançando ao vivo pelo recompute local de 60s (sem fetch) abaixo.
-    const debounced = debounce(fetchAndCompute, 30_000);
+    // Guarda de aba em background: cada refetch baixa 30d de conversas + todas as
+    // mensagens delas (~0,5MB). Numa aba oculta isso é egress puro que ninguém vê.
+    // Adiamos o refetch e marcamos "stale"; ao refocar, recuperamos uma vez.
+    let staleWhileHidden = false;
+    const isHidden = () => typeof document !== "undefined" && document.hidden;
+    const guardedRefetch = () => {
+      if (isHidden()) { staleWhileHidden = true; return; }
+      fetchAndCompute();
+    };
+    const debounced = debounce(guardedRefetch, 30_000);
     // Escuta apenas `conversations`: ela já é atualizada a cada mensagem
     // (last_customer_message_at / last_seller_response_at), então cobre o gatilho
     // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada
@@ -245,6 +254,14 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
       .channel("sla-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
       .subscribe();
+
+    const onVisible = () => {
+      if (!isHidden() && staleWhileHidden) {
+        staleWhileHidden = false;
+        fetchAndCompute();
+      }
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
 
     // Recalcula os contadores de tempo localmente (sem fetch): um SLA que estoura
     // só pela passagem do tempo precisa acender sem depender de evento no banco.
@@ -255,6 +272,7 @@ export function useSlaStats(filter: DateFilter = "7d"): SlaTableData {
     return () => {
       debounced.cancel();
       clearInterval(ticker);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
       supabase.removeChannel(channel);
     };
   }, [fetchAndCompute, recompute]);

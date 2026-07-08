@@ -166,6 +166,81 @@ def _alert_recently_fired(alert_type: str) -> bool:
         return False
 
 
+# Passo 1 tem dois caminhos: a RPC agregada (get_last_user_msg_per_conversation,
+# 1 linha/conversa) e o fallback paginado historico. `_RPC_AGG_DISABLED` evita
+# re-tentar (e re-logar) a RPC a cada tick quando ela nao existe/falha: a primeira
+# falha desliga a RPC pela vida do processo e passamos a usar so o fallback ate o
+# proximo restart (que ocorre no deploy, ja com a migration aplicada). O fallback e
+# correto por construcao, entao desligar a RPC e conservador — nunca perigoso.
+_RPC_AGG_DISABLED = False
+
+
+def _last_user_msg_via_rpc(sb, since_iso: str, until_iso: str):
+    """Ultima msg do contato por conversa via agregacao no Postgres (GROUP BY).
+
+    Retorna {conversation_id: created_at_iso} em sucesso, ou None para sinalizar
+    "indisponivel — use o fallback paginado". NUNCA levanta: qualquer erro (funcao
+    ausente/PGRST202, rede, cache de schema) vira None. Preserva a janela
+    [since, until] e e mais completa que a paginacao (sem teto de linhas).
+    """
+    global _RPC_AGG_DISABLED
+    if _RPC_AGG_DISABLED:
+        return None
+    try:
+        res = sb.rpc(
+            "get_last_user_msg_per_conversation",
+            {"p_since": since_iso, "p_until": until_iso},
+        ).execute()
+        return {r["conversation_id"]: r["last_user_at"] for r in (res.data or [])}
+    except Exception as exc:
+        _RPC_AGG_DISABLED = True
+        logger.warning(
+            "[WATCHDOG] RPC de agregacao indisponivel (%s) — fallback paginado ate o "
+            "proximo restart; aplique 20260707_watchdog_last_user_msg_rpc.sql",
+            type(exc).__name__,
+        )
+        return None
+
+
+def _last_user_msg_paginated(sb, since_iso: str, until_iso: str) -> dict:
+    """Fallback historico (rede de seguranca): le candidatas paginadas e reduz ao
+    max(created_at) por conversation_id em Python. Caminho coberto pelos testes de
+    paginacao — mantido integralmente."""
+    last_user_msg: dict = {}
+    offset = 0
+    for _ in range(CANDIDATE_MAX_PAGES):
+        page_res = (
+            sb.table("messages")
+            .select("conversation_id, created_at")
+            .eq("role", "user")
+            .gte("created_at", since_iso)
+            .lte("created_at", until_iso)
+            # Tiebreaker (review P3 minor): duas mensagens com o MESMO created_at
+            # (comum em bursts inseridos no mesmo milissegundo) nao tem ordem
+            # garantida so por created_at — sem uma chave secundaria deterministica,
+            # a mesma linha pode aparecer em duas paginas OU sumir entre elas quando
+            # o offset avanca. `id` (PK, unico) fecha o empate de forma estavel.
+            .order("created_at", desc=True)
+            .order("id", desc=True)
+            .range(offset, offset + CANDIDATE_PAGE_SIZE - 1)
+            .execute()
+        )
+        page_rows = page_res.data or []
+        for row in page_rows:
+            conv_id = row["conversation_id"]
+            ts = row["created_at"]
+            if conv_id not in last_user_msg or _parse_ts(ts) > _parse_ts(last_user_msg[conv_id]):
+                last_user_msg[conv_id] = ts
+        if len(page_rows) < CANDIDATE_PAGE_SIZE:
+            break  # pagina parcial/vazia = fim natural da janela
+        offset += CANDIDATE_PAGE_SIZE
+    else:
+        # Consumiu as CANDIDATE_MAX_PAGES sem achar pagina parcial/vazia — pode
+        # haver candidatas mais antigas ainda nao lidas (ver docstring da constante).
+        logger.warning("[WATCHDOG] janela candidata truncada em %d páginas", CANDIDATE_MAX_PAGES)
+    return last_user_msg
+
+
 def _find_unanswered_conversations(
     now: datetime,
     *,
@@ -199,39 +274,16 @@ def _find_unanswered_conversations(
     lookback_cutoff = (now - timedelta(hours=AI_UNRESPONSIVE_LOOKBACK_HOURS)).isoformat()
     grace_cutoff = (now - timedelta(minutes=grace_minutes)).isoformat()
 
-    # Passo 1 — candidatas, paginado.
-    last_user_msg: dict = {}
-    offset = 0
-    for _ in range(CANDIDATE_MAX_PAGES):
-        page_res = (
-            sb.table("messages")
-            .select("conversation_id, created_at")
-            .eq("role", "user")
-            .gte("created_at", lookback_cutoff)
-            .lte("created_at", grace_cutoff)
-            # Tiebreaker (review P3 minor): duas mensagens com o MESMO created_at
-            # (comum em bursts inseridos no mesmo milissegundo) nao tem ordem
-            # garantida so por created_at — sem uma chave secundaria deterministica,
-            # a mesma linha pode aparecer em duas paginas OU sumir entre elas quando
-            # o offset avanca. `id` (PK, unico) fecha o empate de forma estavel.
-            .order("created_at", desc=True)
-            .order("id", desc=True)
-            .range(offset, offset + CANDIDATE_PAGE_SIZE - 1)
-            .execute()
-        )
-        page_rows = page_res.data or []
-        for row in page_rows:
-            conv_id = row["conversation_id"]
-            ts = row["created_at"]
-            if conv_id not in last_user_msg or _parse_ts(ts) > _parse_ts(last_user_msg[conv_id]):
-                last_user_msg[conv_id] = ts
-        if len(page_rows) < CANDIDATE_PAGE_SIZE:
-            break  # pagina parcial/vazia = fim natural da janela
-        offset += CANDIDATE_PAGE_SIZE
-    else:
-        # Consumiu as CANDIDATE_MAX_PAGES sem achar pagina parcial/vazia — pode
-        # haver candidatas mais antigas ainda nao lidas (ver docstring da constante).
-        logger.warning("[WATCHDOG] janela candidata truncada em %d páginas", CANDIDATE_MAX_PAGES)
+    # Passo 1 — última mensagem do contato por conversa na janela.
+    # Preferimos a agregação server-side (RPC get_last_user_msg_per_conversation):
+    # devolve 1 linha/conversa em vez de ler até 5.000 linhas cruas por tick — o
+    # maior corte de egress do backend. A RPC é semanticamente idêntica ao loop
+    # paginado (é o mesmo GROUP BY) e mais completa (sem o teto de páginas). Se ela
+    # não existir ainda (migration não aplicada) ou falhar, caímos no caminho
+    # paginado histórico — a rede de segurança NUNCA depende da RPC estar lá.
+    last_user_msg = _last_user_msg_via_rpc(sb, lookback_cutoff, grace_cutoff)
+    if last_user_msg is None:
+        last_user_msg = _last_user_msg_paginated(sb, lookback_cutoff, grace_cutoff)
 
     if not last_user_msg:
         return []
