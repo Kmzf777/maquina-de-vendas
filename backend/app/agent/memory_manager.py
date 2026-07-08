@@ -160,6 +160,23 @@ async def generate_rolling_summary(
         return prior_summary
 
 
+def _parse_ts(value: str) -> datetime:
+    """Parse tolerante de timestamp ISO do PostgREST (aceita sufixo 'Z')."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _summary_is_current(rolling_summary_updated_at, last_customer_message_at) -> bool:
+    """True se o dossiê já cobre a última mensagem do cliente (nada novo p/ resumir).
+    Usado p/ NÃO reselecionar o mesmo lead a cada tick só p/ achar delta vazio (lock churn +
+    egress). Fail-open: em dúvida (campos ausentes/formato estranho) devolve False → processa."""
+    if not rolling_summary_updated_at or not last_customer_message_at:
+        return False
+    try:
+        return _parse_ts(rolling_summary_updated_at) >= _parse_ts(last_customer_message_at)
+    except Exception:
+        return False
+
+
 def _claim_lock(sb, lead_id: str, now: datetime) -> bool:
     """Claim atômico do lock. UPDATE ... WHERE id=? AND (processing_at IS NULL OR < now-TTL).
     O Postgres serializa a linha → de dois claims concorrentes só um casa o WHERE."""
@@ -203,12 +220,21 @@ async def refresh_lead_memory(lead_id: str, client=None, model: str = DEFAULT_MO
         new_summary = await generate_rolling_summary(
             prior, delta, client, model, lead_id=lead_id, stage=lead.get("stage") or "",
         )
+        # Marca d'água: avança rolling_summary_updated_at até a ÚLTIMA mensagem já consumida
+        # neste delta — MESMO quando o dossiê sai idêntico ao anterior. Sem isso, um dossiê
+        # estável (lead quieto, delta sem novidade relevante) reprocessa o MESMO delta a cada
+        # tick do worker, num loop que queimou ~78 refreshes/lead/dia (1117 chamadas LLM p/ 15
+        # leads em 08/07). Usa o created_at da última msg do delta (não now()) p/ não "pular"
+        # mensagens que chegaram durante o processamento — elas entram no próximo ciclo.
+        watermark = (delta[-1].get("created_at") if delta else None) or now.isoformat()
         if not new_summary or new_summary == prior:
+            # nada novo p/ gravar no texto, mas consumimos o delta → só avança a marca d'água
+            update_lead(lead_id, rolling_summary_updated_at=watermark)
             return False
         update_lead(
             lead_id,
             rolling_summary=new_summary,
-            rolling_summary_updated_at=now.isoformat(),
+            rolling_summary_updated_at=watermark,
         )
         logger.info("refresh_lead_memory: dossiê atualizado para lead %s", lead_id)
         return True
@@ -231,7 +257,7 @@ async def process_stale_lead_memories(now: datetime | None = None) -> int:
         lock_cutoff = (now - LOCK_TTL).isoformat()
         rows = (
             sb.table("leads")
-            .select("id")
+            .select("id, last_customer_message_at, rolling_summary_updated_at")
             .gte("last_customer_message_at", recency_cutoff)
             .lt("last_customer_message_at", inactivity_cutoff)
             .or_(f"rolling_summary_processing_at.is.null,rolling_summary_processing_at.lt.{lock_cutoff}")
@@ -247,6 +273,10 @@ async def process_stale_lead_memories(now: datetime | None = None) -> int:
     for row in rows:
         lead_id = row.get("id")
         if not lead_id:
+            continue
+        # Se o dossiê já cobre a última msg do cliente, não há delta novo: pular ANTES de pegar
+        # o lock evita o churn de claim/release + SELECT vazio a cada tick (visto no loop 08/07).
+        if _summary_is_current(row.get("rolling_summary_updated_at"), row.get("last_customer_message_at")):
             continue
         if await refresh_lead_memory(lead_id):
             count += 1

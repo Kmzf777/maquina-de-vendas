@@ -260,6 +260,56 @@ async def test_refresh_lead_memory_passes_updated_at_as_since():
     assert kwargs.get("since") == "2026-06-26T10:00:00+00:00"
 
 
+@pytest.mark.asyncio
+async def test_refresh_lead_memory_advances_watermark_even_when_summary_unchanged():
+    """Dossiê estável (== prior) TEM que avançar rolling_summary_updated_at até a última
+    mensagem consumida — senão o MESMO delta reprocessa a cada tick (loop que queimou
+    1117 chamadas p/ 15 leads em 08/07). Não reescreve o texto do dossiê, só a marca d'água."""
+    from app.agent import memory_manager as mm
+
+    store = {"claimable": True, "calls": []}
+    delta = [
+        {"role": "user", "content": "oi", "created_at": "2026-07-08T18:00:00+00:00"},
+        {"role": "assistant", "content": "olá", "created_at": "2026-07-08T18:01:30+00:00"},
+    ]
+    with patch.object(mm, "get_supabase", return_value=_FakeLockSupabase(store)), \
+         patch.object(mm, "get_lead", return_value={"id": "l1", "rolling_summary": "MESMO", "rolling_summary_updated_at": "2026-07-08T17:00:00+00:00"}), \
+         patch.object(mm, "get_history", return_value=delta), \
+         patch.object(mm, "generate_rolling_summary", new=AsyncMock(return_value="MESMO")), \
+         patch.object(mm, "update_lead") as upd:
+        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+
+    assert ok is False  # não gravou dossiê novo
+    upd.assert_called_once()  # mas AVANÇOU a marca d'água
+    _, kwargs = upd.call_args
+    assert kwargs.get("rolling_summary_updated_at") == "2026-07-08T18:01:30+00:00"  # última msg do delta
+    assert "rolling_summary" not in kwargs  # texto do dossiê não é reescrito à toa
+    assert store["calls"] == ["claim", "release"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_lead_memory_watermark_uses_last_delta_created_at_on_write():
+    """Quando o dossiê muda, a marca d'água é o created_at da ÚLTIMA msg do delta (não now()),
+    p/ não pular mensagens que chegaram durante o processamento."""
+    from app.agent import memory_manager as mm
+
+    store = {"claimable": True, "calls": []}
+    delta = [
+        {"role": "user", "content": "novidade", "created_at": "2026-07-08T18:05:00+00:00"},
+    ]
+    with patch.object(mm, "get_supabase", return_value=_FakeLockSupabase(store)), \
+         patch.object(mm, "get_lead", return_value={"id": "l1", "rolling_summary": "P", "rolling_summary_updated_at": "2026-07-08T17:00:00+00:00"}), \
+         patch.object(mm, "get_history", return_value=delta), \
+         patch.object(mm, "generate_rolling_summary", new=AsyncMock(return_value="NOVO")), \
+         patch.object(mm, "update_lead") as upd:
+        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+
+    assert ok is True
+    _, kwargs = upd.call_args
+    assert kwargs["rolling_summary"] == "NOVO"
+    assert kwargs["rolling_summary_updated_at"] == "2026-07-08T18:05:00+00:00"
+
+
 # ── process_stale_lead_memories: seleção com janela de recência ──────────────
 class _SelResp:
     def __init__(self, data):
@@ -325,3 +375,35 @@ async def test_process_stale_lead_memories_refreshes_each_candidate():
     assert any(f[0] == "gte" and f[1] == "last_customer_message_at" for f in store["filters"])
     assert any(f[0] == "lt" and f[1] == "last_customer_message_at" for f in store["filters"])
     assert store["limit"] == mm.BATCH_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_process_stale_skips_leads_already_summarized_past_last_message():
+    """Não reprocessa (nem pega lock de) leads cujo dossiê já cobre a última msg do cliente —
+    evita o lock churn/egress de reselecionar os mesmos leads a cada tick só p/ achar delta vazio."""
+    from app.agent import memory_manager as mm
+
+    rows = [
+        # dossiê ATRASADO (updated_at < last_msg) → processa
+        {"id": "novo", "last_customer_message_at": "2026-07-08T18:00:00+00:00",
+         "rolling_summary_updated_at": "2026-07-08T17:00:00+00:00"},
+        # dossiê EM DIA (updated_at >= last_msg) → pula
+        {"id": "em_dia", "last_customer_message_at": "2026-07-08T18:00:00+00:00",
+         "rolling_summary_updated_at": "2026-07-08T18:00:00+00:00"},
+        # nunca resumido (updated_at null) → processa
+        {"id": "virgem", "last_customer_message_at": "2026-07-08T18:00:00+00:00",
+         "rolling_summary_updated_at": None},
+    ]
+    store = {"rows": rows, "filters": [], "limit": None}
+    refreshed = []
+
+    async def fake_refresh(lead_id, **k):
+        refreshed.append(lead_id)
+        return True
+
+    with patch.object(mm, "get_supabase", return_value=_FakeSelSupabase(store)), \
+         patch.object(mm, "refresh_lead_memory", new=fake_refresh):
+        count = await mm.process_stale_lead_memories()
+
+    assert refreshed == ["novo", "virgem"]  # "em_dia" nunca chega a refresh_lead_memory
+    assert count == 2
