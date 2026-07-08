@@ -99,11 +99,17 @@ export function useMessageNotifications() {
       .channel("global-message-notifications")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages" },
+        // Filtro server-side `role=eq.user`: o Realtime só empurra INSERTs de
+        // mensagens do contato para o browser. Antes, TODA inserção em `messages`
+        // (inclusive assistant/system) era transmitida a cada aba logada e só
+        // então descartada no cliente por shouldNotifyForMessage — egress inútil.
+        // Como shouldNotifyForMessage já exige role==="user", o filtro é
+        // equivalente em comportamento e corta o tráfego de saída pela metade+.
+        { event: "INSERT", schema: "public", table: "messages", filter: "role=eq.user" },
         async (payload) => {
           const msg = payload.new as Message;
-          // Notifica TODA mensagem do contato (role=user), com IA ligada ou não.
-          // Mensagens da IA (assistant) e de sistema não geram alerta.
+          // Defesa em profundidade: mantém o guard no cliente mesmo com o filtro
+          // server-side (mídia/sistema com role atípico continua não notificando).
           if (!shouldNotifyForMessage(msg)) return;
 
           const conv = await resolveConversation(msg);

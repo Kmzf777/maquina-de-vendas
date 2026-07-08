@@ -27,9 +27,17 @@ export function useRealtimeDeals(pipelineId?: string | null) {
     setLoading(true);
     fetchDeals();
     const channelName = pipelineId ? `deals-changes-${pipelineId}` : "deals-changes-all";
+    // Escopa a inscrição ao pipeline aberto quando há um selecionado: sem o
+    // filtro, QUALQUER mudança em `deals` (de qualquer pipeline) chegava ao
+    // browser e disparava um refetch da lista inteira com joins. Com o filtro,
+    // só mudanças do pipeline visível acordam o refetch. Sem pipeline (visão
+    // agregada) mantém table-wide por necessidade.
+    const changeFilter = pipelineId
+      ? { event: "*" as const, schema: "public", table: "deals", filter: `pipeline_id=eq.${pipelineId}` }
+      : { event: "*" as const, schema: "public", table: "deals" };
     const channel = supabase
       .channel(channelName)
-      .on("postgres_changes", { event: "*", schema: "public", table: "deals" }, fetchDeals)
+      .on("postgres_changes", changeFilter, fetchDeals)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [fetchDeals, pipelineId, supabase]);
