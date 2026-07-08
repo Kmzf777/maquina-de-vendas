@@ -28,8 +28,9 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 _BILLING_ERROR_CODE = 131042
 _META_API_BASE = "https://graph.facebook.com/v21.0"
-# Eixo 3B: template utility aprovado (pt_BR, param nomeado {{primeiro_nome}}) usado para
-# reabrir a janela 24h de um retorno agendado que venceu fora da janela.
+# Eixo 3B: template utility aprovado (pt_BR, BODY estático + botão QUICK_REPLY, ZERO params)
+# usado para reabrir a janela 24h de um retorno agendado que venceu fora da janela.
+# ATENÇÃO: NÃO tem placeholder — enviar qualquer param de body dá Meta #132000.
 _REOPEN_TEMPLATE_NAME = "continuar_conversa"
 
 # agent_profile "ValerIA - Outbound / Recuperacao" (prompt_key=valeria_outbound).
@@ -1573,18 +1574,16 @@ async def fire_reopen_template(
         return False
 
     send_to = resolve_send_target(lead, lead.get("phone", ""))
-    # Task C-4: mesmo tratamento de nome dos demais renderizadores deste módulo —
-    # strip_greeting_prefix + fallback _NAME_FALLBACK, param SEMPRE enviado (nunca omitido).
-    stripped_name = strip_greeting_prefix(lead.get("name"))
-    first_name = stripped_name.split()[0] if stripped_name else _NAME_FALLBACK
-    components = [{
-        "type": "body",
-        "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": first_name}],
-    }]
+    # continuar_conversa (pt_BR, approved) é BODY estático + botão QUICK_REPLY, ZERO params.
+    # Enviar qualquer parâmetro de body faz a Meta rejeitar com #132000 ("number of
+    # localizable_params (1) does not match the expected number of params (0)") — foi o que
+    # derrubou o reopen em 08/07 (lead cintia, 554599367983). NÃO montar components: o
+    # send_template omite o array quando components é None. Confirmado em message_templates
+    # (sem placeholder). Diverge dos templates lp_*/João, que TÊM param nomeado obrigatório.
     try:
         provider_meta = MetaCloudClient(channel["provider_config"])
         send_result = await provider_meta.send_template(
-            send_to, _REOPEN_TEMPLATE_NAME, components=components, language_code="pt_BR"
+            send_to, _REOPEN_TEMPLATE_NAME, components=None, language_code="pt_BR"
         )
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code

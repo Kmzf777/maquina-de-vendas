@@ -57,6 +57,10 @@ async def test_janela_fechada_dispara_template_e_marca_awaiting_reopen(monkeypat
     await scheduler._process_ai_scheduled_return(job, now)
 
     assert sent["name"] == "continuar_conversa"
+    # continuar_conversa é BODY estático + botão QUICK_REPLY, ZERO params. Enviar qualquer
+    # parâmetro de body faz a Meta rejeitar com #132000 (regressão de 08/07, lead cintia):
+    # o reopen NÃO pode montar components — send_template omite o array quando é None.
+    assert not sent["components"], f"reopen deve enviar 0 params, veio: {sent['components']}"
     assert marks == ["job-1"]
     assert cancels == []  # não descarta em silêncio
 
