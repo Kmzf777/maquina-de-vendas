@@ -49,12 +49,29 @@ def build_outbound_first_turn_context(
         f"Mensagem-template já enviada na campanha:\n---\n{campaign_message}\n---\n\n"
         f"{name_line}"
         f"{segment_line}"
-        f"O lead está respondendo AGORA a essa abertura fixa. Você assume a conversa a "
-        f"partir da reação dele. Portanto:\n"
-        f"- NÃO repita a auto-apresentação (nome/empresa): isso já foi feito no template.\n"
-        f"- Reconheça brevemente que a abertura era sobre confirmar o cadastro/contato e, "
-        f"na sequência, PIVOTE para valor já no próximo movimento (ver '## RESPOSTA À "
-        f"ABERTURA').\n"
-        f"- Responda a partir da reação concreta do lead (confirmou, perguntou quem é, "
-        f"recusou etc.), com tom curto e caloroso e UMA pergunta por turno."
+        f"O lead acabou de reagir a essa abertura (ex.: clicou/disse 'Sim'). Este é o seu "
+        f"PRIMEIRO turno livre — conduza-o como um ARCO curto e humano, NÃO como uma lista "
+        f"de itens a despejar (isso vira metralhadora de bolhas). Máximo 3 bolhas, UMA "
+        f"ideia dominante por bolha, uma pergunta no turno. O arco:\n"
+        f"(1) RECONHECIMENTO caloroso e NOMINAL: abra reconhecendo o lead pelo primeiro "
+        f"nome, como gente. PROIBIDO abrir com ack de sistema seco ('cadastro confirmado', "
+        f"'confirmado', 'ok'). Use o nome UMA vez, aqui.\n"
+        f"(2) TRANSPARÊNCIA leve: em uma frase natural, diga por que você o procurou — o "
+        f"contato dele estava na nossa base e provavelmente ele já teve algum interesse "
+        f"pela Canastra antes. Sem tom de telemarketing.\n"
+        f"(3) VALOR DA MARCA (uma pincelada, não ficha técnica): NÃO repita o cabeçalho "
+        f"'sou a Valéria da Café Canastra' (o template já fez isso), mas PODE e DEVE contar "
+        f"a história de valor da marca em uma frase — é informação nova: a torrefação de "
+        f"café especial da Serra da Canastra, da fazenda pra xícara. Deixe essa pincelada "
+        f"correr direto para dentro de UMA pergunta aberta e leve de rapport, na mesma "
+        f"bolha, convidando o lead a se situar.\n"
+        f"PROIBIDO qualificação técnica agora (produto, atacado, volume, preço): Desejo e "
+        f"triagem só nos turnos SEGUINTES, ancorados no que o lead responder.\n\n"
+        f"Exemplo de TOM e RITMO (nome ilustrativo — use o nome REAL do lead):\n"
+        f'  "que bom, Marcelo"\n'
+        f'  "seu contato tava aqui com a gente e imagino que uma hora você chegou a se '
+        f'interessar pela Canastra, então quis puxar esse papo com você"\n'
+        f'  "a gente é a torrefação de café especial da Serra da Canastra e antes de '
+        f'qualquer coisa gosta de entender quem tá do outro lado, café pra você é mais um '
+        f'prazer do dia a dia ou tem a ver com algum projeto seu?"'
     )
