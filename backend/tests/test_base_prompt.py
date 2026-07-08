@@ -19,6 +19,42 @@ def test_base_prompt_with_name():
     assert "João" in prompt
 
 
+# ── Implicit caching: prefixo estatico estavel + volatil por ultimo ──────────
+def test_base_prompt_static_prefix_is_identical_across_leads():
+    """GARANTIA DE CACHE: tudo ANTES de <context> tem que ser byte-identico entre leads
+    diferentes — senao o implicit caching do Gemini nao pega (prefixo instavel). Este teste
+    trava a regressao de reintroduzir dado volatil (nome/data/dossie) antes de <context>."""
+    now = _now()
+    p1 = build_base_prompt("João", "Cafeteria A", now,
+                           lead_context={"name": "João", "notes": "quer 50kg", "rolling_summary": "## DOSSIÊ DO LEAD\n* X"})
+    p2 = build_base_prompt("Maria", "Hotel Sol", now,
+                           lead_context={"name": "Maria", "notes": "quer 200kg", "rolling_summary": "## DOSSIÊ DO LEAD\n* Y"})
+
+    assert "<context>" in p1 and "<context>" in p2
+    prefix1 = p1.split("<context>")[0]
+    prefix2 = p2.split("<context>")[0]
+    # o prefixo estatico (role+constraints+instructions+examples) e igual byte a byte
+    assert prefix1 == prefix2, "prefixo estatico divergiu entre leads — implicit caching quebrado"
+    # e o prefixo carrega o grosso do prompt (o corpo estatico), nao um pedaco minusculo
+    assert len(prefix1) > 20000, "prefixo estatico pequeno demais — bloco estatico nao esta no prefixo"
+
+
+def test_base_prompt_volatile_content_comes_after_static_body():
+    """O bloco volatil <context> (nome/empresa/dossie) vem DEPOIS do corpo estatico
+    (<examples> e o ultimo bloco estatico antes de <context>)."""
+    ctx = {"name": "Maria", "company": "Hotel Sol", "rolling_summary": "## DOSSIÊ DO LEAD\n* memoria viva"}
+    prompt = build_base_prompt(None, None, _now(), lead_context=ctx)
+    idx_examples = prompt.find("<examples>")
+    idx_context = prompt.find("<context>")
+    idx_name = prompt.find("Maria")
+    assert idx_examples != -1 and idx_context != -1
+    assert idx_context > idx_examples, "<context> deve vir depois de <examples>"
+    assert idx_name > idx_context, "conteudo volatil (nome) deve estar dentro/depois de <context>"
+    # nada de dado do lead vaza pro corpo estatico
+    assert "Maria" not in prompt.split("<context>")[0]
+    assert "memoria viva" not in prompt.split("<context>")[0]
+
+
 def test_base_prompt_exige_ponto_de_interrogacao():
     """A regra 'sem ponto final' nao pode derrubar o '?': perguntas DEVEM terminar com '?'."""
     prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())

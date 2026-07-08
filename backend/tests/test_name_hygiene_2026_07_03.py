@@ -269,10 +269,13 @@ async def test_process_lp_welcome_sem_nome_nenhum_envia_fallback():
     }]
 
 
-# ─── fire_reopen_template: mesma higiene (achado por grep, mesma família de bug) ────
+# ─── fire_reopen_template: continuar_conversa tem ZERO params (fix Meta #132000) ────
 
 @pytest.mark.asyncio
-async def test_fire_reopen_template_nome_so_saudacao_usa_fallback(monkeypatch):
+async def test_fire_reopen_template_envia_zero_params(monkeypatch):
+    """continuar_conversa e um template de 0 params (BODY estatico + botao QUICK_REPLY).
+    Mandar qualquer parametro (ex.: primeiro_nome) da Meta #132000 e a reabertura falha
+    (fix commit 9492567). Independe do 'name' do lead ser uma saudacao — nao ha param de nome."""
     from app.follow_up import scheduler
 
     captured = {}
@@ -296,7 +299,4 @@ async def test_fire_reopen_template_nome_so_saudacao_usa_fallback(monkeypatch):
         lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
     )
     assert ok is True
-    assert captured["components"] == [{
-        "type": "body",
-        "parameters": [{"type": "text", "parameter_name": "primeiro_nome", "text": _NAME_FALLBACK}],
-    }]
+    assert not captured["components"], f"reopen deve enviar 0 params, veio: {captured['components']}"

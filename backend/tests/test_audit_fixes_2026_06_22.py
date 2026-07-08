@@ -108,10 +108,12 @@ async def test_outbound_injeta_contexto_com_abertura_no_historico():
         await run_agent(conversation, "sim", lead_context=None, agent_profile_id="profile-out")
 
     messages = _capture_messages(create_mock)
-    # system + assistant(opener) + user(contexto outbound) + user("sim")
-    ctx_msgs = [m for m in messages if m["role"] == "user" and "O lead está respondendo" in m["content"]]
-    assert len(ctx_msgs) == 1, messages
-    assert "Falo com Maria neste número?" in ctx_msgs[0]["content"]
+    # O contexto de 1º turno outbound tem que ser injetado. O texto foi reescrito para o arco
+    # AIDA caloroso (commit 1674bc5) — marcador estavel = "PRIMEIRO turno" — e a abertura-template
+    # e derivada do proprio broadcast no historico ("Falo com Maria neste número?").
+    blob = " ".join(str(m.get("content", "")) for m in messages)
+    assert "PRIMEIRO turno" in blob, messages
+    assert "Falo com Maria neste número?" in blob
     assert messages[-1] == {"role": "user", "content": "sim"}
 
 
@@ -142,4 +144,5 @@ async def test_outbound_segundo_turno_com_abertura_nao_injeta():
         await run_agent(conversation, "quero saber mais", lead_context=None, agent_profile_id="profile-out")
 
     messages = _capture_messages(create_mock)
-    assert not any("O lead está respondendo" in str(m) for m in messages)
+    # 2º turno: NAO injeta o contexto de 1º turno outbound (marcador "PRIMEIRO turno" ausente).
+    assert not any("PRIMEIRO turno" in str(m) for m in messages)

@@ -6,7 +6,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def test_context_builder_com_nome_e_campanha():
-    """Deve incluir campaign_message, nome do lead e aviso de que está respondendo."""
+    """Deve incluir campaign_message, nome do lead e o frame de PRIMEIRO turno outbound."""
     from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 
     result = build_outbound_first_turn_context(
@@ -16,7 +16,7 @@ def test_context_builder_com_nome_e_campanha():
 
     assert "Ola, aqui e a Valeria da Cafe Canastra." in result
     assert "O lead se chama Joao" in result
-    assert "O lead está respondendo" in result
+    assert "PRIMEIRO turno" in result  # arco AIDA (1674bc5) reescreveu o texto antigo
 
 
 def test_context_builder_sem_nome():
@@ -30,7 +30,7 @@ def test_context_builder_sem_nome():
 
     assert "O lead se chama" not in result
     assert "Template da campanha." in result
-    assert "O lead está respondendo" in result
+    assert "PRIMEIRO turno" in result  # arco AIDA (1674bc5) reescreveu o texto antigo
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ async def test_outbound_primeiro_turno_injeta_contexto_campanha():
     assert len(messages) == 3
     assert messages[1]["role"] == "user"
     assert "Ola, aqui e a Valeria." in messages[1]["content"]
-    assert "O lead está respondendo" in messages[1]["content"]
+    assert "PRIMEIRO turno" in messages[1]["content"]  # arco AIDA (1674bc5)
     assert messages[2] == {"role": "user", "content": "sim"}
 
 

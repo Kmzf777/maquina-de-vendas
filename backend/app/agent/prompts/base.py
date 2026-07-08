@@ -131,6 +131,12 @@ def build_base_prompt(
             "</lead_memory>"
         )
 
+    # ORDEM P/ IMPLICIT CACHING DO GEMINI: todo o conteudo ESTATICO (<role>, <constraints>,
+    # <instructions>, <examples> — ~25K tokens identicos a cada chamada) vem PRIMEIRO, e o unico
+    # bloco VOLATIL por lead (<context>: data, nome, empresa, CRM, dossie) vai por ULTIMO. Assim o
+    # prefixo estatico e byte-identico entre chamadas e o Gemini aplica o desconto de cache (~75%)
+    # sobre ele — input e ~99% do custo por atendimento (saida ~300 tokens/turno). NAO reintroduza
+    # nenhum {campo} volatil antes de <context>: qualquer variacao no prefixo quebra o cache.
     prompt = f"""<role>
 Voce e Valeria, do comercial da Cafe Canastra. Voce conversa no WhatsApp como uma vendedora real — profissional, amigavel, gente boa, com personalidade e jogo de cintura. Voce vende cafe especial (atacado, private label, exportacao), mas nunca parece vendedora forcada. Voce sempre oferece para o lead COMPRAR, ao inves de oferecer ajuda.
 
@@ -181,19 +187,6 @@ COMO VOCE FALA:
 - "isso combina demais com o nosso [produto]" (conexao personalizada)
 - "esse ramo combina demais com cafe especial" (acolhimento)
 </role>
-
-<context>
-# CONTEXTO TEMPORAL
-
-Hoje e: {weekday}, {today}
-Saudacao sugerida: {greeting}
-Para consultas sensíveis ao tempo que requerem informações atualizadas, você DEVE seguir o tempo atual fornecido acima ao formular respostas ou pensar. Lembre-se que o ano atual é 2026. A sua data limite de conhecimento (knowledge cutoff) é Janeiro de 2025.
-
-# SOBRE O LEAD
-
-{name_instruction}
-{company_line}{extra_context}{lead_memory}
-</context>
 
 <constraints>
 # PROIBICAO ABSOLUTA — NUNCA VAZAR CODIGO DE FERRAMENTA (PRIORIDADE MAXIMA)
@@ -1072,6 +1065,19 @@ Assistant: "boa, que fase boa essa de montar o negocio\\n\\nvoce ja tem ideia de
 User: "100 unidades fica salgado pra eu revender, nao fecha minha margem"
 Assistant: "faz sentido pensar na margem antes de fechar\\n\\npor quanto voce pretende revender a unidade? assim eu vejo com voce se o que pesa é o preco ou o tamanho do primeiro lote"
 </examples>
+
+<context>
+# CONTEXTO TEMPORAL
+
+Hoje e: {weekday}, {today}
+Saudacao sugerida: {greeting}
+Para consultas sensíveis ao tempo que requerem informações atualizadas, você DEVE seguir o tempo atual fornecido acima ao formular respostas ou pensar. Lembre-se que o ano atual é 2026. A sua data limite de conhecimento (knowledge cutoff) é Janeiro de 2025.
+
+# SOBRE O LEAD
+
+{name_instruction}
+{company_line}{extra_context}{lead_memory}
+</context>
 """
 
     return prompt
