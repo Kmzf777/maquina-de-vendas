@@ -107,8 +107,29 @@ def _gemini_thinking_off(model: str) -> dict:
     return {}
 
 
+def _track_memory_usage(response, lead_id: str | None, stage: str, model: str) -> None:
+    """Contabiliza o custo do refresh de dossiê em token_usage. Fail-soft: nunca levanta —
+    era off-book (rodava a cada sessão encerrada de cada lead sem gravar nada)."""
+    try:
+        usage = getattr(response, "usage", None)
+        if not usage or not lead_id:
+            return
+        from app.agent.token_tracker import track_token_usage
+        track_token_usage(
+            lead_id=lead_id,
+            stage=stage or "",
+            model=model,
+            call_type="rolling_summary",
+            prompt_tokens=usage.prompt_tokens or 0,
+            completion_tokens=usage.completion_tokens or 0,
+        )
+    except Exception as exc:  # pragma: no cover - defensivo
+        logger.warning("memory_manager: falha ao registrar token_usage (ignorado): %s", exc)
+
+
 async def generate_rolling_summary(
     prior_summary: str, delta: list[dict], client, model: str,
+    lead_id: str | None = None, stage: str = "",
 ) -> str:
     """Gera o dossiê atualizado (structured JSON → markdown). Fail-soft: erro/JSON inválido/
     delta vazio → devolve o `prior_summary` intacto (nunca perde memória nem degrada formato)."""
@@ -123,6 +144,7 @@ async def generate_rolling_summary(
             temperature=0.2,
             **_gemini_thinking_off(model),
         )
+        _track_memory_usage(response, lead_id, stage, model)
         if not response.choices:
             return prior_summary
         content = response.choices[0].message.content or ""
@@ -178,7 +200,9 @@ async def refresh_lead_memory(lead_id: str, client=None, model: str = DEFAULT_MO
         if client is None:
             from app.agent.orchestrator import get_ai_client
             client = get_ai_client(model)
-        new_summary = await generate_rolling_summary(prior, delta, client, model)
+        new_summary = await generate_rolling_summary(
+            prior, delta, client, model, lead_id=lead_id, stage=lead.get("stage") or "",
+        )
         if not new_summary or new_summary == prior:
             return False
         update_lead(

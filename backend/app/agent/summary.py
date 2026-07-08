@@ -5,6 +5,27 @@ from app.agent.gemini_native import GeminiNativeClient
 
 logger = logging.getLogger(__name__)
 
+
+def _track_summary_usage(response: Any, lead: dict[str, Any], model: str, call_type: str) -> None:
+    """Registra o custo da chamada de resumo em token_usage. Fail-soft: nunca levanta —
+    contabilidade jamais pode derrubar o handoff. Só grava com lead_id e usage presentes."""
+    try:
+        usage = getattr(response, "usage", None)
+        lead_id = lead.get("id")
+        if not usage or not lead_id:
+            return
+        from app.agent.token_tracker import track_token_usage
+        track_token_usage(
+            lead_id=lead_id,
+            stage=lead.get("stage") or "",
+            model=model,
+            call_type=call_type,
+            prompt_tokens=usage.prompt_tokens or 0,
+            completion_tokens=usage.completion_tokens or 0,
+        )
+    except Exception as exc:  # pragma: no cover - defensivo
+        logger.warning("summary: falha ao registrar token_usage (ignorado): %s", exc)
+
 _SUMMARY_SYSTEM_PROMPT = """Você é um assistente especializado em briefings de vendas do Café Canastra.
 
 Analise as informações do lead e o histórico da conversa abaixo, depois gere exatamente este bloco markdown (mantenha todos os campos — use "Não informado na triagem" quando não houver dados explícitos):
@@ -94,6 +115,9 @@ async def generate_qualification_summary(
             temperature=0.2,
             **_gemini_thinking_off(model),
         )
+        # Contabiliza o custo desta chamada — antes era off-book (nunca gravava token_usage),
+        # mascarando o gasto real e cegando o budget_guard. call_type próprio p/ auditoria.
+        _track_summary_usage(response, lead, model, "qualification_summary")
         if not response.choices:
             return "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n*Resumo indisponível (resposta vazia do modelo).*"
         return response.choices[0].message.content or ""

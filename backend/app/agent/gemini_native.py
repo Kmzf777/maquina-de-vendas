@@ -309,11 +309,24 @@ class GeminiNativeClient:
 _client: GeminiNativeClient | None = None
 
 
+def _key_fingerprint(key: str) -> str:
+    """sha256[:8] da chave — identifica QUAL chave está ativa sem vazá-la. Serve para
+    confirmar que prod e dev NÃO compartilham a mesma GEMINI_API_KEY (a chave compartilhada
+    faz o teto mensal do Google ser drenado por dev e derrubar a produção)."""
+    import hashlib
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+
 def get_client() -> GeminiNativeClient:
     """Singleton do cliente Gemini nativo. Levanta se a GEMINI_API_KEY não estiver setada."""
     global _client
     if _client is None:
         if not settings.gemini_api_key:
             raise ValueError("GEMINI_API_KEY is not configured — set it in .env to use Gemini models")
+        logger.info(
+            "[GEMINI] cliente inicializado — key fp=%s dev_env=%s. Prod e dev DEVEM ter "
+            "fingerprints diferentes (chave compartilhada drena o teto e derruba a produção).",
+            _key_fingerprint(settings.gemini_api_key), getattr(settings, "is_dev_env", None),
+        )
         _client = GeminiNativeClient(api_key=settings.gemini_api_key)
     return _client
