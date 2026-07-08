@@ -3,9 +3,9 @@
 
 Contexto forense: Juliana (02/07) mandou mensagem no canal humano (pos-handoff, o
 Joao ja tinha assumido a conversa) e ficou 1h46 sem resposta — "o Joao visualiza e
-nao responde" — e ZERO alertas dispararam. O Check 2 (`orphan_lead_reply`) nao
-cobre esse caso por DESIGN: `human_control=true` tira a conversa do escopo (e o
-estado ESPERADO pos-handoff, a ponte da Frente B1). Este arquivo cobre o Check 5,
+nao responde" — e ZERO alertas dispararam. `human_control=true` e o estado ESPERADO
+pos-handoff (a ponte da Frente B1), entao esse caso pos-handoff so e coberto pelo
+Check 5. Este arquivo cobre o Check 5,
 que fecha essa lacuna observando diretamente `conversations.last_customer_message_at`/
 `last_seller_response_at` (mantidas por fluxo/trigger ja existentes — ver
 migrations/20260525_sla_seller_columns.sql — o check nao precisa ler `messages`).

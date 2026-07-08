@@ -3,13 +3,11 @@
 Contexto forense: o apagao de producao (01-02/07) deixou leads ate 21h sem resposta
 com mensagens salvas no banco e ZERO alertas — os alertas existentes (llm_down,
 billing) observam EXCECOES no caminho de execucao, nao o resultado fim-a-fim. Este
-arquivo cobre os 3 checks que leem o banco direto (verdade fim-a-fim, independente
+arquivo cobre os checks que leem o banco direto (verdade fim-a-fim, independente
 de qual bug matou o turno) e o loop `run_watchdog` que os orquestra:
 
   - Check 1 `ai_unresponsive` (caso Welita): lead mandou mensagem num canal de IA
     com IA ligada e ninguem respondeu.
-  - Check 2 `orphan_lead_reply` (caso Rafael): lead respondeu com a IA desligada e
-    sem controle humano assumido — ninguem e dono da conversa.
   - Check 3 `followup_jobs_stuck`: jobs de follow-up pendentes com fire_at muito no
     passado — o scheduler parou de rodar.
 
@@ -25,7 +23,6 @@ import pytest
 from app.watchdog import service as W
 from app.watchdog.service import (
     check_ai_unresponsive,
-    check_orphan_lead_reply,
     check_stuck_followup_jobs,
     run_watchdog,
 )
@@ -317,18 +314,6 @@ def _seed_conversation_check1(fake, conv_id, *, mode, ai_enabled, opt_out=False,
     })
 
 
-def _seed_conversation_check2(fake, conv_id, *, ai_enabled, human_control, opt_out, name="Lead"):
-    fake.tables["conversations"].append({
-        "id": conv_id,
-        "leads": {
-            "ai_enabled": ai_enabled,
-            "human_control": human_control,
-            "opt_out": opt_out,
-            "name": name,
-        },
-    })
-
-
 def _seed_alert(fake, alert_type, created_at, resolved=False):
     fake.tables["system_alerts"].append({
         "type": alert_type,
@@ -447,20 +432,6 @@ def test_check1_detects_violation_when_embed_returns_list_shape(fake_db):
     assert alerts[0]["type"] == "ai_unresponsive"
 
 
-def test_check2_detects_violation_when_embed_returns_list_shape(fake_db):
-    """Mesma robustez de shape para o Check 2 (orphan_lead_reply): leads embed como lista."""
-    now = datetime.now(timezone.utc)
-    fake_db.tables["conversations"].append({
-        "id": "conv-rafael-list",
-        "leads": [{"ai_enabled": False, "human_control": False, "opt_out": False, "name": "Rafael"}],
-    })
-    _seed_message(fake_db, "conv-rafael-list", "user", now - timedelta(minutes=40))
-
-    assert check_orphan_lead_reply(now) == 1
-    assert len(fake_db.tables["system_alerts"]) == 1
-    assert fake_db.tables["system_alerts"][0]["type"] == "orphan_lead_reply"
-
-
 def test_check1_human_channel_out_of_scope(fake_db):
     now = datetime.now(timezone.utc)
     _seed_conversation_check1(fake_db, "conv-human", mode="human", ai_enabled=True)
@@ -476,44 +447,6 @@ def test_check1_ai_disabled_lead_out_of_scope(fake_db):
     _seed_message(fake_db, "conv-off", "user", now - timedelta(hours=21))
 
     assert check_ai_unresponsive(now) == 0
-    assert fake_db.tables["system_alerts"] == []
-
-
-# ── Check 2: orphan_lead_reply (caso Rafael) ───────────────────────────────────
-
-def test_check2_rafael_detects_violation_and_inserts_warning(fake_db):
-    now = datetime.now(timezone.utc)
-    _seed_conversation_check2(
-        fake_db, "conv-rafael", ai_enabled=False, human_control=False, opt_out=False, name="Rafael"
-    )
-    _seed_message(fake_db, "conv-rafael", "user", now - timedelta(minutes=40))
-
-    result = check_orphan_lead_reply(now)
-
-    assert result == 1
-    alerts = fake_db.tables["system_alerts"]
-    assert len(alerts) == 1
-    assert alerts[0]["type"] == "orphan_lead_reply"
-    assert alerts[0]["severity"] == "warning"
-    assert alerts[0]["metadata"]["conversation_ids"] == ["conv-rafael"]
-
-
-def test_check2_human_control_true_out_of_scope(fake_db):
-    """Pos-handoff (human_control=true) e o estado esperado -- NAO alerta (ponte B1 e outra etapa)."""
-    now = datetime.now(timezone.utc)
-    _seed_conversation_check2(fake_db, "conv-handoff", ai_enabled=False, human_control=True, opt_out=False)
-    _seed_message(fake_db, "conv-handoff", "user", now - timedelta(minutes=40))
-
-    assert check_orphan_lead_reply(now) == 0
-    assert fake_db.tables["system_alerts"] == []
-
-
-def test_check2_opt_out_true_out_of_scope(fake_db):
-    now = datetime.now(timezone.utc)
-    _seed_conversation_check2(fake_db, "conv-optout", ai_enabled=False, human_control=False, opt_out=True)
-    _seed_message(fake_db, "conv-optout", "user", now - timedelta(minutes=40))
-
-    assert check_orphan_lead_reply(now) == 0
     assert fake_db.tables["system_alerts"] == []
 
 
@@ -563,7 +496,6 @@ async def test_run_watchdog_rehearsal_mode_skips_all_checks(monkeypatch):
     monkeypatch.setenv("REHEARSAL_MODE", "true")
     calls = []
     monkeypatch.setattr(W, "check_ai_unresponsive", lambda now: calls.append("check1") or 0)
-    monkeypatch.setattr(W, "check_orphan_lead_reply", lambda now: calls.append("check2") or 0)
     monkeypatch.setattr(W, "check_stuck_followup_jobs", lambda now: calls.append("check3") or 0)
 
     app_mock = MagicMock()
@@ -576,13 +508,13 @@ async def test_run_watchdog_rehearsal_mode_skips_all_checks(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_failure(monkeypatch):
-    """Tick normal: chama os 4 checks + recover_orphaned_buffers mesmo se o 1o check lancar.
+    """Tick normal: chama os 3 checks + recover_orphaned_buffers mesmo se o 1o check lancar.
 
-    Os 4 checks (incluindo o novo Check 5 `check_handoff_sla`, registrado como o 4o
-    do loop) sao monkeypatchados — sem isso, `check_handoff_sla` real bateria no
-    Supabase de verdade (URL fake do conftest, `https://test.supabase.co`) sempre
-    que o horario real da maquina de teste cair dentro da janela util (8h-20h
-    America/Sao_Paulo), tornando o teste dependente de hora do dia (flaky).
+    Os 3 checks (incluindo o Check 5 `check_handoff_sla`) sao monkeypatchados — sem
+    isso, `check_handoff_sla` real bateria no Supabase de verdade (URL fake do
+    conftest, `https://test.supabase.co`) sempre que o horario real da maquina de
+    teste cair dentro da janela util (8h-20h America/Sao_Paulo), tornando o teste
+    dependente de hora do dia (flaky).
     """
     monkeypatch.setenv("REHEARSAL_MODE", "false")
     calls = []
@@ -592,7 +524,6 @@ async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_
         raise RuntimeError("boom")
 
     monkeypatch.setattr(W, "check_ai_unresponsive", _boom)
-    monkeypatch.setattr(W, "check_orphan_lead_reply", lambda now: calls.append("check2") or 0)
     monkeypatch.setattr(W, "check_stuck_followup_jobs", lambda now: calls.append("check3") or 0)
     monkeypatch.setattr(W, "check_handoff_sla", lambda now: calls.append("check5") or 0)
 
@@ -611,5 +542,5 @@ async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_
         with pytest.raises(asyncio.CancelledError):
             await run_watchdog(app_mock)
 
-    assert calls == ["check1", "check2", "check3", "check5"]
+    assert calls == ["check1", "check3", "check5"]
     assert recovery_calls == [("fake-redis-marker", {"require_no_deadline": True, "source": "watchdog"})]

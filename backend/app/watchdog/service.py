@@ -9,15 +9,12 @@ bug matou o turno):
 
   - Check 1 `ai_unresponsive` (caso Welita): lead mandou mensagem num canal de IA
     com a IA ligada e ninguem respondeu.
-  - Check 2 `orphan_lead_reply` (caso Rafael): lead respondeu com a IA desligada e
-    sem controle humano assumido — ninguem e dono da conversa.
   - Check 3 `followup_jobs_stuck`: jobs de follow-up pendentes com fire_at muito no
     passado — o scheduler parou de rodar.
   - Check 5 `handoff_sla_breach` (caso Juliana, 02/07): lead mandou mensagem no
     canal humano (pos-handoff, vendedor ja assumiu) e ficou mais de 20min sem
-    resposta do vendedor. Fecha a lacuna que o Check 2 deixa por design
-    (human_control=true e o estado ESPERADO pos-handoff, fora do escopo de
-    orphan_lead_reply) — sem este check, "o Joao visualiza e nao responde" fica
+    resposta do vendedor. Cobre o caso em que "o Joao visualiza e nao responde"
+    (human_control=true, o estado ESPERADO pos-handoff) — sem este check, ficaria
     1h46 invisivel, como aconteceu com a Juliana.
 
 Roda como task asyncio no lifespan de main.py, espelhando o padrao de run_flusher
@@ -43,10 +40,9 @@ logger = logging.getLogger(__name__)
 # --- Constantes (sem numeros magicos inline) -----------------------------------
 WATCHDOG_INTERVAL_SECONDS = 60
 AI_UNRESPONSIVE_GRACE_MINUTES = 5
-# Usado tambem como piso da janela de candidatas do Check 2 (_find_unanswered_conversations
-# e compartilhada) -- so leva o nome do Check 1 porque foi o caso motivador (Welita).
+# Piso da janela de candidatas de _find_unanswered_conversations (helper compartilhado)
+# -- leva o nome do Check 1 porque foi o caso motivador (Welita).
 AI_UNRESPONSIVE_LOOKBACK_HOURS = 24
-ORPHAN_REPLY_GRACE_MINUTES = 30
 STUCK_JOB_HOURS = 2
 ALERT_DEDUP_HOURS = 1
 # Tamanho de cada pagina do passo 1 (candidatas) dos Checks 1/2 — mantem cada query
@@ -365,40 +361,6 @@ def check_ai_unresponsive(now: datetime) -> int:
     return n
 
 
-def check_orphan_lead_reply(now: datetime) -> int:
-    """Check 2 (caso Rafael) — retorna o nº de conversas em violacao (0 = ok).
-
-    Pos-handoff (`human_control=true`) NAO alerta — e o estado esperado (a ponte
-    B1 que garante um vendedor efetivamente assumindo e outra etapa).
-    """
-    violated = _find_unanswered_conversations(
-        now,
-        grace_minutes=ORPHAN_REPLY_GRACE_MINUTES,
-        # Embed enxuto: scope_ok so le ai_enabled/human_control/opt_out — name nunca
-        # e consumido aqui.
-        embed_select="id, leads!inner(ai_enabled, human_control, opt_out)",
-        scope_ok=lambda row: (
-            _embed_one(row.get("leads")).get("ai_enabled") is False
-            and _embed_one(row.get("leads")).get("human_control") is False
-            and _embed_one(row.get("leads")).get("opt_out") is False
-        ),
-    )
-    n = len(violated)
-    if n:
-        logger.warning("[WATCHDOG] orphan_lead_reply: %d conversa(s) em violacao", n)
-        if not _alert_recently_fired("orphan_lead_reply"):
-            create_system_alert(
-                "orphan_lead_reply",
-                "Lead respondeu sem dono",
-                f"{n} lead(s) responderam há mais de {ORPHAN_REPLY_GRACE_MINUTES}min "
-                "com a IA desligada e sem controle humano assumido (sem dono). "
-                "Verifique se algum vendedor precisa assumir a conversa.",
-                severity="warning",
-                metadata={"conversation_ids": violated[:10]},
-            )
-    return n
-
-
 def check_stuck_followup_jobs(now: datetime) -> int:
     """Check 3 — jobs de follow-up pendentes com fire_at muito no passado (scheduler parado)."""
     sb = get_supabase()
@@ -483,9 +445,9 @@ def check_handoff_sla(now: datetime) -> int:
 
     Juliana mandou mensagem no canal do Joao (pos-handoff, vendedor ja assumiu a
     conversa) e ficou 1h46 sem resposta — "o Joao visualiza e nao responde" — e
-    ZERO alertas dispararam. O Check 2 (orphan_lead_reply) nao cobre esse caso por
-    design: human_control=true tira a conversa do escopo (e o estado ESPERADO
-    pos-handoff, a ponte da Frente B1). Este check fecha a lacuna observando
+    ZERO alertas dispararam. Este e o caso do pos-handoff: human_control=true e o
+    estado ESPERADO (a ponte da Frente B1), entao um lead que responde ao vendedor
+    e fica sem retorno so e visto por este check, que fecha a lacuna observando
     diretamente as colunas `conversations.last_customer_message_at`/
     `last_seller_response_at` (mantidas por fluxo/trigger ja existentes — nao
     precisa ler `messages`).
@@ -596,13 +558,6 @@ async def run_watchdog(app) -> None:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_ai_unresponsive falhou: %s", exc, exc_info=True)
-
-        try:
-            await asyncio.to_thread(check_orphan_lead_reply, now)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("[WATCHDOG] check check_orphan_lead_reply falhou: %s", exc, exc_info=True)
 
         try:
             await asyncio.to_thread(check_stuck_followup_jobs, now)

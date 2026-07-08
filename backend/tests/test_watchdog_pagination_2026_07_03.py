@@ -25,12 +25,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from app.watchdog import service as W
-from app.watchdog.service import check_ai_unresponsive, check_orphan_lead_reply
+from app.watchdog.service import check_ai_unresponsive
 
 from tests.test_watchdog_checks_2026_07_02 import (  # reuso, nao duplicacao (ver docstring)
     FakeSupabase,
     _seed_conversation_check1,
-    _seed_conversation_check2,
     _seed_message,
 )
 
@@ -123,12 +122,12 @@ def test_chunking_splits_over_100_ids_and_aggregates_result_correctly(monkeypatc
     n_convs = 101  # > ID_CHUNK_SIZE (100) -> pelo menos 2 chunks
     for i in range(n_convs):
         conv_id = f"conv-{i:03d}"
-        _seed_conversation_check2(fake, conv_id, ai_enabled=False, human_control=False, opt_out=False)
+        _seed_conversation_check1(fake, conv_id, mode="ai", ai_enabled=True)
         _seed_message(fake, conv_id, "user", now - timedelta(minutes=40))
         if i % 2 == 0:
             _seed_message(fake, conv_id, "assistant", now - timedelta(minutes=35))  # limpa a violacao
 
-    result = check_orphan_lead_reply(now)
+    result = check_ai_unresponsive(now)
 
     expected_violated = len([i for i in range(n_convs) if i % 2 != 0])  # 50 impares sem resposta
     assert result == expected_violated
@@ -194,20 +193,20 @@ def test_check1_embed_select_omits_unused_name_and_opt_out(monkeypatch):
         assert "ai_enabled" in c["select"]
 
 
-def test_check2_embed_select_omits_unused_name(monkeypatch):
-    """Check 2 (`scope_ok` le `ai_enabled`/`human_control`/`opt_out`) nao deveria
-    pedir `name` no embed de `leads` — nunca lido por `scope_ok`.
+def test_check1_embed_select_omits_name_and_optout_at_scale(monkeypatch):
+    """Check 1 (`scope_ok` le so `channels.mode`/`leads.ai_enabled`) nao pede
+    `name`/`opt_out` no embed de `leads` — campos nunca lidos por `scope_ok`.
     """
     fake = _fake_db(monkeypatch)
     now = datetime.now(timezone.utc)
-    _seed_conversation_check2(fake, "conv-y", ai_enabled=False, human_control=False, opt_out=False)
+    _seed_conversation_check1(fake, "conv-y", mode="ai", ai_enabled=True)
     _seed_message(fake, "conv-y", "user", now - timedelta(minutes=40))
 
-    assert check_orphan_lead_reply(now) == 1
+    assert check_ai_unresponsive(now) == 1
 
     conv_calls = [c for c in fake.calls if c["table"] == "conversations"]
     assert conv_calls, "passo 2 deveria ter sido chamado"
     for c in conv_calls:
         assert "name" not in c["select"]
-        assert "human_control" in c["select"]
-        assert "opt_out" in c["select"]
+        assert "opt_out" not in c["select"]
+        assert "ai_enabled" in c["select"]
