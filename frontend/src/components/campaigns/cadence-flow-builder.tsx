@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, DragEvent, memo } from "react";
 import { useRouter } from "next/navigation";
+import { CadenceExecutionLog } from "@/components/campaigns/cadence-execution-log";
 import {
   ReactFlow,
   Background,
@@ -1618,7 +1619,8 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
           </div>
         </div>
 
-        {/* ── Canvas (React Flow) ───────────────────────────────────── */}
+        {/* ── Canvas + Execution Log (stacked vertically) ──────────── */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div
           ref={reactFlowWrapper}
           style={{ flex: 1, position: "relative" }}
@@ -1688,6 +1690,10 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             )}
           </ReactFlow>
         </div>
+
+        {/* ── Execution Log panel (bottom of canvas column) ────────── */}
+        <CadenceExecutionLog campaignId={campaignId} />
+        </div>{/* end canvas+log column */}
 
         {/* Edge context menu */}
         {edgeContextMenu && (
