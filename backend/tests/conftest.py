@@ -17,6 +17,11 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 # precisam desses valores os definem explicitamente via monkeypatch/mock.
 os.environ.setdefault("REHEARSAL_MODE", "false")
 os.environ.setdefault("AI_PHONE_NUMBER_ID", "")
+# Jitter de reação humana (processor._human_extra_first_delay) é sorteado por faixa
+# horária — num teste ele tornaria o pacing dependente da hora local (pulsos extras
+# de "digitando"). Baseline hermético: OFF na suíte; os testes do próprio jitter
+# exercitam a função pura diretamente (param enabled/rng), sem depender deste env.
+os.environ.setdefault("HUMAN_REACTION_JITTER", "off")
 
 
 @pytest.fixture

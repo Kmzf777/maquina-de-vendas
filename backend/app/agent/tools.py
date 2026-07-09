@@ -116,12 +116,15 @@ PRODUTO_PHOTO_MAP: dict[str, dict[str, dict[str, str]]] = {
     },
 }
 
+# Voz da persona também no fallback (auditoria 08/07: no outage do LLM, leads
+# receberam "Perfeito! Seu atendimento agora será continuado..." — maiúsculas,
+# "!", emoji e ponto final quebraram a máscara no momento mais frágil).
 _HANDOFF_MSG = (
-    "Perfeito! Seu atendimento agora será continuado pelo João, um dos nossos especialistas.\n\n"
-    "👉 Clique no link abaixo e envie uma mensagem para ele agora mesmo para dar continuidade "
-    "no seu atendimento com prioridade:\n"
+    "seu atendimento agora segue com o João, um dos nossos especialistas\n\n"
+    "toca no link aqui embaixo e manda um oi pra ele agora, que ele já te atende "
+    "com prioridade\n"
     "http://wa.me/553491461669\n\n"
-    "Assim que você chamar, ele já receberá seu contato e continuará seu atendimento."
+    "assim que você chamar, ele já recebe seu contato e segue contigo"
 )
 
 # Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é

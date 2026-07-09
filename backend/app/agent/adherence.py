@@ -138,3 +138,181 @@ def detect_auto_producer(text: str) -> bool:
         return False
     normalized = _normalize(text)
     return any(signal in normalized for signal in _AUTO_PRODUCER_SIGNALS)
+
+
+# ---------------------------------------------------------------------------
+# 3. detect_autoresponder (auditoria 2026-07-08 — caso Letícia/Duo Gelatto)
+# ---------------------------------------------------------------------------
+# Resposta automática de empresa não é engajamento humano. Em 08/07 o auto-reply
+# de uma gelateria (marcador U+200E + links de iFood + "agradece seu contato")
+# passou como fala de pessoa, caiu no fallback de LLM-down e virou handoff pro
+# João. Heurística por PONTUAÇÃO de sinais independentes (>= 2 pontos):
+#   - caractere invisível LRM/RLM na abertura (marca de mensagem automática): 2 pts
+#   - 2+ URLs: 1 pt
+#   - frases típicas de bot comercial: 1 pt cada (teto 2)
+#   - menu numerado (2+ linhas "1 -", "2 -"): 1 pt
+# Conservador de propósito: um lead humano com UM link ou UMA frase não pontua 2.
+
+_AUTORESPONDER_PHRASES = (
+    re.compile(r"agradece\w*\s+(?:o\s+)?seu\s+contato"),
+    re.compile(r"\bretornaremos\b"),
+    re.compile(r"horario de funcionamento"),
+    re.compile(r"mensagem automatica"),
+    re.compile(r"atendimento automatico"),
+    re.compile(r"escolha uma(?: das)? opc"),
+    re.compile(r"digite o numero"),
+    re.compile(r"nao e monitorad"),
+    re.compile(r"para entrega acesse"),
+    re.compile(r"para outros assuntos"),
+    re.compile(r"bem[- ]vindo\w* ao atendimento"),
+    re.compile(r"retornamos o mais breve"),
+)
+_URL_COUNT_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+_MENU_LINE_RE = re.compile(r"^\s*\d+\s*[-–—.)]", re.MULTILINE)
+
+
+def detect_autoresponder(text: str) -> bool:
+    """True quando a mensagem tem cara de resposta automática de empresa.
+
+    Função pura — sem I/O. Ver tabela de sinais no comentário acima.
+    """
+    if not text:
+        return False
+    score = 0
+    if text[0] in ("‎", "‏"):
+        score += 2
+    if len(_URL_COUNT_RE.findall(text)) >= 2:
+        score += 1
+    normalized = _normalize(text)
+    phrase_hits = sum(1 for pat in _AUTORESPONDER_PHRASES if pat.search(normalized))
+    score += min(phrase_hits, 2)
+    if len(_MENU_LINE_RE.findall(text)) >= 2:
+        score += 1
+    return score >= 2
+
+
+# ---------------------------------------------------------------------------
+# 4. normalize_orthography (auditoria 2026-07-08 — ortografia oscilante)
+# ---------------------------------------------------------------------------
+# A mesma bolha saiu com "é" acentuado e "torrefacao"/"xicara" crus — humano tem
+# UMA digitação. O prompt já EXIGE acentos (base.py, MODELO DE ESCRITA); este
+# normalizador transforma a exigência em garantia, num mapa de substituições
+# INEQUÍVOCAS por fronteira de palavra. Ambíguas ficam de fora de propósito:
+# "e"/"é" (conjunção × verbo), "esta"/"está", "ai"/"aí", "pais"/"país", "as"/"às".
+# Tokens de URL nunca são tocados (cafecanastra.com/cafe fica intacto).
+
+_ORTHO_MAP = {
+    "nao": "não", "voce": "você", "voces": "vocês", "cafe": "café", "cafes": "cafés",
+    "ja": "já", "entao": "então", "tambem": "também", "xicara": "xícara",
+    "xicaras": "xícaras", "torrefacao": "torrefação", "so": "só", "ta": "tá",
+    "ne": "né", "propria": "própria", "proprio": "próprio", "minimo": "mínimo",
+    "minima": "mínima", "preco": "preço", "precos": "preços", "numero": "número",
+    "numeros": "números", "grao": "grão", "graos": "grãos", "sao": "são",
+    "ate": "até", "atencao": "atenção", "opcao": "opção", "opcoes": "opções",
+    "tres": "três", "apos": "após", "porem": "porém", "otimo": "ótimo",
+    "otima": "ótima", "duvida": "dúvida", "duvidas": "dúvidas",
+    "horario": "horário", "horarios": "horários", "disponivel": "disponível",
+    "possivel": "possível", "rapido": "rápido", "rapida": "rápida", "alem": "além",
+    "proximo": "próximo", "proxima": "próxima",
+}
+_URL_SPAN_RE = re.compile(
+    r"(https?://\S+|www\.\S+|\b[\w.-]+\.(?:com|net|org|br)(?:/\S*)?)", re.IGNORECASE,
+)
+_ORTHO_WORD_RE = re.compile(
+    r"\b(" + "|".join(sorted(_ORTHO_MAP, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _ortho_replace(match: "re.Match[str]") -> str:
+    word = match.group(0)
+    base = _ORTHO_MAP[word.lower()]
+    if word.isupper() and len(word) > 1:
+        return base.upper()
+    if word[0].isupper():
+        return base[0].upper() + base[1:]
+    return base
+
+
+def normalize_orthography(text: str) -> str:
+    """Fixa a acentuação das palavras inequívocas do vocabulário da persona.
+
+    Preserva URLs, caixa inicial e todo o resto do texto. Função pura.
+    """
+    if not text:
+        return text
+    parts = _URL_SPAN_RE.split(text)
+    for i in range(0, len(parts), 2):  # índices pares = fora de URL
+        parts[i] = _ORTHO_WORD_RE.sub(_ortho_replace, parts[i])
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# 5. is_repeated_question (auditoria 2026-07-08 — caso Luciano)
+# ---------------------------------------------------------------------------
+# O lead recebeu a MESMA pergunta de qualificação 3x depois de já tê-la
+# respondido. Detecta, no texto candidato, uma pergunta substancial (>= 6
+# tokens) que já apareceu numa fala anterior do assistente — por igualdade
+# normalizada ou por containment de tokens (>= 80% dos tokens do candidato
+# presentes na pergunta anterior).
+
+_QUESTION_MIN_TOKENS = 6
+_QUESTION_OVERLAP_THRESHOLD = 0.8
+_QUESTION_CHUNK_RE = re.compile(r"[^?!.\n]+\?")
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _extract_questions(text: str) -> list[tuple[str, frozenset]]:
+    normalized = _normalize(text or "")
+    out: list[tuple[str, frozenset]] = []
+    for chunk in _QUESTION_CHUNK_RE.findall(normalized):
+        q = chunk.strip()
+        tokens = frozenset(_TOKEN_RE.findall(q))
+        if len(tokens) >= _QUESTION_MIN_TOKENS:
+            out.append((q, tokens))
+    return out
+
+
+def is_repeated_question(text: str, prior_assistant_texts: list[str] | None) -> str | None:
+    """Devolve a pergunta repetida (normalizada) ou None.
+
+    Compara as perguntas do texto candidato com as das últimas falas do
+    assistente. Perguntas curtas de cortesia ("tudo bem?") ficam abaixo do
+    mínimo de tokens e nunca flagram. Função pura.
+    """
+    candidates = _extract_questions(text or "")
+    if not candidates:
+        return None
+    prior: list[tuple[str, frozenset]] = []
+    for prior_text in (prior_assistant_texts or [])[-10:]:
+        prior.extend(_extract_questions(prior_text or ""))
+    if not prior:
+        return None
+    for q, tokens in candidates:
+        for prior_q, prior_tokens in prior:
+            if q == prior_q:
+                return q
+            if len(tokens & prior_tokens) / len(tokens) >= _QUESTION_OVERLAP_THRESHOLD:
+                return q
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 6. find_verbatim_prompt_echo (auditoria 2026-07-08 — carimbo do exemplo)
+# ---------------------------------------------------------------------------
+# O "exemplo vencedor" do prompt foi copiado byte a byte para 5 leads no mesmo
+# disparo. Detecta eco literal (janela normalizada >= min_len) de qualquer
+# semente/exemplo registrado. Uso: telemetria de aderência (log), não bloqueio.
+
+def find_verbatim_prompt_echo(
+    text: str, snippets: tuple[str, ...] | list[str], min_len: int = 25,
+) -> str | None:
+    """Devolve a semente ecoada literalmente no texto, ou None. Função pura."""
+    if not text or not snippets:
+        return None
+    text_norm = re.sub(r"\s+", " ", _normalize(text)).strip()
+    for snippet in snippets:
+        snippet_norm = re.sub(r"\s+", " ", _normalize(snippet or "")).strip()
+        if len(snippet_norm) >= min_len and snippet_norm in text_norm:
+            return snippet
+    return None

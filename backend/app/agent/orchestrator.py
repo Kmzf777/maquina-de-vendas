@@ -18,7 +18,12 @@ from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.catalog import get_products_by_funnel
 from app.agent.tools import get_tools_for_stage, execute_tool
-from app.agent.adherence import strip_prohibited_phrases
+from app.agent.adherence import (
+    find_verbatim_prompt_echo,
+    is_repeated_question,
+    normalize_orthography,
+    strip_prohibited_phrases,
+)
 from app.conversations.service import (
     get_history,
     resolve_message_text_by_wamid,
@@ -270,7 +275,17 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "(source=%s, stage=%s)",
             conversation_id, source, stage,
         )
-    return after_phrase_strip
+    # Ortografia única (auditoria 08/07): o modelo oscila entre "você" e "voce" na
+    # MESMA conversa (bolha real misturou "é" com "torrefacao/xicara"). O normalizador
+    # determinístico fixa as palavras inequívocas do vocabulário da persona; URLs
+    # ficam intactas (ver app.agent.adherence.normalize_orthography).
+    normalized = normalize_orthography(after_phrase_strip)
+    if normalized != after_phrase_strip:
+        logger.debug(
+            "[ORTHO GUARD] acentuação normalizada em conv %s (source=%s)",
+            conversation_id, source,
+        )
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -1264,6 +1279,83 @@ async def run_agent(
             "(stage=%s, media=%s, tool_iterations=%d)",
             conversation_id, transitioned_to_stage, media_tool_used, tool_iterations,
         )
+
+    # -----------------------------------------------------------------------
+    # GUARDA DE PERGUNTA REPETIDA (auditoria 08/07 — caso Luciano)
+    # -----------------------------------------------------------------------
+    # O lead recebeu a MESMA pergunta de qualificação 3x depois de já tê-la
+    # respondido — o script venceu a escuta e a conversa morreu em sem_interesse.
+    # Se o texto final repete uma pergunta de turno anterior do assistente,
+    # fazemos UMA regeneração corretiva ancorada na última fala do lead.
+    # Fail-open: qualquer falha mantém o texto original (repetir é ruim;
+    # fantasmar o lead é pior).
+    if assistant_text:
+        _prior_assistant = [m.get("content") or "" for m in history if m.get("role") == "assistant"]
+        try:
+            _repeated = is_repeated_question(assistant_text, _prior_assistant)
+        except Exception:
+            _repeated = None
+        if _repeated:
+            logger.warning(
+                "[REPEAT QUESTION GUARD] conv %s repetiu pergunta já feita (%.120s) — "
+                "regeneração corretiva única",
+                conversation_id, _repeated,
+            )
+            try:
+                _nudge = (
+                    "ATENÇÃO (mensagem do sistema, invisível ao cliente): sua resposta "
+                    "repetiu uma pergunta que você JÁ fez nesta conversa: «" + _repeated + "». "
+                    "O lead já a respondeu (ou ela não cabe mais). Reescreva a resposta "
+                    "INTEIRA: a primeira bolha reage à última mensagem do lead (ancoragem "
+                    "no novo, regra 33), sem repetir essa pergunta, sem copiar frases "
+                    "prontas, máximo 3 bolhas, sem ponto final."
+                )
+                _fix_resp = await _create_with_retry(_get_client(model),
+                    model=model,
+                    messages=messages + [
+                        {"role": "assistant", "content": assistant_text},
+                        {"role": "user", "content": _nudge},
+                    ],
+                    tools=None,
+                    temperature=0.5,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    stop=_STOP_SEQUENCES,
+                    **_gemini_thinking_off(model),
+                )
+                if _fix_resp.usage:
+                    track_token_usage(
+                        lead_id=lead_id,
+                        stage=stage,
+                        model=model,
+                        call_type="response_retry",
+                        prompt_tokens=_fix_resp.usage.prompt_tokens,
+                        completion_tokens=_fix_resp.usage.completion_tokens,
+                        cached_tokens=_fix_resp.usage.cached_tokens,
+                        reasoning_tokens=_fix_resp.usage.reasoning_tokens,
+                    )
+                _fix_text = _sanitize_assistant_text(
+                    (_fix_resp.choices[0].message.content or "") if _fix_resp.choices else "",
+                    conversation_id, stage, source="repeat-question-fix",
+                )
+                if _fix_text and not is_repeated_question(_fix_text, _prior_assistant):
+                    assistant_text = _fix_text
+            except Exception as _rq_exc:
+                logger.error(
+                    "[REPEAT QUESTION GUARD] regeneração corretiva falhou p/ conv %s: %s",
+                    conversation_id, _rq_exc,
+                )
+        # Telemetria de eco de semente (lei anti-carimbo, auditoria 08/07): cópia
+        # literal dos exemplos do prompt identifica o carimbo. Log-only.
+        try:
+            from app.agent.prompts.valeria_outbound.secretaria import TONE_SEEDS as _SEEDS
+            _echo = find_verbatim_prompt_echo(assistant_text, _SEEDS)
+            if _echo:
+                logger.warning(
+                    "[PROMPT ECHO] conv %s copiou semente do prompt literalmente: %.80s",
+                    conversation_id, _echo,
+                )
+        except Exception:
+            pass
 
     # -----------------------------------------------------------------------
     # GUARDA DETERMINÍSTICA DE HANDOFF VERBALIZADO (2026-06-30)

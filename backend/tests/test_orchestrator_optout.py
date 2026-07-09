@@ -23,6 +23,9 @@ async def test_registrar_optout_retorna_despedida():
     }
 
     farewell = "Entendido, sem problema. Nao entrarei mais em contato."
+    # O sanitizador agora normaliza ortografia inequívoca ("Nao"→"Não") — auditoria
+    # 08/07 (ortografia oscilante). O texto ENTREGUE é a versão acentuada.
+    farewell_entregue = "Entendido, sem problema. Não entrarei mais em contato."
 
     tool_call = _make_tool_call("registrar_optout", {"motivo": "clicou parar mensagens"})
 
@@ -45,7 +48,7 @@ async def test_registrar_optout_retorna_despedida():
         mock_client.return_value.chat.completions.create = AsyncMock(return_value=first_response)
         result = await run_agent(conversation, "para de me mandar mensagem")
 
-    assert result == farewell
+    assert result == farewell_entregue
     mock_exec.assert_called_once()
     call_args = mock_exec.call_args
     assert call_args.args[0] == "registrar_optout"

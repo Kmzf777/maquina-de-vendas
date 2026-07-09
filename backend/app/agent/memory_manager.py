@@ -16,6 +16,7 @@ Pontos de arquitetura:
 """
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
@@ -110,6 +111,62 @@ def _gemini_thinking_off(model: str) -> dict:
     return {}
 
 
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def _extract_json_object(content: str) -> dict:
+    """Extrai o objeto JSON da saída do modelo, tolerando cerca markdown e prosa em volta.
+
+    Auditoria 08/07: o Gemini devolvia o dossiê embrulhado (```json ... ``` ou texto ao
+    redor) e o `json.loads` cru rejeitava 100% das 1.366 gerações do dia — nenhum
+    dossiê persistiu e, no código pré-53bcdf2, a marca d'água parada realimentava o loop.
+    Levanta ValueError/JSONDecodeError quando não há objeto JSON válido.
+    """
+    text = (content or "").strip()
+    fence = _JSON_FENCE_RE.search(text)
+    if fence:
+        text = fence.group(1).strip()
+    if not text.startswith("{") or not text.endswith("}"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end <= start:
+            raise ValueError("nenhum objeto JSON na saída do modelo")
+        text = text[start:end + 1]
+    fields = json.loads(text)
+    if not isinstance(fields, dict):
+        raise ValueError("saída JSON não é um objeto")
+    return fields
+
+
+def _fire_memory_parse_alert() -> None:
+    """Alerta memory_parse_fail (dedup: 1 não-resolvido por 24h). Fail-soft.
+
+    Um subsistema que falha em 100% das chamadas não pode voltar a ser invisível
+    (08/07: US$1,01 queimados em gerações que nunca persistiram nada).
+    """
+    try:
+        sb = get_supabase()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        existing = (
+            sb.table("system_alerts").select("id")
+            .eq("type", "memory_parse_fail").eq("resolved", False)
+            .gte("created_at", cutoff).limit(1).execute()
+        )
+        if existing.data:
+            return
+        from app.alerts.service import create_system_alert
+        create_system_alert(
+            "memory_parse_fail",
+            "Dossiê do lead não está sendo persistido",
+            "generate_rolling_summary está recebendo saída não-JSON do modelo e preservando o "
+            "dossiê anterior. Verifique o formato de resposta do MEMORY_MODEL — sem isso a "
+            "memória de longo prazo da Valéria fica em branco.",
+            severity="warning",
+        )
+    except Exception as exc:  # pragma: no cover - defensivo
+        logger.warning("memory_manager: falha ao gravar alerta memory_parse_fail: %s", exc)
+
+
 def _track_memory_usage(response, lead_id: str | None, stage: str, model: str) -> None:
     """Contabiliza o custo do refresh de dossiê em token_usage. Fail-soft: nunca levanta —
     era off-book (rodava a cada sessão encerrada de cada lead sem gravar nada)."""
@@ -153,13 +210,16 @@ async def generate_rolling_summary(
         if not response.choices:
             return prior_summary
         content = response.choices[0].message.content or ""
-        fields = json.loads(content)
-        if not isinstance(fields, dict):
+        try:
+            fields = _extract_json_object(content)
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.error(
+                "generate_rolling_summary: saída não-JSON do modelo (lead=%s): %.200s — %s",
+                lead_id, content, exc,
+            )
+            _fire_memory_parse_alert()
             return prior_summary
         return render_dossier(fields)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("generate_rolling_summary: saída não-JSON do modelo — preservando prior: %s", exc)
-        return prior_summary
     except Exception as exc:
         logger.error("generate_rolling_summary: falha na chamada LLM: %s", exc, exc_info=True)
         return prior_summary

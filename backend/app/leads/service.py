@@ -165,9 +165,11 @@ def lead_has_active_relationship(lead_id: str) -> bool:
         return False
     try:
         sb = get_supabase()
+        # NB: checagens usam "lista não-vazia" (PostgREST sempre devolve list) em vez
+        # de truthiness cru — um client mockado/anômalo nunca deve virar positivo.
         # (1) Venda registrada na tabela `sales` = cliente definitivo (sinal mais forte).
         sale = sb.table("sales").select("id").eq("lead_id", lead_id).limit(1).execute()
-        if sale.data:
+        if isinstance(sale.data, list) and sale.data:
             return True
         # (2) Deal em tratativa humana (ja_chamado) ou fechado-ganho (closed-won).
         deal = (
@@ -176,7 +178,7 @@ def lead_has_active_relationship(lead_id: str) -> bool:
             .in_("stage", list(_ACTIVE_DEAL_STAGES + _WON_DEAL_STAGES))
             .limit(1).execute()
         )
-        if deal.data:
+        if isinstance(deal.data, list) and deal.data:
             return True
         # (3) Heurística legada: deal fechado (closed_at setado) que NÃO é de perda.
         closed_won = (
@@ -186,9 +188,44 @@ def lead_has_active_relationship(lead_id: str) -> bool:
             .filter("closed_at", "not.is", "null")
             .limit(1).execute()
         )
-        return bool(closed_won.data)
+        if isinstance(closed_won.data, list) and closed_won.data:
+            return True
+        # (4) Contato humano recente (mensagens de seller <90d) — caso Nayara 08/07:
+        # compra em maio nunca virou `sales` nem deal fechado, mas as MENSAGENS do
+        # vendedor estavam lá; ela entrou na lista fria e levou template 3x em 13 dias.
+        return lead_recently_engaged(lead_id)
     except Exception as exc:
         logger.warning("leads.service: lead_has_active_relationship falhou p/ %s: %s", lead_id, exc)
+        return False
+
+
+# Janela padrão do sinal "contato humano recente" (dias). Um lead com conversa de
+# vendedor dentro desta janela NÃO é frio, mesmo sem venda/deal registrado.
+_RECENT_ENGAGEMENT_DAYS = 90
+
+
+def lead_recently_engaged(lead_id: str, days: int = _RECENT_ENGAGEMENT_DAYS) -> bool:
+    """True se um vendedor humano trocou mensagem com o lead nos últimos `days` dias.
+
+    Sinal complementar ao `lead_has_active_relationship`: cobre o cliente real cuja
+    compra nunca virou `sales`/deal fechado no CRM (caso Nayara, 08/07/2026).
+    Fail-open=False: erro de checagem nunca bloqueia o fluxo.
+    """
+    if not lead_id:
+        return False
+    try:
+        sb = get_supabase()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        res = (
+            sb.table("messages").select("id")
+            .eq("lead_id", lead_id)
+            .eq("sent_by", "seller")
+            .gte("created_at", cutoff)
+            .limit(1).execute()
+        )
+        return isinstance(res.data, list) and bool(res.data)
+    except Exception as exc:
+        logger.warning("leads.service: lead_recently_engaged falhou p/ %s: %s", lead_id, exc)
         return False
 
 

@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import logging
+import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -95,23 +96,58 @@ def _subsequent_secs(text: str) -> float:
     return max(_SUBSEQUENT_MIN_DELAY, min(_SUBSEQUENT_MAX_DELAY, len(text) / _TYPING_CHARS_PER_SEC))
 
 
+# Jitter de "reação humana" por faixa horária (auditoria 08/07): as 12 respostas
+# do dia saíram TODAS em 16–31s, às 13h, às 18h e às 21h37 — constância inumana.
+# O jitter alonga o tempo de digitação do 1º balão (o typing segue pulsando, então
+# nunca vira silêncio visual). Bandas em segundos (BRT): comercial, noite, madrugada.
+_JITTER_DAY: tuple[float, float] = (0.0, 8.0)        # 08h–18h59
+_JITTER_EVENING: tuple[float, float] = (5.0, 20.0)   # 19h–22h59
+_JITTER_NIGHT: tuple[float, float] = (10.0, 35.0)    # 23h–07h59
+_BRT = timezone(timedelta(hours=-3))
+
+
+def _human_jitter_enabled() -> bool:
+    """Kill-switch por env (HUMAN_REACTION_JITTER=off desliga sem deploy)."""
+    return os.environ.get("HUMAN_REACTION_JITTER", "on").strip().lower() not in (
+        "off", "0", "false",
+    )
+
+
+def _human_extra_first_delay(
+    hour: int, *, enabled: bool = True, rng: "random.Random | None" = None,
+) -> float:
+    """Segundos extras de 'reação humana' no 1º balão, sorteados por faixa horária."""
+    if not enabled:
+        return 0.0
+    r = rng or random
+    if 8 <= hour < 19:
+        lo, hi = _JITTER_DAY
+    elif 19 <= hour < 23:
+        lo, hi = _JITTER_EVENING
+    else:
+        lo, hi = _JITTER_NIGHT
+    return r.uniform(lo, hi)
+
+
 def _bubble_delays(
-    bubbles: list[str], is_rehearsal: bool, llm_latency: float = 0.0
+    bubbles: list[str], is_rehearsal: bool, llm_latency: float = 0.0,
+    extra_first_delay: float = 0.0,
 ) -> list[float]:
     """Pré-delay ASSIMÉTRICO por balão (ver constantes acima p/ o porquê).
 
-    - Primeiro balão (pensativo): clamp(len/CPS, 5, 15) menos a latência da LLM (piso 0).
+    - Primeiro balão (pensativo): clamp(len/CPS, 5, 15) menos a latência da LLM (piso 0),
+      mais o jitter de reação humana (`extra_first_delay`), quando houver.
       É onde o "digitando…" aparece de fato, então a demora é natural.
     - Balões seguintes (sucessão rápida): clamp(len(prev)/CPS, 1.5, 2.5), SEM pausa de
       transição. Como a Meta não re-renderiza o typing aqui, delays longos virariam
       silêncio visual — então caem rápido em sequência.
-    - Rehearsal zera tudo (testes/automação não esperam).
+    - Rehearsal zera tudo (testes/automação não esperam), inclusive o jitter.
     """
     count = len(bubbles)
     if is_rehearsal or count == 0:
         return [0.0] * count
 
-    first_delay = max(0.0, _typing_secs(bubbles[0]) - llm_latency)
+    first_delay = max(0.0, _typing_secs(bubbles[0]) - llm_latency) + max(0.0, extra_first_delay)
     delays = [first_delay]
     for prev_bubble in bubbles[:-1]:
         delays.append(_subsequent_secs(prev_bubble))
@@ -555,19 +591,56 @@ async def _record_llm_failure() -> int:
         return 0
 
 
-async def _handle_llm_down(lead: dict, phone: str, conversation: dict) -> None:
+def _broadcast_recently_active(hours: int = 2) -> bool:
+    """True se houve envio de broadcast nas últimas `hours` horas.
+
+    Sensibiliza o alerta llm_down durante janela de disparo (auditoria 08/07:
+    outage de 13min em cima do run queimou 2/9 respostas e o limiar fixo de 3
+    falhas consecutivas nunca disparou). Fail-open=False.
+    """
+    try:
+        sb = get_supabase()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        res = (
+            sb.table("broadcast_leads").select("id")
+            .gte("sent_at", cutoff).limit(1).execute()
+        )
+        return isinstance(res.data, list) and bool(res.data)
+    except Exception as exc:
+        logger.debug("[LLM DOWN] checagem de disparo ativo falhou: %s", exc)
+        return False
+
+
+async def _handle_llm_down(
+    lead: dict, phone: str, conversation: dict, inbound_text: str | None = None,
+) -> None:
     """Fallback quando o LLM está fora: encaminha o lead ao humano (cartão do João)
     em vez de fantasmá-lo. Reutiliza encaminhar_humano (desativa IA, cria deal,
     cancela follow-ups, envia o cartão de contato do João, agenda rescue). Fail-soft:
-    nenhuma falha aqui pode escalar. Incrementa o contador consecutivo e, no limiar,
-    dispara o alerta llm_down (observabilidade).
+    nenhuma falha aqui pode escalar. Incrementa o contador consecutivo e alerta no
+    limiar — que cai para 2 quando há disparo ativo (janela mais sensível).
+
+    `inbound_text` é o texto que disparou o turno: autoresponder de empresa NUNCA
+    vira handoff (auditoria 08/07: o bot da gelateria foi encaminhado ao João, que
+    ainda mandou follow-up pro robô — dois sistemas conversando).
     """
     try:
         _count = await _record_llm_failure()
-        if _count >= _LLM_DOWN_ALERT_THRESHOLD:
+        _threshold = 2 if _broadcast_recently_active() else _LLM_DOWN_ALERT_THRESHOLD
+        if _count >= _threshold:
             _fire_llm_down_alert(_count)
     except Exception as exc:
         logger.warning("[LLM DOWN] falha ao registrar/alertar contador p/ %s: %s", phone, exc)
+    try:
+        from app.agent.adherence import detect_autoresponder
+        if inbound_text and detect_autoresponder(inbound_text):
+            logger.warning(
+                "[LLM DOWN] inbound de %s tem cara de autoresponder — handoff suprimido (conv=%s)",
+                phone, conversation.get("id"),
+            )
+            return
+    except Exception as exc:
+        logger.debug("[LLM DOWN] checagem de autoresponder falhou: %s", exc)
     try:
         from app.agent.tools import execute_tool
         await execute_tool(
@@ -583,7 +656,70 @@ async def _handle_llm_down(lead: dict, phone: str, conversation: dict) -> None:
         )
 
 
-async def _handle_agent_exhausted(lead: dict, phone: str, conversation: dict) -> None:
+_AUTORESPONDER_PROBE = "oi, consigo falar com alguém por aqui?"
+
+
+async def _handle_autoresponder(
+    lead: dict, phone: str, conversation: dict, provider, text: str,
+) -> bool:
+    """Gate determinístico de autoresponder (caso Letícia, 08/07). True = mensagem
+    tratada aqui; o turno NÃO deve marcar lido nem rodar o agente.
+
+    1º hit: UMA sondagem humana curta + marca o lead. 2º+ hit: silêncio + nota
+    analítica (número de empresa / mudou de dono). Nunca handoff, nunca funil.
+    Fail-soft: qualquer erro devolve False (fluxo normal).
+    """
+    from app.agent.adherence import detect_autoresponder
+    try:
+        if not detect_autoresponder(text):
+            return False
+    except Exception:
+        return False
+    lead_id = lead.get("id")
+    conv_id = conversation.get("id")
+    meta = dict(lead.get("metadata") or {})
+    hits = int(meta.get("autoresponder_hits") or 0)
+    meta["autoresponder_hits"] = hits + 1
+    try:
+        from app.leads.service import update_lead
+        update_lead(lead_id, metadata=meta)
+    except Exception as exc:
+        logger.warning("[AUTORESPONDER] falha ao marcar hits p/ %s: %s", phone, exc)
+    if hits == 0:
+        if os.environ.get("REHEARSAL_MODE") != "true":
+            try:
+                send_result = await provider.send_text(
+                    resolve_send_target(lead, phone), _AUTORESPONDER_PROBE,
+                )
+                save_message(
+                    conv_id, lead_id, "assistant", _AUTORESPONDER_PROBE,
+                    conversation.get("stage"), sent_by="agent",
+                    wamid=extract_wamid(send_result),
+                )
+            except Exception as exc:
+                logger.warning("[AUTORESPONDER] sondagem falhou p/ %s: %s", phone, exc)
+        logger.info("[AUTORESPONDER] 1º hit p/ %s — sondagem única enviada", phone)
+        return True
+    if hits == 1:
+        try:
+            get_supabase().table("lead_notes").insert({
+                "lead_id": lead_id,
+                "author": "sistema-autoresponder",
+                "content": (
+                    "número responde com atendimento automático (provável número de "
+                    "empresa ou que mudou de dono) — funil automático silenciado; "
+                    "nenhuma sondagem adicional será enviada"
+                ),
+            }).execute()
+        except Exception as exc:
+            logger.warning("[AUTORESPONDER] falha ao gravar nota p/ %s: %s", phone, exc)
+    logger.info("[AUTORESPONDER] hit %d p/ %s — silêncio", hits + 1, phone)
+    return True
+
+
+async def _handle_agent_exhausted(
+    lead: dict, phone: str, conversation: dict, inbound_text: str | None = None,
+) -> None:
     """Ramo terminal do loop de retry do agente ([AGENT FAILED]).
 
     Antes: quando `run_agent` esgotava as tentativas por uma exceção genérica (400/401
@@ -603,7 +739,7 @@ async def _handle_agent_exhausted(lead: dict, phone: str, conversation: dict) ->
     pop_interest_marked(conv_id)  # não vaza flag p/ o próximo turno
     pop_quote_executed(conv_id)  # idem (Frente B3)
     try:
-        await _handle_llm_down(lead, phone, conversation)
+        await _handle_llm_down(lead, phone, conversation, inbound_text=inbound_text)
     except Exception as exc:  # _handle_llm_down já é fail-soft; guarda extra de segurança
         logger.error(
             "[AGENT FAILED] handoff terminal falhou p/ %s (conv=%s): %s",
@@ -983,6 +1119,16 @@ async def process_buffered_messages(
             _update_last_msg(conversation["id"])
             return
 
+    # Gate de autoresponder (auditoria 08/07, caso Letícia/Duo Gelatto): resposta
+    # automática de empresa não é engajamento humano — não marca lido, não roda o
+    # agente e nunca vira handoff. 1º hit sonda uma única vez; depois, silêncio.
+    try:
+        if await _handle_autoresponder(lead, phone, conversation, provider, resolved_text):
+            _update_last_msg(conversation["id"])
+            return
+    except Exception as exc:
+        logger.warning("[AUTORESPONDER] gate falhou p/ %s (segue fluxo normal): %s", phone, exc)
+
     # Resolve agent profile: conversation takes priority over channel default
     # None means no explicit profile — orchestrator defaults to valeria_inbound
     agent_profile_id = _resolve_agent_profile_id(conversation, channel)
@@ -1129,7 +1275,7 @@ async def process_buffered_messages(
                     )
                     pop_interest_marked(conversation["id"])
                     pop_quote_executed(conversation["id"])  # idem (Frente B3)
-                    await _handle_llm_down(lead, phone, conversation)
+                    await _handle_llm_down(lead, phone, conversation, inbound_text=resolved_text)
                     _update_last_msg(conversation["id"])
                     return
                 except Exception as e:
@@ -1149,7 +1295,7 @@ async def process_buffered_messages(
                         # _create_with_retry) e qualquer exceção genérica agora encaminham
                         # ao humano pela MESMA rede do LLMUnavailableError, em vez de só
                         # alertar sem handoff. Ver _handle_agent_exhausted.
-                        await _handle_agent_exhausted(lead, phone, conversation)
+                        await _handle_agent_exhausted(lead, phone, conversation, inbound_text=resolved_text)
                         return
 
             # LLM terminou de pensar/resolver tools → encerra o pulso de "digitando…": daqui
@@ -1189,7 +1335,14 @@ async def process_buffered_messages(
             send_to = resolve_send_target(lead, phone)
             bubbles = split_into_bubbles(response)
             llm_latency = time.monotonic() - _agent_t0
-            delays = _bubble_delays(bubbles, is_rehearsal, llm_latency=llm_latency)
+            # Jitter de reação humana (auditoria 08/07: latência constante de ~20s a
+            # qualquer hora denuncia o robô). Só no 1º balão; rehearsal e env off zeram.
+            _jitter = 0.0
+            if not is_rehearsal and _human_jitter_enabled():
+                _jitter = _human_extra_first_delay(datetime.now(_BRT).hour)
+            delays = _bubble_delays(
+                bubbles, is_rehearsal, llm_latency=llm_latency, extra_first_delay=_jitter,
+            )
             send_ok = True
             # B2: handoff/opt-out concorrente desligou a IA durante o envio → abortamos as
             # bolhas restantes (e a mídia/follow-up abaixo). O handoff é a última ação.

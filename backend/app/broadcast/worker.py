@@ -21,8 +21,11 @@ from app.broadcast.service import (
     requeue_broadcast_lead,
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
-from app.templates.intent import dispatch_metadata
-from app.leads.service import update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target
+from app.templates.intent import dispatch_metadata, classify_template_intent, COLD_REACTIVATION
+from app.leads.service import (
+    update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
+    lead_has_active_relationship,
+)
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -858,6 +861,67 @@ def _has_open_billing_alert(sb) -> bool:
         return False
 
 
+# Janela (dias) do dedup lead+template: o MESMO template reenviado dentro dela é
+# pulado (auditoria 08/07, caso Daniel: template idêntico em 04/07 e 08/07 → opt-out).
+_TEMPLATE_DEDUP_DAYS = int(os.environ.get("BROADCAST_TEMPLATE_DEDUP_DAYS", "14"))
+
+
+def _hot_lead_guardrail(lead: dict, broadcast_intent: str) -> str | None:
+    """Camada 2 da higiene de lista fria (auditoria 08/07, caso Nayara): lead com
+    relacionamento ativo/contato humano recente NÃO recebe disparo FRIO.
+
+    Só se aplica a broadcasts de intent COLD_REACTIVATION — campanhas de reativação
+    de clientes (reativacao_*) miram leads quentes DE PROPÓSITO e passam direto.
+    Fail-open: erro na checagem nunca bloqueia o envio.
+    """
+    if broadcast_intent != COLD_REACTIVATION:
+        return None
+    try:
+        if lead_has_active_relationship(lead.get("id")):
+            return "lead quente (relacionamento ativo/contato humano <90d) — excluído do disparo frio"
+    except Exception as exc:
+        logger.warning(
+            "[BROADCAST][HOT] checagem de relacionamento falhou p/ %s: %s (fail-open)",
+            lead.get("id"), exc,
+        )
+    return None
+
+
+def _template_dedup_guardrail(
+    lead_id: str | None, template_name: str | None, window_days: int | None = None,
+) -> str | None:
+    """Pula o envio se ESTE template já foi enviado a ESTE lead dentro da janela.
+
+    Re-blast idêntico em poucos dias queima a lista (caso Daniel, 08/07). Janela
+    configurável via BROADCAST_TEMPLATE_DEDUP_DAYS (default 14). Fail-open.
+    """
+    if not lead_id or not template_name:
+        return None
+    days = window_days or _TEMPLATE_DEDUP_DAYS
+    try:
+        sb = get_supabase()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        res = (
+            sb.table("broadcast_leads")
+            .select("id, broadcasts!inner(template_name)")
+            .eq("lead_id", lead_id)
+            .eq("status", "sent")
+            .eq("broadcasts.template_name", template_name)
+            .gte("sent_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        # lista não-vazia (PostgREST devolve list) — truthiness cru dispararia com mocks.
+        if isinstance(res.data, list) and res.data:
+            return f"dedup: template '{template_name}' já enviado a este lead há menos de {days}d"
+    except Exception as exc:
+        logger.warning(
+            "[BROADCAST][DEDUP] checagem de template repetido falhou p/ %s: %s (fail-open)",
+            lead_id, exc,
+        )
+    return None
+
+
 async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
@@ -937,6 +1001,11 @@ async def process_single_broadcast(broadcast: dict):
     # Persona (prompt_key) do disparo — resolvida 1x por batch. Torna a escolha outbound do
     # operador autoridade na classificação de intent do cold-open (ver dispatch_metadata).
     broadcast_prompt_key = _resolve_broadcast_prompt_key(sb, broadcast.get("agent_profile_id"))
+    # Intent do disparo (1x por batch) — os guardrails de higiene abaixo só travam
+    # lead quente em disparo FRIO (cold_reactivation), nunca em reativação intencional.
+    broadcast_intent = classify_template_intent(
+        broadcast.get("template_name"), broadcast_prompt_key,
+    )
 
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
@@ -984,6 +1053,31 @@ async def process_single_broadcast(broadcast: dict):
                 lead.get("id"), lead.get("phone"), block_reason,
             )
             mark_broadcast_lead_failed(bl["id"], block_reason)
+            increment_broadcast_failed(broadcast_id)
+            continue
+
+        # CAMADA 2.1 — higiene de lista fria (auditoria 08/07): cliente ativo/contato
+        # humano recente não recebe template de "atualização de cadastro" (caso Nayara:
+        # compradora de maio levou o template frio 3x em 13 dias).
+        hot_reason = _hot_lead_guardrail(lead, broadcast_intent)
+        if hot_reason:
+            logger.warning(
+                "[BROADCAST][HOT] lead %s (%s) — envio pulado (%s)",
+                lead.get("id"), lead.get("phone"), hot_reason,
+            )
+            mark_broadcast_lead_failed(bl["id"], hot_reason)
+            increment_broadcast_failed(broadcast_id)
+            continue
+
+        # CAMADA 2.2 — dedup lead+template na janela (caso Daniel: re-blast idêntico
+        # em 4 dias terminou em "Parar mensagens").
+        dedup_reason = _template_dedup_guardrail(lead.get("id"), broadcast.get("template_name"))
+        if dedup_reason:
+            logger.warning(
+                "[BROADCAST][DEDUP] lead %s (%s) — envio pulado (%s)",
+                lead.get("id"), lead.get("phone"), dedup_reason,
+            )
+            mark_broadcast_lead_failed(bl["id"], dedup_reason)
             increment_broadcast_failed(broadcast_id)
             continue
 

@@ -67,11 +67,12 @@ def build_outbound_first_turn_context(
         f"bolha, convidando o lead a se situar.\n"
         f"PROIBIDO qualificação técnica agora (produto, atacado, volume, preço): Desejo e "
         f"triagem só nos turnos SEGUINTES, ancorados no que o lead responder.\n\n"
-        f"Exemplo de TOM e RITMO (nome ilustrativo — use o nome REAL do lead):\n"
-        f'  "que bom, Marcelo"\n'
-        f'  "seu contato tava aqui com a gente e imagino que uma hora você chegou a se '
-        f'interessar pela Canastra, então quis puxar esse papo com você"\n'
-        f'  "a gente é a torrefação de café especial da Serra da Canastra e antes de '
-        f'qualquer coisa gosta de entender quem tá do outro lado, café pra você é mais um '
-        f'prazer do dia a dia ou tem a ver com algum projeto seu?"'
+        f"ESCRITA PRÓPRIA OBRIGATÓRIA: NUNCA copie frases prontas deste prompt nem dos "
+        f"prompts de estágio — os exemplos e sementes são referência de TOM, e reproduzi-los "
+        f"literalmente gera a MESMA abertura para leads diferentes (padrão de robô flagrado "
+        f"em auditoria real de 08/07). Escreva as 3 bolhas com as SUAS palavras desta "
+        f"conversa, ancoradas no que o lead reagiu e em QUALQUER contexto que você tenha "
+        f"dele (<lead_memory>, <crm_data>, histórico). Se o lead JÁ é conhecido/cliente, a "
+        f"transparência da bolha 2 parte do que vocês já viveram — jamais 'imagino que você "
+        f"se interessou' para quem já comprou."
     )

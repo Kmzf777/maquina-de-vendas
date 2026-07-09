@@ -101,6 +101,9 @@ async def test_davi_initial_and_retry1_empty_retry2_recovers_text():
     from app.agent.orchestrator import run_agent
 
     davi_text = "entendo a questao do preco\n\nposso fechar o granel com um desconto especial pra voce"
+    # Saída entregue passa pelo normalizador ortográfico (auditoria 08/07):
+    # "preco"→"preço", "voce"→"você" ("questao" fica — só palavras inequívocas do mapa).
+    davi_text_entregue = "entendo a questao do preço\n\nposso fechar o granel com um desconto especial pra você"
     user_msg = "acho caro, da pra fazer por menos no granel?"
     n = {"i": 0}
 
@@ -121,7 +124,7 @@ async def test_davi_initial_and_retry1_empty_retry2_recovers_text():
         mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(_conversation("secretaria"), user_msg)
 
-    assert result == davi_text, f"esperado o texto do retry2, got {result!r}"
+    assert result == davi_text_entregue, f"esperado o texto do retry2, got {result!r}"
     assert n["i"] == 3, f"esperado exatamente 3 chamadas (inicial+retry1+retry2), got {n['i']}"
     call_types = [c.kwargs.get("call_type") for c in mock_track.call_args_list]
     assert call_types == ["response", "response_retry", "response_retry2"], (
