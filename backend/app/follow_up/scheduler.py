@@ -16,7 +16,7 @@ from app.conversations.service import get_or_create_conversation
 from app.conversations.service import save_message as save_message_conv
 from app.whatsapp.meta import MetaCloudClient, extract_wamid
 from app.humanizer.splitter import split_into_bubbles
-from app.agent.prompts.base import build_base_prompt
+from app.agent.prompts.voice_card import VALERIA_VOICE_CARD
 from app.agent.token_tracker import track_token_usage
 from app.templates.intent import dispatch_metadata
 from app.alerts.service import create_system_alert
@@ -428,10 +428,13 @@ def _humanize_elapsed(now: datetime, last_ts: datetime) -> str:
 def _build_followup_system_prompt(
     sequence: int, objetivo: str | None = None, last_msg_age: str | None = None
 ) -> str:
-    """System prompt do follow-up — usa a persona Valéria (não um prompt genérico).
+    """System prompt do follow-up — usa o CARTÃO DE VOZ da Valéria (persona destilada).
 
     Garante que a mensagem de reengajamento siga as mesmas regras de voz das respostas
-    normais da Valéria.
+    normais da Valéria. FinOps 08/07: antes vinha a persona COMPLETA via build_base_prompt
+    (~21K tokens de regras de funil/ferramenta irrelevantes numa chamada text-only de 1-2
+    bolhas); o cartão de voz (app/agent/prompts/voice_card.py) carrega só identidade,
+    voz/formato, blacklist, moderação de nome e grounding (~2K tokens, −90% de input).
 
     O TOM segue o OBJETIVO do toque, NÃO o número da sequência. Só o toque que é de fato o
     último da cadência (objetivo 'ultima_chamada') usa o tom de "última tentativa"; todos os
@@ -452,7 +455,7 @@ def _build_followup_system_prompt(
         "esta é uma retomada de reengajamento: leve, curiosa e natural, sem pressionar — "
         "retome pelo assunto que ficou em aberto e demonstre interesse genuíno"
     )
-    persona = build_base_prompt(lead_name=None, lead_company=None, now=datetime.now(_FOLLOWUP_TZ_BR))
+    persona = VALERIA_VOICE_CARD
     temporal = (
         f"\nContexto temporal (GROUNDING): a última mensagem desta conversa foi enviada {last_msg_age}. "
         "Use exatamente essa referência — não invente outro intervalo."
@@ -530,6 +533,8 @@ async def _generate_followup_message(
                 call_type="followup",
                 prompt_tokens=resp.usage.prompt_tokens,
                 completion_tokens=resp.usage.completion_tokens,
+                cached_tokens=getattr(resp.usage, "cached_tokens", 0) or 0,
+                reasoning_tokens=getattr(resp.usage, "reasoning_tokens", 0) or 0,
             )
         except Exception as exc:
             logger.error("[FOLLOWUP] falha ao registrar token_usage: %s", exc)

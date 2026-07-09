@@ -94,13 +94,23 @@ def test_followup_prompt_no_longer_primes_literal_newline():
 
 # ============================ C4 — preço verbatim ============================
 
-def test_catalog_block_pins_prices_and_forbids_softening():
+def test_catalog_block_pins_prices_and_allows_reference_frame():
+    """Harmonização 08/07/2026 (FinOps): a intenção do C4 era INTEGRIDADE DO VALOR
+    (centavo exato, nunca arredondar/misturar SKU) — mas a proibição literal de
+    'por volta de'/'em torno de' contradizia frontalmente a regra 12 do base.py e os
+    qualificadores de QA do atacado (que EXIGEM a moldura de referência), com as duas
+    instruções viajando juntas no MESMO system prompt. Agora o bloco trava o NÚMERO e
+    libera a MOLDURA — ver test_prompt_dieta_preco_2026_07_08.py."""
     from app.agent.orchestrator import _build_catalog_block
     block = _build_catalog_block("- **Café X**\n  - Preço: R$ 25,70")
     assert "ESTRITAMENTE PROIBIDA" in block
-    # proíbe os amaciadores que apareceram na auditoria
-    for hedge in ("por volta de", "em torno de", "aproximadamente"):
-        assert hedge in block
+    # o núcleo do C4 permanece: valor exato, mesmo centavo, sem arredondar
+    assert "centavo" in block
+    assert "arredondar" in block or "arredondado" in block
+    # a moldura de referência da regra 12 é explicitamente permitida ao redor do valor exato
+    assert "gira em torno de R$28,70" in block
+    # e a proibição contraditória de amaciar a FRASE saiu
+    assert "amacie" not in block
     # manda confirmar a variação antes de cotar (caso 25,70 vs 26,70)
     assert "variação" in block or "variacao" in block
     # o catálogo injetado continua presente

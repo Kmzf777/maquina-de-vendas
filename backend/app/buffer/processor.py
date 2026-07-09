@@ -219,8 +219,19 @@ def _audio_mime_type(content_type: str | None) -> str:
     return base or "audio/ogg"
 
 
-async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str:
-    """Transcreve áudio via Gemini generateContent (inline_data). Levanta em falha."""
+async def _transcribe_audio(
+    audio_bytes: bytes, content_type: str | None,
+    lead_id: str | None = None, stage: str = "",
+) -> str:
+    """Transcreve áudio via Gemini generateContent (inline_data). Levanta em falha.
+
+    FinOps 08/07: transcrição é tarefa MECÂNICA — thinking dinâmico aqui era raciocínio
+    pago à toa (era o único caminho LLM sem generationConfig nenhum). thinkingBudget=0 +
+    maxOutputTokens limitado, e o usageMetadata (antes descartado) vira linha de
+    token_usage (call_type=media_transcription) para o gasto parar de ser invisível ao
+    budget_guard. `lead_id`/`stage` chegam de process_buffered_messages via _resolve_media;
+    contabilidade é fail-soft — jamais derruba a transcrição.
+    """
     mime = _audio_mime_type(content_type)
     b64 = base64.b64encode(audio_bytes).decode()
     url = _GEMINI_GENERATE_URL.format(model=settings.transcription_model)
@@ -236,12 +247,38 @@ async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str
                     {"inline_data": {"mime_type": mime, "data": b64}},
                 ]
             }
-        ]
+        ],
+        # Um áudio de voz de vários minutos rende ~1K tokens de transcrição — 2048 dá
+        # folga sem deixar a saída aberta. thinkingBudget=0 = thinking OFF (REST camelCase).
+        "generationConfig": {
+            "thinkingConfig": {"thinkingBudget": 0},
+            "maxOutputTokens": 2048,
+        },
     }
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(url, params={"key": settings.gemini_api_key}, json=payload)
         resp.raise_for_status()
         data = resp.json()
+
+    # Contabilidade ANTES da validação de vazio: os tokens foram consumidos mesmo quando a
+    # transcrição volta vazia. Espelha a fachada (thinking cobrado como output).
+    try:
+        um = data.get("usageMetadata") or {}
+        visible = um.get("candidatesTokenCount", 0) or 0
+        thoughts = um.get("thoughtsTokenCount", 0) or 0
+        from app.agent.token_tracker import track_token_usage
+        track_token_usage(
+            lead_id=lead_id,
+            stage=stage or "",
+            model=settings.transcription_model,
+            call_type="media_transcription",
+            prompt_tokens=um.get("promptTokenCount", 0) or 0,
+            completion_tokens=visible + thoughts,
+            cached_tokens=um.get("cachedContentTokenCount", 0) or 0,
+            reasoning_tokens=thoughts,
+        )
+    except Exception as exc:  # contabilidade nunca derruba a transcrição
+        logger.warning("[AUDIO] falha ao registrar token_usage da transcrição (ignorado): %s", exc)
 
     candidate = (data.get("candidates") or [{}])[0]
     parts = (candidate.get("content") or {}).get("parts") or []
@@ -769,7 +806,9 @@ async def process_buffered_messages(
     _document_name: str | None = None
     _metadata: dict | None = None
     try:
-        resolved_text, _media_url, _message_type, _document_name, _metadata = await _resolve_media(combined_text, provider)
+        resolved_text, _media_url, _message_type, _document_name, _metadata = await _resolve_media(
+            combined_text, provider, lead_id=lead.get("id"), stage=lead.get("stage") or "",
+        )
     except Exception as e:
         logger.warning(f"Failed to resolve media for {phone}: {e}")
         resolved_text = combined_text
@@ -1459,7 +1498,7 @@ def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: s
 
 
 async def _resolve_media(
-    text: str, provider
+    text: str, provider, lead_id: str | None = None, stage: str = "",
 ) -> tuple[str, str | None, str | None, str | None, dict | None]:
     """Replace media placeholders with type/url metadata.
 
@@ -1467,6 +1506,7 @@ async def _resolve_media(
     Audio: downloaded, transcribed, uploaded to Supabase Storage.
     Image/video/document/sticker: media_id extracted only, no download.
     Location/contact/reaction: metadata dict extracted from base64 JSON.
+    `lead_id`/`stage`: atribuição da contabilidade da transcrição (token_usage).
     """
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
     audio_url_pattern = r"\[audio: media_url=(\S+)\]"
@@ -1508,7 +1548,7 @@ async def _resolve_media(
 
             # ETAPA 2 — TRANSCRIÇÃO (Gemini generateContent). Log granular do erro real.
             try:
-                transcript_text = await _transcribe_audio(audio_bytes, content_type)
+                transcript_text = await _transcribe_audio(audio_bytes, content_type, lead_id=lead_id, stage=stage)
                 text = text.replace(match.group(0), f"[audio transcrito: {transcript_text}]")
             except httpx.HTTPStatusError as e:
                 logger.error(

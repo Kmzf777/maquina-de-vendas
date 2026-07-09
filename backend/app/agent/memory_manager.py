@@ -18,12 +18,15 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from app.config import settings
 from app.db.supabase import get_supabase
 from app.leads.service import get_history, get_lead, update_lead
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+# Modelo default resolvido em runtime via settings.memory_model (env MEMORY_MODEL) —
+# consolidar dossiê é merge mecânico de JSON: flash-lite por default (FinOps 08/07),
+# revertível por env sem deploy. Callers que passam `model` explícito seguem mandando.
 
 # Janela debounce/seleção do worker e parâmetros do lock.
 INACTIVITY_GAP = timedelta(minutes=10)   # silêncio mínimo p/ considerar a "sessão encerrada"
@@ -122,6 +125,8 @@ def _track_memory_usage(response, lead_id: str | None, stage: str, model: str) -
             call_type="rolling_summary",
             prompt_tokens=usage.prompt_tokens or 0,
             completion_tokens=usage.completion_tokens or 0,
+            cached_tokens=getattr(usage, "cached_tokens", 0) or 0,
+            reasoning_tokens=getattr(usage, "reasoning_tokens", 0) or 0,
         )
     except Exception as exc:  # pragma: no cover - defensivo
         logger.warning("memory_manager: falha ao registrar token_usage (ignorado): %s", exc)
@@ -198,9 +203,10 @@ def _release_lock(sb, lead_id: str) -> None:
         logger.error("memory_manager: falha ao liberar lock do lead %s: %s", lead_id, exc)
 
 
-async def refresh_lead_memory(lead_id: str, client=None, model: str = DEFAULT_MODEL) -> bool:
+async def refresh_lead_memory(lead_id: str, client=None, model: str | None = None) -> bool:
     """Regenera o dossiê do lead (cross-canal), com lock de concorrência. Fail-soft: nunca
     levanta. Retorna True só quando gravou um dossiê novo."""
+    model = model or settings.memory_model
     sb = get_supabase()
     now = datetime.now(timezone.utc)
 

@@ -100,6 +100,16 @@ def get_products_by_funnel(funnel_name: str, prompt_key: str | None = None) -> s
     try:
         all_active = _fetch_active_products()
     except Exception as exc:  # fail-open — nunca quebrar o agente por causa do catálogo
+        # Stale-if-error (08/07): o catálogo é a fonte ÚNICA de preços do agente (roteiros
+        # apontam pra tag, nada hardcoded) — "" numa falha de DB deixava a Valéria sem
+        # preço nenhum. Serve o último markdown válido SEM renovar o TTL (a próxima
+        # chamada tenta o banco de novo); "" continua só quando nunca houve fetch bom.
+        if cached is not None:
+            logger.warning(
+                "get_products_by_funnel: falha ao ler catálogo (%s) — servindo último "
+                "cache válido (stale): %s", funnel, exc,
+            )
+            return cached[1]
         logger.warning("get_products_by_funnel: falha ao ler catálogo (%s): %s", funnel, exc)
         return ""
 

@@ -67,6 +67,10 @@ class _Usage:
     # Tokens de "thinking" (thoughts_token_count). Já estão SOMADOS em completion_tokens
     # — o Gemini 2.5 os cobra como output. Exposto à parte só para observabilidade/log.
     reasoning_tokens: int = 0
+    # Tokens de prompt servidos pelo implicit caching (cached_content_token_count) —
+    # subconjunto de prompt_tokens cobrado a ~25% do preço de input. Medir isto é o que
+    # comprova (ou desmente) o hit-rate do prefixo estático do prompt (a7a287e).
+    cached_tokens: int = 0
 
 
 class _Message:
@@ -232,6 +236,7 @@ def _parse_response(resp: Any) -> _Response:
             prompt_tokens=getattr(um, "prompt_token_count", 0) or 0,
             completion_tokens=visible + thoughts,
             reasoning_tokens=thoughts,
+            cached_tokens=getattr(um, "cached_content_token_count", 0) or 0,
         )
 
     # Coerência de finish_reason: se houve tool call e o modelo não cortou por tamanho,

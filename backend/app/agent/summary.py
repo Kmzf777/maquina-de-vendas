@@ -22,6 +22,8 @@ def _track_summary_usage(response: Any, lead: dict[str, Any], model: str, call_t
             call_type=call_type,
             prompt_tokens=usage.prompt_tokens or 0,
             completion_tokens=usage.completion_tokens or 0,
+            cached_tokens=getattr(usage, "cached_tokens", 0) or 0,
+            reasoning_tokens=getattr(usage, "reasoning_tokens", 0) or 0,
         )
     except Exception as exc:  # pragma: no cover - defensivo
         logger.warning("summary: falha ao registrar token_usage (ignorado): %s", exc)

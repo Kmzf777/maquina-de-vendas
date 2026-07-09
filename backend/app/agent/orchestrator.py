@@ -601,8 +601,11 @@ def _build_catalog_block(catalog_text: str) -> str:
         "Os valores abaixo são TABELADOS e EXATOS. Você está ESTRITAMENTE PROIBIDA de "
         "inventar, arredondar ou alterar qualquer valor ou centavo. Informe o preço "
         "EXATAMENTE como está escrito aqui, com o mesmo centavo.\n"
-        "- NUNCA amacie o valor com 'por volta de', 'em torno de', 'mais ou menos', "
-        "'uns', 'aproximadamente' ou 'a partir de' — preço de tabela NÃO é estimativa.\n"
+        "- O NÚMERO é intocável; a MOLDURA da frase segue as regras de voz do seu estágio "
+        "(o verbo de referência da regra 12 — 'gira em torno de', 'fica por volta de' — é "
+        "permitido AO REDOR do valor exato: 'gira em torno de R$28,70'). PROIBIDO usar a "
+        "moldura para vagar ou trocar o número: 'uns 30 reais', valor sem o centavo ou "
+        "arredondado é alucinação de preço.\n"
         "- Quando o mesmo café tiver variações com preços diferentes (ex.: embalagem do "
         "cliente vs. embalagem Canastra, moído vs. em grãos, 250g vs. 500g), CONFIRME "
         "com o cliente qual variação ele quer ANTES de dizer o preço. Nunca chute a "
@@ -806,6 +809,8 @@ async def run_agent(
             call_type="response",
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
+            cached_tokens=response.usage.cached_tokens,
+            reasoning_tokens=response.usage.reasoning_tokens,
         )
 
     message = response.choices[0].message
@@ -845,6 +850,20 @@ async def run_agent(
                         stop=_STOP_SEQUENCES,
                         **_gemini_thinking_off(model),
                     )
+                    # Turno patológico é o mais caro (histórico cheio reenviado N vezes) —
+                    # esta era a única chamada do run_agent com usage DESCARTADO. call_type
+                    # próprio p/ monitorar a frequência do loop descontrolado (FinOps 08/07).
+                    if fallback.usage:
+                        track_token_usage(
+                            lead_id=lead_id,
+                            stage=stage,
+                            model=model,
+                            call_type="response_loopguard",
+                            prompt_tokens=fallback.usage.prompt_tokens,
+                            completion_tokens=fallback.usage.completion_tokens,
+                            cached_tokens=fallback.usage.cached_tokens,
+                            reasoning_tokens=fallback.usage.reasoning_tokens,
+                        )
                     message = fallback.choices[0].message
                 except Exception as _exc:
                     logger.error("[LOOP GUARD] fallback call failed for conv %s: %s", conversation_id, _exc)
@@ -957,6 +976,8 @@ async def run_agent(
                 call_type="response",
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
+                cached_tokens=response.usage.cached_tokens,
+                reasoning_tokens=response.usage.reasoning_tokens,
             )
         message = response.choices[0].message
 
@@ -1013,6 +1034,8 @@ async def run_agent(
                     call_type="response_retry",
                     prompt_tokens=retry_resp.usage.prompt_tokens,
                     completion_tokens=retry_resp.usage.completion_tokens,
+                    cached_tokens=retry_resp.usage.cached_tokens,
+                    reasoning_tokens=retry_resp.usage.reasoning_tokens,
                 )
             retry_msg = retry_resp.choices[0].message
             # Change B (2026-06-30): se o retry recuperou tool_calls (porque tools foram mantidas),
@@ -1142,6 +1165,8 @@ async def run_agent(
                         call_type="response_retry",
                         prompt_tokens=post_resp.usage.prompt_tokens,
                         completion_tokens=post_resp.usage.completion_tokens,
+                        cached_tokens=post_resp.usage.cached_tokens,
+                        reasoning_tokens=post_resp.usage.reasoning_tokens,
                     )
                 assistant_text = _sanitize_assistant_text(
                     post_resp.choices[0].message.content or "",
@@ -1196,6 +1221,8 @@ async def run_agent(
                     call_type="response_retry2",
                     prompt_tokens=retry2_resp.usage.prompt_tokens,
                     completion_tokens=retry2_resp.usage.completion_tokens,
+                    cached_tokens=retry2_resp.usage.cached_tokens,
+                    reasoning_tokens=retry2_resp.usage.reasoning_tokens,
                 )
             assistant_text = _sanitize_assistant_text(
                 retry2_resp.choices[0].message.content or "",
