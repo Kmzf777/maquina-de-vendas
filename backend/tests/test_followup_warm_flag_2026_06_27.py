@@ -61,8 +61,10 @@ async def test_warm_true_when_interest_marked():
         mock_provider_fn.return_value = mock_provider
         from app.buffer.processor import process_buffered_messages
         await process_buffered_messages("+5511988887777", "qual o preço?", "ch-w")
+        # outbound=False: persona inbound não recebe o nudge "retomar_pos_sim" (Onda 2).
         mock_followup.assert_called_once_with(
             conversation_id="conv-w", lead_id="lead-w", channel_id="ch-w", warm=True,
+            outbound=False,
         )
 
 
@@ -92,6 +94,8 @@ async def test_warm_false_when_outbound_engaged_without_interest():
         mock_provider_fn.return_value = mock_provider
         from app.buffer.processor import process_buffered_messages
         await process_buffered_messages("+5511988887777", "meu negócio", "ch-w")
+        # outbound=True: o frio outbound ganha o nudge "retomar_pos_sim" +18h (Onda 2).
         mock_followup.assert_called_once_with(
             conversation_id="conv-w", lead_id="lead-w", channel_id="ch-w", warm=False,
+            outbound=True,
         )

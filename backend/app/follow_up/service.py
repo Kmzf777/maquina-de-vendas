@@ -130,11 +130,14 @@ def schedule_followup(
     lead_id: str,
     channel_id: str,
     warm: bool = True,
+    outbound: bool = False,
 ) -> None:
     """Cancela jobs pendentes anteriores desta conversa e insere a cadência via build_touch_jobs.
 
     `warm=True` (default): cadência completa (T1 same-day). `warm=False` (lead frio sem interesse):
-    suprime o T1 — cadência começa no T2 (anti-bombardeio).
+    suprime o T1 — cadência começa no T2 (anti-bombardeio). `outbound=True` (persona
+    valeria_outbound): o frio ganha o nudge "retomar_pos_sim" a +18h no lugar do T1 suprimido
+    (Onda 2 — "Sim-e-sumiu" dentro da janela de 24h da Meta).
     """
     sb = get_supabase()
     now = datetime.now(timezone.utc)
@@ -187,7 +190,10 @@ def schedule_followup(
     # (warm efetivo = warm pedido E ainda não tocou hoje). Mantém a supressão do lead frio também.
     effective_warm = warm and not _already_touched_today(conversation_id, now)
     from app.follow_up.cadence import build_touch_jobs
-    jobs = build_touch_jobs(now, conversation_id, lead_id, channel_id, _ENV_TAG, warm=effective_warm)
+    jobs = build_touch_jobs(
+        now, conversation_id, lead_id, channel_id, _ENV_TAG,
+        warm=effective_warm, outbound=outbound,
+    )
     try:
         sb.table("follow_up_jobs").insert(jobs).execute()
     except Exception as exc:

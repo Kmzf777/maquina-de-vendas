@@ -26,6 +26,19 @@ class Touch:
 # clamp empurra vários toques para a mesma abertura comercial (ex.: seg 09h pós fim de semana).
 MIN_GAP = timedelta(hours=2)
 
+# Nudge outbound "Sim-e-sumiu" (Onda 2, auditoria 08/07): o lead confirmou a identidade
+# ("Sim"), ouviu o pitch e sumiu. O T2 padrão (D+1 clampado) cai FORA da janela de 24h da
+# Meta para respostas noturnas — viraria template de reabertura em vez de mensagem livre.
+# +18h clampado fica dentro da janela p/ qualquer resposta entre ~9h e ~22h, no calor da
+# conversa. Substitui o T1 SUPRIMIDO da cadência fria só no fluxo outbound.
+OUTBOUND_NUDGE = Touch(
+    1, timedelta(hours=18), None, "retomar_pos_sim",
+    "Este é o toque de RETOMADA PÓS-CONFIRMAÇÃO: o lead confirmou que era ele, trocou "
+    "algumas mensagens e silenciou depois da apresentação. Retome ancorando no ÚLTIMO "
+    "assunto que ELE trouxe (releia as mensagens dele), com UMA pergunta leve e fácil de "
+    "responder. Não reapresente a empresa, não repita o pitch, não pressione.",
+)
+
 CADENCE: tuple[Touch, ...] = (
     Touch(
         1, timedelta(0), (90, 210), "reengajar",
@@ -57,6 +70,7 @@ def build_touch_jobs(
     channel_id: str,
     env_tag: str,
     warm: bool = True,
+    outbound: bool = False,
     rng=_random,
 ) -> list[dict]:
     """Constrói os jobs da cadência com fire_at monotônico (>= MIN_GAP) e clampado.
@@ -65,12 +79,20 @@ def build_touch_jobs(
     `warm=False` (lead frio, sem interesse marcado): SUPRIME o T1 same-day — a cadência começa no
     T2 (dia seguinte). Anti-bombardeio: lead que só engajou (sem sinal de interesse) não recebe
     cobrança no mesmo dia.
+    `outbound=True` + `warm=False` (Onda 2, "Sim-e-sumiu"): o lugar do T1 suprimido é ocupado
+    pelo OUTBOUND_NUDGE (+18h, dentro da janela de 24h da Meta) — retomada livre no calor da
+    conversa em vez de esperar o T2 cair fora da janela e virar template de reabertura.
 
     Função pura: sem I/O. `rng` injetável para teste do jitter do T1.
     """
     jobs: list[dict] = []
     prev_fire: datetime | None = None
-    touches = CADENCE if warm else CADENCE[1:]
+    if warm:
+        touches = CADENCE
+    elif outbound:
+        touches = (OUTBOUND_NUDGE,) + CADENCE[1:]
+    else:
+        touches = CADENCE[1:]
     for touch in touches:
         offset = touch.offset
         if touch.jitter_minutes:

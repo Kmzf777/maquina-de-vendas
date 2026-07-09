@@ -1473,6 +1473,9 @@ async def process_buffered_messages(
                                 lead_id=lead["id"],
                                 channel_id=channel["id"],
                                 warm=warm,
+                                # Onda 2: outbound frio ganha o nudge "retomar_pos_sim"
+                                # (+18h, janela de 24h) no lugar do T1 suprimido.
+                                outbound=is_outbound,
                             )
                             logger.info("[FOLLOWUP] agendado (%s, warm=%s) para %s", reason, warm, phone)
                         except Exception as e:

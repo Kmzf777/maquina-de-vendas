@@ -190,6 +190,7 @@ async def test_b3_1_samuel_inbound_com_rs_agenda_warm_true(caplog):
 
     schedule_mock.assert_called_once_with(
         conversation_id="conv-b3p-1", lead_id="lead-b3p-1", channel_id="ch", warm=True,
+        outbound=False,
     )
     assert "inbound cotou pre" in caplog.text  # "inbound cotou preço" (tolera encoding do console)
 
@@ -212,6 +213,7 @@ async def test_b3_2_tool_executada_sem_rs_no_texto_agenda_mesmo_assim():
 
     schedule_mock.assert_called_once_with(
         conversation_id="conv-b3p-2", lead_id="lead-b3p-2", channel_id="ch", warm=True,
+        outbound=False,
     )
 
 
@@ -247,6 +249,7 @@ async def test_b3_3b_sem_preco_com_interesse_ainda_agenda_regressao():
 
     schedule_mock.assert_called_once_with(
         conversation_id="conv-b3p-3b", lead_id="lead-b3p-3b", channel_id="ch", warm=True,
+        outbound=False,
     )
 
 
@@ -286,6 +289,7 @@ async def test_b3_5_outbound_com_rs_preserva_gatilho_atual_uma_chamada_so():
     assert schedule_mock.call_count == 1, "gatilho outbound + novo gatilho inbound dispararam em dobro"
     schedule_mock.assert_called_once_with(
         conversation_id="conv-b3p-5", lead_id="lead-b3p-5", channel_id="ch", warm=False,
+        outbound=True,
     )
 
 
