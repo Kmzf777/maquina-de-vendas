@@ -30,6 +30,7 @@ from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 from app.agent.tools import (
     pop_deferred_media, pop_interest_marked, pop_quote_executed, SUPERVISOR_NAME, SUPERVISOR_PHONE,
+    record_deferred_media_delivery,
 )
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
@@ -1486,22 +1487,58 @@ async def process_buffered_messages(
                 # WhatsApp shows the explanatory text BEFORE the photos — preserves message order.
                 # B2: se o handoff abortou o turno, a fila já foi drenada acima — não despeja
                 # catálogo de fotos sobre o lead transbordado.
-                deferred = [] if (handoff_aborted or superseded) else pop_deferred_media(conversation["id"])
-                for item in deferred:
-                    try:
-                        await provider.send_image_base64(
-                            send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
-                        )
-                        await asyncio.sleep(1)
-                    except Exception as _e:
-                        logger.error(
-                            "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
-                        )
+                if not (handoff_aborted or superseded):
+                    await _dispatch_deferred_media(provider, send_to, conversation, lead)
 
             _update_last_msg(conversation["id"])
     finally:
         # Rede de segurança: garante que o pulso de digitação nunca vaza (idempotente).
         _stop_typing_pulse(_typing_task)
+
+
+async def _dispatch_deferred_media(provider, send_to: str, conversation: dict, lead: dict) -> None:
+    """Envia a mídia diferida e SÓ ENTÃO persiste o marcador de entrega.
+
+    Verdade-no-marcador (auditoria Wander 5567999295671, 08/07): o marcador
+    "[enviar_fotos] ... enviadas (4/4)" nascia no ENFILEIRAMENTO (tools.py). Quando o
+    turno era superseded pelo re-coalescing, o drain descartava a fila SEM enviar (zero
+    requests de mídia no meta_webhook_logs), mas o marcador ficava no histórico — o
+    dedup da tool recusava reenvio para sempre e o modelo negava a realidade do lead
+    ("as fotos já foram enviadas aqui no chat"), até o handoff com "Não chegou nada".
+    Agora o marcador nasce AQUI, após o envio real, com contagem honesta (k/n); falha
+    total não deixa marcador e o próximo turno pode reenviar.
+    """
+    deferred = pop_deferred_media(conversation["id"])
+    if not deferred:
+        return
+    groups: list[dict] = []
+    by_marker: dict[str, dict] = {}
+    for item in deferred:
+        marker = str(item.get("marker", ""))
+        g = by_marker.get(marker)
+        if g is None:
+            g = {"marker": marker, "sent": 0, "total": 0, "catalog": False}
+            by_marker[marker] = g
+            groups.append(g)
+        g["total"] += 1
+        try:
+            await provider.send_image_base64(
+                send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
+            )
+            g["sent"] += 1
+            g["catalog"] = g["catalog"] or bool(item.get("catalog"))
+            await asyncio.sleep(1)
+        except Exception as _e:
+            logger.error(
+                "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
+            )
+    try:
+        record_deferred_media_delivery(lead["id"], conversation["id"], groups)
+    except Exception as _e:
+        logger.error(
+            "Falha ao registrar entrega de mídia diferida p/ conv %s: %s",
+            conversation["id"], _e, exc_info=True,
+        )
 
 
 def _ai_still_enabled(lead_id: str) -> bool:

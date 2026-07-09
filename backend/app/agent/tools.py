@@ -55,10 +55,54 @@ _deferred_media: dict[str, list[dict]] = {}
 def pop_deferred_media(conversation_id: str) -> list[dict]:
     """Return and clear deferred media for a conversation.
 
-    Each entry: {"b64": str, "mimetype": str, "caption": str}.
-    Called by processor.py after text bubbles are sent.
+    Each entry: {"b64": str, "mimetype": str, "caption": str, "marker": str,
+    "catalog": bool}. Called by processor.py after text bubbles are sent.
     """
     return _deferred_media.pop(conversation_id, [])
+
+
+def record_deferred_media_delivery(lead_id: str, conversation_id: str | None, groups: list[dict]) -> None:
+    """Persiste o marcador de entrega de mídia APÓS o envio real (verdade-no-marcador).
+
+    Auditoria Wander (5567999295671, 08/07): o marcador "[enviar_fotos] ... enviadas"
+    nascia no ENFILEIRAMENTO; quando o turno era superseded/handoff a fila era drenada
+    sem enviar, mas o marcador ficava — o dedup da tool recusava reenvio para sempre e
+    o modelo negava a realidade do lead ("as fotos já foram enviadas"). O marcador (e o
+    carimbo metadata.catalog_shown do backstop de follow-up) agora só existem com
+    entrega confirmada, com contagem honesta (k/n). Grupo com sent=0 não deixa rastro,
+    então a tool pode reenviar no turno seguinte.
+
+    Fail-soft: telemetria/carimbo nunca derrubam o turno que já entregou a mídia.
+    """
+    delivered_catalog = False
+    for g in groups:
+        if not g.get("marker") or not g.get("sent"):
+            continue
+        try:
+            save_message(
+                lead_id, "system",
+                f"{g['marker']} ({g['sent']}/{g['total']})",
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "record_deferred_media_delivery: falha ao gravar marcador p/ lead %s: %s",
+                lead_id, exc,
+            )
+        delivered_catalog = delivered_catalog or bool(g.get("catalog"))
+    if not delivered_catalog:
+        return
+    # Item 3 (backstop): marca que o catálogo foi APRESENTADO DE FATO. A rede de
+    # segurança de follow-up usa essa flag p/ entregar ao João o lead qualificado que
+    # viu catálogo e ficou inativo (caso Joabe).
+    try:
+        _cf_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
+        if not _cf_meta.get("catalog_shown"):
+            _cf_meta["catalog_shown"] = True
+            _cf_meta["catalog_shown_at"] = datetime.now(_TZ_BR).isoformat()
+            update_lead(lead_id, metadata=_cf_meta)
+    except Exception as _cf_exc:
+        logger.error("record_deferred_media_delivery: falha ao marcar catalog_shown p/ lead %s: %s", lead_id, _cf_exc)
 
 
 # Per-conversation flag: set when the LLM calls marcar_interesse during this turn.
@@ -1060,6 +1104,13 @@ async def execute_tool(
                 args.get("categoria"), lead_id,
             )
             return "fotos ja enviadas nesta conversa — nao reenviar"
+        # Dedup intra-turno pela FILA (o marcador de histórico agora só nasce após a
+        # entrega real): segunda chamada no mesmo turno não duplica o lote.
+        if any(
+            str(item.get("marker", "")).startswith("[enviar_fotos]")
+            for item in _deferred_media.get(conversation_id, [])
+        ):
+            return "fotos ja enfileiradas neste turno — nao reenviar"
 
         categoria = args["categoria"]
         photos_dir = Path(__file__).parent.parent / "photos" / categoria
@@ -1080,20 +1131,16 @@ async def execute_tool(
             mimetype = "image/png" if photo.suffix == ".png" else "image/jpeg"
             stem = photo.stem
             caption = captions.get(stem, "")
-            queue.append({"b64": b64, "mimetype": mimetype, "caption": caption})
+            queue.append({
+                "b64": b64, "mimetype": mimetype, "caption": caption,
+                # Verdade-no-marcador (caso Wander): o marcador de entrega e o carimbo
+                # catalog_shown são persistidos pelo PROCESSOR após o envio real
+                # (record_deferred_media_delivery) — fila drenada por supersede/handoff
+                # não deixa rastro e o reenvio continua possível.
+                "marker": f"[enviar_fotos] Fotos de {categoria} enviadas",
+                "catalog": True,
+            })
 
-        save_message(lead_id, "system", f"[enviar_fotos] Fotos de {categoria} enviadas ({len(photos)}/{len(photos)})", conversation_id=conversation_id)
-        # Item 3 (backstop): marca que o catálogo foi apresentado. A rede de segurança de
-        # follow-up usa essa flag para entregar ao João o lead qualificado que viu catálogo e
-        # ficou inativo (padrão dominante do vazamento — "caso Joabe").
-        try:
-            _cf_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
-            if not _cf_meta.get("catalog_shown"):
-                _cf_meta["catalog_shown"] = True
-                _cf_meta["catalog_shown_at"] = datetime.now(_TZ_BR).isoformat()
-                update_lead(lead_id, metadata=_cf_meta)
-        except Exception as _cf_exc:
-            logger.error("enviar_fotos: falha ao marcar catalog_shown p/ lead %s: %s", lead_id, _cf_exc)
         return f"{len(photos)} fotos de {categoria} enfileiradas para envio após o texto"
 
     elif tool_name == "enviar_foto_produto":
@@ -1104,6 +1151,12 @@ async def execute_tool(
         marker = f"[enviar_foto_produto] Foto de {produto}"
         if any(marker in m.get("content", "") for m in history if m.get("role") == "system"):
             return f"foto de {produto} ja enviada nesta conversa — nao reenviar"
+        # Dedup intra-turno pela fila (marcador de histórico só nasce pós-entrega).
+        if any(
+            str(item.get("marker", "")).startswith(marker)
+            for item in _deferred_media.get(conversation_id, [])
+        ):
+            return f"foto de {produto} ja enfileirada neste turno — nao reenviar"
 
         cat_map = PRODUTO_PHOTO_MAP.get(categoria, {})
         entry = cat_map.get(produto)
@@ -1121,10 +1174,12 @@ async def execute_tool(
         mimetype = "image/png" if photo_path.suffix == ".png" else "image/jpeg"
 
         # Queue for deferred dispatch so text explanation arrives before the photo.
+        # Marcador de entrega persistido pós-envio real (record_deferred_media_delivery).
         _deferred_media.setdefault(conversation_id, []).append(
-            {"b64": b64, "mimetype": mimetype, "caption": entry["caption"]}
+            {"b64": b64, "mimetype": mimetype, "caption": entry["caption"],
+             "marker": f"[enviar_foto_produto] Foto de {produto} enviada",
+             "catalog": False}
         )
-        save_message(lead_id, "system", f"[enviar_foto_produto] Foto de {produto} enviada", conversation_id=conversation_id)
         return f"foto de {produto} enfileirada para envio após o texto"
 
     elif tool_name == "marcar_interesse":
