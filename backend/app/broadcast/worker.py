@@ -24,7 +24,7 @@ from app.conversations.service import get_or_create_conversation, update_convers
 from app.templates.intent import dispatch_metadata, classify_template_intent, COLD_REACTIVATION
 from app.leads.service import (
     update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
-    lead_has_active_relationship,
+    lead_has_active_relationship, apply_optout_side_effects, append_lead_observation,
 )
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
@@ -754,6 +754,8 @@ async def run_worker():
             # (responde quando o LLM volta; handoff se a janela estourar).
             from app.buffer.parking import drain_parked_llm_turns
             await drain_parked_llm_turns()
+            # Onda 2: higiene da ponta morta de número errado (72h mudo → opt-out).
+            process_wrong_number_deadends()
             # Gatilho A da Camada de Memória: consolida o Dossiê de leads cuja sessão
             # acabou de encerrar (debounced por inatividade + lock no banco).
             from app.agent.memory_manager import process_stale_lead_memories
@@ -765,6 +767,78 @@ async def run_worker():
             logger.error(f"Worker error: {e}", exc_info=True)
 
         await asyncio.sleep(WORKER_TICK_SECONDS)
+
+
+_WRONG_NUMBER_DEADLINE_HOURS = 72
+_WRONG_NUMBER_SCAN_LIMIT = 200
+
+
+def _parse_iso_ts(value) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def process_wrong_number_deadends(now: datetime | None = None) -> int:
+    """Higiene da ponta morta de número errado (Onda 2, caso Magda 08/07).
+
+    A tool `registrar_numero_errado` marca `metadata.wrong_number_at` quando quem
+    responde nega ser a pessoa do cadastro sem se identificar. Este job varre os
+    marcados: quem mandou mensagem DEPOIS do marcador volta ao fluxo (marcador
+    limpo — a conversa seguiu); quem ficou 72h mudo vira opt-out com nota analítica
+    (número de dono trocado/engano nunca mais recebe disparo). Fail-soft: retorna o
+    nº de opt-outs aplicados; qualquer erro → 0 sem derrubar o tick.
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("leads")
+            .select("id, phone, opt_out, metadata, last_customer_message_at")
+            .filter("metadata->>wrong_number_at", "not.is", "null")
+            .eq("opt_out", False)
+            .limit(_WRONG_NUMBER_SCAN_LIMIT)
+            .execute()
+        )
+        rows = res.data if isinstance(res.data, list) else []
+    except Exception as exc:
+        logger.warning("[WRONG NUMBER] varredura falhou: %s", exc)
+        return 0
+
+    cleaned = 0
+    opted_out = 0
+    for row in rows:
+        lead_id = row.get("id")
+        meta = dict(row.get("metadata") or {})
+        marked_at = _parse_iso_ts(meta.get("wrong_number_at"))
+        if not lead_id or marked_at is None:
+            continue
+        last_reply = _parse_iso_ts(row.get("last_customer_message_at"))
+        try:
+            if last_reply and last_reply > marked_at:
+                # Alguém respondeu depois do marcador — a conversa seguiu (pode ser o
+                # novo dono do número engajando). Limpa o marcador e devolve ao fluxo.
+                meta.pop("wrong_number_at", None)
+                meta.pop("wrong_number_context", None)
+                update_lead(lead_id, metadata=meta)
+                cleaned += 1
+                logger.info("[WRONG NUMBER] lead %s respondeu após o marcador — marcador limpo", lead_id)
+                continue
+            if now - marked_at < timedelta(hours=_WRONG_NUMBER_DEADLINE_HOURS):
+                continue  # ainda dentro da janela de resposta
+            apply_optout_side_effects(lead_id)
+            _ctx = meta.get("wrong_number_context") or ""
+            append_lead_observation(
+                lead_id,
+                f"📵 [NÚMERO ERRADO] ponta morta: marcado em {meta.get('wrong_number_at')} "
+                f"({_ctx}) e {_WRONG_NUMBER_DEADLINE_HOURS}h sem resposta — opt-out automático de higiene",
+            )
+            opted_out += 1
+            logger.info("[WRONG NUMBER] lead %s virou opt-out por ponta morta (72h mudo)", lead_id)
+        except Exception as exc:
+            logger.error("[WRONG NUMBER] falha ao processar lead %s: %s", lead_id, exc)
+    return opted_out
 
 
 async def process_broadcasts():

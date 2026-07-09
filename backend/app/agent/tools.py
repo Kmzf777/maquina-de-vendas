@@ -351,6 +351,69 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "registrar_numero_errado",
+            "description": (
+                "NUMERO POSSIVELMENTE ERRADO (higiene, NAO e opt-out). Use quando quem responde NEGA ser a pessoa "
+                "do cadastro SEM se identificar ('nao sou eu', 'numero errado', 'nao conheco', 'esse celular nao e "
+                "mais da/do X'). Efeito: marca o numero para higiene automatica — se NINGUEM responder em 72h, o "
+                "sistema registra opt-out sozinho e o numero nunca mais recebe disparo. NAO desativa a IA nem "
+                "encerra a conversa: continue o arco normal (desculpa leve + UMA pergunta de re-engajamento). "
+                "Se a pessoa se identificar depois, o marcador e limpo automaticamente. "
+                "NAO use quando a pessoa AFIRMA o proprio nome (isso e correcao de cadastro — use salvar_nome)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contexto": {
+                        "type": "string",
+                        "description": (
+                            "O que a pessoa disse, literal (ex.: \"clicou Nao e escreveu 'nao conheco'\", "
+                            "\"disse que esse celular nao e mais da Magda\")."
+                        ),
+                    }
+                },
+                "required": ["contexto"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "registrar_indicacao",
+            "description": (
+                "INDICACAO / REFERRAL. Use quando o lead indicar OUTRA pessoa como o contato certo para o negocio: "
+                "vendeu/fechou a loja e diz quem ficou com ela, 'quem cuida disso agora e o Fulano', 'fala com meu "
+                "socio', ou oferece repassar seu contato ao sucessor. Efeito: grava a indicacao no CRM (nota + tag) "
+                "para o time humano acionar o indicado — a tool NAO cria lead novo nem dispara mensagem a terceiro. "
+                "Chame UMA vez por indicacao, assim que o lead der a informacao; capture nome/telefone se ele der, "
+                "mas o contexto sozinho ja vale o registro. Depois de chamar, agradeca com naturalidade."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contexto": {
+                        "type": "string",
+                        "description": (
+                            "A historia da indicacao com as palavras do lead (ex.: 'vendeu a Divina Terra em maio; "
+                            "quem assumiu foi o antigo gerente, vai continuar com cafe especial')."
+                        ),
+                    },
+                    "nome": {
+                        "type": "string",
+                        "description": "Nome do indicado, se o lead informou. Vazio se nao deu.",
+                    },
+                    "telefone": {
+                        "type": "string",
+                        "description": "Telefone/WhatsApp do indicado, se o lead informou. Vazio se nao deu.",
+                    },
+                },
+                "required": ["contexto"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "enviar_fotos",
             "description": "Envia catalogo de fotos dos produtos ao lead",
             "parameters": {
@@ -601,9 +664,9 @@ TOOLS_SCHEMA = [
 def get_tools_for_stage(stage: str) -> list[dict]:
     """Return tools available for a given stage."""
     stage_tools = {
-        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
-        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
-        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
+        "secretaria":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout", "registrar_sem_interesse_atual", "registrar_numero_errado", "registrar_indicacao", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
+        "atacado":       ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "registrar_indicacao", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
+        "private_label": ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "registrar_indicacao", "enviar_fotos", "enviar_foto_produto", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento", "calcular_orcamento"],
         "exportacao":    ["salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead", "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
         # Varejo B2C NÃO é "lead perdido": consumo NUNCA auto-descarta (sem
         # registrar_sem_interesse_atual). A saída legítima continua sendo opt-out (lead pede
@@ -1094,6 +1157,58 @@ async def execute_tool(
             lead_id, motivo,
         )
         return "Lead marcado como sem interesse atual."
+
+    elif tool_name == "registrar_numero_errado":
+        contexto = args.get("contexto", "")
+        try:
+            _wn_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
+            _wn_meta["wrong_number_at"] = datetime.now(timezone.utc).isoformat()
+            _wn_meta["wrong_number_context"] = contexto
+            update_lead(lead_id, metadata=_wn_meta)
+        except Exception as _wn_exc:
+            logger.error("registrar_numero_errado: falha ao marcar lead %s: %s", lead_id, _wn_exc)
+        save_message(
+            lead_id, "system",
+            f"[registrar_numero_errado] possivel numero errado: {contexto}",
+            conversation_id=conversation_id,
+        )
+        logger.info("registrar_numero_errado: lead %s marcado — %s", lead_id, contexto)
+        return (
+            "numero marcado como possivel engano — se ninguem responder em 72h o sistema "
+            "faz a higiene (opt-out) sozinho; siga o arco normal de re-engajamento"
+        )
+
+    elif tool_name == "registrar_indicacao":
+        contexto = args.get("contexto", "")
+        nome = (args.get("nome") or "").strip()
+        telefone = (args.get("telefone") or "").strip()
+        _ts = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
+        detalhe = f"🤝 [INDICAÇÃO] {_ts}: {contexto}"
+        if nome:
+            detalhe += f" — indicado: {nome}"
+        if telefone:
+            detalhe += f" ({telefone})"
+        append_lead_observation(lead_id, detalhe)
+        try:
+            _ref_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
+            _ref_meta["referral"] = {
+                "nome": nome, "telefone": telefone, "contexto": contexto,
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+            update_lead(lead_id, metadata=_ref_meta)
+        except Exception as _ref_exc:
+            logger.error("registrar_indicacao: falha ao gravar metadata p/ lead %s: %s", lead_id, _ref_exc)
+        # Tag opcional (add_tags_to_lead ignora nomes inexistentes — fail-soft por design).
+        add_tags_to_lead(lead_id, ["indicacao"])
+        save_message(
+            lead_id, "system",
+            f"[registrar_indicacao] {contexto}"
+            + (f" — indicado: {nome}" if nome else "")
+            + (f" ({telefone})" if telefone else ""),
+            conversation_id=conversation_id,
+        )
+        logger.info("registrar_indicacao: lead %s — nome=%r tel=%r", lead_id, nome, telefone)
+        return "indicacao registrada no CRM — agradeca com naturalidade e siga a conversa"
 
     elif tool_name == "enviar_fotos":
         history = get_history(lead_id, limit=100)
