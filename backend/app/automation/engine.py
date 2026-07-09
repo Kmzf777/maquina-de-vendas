@@ -16,6 +16,9 @@ class WindowClosed(Exception):
 
 # Replaced in Task 8 (execution log) with a real writer via campaigns/execution_log.py
 def _log_exec(*a, **k): pass  # noqa: E704 — no-op stub
+
+MAX_STEPS = 200  # F6: anti-loop guard — enrollment cancelled/failed if step_count hits this.
+
 BRT_OFFSET = timedelta(hours=-3)
 
 
@@ -197,6 +200,15 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
         )
         return
 
+    # F6: per-enrollment step guard — detects infinite loops in cadence graphs.
+    if (enrollment.get("step_count") or 0) >= MAX_STEPS:
+        _update(enrollment["id"], status="failed", last_error="max_steps_exceeded", claimed_at=None)
+        logger.error(
+            "[AUTOMATION] enrollment=%s excedeu MAX_STEPS (%d) — loop suspeito",
+            enrollment["id"], MAX_STEPS,
+        )
+        return
+
     node_type = node["type"]
     cfg = node.get("config") or {}
 
@@ -253,7 +265,8 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                     retry_count=0,
                     last_error=None,
                     claimed_at=None,
-                    last_sent_node_id=None)
+                    last_sent_node_id=None,
+                    step_count=(enrollment.get("step_count") or 0) + 1)
         else:
             _complete(enrollment["id"])
 
@@ -375,7 +388,8 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
 
     next_node_id = node["yes_node_id"] if result else node["no_node_id"]
     if next_node_id:
-        _update(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat(), claimed_at=None)
+        _update(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat(),
+                claimed_at=None, step_count=(enrollment.get("step_count") or 0) + 1)
     else:
         _complete(enrollment["id"])
     logger.info("[AUTOMATION] condition '%s' → %s for %s", cond, "YES" if result else "NO", lead["phone"])
