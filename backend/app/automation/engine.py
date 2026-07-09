@@ -14,8 +14,19 @@ class WindowClosed(Exception):
     """24h Meta window closed for a free-text node — cannot send now."""
 
 
-# Replaced in Task 8 (execution log) with a real writer via campaigns/execution_log.py
-def _log_exec(*a, **k): pass  # noqa: E704 — no-op stub
+def _log_exec(enrollment: dict, node: dict | None, status: str, log: str | None = None) -> None:
+    """Fail-soft execution-log writer (Task 8). Pulls ids from enrollment/node and
+    delegates to campaigns.execution_log.log_execution. Never raises."""
+    from app.campaigns.execution_log import log_execution
+    log_execution(
+        enrollment_id=enrollment.get("id"),
+        campaign_id=(enrollment.get("campaigns") or {}).get("id") or enrollment.get("campaign_id"),
+        lead_id=enrollment.get("lead_id"),
+        node_id=(node or {}).get("id"),
+        node_type=(node or {}).get("type"),
+        status=status,
+        log=log,
+    )
 
 MAX_STEPS = 200  # F6: anti-loop guard — enrollment cancelled/failed if step_count hits this.
 
@@ -242,6 +253,9 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                     mark_enrollment_sent(enrollment["id"], node["id"], None)
             if not already_sent:
                 record_daily_send(lead["id"])
+            _log_exec(enrollment, node, "done",
+                      "template enviado" if node_type == "send" else "mensagem enviada"
+                      if not already_sent else "envio ignorado (idempotência)")
 
         elif node_type == "wait":
             days    = cfg.get("days", 1)
@@ -252,18 +266,24 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             if not _is_within_window(target, start_h, end_h, skip_weekends=skip_wk):
                 target = _next_window_start(target, start_h, skip_weekends=skip_wk)
             _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
+            _log_exec(enrollment, node, "done", f"aguardando {days} dia(s)")
             return
 
         elif node_type == "condition":
             _execute_condition(enrollment, node, lead, now)
+            _log_exec(enrollment, node, "done",
+                      f"condição {(cfg.get('condition_type') or 'desconhecida')} avaliada")
             return
 
         elif node_type == "action":
             _execute_action(enrollment, node, lead)
+            _log_exec(enrollment, node, "done",
+                      f"ação {(cfg.get('action_type') or 'desconhecida')} executada")
 
         elif node_type == "end":
             _execute_end(enrollment, node, lead)
             _complete(enrollment["id"])
+            _log_exec(enrollment, node, "done", "fluxo encerrado")
             return
 
         next_id = node.get("next_node_id")

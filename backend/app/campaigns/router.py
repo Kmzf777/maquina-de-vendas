@@ -8,6 +8,7 @@ from app.campaigns.service import (
     list_enrollments, create_enrollment, update_enrollment, cancel_enrollment, pause_enrollment,
     is_already_enrolled,
 )
+from app.campaigns.execution_log import list_execution_log
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
@@ -143,3 +144,10 @@ async def api_update_enrollment(campaign_id: str, enrollment_id: str, body: dict
         cancel_enrollment(enrollment_id)
         return {"status": "cancelled"}
     return update_enrollment(enrollment_id, **{k: v for k, v in body.items() if k != "action"})
+
+
+# ─── Execution Log ────────────────────────────────────────────────────────────
+
+@router.get("/{campaign_id}/execution-log")
+async def api_list_execution_log(campaign_id: str, limit: int = 50):
+    return {"data": list_execution_log(campaign_id, limit=limit)}
