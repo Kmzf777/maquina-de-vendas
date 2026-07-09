@@ -8,6 +8,14 @@ from app.automation.variables import substitute_variables
 from app.automation.retry import calculate_next_retry
 
 logger = logging.getLogger(__name__)
+
+
+class WindowClosed(Exception):
+    """24h Meta window closed for a free-text node — cannot send now."""
+
+
+# Replaced in Task 8 (execution log) with a real writer via campaigns/execution_log.py
+def _log_exec(*a, **k): pass  # noqa: E704 — no-op stub
 BRT_OFFSET = timedelta(hours=-3)
 
 
@@ -151,19 +159,6 @@ def _complete(enrollment_id: str) -> None:
     }).eq("id", enrollment_id).execute()
 
 
-def _fail_enrollment(enrollment_id: str, retry_count: int, error: str, now: datetime) -> None:
-    next_retry, new_count, final = calculate_next_retry(retry_count, now)
-    if final:
-        _update(enrollment_id, status="failed", last_error=error[:500], claimed_at=None)
-    else:
-        _update(enrollment_id,
-                retry_count=new_count,
-                last_error=error[:500],
-                next_execute_at=next_retry.isoformat(),
-                next_retry_at=next_retry.isoformat(),
-                claimed_at=None)
-
-
 async def process_due_enrollments(now: datetime | None = None) -> None:
     from app.campaigns.service import claim_enrollment, recover_stale_enrollments
     now = now or datetime.now(timezone.utc)
@@ -262,10 +257,22 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
         else:
             _complete(enrollment["id"])
 
+    except WindowClosed:
+        from app.automation.retry import calculate_next_retry
+        nxt, new_count, final = calculate_next_retry(enrollment.get("retry_count", 0), now)
+        if final:
+            _update(enrollment["id"], status="cancelled", last_error="24h_window_expired", claimed_at=None)
+        else:
+            _update(enrollment["id"], retry_count=new_count, next_execute_at=nxt.isoformat(),
+                    last_error="24h_window_expired", claimed_at=None)
+        _log_exec(enrollment, node, "skipped", "janela 24h fechada — reagendado")
+        return
     except Exception as e:
         logger.error("[AUTOMATION] enrollment=%s node=%s error=%s",
                      enrollment["id"], node.get("id"), e, exc_info=True)
-        _fail_enrollment(enrollment["id"], enrollment.get("retry_count", 0), str(e), now)
+        from app.automation.retry import decide_failure_update
+        _update(enrollment["id"], **decide_failure_update(e, enrollment.get("retry_count", 0), now), claimed_at=None)
+        _log_exec(enrollment, node, "failed", str(e)[:300])
 
 
 async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> str | None:
@@ -296,8 +303,7 @@ async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: date
         if isinstance(last_msg, str):
             last_msg = parse(last_msg)
         if (now - last_msg).total_seconds() > 86400:
-            _update(enrollment["id"], last_error="24h_window_expired")
-            return
+            raise WindowClosed()
 
     message = substitute_variables(cfg.get("message_text", ""), lead, enrollment)
     channel = _resolve_channel(cfg, campaign)
