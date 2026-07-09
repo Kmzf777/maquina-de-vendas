@@ -81,7 +81,8 @@ async def test_agent_failed_registra_contador_e_dispara_alerta_no_limiar():
     with _agent_failed_scenario(record_failure_return=3) as (mock_record, mock_alert, mock_exec):
         await P.process_buffered_messages("5511999999999", "oi", "chan-uuid")
     mock_record.assert_awaited_once()
-    mock_alert.assert_called_once_with(3)
+    # handoff_ativo=True: suite roda com LLM_PARKING=off (fallback = handoff imediato).
+    mock_alert.assert_called_once_with(3, handoff_ativo=True)
     mock_exec.assert_awaited()  # encaminhar_humano disparado
 
 

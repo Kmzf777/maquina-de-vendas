@@ -624,12 +624,25 @@ async def _handle_llm_down(
     `inbound_text` é o texto que disparou o turno: autoresponder de empresa NUNCA
     vira handoff (auditoria 08/07: o bot da gelateria foi encaminhado ao João, que
     ainda mandou follow-up pro robô — dois sistemas conversando).
+
+    Onda 2 (09/07): com LLM_PARKING ligado (default), o turno é ESTACIONADO para
+    retry automático no worker em vez de handoff imediato — outage de minutos não
+    custa mais o funil do lead (2/9 respostas do run de 08/07 viraram handoff cego).
+    O contador/alerta continuam rodando ANTES do desvio; o handoff imediato segue
+    sendo o fallback quando o parking está off ou o Redis falha, e o próprio drain
+    faz o handoff se a janela de parking estourar com o LLM ainda fora.
     """
+    from app.buffer.parking import park_turn, parking_enabled
+    _parking_on = False
+    try:
+        _parking_on = parking_enabled()
+    except Exception:
+        _parking_on = False
     try:
         _count = await _record_llm_failure()
         _threshold = 2 if _broadcast_recently_active() else _LLM_DOWN_ALERT_THRESHOLD
         if _count >= _threshold:
-            _fire_llm_down_alert(_count)
+            _fire_llm_down_alert(_count, handoff_ativo=not _parking_on)
     except Exception as exc:
         logger.warning("[LLM DOWN] falha ao registrar/alertar contador p/ %s: %s", phone, exc)
     try:
@@ -642,6 +655,13 @@ async def _handle_llm_down(
             return
     except Exception as exc:
         logger.debug("[LLM DOWN] checagem de autoresponder falhou: %s", exc)
+    if _parking_on:
+        try:
+            if await park_turn(conversation, lead, phone, inbound_text):
+                return  # estacionado — o drain do worker responde ou faz o handoff no prazo
+        except Exception as exc:
+            logger.error("[LLM DOWN] falha ao estacionar turno p/ %s: %s", phone, exc)
+        # Redis fora/falha ao estacionar → degrada para o handoff imediato (abaixo).
     try:
         from app.agent.tools import execute_tool
         await execute_tool(
@@ -778,8 +798,8 @@ def _fire_llm_down_alert(count: int, *, handoff_ativo: bool = True) -> None:
         encaminhamento = "Leads estão sendo encaminhados automaticamente ao humano (João)."
     else:
         encaminhamento = (
-            "Leads NÃO estão sendo encaminhados automaticamente — falha genérica "
-            "sem handoff (ver logs [AGENT FAILED])."
+            "Turnos estão sendo ESTACIONADOS para retry automático (LLM_PARKING); "
+            "se o LLM não voltar dentro da janela, o worker encaminha ao humano."
         )
     create_system_alert(
         "llm_down",

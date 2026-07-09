@@ -43,7 +43,8 @@ async def test_alerta_llm_down_dispara_no_limiar_e_deduplica():
          patch("app.buffer.processor._record_llm_failure", new=AsyncMock(return_value=3)), \
          patch("app.buffer.processor._fire_llm_down_alert") as mock_alert:
         await P._handle_llm_down(lead, "5564984794946", conversation)
-    mock_alert.assert_called_once_with(3)
+    # handoff_ativo=True: suite roda com LLM_PARKING=off (fallback = handoff imediato).
+    mock_alert.assert_called_once_with(3, handoff_ativo=True)
 
 
 @pytest.mark.asyncio

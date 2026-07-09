@@ -22,6 +22,11 @@ os.environ.setdefault("AI_PHONE_NUMBER_ID", "")
 # de "digitando"). Baseline hermético: OFF na suíte; os testes do próprio jitter
 # exercitam a função pura diretamente (param enabled/rng), sem depender deste env.
 os.environ.setdefault("HUMAN_REACTION_JITTER", "off")
+# Estacionamento de turnos no LLM-down (Onda 2): OFF na suíte — os testes legados de
+# _handle_llm_down documentam o caminho de FALLBACK (handoff imediato), que continua
+# sendo o contrato quando LLM_PARKING=off ou o Redis falha. Os testes do parking
+# (test_onda2_llm_parking_*) removem/ajustam o env explicitamente via monkeypatch.
+os.environ.setdefault("LLM_PARKING", "off")
 
 
 @pytest.fixture

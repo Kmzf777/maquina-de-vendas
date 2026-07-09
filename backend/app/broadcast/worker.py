@@ -750,6 +750,10 @@ async def run_worker():
             await check_polling_triggers()
             await process_due_enrollments()
             await process_due_followups()
+            # Onda 2: drena turnos estacionados durante indisponibilidade do LLM
+            # (responde quando o LLM volta; handoff se a janela estourar).
+            from app.buffer.parking import drain_parked_llm_turns
+            await drain_parked_llm_turns()
             # Gatilho A da Camada de Memória: consolida o Dossiê de leads cuja sessão
             # acabou de encerrar (debounced por inatividade + lock no banco).
             from app.agent.memory_manager import process_stale_lead_memories
