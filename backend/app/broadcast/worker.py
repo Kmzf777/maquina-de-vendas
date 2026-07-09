@@ -32,14 +32,11 @@ _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 _BILLING_ERROR_CODE = 131042
 
-# Cadência do loop principal. Era 5s — com ~8-12 queries REST por tick, 24/7,
-# o polling ocioso respondia por boa parte do estouro de Egress do Supabase
-# (cota Free de 5GB/mês). Nenhum job do loop exige latência de segundos:
-# broadcasts agendados, cadência, follow-ups e memórias têm granularidade de
-# minutos/horas; o envio em si roda DENTRO de process_single_broadcast com
-# sleep próprio por lead. Ao adicionar jobs novos ao loop (ex.: Etapa 3-4 do
-# watchdog/Frente B), dimensionar para esta latência base.
-WORKER_TICK_SECONDS = 30
+# A cadência/orquestração dos ticks vive em app/worker/main.py (uma task
+# asyncio isolada por domínio, acordada por eventos com fallback) — este módulo
+# expõe apenas as funções de domínio. Histórico de dimensionamento de egress:
+# o tick era 5s e estourava a cota Free do Supabase; hoje cada domínio tem
+# intervalo próprio definido em TASK_SPECS.
 
 # Lotes de lead_ids por query no reconcile (limite prático de URL do PostgREST
 # com UUIDs em `in.(...)`).
@@ -734,39 +731,6 @@ async def _retry_single_undelivered(sb, bl: dict) -> None:
             logger.warning("[DELIVERY][RETRY] falha ao registrar msg da retentativa (bl %s): %s", bl["id"], msg_err)
     except Exception as e:
         logger.warning("[DELIVERY][RETRY] reenvio falhou p/ bl %s (%s): %s", bl["id"], alt_target, e)
-
-
-async def run_worker():
-    """Main worker loop: broadcasts, automation engine, follow-ups."""
-    logger.info("Worker started")
-
-    while True:
-        try:
-            from app.automation.engine import process_due_enrollments
-            from app.automation.triggers import check_polling_triggers
-            await check_meta_channel_health()
-            await process_scheduled_broadcasts()
-            await process_broadcasts()
-            await check_polling_triggers()
-            await process_due_enrollments()
-            await process_due_followups()
-            # Onda 2: drena turnos estacionados durante indisponibilidade do LLM
-            # (responde quando o LLM volta; handoff se a janela estourar).
-            from app.buffer.parking import drain_parked_llm_turns
-            await drain_parked_llm_turns()
-            # Onda 2: higiene da ponta morta de número errado (72h mudo → opt-out).
-            process_wrong_number_deadends()
-            # Gatilho A da Camada de Memória: consolida o Dossiê de leads cuja sessão
-            # acabou de encerrar (debounced por inatividade + lock no banco).
-            from app.agent.memory_manager import process_stale_lead_memories
-            await process_stale_lead_memories()
-            reconcile_broadcast_replies()
-            reconcile_delivery_timeouts()
-            await retry_undelivered_cold_sends()
-        except Exception as e:
-            logger.error(f"Worker error: {e}", exc_info=True)
-
-        await asyncio.sleep(WORKER_TICK_SECONDS)
 
 
 _WRONG_NUMBER_DEADLINE_HOURS = 72
