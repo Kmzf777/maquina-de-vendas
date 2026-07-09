@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
+from app.events.bus import emit_event
 from app.campaign.importer import parse_csv
 from app.leads.service import (
     get_or_create_lead as _get_or_create_lead,
@@ -55,6 +56,8 @@ async def create_broadcast(broadcast: BroadcastCreate):
     settings = get_settings()
     data["env_tag"] = "dev" if settings.is_dev_env else "production"
     result = sb.table("broadcasts").insert(data).execute()
+    if status == "scheduled":
+        emit_event("broadcasts")  # wake-up do worker (fail-open; fallback tick cobre)
     return result.data[0]
 
 
@@ -98,6 +101,8 @@ async def update_broadcast(broadcast_id: str, body: dict):
 
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = sb.table("broadcasts").update(body).eq("id", broadcast_id).execute()
+    if body.get("status") in ("scheduled", "running"):
+        emit_event("broadcasts")  # wake-up do worker (fail-open; fallback tick cobre)
     return result.data[0]
 
 
@@ -212,6 +217,7 @@ async def start_broadcast(broadcast_id: str):
         raise HTTPException(400, "Nenhum lead pendente para envio")
 
     sb.table("broadcasts").update({"status": "running"}).eq("id", broadcast_id).execute()
+    emit_event("broadcasts")  # wake-up do worker (fail-open; fallback tick cobre)
     return {"status": "started", "leads_queued": pending}
 
 

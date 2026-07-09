@@ -16,6 +16,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
+from app.events.bus import emit_event
 from app.leads.service import (
     normalize_phone,
     get_or_create_lead,
@@ -343,6 +344,7 @@ def _schedule_lp_welcome(
             f"lp_welcome insert returned empty data for lead {lead_id}"
         )
 
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
     logger.info(
         "[LP_WELCOME] Agendado em %dmin lead=%s conversation=%s",
         delay_minutes, lead_id, conversation_id,

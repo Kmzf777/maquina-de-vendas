@@ -3,6 +3,7 @@ from typing import Any
 
 from app.db.supabase import get_supabase
 from app.config import get_settings
+from app.events.bus import emit_event
 
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
@@ -81,7 +82,7 @@ def list_enrollments(campaign_id: str, status: str | None = None) -> list[dict[s
 
 def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next_execute_at: datetime, deal_id: str | None = None) -> dict[str, Any]:
     sb = get_supabase()
-    return sb.table("campaign_enrollments").insert({
+    row = sb.table("campaign_enrollments").insert({
         "campaign_id": campaign_id,
         "lead_id": lead_id,
         "deal_id": deal_id,
@@ -89,6 +90,8 @@ def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next
         "next_execute_at": next_execute_at.isoformat(),
         "env_tag": _ENV_TAG,
     }).execute().data[0]
+    emit_event("automation")  # wake-up do worker (fail-open; fallback tick cobre)
+    return row
 
 
 def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict[str, Any]]:
