@@ -36,10 +36,12 @@ from app.leads.service import get_lead, sanitize_display_name, update_lead
 logger = logging.getLogger(__name__)
 
 TZ_BR = timezone(timedelta(hours=-3))
-# 09/07/2026 ~15:15 BRT: Google DESLIGOU a geração do gemini-2.5-flash(-lite) (404
-# "no longer available") no meio de um run de disparo. Sucessor validado ao vivo na
-# chave de produção: texto + function calling + reasoning_effort="none" OK.
-DEFAULT_MODEL = "gemini-3.5-flash"
+# 09/07/2026: INCIDENTE Google das 15:15-17:40 BRT — o v1beta devolveu 404 "no longer
+# available" p/ os 2.5 com mensagem ENGANOSA de sunset (o sunset real e 16/10/2026,
+# docs/deprecations; sucessores oficiais: 3.5-flash e 3.1-flash-lite, JA validados na
+# chave com function calling — migrar com calma ANTES de outubro). Revertido ao 2.5
+# pos-recuperacao por custo (3.5 e 5x input / 3.6x output).
+DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_TOOL_ITERATIONS = 5
 # gemini-2.5-flash conta tokens de "thinking" no MESMO budget que a saída via API
 # OpenAI-compat. Com teto baixo (1024) o modelo gasta o orçamento pensando e devolve

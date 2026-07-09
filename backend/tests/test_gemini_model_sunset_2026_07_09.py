@@ -1,13 +1,15 @@
-"""Hotfix 09/07 ~15:15 BRT: Google desligou a geração dos gemini-2.5-flash e
-gemini-2.5-flash-lite (404 "no longer available") NO MEIO de um run de disparo.
+"""Incidente Google 09/07 (15:15-17:40 BRT): o v1beta devolveu 404 "no longer
+available" para gemini-2.5-flash(-lite) com mensagem ENGANOSA de sunset, no meio de
+um run de disparo. O sunset REAL é 16/10/2026 (docs/deprecations). Após a
+recuperação, revertido ao 2.5 por custo (3.5-flash é 5x input / 3.6x output).
 
-Smoke tests reais na chave de produção validaram os sucessores:
-  - gemini-3.5-flash: texto + function calling + reasoning_effort="none" OK
+Ficam validados na chave de produção, para a migração planejada ANTES de 16/10:
+  - gemini-3.5-flash e gemini-3-flash-preview: texto + function calling + none OK
   - gemini-3.1-flash-lite: JSON mode + reasoning_effort="none" OK
 
-Estes testes pinam (a) os defaults novos e (b) o gate de thinking-off cobrindo a
-família 3.x — sem isso o 3.5-flash pensa por padrão e queima o budget de saída
-(mesma assinatura do bug da Carla: resposta vazia com finish_reason=length).
+Estes testes pinam (a) os defaults atuais (2.5 até a migração planejada) e (b) o
+gate de thinking-off cobrindo TAMBÉM a família 3.x — sem isso, na migração, o 3.5
+pensa por padrão e queima o budget de saída (assinatura do bug da Carla).
 """
 from app.agent.orchestrator import DEFAULT_MODEL, _gemini_thinking_off
 from app.agent import memory_manager as MM
@@ -15,11 +17,11 @@ from app.follow_up import scheduler as SCH
 from app.config import settings
 
 
-def test_default_models_sao_da_familia_viva():
-    assert DEFAULT_MODEL == "gemini-3.5-flash"
-    assert SCH._FOLLOWUP_MODEL == "gemini-3.5-flash"
-    assert settings.memory_model == "gemini-3.1-flash-lite"
-    assert settings.transcription_model == "gemini-3.1-flash-lite"
+def test_default_models_atuais_2_5_ate_migracao_planejada():
+    assert DEFAULT_MODEL == "gemini-2.5-flash"
+    assert SCH._FOLLOWUP_MODEL == "gemini-2.5-flash"
+    assert settings.memory_model == "gemini-2.5-flash-lite"
+    assert settings.transcription_model == "gemini-2.5-flash-lite"
 
 
 def test_thinking_off_cobre_familia_3x():
