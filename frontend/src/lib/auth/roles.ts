@@ -9,6 +9,7 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
     "/campanhas",
     "/qualificacao",
     "/vendas",
+    "/painel-vendas",
     "/canais",
     "/estatisticas",
     "/config",
@@ -20,6 +21,7 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
     "/campanhas",
     "/qualificacao",
     "/vendas",
+    "/painel-vendas",
   ],
 };
 
@@ -29,6 +31,8 @@ export const ADMIN_API_PREFIXES = [
   "/api/evolution",
   "/api/admin",
   "/api/users",
+  "/api/model-pricing",
+  "/api/lp-webhook",
 ];
 
 export function isAdminOnlyPage(pathname: string): boolean {
