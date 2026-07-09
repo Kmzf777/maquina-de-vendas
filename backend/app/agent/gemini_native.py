@@ -27,6 +27,7 @@ O contrato preservado (o que os call sites consomem):
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from dataclasses import dataclass, field
@@ -58,6 +59,11 @@ class _ToolCall:
     id: str
     function: _Function
     type: str = "function"
+    # Assinatura opaca de raciocínio da família Gemini 3 (base64). O modelo EXIGE o eco
+    # dela no turno do function_call da chamada seguinte — sem isso, 400 INVALID_ARGUMENT
+    # "Function call is missing a thought_signature" (incidente 09/07: retry re-executava
+    # a tool e esgotava em handoff). Família 2.5 não emite (fica None).
+    thought_signature: str | None = None
 
 
 @dataclass
@@ -89,6 +95,8 @@ class _Message:
                     "id": tc.id,
                     "type": tc.type,
                     "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    # passthrough Gemini 3 (ver _ToolCall.thought_signature)
+                    **({"thought_signature": tc.thought_signature} if tc.thought_signature else {}),
                 }
                 for tc in self.tool_calls
             ]
@@ -166,7 +174,18 @@ def _convert_messages(messages: list[dict]) -> tuple[str | None, list[types.Cont
                     args_dict = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
                 except (json.JSONDecodeError, TypeError):
                     args_dict = {}
-                parts.append(types.Part(function_call=types.FunctionCall(name=fn.get("name", ""), args=args_dict)))
+                # Eco do thought_signature (família 3) — obrigatório junto do function_call.
+                sig_b64 = tc.get("thought_signature")
+                sig = None
+                if sig_b64:
+                    try:
+                        sig = base64.b64decode(sig_b64)
+                    except Exception:
+                        sig = None
+                fc_part = types.Part(function_call=types.FunctionCall(name=fn.get("name", ""), args=args_dict))
+                if sig:
+                    fc_part.thought_signature = sig
+                parts.append(fc_part)
             if not parts:
                 parts.append(types.Part(text=""))
             contents.append(types.Content(role="model", parts=parts))
@@ -213,6 +232,7 @@ def _parse_response(resp: Any) -> _Response:
             fc = getattr(p, "function_call", None)
             if fc is not None:
                 args = dict(getattr(fc, "args", None) or {})
+                raw_sig = getattr(p, "thought_signature", None)
                 tool_calls.append(
                     _ToolCall(
                         id=f"call_{len(tool_calls)}",
@@ -220,6 +240,7 @@ def _parse_response(resp: Any) -> _Response:
                             name=getattr(fc, "name", "") or "",
                             arguments=json.dumps(args, ensure_ascii=False),
                         ),
+                        thought_signature=(base64.b64encode(raw_sig).decode() if raw_sig else None),
                     )
                 )
 
