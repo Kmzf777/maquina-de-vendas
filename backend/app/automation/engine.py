@@ -165,8 +165,9 @@ def _fail_enrollment(enrollment_id: str, retry_count: int, error: str, now: date
 
 
 async def process_due_enrollments(now: datetime | None = None) -> None:
-    from app.campaigns.service import claim_enrollment
+    from app.campaigns.service import claim_enrollment, recover_stale_enrollments
     now = now or datetime.now(timezone.utc)
+    recover_stale_enrollments(now)
     enrollments = get_due_enrollments(now)
     enrollments.sort(key=lambda e: (e.get("campaigns") or {}).get("priority", 5), reverse=True)
     for enrollment in enrollments:
@@ -206,6 +207,7 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
 
     try:
         if node_type in ("send", "send_text"):
+            from app.campaigns.service import mark_enrollment_sent
             start_h = campaign.get("send_start_hour", 7)
             end_h   = campaign.get("send_end_hour", 18)
             if not _is_within_window(now, start_h, end_h):
@@ -214,11 +216,17 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             if not check_frequency_cap(lead["id"], campaign.get("frequency_cap", 1)):
                 _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat(), claimed_at=None)
                 return
+            already_sent = enrollment.get("last_sent_node_id") == node["id"]
             if node_type == "send":
-                await _execute_send(enrollment, node, lead, now, campaign)
+                if not already_sent:
+                    wamid = await _execute_send(enrollment, node, lead, now, campaign)
+                    mark_enrollment_sent(enrollment["id"], node["id"], wamid)
             else:
-                await _execute_send_text(enrollment, node, lead, now, campaign)
-            record_daily_send(lead["id"])
+                if not already_sent:
+                    await _execute_send_text(enrollment, node, lead, now, campaign)
+                    mark_enrollment_sent(enrollment["id"], node["id"], None)
+            if not already_sent:
+                record_daily_send(lead["id"])
 
         elif node_type == "wait":
             days    = cfg.get("days", 1)
@@ -249,7 +257,8 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                     next_execute_at=now.isoformat(),
                     retry_count=0,
                     last_error=None,
-                    claimed_at=None)
+                    claimed_at=None,
+                    last_sent_node_id=None)
         else:
             _complete(enrollment["id"])
 
@@ -259,7 +268,8 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
         _fail_enrollment(enrollment["id"], enrollment.get("retry_count", 0), str(e), now)
 
 
-async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
+async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> str | None:
+    """Execute a template send node and return the wamid (for idempotency marker)."""
     from app.campaigns.worker import _execute_send_node
     campaign = campaign or {}
     node_with_channel = dict(node)
@@ -267,7 +277,7 @@ async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime,
     if not cfg.get("channel_id") and campaign.get("channel_id"):
         cfg["channel_id"] = campaign["channel_id"]
     node_with_channel["config"] = cfg
-    await _execute_send_node(enrollment, node_with_channel, lead, now)
+    return await _execute_send_node(enrollment, node_with_channel, lead, now)
 
 
 async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:

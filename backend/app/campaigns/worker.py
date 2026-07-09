@@ -210,7 +210,7 @@ async def process_campaign_enrollments(now: datetime | None = None) -> None:
         await asyncio.sleep(random.randint(2, 5))
 
 
-async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
+async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> str | None:
     from app.whatsapp.registry import get_provider
     from app.channels.service import get_channel_for_lead
     from app.broadcast.worker import (
@@ -271,6 +271,7 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         logger.warning("[CAMPAIGNS] Could not update ai_enabled for %s: %s", lead["phone"], e)
 
     logger.info("[CAMPAIGNS] Sent template '%s' to %s", template_name, lead["phone"])
+    return wamid
 
 
 def _execute_condition_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:

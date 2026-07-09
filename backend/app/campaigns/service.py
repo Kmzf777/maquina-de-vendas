@@ -239,3 +239,39 @@ def is_already_enrolled(campaign_id: str, lead_id: str) -> bool:
         .execute()
     )
     return len(result.data) > 0
+
+
+def mark_enrollment_sent(enrollment_id: str, node_id: str, wamid: str | None) -> None:
+    """Persist idempotency marker BEFORE advancing to the next node.
+
+    If the worker crashes after send but before advance, recovery skips the
+    re-send because last_sent_node_id == current_node_id. Mirrors
+    follow_up._save_followup_wamid. Fail-open: DB errors are swallowed."""
+    try:
+        sb = get_supabase()
+        sb.table("campaign_enrollments").update({
+            "last_sent_node_id": node_id, "last_sent_wamid": wamid,
+        }).eq("id", enrollment_id).execute()
+    except Exception:
+        pass
+
+
+def recover_stale_enrollments(now: datetime, stale_seconds: int = CLAIM_STALE_SECONDS) -> int:
+    """Clear stale claims (worker died mid-tick) so rows re-enter. Idempotency guard
+    (last_sent_node_id) prevents any resend. Mirrors follow_up._recover_stale_followup_jobs.
+    Fail-open: returns 0 on any DB error."""
+    from datetime import timedelta
+    try:
+        sb = get_supabase()
+        cutoff = (now - timedelta(seconds=stale_seconds)).isoformat()
+        res = (
+            sb.table("campaign_enrollments")
+            .update({"claimed_at": None})
+            .eq("status", "active")
+            .eq("env_tag", _ENV_TAG)
+            .lt("claimed_at", cutoff)
+            .execute()
+        )
+        return len(res.data or [])
+    except Exception:
+        return 0
