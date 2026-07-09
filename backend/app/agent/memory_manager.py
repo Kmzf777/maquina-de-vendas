@@ -34,6 +34,9 @@ INACTIVITY_GAP = timedelta(minutes=10)   # silêncio mínimo p/ considerar a "se
 RECENCY_WINDOW = timedelta(hours=24)     # só sessões recém-encerradas (evita backfill da base fria)
 LOCK_TTL = timedelta(minutes=5)          # lock mais velho que isto é considerado órfão (worker crashou)
 BATCH_LIMIT = 20                         # leads processados por tick do worker
+# Cap do caminho "sem dossiê prévio" (histórico completo): mantém o prompt bounded
+# mesmo p/ leads com centenas de mensagens — só as últimas N entram na 1ª consolidação.
+MEMORY_BACKFILL_MAX_MSGS = 200
 
 MAX_OUTPUT_TOKENS = 1024
 
@@ -276,8 +279,16 @@ async def refresh_lead_memory(lead_id: str, client=None, model: str | None = Non
     try:
         lead = get_lead(lead_id) or {}
         prior = lead.get("rolling_summary") or ""
-        since = lead.get("rolling_summary_updated_at")
+        # Sem dossiê prévio, a marca d'água NÃO vale nada: as gerações que falharam no
+        # parse (burn 08/07: 1.366 chamadas, zero persistência) avançaram o watermark
+        # sem gravar dossiê — honrá-lo perderia a história anterior para sempre.
+        # Primeira consolidação lê o histórico completo (capado); com dossiê, delta
+        # incremental como sempre. Este caminho também é o motor do backfill
+        # (scripts/backfill_dossies.py).
+        since = lead.get("rolling_summary_updated_at") if prior else None
         delta = get_history(lead_id, since=since)
+        if not prior and len(delta) > MEMORY_BACKFILL_MAX_MSGS:
+            delta = delta[-MEMORY_BACKFILL_MAX_MSGS:]
         if not delta:
             return False
         if client is None:

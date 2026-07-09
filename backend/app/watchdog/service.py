@@ -525,6 +525,123 @@ def check_handoff_sla(now: datetime) -> int:
     return n
 
 
+# --- QA diário de aderência (Onda 2, 09/07) --------------------------------------
+# Janela de publicação (07:00-08:00 America/Sao_Paulo): 1 relatório D-1 por dia.
+QA_WINDOW_START = time(7, 0)
+QA_WINDOW_END = time(8, 0)
+
+
+def _qa_already_published_today(now: datetime) -> bool:
+    """True se já existe um daily_qa_report criado HOJE (dia BRT). Fail-open=True em
+    erro de leitura: na dúvida NÃO republica (é telemetria, não segurança)."""
+    try:
+        local = now.astimezone(_SP_TZ)
+        day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        res = (
+            get_supabase().table("system_alerts")
+            .select("id")
+            .eq("type", "daily_qa_report")
+            .gte("created_at", day_start.astimezone(timezone.utc).isoformat())
+            .limit(1)
+            .execute()
+        )
+        return isinstance(res.data, list) and bool(res.data)
+    except Exception as exc:
+        logger.warning("[WATCHDOG] dedup do daily_qa falhou: %s — não republica", exc)
+        return True
+
+
+def _qa_count(build_query) -> int:
+    """Executa uma query count='exact' construída por `build_query(sb)`. -1 em falha
+    (indicador quebrado não derruba o relatório)."""
+    try:
+        res = build_query(get_supabase()).execute()
+        return int(res.count or 0)
+    except Exception as exc:
+        logger.warning("[WATCHDOG] métrica do daily_qa falhou: %s", exc)
+        return -1
+
+
+def _qa_collect_metrics(now: datetime) -> dict:
+    """Consolida os indicadores de D-1 (dia BRT anterior, convertido p/ UTC)."""
+    local = now.astimezone(_SP_TZ)
+    day_end_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_local = day_end_local - timedelta(days=1)
+    start = day_start_local.astimezone(timezone.utc).isoformat()
+    end = day_end_local.astimezone(timezone.utc).isoformat()
+
+    def _msgs(q, **eqs):
+        def build(sb):
+            query = sb.table("messages").select("id", count="exact") \
+                .gte("created_at", start).lt("created_at", end)
+            for k, v in eqs.items():
+                query = query.eq(k, v)
+            if q:
+                query = query.like("content", q)
+            return query
+        return build
+
+    return {
+        "respostas_ia": _qa_count(_msgs(None, role="assistant", sent_by="agent")),
+        "followups_enviados": _qa_count(_msgs(None, role="assistant", sent_by="followup")),
+        "inbounds": _qa_count(_msgs(None, role="user")),
+        "handoffs": _qa_count(_msgs("[encaminhar_humano]%", role="system")),
+        "optouts": _qa_count(_msgs("[registrar_optout]%", role="system")),
+        "numero_errado_marcados": _qa_count(_msgs("[registrar_numero_errado]%", role="system")),
+        "indicacoes": _qa_count(_msgs("[registrar_indicacao]%", role="system")),
+        "perguntas_repetidas_corrigidas": _qa_count(
+            lambda sb: sb.table("token_usage").select("id", count="exact")
+            .eq("call_type", "response_retry")
+            .gte("created_at", start).lt("created_at", end)
+        ),
+        "dossies_atualizados": _qa_count(
+            lambda sb: sb.table("leads").select("id", count="exact")
+            .not_.is_("rolling_summary", "null")
+            .gte("rolling_summary_updated_at", start).lt("rolling_summary_updated_at", end)
+        ),
+        "disparos_enviados": _qa_count(
+            lambda sb: sb.table("broadcast_leads").select("id", count="exact")
+            .gte("sent_at", start).lt("sent_at", end)
+        ),
+    }
+
+
+def check_daily_qa(now: datetime) -> bool:
+    """Publica o relatório diário de QA conversacional (D-1) em system_alerts.
+
+    Consolida os sinais que as guardas da Onda 1 espalham pelo banco (handoffs,
+    opt-outs, correções de pergunta repetida, dossiês, disparos) num único alerta
+    informativo por dia — o pulso de aderência que a auditoria de 08/07 teve que
+    reconstruir na mão. Fora da janela 07-08h BRT retorna False SEM tocar o banco.
+    """
+    local = now.astimezone(_SP_TZ)
+    if not (QA_WINDOW_START <= local.time() < QA_WINDOW_END):
+        return False
+    if _qa_already_published_today(now):
+        return False
+    metrics = _qa_collect_metrics(now)
+    dia = (local - timedelta(days=1)).strftime("%d/%m/%Y")
+    resumo = (
+        f"QA diário {dia}: {metrics['respostas_ia']} respostas da IA e "
+        f"{metrics['followups_enviados']} follow-ups para {metrics['inbounds']} mensagens de leads; "
+        f"{metrics['handoffs']} handoffs, {metrics['optouts']} opt-outs, "
+        f"{metrics['perguntas_repetidas_corrigidas']} perguntas repetidas corrigidas pela guarda; "
+        f"{metrics['dossies_atualizados']} dossiês atualizados; "
+        f"{metrics['disparos_enviados']} templates disparados; "
+        f"{metrics['numero_errado_marcados']} números marcados como errados e "
+        f"{metrics['indicacoes']} indicações registradas. (-1 = indicador indisponível)"
+    )
+    create_system_alert(
+        "daily_qa_report",
+        f"QA diário da Valéria — {dia}",
+        resumo,
+        severity="info",
+        metadata={"metrics": metrics, "dia": dia},
+    )
+    logger.info("[WATCHDOG] daily_qa_report publicado (%s)", dia)
+    return True
+
+
 async def run_watchdog(app) -> None:
     """Loop de background iniciado pelo lifespan (main.py). Roda ate ser cancelado.
 
@@ -572,6 +689,13 @@ async def run_watchdog(app) -> None:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_handoff_sla falhou: %s", exc, exc_info=True)
+
+        try:
+            await asyncio.to_thread(check_daily_qa, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[WATCHDOG] check check_daily_qa falhou: %s", exc, exc_info=True)
 
         try:
             await recover_orphaned_buffers(app.state.redis, require_no_deadline=True, source="watchdog")

@@ -32,7 +32,7 @@ def test_schedule_followup_forca_warm_false_se_ja_tocado_hoje(monkeypatch):
     now = datetime(2026, 6, 26, 17, 0, tzinfo=timezone.utc)
     captured = {}
 
-    def fake_build(now_, conv, lead, chan, env, warm=True):
+    def fake_build(now_, conv, lead, chan, env, warm=True, outbound=False):
         captured["warm"] = warm
         return []
 
@@ -50,7 +50,7 @@ def test_schedule_followup_preserva_warm_true_sem_toque_hoje(monkeypatch):
     now = datetime(2026, 6, 26, 17, 0, tzinfo=timezone.utc)
     captured = {}
 
-    def fake_build(now_, conv, lead, chan, env, warm=True):
+    def fake_build(now_, conv, lead, chan, env, warm=True, outbound=False):
         captured["warm"] = warm
         return []
 
