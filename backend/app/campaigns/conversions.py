@@ -11,6 +11,8 @@ from typing import Any
 
 from app.campaigns.capi_dispatcher import dispatch_conversion
 from app.campaigns.conversion_log import already_fired, record_conversion_event
+from app.db.supabase import get_supabase
+from app.leads.service import get_lead
 
 logger = logging.getLogger(__name__)
 
@@ -50,3 +52,37 @@ def fire_stage_conversion_background(lead: dict[str, Any], deal_id: str, event: 
         except Exception as exc:  # pragma: no cover - defensivo
             logger.error("[CONV] erro no disparo em background (%s,%s): %s", deal_id, event, exc)
     threading.Thread(target=_run, name="conv-dispatch", daemon=True).start()
+
+
+def fire_conversion_for_deal_stage(lead_id: str, deal_id: str) -> None:
+    """Shared helper: resolve the deal's current stage conversion_event/value and fire.
+
+    Used by both campaigns/triggers._maybe_fire_stage_conversion (deal_stage_enter event)
+    and engine._execute_action (move_deal_stage / mark_deal_won actions). Fail-soft — never
+    raises; logs warnings on any error so the caller (tick) is never interrupted.
+    """
+    try:
+        sb = get_supabase()
+        rows = sb.table("deals").select("id, lead_id, stage_id, value").eq("id", deal_id).limit(1).execute().data
+        if not rows:
+            return
+        deal = rows[0]
+        stage_data = (
+            sb.table("pipeline_stages")
+            .select("conversion_event, conversion_value")
+            .eq("id", deal.get("stage_id"))
+            .single()
+            .execute()
+            .data
+        )
+        event = (stage_data or {}).get("conversion_event")
+        if not event:
+            return
+        if event == "purchase":
+            value = deal.get("value") if deal.get("value") is not None else (stage_data or {}).get("conversion_value")
+        else:
+            value = (stage_data or {}).get("conversion_value")
+        lead = get_lead(lead_id) or {"id": lead_id}
+        fire_stage_conversion_background(lead, deal_id, event, value=value)
+    except Exception as exc:
+        logger.warning("[CONV] fire_conversion_for_deal_stage(lead=%s, deal=%s) falhou: %s", lead_id, deal_id, exc)

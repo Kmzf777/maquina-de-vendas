@@ -466,20 +466,17 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             .data
         )
         if rows:
-            sb.table("deals").update({"stage_id": stage_id}).eq("id", rows[0]["id"]).execute()
-            # Venda confirmada → dispara conversão outbound (Meta CAPI / Google). Fail-soft:
-            # uma falha de disparo nunca pode interromper a automação. Disparo é no-op se
-            # não houver credenciais nem click id (ctwa_clid/fbclid/gclid) no lead.
-            if action_type == "mark_deal_won":
+            deal_id = rows[0]["id"]
+            sb.table("deals").update({"stage_id": stage_id}).eq("id", deal_id).execute()
+            # F9: dispara a conversão associada à etapa de destino (move_deal_stage /
+            # mark_deal_won). Usa helper compartilhado com triggers._maybe_fire_stage_conversion.
+            # Fail-soft — qualquer erro loga warning e NÃO interrompe o tick.
+            if action_type in ("mark_deal_won", "move_deal_stage"):
                 try:
-                    from app.campaigns.conversions import fire_stage_conversion_background
-                    from app.leads.service import get_lead
-                    lead_row = get_lead(enrollment["lead_id"]) or {}
-                    fire_stage_conversion_background(
-                        lead_row, rows[0]["id"], "purchase", value=cfg.get("value")
-                    )
+                    from app.campaigns.conversions import fire_conversion_for_deal_stage
+                    fire_conversion_for_deal_stage(enrollment["lead_id"], deal_id)
                 except Exception as exc:
-                    logger.warning("[AUTOMATION] mark_deal_won: falha ao disparar conversão: %s", exc)
+                    logger.warning("[AUTOMATION] %s: falha ao disparar conversão: %s", action_type, exc)
 
     elif action_type == "add_note":
         template = cfg.get("note_template") or ""

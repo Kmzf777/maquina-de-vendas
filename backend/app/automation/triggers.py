@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 
 from app.db.supabase import get_supabase
@@ -8,10 +9,18 @@ from app.campaigns.service import (
     create_enrollment,
 )
 from app.automation import engine as _engine
-from app.leads.service import get_lead
-from app.campaigns.conversions import fire_stage_conversion_background
+from app.campaigns.conversions import fire_conversion_for_deal_stage
 
 logger = logging.getLogger(__name__)
+
+
+def _keyword_hit(body: str, keywords: list[str]) -> bool:
+    """Word-boundary keyword match — prevents false positives from substrings.
+
+    "sim" in "assim" would match with a plain `in` check; this uses (?<!\\w)/(?!\\w)
+    anchors so only whole-word (or punctuation-separated) occurrences trigger.
+    """
+    return any(re.search(rf"(?<!\w){re.escape(k)}(?!\w)", body) for k in keywords if k)
 
 
 def _get_env_tag() -> str:
@@ -25,33 +34,13 @@ def _get_env_tag() -> str:
 def _maybe_fire_stage_conversion(lead_id: str, data: dict) -> None:
     """Se a etapa que o deal entrou estiver marcada com conversion_event, dispara a conversão.
 
-    Resolve o evento/valor pelo stage_id ATUAL do deal (autoritativo), não pela key do payload.
-    purchase usa o valor real do deal; demais usam conversion_value fixo da etapa. Fail-soft.
+    Delega para fire_conversion_for_deal_stage (campaigns/conversions.py) — helper
+    compartilhado também chamado por engine._execute_action em move_deal_stage/mark_deal_won.
     """
     deal_id = data.get("deal_id")
     if not deal_id:
         return
-    try:
-        sb = get_supabase()
-        rows = sb.table("deals").select("id, lead_id, stage_id, value").eq("id", deal_id).limit(1).execute().data
-        if not rows:
-            return
-        deal = rows[0]
-        stage = (
-            sb.table("pipeline_stages").select("conversion_event, conversion_value")
-            .eq("id", deal.get("stage_id")).single().execute().data
-        )
-        event = (stage or {}).get("conversion_event")
-        if not event:
-            return
-        if event == "purchase":
-            value = deal.get("value") if deal.get("value") is not None else (stage or {}).get("conversion_value")
-        else:
-            value = (stage or {}).get("conversion_value")
-        lead = get_lead(lead_id) or {"id": lead_id}
-        fire_stage_conversion_background(lead, deal_id, event, value=value)
-    except Exception as exc:
-        logger.error("[CONV] _maybe_fire_stage_conversion(lead=%s, deal=%s) falhou: %s", lead_id, deal_id, exc)
+    fire_conversion_for_deal_stage(lead_id, deal_id)
 
 
 async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) -> None:
@@ -68,7 +57,7 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
             for tn in get_campaigns_with_trigger_type("keyword_received"):
                 cfg = tn.get("config") or {}
                 keywords = [k.lower() for k in (cfg.get("keywords") or []) if k]
-                if not keywords or not any(k in message_body for k in keywords):
+                if not keywords or not _keyword_hit(message_body, keywords):
                     continue
                 if is_already_enrolled(tn["campaign_id"], lead_id) or not tn.get("next_node_id"):
                     continue
