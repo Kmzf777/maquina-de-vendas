@@ -52,17 +52,24 @@ def record_daily_send(lead_id: str) -> None:
     }).execute()
 
 
-def _is_within_window(now_utc: datetime, start_hour: int = 7, end_hour: int = 18) -> bool:
+def _is_within_window(now_utc: datetime, start_hour: int = 7, end_hour: int = 18,
+                      skip_weekends: bool = False) -> bool:
     brt = now_utc + BRT_OFFSET
+    if skip_weekends and brt.weekday() >= 5:
+        return False
     return start_hour <= brt.hour < end_hour
 
 
-def _next_window_start(now_utc: datetime, start_hour: int = 7) -> datetime:
+def _next_window_start(now_utc: datetime, start_hour: int = 7,
+                       skip_weekends: bool = False) -> datetime:
     brt = now_utc + BRT_OFFSET
     if brt.hour < start_hour:
         target = brt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
     else:
         target = (brt + timedelta(days=1)).replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    if skip_weekends:
+        while target.weekday() >= 5:
+            target = (target + timedelta(days=1)).replace(hour=start_hour, minute=0, second=0, microsecond=0)
     return target - BRT_OFFSET
 
 
@@ -217,11 +224,12 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             from app.campaigns.service import mark_enrollment_sent
             start_h = campaign.get("send_start_hour", 7)
             end_h   = campaign.get("send_end_hour", 18)
-            if not _is_within_window(now, start_h, end_h):
-                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat(), claimed_at=None)
+            skip_wk = campaign.get("skip_weekends", False)
+            if not _is_within_window(now, start_h, end_h, skip_weekends=skip_wk):
+                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h, skip_weekends=skip_wk).isoformat(), claimed_at=None)
                 return
             if not check_frequency_cap(lead["id"], campaign.get("frequency_cap", 1)):
-                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat(), claimed_at=None)
+                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h, skip_weekends=skip_wk).isoformat(), claimed_at=None)
                 return
             already_sent = enrollment.get("last_sent_node_id") == node["id"]
             if node_type == "send":
@@ -239,9 +247,10 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             days    = cfg.get("days", 1)
             start_h = cfg.get("send_start_hour", 7)
             end_h   = cfg.get("send_end_hour", 18)
+            skip_wk = campaign.get("skip_weekends", False)
             target  = now + timedelta(days=days)
-            if not _is_within_window(target, start_h, end_h):
-                target = _next_window_start(target, start_h)
+            if not _is_within_window(target, start_h, end_h, skip_weekends=skip_wk):
+                target = _next_window_start(target, start_h, skip_weekends=skip_wk)
             _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
             return
 
