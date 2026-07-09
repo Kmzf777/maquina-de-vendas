@@ -79,16 +79,37 @@ def list_enrollments(campaign_id: str, status: str | None = None) -> list[dict[s
     return q.order("enrolled_at", desc=True).execute().data
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return "23505" in s or "duplicate key" in s or "uq_campaign_enrollments_active" in s
+
+
 def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next_execute_at: datetime, deal_id: str | None = None) -> dict[str, Any]:
     sb = get_supabase()
-    return sb.table("campaign_enrollments").insert({
-        "campaign_id": campaign_id,
-        "lead_id": lead_id,
-        "deal_id": deal_id,
-        "current_node_id": current_node_id,
-        "next_execute_at": next_execute_at.isoformat(),
-        "env_tag": _ENV_TAG,
-    }).execute().data[0]
+    try:
+        return sb.table("campaign_enrollments").insert({
+            "campaign_id": campaign_id,
+            "lead_id": lead_id,
+            "deal_id": deal_id,
+            "current_node_id": current_node_id,
+            "next_execute_at": next_execute_at.isoformat(),
+            "env_tag": _ENV_TAG,
+        }).execute().data[0]
+    except Exception as exc:
+        if not _is_unique_violation(exc):
+            raise
+        # Already enrolled (unique index) — return the live enrollment, no-op.
+        rows = (
+            sb.table("campaign_enrollments")
+            .select("*")
+            .eq("campaign_id", campaign_id)
+            .eq("lead_id", lead_id)
+            .in_("status", ["active", "paused"])
+            .limit(1)
+            .execute()
+            .data
+        )
+        return rows[0] if rows else {}
 
 
 def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict[str, Any]]:
