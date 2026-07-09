@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 
 from app.config import get_settings
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, db_call
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.broadcast.service import (
@@ -807,15 +807,14 @@ def process_wrong_number_deadends(now: datetime | None = None) -> int:
 
 async def process_broadcasts():
     """Find running broadcasts and send pending templates."""
-    sb = get_supabase()
-    broadcasts = (
-        sb.table("broadcasts")
+    broadcasts = (await db_call(
+        lambda: get_supabase().table("broadcasts")
         .select("*")
         .eq("status", "running")
         .eq("env_tag", _ENV_TAG)
-        .execute()
-        .data
-    )
+        .execute(),
+        label="broadcasts.scan",
+    )).data
 
     logger.info(f"[DEBUG-BROADCAST] tick — env_tag={_ENV_TAG} running_broadcasts={len(broadcasts)}")
     for broadcast in broadcasts:
@@ -825,34 +824,41 @@ async def process_broadcasts():
 
 async def process_scheduled_broadcasts():
     """Auto-inicia broadcasts cujo scheduled_at já passou."""
-    sb = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
-    broadcasts = (
-        sb.table("broadcasts")
+    broadcasts = (await db_call(
+        lambda: get_supabase().table("broadcasts")
         .select("id, name")
         .eq("status", "scheduled")
         .eq("env_tag", _ENV_TAG)
         .lte("scheduled_at", now)
-        .execute()
-        .data
-    )
+        .execute(),
+        label="broadcasts.scheduled_scan",
+    )).data
     for broadcast in broadcasts:
         broadcast_id = broadcast["id"]
-        pending_count = (
-            sb.table("broadcast_leads")
+        pending_count = (await db_call(
+            lambda: get_supabase().table("broadcast_leads")
             .select("id", count="exact")
             .eq("broadcast_id", broadcast_id)
             .eq("status", "pending")
-            .execute()
-            .count
-        ) or 0
+            .execute(),
+            label="broadcasts.pending_count",
+        )).count or 0
         if not pending_count:
             logger.error(
                 f"[SCHEDULER] broadcast {broadcast_id} sem leads pendentes — marcando como failed"
             )
-            sb.table("broadcasts").update({"status": "failed"}).eq("id", broadcast_id).execute()
+            await db_call(
+                lambda: get_supabase().table("broadcasts")
+                .update({"status": "failed"}).eq("id", broadcast_id).execute(),
+                label="broadcasts.mark_failed",
+            )
             continue
-        sb.table("broadcasts").update({"status": "running"}).eq("id", broadcast_id).execute()
+        await db_call(
+            lambda: get_supabase().table("broadcasts")
+            .update({"status": "running"}).eq("id", broadcast_id).execute(),
+            label="broadcasts.autostart",
+        )
         logger.info(
             f"[SCHEDULER] broadcast {broadcast_id} ({broadcast.get('name')}) "
             f"iniciado automaticamente — {pending_count} leads"
