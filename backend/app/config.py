@@ -48,10 +48,10 @@ if PYDANTIC_V2:
         buffer_max_timeout: int = 60
         # Modelo Gemini usado para transcrição de áudio (via generateContent, NÃO
         # /audio/transcriptions — esse endpoint OpenAI-compat não existe no Gemini).
-        transcription_model: str = "gemini-2.5-flash-lite"
+        transcription_model: str = "gemini-3.1-flash-lite"
         # Modelo do Dossiê do Lead (rolling summary) — merge estruturado de JSON, tarefa
         # mecânica de worker: flash-lite por default; override por env MEMORY_MODEL.
-        memory_model: str = "gemini-2.5-flash-lite"
+        memory_model: str = "gemini-3.1-flash-lite"
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
 
@@ -86,10 +86,10 @@ else:
         buffer_max_timeout: int = 60
         # Modelo Gemini usado para transcrição de áudio (via generateContent, NÃO
         # /audio/transcriptions — esse endpoint OpenAI-compat não existe no Gemini).
-        transcription_model: str = "gemini-2.5-flash-lite"
+        transcription_model: str = "gemini-3.1-flash-lite"
         # Modelo do Dossiê do Lead (rolling summary) — merge estruturado de JSON, tarefa
         # mecânica de worker: flash-lite por default; override por env MEMORY_MODEL.
-        memory_model: str = "gemini-2.5-flash-lite"
+        memory_model: str = "gemini-3.1-flash-lite"
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
 

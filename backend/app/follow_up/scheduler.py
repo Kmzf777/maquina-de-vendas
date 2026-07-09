@@ -298,7 +298,7 @@ async def _health_check_via_logs(now: datetime) -> None:
         logger.error("[HEALTH] Falha ao escanear logs por billing errors: %s", exc)
 
 
-_FOLLOWUP_MODEL = "gemini-2.5-flash"
+_FOLLOWUP_MODEL = "gemini-3.5-flash"  # sunset do 2.5-flash em 09/07 (404 no longer available)
 # gemini-2.5-flash conta tokens de thinking + texto no MESMO budget via API de compatibilidade.
 # Com max_tokens baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
 # (auditoria leads 5566999975586 / 5531996039118, 2026-06-25: "...o que te fez pensar em").

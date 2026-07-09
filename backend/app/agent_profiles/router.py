@@ -13,7 +13,7 @@ router = APIRouter(
 
 class ProfileCreate(BaseModel):
     name: str
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash"
     stages: dict
     base_prompt: str
 

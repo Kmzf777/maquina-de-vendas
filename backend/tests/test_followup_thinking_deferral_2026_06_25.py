@@ -113,7 +113,7 @@ async def test_generate_followup_records_token_usage():
     assert kw["lead_id"] == "lead-1"
     assert kw["prompt_tokens"] == 123
     assert kw["completion_tokens"] == 45
-    assert kw["model"] == "gemini-2.5-flash"
+    assert kw["model"] == "gemini-3.5-flash"  # sunset do 2.5 em 09/07
 
 
 @pytest.mark.asyncio

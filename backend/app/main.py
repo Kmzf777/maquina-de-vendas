@@ -153,9 +153,9 @@ async def debug_agent():
     try:
         from app.agent.orchestrator import get_ai_client
 
-        client = get_ai_client("gemini-2.5-flash")
+        client = get_ai_client("gemini-3.5-flash")
         resp = await client.chat.completions.create(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
         )

@@ -13,7 +13,7 @@ import pytest
 def test_memory_model_default_flash_lite():
     from app.config import Settings
     field = Settings.model_fields["memory_model"]
-    assert field.default == "gemini-2.5-flash-lite"
+    assert field.default == "gemini-3.1-flash-lite"  # sunset do 2.5 em 09/07
 
 
 @pytest.mark.asyncio
@@ -43,4 +43,4 @@ async def test_refresh_usa_memory_model_das_settings(monkeypatch):
 
     ok = await memory_manager.refresh_lead_memory("L1", client=MagicMock())
     assert ok is True
-    assert seen["model"] == "gemini-2.5-flash-lite"
+    assert seen["model"] == "gemini-3.1-flash-lite"

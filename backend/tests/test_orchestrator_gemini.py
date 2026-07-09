@@ -88,5 +88,5 @@ async def test_run_agent_coage_modelo_nao_gemini_para_gemini_flash():
         from app.agent.orchestrator import run_agent
         result = await run_agent(conversation, "oi", agent_profile_id="profile-1")
 
-    mock_get_client.assert_called_with("gemini-2.5-flash")
+    mock_get_client.assert_called_with("gemini-3.5-flash")  # DEFAULT_MODEL pós-sunset 09/07
     assert result == "Olá!"

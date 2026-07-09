@@ -117,4 +117,4 @@ def test_transcription_model_default_flash_lite():
     Override por env TRANSCRIPTION_MODEL continua valendo (sem deploy p/ reverter)."""
     from app.config import Settings
     field = Settings.model_fields["transcription_model"]
-    assert field.default == "gemini-2.5-flash-lite"
+    assert field.default == "gemini-3.1-flash-lite"  # sunset do 2.5 em 09/07

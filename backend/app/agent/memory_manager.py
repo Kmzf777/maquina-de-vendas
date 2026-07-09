@@ -108,8 +108,9 @@ def build_memory_messages(prior_summary: str, delta: list[dict]) -> list[dict]:
 
 
 def _gemini_thinking_off(model: str) -> dict:
-    """Desliga o thinking do gemini-2.5 (exceto pro), que senão queima o budget e devolve vazio."""
-    if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
+    """Desliga o thinking dos Gemini flash/lite (exceto pro), que senão queimam o budget e
+    devolvem vazio. Família 3.x aceita reasoning_effort="none" (validado 09/07 no sunset)."""
+    if model.startswith("gemini-") and "pro" not in model and ("flash" in model or "lite" in model):
         return {"reasoning_effort": "none"}
     return {}
 

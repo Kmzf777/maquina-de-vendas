@@ -36,7 +36,10 @@ from app.leads.service import get_lead, sanitize_display_name, update_lead
 logger = logging.getLogger(__name__)
 
 TZ_BR = timezone(timedelta(hours=-3))
-DEFAULT_MODEL = "gemini-2.5-flash"
+# 09/07/2026 ~15:15 BRT: Google DESLIGOU a geração do gemini-2.5-flash(-lite) (404
+# "no longer available") no meio de um run de disparo. Sucessor validado ao vivo na
+# chave de produção: texto + function calling + reasoning_effort="none" OK.
+DEFAULT_MODEL = "gemini-3.5-flash"
 MAX_TOOL_ITERATIONS = 5
 # gemini-2.5-flash conta tokens de "thinking" no MESMO budget que a saída via API
 # OpenAI-compat. Com teto baixo (1024) o modelo gasta o orçamento pensando e devolve
@@ -434,15 +437,16 @@ def _is_gemini_model(model: str) -> bool:
 
 
 def _gemini_thinking_off(model: str) -> dict:
-    """Kwargs que desligam o 'thinking' do Gemini 2.5 (flash/flash-lite) nas chamadas pós-tool.
+    """Kwargs que desligam o 'thinking' dos Gemini flash/lite nas chamadas pós-tool.
 
-    Causa raiz do Bug 2: gemini-2.5-flash gasta o budget de saída pensando e devolve
-    completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A doc oficial
-    (OpenAI-compat) permite `reasoning_effort="none"` para DESLIGAR o thinking nos modelos
-    2.5 — mas NÃO em 2.5-pro nem 3.x, que rejeitam o valor. Por isso retornamos {} nesses
-    casos (2.5-pro e 3.x), evitando um 400 em produção.
+    Causa raiz do Bug 2: o flash gasta o budget de saída pensando e devolve
+    completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A família
+    3.x flash/lite ACEITA `reasoning_effort="none"` (smoke test real na chave de
+    produção em 09/07, durante o sunset do 2.5 — a suposição antiga de que 3.x
+    rejeitava com 400 não vale para gemini-3.5-flash/gemini-3.1-flash-lite). Os
+    modelos *pro* seguem pensando (retorna {}).
     """
-    if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
+    if model.startswith("gemini-") and "pro" not in model and ("flash" in model or "lite" in model):
         return {"reasoning_effort": "none"}
     return {}
 
