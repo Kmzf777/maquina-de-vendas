@@ -147,26 +147,31 @@ def _complete(enrollment_id: str) -> None:
     sb.table("campaign_enrollments").update({
         "status": "completed",
         "completed_at": datetime.now(timezone.utc).isoformat(),
+        "claimed_at": None,
     }).eq("id", enrollment_id).execute()
 
 
 def _fail_enrollment(enrollment_id: str, retry_count: int, error: str, now: datetime) -> None:
     next_retry, new_count, final = calculate_next_retry(retry_count, now)
     if final:
-        _update(enrollment_id, status="failed", last_error=error[:500])
+        _update(enrollment_id, status="failed", last_error=error[:500], claimed_at=None)
     else:
         _update(enrollment_id,
                 retry_count=new_count,
                 last_error=error[:500],
                 next_execute_at=next_retry.isoformat(),
-                next_retry_at=next_retry.isoformat())
+                next_retry_at=next_retry.isoformat(),
+                claimed_at=None)
 
 
 async def process_due_enrollments(now: datetime | None = None) -> None:
+    from app.campaigns.service import claim_enrollment
     now = now or datetime.now(timezone.utc)
     enrollments = get_due_enrollments(now)
     enrollments.sort(key=lambda e: (e.get("campaigns") or {}).get("priority", 5), reverse=True)
     for enrollment in enrollments:
+        if not claim_enrollment(enrollment["id"], now):
+            continue
         await _process_one(enrollment, now)
         await asyncio.sleep(random.randint(1, 3))
 
@@ -192,6 +197,7 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             enrollment["id"],
             status="paused",
             last_error="conversation_finalized",
+            claimed_at=None,
         )
         return
 
@@ -203,10 +209,10 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             start_h = campaign.get("send_start_hour", 7)
             end_h   = campaign.get("send_end_hour", 18)
             if not _is_within_window(now, start_h, end_h):
-                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat())
+                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat(), claimed_at=None)
                 return
             if not check_frequency_cap(lead["id"], campaign.get("frequency_cap", 1)):
-                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat())
+                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat(), claimed_at=None)
                 return
             if node_type == "send":
                 await _execute_send(enrollment, node, lead, now, campaign)
@@ -221,7 +227,7 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             target  = now + timedelta(days=days)
             if not _is_within_window(target, start_h, end_h):
                 target = _next_window_start(target, start_h)
-            _update(enrollment["id"], next_execute_at=target.isoformat())
+            _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
             return
 
         elif node_type == "condition":
@@ -242,7 +248,8 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                     current_node_id=next_id,
                     next_execute_at=now.isoformat(),
                     retry_count=0,
-                    last_error=None)
+                    last_error=None,
+                    claimed_at=None)
         else:
             _complete(enrollment["id"])
 
@@ -352,7 +359,7 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
 
     next_node_id = node["yes_node_id"] if result else node["no_node_id"]
     if next_node_id:
-        _update(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat())
+        _update(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat(), claimed_at=None)
     else:
         _complete(enrollment["id"])
     logger.info("[AUTOMATION] condition '%s' → %s for %s", cond, "YES" if result else "NO", lead["phone"])

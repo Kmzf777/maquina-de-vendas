@@ -120,10 +120,45 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict[str, Any]]:
         .eq("status", "active")
         .eq("env_tag", _ENV_TAG)
         .lte("next_execute_at", now.isoformat())
+        .order("next_execute_at", desc=False)
         .limit(limit)
         .execute()
         .data
     )
+
+
+CLAIM_STALE_SECONDS = 300  # 5 min — mirrors follow_up crash-recovery cutoff.
+
+
+def claim_enrollment(enrollment_id: str, now: datetime) -> bool:
+    """Atomic pending→claimed guard. True only if THIS worker won the row.
+
+    Guarded UPDATE: only claims an active enrollment whose claim is free or stale.
+    Mirrors follow_up._claim_followup_job. Fail-open→False (skip, retry next tick)."""
+    from datetime import timedelta
+    try:
+        sb = get_supabase()
+        stale = (now - timedelta(seconds=CLAIM_STALE_SECONDS)).isoformat()
+        res = (
+            sb.table("campaign_enrollments")
+            .update({"claimed_at": now.isoformat()})
+            .eq("id", enrollment_id)
+            .eq("status", "active")
+            .or_(f"claimed_at.is.null,claimed_at.lt.{stale}")
+            .execute()
+        )
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+def release_enrollment_claim(enrollment_id: str) -> None:
+    """Clear the claim lock so the next tick can re-claim (used on advance/complete/fail)."""
+    try:
+        sb = get_supabase()
+        sb.table("campaign_enrollments").update({"claimed_at": None}).eq("id", enrollment_id).execute()
+    except Exception:
+        pass
 
 
 def update_enrollment(enrollment_id: str, **kwargs) -> dict[str, Any]:
