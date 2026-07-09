@@ -253,9 +253,13 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                     mark_enrollment_sent(enrollment["id"], node["id"], None)
             if not already_sent:
                 record_daily_send(lead["id"])
-            _log_exec(enrollment, node, "done",
-                      "template enviado" if node_type == "send" else "mensagem enviada"
-                      if not already_sent else "envio ignorado (idempotência)")
+            if already_sent:
+                _send_summary = "envio ignorado (idempotência)"
+            elif node_type == "send":
+                _send_summary = "template enviado"
+            else:
+                _send_summary = "mensagem enviada"
+            _log_exec(enrollment, node, "done", _send_summary)
 
         elif node_type == "wait":
             days    = cfg.get("days", 1)
