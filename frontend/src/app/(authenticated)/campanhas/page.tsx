@@ -10,6 +10,7 @@ import { CadenceList } from "@/components/campaigns/cadence-list";
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
+import { FollowupBoard } from "@/components/campaigns/followup-board";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -32,7 +33,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-const VALID_TABS = ["visao-geral", "disparos", "cadencias", "templates"] as const;
+const VALID_TABS = ["visao-geral", "disparos", "cadencias", "follow-up", "templates"] as const;
 type TabId = typeof VALID_TABS[number];
 
 function CampanhasPageInner() {
@@ -163,6 +164,7 @@ function CampanhasPageInner() {
               {tab === "visao-geral" ? "Visão Geral"
                 : tab === "disparos" ? "Disparos"
                 : tab === "cadencias" ? "Cadências"
+                : tab === "follow-up" ? "Follow-up"
                 : "Templates"}
             </button>
           ))}
@@ -240,6 +242,7 @@ function CampanhasPageInner() {
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
         {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={() => {}} />}
+        {activeTab === "follow-up" && <FollowupBoard />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>
 

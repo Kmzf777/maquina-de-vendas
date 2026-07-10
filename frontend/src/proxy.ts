@@ -87,6 +87,8 @@ export const config = {
     "/api/broadcasts/:path*",
     "/api/automation/:path*",
     "/api/campaigns/:path*",
+    "/api/cadence/:path*",
+    "/api/followups/:path*",
     "/api/leads/:path*",
     "/api/conversations/:path*",
     "/api/deals/:path*",

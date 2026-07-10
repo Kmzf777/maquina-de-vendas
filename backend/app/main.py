@@ -114,6 +114,7 @@ from app.conversations.router import router as conversations_router
 from app.dev_router.router import router as dev_router
 from app.templates.router import router as templates_router
 from app.follow_up.router import router as follow_up_router
+from app.follow_up.api import router as cadence_api_router
 from app.campaigns.router import router as campaigns_router
 from app.campaigns.conversions_router import router as conversions_router
 from app.automation.router import router as automation_router
@@ -132,6 +133,7 @@ app.include_router(conversations_router)
 app.include_router(dev_router)
 app.include_router(templates_router)
 app.include_router(follow_up_router)
+app.include_router(cadence_api_router)
 app.include_router(campaigns_router)
 app.include_router(conversions_router)
 app.include_router(automation_router)

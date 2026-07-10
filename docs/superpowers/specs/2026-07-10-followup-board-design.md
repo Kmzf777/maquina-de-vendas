@@ -32,8 +32,9 @@ visão GLOBAL operacional e gerenciável desse motor.
   `leads(name, phone)`; filtro por status (`pending|awaiting_reopen|sent|cancelled`),
   ordenação: pending/awaiting_reopen por `fire_at` asc; sent/cancelled por
   `sent_at|fire_at` desc; limite default 100 (máx 200).
-- `GET /api/followups/summary` — contagens: pending, awaiting_reopen, sent hoje (BRT),
-  cancelled hoje (BRT).
+- `GET /api/followups/summary` — contagens: pending, awaiting_reopen, sent hoje (BRT)
+  e sent últimos 7 dias (cancelamento não tem timestamp próprio na tabela — KPI de
+  cancelados hoje seria mentiroso).
 - `POST /api/followups/[id]/cancel` — atualização GUARDADA: só `pending` ou
   `awaiting_reopen` viram `cancelled` com `cancel_reason='cancelled_by_operator'`
   (update com `.in_("status", [...])`; 0 linhas → 409). Nunca toca jobs
@@ -46,7 +47,7 @@ visão GLOBAL operacional e gerenciável desse motor.
   1. **Esteira da cadência** (definição): cartões T1→T4 + nudge com offset humano
      ("mesmo dia +1h30–3h30", "D+1", "D+3", "D+6", "+18h") e objetivo — dados do
      endpoint de definição (nunca hardcode que derive de cadence.py).
-  2. **KPIs**: Pendentes / Aguardando reabertura / Enviados hoje / Cancelados hoje.
+  2. **KPIs**: Pendentes / Aguardando reabertura / Enviados hoje / Enviados (7 dias).
   3. **Tabela de jobs**: chips de filtro por status; colunas Lead (nome ou telefone,
      link `/conversas?lead_id=`), Toque (seq + objetivo via `objectiveLabel`, ou tipo
      especializado rotulado: handoff_rescue→"Resgate handoff", lp_welcome→"Boas-vindas
