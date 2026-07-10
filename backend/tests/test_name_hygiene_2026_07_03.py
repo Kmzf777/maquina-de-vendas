@@ -324,3 +324,83 @@ async def test_fire_reopen_template_envia_zero_params(monkeypatch):
     )
     assert ok is True
     assert not captured["components"], f"reopen deve enviar 0 params, veio: {captured['components']}"
+
+
+# ─── fire_reopen_template: persistido == enviado (QA 10/07, Rodada 4) ───────────
+# O lead recebia o template aprovado ("Olá \nInfelizmente não consegui te responder
+# a tempo..."), mas a conversa gravava o PLACEHOLDER "continuar a conversa de onde
+# paramos" como fala da Valéria — poluindo o CRM (parece mensagem errática enviada)
+# e o histórico que o LLM relê nos turnos seguintes. 5 casos reais em 10/07
+# (Tainara, Luciana, Maria, Lucas, Yandra — toques seq=2 com janela fechada).
+
+def _reopen_scheduler_patched(monkeypatch, scheduler, captured):
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            return {"messages": [{"id": "wamid-body"}]}
+
+    def _capture_save(**kw):
+        captured.update(kw)
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
+    monkeypatch.setattr(scheduler, "save_message_conv", _capture_save)
+    monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: None)
+    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda *a: None)
+    monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-body")
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_persiste_o_corpo_real_do_template(monkeypatch):
+    """O content persistido deve ser o BODY real do template (message_templates),
+    nunca o placeholder interno."""
+    from unittest.mock import MagicMock
+    from app.follow_up import scheduler
+
+    captured = {}
+    _reopen_scheduler_patched(monkeypatch, scheduler, captured)
+
+    corpo_real = "Olá \nCorpo REAL do template aprovado — clique no botão abaixo."
+    sb = MagicMock()
+    (sb.table.return_value.select.return_value
+        .eq.return_value.limit.return_value
+        .execute.return_value) = MagicMock(
+        data=[{"components": [{"type": "BODY", "text": corpo_real}]}]
+    )
+    monkeypatch.setattr(scheduler, "get_supabase", lambda: sb)
+
+    lead = {"id": "lead-1", "name": "Tainara", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(
+        {"id": "job-1", "lead_id": "lead-1", "conversation_id": "conv-1", "metadata": {}},
+        lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
+    )
+    assert ok is True
+    assert captured["content"] == corpo_real, (
+        f"persistido != enviado: gravou {captured['content']!r} em vez do corpo do template"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_fallback_persiste_corpo_estatico_completo(monkeypatch):
+    """message_templates indisponível → persiste a cópia fiel do corpo aprovado
+    (o template é estático, ZERO params), jamais o fragmento-placeholder."""
+    from app.follow_up import scheduler
+
+    captured = {}
+    _reopen_scheduler_patched(monkeypatch, scheduler, captured)
+
+    def _boom():
+        raise RuntimeError("db indisponível")
+
+    monkeypatch.setattr(scheduler, "get_supabase", _boom)
+
+    lead = {"id": "lead-1", "name": "Tainara", "phone": "5511999999999"}
+    ok = await scheduler.fire_reopen_template(
+        {"id": "job-1", "lead_id": "lead-1", "conversation_id": "conv-1", "metadata": {}},
+        lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
+    )
+    assert ok is True
+    content = captured["content"]
+    assert content != "continuar a conversa de onde paramos"
+    assert "janela de atendimento fechou" in content
+    assert "clique no botão abaixo" in content

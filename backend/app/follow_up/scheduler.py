@@ -1516,6 +1516,49 @@ def _pending_reopen_job(conversation_id: str) -> dict | None:
         return None
 
 
+# Cópia fiel do BODY aprovado do template `continuar_conversa` (pt_BR, estático,
+# ZERO params) — usada como fallback de PERSISTÊNCIA quando message_templates está
+# indisponível. Persistido == enviado (QA 10/07, Rodada 4): gravar o placeholder
+# "continuar a conversa de onde paramos" como fala da Valéria poluía o CRM e o
+# histórico que o LLM relê nos turnos seguintes.
+_REOPEN_TEMPLATE_BODY_FALLBACK = (
+    "Olá \nInfelizmente não consegui te responder a tempo e a nossa janela de "
+    "atendimento fechou. \nPeço desculpas pela espera!\n\n"
+    "Para continuarmos nossa conversa exatamente de onde paramos, por favor, "
+    "clique no botão abaixo."
+)
+
+
+def _reopen_template_body() -> str:
+    """BODY real do template de reabertura (message_templates), ou a cópia fiel.
+
+    O template é estático por construção (zero params), então a constante de
+    fallback é idêntica ao que a Meta entrega — nunca um placeholder interno.
+    """
+    try:
+        res = (
+            get_supabase()
+            .table("message_templates")
+            .select("components")
+            .eq("name", _REOPEN_TEMPLATE_NAME)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            body = next(
+                (c for c in (res.data[0].get("components") or []) if c.get("type") == "BODY"),
+                None,
+            )
+            if body and body.get("text"):
+                return body["text"]
+    except Exception as exc:
+        logger.warning(
+            "[REOPEN] falha ao buscar corpo do template %s: %s — usando cópia fiel",
+            _REOPEN_TEMPLATE_NAME, exc,
+        )
+    return _REOPEN_TEMPLATE_BODY_FALLBACK
+
+
 def _reopen_template_category() -> str | None:
     """Categoria (lowercase) do template de reabertura em message_templates, ou None.
 
@@ -1604,7 +1647,7 @@ async def fire_reopen_template(
         save_message_conv(
             lead_id=job["lead_id"],
             role="assistant",
-            content="continuar a conversa de onde paramos",
+            content=_reopen_template_body(),
             sent_by="followup",
             conversation_id=conversation_id,
             wamid=extract_wamid(send_result),
