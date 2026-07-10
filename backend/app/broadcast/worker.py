@@ -613,15 +613,29 @@ def _toggle_br_ninth_digit(number: str | None) -> str | None:
     return None
 
 
+_BL_RETRY_SELECT = (
+    "id, broadcast_id, lead_id, wamid, "
+    "leads!inner(id, phone, wa_id), "
+    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables)"
+)
+
+# Título que a Meta envia no webhook de status para o erro 131026 (registration do
+# destino difere do formato enviado) — o único tipo de falha explícita retentável.
+_META_UNDELIVERABLE_TITLE = "Message undeliverable"
+
+
 async def retry_undelivered_cold_sends() -> None:
     """Dupla tentativa ESTRUTURADA: uma única retentativa alternando o 9º dígito.
 
     Quando reconcile_delivery_timeouts vira uma mensagem de disparo de 'accepted' para
     'undelivered' (a Meta aceitou mas nunca confirmou entrega), este job reenvia UMA vez
     para a forma alternada do número — cobrindo o caso em que a registration real do
-    destino difere do formato que tentamos. Trava dupla contra duplicação: só age quando
-    `delivered_at IS NULL` e claima atomicamente `delivery_retried` (false→true), de modo
-    que jamais há mais de uma retentativa nem reenvio a quem já recebeu.
+    destino difere do formato que tentamos. O mesmo vale quando a Meta reporta a falha
+    EXPLICITAMENTE pelo webhook de status (131026 "Message undeliverable") — é o mesmo
+    cenário de registration, só que confessado em vez de silencioso. Trava dupla contra
+    duplicação: só age quando `delivered_at IS NULL` e claima atomicamente
+    `delivery_retried` (false→true), de modo que jamais há mais de uma retentativa nem
+    reenvio a quem já recebeu.
     """
     sb = get_supabase()
     floor = (datetime.now(timezone.utc) - timedelta(hours=_DELIVERY_LIMBO_LOOKBACK_HOURS)).isoformat()
@@ -640,21 +654,15 @@ async def retry_undelivered_cold_sends() -> None:
         )
     except Exception as e:
         logger.warning("[DELIVERY][RETRY] falha ao buscar undelivered: %s", e)
-        return
+        undelivered = []
     wamids = sorted({m["wamid"] for m in undelivered if m.get("wamid")})
-    if not wamids:
-        return
 
     for i in range(0, len(wamids), _RECONCILE_ID_CHUNK):
         chunk = wamids[i : i + _RECONCILE_ID_CHUNK]
         try:
             bls = (
                 sb.table("broadcast_leads")
-                .select(
-                    "id, broadcast_id, lead_id, wamid, "
-                    "leads!inner(id, phone, wa_id), "
-                    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables)"
-                )
+                .select(_BL_RETRY_SELECT)
                 .in_("wamid", chunk)
                 .eq("delivery_retried", False)
                 .is_("delivered_at", "null")
@@ -668,6 +676,31 @@ async def retry_undelivered_cold_sends() -> None:
 
         for bl in bls:
             await _retry_single_undelivered(sb, bl)
+
+    # Falha explícita 131026: o webhook de status grava messages.delivery_status='failed'
+    # (nunca 'undelivered'), então esses leads não aparecem na varredura acima. O claim
+    # atômico em _retry_single_undelivered mantém a garantia de retentativa única mesmo
+    # se um wamid cruzar os dois caminhos.
+    try:
+        failed_bls = (
+            sb.table("broadcast_leads")
+            .select(_BL_RETRY_SELECT)
+            .eq("status", "failed")
+            .eq("error_message", _META_UNDELIVERABLE_TITLE)
+            .eq("delivery_retried", False)
+            .is_("delivered_at", "null")
+            .gte("sent_at", floor)
+            .limit(100)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        logger.warning("[DELIVERY][RETRY] falha ao buscar failed-undeliverable (131026): %s", e)
+        failed_bls = []
+
+    for bl in failed_bls:
+        await _retry_single_undelivered(sb, bl)
 
 
 async def _retry_single_undelivered(sb, bl: dict) -> None:
