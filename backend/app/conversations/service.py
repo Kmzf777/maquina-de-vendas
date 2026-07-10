@@ -193,7 +193,12 @@ def save_message(
         # webhook de status (_handle_delivery_status: accepted→sent→delivered→read/failed).
         # Mensagens presas em "accepted" além do timeout são varridas por
         # reconcile_delivery_timeouts (canal sem webhook de status = silencioso).
-        msg["delivery_status"] = "accepted"
+        # SÓ mensagens NOSSAS (role=assistant) têm ciclo de status: a Meta nunca envia
+        # status para inbound — carimbar o inbound o transformava em 'undelivered'
+        # fantasma no reconciler e disparava alerta CRITICAL falso de canal silencioso
+        # (QA 10/07: o alerta do canal do João era 100% áudios de lead).
+        if role == "assistant":
+            msg["delivery_status"] = "accepted"
     if document_name is not None:
         msg["document_name"] = document_name
     if media_mime is not None:
