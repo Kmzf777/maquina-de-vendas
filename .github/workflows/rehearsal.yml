@@ -1,0 +1,109 @@
+# Gate de regressão do agente (Valéria): roda os 10 arquétipos do harness de
+# rehearsal (T1-T6 inbound + O1-O4 outbound) contra o Supabase HOMOLOG com a
+# Meta 100% mockada (REHEARSAL_MODE). NÃO roda no push — custo de LLM — apenas
+# agendado (diário) ou disparo manual.
+#
+# Secrets exigidos (todos de HOMOLOG/isolados — os guards do harness abortam
+# com URL/chave de produção):
+#   REHEARSAL_SUPABASE_URL          — projeto homolog
+#   REHEARSAL_SUPABASE_SERVICE_KEY  — service key do homolog
+#   REHEARSAL_GEMINI_API_KEY        — chave da Valéria no backend do run (isolada)
+#   GEMINI_API_KEY_DEV              — ator (flash-lite) + juiz (pro); deve DIFERIR da acima
+name: Rehearsal Gate (Agente)
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 06:00 BRT, fora do horário comercial de disparo
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Rodar apenas um arquétipo (ex: T3 ou O2). Vazio = todos.'
+        required: false
+        default: ''
+
+jobs:
+  rehearsal:
+    name: Rehearsal (10 arquétipos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    env:
+      REHEARSAL_MODE: 'true'
+      REDIS_URL: redis://localhost:6379
+      SUPABASE_URL: ${{ secrets.REHEARSAL_SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.REHEARSAL_SUPABASE_SERVICE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.REHEARSAL_GEMINI_API_KEY }}
+      GEMINI_API_KEY_DEV: ${{ secrets.GEMINI_API_KEY_DEV }}
+      DEV_BACKEND_URL: http://127.0.0.1:8001
+      REHEARSAL_ONLY: ${{ inputs.only }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Start backend (REHEARSAL_MODE)
+        working-directory: backend
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 > uvicorn.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8001/health && exit 0
+            sleep 2
+          done
+          echo "backend não subiu em 60s"; tail -50 uvicorn.log; exit 1
+
+      - name: Run inbound rehearsal (T1-T6)
+        working-directory: backend
+        run: python -m scripts.rehearsal_runner
+
+      - name: Run outbound rehearsal (O1-O4)
+        working-directory: backend
+        run: python -m scripts.outbound_rehearsal_runner
+
+      - name: Publish summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import glob, json, os
+          lines = ["# Rehearsal Gate — resultado por arquétipo", "",
+                   "| Arquétipo | Status | Detalhe |", "|---|---|---|"]
+          runs = sorted(glob.glob("docs/superpowers/plans/pilot/*rehearsal-runs/*/run.json"),
+                        key=os.path.getmtime)[-2:]
+          for rj in runs:
+              data = json.load(open(rj, encoding="utf-8"))
+              for v in data.get("verifications", []):
+                  status = v.get("status", "?")
+                  icon = "✅" if status == "passed" else "❌"
+                  detail = str(v.get("hard_checks", v))[:120]
+                  lines.append(f"| {v.get('archetype_id', '?')} | {icon} {status} | {detail} |")
+          out = "\n".join(lines) + "\n"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(out)
+          print(out)
+          EOF
+
+      - name: Upload artifacts (transcripts + run.json)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rehearsal-artifacts
+          path: |
+            docs/superpowers/plans/pilot/rehearsal-runs/
+            docs/superpowers/plans/pilot/outbound-rehearsal-runs/
+            backend/uvicorn.log
+          retention-days: 14
+          if-no-files-found: warn
