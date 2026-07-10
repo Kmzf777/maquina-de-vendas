@@ -19,7 +19,10 @@ from app.conversations.service import (
     update_conversation, save_message,
 )
 from app.agent.gemini_client import transcribe_audio
-from app.agent.orchestrator import run_agent, resolve_prompt_key, LLMUnavailableError
+from app.agent.orchestrator import (
+    run_agent, resolve_prompt_key,
+    LLMUnavailableError, LLMBudgetExceededError, LLMQuotaExhaustedError,
+)
 from app.alerts.service import create_system_alert
 from app.agent.persona import resolve_persona_prompt_key
 from app.agent_profiles.service import get_profile_id_by_prompt_key
@@ -563,8 +566,25 @@ def _broadcast_recently_active(hours: int = 2) -> bool:
         return False
 
 
+def _llm_down_reason(exc: Exception) -> str:
+    """Mapeia o TIPO da exceção do agente → reason do parking (wartime 10/07).
+
+    Exaustão longa (budget interno / quota-billing do Google) precisa de deadline até
+    a virada do dia, não de 30min — sem essa distinção, todo lead que respondia ao
+    disparo após o estouro era estacionado por 30min e depois recebia handoff cego
+    definitivo (repetição industrializada do incidente de 08/07). A ordem importa:
+    ambas as classes herdam de LLMUnavailableError, então o isinstance vem primeiro.
+    """
+    if isinstance(exc, LLMBudgetExceededError):
+        return "budget"
+    if isinstance(exc, LLMQuotaExhaustedError):
+        return "quota"
+    return "transient"
+
+
 async def _handle_llm_down(
     lead: dict, phone: str, conversation: dict, inbound_text: str | None = None,
+    reason: str = "transient",
 ) -> None:
     """Fallback quando o LLM está fora: encaminha o lead ao humano (cartão do João)
     em vez de fantasmá-lo. Reutiliza encaminhar_humano (desativa IA, cria deal,
@@ -582,6 +602,13 @@ async def _handle_llm_down(
     O contador/alerta continuam rodando ANTES do desvio; o handoff imediato segue
     sendo o fallback quando o parking está off ou o Redis falha, e o próprio drain
     faz o handoff se a janela de parking estourar com o LLM ainda fora.
+
+    Wartime 10/07: `reason` ("transient"/"budget"/"quota", ver _llm_down_reason) é
+    propagado até park_turn, que grava o deadline correspondente (exaustão = virada do
+    dia, não 30min). Com reason="budget" o alerta llm_down é SUPRIMIDO — o alerta
+    dedicado llm_budget_exceeded (budget_guard) já cobre o incidente e um segundo
+    alerta critical seria ruído duplo; o contador de falhas consecutivas continua
+    rodando (é ele que zera no 1º sucesso do drain).
     """
     from app.buffer.parking import park_turn, parking_enabled
     _parking_on = False
@@ -592,7 +619,7 @@ async def _handle_llm_down(
     try:
         _count = await _record_llm_failure()
         _threshold = 2 if _broadcast_recently_active() else _LLM_DOWN_ALERT_THRESHOLD
-        if _count >= _threshold:
+        if _count >= _threshold and reason != "budget":
             _fire_llm_down_alert(_count, handoff_ativo=not _parking_on)
     except Exception as exc:
         logger.warning("[LLM DOWN] falha ao registrar/alertar contador p/ %s: %s", phone, exc)
@@ -608,7 +635,7 @@ async def _handle_llm_down(
         logger.debug("[LLM DOWN] checagem de autoresponder falhou: %s", exc)
     if _parking_on:
         try:
-            if await park_turn(conversation, lead, phone, inbound_text):
+            if await park_turn(conversation, lead, phone, inbound_text, reason=reason):
                 return  # estacionado — o drain do worker responde ou faz o handoff no prazo
         except Exception as exc:
             logger.error("[LLM DOWN] falha ao estacionar turno p/ %s: %s", phone, exc)
@@ -691,6 +718,7 @@ async def _handle_autoresponder(
 
 async def _handle_agent_exhausted(
     lead: dict, phone: str, conversation: dict, inbound_text: str | None = None,
+    reason: str = "transient",
 ) -> None:
     """Ramo terminal do loop de retry do agente ([AGENT FAILED]).
 
@@ -706,12 +734,17 @@ async def _handle_agent_exhausted(
     (`encaminhar_humano` via `_handle_llm_down`, que também registra o contador e dispara
     o alerta llm_down no limiar). Fail-soft de ponta a ponta: nada aqui pode escalar — é
     o último anteparo do turno.
+
+    `reason` (wartime 10/07) segue o mesmo mapeamento de _llm_down_reason. Na prática
+    este ramo só recebe exceções genéricas (as LLM* são capturadas antes pelo `except
+    LLMUnavailableError` do loop) → default "transient"; o parâmetro existe p/ manter o
+    contrato simétrico com _handle_llm_down caso um caller futuro capture diferente.
     """
     conv_id = conversation["id"]
     pop_interest_marked(conv_id)  # não vaza flag p/ o próximo turno
     pop_quote_executed(conv_id)  # idem (Frente B3)
     try:
-        await _handle_llm_down(lead, phone, conversation, inbound_text=inbound_text)
+        await _handle_llm_down(lead, phone, conversation, inbound_text=inbound_text, reason=reason)
     except Exception as exc:  # _handle_llm_down já é fail-soft; guarda extra de segurança
         logger.error(
             "[AGENT FAILED] handoff terminal falhou p/ %s (conv=%s): %s",
@@ -1240,13 +1273,19 @@ async def process_buffered_messages(
                     await _reset_llm_failures()
                     break
                 except LLMUnavailableError as e:
+                    # Wartime 10/07: o tipo da exceção decide o reason do parking —
+                    # budget/quota (exaustão longa) estaciona até a virada do dia;
+                    # o resto mantém a janela transitória de 30min.
+                    _reason = _llm_down_reason(e)
                     logger.error(
-                        "[LLM DOWN] LLM indisponível para %s (conv=%s): %s",
-                        phone, conversation["id"], e, exc_info=True,
+                        "[LLM DOWN] LLM indisponível para %s (conv=%s, reason=%s): %s",
+                        phone, conversation["id"], _reason, e, exc_info=True,
                     )
                     pop_interest_marked(conversation["id"])
                     pop_quote_executed(conversation["id"])  # idem (Frente B3)
-                    await _handle_llm_down(lead, phone, conversation, inbound_text=resolved_text)
+                    await _handle_llm_down(
+                        lead, phone, conversation, inbound_text=resolved_text, reason=_reason,
+                    )
                     _update_last_msg(conversation["id"])
                     return
                 except Exception as e:

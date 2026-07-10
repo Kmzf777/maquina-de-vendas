@@ -471,10 +471,32 @@ class LLMUnavailableError(Exception):
     """
 
 
-class LLMBudgetExceededError(LLMUnavailableError):
-    """Teto diário de gasto atingido (kill-switch). Subclasse de LLMUnavailableError para
-    reusar o MESMO fallback de handoff — o lead cai no João em vez de ser fantasmado, e o
-    sistema para de queimar cota até a virada do dia (UTC). Ver app/agent/budget_guard.py."""
+class LLMExhaustedError(LLMUnavailableError):
+    """Exaustão LONGA do LLM — não volta em minutos (wartime 10/07/2026).
+
+    Distingue "cofre vazio" (teto de gasto interno, quota diária/billing do Google) de
+    um outage transitório de segundos. Antes, tudo herdava só de LLMUnavailableError e
+    caía no MESMO parking de 30min: como o bloqueio dura até a virada do dia, todo lead
+    que respondia ao disparo após o estouro era estacionado por 30min e recebia handoff
+    CEGO definitivo (ai_enabled=false) — repetição industrializada do incidente de 08/07
+    (2/9 respostas queimadas em 13min de outage). Com esta categoria, o parking usa um
+    deadline de reset (virada do dia) em vez da janela curta. Continua sendo
+    LLMUnavailableError por retrocompatibilidade: todo `except LLMUnavailableError`
+    existente segue capturando."""
+
+
+class LLMBudgetExceededError(LLMExhaustedError):
+    """Teto diário de gasto atingido (kill-switch INTERNO). Reclassificado (10/07) de
+    LLMUnavailableError para LLMExhaustedError: o bloqueio dura até a virada do dia (UTC),
+    então o turno deve ser estacionado até o reset do budget_guard — não por 30min.
+    Ver app/agent/budget_guard.py."""
+
+
+class LLMQuotaExhaustedError(LLMExhaustedError):
+    """Quota diária/billing esgotada do LADO GOOGLE (429 com marcador de quota diária,
+    ou 403 persistente). Retry em minutos é inútil (o reset é na virada do dia
+    America/Los_Angeles, fuso das quotas diárias da Gemini API) e só queima RPM —
+    o parking usa esse horizonte como deadline. Wartime 10/07/2026."""
 
 
 def _initial_thinking_off(model: str) -> bool:
@@ -497,6 +519,28 @@ def _genai_status_code(exc: genai_errors.APIError) -> int | None:
     """Extrai o status HTTP de um erro do google-genai (APIError.code)."""
     code = getattr(exc, "code", None)
     return code if isinstance(code, int) else None
+
+
+# Marcador de quota DIÁRIA num 429 do Google: a mensagem cita o eixo do limite, e os
+# formatos observados variam ("per day", "PerDay" em métricas camelCase tipo
+# GenerateRequestsPerDayPerProjectPerModel, "per_day" em nomes snake_case). O regex
+# cobre os três — case-insensitive — sem casar "per minute"/"PerMinute" (rate-limit
+# comum, que continua retentável).
+_DAILY_QUOTA_RE = re.compile(r"per[\s_-]?day", re.IGNORECASE)
+
+
+def _is_daily_quota_429(status: int | None, exc: Exception) -> bool:
+    """True quando o erro é um 429 de quota DIÁRIA esgotada (não rate-limit de minuto).
+
+    Retentar aqui é inútil (o reset é só na virada do dia do Google) e ainda queima o
+    RPM que sobrou — por isso _generate_with_retry converte em LLMQuotaExhaustedError
+    IMEDIATO, sem gastar as 3 tentativas."""
+    if status != 429:
+        return False
+    try:
+        return bool(_DAILY_QUOTA_RE.search(str(exc)))
+    except Exception:
+        return False
 
 
 async def _generate_with_retry(**gen_kwargs) -> GenerateResult:
@@ -533,6 +577,12 @@ async def _generate_with_retry(**gen_kwargs) -> GenerateResult:
             )
         except genai_errors.APIError as exc:
             status = _genai_status_code(exc)
+            if _is_daily_quota_429(status, exc):
+                # Quota DIÁRIA esgotada (wartime 10/07): retry é inútil até a virada do
+                # dia e queima o RPM restante → classifica como exaustão longa na hora.
+                raise LLMQuotaExhaustedError(
+                    f"Quota diária do provedor esgotada (429 per-day): {exc}"
+                ) from exc
             if status not in (403, 429) and not (isinstance(status, int) and status >= 500):
                 raise  # 4xx não-retentável (400/401/404/...) → relança cru
             last_exc = exc
@@ -547,6 +597,18 @@ async def _generate_with_retry(**gen_kwargs) -> GenerateResult:
             )
         if attempt < _LLM_RETRY_ATTEMPTS:
             await asyncio.sleep(_delay)
+    # Classificação do esgotamento (wartime 10/07): 403 persistente é billing/permissão —
+    # historicamente NUNCA é transitório de segundos (o reset depende de ação humana ou da
+    # virada do dia) → exaustão longa. O 429-diário já foi convertido em
+    # LLMQuotaExhaustedError na 1ª ocorrência acima; o check aqui é cinto de segurança
+    # caso ele apareça só na última tentativa intercalado com erros de conexão.
+    if isinstance(last_exc, genai_errors.APIError):
+        _last_status = _genai_status_code(last_exc)
+        if _last_status == 403 or _is_daily_quota_429(_last_status, last_exc):
+            raise LLMQuotaExhaustedError(
+                f"Quota/billing do provedor esgotado após {_LLM_RETRY_ATTEMPTS} "
+                f"tentativas (HTTP {_last_status}): {last_exc}"
+            ) from last_exc
     raise LLMUnavailableError(
         f"LLM indisponível após {_LLM_RETRY_ATTEMPTS} tentativas: {last_exc}"
     ) from last_exc
