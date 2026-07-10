@@ -526,6 +526,10 @@ async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_
     monkeypatch.setattr(W, "check_ai_unresponsive", _boom)
     monkeypatch.setattr(W, "check_stuck_followup_jobs", lambda now: calls.append("check3") or 0)
     monkeypatch.setattr(W, "check_handoff_sla", lambda now: calls.append("check5") or 0)
+    # Check 6 (cadence_dead) tem janela util 08h-20h BRT — sem o monkeypatch, o check
+    # real bateria no Supabase fake do conftest na maior parte do dia (mesma
+    # justificativa do check5 acima). Tambem VERIFICA o registro no ciclo (C2.2).
+    monkeypatch.setattr(W, "check_cadence_dead", lambda now: calls.append("check6") or 0)
 
     recovery_calls = []
 
@@ -542,5 +546,5 @@ async def test_run_watchdog_normal_tick_calls_checks_and_recovery_despite_first_
         with pytest.raises(asyncio.CancelledError):
             await run_watchdog(app_mock)
 
-    assert calls == ["check1", "check3", "check5"]
+    assert calls == ["check1", "check3", "check5", "check6"]
     assert recovery_calls == [("fake-redis-marker", {"require_no_deadline": True, "source": "watchdog"})]

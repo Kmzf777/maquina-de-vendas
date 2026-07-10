@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +137,16 @@ def list_conversations(
 
 
 def update_conversation(conversation_id: str, **fields) -> dict[str, Any]:
-    sb = get_supabase()
-    sb.table("conversations").update(fields).eq("id", conversation_id).execute()
+    # Retry de transporte (GOAWAY sob rajada de disparo perdia o write silenciosamente).
+    # A lambda refaz o request inteiro a cada tentativa — contrato do run_with_retry.
+    run_with_retry(
+        lambda: get_supabase()
+        .table("conversations")
+        .update(fields)
+        .eq("id", conversation_id)
+        .execute(),
+        label="update_conversation",
+    )
     return {}
 
 
@@ -169,7 +177,6 @@ def save_message(
     quoted_wamid: str | None = None,
     agent_persona: str | None = None,
 ) -> dict[str, Any]:
-    sb = get_supabase()
     msg = {
         "conversation_id": conversation_id,
         "lead_id": lead_id,
@@ -209,7 +216,12 @@ def save_message(
         msg["quoted_wamid"] = quoted_wamid
     logger.info(f"[DEBUG-SAVE_MESSAGE] enter payload={msg}")
     try:
-        result = sb.table("messages").insert(msg).execute()
+        # Retry de transporte (GOAWAY sob rajada de disparo perdia a mensagem
+        # silenciosamente). Erro de aplicação (4xx/5xx) propaga sem retry.
+        result = run_with_retry(
+            lambda: get_supabase().table("messages").insert(msg).execute(),
+            label="save_message",
+        )
     except Exception as e:
         logger.error(f"[DEBUG-SAVE_MESSAGE] insert raised {type(e).__name__}: {e}", exc_info=True)
         raise
@@ -234,7 +246,16 @@ def save_message(
             update_fields["unread_count"] = 0
         if role == "user":
             update_fields["last_customer_message_at"] = now_iso
-        sb.table("conversations").update(update_fields).eq("id", conversation_id).execute()
+        # Retry de transporte também no carimbo da conversa — perder last_msg_at/
+        # last_customer_message_at desalinha janela 24h e ordenação do inbox.
+        run_with_retry(
+            lambda: get_supabase()
+            .table("conversations")
+            .update(update_fields)
+            .eq("id", conversation_id)
+            .execute(),
+            label="save_message conv touch",
+        )
     except Exception as e:
         logger.warning(f"[DEBUG-SAVE_MESSAGE] failed to update last_msg_at: {e}")
 

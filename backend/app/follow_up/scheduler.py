@@ -306,6 +306,13 @@ async def _health_check_via_logs(now: datetime) -> None:
                     )
             except Exception as exc:
                 logger.error("[HEALTH] Falha ao auto-resolver alertas de billing: %s", exc)
+            # Billing normalizado → retoma broadcasts pausados por billing (wartime T4).
+            # Fail-soft e import tardio: o health check JAMAIS quebra por causa disto.
+            try:
+                from app.broadcast.service import resume_broadcasts_after_billing
+                resume_broadcasts_after_billing()
+            except Exception as exc:
+                logger.error("[HEALTH] Falha no auto-resume de broadcasts pós-billing: %s", exc)
     except Exception as exc:
         logger.error("[HEALTH] Falha ao escanear logs por billing errors: %s", exc)
 

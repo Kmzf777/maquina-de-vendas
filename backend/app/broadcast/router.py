@@ -6,6 +6,8 @@ from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.events.bus import emit_event
 from app.campaign.importer import parse_csv
+from app.channels.service import get_channel_by_id
+from app.templates.preflight import validate_template_for_broadcast
 from app.leads.service import (
     get_or_create_lead as _get_or_create_lead,
     lead_has_active_relationship as _lead_has_active_relationship,
@@ -215,6 +217,29 @@ async def start_broadcast(broadcast_id: str):
     pending = sb.table("broadcast_leads").select("id", count="exact").eq("broadcast_id", broadcast_id).eq("status", "pending").execute().count
     if not pending:
         raise HTTPException(400, "Nenhum lead pendente para envio")
+
+    # Pre-flight de template (wartime T3): valida existência/aprovação, locale, params
+    # do BODY e header ANTES de mudar o status — template quebrado explodiria lead a
+    # lead NO MEIO da campanha (classe dos incidentes reativacao_* e
+    # automacao_valeria_to_joao). Erros bloqueiam com 400 e o status fica intocado.
+    # PREFLIGHT_TEMPLATE=off (env) desliga o gate sem deploy.
+    channel = None
+    channel_id = broadcast.get("channel_id")
+    if channel_id:
+        try:
+            channel = get_channel_by_id(channel_id)
+        except Exception:
+            channel = None  # sem canal → preflight segue só com o lookup local
+    preflight_errors = await validate_template_for_broadcast(
+        broadcast.get("template_name"),
+        broadcast.get("template_language_code", "pt_BR"),
+        broadcast.get("template_variables") or {},
+        channel,
+    )
+    if preflight_errors:
+        raise HTTPException(
+            400, "Disparo bloqueado pelo pre-flight: " + "; ".join(preflight_errors)
+        )
 
     sb.table("broadcasts").update({"status": "running"}).eq("id", broadcast_id).execute()
     emit_event("broadcasts")  # wake-up do worker (fail-open; fallback tick cobre)

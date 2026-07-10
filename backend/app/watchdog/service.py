@@ -16,6 +16,11 @@ bug matou o turno):
     resposta do vendedor. Cobre o caso em que "o Joao visualiza e nao responde"
     (human_control=true, o estado ESPERADO pos-handoff) — sem este check, ficaria
     1h46 invisivel, como aconteceu com a Juliana.
+  - Check 6 `cadence_dead` (incidente 26/06→09/07): a Valeria conversou nas
+    ultimas 24h mas NENHUM follow_up_job foi criado no periodo — a CRIACAO de
+    jobs morreu (constraint 23514 engolida como warning por 13 dias). O Check 3
+    nao enxerga essa classe porque ele so olha jobs que EXISTEM e estao presos;
+    quando o insert falha, nao ha job nenhum para ficar preso.
 
 Roda como task asyncio no lifespan de main.py, espelhando o padrao de run_flusher
 (app/buffer/flusher.py): loop infinito, sleep entre ticks, cancelado no shutdown.
@@ -96,6 +101,27 @@ _SP_TZ = ZoneInfo("America/Sao_Paulo")
 # dedup permanecem como defesa em profundidade.
 HANDOFF_SLA_FETCH_LIMIT = 1000
 
+# --- Check 6 (cadence_dead, incidente 26/06→09/07) -------------------------------
+# A cadencia 4-touch ficou MORTA por 13 dias (26/06→09/07): a constraint 23514
+# fazia o INSERT em follow_up_jobs falhar como warning engolido — os jobs NUNCA
+# eram criados, entao o Check 3 (followup_jobs_stuck), que olha jobs EXISTENTES com
+# fire_at velho, nunca teve o que olhar. O detector correto e a COMBINACAO
+# "operacao viva + zero criacao": mensagens `assistant` novas provam que a Valeria
+# conversou (nao e um dia sem trafego), e zero linhas novas em follow_up_jobs no
+# mesmo periodo provam que NENHUM caminho de agendamento (cadencia 4-touch,
+# handoff_rescue, lp_welcome, ai_scheduled_return, nudge...) gravou nada — a
+# assinatura exata dos 13 dias de silencio.
+CADENCE_DEAD_LOOKBACK_HOURS = 24
+# Dedup mais largo que o ALERT_DEDUP_HOURS global (1h): cadencia morta e um estado
+# ESTRUTURAL que nao muda de hora em hora — 1 alerta nao-resolvido por 24h evita
+# 12 criticals/dia (cada critical acorda WhatsApp+Sentry via T2) enquanto o fix
+# nao sobe.
+CADENCE_DEAD_DEDUP_HOURS = 24
+# Teto do fetch do breakdown de jobs do QA diario (_qa_jobs_breakdown) — mesma
+# disciplina dos outros fetches do watchdog: nunca uma query sem limite explicito.
+# 2000 jobs/dia e uma ordem de grandeza acima do volume atual.
+QA_JOBS_FETCH_LIMIT = 2000
+
 # Mesmo padrao de app/follow_up/service.py:13 — escopa Check 3 ao ambiente atual
 # (dev/production) para nao misturar jobs de teste com os reais.
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
@@ -136,17 +162,20 @@ def _chunked(seq: list, n: int):
         yield seq[i:i + n]
 
 
-def _alert_recently_fired(alert_type: str) -> bool:
-    """True se ja existe um alerta `alert_type` NAO resolvido criado na ultima hora.
+def _alert_recently_fired(alert_type: str, dedup_hours: int = ALERT_DEDUP_HOURS) -> bool:
+    """True se ja existe um alerta `alert_type` NAO resolvido criado nas ultimas
+    `dedup_hours` horas (default: ALERT_DEDUP_HOURS=1, o padrao dos checks 1/3).
 
     Dedup espelhando o padrao de `processor._fire_llm_down_alert` /
-    `alerts.service.fire_billing_alert`. Fail-open: erro ao consultar -> False (nao
-    bloqueia o alerta — foi o silencio, nao um alerta duplicado, que deixou o
-    apagao de 01-02/07 invisivel).
+    `alerts.service.fire_billing_alert`. `dedup_hours` existe para alertas de
+    estado ESTRUTURAL (ex.: `cadence_dead`, dedup de 24h) que nao devem re-alertar
+    a cada hora. Fail-open: erro ao consultar -> False (nao bloqueia o alerta —
+    foi o silencio, nao um alerta duplicado, que deixou o apagao de 01-02/07
+    invisivel).
     """
     try:
         sb = get_supabase()
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=ALERT_DEDUP_HOURS)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=dedup_hours)).isoformat()
         existing = (
             sb.table("system_alerts")
             .select("id")
@@ -555,6 +584,86 @@ def check_handoff_sla(now: datetime) -> int:
     return n
 
 
+def check_cadence_dead(now: datetime) -> int:
+    """Check 6 (incidente 26/06→09/07) — a criação de follow_up_jobs morreu.
+
+    A cadência 4-touch ficou 13 dias sem rodar porque uma constraint (23514) fazia
+    o INSERT em follow_up_jobs falhar como warning engolido: os jobs nunca eram
+    CRIADOS, então o Check 3 (que olha jobs existentes presos há 2h) nunca disparou.
+    Este check observa a assinatura correta — operação viva + zero criação:
+
+      (a) janela útil 08h-20h America/Sao_Paulo (mesma do Check 5): de madrugada é
+          normal não criar job, e um critical acordaria o operador à toa;
+      (b) existe pelo menos 1 mensagem `assistant` nas últimas 24h — a Valéria
+          conversou, então os caminhos que agendam follow-up TIVERAM oportunidade;
+      (c) ZERO linhas criadas em follow_up_jobs (env atual) no mesmo período.
+
+    Fail-open no sentido de NÃO alertar: diferente do dedup (onde o silêncio era o
+    inimigo), uma falha transitória de query aqui não é evidência de cadência morta
+    — alertar critical em cima de erro de leitura seria falso positivo (e o
+    critical do T2 dispara WhatsApp+Sentry). Erro de query → loga warning, retorna 0.
+
+    Retorna o nº de alertas criados neste tick (0 ou 1 — o dedup de 24h decide).
+    """
+    if not _within_sla_window(now):
+        return 0
+
+    cutoff = (now - timedelta(hours=CADENCE_DEAD_LOOKBACK_HOURS)).isoformat()
+    try:
+        sb = get_supabase()
+        alive = (
+            sb.table("messages")
+            .select("id")
+            .eq("role", "assistant")
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        if not alive.data:
+            return 0  # dia sem tráfego — sem operação viva não há sinal de cadência morta
+        jobs = (
+            sb.table("follow_up_jobs")
+            .select("id")
+            .eq("env_tag", _ENV_TAG)
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        if jobs.data:
+            return 0  # pelo menos 1 job criado na janela — a criação está viva
+    except Exception as exc:
+        logger.warning(
+            "[WATCHDOG] check_cadence_dead: falha de query — sem alerta neste tick "
+            "(fail-open): %s", exc
+        )
+        return 0
+
+    logger.warning(
+        "[WATCHDOG] cadence_dead: operação viva (assistant nas últimas %dh) e ZERO "
+        "follow_up_jobs criados (env=%s)",
+        CADENCE_DEAD_LOOKBACK_HOURS, _ENV_TAG,
+    )
+    if _alert_recently_fired("cadence_dead", dedup_hours=CADENCE_DEAD_DEDUP_HOURS):
+        return 0
+    create_system_alert(
+        "cadence_dead",
+        "Cadência de follow-up morta",
+        f"A Valéria conversou nas últimas {CADENCE_DEAD_LOOKBACK_HOURS}h (há mensagens "
+        f"assistant novas), mas ZERO jobs foram criados em follow_up_jobs no mesmo "
+        f"período (env={_ENV_TAG}). Essa é a assinatura do incidente de 26/06→09/07, "
+        "quando a constraint 23514 engoliu os INSERTs como warning por 13 dias e "
+        "nenhum follow-up foi agendado. Verifique os caminhos de agendamento "
+        "(cadência 4-touch, handoff_rescue, lp_welcome, ai_scheduled_return) e os "
+        "warnings de INSERT nos logs do backend/worker.",
+        severity="critical",
+        metadata={
+            "lookback_hours": CADENCE_DEAD_LOOKBACK_HOURS,
+            "env_tag": _ENV_TAG,
+        },
+    )
+    return 1
+
+
 # --- QA diário de aderência (Onda 2, 09/07) --------------------------------------
 # Janela de publicação (07:00-08:00 America/Sao_Paulo): 1 relatório D-1 por dia.
 QA_WINDOW_START = time(7, 0)
@@ -590,6 +699,64 @@ def _qa_count(build_query) -> int:
     except Exception as exc:
         logger.warning("[WATCHDOG] métrica do daily_qa falhou: %s", exc)
         return -1
+
+
+def _qa_jobs_breakdown(start: str, end: str):
+    """Breakdown por `job_type` dos follow_up_jobs de D-1: CRIADOS (created_at na
+    janela) e EXECUTADOS (status='sent' com sent_at na janela — 'sent' é o estado
+    terminal de sucesso do scheduler, ver follow_up/scheduler._update_job_status).
+
+    Motivação (incidente 26/06→09/07): o QA reportava só `followups_enviados`
+    agregado — um tipo inteiro de job podia sumir (a cadência 4-touch morreu por 13
+    dias) sem que o número agregado denunciasse. O histograma diário por tipo é o
+    detector HUMANO de "um tipo sumiu"; o detector automático em tempo real é o
+    check_cadence_dead. Retorna {job_type: {"criados": n, "executados": n}} ou -1
+    em falha (padrão dos indicadores do QA: um indicador quebrado não derruba o
+    relatório).
+    """
+    try:
+        sb = get_supabase()
+        created_rows = (
+            sb.table("follow_up_jobs").select("job_type")
+            .eq("env_tag", _ENV_TAG)
+            .gte("created_at", start).lt("created_at", end)
+            .limit(QA_JOBS_FETCH_LIMIT).execute()
+        ).data or []
+        sent_rows = (
+            sb.table("follow_up_jobs").select("job_type")
+            .eq("env_tag", _ENV_TAG)
+            .eq("status", "sent")
+            .gte("sent_at", start).lt("sent_at", end)
+            .limit(QA_JOBS_FETCH_LIMIT).execute()
+        ).data or []
+        breakdown: dict = {}
+        for row in created_rows:
+            job_type = row.get("job_type") or "standard"
+            slot = breakdown.setdefault(job_type, {"criados": 0, "executados": 0})
+            slot["criados"] += 1
+        for row in sent_rows:
+            job_type = row.get("job_type") or "standard"
+            slot = breakdown.setdefault(job_type, {"criados": 0, "executados": 0})
+            slot["executados"] += 1
+        return breakdown
+    except Exception as exc:
+        logger.warning("[WATCHDOG] breakdown de jobs do daily_qa falhou: %s", exc)
+        return -1
+
+
+def _fmt_jobs_breakdown(breakdown) -> str:
+    """Renderiza o breakdown de jobs compacto p/ a mensagem do QA
+    ("standard 12/10, handoff_rescue 3/3" = criados/executados). Tolerante a -1
+    (indisponível, padrão dos indicadores) e a dict vazio (nenhum job no dia —
+    sinal que o check_cadence_dead cobre em tempo real, não só no relatório)."""
+    if not isinstance(breakdown, dict):
+        return "indisponível (-1)"
+    if not breakdown:
+        return "nenhum"
+    return ", ".join(
+        f"{job_type} {counts['criados']}/{counts['executados']}"
+        for job_type, counts in sorted(breakdown.items())
+    )
 
 
 def _qa_collect_metrics(now: datetime) -> dict:
@@ -652,6 +819,9 @@ def _qa_collect_metrics(now: datetime) -> dict:
             lambda sb: sb.table("broadcast_leads").select("id", count="exact")
             .gte("sent_at", start).lt("sent_at", end)
         ),
+        # Histograma diário de follow_up_jobs por tipo (criados/executados) — o
+        # detector humano da classe "um job_type sumiu" (incidente 26/06→09/07).
+        "jobs_por_tipo": _qa_jobs_breakdown(start, end),
     }
 
 
@@ -678,7 +848,11 @@ def check_daily_qa(now: datetime) -> bool:
         f"{metrics['dossies_atualizados']} dossiês atualizados; "
         f"{metrics['disparos_enviados']} templates disparados; "
         f"{metrics['numero_errado_marcados']} números marcados como errados e "
-        f"{metrics['indicacoes']} indicações registradas. (-1 = indicador indisponível)"
+        f"{metrics['indicacoes']} indicações registradas. "
+        # Breakdown por job_type (criados/executados) — `.get` tolerante porque o
+        # relatório não pode quebrar se a chave faltar num metrics antigo/parcial.
+        f"Jobs 24h (criados/executados): {_fmt_jobs_breakdown(metrics.get('jobs_por_tipo', -1))}. "
+        "(-1 = indicador indisponível)"
     )
     create_system_alert(
         "daily_qa_report",
@@ -738,6 +912,13 @@ async def run_watchdog(app) -> None:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_handoff_sla falhou: %s", exc, exc_info=True)
+
+        try:
+            await asyncio.to_thread(check_cadence_dead, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[WATCHDOG] check check_cadence_dead falhou: %s", exc, exc_info=True)
 
         try:
             await asyncio.to_thread(check_daily_qa, now)

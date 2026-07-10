@@ -4,7 +4,7 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -502,8 +502,12 @@ def get_or_create_lead(
 
 
 def update_lead(lead_id: str, **fields) -> dict[str, Any]:
-    sb = get_supabase()
-    result = sb.table("leads").update(fields).eq("id", lead_id).execute()
+    # Retry de transporte (GOAWAY sob rajada de disparo perdia o write silenciosamente).
+    # A lambda refaz o request inteiro a cada tentativa; erro de aplicação propaga sem retry.
+    result = run_with_retry(
+        lambda: get_supabase().table("leads").update(fields).eq("id", lead_id).execute(),
+        label="update_lead",
+    )
     return result.data[0]
 
 

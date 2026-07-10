@@ -26,7 +26,10 @@ def test_pause_broadcast_for_billing_updates_only_active():
     update_chain = mock_sb.table.return_value.update.return_value
     update_chain.eq.return_value.in_.return_value.execute.return_value.data = [{"id": "bc"}]
 
-    with patch("app.broadcast.service.get_supabase", return_value=mock_sb):
+    # _get_redis patchado: o marcador de billing (wartime T4) é best-effort e não
+    # deve tocar um Redis real na suíte.
+    with patch("app.broadcast.service.get_supabase", return_value=mock_sb), \
+         patch("app.broadcast.service._get_redis", return_value=MagicMock()):
         from app.broadcast.service import pause_broadcast_for_billing
         paused = pause_broadcast_for_billing("bc")
 

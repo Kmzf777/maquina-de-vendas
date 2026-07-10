@@ -27,6 +27,11 @@ os.environ.setdefault("HUMAN_REACTION_JITTER", "off")
 # sendo o contrato quando LLM_PARKING=off ou o Redis falha. Os testes do parking
 # (test_onda2_llm_parking_*) removem/ajustam o env explicitamente via monkeypatch.
 os.environ.setdefault("LLM_PARKING", "off")
+# Pre-flight de template do broadcast (wartime T3): OFF na suíte — o gate real faz
+# lookup em message_templates/Meta API e bloquearia (fail-closed) qualquer teste que
+# dirige start_broadcast sem mockar o preflight. Os testes do próprio preflight
+# (test_broadcast_preflight_*) ligam o gate explicitamente via monkeypatch.
+os.environ.setdefault("PREFLIGHT_TEMPLATE", "off")
 
 
 @pytest.fixture

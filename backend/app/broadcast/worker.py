@@ -32,6 +32,37 @@ _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 _BILLING_ERROR_CODE = 131042
 
+# Classe de erro de TEMPLATE (wartime T3, defesa em profundidade do pre-flight):
+# template inexistente/locale errado (132001, e o 404 cru que a Meta devolve p/
+# tradução ausente), params errados (132000), formato inválido (132005/132007/132012).
+# Um broadcast com template quebrado falha IGUAL para todos os leads — sem circuit
+# breaker, queimaria a lista inteira lead a lead.
+_TEMPLATE_ERROR_CODES = frozenset({132000, 132001, 132005, 132007, 132012})
+# Nº de erros de template CONSECUTIVOS que pausa o broadcast. 3 tolera flukes
+# isolados sem deixar a lista queimar.
+_TEMPLATE_ERROR_PAUSE_THRESHOLD = 3
+# Contador in-memory por broadcast_id, vivo só neste processo do worker: restart
+# zera (aceitável — o broadcast pausado não volta sozinho e o dano por ciclo de
+# vida do processo fica limitado a 3 leads).
+_template_error_streaks: dict[str, int] = {}
+
+
+def _is_template_error(status_code: int | None, meta_err: dict) -> bool:
+    """True se o erro Meta é da classe 'template quebrado' (falha igual p/ todo lead)."""
+    code = meta_err.get("code")
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        code = None
+    if code in _TEMPLATE_ERROR_CODES:
+        return True
+    # 404 de template: locale inexistente devolve HTTP 404 sem código estável
+    # (incidente automacao_valeria_to_joao pt_BR→404). Casa por status + menção
+    # a template na mensagem para não engolir 404 de endpoint/recurso genérico.
+    if status_code == 404 and "template" in str(meta_err.get("message", "")).lower():
+        return True
+    return False
+
 # A cadência/orquestração dos ticks vive em app/worker/main.py (uma task
 # asyncio isolada por domínio, acordada por eventos com fallback) — este módulo
 # expõe apenas as funções de domínio. Histórico de dimensionamento de egress:
@@ -1219,6 +1250,10 @@ async def process_single_broadcast(broadcast: dict):
             # (ver _handle_delivery_status e o captura de wa_id do inbound em meta_router).
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
+            # Send OK → zera a sequência de erros de template deste broadcast: o
+            # circuit breaker só conta falhas CONSECUTIVAS (template quebrado falha
+            # p/ todo lead; sucesso no meio prova que o template está são).
+            _template_error_streaks.pop(broadcast_id, None)
 
             # Registra observação analítica de disparo no card de CRM (fail-soft).
             record_dispatch_note(lead["id"], broadcast["template_name"])
@@ -1386,6 +1421,52 @@ async def process_single_broadcast(broadcast: dict):
                 except Exception:
                     pass
                 return
+            # Erro da classe TEMPLATE (wartime T3, send-side): o lead já foi marcado
+            # failed acima SEM requeue — retentar um template quebrado é loop infinito.
+            # Circuit breaker: N erros de template consecutivos = o template está
+            # quebrado p/ TODOS os leads → pausa o broadcast e alerta critical (chega
+            # no WhatsApp/Sentry via T2) em vez de queimar a lista inteira.
+            if _is_template_error(http_err.response.status_code, meta_err):
+                streak = _template_error_streaks.get(broadcast_id, 0) + 1
+                _template_error_streaks[broadcast_id] = streak
+                logger.error(
+                    "[BROADCAST][TEMPLATE] erro de template no broadcast %s (%d consecutivo(s)): %s",
+                    broadcast_id, streak, error_msg,
+                )
+                if streak >= _TEMPLATE_ERROR_PAUSE_THRESHOLD:
+                    logger.critical(
+                        "[BROADCAST][TEMPLATE] %d erros de template consecutivos — "
+                        "pausando broadcast %s (template '%s' quebrado)",
+                        streak, broadcast_id, broadcast.get("template_name"),
+                    )
+                    sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
+                    _template_error_streaks.pop(broadcast_id, None)
+                    try:
+                        from app.alerts.service import create_system_alert
+                        create_system_alert(
+                            "broadcast_template_error",
+                            f"Disparo pausado — erro de template '{broadcast.get('template_name')}'",
+                            (
+                                f"O broadcast '{broadcast.get('name') or broadcast_id}' foi pausado "
+                                f"automaticamente após {streak} erros de template consecutivos. "
+                                f"Último erro da Meta: {error_msg}. Template: "
+                                f"'{broadcast.get('template_name')}' "
+                                f"({broadcast.get('template_language_code', 'pt_BR')}). Corrija o "
+                                f"template/variáveis e retome o disparo manualmente."
+                            ),
+                            severity="critical",
+                            metadata={
+                                "broadcast_id": str(broadcast_id),
+                                "template_name": broadcast.get("template_name"),
+                                "meta_error_code": meta_err.get("code"),
+                            },
+                        )
+                    except Exception as alert_err:
+                        logger.warning(
+                            "[BROADCAST][TEMPLATE] alerta não criado p/ %s: %s",
+                            broadcast_id, alert_err,
+                        )
+                    return
         except httpx.TransportError as transport_err:
             # Queda TRANSITÓRIA de conexão (GOAWAY/RemoteProtocolError/ConnectError) que
             # esgotou os retries HTTP do _request_with_retry. NÃO é uma rejeição da Meta —
