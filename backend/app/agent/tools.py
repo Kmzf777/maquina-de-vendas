@@ -1112,8 +1112,12 @@ async def execute_tool(
 
     elif tool_name == "registrar_numero_errado":
         contexto = args.get("contexto", "")
+        # Idempotência (incidente 09/07: retry do agente re-executou a tool 4x no mesmo
+        # lead): já marcado → no-op, sem novo marcador nem system message duplicada.
+        _wn_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
+        if _wn_meta.get("wrong_number_at"):
+            return "numero ja marcado como possivel engano — higiene automatica ja armada, siga o arco normal"
         try:
-            _wn_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
             _wn_meta["wrong_number_at"] = datetime.now(timezone.utc).isoformat()
             _wn_meta["wrong_number_context"] = contexto
             update_lead(lead_id, metadata=_wn_meta)
