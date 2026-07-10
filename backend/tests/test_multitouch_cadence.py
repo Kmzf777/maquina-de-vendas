@@ -131,7 +131,7 @@ async def test_fire_reopen_template_success_marks_awaiting_reopen(monkeypatch):
     assert ok is True
     assert calls["awaiting"] == "job-1"
     assert calls["meta"][1] == scheduler._REOPEN_TEMPLATE_NAME
-    assert calls["meta"][2] == "pt_BR"
+    assert calls["meta"][2] == scheduler._REOPEN_TEMPLATE_LANGUAGE  # locale da APROVACAO na Meta
     assert calls["ctx"] == ("job-1", "ultima_chamada", "ultima_chamada")
 
 

@@ -56,11 +56,15 @@ async def test_janela_fechada_dispara_template_e_marca_awaiting_reopen(monkeypat
 
     await scheduler._process_ai_scheduled_return(job, now)
 
-    assert sent["name"] == "continuar_conversa"
-    # continuar_conversa é BODY estático + botão QUICK_REPLY, ZERO params. Enviar qualquer
-    # parâmetro de body faz a Meta rejeitar com #132000 (regressão de 08/07, lead cintia):
-    # o reopen NÃO pode montar components — send_template omite o array quando é None.
-    assert not sent["components"], f"reopen deve enviar 0 params, veio: {sent['components']}"
+    assert sent["name"] == scheduler._REOPEN_TEMPLATE_NAME
+    # Rodada 5 (10/07): reopen usa utilidade_geral_confirmacao_v1 — 3 params POSICIONAIS
+    # obrigatórios (nome, assunto, data). Contagem divergente do aprovado dá Meta #132000
+    # (mesma classe da regressão de 08/07, lead cintia).
+    params = sent["components"][0]["parameters"]
+    assert len(params) == 3 and all(p["type"] == "text" for p in params), (
+        f"reopen deve enviar exatamente 3 params posicionais, veio: {sent['components']}"
+    )
+    assert params[0]["text"] == "Walter"  # primeiro nome sanitizado
     assert marks == ["job-1"]
     assert cancels == []  # não descarta em silêncio
 

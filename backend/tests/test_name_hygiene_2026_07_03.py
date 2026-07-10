@@ -293,13 +293,59 @@ async def test_process_lp_welcome_sem_nome_nenhum_envia_fallback():
     }]
 
 
-# ─── fire_reopen_template: continuar_conversa tem ZERO params (fix Meta #132000) ────
+# ─── fire_reopen_template: template coerente com silêncio DO LEAD (Rodada 5) ────
+# O antigo continuar_conversa pedia desculpas por atraso NOSSO ("não consegui te
+# responder a tempo") num gatilho onde quem silenciou foi o LEAD — incoerência
+# comercial vista ao vivo em 10/07 (5 leads). Novo: utilidade_geral_confirmacao_v1
+# (utility aprovado, en_US, corpo pt): "O Cafe Canastra esta aguardando sua
+# confirmacao sobre {{2}} desde {{3}}" — 3 params posicionais determinísticos.
+
+import re as _re
+
 
 @pytest.mark.asyncio
-async def test_fire_reopen_template_envia_zero_params(monkeypatch):
-    """continuar_conversa e um template de 0 params (BODY estatico + botao QUICK_REPLY).
-    Mandar qualquer parametro (ex.: primeiro_nome) da Meta #132000 e a reabertura falha
-    (fix commit 9492567). Independe do 'name' do lead ser uma saudacao — nao ha param de nome."""
+async def test_fire_reopen_template_envia_3_params_e_locale_aprovado(monkeypatch):
+    """Nome sanitizado (recupera 'Luiz' da saudação), assunto fixo honesto e data da
+    última msg do lead — enviados como params POSICIONAIS com o locale da aprovação."""
+    from app.follow_up import scheduler
+
+    captured = {}
+
+    class _Meta:
+        def __init__(self, cfg): pass
+        async def send_template(self, to, name, components=None, language_code="pt_BR"):
+            captured.update(name=name, components=components, language_code=language_code)
+            return {"messages": [{"id": "wamid-hygiene"}]}
+
+    monkeypatch.setattr(scheduler, "MetaCloudClient", _Meta)
+    monkeypatch.setattr(scheduler, "_reopen_template_category", lambda: "utility")
+    monkeypatch.setattr(scheduler, "save_message_conv", lambda **kw: None)
+    monkeypatch.setattr(scheduler, "_mark_awaiting_reopen", lambda jid: None)
+    monkeypatch.setattr(scheduler, "_store_reopen_context", lambda *a: None)
+    monkeypatch.setattr(scheduler, "extract_wamid", lambda r: "wamid-hygiene")
+
+    lead = {"id": "lead-1", "name": "Boa tarde.... Luiz", "phone": "5511999999999"}
+    job = {
+        "id": "job-1", "lead_id": "lead-1", "conversation_id": "conv-1", "metadata": {},
+        "conversations": {"last_customer_message_at": "2026-07-09T17:58:38+00:00"},
+    }
+    ok = await scheduler.fire_reopen_template(
+        job, lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
+    )
+    assert ok is True
+    assert captured["name"] == "utilidade_geral_confirmacao_v1"
+    assert captured["language_code"] == "en_US", "locale deve ser o da APROVAÇÃO na Meta"
+    params = captured["components"][0]["parameters"]
+    assert [p["type"] for p in params] == ["text", "text", "text"]
+    assert all("parameter_name" not in p for p in params), "params são POSICIONAIS"
+    assert params[0]["text"] == "Luiz"
+    assert params[1]["text"] == "a continuidade do atendimento"
+    assert params[2]["text"] == "09/07/2026"  # 17:58 UTC = 14:58 BRT, mesmo dia
+
+
+@pytest.mark.asyncio
+async def test_fire_reopen_template_nome_lixo_cai_no_fallback(monkeypatch):
+    """Nome-saudação puro → param 1 vira o fallback neutro ('tudo bem')."""
     from app.follow_up import scheduler
 
     captured = {}
@@ -323,7 +369,7 @@ async def test_fire_reopen_template_envia_zero_params(monkeypatch):
         lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
     )
     assert ok is True
-    assert not captured["components"], f"reopen deve enviar 0 params, veio: {captured['components']}"
+    assert captured["components"][0]["parameters"][0]["text"] == scheduler._NAME_FALLBACK
 
 
 # ─── fire_reopen_template: persistido == enviado (QA 10/07, Rodada 4) ───────────
@@ -360,7 +406,7 @@ async def test_fire_reopen_template_persiste_o_corpo_real_do_template(monkeypatc
     captured = {}
     _reopen_scheduler_patched(monkeypatch, scheduler, captured)
 
-    corpo_real = "Olá \nCorpo REAL do template aprovado — clique no botão abaixo."
+    corpo_real = "Ola, {{1}}! Aguardando sua confirmacao sobre {{2}} desde {{3}}."
     sb = MagicMock()
     (sb.table.return_value.select.return_value
         .eq.return_value.limit.return_value
@@ -370,14 +416,18 @@ async def test_fire_reopen_template_persiste_o_corpo_real_do_template(monkeypatc
     monkeypatch.setattr(scheduler, "get_supabase", lambda: sb)
 
     lead = {"id": "lead-1", "name": "Tainara", "phone": "5511999999999"}
+    job = {
+        "id": "job-1", "lead_id": "lead-1", "conversation_id": "conv-1", "metadata": {},
+        "conversations": {"last_customer_message_at": "2026-07-09T17:58:38+00:00"},
+    }
     ok = await scheduler.fire_reopen_template(
-        {"id": "job-1", "lead_id": "lead-1", "conversation_id": "conv-1", "metadata": {}},
-        lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
+        job, lead, {"provider_config": {}}, "conv-1", motivo="x", contexto="x",
     )
     assert ok is True
-    assert captured["content"] == corpo_real, (
-        f"persistido != enviado: gravou {captured['content']!r} em vez do corpo do template"
-    )
+    assert captured["content"] == (
+        "Ola, Tainara! Aguardando sua confirmacao sobre a continuidade do atendimento "
+        "desde 09/07/2026."
+    ), f"persistido != enviado (renderizado): {captured['content']!r}"
 
 
 @pytest.mark.asyncio
@@ -402,5 +452,9 @@ async def test_fire_reopen_template_fallback_persiste_corpo_estatico_completo(mo
     assert ok is True
     content = captured["content"]
     assert content != "continuar a conversa de onde paramos"
-    assert "janela de atendimento fechou" in content
-    assert "clique no botão abaixo" in content
+    assert "{{" not in content, "placeholders devem estar renderizados"
+    assert "aguardando sua confirmacao" in content
+    assert "Tainara" in content
+    # Rodada 5: o corpo NÃO pode mais ser o pedido de desculpas por atraso nosso
+    assert "não consegui te responder" not in content
+    assert "Peço desculpas" not in content
