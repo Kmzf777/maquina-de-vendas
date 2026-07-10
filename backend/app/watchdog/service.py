@@ -581,13 +581,32 @@ def _qa_collect_metrics(now: datetime) -> dict:
             return query
         return build
 
+    def _distinct_leads(like_pattern: str) -> int:
+        """Leads DISTINTOS com o marcador na janela — imune a re-execuções do retry
+        do agente (incidente 09/07: registrar_numero_errado gravado 4x no mesmo lead)."""
+        try:
+            res = (
+                get_supabase().table("messages").select("lead_id")
+                .eq("role", "system").like("content", like_pattern)
+                .gte("created_at", start).lt("created_at", end)
+                .limit(1000).execute()
+            )
+            rows = res.data if isinstance(res.data, list) else []
+            return len({r.get("lead_id") for r in rows if r.get("lead_id")})
+        except Exception as exc:
+            logger.warning("[WATCHDOG] métrica distinct do daily_qa falhou: %s", exc)
+            return -1
+
     return {
         "respostas_ia": _qa_count(_msgs(None, role="assistant", sent_by="agent")),
         "followups_enviados": _qa_count(_msgs(None, role="assistant", sent_by="followup")),
         "inbounds": _qa_count(_msgs(None, role="user")),
-        "handoffs": _qa_count(_msgs("[encaminhar_humano]%", role="system")),
+        # Só o marcador de handoff em si: cada encaminhar_humano grava DUAS system
+        # messages ("Lead encaminhado..." + "cartão de contato enviado") — o LIKE
+        # amplo dobrava a contagem (relatório de 10/07 mostrou 14 p/ 7 reais).
+        "handoffs": _qa_count(_msgs("[encaminhar_humano] Lead encaminhado%", role="system")),
         "optouts": _qa_count(_msgs("[registrar_optout]%", role="system")),
-        "numero_errado_marcados": _qa_count(_msgs("[registrar_numero_errado]%", role="system")),
+        "numero_errado_marcados": _distinct_leads("[registrar_numero_errado]%"),
         "indicacoes": _qa_count(_msgs("[registrar_indicacao]%", role="system")),
         "perguntas_repetidas_corrigidas": _qa_count(
             lambda sb: sb.table("token_usage").select("id", count="exact")
