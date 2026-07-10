@@ -29,7 +29,9 @@ async def test_refresh_usa_memory_model_das_settings(monkeypatch):
     )
     monkeypatch.setattr(
         memory_manager, "get_history",
-        lambda _id, since=None: [{"role": "user", "content": "oi", "created_at": "2026-07-08T10:00:00+00:00"}],
+        lambda _id, since=None, limit=30, latest=False: [
+            {"role": "user", "content": "oi", "created_at": "2026-07-08T10:00:00+00:00"}
+        ],
     )
     monkeypatch.setattr(memory_manager, "update_lead", lambda *a, **k: None)
 
