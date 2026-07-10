@@ -1506,10 +1506,16 @@ def get_relationship_summary(lead_id: str) -> str:
         return "Não foi possível consultar o relacionamento agora."
 
 
-def get_history(lead_id: str, limit: int = 30, since: str | None = None) -> list[dict[str, Any]]:
+def get_history(
+    lead_id: str, limit: int = 30, since: str | None = None, latest: bool = False
+) -> list[dict[str, Any]]:
     """Histórico cross-canal do lead (todas as conversas). `since` (ISO) filtra apenas
     mensagens com created_at > since — usado pela Camada de Memória para buscar só o DELTA
-    desde o último resumo rolante (ver app/agent/memory_manager.py)."""
+    desde o último resumo rolante (ver app/agent/memory_manager.py).
+
+    `latest=True` devolve a janela das `limit` mensagens MAIS RECENTES (ainda em ordem
+    cronológica) — com asc+limit o corte pegaria as mais ANTIGAS, o que inutilizava o
+    cap do backfill de dossiê (consolidava o começo da história, não o fim)."""
     sb = get_supabase()
     query = (
         sb.table("messages")
@@ -1518,5 +1524,8 @@ def get_history(lead_id: str, limit: int = 30, since: str | None = None) -> list
     )
     if since:
         query = query.gt("created_at", since)
+    if latest:
+        result = query.order("created_at", desc=True).limit(limit).execute()
+        return list(reversed(result.data))
     result = query.order("created_at", desc=False).limit(limit).execute()
     return result.data

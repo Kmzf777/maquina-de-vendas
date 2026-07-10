@@ -24,7 +24,15 @@ def _base_patches(lead, history):
         patch.object(MM, "_claim_lock", return_value=True),
         patch.object(MM, "_release_lock"),
         patch.object(MM, "get_lead", return_value=lead),
-        patch.object(MM, "get_history", return_value=history) ,
+        # Emula a semântica real de get_history: latest=True devolve a janela das
+        # `limit` mensagens mais recentes em ordem cronológica (o cap do backfill
+        # passou do slice em memória para a query — fix P3 de 09/07).
+        patch.object(
+            MM, "get_history",
+            side_effect=lambda lead_id, limit=30, since=None, latest=False: (
+                history[-limit:] if latest else history[:limit]
+            ),
+        ),
         patch.object(MM, "update_lead"),
         patch.object(
             MM, "generate_rolling_summary",

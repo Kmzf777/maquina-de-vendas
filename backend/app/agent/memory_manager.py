@@ -287,9 +287,15 @@ async def refresh_lead_memory(lead_id: str, client=None, model: str | None = Non
         # incremental como sempre. Este caminho também é o motor do backfill
         # (scripts/backfill_dossies.py).
         since = lead.get("rolling_summary_updated_at") if prior else None
-        delta = get_history(lead_id, since=since)
-        if not prior and len(delta) > MEMORY_BACKFILL_MAX_MSGS:
-            delta = delta[-MEMORY_BACKFILL_MAX_MSGS:]
+        if prior:
+            delta = get_history(lead_id, since=since)
+        else:
+            # Histórico completo REAL: janela das MEMORY_BACKFILL_MAX_MSGS mensagens
+            # mais recentes (latest=True). O default limit=30 asc do get_history
+            # devolvia as 30 mais ANTIGAS e o cap de 200 nunca agia.
+            delta = get_history(
+                lead_id, since=None, limit=MEMORY_BACKFILL_MAX_MSGS, latest=True
+            )
         if not delta:
             return False
         if client is None:
@@ -335,7 +341,7 @@ async def process_stale_lead_memories(now: datetime | None = None) -> int:
         lock_cutoff = (now - LOCK_TTL).isoformat()
         rows = (
             sb.table("leads")
-            .select("id, last_customer_message_at, rolling_summary_updated_at")
+            .select("id, last_customer_message_at, rolling_summary_updated_at, rolling_summary")
             .gte("last_customer_message_at", recency_cutoff)
             .lt("last_customer_message_at", inactivity_cutoff)
             .or_(f"rolling_summary_processing_at.is.null,rolling_summary_processing_at.lt.{lock_cutoff}")
@@ -354,7 +360,12 @@ async def process_stale_lead_memories(now: datetime | None = None) -> int:
             continue
         # Se o dossiê já cobre a última msg do cliente, não há delta novo: pular ANTES de pegar
         # o lock evita o churn de claim/release + SELECT vazio a cada tick (visto no loop 08/07).
-        if _summary_is_current(row.get("rolling_summary_updated_at"), row.get("last_customer_message_at")):
+        # SÓ vale com dossiê gravado: rolling_summary NULL com watermark avançado é vítima do
+        # burn (gerações que falharam no parse avançaram a marca) — precisa reprocessar, senão
+        # o lead nunca ganha dossiê pela via de produção.
+        if row.get("rolling_summary") and _summary_is_current(
+            row.get("rolling_summary_updated_at"), row.get("last_customer_message_at")
+        ):
             continue
         if await refresh_lead_memory(lead_id):
             count += 1
