@@ -54,7 +54,7 @@ async def test_refresh_sem_dossie_busca_mensagens_mais_recentes_com_cap():
         calls["latest"] = latest
         return [{"role": "user", "content": "oi", "created_at": "2026-07-08T18:00:00+00:00"}]
 
-    async def fake_generate(prior, delta, client, model, **k):
+    async def fake_generate(prior, delta, model, **k):
         return "## DOSSIÊ DO LEAD\n- novo"
 
     with patch.object(mm, "get_supabase"), \
@@ -65,7 +65,7 @@ async def test_refresh_sem_dossie_busca_mensagens_mais_recentes_com_cap():
          patch.object(mm, "get_history", new=fake_get_history), \
          patch.object(mm, "generate_rolling_summary", new=fake_generate), \
          patch.object(mm, "update_lead") as upd:
-        ok = await mm.refresh_lead_memory("lead-1", client=object())
+        ok = await mm.refresh_lead_memory("lead-1")
 
     assert ok is True
     assert calls["since"] is None  # watermark ignorado sem dossiê (Onda 2)
