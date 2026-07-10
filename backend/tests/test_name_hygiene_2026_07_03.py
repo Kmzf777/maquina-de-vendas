@@ -112,6 +112,30 @@ def test_sanitize_display_name_com_saudacao(raw, expected):
     assert sanitize_display_name(raw) == expected
 
 
+# ─── pushname-apelido não é nome (QA 10/07 — lead "querido") ─────────────────
+# Caso real: pushname "querido" passou o filtro conservador, virou leads.name e a
+# Valéria abriu bolha com "boa, querido" num lead B2B. Apelidos afetivos genéricos
+# usados como pushname NÃO são nomes — match exato do nome inteiro normalizado,
+# para nunca derrubar nomes legítimos.
+
+@pytest.mark.parametrize("raw", [
+    "querido", "Querida", "AMOR", "meu amor", "mozão", "Mozao",
+    "bebê", "bebe", "vida", "eu", "Eu mesmo", "eu mesma",
+])
+def test_sanitize_display_name_descarta_apelido_de_pushname(raw):
+    assert sanitize_display_name(raw) is None, (
+        f"apelido de pushname {raw!r} virou nome de lead — a Valéria chamaria o lead assim"
+    )
+
+
+@pytest.mark.parametrize("raw", [
+    # Nomes reais que CONTÊM (mas não SÃO) termos da blocklist — jamais descartar
+    "Amora", "Vidal", "Eugênio", "Eunice", "Vida Nova Cafés",
+])
+def test_sanitize_display_name_preserva_nomes_parecidos_com_apelido(raw):
+    assert sanitize_display_name(raw) == raw
+
+
 # ─── _build_joao_handoff_components: nome-lixo -> fallback "tudo bem" ───────
 
 def test_build_joao_handoff_components_nome_so_saudacao_cai_no_fallback():
