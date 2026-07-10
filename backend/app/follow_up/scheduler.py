@@ -9,7 +9,10 @@ import httpx
 from app.agent.gemini_client import generate, user_content
 from app.config import settings
 from app.follow_up.service import get_due_followups, should_proactive_handoff, _ENV_TAG
-from app.leads.service import resolve_send_target, create_deal, record_dispatch_note, strip_greeting_prefix
+from app.leads.service import (
+    resolve_send_target, create_deal, record_dispatch_note,
+    strip_greeting_prefix, sanitize_display_name,
+)
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -29,10 +32,18 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 _BILLING_ERROR_CODE = 131042
 _META_API_BASE = "https://graph.facebook.com/v21.0"
-# Eixo 3B: template utility aprovado (pt_BR, BODY estático + botão QUICK_REPLY, ZERO params)
-# usado para reabrir a janela 24h de um retorno agendado que venceu fora da janela.
-# ATENÇÃO: NÃO tem placeholder — enviar qualquer param de body dá Meta #132000.
-_REOPEN_TEMPLATE_NAME = "continuar_conversa"
+# Eixo 3B / Rodada 5 (10/07): template utility aprovado usado para reabrir a janela 24h
+# quando um toque da cadência (ou retorno agendado) vence com a janela fechada. O antigo
+# `continuar_conversa` pedia desculpas por atraso NOSSO ("não consegui te responder a
+# tempo") num gatilho onde quem silenciou foi o LEAD — incoerência comercial. O novo
+# enquadra a pendência no lead: "O Cafe Canastra esta aguardando sua confirmacao sobre
+# {{2}} desde {{3}}" + QUICK_REPLYs (inclusive saída digna "Nao tenho interesse").
+# ATENÇÃO (locale): a APROVAÇÃO é `en_US` (corpo em português) — o language_code enviado
+# DEVE ser o da aprovação; e o BODY exige exatamente 3 params POSICIONAIS.
+_REOPEN_TEMPLATE_NAME = "utilidade_geral_confirmacao_v1"
+_REOPEN_TEMPLATE_LANGUAGE = "en_US"
+# Assunto ({{2}}) fixo e honesto: há de fato um atendimento em aberto — a conversa.
+_REOPEN_TOPIC = "a continuidade do atendimento"
 
 # agent_profile "ValerIA - Outbound / Recuperacao" (prompt_key=valeria_outbound).
 # Todo job ai_reengage é, por definição, uma recuperação outbound — força esta
@@ -1516,6 +1527,82 @@ def _pending_reopen_job(conversation_id: str) -> dict | None:
         return None
 
 
+# Cópia fiel do BODY aprovado do template de reabertura — usada como fallback de
+# PERSISTÊNCIA quando message_templates está indisponível. Persistido == enviado
+# (QA 10/07, Rodada 4): gravar placeholder interno como fala da Valéria poluía o
+# CRM e o histórico que o LLM relê nos turnos seguintes.
+_REOPEN_TEMPLATE_BODY_FALLBACK = (
+    "Ola, {{1}}! O Cafe Canastra esta aguardando sua confirmacao sobre {{2}} "
+    "desde {{3}}. Responda essa mensagem para finalizarmos seu atendimento."
+)
+
+
+def _reopen_body_params(lead: dict, job: dict | None = None) -> list[str]:
+    """Os 3 params posicionais do template de reabertura: [nome, assunto, data].
+
+    Nome: sanitizado (saudação/handle/apelido de pushname viram fallback neutro).
+    Assunto: constante honesta (_REOPEN_TOPIC). Data: última mensagem do lead
+    (dd/mm/YYYY, BRT) — fallback `now` quando o embed da conversa não está no job.
+    """
+    clean = sanitize_display_name((lead or {}).get("name"))
+    first_name = clean.split()[0] if clean else _NAME_FALLBACK
+
+    last_ts = ((job or {}).get("conversations") or {}).get("last_customer_message_at")
+    ref = None
+    if last_ts:
+        try:
+            ref = datetime.fromisoformat(str(last_ts).replace("Z", "+00:00"))
+        except Exception:
+            ref = None
+    if ref is None:
+        ref = datetime.now(timezone.utc)
+    date_str = ref.astimezone(_FOLLOWUP_TZ_BR).strftime("%d/%m/%Y")
+
+    return [first_name, _REOPEN_TOPIC, date_str]
+
+
+def _build_reopen_components(params: list[str]) -> list[dict]:
+    """Componentes BODY (params POSICIONAIS) do template de reabertura."""
+    return [{
+        "type": "body",
+        "parameters": [{"type": "text", "text": p} for p in params],
+    }]
+
+
+def _reopen_template_body(params: list[str]) -> str:
+    """BODY real do template de reabertura RENDERIZADO com os params enviados.
+
+    Busca o texto em message_templates (fallback: cópia fiel do corpo aprovado) e
+    substitui {{1}}..{{n}} pelos mesmos valores enviados à Meta — persistido ==
+    enviado, nunca um placeholder interno.
+    """
+    text = _REOPEN_TEMPLATE_BODY_FALLBACK
+    try:
+        res = (
+            get_supabase()
+            .table("message_templates")
+            .select("components")
+            .eq("name", _REOPEN_TEMPLATE_NAME)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            body = next(
+                (c for c in (res.data[0].get("components") or []) if c.get("type") == "BODY"),
+                None,
+            )
+            if body and body.get("text"):
+                text = body["text"]
+    except Exception as exc:
+        logger.warning(
+            "[REOPEN] falha ao buscar corpo do template %s: %s — usando cópia fiel",
+            _REOPEN_TEMPLATE_NAME, exc,
+        )
+    for i, value in enumerate(params, start=1):
+        text = text.replace("{{" + str(i) + "}}", value)
+    return text
+
+
 def _reopen_template_category() -> str | None:
     """Categoria (lowercase) do template de reabertura em message_templates, ou None.
 
@@ -1573,16 +1660,19 @@ async def fire_reopen_template(
         return False
 
     send_to = resolve_send_target(lead, lead.get("phone", ""))
-    # continuar_conversa (pt_BR, approved) é BODY estático + botão QUICK_REPLY, ZERO params.
-    # Enviar qualquer parâmetro de body faz a Meta rejeitar com #132000 ("number of
-    # localizable_params (1) does not match the expected number of params (0)") — foi o que
-    # derrubou o reopen em 08/07 (lead cintia, 554599367983). NÃO montar components: o
-    # send_template omite o array quando components é None. Confirmado em message_templates
-    # (sem placeholder). Diverge dos templates lp_*/João, que TÊM param nomeado obrigatório.
+    # Rodada 5: utilidade_geral_confirmacao_v1 exige EXATAMENTE 3 params POSICIONAIS e o
+    # language_code da APROVAÇÃO (en_US — corpo em português). Contagem ou locale
+    # divergente do aprovado = rejeição da Meta (#132000/404) — a mesma classe de
+    # armadilha que derrubou o reopen antigo em 08/07 (lead cintia, 554599367983) e os
+    # templates lp_* (param nomeado).
+    reopen_params = _reopen_body_params(lead, job)
     try:
         provider_meta = MetaCloudClient(channel["provider_config"])
         send_result = await provider_meta.send_template(
-            send_to, _REOPEN_TEMPLATE_NAME, components=None, language_code="pt_BR"
+            send_to,
+            _REOPEN_TEMPLATE_NAME,
+            components=_build_reopen_components(reopen_params),
+            language_code=_REOPEN_TEMPLATE_LANGUAGE,
         )
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code
@@ -1604,7 +1694,7 @@ async def fire_reopen_template(
         save_message_conv(
             lead_id=job["lead_id"],
             role="assistant",
-            content="continuar a conversa de onde paramos",
+            content=_reopen_template_body(reopen_params),
             sent_by="followup",
             conversation_id=conversation_id,
             wamid=extract_wamid(send_result),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
@@ -149,7 +149,7 @@ function ReactionTargetBlock({
   );
 }
 
-export function MessageBubble({ message, isGrouped, conversationId, onReply, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
+function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
@@ -482,3 +482,7 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
     </div>
   );
 }
+
+// Memo: com a janela paginada + callbacks estáveis, um push realtime re-renderiza
+// O(1) bubbles em vez da thread inteira.
+export const MessageBubble = memo(MessageBubbleImpl);

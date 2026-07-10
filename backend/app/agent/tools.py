@@ -33,7 +33,7 @@ _TAG_ALLOWLIST: frozenset[str] = frozenset({
 # (já é cliente / já pediu para falar com um humano). Aplicá-las cancela os follow-ups
 # standard pendentes — é o gancho de código para o "equivalente da Regra 27".
 _CLOSE_TAGS: frozenset[str] = frozenset({"Já é Cliente", "Pediu Humano"})
-from app.conversations.service import update_conversation, get_history as get_conversation_history
+from app.conversations.service import update_conversation, get_conversation, get_history as get_conversation_history
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_for_lead
@@ -766,6 +766,21 @@ async def execute_tool(
 
     elif tool_name == "mudar_stage":
         new_stage = args["stage"]
+        # Idempotência (auditoria 10/07, caso Marisete): o modelo re-chama a tool com o
+        # stage ATUAL e o marcador "stage alterado" sai duplicado na transcrição (que
+        # realimenta o prompt), além dos writes redundantes. Só é no-op quando lead E
+        # conversa já estão no stage pedido — divergência ainda re-sincroniza. Fail-open:
+        # qualquer erro no fetch segue o caminho normal.
+        try:
+            _lead_stage = (get_lead(lead_id) or {}).get("stage")
+            _conv_stage = (
+                (get_conversation(conversation_id) or {}).get("stage")
+                if conversation_id else _lead_stage
+            )
+            if _lead_stage == new_stage and _conv_stage == new_stage:
+                return f"Lead já está no stage {new_stage} — nenhuma alteração necessária"
+        except Exception:
+            pass
         if conversation_id:
             update_conversation(conversation_id, stage=new_stage)
         update_lead(lead_id, stage=new_stage)

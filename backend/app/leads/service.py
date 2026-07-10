@@ -1,5 +1,6 @@
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -112,14 +113,30 @@ def strip_greeting_prefix(name: str | None) -> str | None:
     return remainder or None
 
 
+# Apelidos afetivos genéricos usados como pushname do WhatsApp (QA 10/07 — lead
+# "querido" virou "boa, querido" numa bolha da Valéria em conversa B2B). Match EXATO
+# do nome inteiro normalizado (minúsculas, sem acento) — nunca substring, para não
+# derrubar nomes legítimos ("Amora", "Vidal", "Vida Nova Cafés").
+_PUSHNAME_ENDEARMENTS = frozenset({
+    "querido", "querida", "amor", "meu amor", "mozao", "bebe",
+    "vida", "eu", "eu mesmo", "eu mesma",
+})
+
+
+def _normalize_name_for_blocklist(text: str) -> str:
+    nfd = unicodedata.normalize("NFD", text.lower().strip())
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+
+
 def sanitize_display_name(name: str | None) -> str | None:
-    """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username
-    ou lixo de import.
+    """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username,
+    apelido de pushname ou lixo de import.
 
     None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez de
     chamar o lead por um handle; o template do disparo usa "você"). Conservador: só descarta
-    com sinal claro — saudação pura (ex.: "Olá, boa tarde"), handle (dígito/underscore) ou
-    marcador de lixo de importação/CRM — pra não derrubar nomes legítimos como "João Silva".
+    com sinal claro — saudação pura (ex.: "Olá, boa tarde"), handle (dígito/underscore),
+    apelido afetivo genérico de pushname ("querido") ou marcador de lixo de importação/CRM
+    — pra não derrubar nomes legítimos como "João Silva".
 
     Task C-4: o strip de saudação roda ANTES das checagens de handle/import, e sobre o
     RESULTADO do strip — assim "Boa tarde.... Luiz" vira "Luiz" antes de ser validado (e
@@ -136,6 +153,8 @@ def sanitize_display_name(name: str | None) -> str | None:
     if _HANDLE_CHAR_RE.search(n):
         return None
     if _IMPORT_GARBAGE_RE.search(n):
+        return None
+    if _normalize_name_for_blocklist(n) in _PUSHNAME_ENDEARMENTS:
         return None
     return n
 

@@ -27,6 +27,9 @@ interface MessageListProps {
   conversationId: string;
   onReply?: (msg: Message) => void;
   onContactDispatch?: (phone: string) => void;
+  hasMore?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => Promise<void> | void;
 }
 
 export interface MessageListHandle {
@@ -52,12 +55,18 @@ function isGrouped(current: Message, previous: Message | undefined): boolean {
 }
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
-  function MessageList({ messages, loading, conversationId, onReply, onContactDispatch }, ref) {
+  function MessageList(
+    { messages, loading, conversationId, onReply, onContactDispatch, hasMore, loadingOlder, onLoadOlder },
+    ref,
+  ) {
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
     const prevMessageCountRef = useRef(messages.length);
+    // Âncora p/ distinguir mensagem NOVA (última muda) de prepend do "carregar
+    // anteriores" (última não muda) — senão o badge somaria a página inteira.
+    const prevLastIdRef = useRef<string | null>(messages[messages.length - 1]?.id ?? null);
     const isAtBottomRef = useRef(true);
     const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
     const [highlightedId, setHighlightedId] = useState<string | null>(null);
@@ -85,11 +94,15 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
       if (atBottom) setUnreadCount(0);
     }, []);
 
-    // Auto-scroll on new messages if already at bottom; increment badge if not
+    // Auto-scroll on new messages if already at bottom; increment badge if not.
+    // Só conta como "novo" quando a ÚLTIMA mensagem muda — prepend de página
+    // antiga cresce o array sem mudar o fim da thread.
     useEffect(() => {
       const newCount = messages.length;
       const prevCount = prevMessageCountRef.current;
-      if (newCount > prevCount) {
+      const lastId = messages[messages.length - 1]?.id ?? null;
+      const lastChanged = lastId !== prevLastIdRef.current;
+      if (newCount > prevCount && lastChanged) {
         if (isAtBottomRef.current) {
           bottomRef.current?.scrollIntoView({ behavior: "smooth" });
           setUnreadCount(0);
@@ -98,7 +111,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
         }
       }
       prevMessageCountRef.current = newCount;
-    }, [messages.length]);
+      prevLastIdRef.current = lastId;
+    }, [messages]);
 
     // Initial scroll to bottom on mount / conversation switch
     useEffect(() => {
@@ -110,6 +124,27 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
     function scrollToBottom() {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
       setUnreadCount(0);
+    }
+
+    // Estável (refs internos): permite React.memo efetivo no MessageBubble.
+    const scrollToMessageId = useCallback((targetId: string) => {
+      const el = messageRefsMap.current.get(targetId);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedId(targetId);
+      setTimeout(() => setHighlightedId(null), 1500);
+    }, []);
+
+    async function handleLoadOlder() {
+      const el = containerRef.current;
+      const prevHeight = el?.scrollHeight ?? 0;
+      await onLoadOlder?.();
+      // Restaura a posição: mantém o usuário olhando as MESMAS mensagens após o
+      // prepend (senão o scroll salta para o topo do conteúdo novo).
+      requestAnimationFrame(() => {
+        const el2 = containerRef.current;
+        if (el2) el2.scrollTop += el2.scrollHeight - prevHeight;
+      });
     }
 
     return (
@@ -128,6 +163,18 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
             <p className="text-[#7b7b78] text-sm text-center py-8">
               Nenhuma mensagem.
             </p>
+          )}
+
+          {!loading && hasMore && (
+            <div className="flex justify-center pb-3">
+              <button
+                onClick={handleLoadOlder}
+                disabled={loadingOlder}
+                className="px-3 py-1.5 text-[12px] text-[#7b7b78] border border-[#dedbd6] rounded-full bg-white hover:bg-[#f4f2ee] transition-colors disabled:opacity-60"
+              >
+                {loadingOlder ? "Carregando…" : "Carregar anteriores"}
+              </button>
+            </div>
           )}
 
           {(() => {
@@ -166,13 +213,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                     isGrouped={grouped}
                     conversationId={conversationId}
                     onReply={onReply}
-                    onScrollToMessage={(targetId) => {
-                      const el = messageRefsMap.current.get(targetId);
-                      if (!el) return;
-                      el.scrollIntoView({ behavior: "smooth", block: "center" });
-                      setHighlightedId(targetId);
-                      setTimeout(() => setHighlightedId(null), 1500);
-                    }}
+                    onScrollToMessage={scrollToMessageId}
                     onContactDispatch={onContactDispatch}
                   />
                 )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, type ChangeEvent } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, type ChangeEvent } from "react";
 import type { Message, Conversation, Tag, QuickReply } from "@/lib/types";
 import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 import { getWindowStatus } from "@/lib/window-status";
@@ -41,7 +41,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const lead = conversation.leads;
   const channel = conversation.channels;
 
-  const { messages, loading, refetch } = useRealtimeMessages(conversation.id ?? null);
+  const { messages, loading, refetch, hasMore, loadOlder, loadingOlder } = useRealtimeMessages(conversation.id ?? null);
 
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
@@ -142,9 +142,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     [messages, optimisticMessages]
   );
 
-  function handleContactDispatch(phone: string) {
+  // Estáveis (useCallback): MessageBubble é memoizado — callbacks recriados a
+  // cada render invalidariam o memo da thread inteira.
+  const handleContactDispatch = useCallback((phone: string) => {
     setQuickSendPhone(phone);
-  }
+  }, []);
+
+  const handleReply = useCallback((msg: Message) => setReplyingTo(msg), []);
 
   async function handleOptOut() {
     if (optOutLoading) return;
@@ -578,7 +582,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         loading={loading}
         conversationId={conversation.id}
         onContactDispatch={handleContactDispatch}
-        onReply={(msg) => setReplyingTo(msg)}
+        onReply={handleReply}
+        hasMore={hasMore}
+        loadingOlder={loadingOlder}
+        onLoadOlder={loadOlder}
       />
 
       <WhatsappWindowIndicator

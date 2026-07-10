@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -157,6 +158,61 @@ def _extract_statuses(payload: dict) -> list[dict]:
     return statuses
 
 
+# Ordem do ciclo de entrega: um webhook atrasado/fora de ordem nunca REBAIXA o estado
+# (ex.: 'sent' processado depois do 'delivered'). 'undelivered' é o carimbo do reconciler
+# (entrega não confirmada) e qualquer status real o substitui. 'read' e 'failed' são
+# terminais no mesmo rank — um nunca sobrescreve o outro.
+_STATUS_RANK = {"accepted": 0, "undelivered": 0, "sent": 1, "delivered": 2, "read": 3, "failed": 3}
+
+# Corrida webhook × persistência (QA 10/07, bolhas da Marisete): o buffer processor envia
+# as bolhas e só persiste DEPOIS de todas enviadas (jitter incluso) — o status da Meta
+# chegou 6s ANTES do insert, o update casou 0 linhas em silêncio e a mensagem nasceu
+# 'accepted' para sempre (→ 'undelivered' fantasma → alerta CRITICAL falso). Retentativas
+# em background cobrem a janela de persistência; o reconciler de 30min segue de backstop.
+_STATUS_RETRY_DELAYS = (10, 30, 90)
+
+
+def _apply_message_status(sb, wamid: str, status: str) -> bool:
+    """Aplica o status à mensagem com guarda de rank (nunca rebaixa).
+
+    True  → nada mais a fazer (update casou, ou a linha já está em rank >= status).
+    False → a linha AINDA NÃO EXISTE (corrida com a persistência) — retentar depois.
+    """
+    upgrade_from = [s for s, r in _STATUS_RANK.items() if r < _STATUS_RANK[status]]
+    result = (
+        sb.table("messages")
+        .update({"delivery_status": status})
+        .eq("wamid", wamid)
+        .in_("delivery_status", upgrade_from)
+        .execute()
+    )
+    if result.data:
+        return True
+    existing = (
+        sb.table("messages").select("id, delivery_status").eq("wamid", wamid).limit(1).execute()
+    )
+    return bool(existing.data)
+
+
+async def _retry_message_status(wamid: str, status: str) -> None:
+    """Retenta aplicar o status até a persistência da mensagem alcançar o webhook."""
+    for delay in _STATUS_RETRY_DELAYS:
+        await asyncio.sleep(delay)
+        try:
+            if _apply_message_status(get_supabase(), wamid, status):
+                logger.info(
+                    "[DELIVERY] status '%s' aplicado com retentativa (corrida com persistência) wamid=%s",
+                    status, wamid,
+                )
+                return
+        except Exception as e:
+            logger.warning("[DELIVERY] retentativa de status falhou p/ wamid=%s: %s", wamid, e)
+    logger.warning(
+        "[DELIVERY] status '%s' nunca casou com mensagem persistida (wamid=%s) — reconciler decide",
+        status, wamid,
+    )
+
+
 async def _handle_delivery_status(
     wamid: str, status: str, errors: list | None = None, recipient_id: str | None = None
 ) -> None:
@@ -165,7 +221,8 @@ async def _handle_delivery_status(
         return
     try:
         sb = get_supabase()
-        sb.table("messages").update({"delivery_status": status}).eq("wamid", wamid).execute()
+        if not _apply_message_status(sb, wamid, status):
+            asyncio.create_task(_retry_message_status(wamid, status))
     except Exception as e:
         logger.warning("[DELIVERY] Failed to update message delivery_status for wamid=%s: %s", wamid, e)
 
