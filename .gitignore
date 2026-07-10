@@ -49,3 +49,11 @@ docker-compose.override.yml
 
 # Binario do Cloudflare Tunnel baixado localmente (nao versionar — ~50MB)
 cloudflared.exe
+
+# Dados/fixtures locais (valeriafotos.json 1,3MB etc.) — sem uso em runtime
+data/
+
+# Artefatos locais
+TREE.md
+frontend/build_output.log
+frontend/tsconfig.tsbuildinfo

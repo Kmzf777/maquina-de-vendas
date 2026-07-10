@@ -26,9 +26,12 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 
 # Copy standalone output (does NOT include static assets — must copy explicitly)
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
+
+# Processo não roda como root (user `node` já existe na imagem alpine).
+USER node
 
 EXPOSE 3000
 CMD ["node", "server.js"]
