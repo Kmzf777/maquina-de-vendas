@@ -1,20 +1,22 @@
-import asyncio
+"""Peças vivas do fluxo de campanhas.
+
+O loop próprio deste módulo (check_campaign_triggers / process_campaign_enrollments)
+foi substituído pelo automation engine (app/automation/engine.py) e removido em
+09/07/2026 (~200 linhas mortas). Permanecem apenas as funções consumidas por
+outros módulos:
+
+- `_execute_send_node`  → automation/engine.py (nó `send` das cadências)
+- `handle_campaign_reply` → buffer/processor.py (inbound pausa/cancela enrollment)
+- `decide_failure_update` / `_is_permanent_error` → classificador puro de erro Meta
+  (permanente vs transitório) com suíte própria (test_campaigns_worker_retry.py)
+"""
 import logging
-import random
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 from app.campaigns.service import (
-    get_campaigns_with_trigger_type,
-    is_already_enrolled,
-    create_enrollment,
-    get_due_enrollments,
-    update_enrollment,
-    complete_enrollment,
     cancel_enrollment,
     pause_enrollment,
 )
-from app.db.supabase import get_supabase
-from app.config import get_settings
 from app.automation.retry import calculate_next_retry
 
 logger = logging.getLogger(__name__)
@@ -60,154 +62,6 @@ def decide_failure_update(exc: Exception, retry_count: int, now: datetime) -> di
         "next_execute_at": iso,
         "last_error": err,
     }
-
-
-_ENV_TAG = "dev" if get_settings().is_dev_env else "production"
-
-BRT_OFFSET = timedelta(hours=-3)
-
-
-def _is_within_window(now_utc: datetime, start_hour: int = 7, end_hour: int = 18) -> bool:
-    brt = now_utc + BRT_OFFSET
-    return start_hour <= brt.hour < end_hour
-
-
-def _next_window_start(now_utc: datetime, start_hour: int = 7) -> datetime:
-    brt = now_utc + BRT_OFFSET
-    if brt.hour < start_hour:
-        target = brt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-    else:
-        target = (brt + timedelta(days=1)).replace(hour=start_hour, minute=0, second=0, microsecond=0)
-    return target - BRT_OFFSET
-
-
-async def check_campaign_triggers(now: datetime | None = None) -> None:
-    """Detect leads that satisfy trigger conditions and auto-enroll them."""
-    now = now or datetime.now(timezone.utc)
-    sb = get_supabase()
-
-    # ── no_message triggers ────────────────────────────────────────────────────
-    for trigger_node in get_campaigns_with_trigger_type("no_message"):
-        cfg = trigger_node["config"]
-        days = cfg.get("days", 30)
-        stage_filter = cfg.get("stage_filter")
-        cutoff = (now - timedelta(days=days)).isoformat()
-
-        query = sb.table("leads").select("id, phone").eq("env_tag", _ENV_TAG).lte("last_msg_at", cutoff)
-        if stage_filter:
-            query = query.eq("stage", stage_filter)
-        leads = query.limit(20).execute().data
-
-        for lead in leads:
-            campaign_id = trigger_node["campaign_id"]
-            if is_already_enrolled(campaign_id, lead["id"]):
-                continue
-            if not trigger_node.get("next_node_id"):
-                continue
-            try:
-                create_enrollment(
-                    campaign_id=campaign_id,
-                    lead_id=lead["id"],
-                    current_node_id=trigger_node["next_node_id"],
-                    next_execute_at=now,
-                )
-                logger.info("[CAMPAIGNS] Enrolled lead %s via no_message trigger", lead["phone"])
-            except Exception as e:
-                logger.warning("[CAMPAIGNS] Failed to enroll %s: %s", lead["id"], e)
-
-    # ── stage_stagnation triggers ──────────────────────────────────────────────
-    for trigger_node in get_campaigns_with_trigger_type("stage_stagnation"):
-        cfg = trigger_node["config"]
-        days = cfg.get("days", 7)
-        stage = cfg.get("stage_filter")
-        if not stage:
-            continue
-        cutoff = (now - timedelta(days=days)).isoformat()
-        leads = sb.table("leads").select("id, phone").eq("env_tag", _ENV_TAG).eq("stage", stage).lte("entered_stage_at", cutoff).limit(20).execute().data
-        for lead in leads:
-            campaign_id = trigger_node["campaign_id"]
-            if is_already_enrolled(campaign_id, lead["id"]) or not trigger_node.get("next_node_id"):
-                continue
-            try:
-                create_enrollment(campaign_id=campaign_id, lead_id=lead["id"], current_node_id=trigger_node["next_node_id"], next_execute_at=now)
-                logger.info("[CAMPAIGNS] Enrolled lead %s via stage_stagnation trigger", lead["phone"])
-            except Exception as e:
-                logger.warning("[CAMPAIGNS] Failed to enroll %s: %s", lead["id"], e)
-
-    # ── stage_enter triggers ───────────────────────────────────────────────────
-    for trigger_node in get_campaigns_with_trigger_type("stage_enter"):
-        cfg = trigger_node["config"]
-        stage = cfg.get("stage_filter")
-        if not stage:
-            continue
-        leads = sb.table("leads").select("id, phone").eq("env_tag", _ENV_TAG).eq("stage", stage).limit(20).execute().data
-        for lead in leads:
-            campaign_id = trigger_node["campaign_id"]
-            if is_already_enrolled(campaign_id, lead["id"]) or not trigger_node.get("next_node_id"):
-                continue
-            try:
-                create_enrollment(campaign_id=campaign_id, lead_id=lead["id"], current_node_id=trigger_node["next_node_id"], next_execute_at=now)
-            except Exception as e:
-                logger.warning("[CAMPAIGNS] Failed to enroll %s: %s", lead["id"], e)
-
-
-async def process_campaign_enrollments(now: datetime | None = None) -> None:
-    """Execute the current node for each due enrollment."""
-    now = now or datetime.now(timezone.utc)
-    enrollments = get_due_enrollments(now, limit=20)
-
-    for enrollment in enrollments:
-        node = enrollment.get("campaign_nodes")
-        lead = enrollment["leads"]
-        if not node:
-            complete_enrollment(enrollment["id"])
-            continue
-
-        node_type = node["type"]
-        cfg = node.get("config", {})
-
-        try:
-            if node_type == "send":
-                await _execute_send_node(enrollment, node, lead, now)
-
-            elif node_type == "wait":
-                days = cfg.get("days", 1)
-                start_hour = cfg.get("send_start_hour", 7)
-                target = now + timedelta(days=days)
-                if not _is_within_window(target, start_hour, cfg.get("send_end_hour", 18)):
-                    target = _next_window_start(target, start_hour)
-                update_enrollment(enrollment["id"], next_execute_at=target.isoformat())
-                logger.info("[CAMPAIGNS] Enrollment %s waiting %d days", enrollment["id"], days)
-                continue
-
-            elif node_type == "condition":
-                _execute_condition_node(enrollment, node, lead, now)
-                continue
-
-            elif node_type == "action":
-                _execute_action_node(enrollment, node, lead)
-
-            elif node_type == "end":
-                _execute_end_node(enrollment, node, lead)
-                complete_enrollment(enrollment["id"])
-                continue
-
-            # Advance to next_node_id
-            next_id = node.get("next_node_id")
-            if next_id:
-                update_enrollment(enrollment["id"], current_node_id=next_id, next_execute_at=now.isoformat(), retry_count=0)
-            else:
-                complete_enrollment(enrollment["id"])
-
-        except Exception as e:
-            logger.error("[CAMPAIGNS] Error processing enrollment %s node %s: %s", enrollment["id"], node.get("id"), e, exc_info=True)
-            try:
-                upd = decide_failure_update(e, enrollment.get("retry_count") or 0, now)
-                update_enrollment(enrollment["id"], **upd)
-            except Exception as inner:
-                logger.error("[CAMPAIGNS] Failed to record enrollment failure %s: %s", enrollment["id"], inner)
-
-        await asyncio.sleep(random.randint(2, 5))
 
 
 async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
@@ -271,68 +125,6 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         logger.warning("[CAMPAIGNS] Could not update ai_enabled for %s: %s", lead["phone"], e)
 
     logger.info("[CAMPAIGNS] Sent template '%s' to %s", template_name, lead["phone"])
-
-
-def _execute_condition_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
-    from app.db.supabase import get_supabase
-    cfg = node["config"]
-    cond = cfg.get("condition_type", "replied_recently")
-    result = False
-
-    if cond == "replied_recently":
-        days = cfg.get("days", 5)
-        cutoff = (now - timedelta(days=days)).isoformat()
-        sb = get_supabase()
-        msgs = sb.table("messages").select("id").eq("lead_id", enrollment["lead_id"]).eq("role", "user").gte("created_at", cutoff).limit(1).execute()
-        result = len(msgs.data) > 0
-
-    elif cond == "in_stage":
-        result = lead.get("stage") == cfg.get("stage")
-
-    elif cond == "has_deal":
-        sb = get_supabase()
-        deals = sb.table("deals").select("id").eq("lead_id", enrollment["lead_id"]).limit(1).execute()
-        result = len(deals.data) > 0
-
-    next_node_id = node["yes_node_id"] if result else node["no_node_id"]
-    if next_node_id:
-        update_enrollment(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat())
-    else:
-        complete_enrollment(enrollment["id"])
-
-    logger.info("[CAMPAIGNS] Condition '%s' for %s → %s", cond, lead["phone"], "YES" if result else "NO")
-
-
-def _execute_action_node(enrollment: dict, node: dict, lead: dict) -> None:
-    from app.db.supabase import get_supabase
-    cfg = node["config"]
-    action_type = cfg.get("action_type")
-    sb = get_supabase()
-
-    if action_type == "move_stage":
-        stage_id = cfg.get("stage_id")
-        if stage_id:
-            stage_row = sb.table("pipeline_stages").select("pipeline_id, label").eq("id", stage_id).limit(1).execute().data
-            if stage_row:
-                sb.table("deals").update({"stage_id": stage_id}).eq("lead_id", enrollment["lead_id"]).execute()
-
-    elif action_type == "activate_agent":
-        from app.leads.service import update_lead
-        update_lead(enrollment["lead_id"], ai_enabled=True, human_control=False)
-
-    elif action_type == "deactivate_agent":
-        from app.leads.service import update_lead
-        update_lead(enrollment["lead_id"], ai_enabled=False)
-
-    logger.info("[CAMPAIGNS] Action '%s' executed for lead %s", action_type, lead["phone"])
-
-
-def _execute_end_node(enrollment: dict, node: dict, lead: dict) -> None:
-    cfg = node.get("config", {})
-    for action in cfg.get("final_actions", []):
-        fake_node = {"config": action, "type": "action"}
-        _execute_action_node(enrollment, fake_node, lead)
-    logger.info("[CAMPAIGNS] Enrollment %s completed (end node)", enrollment["id"])
 
 
 def handle_campaign_reply(lead_id: str) -> None:
