@@ -39,7 +39,15 @@ def test_definition_includes_nudge_min_gap_and_business_window():
 
 
 def test_router_is_registered_in_main_app():
-    """O router precisa estar montado no app (prefixo /api/cadence)."""
-    from app.main import app
-    paths = {getattr(r, "path", "") for r in app.routes}
-    assert "/api/cadence/definition" in paths
+    """O router precisa estar montado no app.
+
+    Guarda em NÍVEL DE FONTE (mesmo idioma de test_lifespan_does_not_force_buffer_off):
+    inspecionar `app.main.app.routes` em runtime é frágil a poluição de módulos entre
+    testes (falhou só no runner do CI, com o app parcialmente montado por outro teste).
+    """
+    import inspect
+    import app.main as main_module
+
+    src = inspect.getsource(main_module)
+    assert "from app.follow_up.api import router as cadence_api_router" in src
+    assert "app.include_router(cadence_api_router)" in src
