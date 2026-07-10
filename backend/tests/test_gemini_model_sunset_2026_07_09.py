@@ -11,8 +11,7 @@ Estes testes pinam (a) os defaults atuais (2.5 até a migração planejada) e (b
 gate de thinking-off cobrindo TAMBÉM a família 3.x — sem isso, na migração, o 3.5
 pensa por padrão e queima o budget de saída (assinatura do bug da Carla).
 """
-from app.agent.orchestrator import DEFAULT_MODEL, _gemini_thinking_off
-from app.agent import memory_manager as MM
+from app.agent.orchestrator import DEFAULT_MODEL, _thinking_off_for
 from app.follow_up import scheduler as SCH
 from app.config import settings
 
@@ -25,14 +24,12 @@ def test_default_models_atuais_2_5_ate_migracao_planejada():
 
 
 def test_thinking_off_cobre_familia_3x():
-    # flash/lite (2.5 legado e 3.x atuais) → thinking OFF
+    # flash/lite (2.5 legado e 3.x atuais) → thinking OFF (thinking_budget=0 no núcleo)
     for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite",
               "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"):
-        assert _gemini_thinking_off(m) == {"reasoning_effort": "none"}, m
-        assert MM._gemini_thinking_off(m) == {"reasoning_effort": "none"}, m
+        assert _thinking_off_for(m) is True, m
     # pro pensa (não desligar)
     for m in ("gemini-2.5-pro", "gemini-3.1-pro-preview", "gemini-pro-latest"):
-        assert _gemini_thinking_off(m) == {}, m
-        assert MM._gemini_thinking_off(m) == {}, m
+        assert _thinking_off_for(m) is False, m
     # não-Gemini intocado
-    assert _gemini_thinking_off("gpt-4o") == {}
+    assert _thinking_off_for("gpt-4o") is False

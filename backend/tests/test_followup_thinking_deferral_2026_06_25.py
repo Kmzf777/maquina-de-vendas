@@ -2,10 +2,11 @@
 
 Dois bugs no follow-up `standard`:
 
-1. TÉCNICO (corte): `_generate_followup_message` chamava gemini-2.5-flash com max_tokens=1024
-   e SEM `reasoning_effort="none"`. O thinking devorava o budget → finish_reason="length" →
-   mensagem entregue pela metade ("...o que te fez pensar em"). Mesma cura já aplicada no
-   orchestrator (thinking off + 4096) nunca foi propagada aqui. Sem rastro de token_usage.
+1. TÉCNICO (corte): `_generate_followup_message` chamava gemini-2.5-flash com teto de 1024
+   e SEM desligar o thinking. O thinking devorava o budget → corte por budget (na época
+   finish_reason="length"; no núcleo nativo o nome é "MAX_TOKENS") → mensagem entregue pela
+   metade ("...o que te fez pensar em"). Mesma cura já aplicada no orchestrator (thinking
+   off + 4096) nunca foi propagada aqui. Sem rastro de token_usage.
 
 2. COMPORTAMENTAL (robô surdo): o cliente disse "estou em viagem essa semana, mas na próxima
    já estarei mais tranquilo" e o follow-up disparou ~1h42 depois, ignorando o adiamento.
@@ -17,30 +18,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
-
-# --- Fakes do response do OpenAI/Gemini -----------------------------------
-
-class _Msg:
-    def __init__(self, content):
-        self.content = content
-
-
-class _Choice:
-    def __init__(self, content, finish_reason):
-        self.message = _Msg(content)
-        self.finish_reason = finish_reason
-
-
-class _Usage:
-    def __init__(self, prompt_tokens, completion_tokens):
-        self.prompt_tokens = prompt_tokens
-        self.completion_tokens = completion_tokens
-
-
-class _Resp:
-    def __init__(self, content, finish_reason="stop", usage=None):
-        self.choices = [_Choice(content, finish_reason)]
-        self.usage = usage
+from tests.gemini_fakes import fake_text, fake_usage
 
 
 def _make_job():
@@ -75,33 +53,28 @@ def _sb_with_history():
 @pytest.mark.asyncio
 async def test_generate_followup_disables_thinking_and_raises_cap():
     """A chamada do Gemini no follow-up DEVE desligar o thinking e usar teto de 4096."""
-    create = AsyncMock(return_value=_Resp("oi sobre o cafe", "stop", _Usage(100, 40)))
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = create
+    m_gen = AsyncMock(return_value=fake_text("oi sobre o cafe", usage=fake_usage(100, 40)))
 
-    with patch("app.follow_up.scheduler.get_gemini_client", return_value=mock_client), \
+    with patch("app.follow_up.scheduler.generate", new=m_gen), \
          patch("app.follow_up.scheduler.track_token_usage"):
         from app.follow_up.scheduler import _generate_followup_message
         text, finish = await _generate_followup_message(
             [{"role": "user", "content": "oi"}], 1, lead_id="lead-1", stage="atacado"
         )
 
-    kwargs = create.call_args.kwargs
-    assert kwargs["max_tokens"] == 4096
-    assert kwargs["reasoning_effort"] == "none"
+    kwargs = m_gen.await_args.kwargs
+    assert kwargs["max_output_tokens"] == 4096
+    assert kwargs["thinking_off"] is True
     assert text == "oi sobre o cafe"
-    assert finish == "stop"
+    assert finish == "STOP"
 
 
 @pytest.mark.asyncio
 async def test_generate_followup_records_token_usage():
     """O custo do follow-up DEVE ser gravado em token_usage (antes não era rastreado)."""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(
-        return_value=_Resp("oi", "stop", _Usage(123, 45))
-    )
+    m_gen = AsyncMock(return_value=fake_text("oi", usage=fake_usage(123, 45)))
 
-    with patch("app.follow_up.scheduler.get_gemini_client", return_value=mock_client), \
+    with patch("app.follow_up.scheduler.generate", new=m_gen), \
          patch("app.follow_up.scheduler.track_token_usage") as mock_track:
         from app.follow_up.scheduler import _generate_followup_message
         await _generate_followup_message(
@@ -118,7 +91,7 @@ async def test_generate_followup_records_token_usage():
 
 @pytest.mark.asyncio
 async def test_length_finish_reason_aborts_and_cancels():
-    """finish_reason='length' → NUNCA enviar mensagem pela metade; cancela o job."""
+    """finish_reason='MAX_TOKENS' → NUNCA enviar mensagem pela metade; cancela o job."""
     job = _make_job()
     truncada = "a gente tinha falado sobre o cafe da Canastra\no que te fez pensar em"
     with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
@@ -128,7 +101,7 @@ async def test_length_finish_reason_aborts_and_cancels():
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._generate_followup_message",
-               return_value=(truncada, "length")):
+               return_value=(truncada, "MAX_TOKENS")):
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock()
         mock_provider_fn.return_value = mock_provider
@@ -154,7 +127,7 @@ async def test_deferral_marker_cancels_silently_without_send():
          patch("app.follow_up.scheduler._mark_sent") as mock_sent, \
          patch("app.follow_up.scheduler.save_message_conv"), \
          patch("app.follow_up.scheduler._generate_followup_message",
-               return_value=("[ADIAMENTO_DETECTADO]", "stop")):
+               return_value=("[ADIAMENTO_DETECTADO]", "STOP")):
         mock_provider = AsyncMock()
         mock_provider.send_text = AsyncMock()
         mock_provider_fn.return_value = mock_provider

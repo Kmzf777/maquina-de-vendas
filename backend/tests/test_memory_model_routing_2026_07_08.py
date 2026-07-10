@@ -37,12 +37,12 @@ async def test_refresh_usa_memory_model_das_settings(monkeypatch):
 
     seen = {}
 
-    async def fake_generate(prior, delta, client, model, lead_id=None, stage=""):
+    async def fake_generate(prior, delta, model, lead_id=None, stage=""):
         seen["model"] = model
         return "## DOSSIÊ DO LEAD\n* novo"
 
     monkeypatch.setattr(memory_manager, "generate_rolling_summary", fake_generate)
 
-    ok = await memory_manager.refresh_lead_memory("L1", client=MagicMock())
+    ok = await memory_manager.refresh_lead_memory("L1")
     assert ok is True
     assert seen["model"] == "gemini-2.5-flash-lite"

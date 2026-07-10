@@ -9,13 +9,13 @@ import app.agent.tools as tools
 
 def test_tag_tool_registrada_em_todos_os_stages():
     for stage in ("secretaria", "atacado", "private_label", "exportacao", "consumo"):
-        names = [t["function"]["name"] for t in tools.get_tools_for_stage(stage)]
+        names = [t["name"] for t in tools.get_tools_for_stage(stage)]
         assert "adicionar_tag_lead" in names, f"ausente no stage {stage}"
 
 
 def test_tag_schema_enum_bate_com_allowlist():
-    schema = next(t for t in tools.TOOLS_SCHEMA if t["function"]["name"] == "adicionar_tag_lead")
-    enum = set(schema["function"]["parameters"]["properties"]["tags"]["items"]["enum"])
+    schema = next(t for t in tools.TOOL_DECLARATIONS if t["name"] == "adicionar_tag_lead")
+    enum = set(schema["parameters"]["properties"]["tags"]["items"]["enum"])
     assert enum == set(tools._TAG_ALLOWLIST)
 
 

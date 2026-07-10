@@ -54,7 +54,7 @@ async def test_sem_dossie_ignora_watermark_e_le_historico_completo():
     patches = _base_patches(lead, history)
     with patches[0], patches[1], patches[2], patches[3], patches[4] as m_hist, \
          patches[5], patches[6]:
-        ok = await MM.refresh_lead_memory("lead-1", client=MagicMock(), model="m")
+        ok = await MM.refresh_lead_memory("lead-1", model="m")
 
     assert ok is True
     # since=None → histórico completo, não o delta pós-watermark
@@ -72,7 +72,7 @@ async def test_com_dossie_mantem_delta_incremental():
     patches = _base_patches(lead, history)
     with patches[0], patches[1], patches[2], patches[3], patches[4] as m_hist, \
          patches[5], patches[6]:
-        await MM.refresh_lead_memory("lead-2", client=MagicMock(), model="m")
+        await MM.refresh_lead_memory("lead-2", model="m")
 
     assert m_hist.call_args.kwargs.get("since") == "2026-07-08T10:00:00+00:00"
 
@@ -88,7 +88,7 @@ async def test_historico_gigante_e_capado():
     patches = _base_patches(lead, history)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
          patches[6] as m_gen:
-        await MM.refresh_lead_memory("lead-3", client=MagicMock(), model="m")
+        await MM.refresh_lead_memory("lead-3", model="m")
 
     delta = m_gen.await_args.args[1]
     assert len(delta) == MM.MEMORY_BACKFILL_MAX_MSGS

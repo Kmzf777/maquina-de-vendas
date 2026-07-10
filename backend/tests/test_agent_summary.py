@@ -1,6 +1,14 @@
 # backend/tests/test_agent_summary.py
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text
+
+
+def _user_text(m: AsyncMock) -> str:
+    """Texto do turno de usuário enviado ao núcleo nativo (contents[0])."""
+    contents = m.await_args.kwargs["contents"]
+    return contents[0].parts[0].text
 
 
 @pytest.mark.asyncio
@@ -8,16 +16,15 @@ async def test_empty_history_returns_new_header():
     """Histórico vazio deve retornar mensagem com o novo cabeçalho, sem chamar LLM."""
     from app.agent.summary import generate_qualification_summary
 
-    mock_client = MagicMock()
-    result = await generate_qualification_summary(
-        history=[],
-        lead={"name": "Ana", "stage": "atacado"},
-        client=mock_client,
-        model="gemini-2.5-flash",
-    )
+    with patch("app.agent.summary.generate", new=AsyncMock()) as m_gen:
+        result = await generate_qualification_summary(
+            history=[],
+            lead={"name": "Ana", "stage": "atacado"},
+            model="gemini-2.5-flash",
+        )
 
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
-    mock_client.chat.completions.create.assert_not_called()
+    m_gen.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -25,8 +32,7 @@ async def test_full_history_llm_receives_motivo_and_handoff_at():
     """Com histórico, motivo e handoff_at devem aparecer no contexto enviado ao LLM."""
     from app.agent.summary import generate_qualification_summary
 
-    mock_choice = MagicMock()
-    mock_choice.message.content = (
+    summary_md = (
         "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n"
         "**Data/Hora:** 11/06/2026 14:30\n\n"
         "* **Nome do Lead:** João Silva\n"
@@ -37,51 +43,41 @@ async def test_full_history_llm_receives_motivo_and_handoff_at():
         "* **Tom da Conversa:** Objetivo e direto\n"
         "* **Recomendação de Abordagem para o João:** Confirmar produto e fechar\n"
     )
-    mock_response = MagicMock()
-    mock_response.choices = [mock_choice]
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     history = [
         {"role": "user", "content": "quero café para minha cafeteria"},
         {"role": "assistant", "content": "vou apresentar nossos produtos"},
     ]
 
-    result = await generate_qualification_summary(
-        history=history,
-        lead={"name": "João Silva", "stage": "atacado", "company": "Cafeteria XYZ"},
-        client=mock_client,
-        model="gemini-2.5-flash",
-        motivo="lead com intenção de compra — atacado",
-        handoff_at="11/06/2026 14:30",
-    )
+    with patch("app.agent.summary.generate", new=AsyncMock(side_effect=[fake_text(summary_md)])) as m_gen:
+        result = await generate_qualification_summary(
+            history=history,
+            lead={"name": "João Silva", "stage": "atacado", "company": "Cafeteria XYZ"},
+            model="gemini-2.5-flash",
+            motivo="lead com intenção de compra — atacado",
+            handoff_at="11/06/2026 14:30",
+        )
 
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
-    mock_client.chat.completions.create.assert_called_once()
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    user_msg = next(m for m in call_kwargs["messages"] if m["role"] == "user")
-    assert "intenção de compra" in user_msg["content"]
-    assert "11/06/2026 14:30" in user_msg["content"]
+    assert m_gen.await_count == 1
+    user_msg = _user_text(m_gen)
+    assert "intenção de compra" in user_msg
+    assert "11/06/2026 14:30" in user_msg
 
 
 @pytest.mark.asyncio
-async def test_llm_empty_choices_returns_fallback_with_new_header():
-    """Resposta vazia do LLM deve retornar fallback com o novo cabeçalho."""
+async def test_llm_empty_text_returns_fallback_with_new_header():
+    """Resposta vazia do LLM (text=None) deve retornar fallback com o novo cabeçalho."""
     from app.agent.summary import generate_qualification_summary
-
-    mock_response = MagicMock()
-    mock_response.choices = []
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     history = [{"role": "user", "content": "preciso de café"}]
 
-    result = await generate_qualification_summary(
-        history=history,
-        lead={"name": "Maria", "stage": "atacado"},
-        client=mock_client,
-        model="gemini-2.5-flash",
-    )
+    with patch("app.agent.summary.generate", new=AsyncMock(side_effect=[fake_text(None)])):
+        result = await generate_qualification_summary(
+            history=history,
+            lead={"name": "Maria", "stage": "atacado"},
+            model="gemini-2.5-flash",
+        )
 
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
 
@@ -92,16 +88,13 @@ async def test_llm_exception_returns_fallback_with_new_header(caplog):
     import logging
     from app.agent.summary import generate_qualification_summary
 
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("timeout"))
-
     history = [{"role": "user", "content": "quero café"}]
 
-    with caplog.at_level(logging.ERROR, logger="app.agent.summary"):
+    with patch("app.agent.summary.generate", new=AsyncMock(side_effect=RuntimeError("timeout"))), \
+         caplog.at_level(logging.ERROR, logger="app.agent.summary"):
         result = await generate_qualification_summary(
             history=history,
             lead={"name": "Carlos", "stage": "private_label"},
-            client=mock_client,
             model="gemini-2.5-flash",
         )
 

@@ -7,9 +7,11 @@ Antes, `_build_followup_system_prompt` keyava o tom em `sequence == 1`. Como o l
 queria eliminar. Agora o tom segue o objetivo: só `ultima_chamada` usa o tom de última
 tentativa; todos os outros usam reengajamento leve.
 """
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
+
+from tests.gemini_fakes import fake_text
 
 from app.follow_up.scheduler import _build_followup_system_prompt
 
@@ -57,15 +59,7 @@ async def test_generate_forwards_objetivo_to_system_prompt(monkeypatch):
 
     monkeypatch.setattr(scheduler, "_build_followup_system_prompt", _fake_build)
     monkeypatch.setattr(scheduler, "track_token_usage", lambda **k: None)
-
-    resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].message.content = "oi"
-    resp.choices[0].finish_reason = "stop"
-    resp.usage = None
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=resp)
-    monkeypatch.setattr(scheduler, "get_gemini_client", lambda *a, **k: mock_client)
+    monkeypatch.setattr(scheduler, "generate", AsyncMock(return_value=fake_text("oi")))
 
     msg, finish_reason = await scheduler._generate_followup_message(
         [{"role": "user", "content": "oi"}],

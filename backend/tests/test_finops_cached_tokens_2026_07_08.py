@@ -5,7 +5,7 @@ O implicit caching do Gemini 2.5 desconta ~75% dos tokens de prefixo cacheado, m
 o hit-rate do reorder do prompt (a7a287e) e o custo gravado ficava SUPERESTIMADO nos hits
 (budget_guard queimando teto que não foi gasto). Cobre:
 
-  1. _parse_response captura cached_content_token_count em _Usage.cached_tokens.
+  1. gemini_client.parse_result captura cached_content_token_count no usage nativo.
   2. track_token_usage aplica o desconto de cache (token cacheado = 25% do preço de input).
   3. O insert em token_usage persiste thoughts_tokens e cached_tokens (colunas novas).
   4. Deploy antes da migração (colunas ausentes → PGRST204): fallback re-insere no formato
@@ -16,6 +16,8 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from tests.gemini_fakes import fake_text, fake_usage
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -78,18 +80,19 @@ def tracked(monkeypatch):
     return table
 
 
-# ── 1. captura de cached_content_token_count na fachada ─────────────────────
+# ── 1. captura de cached_content_token_count no núcleo nativo ───────────────
 
 def test_parse_response_captura_cached_tokens():
-    from app.agent.gemini_native import _parse_response
+    from app.agent.gemini_client import parse_result as _parse_response
     parsed = _parse_response(_fake_um(prompt=100, candidates=50, thoughts=10, cached=8000))
-    assert parsed.usage.cached_tokens == 8000
+    assert parsed.usage_metadata.cached_content_token_count == 8000
+    assert parsed.usage_metadata.billed_output_tokens == 60  # candidates + thoughts
 
 
 def test_parse_response_sem_cached_metadata_zera():
-    from app.agent.gemini_native import _parse_response
+    from app.agent.gemini_client import parse_result as _parse_response
     parsed = _parse_response(_fake_um(prompt=100, candidates=50, thoughts=0, cached=None))
-    assert parsed.usage.cached_tokens == 0
+    assert parsed.usage_metadata.cached_content_token_count == 0
 
 
 # ── 2. custo cache-aware ─────────────────────────────────────────────────────
@@ -176,20 +179,23 @@ def test_summary_repassa_cache_e_reasoning(monkeypatch):
     from app.agent import summary, token_tracker
     seen = {}
     monkeypatch.setattr(token_tracker, "track_token_usage", lambda **k: seen.update(k))
-    resp = types.SimpleNamespace(usage=_usage_ns(cached=60, reasoning=5))
-    summary._track_summary_usage(resp, {"id": "L1", "stage": "atacado"}, "gemini-2.5-flash", "qualification_summary")
+    result = fake_text("resumo", usage=fake_usage(prompt=100, out=10, thoughts=5, cached=60))
+    summary._track_summary_usage(result, {"id": "L1", "stage": "atacado"}, "gemini-2.5-flash", "qualification_summary")
     assert seen["cached_tokens"] == 60
     assert seen["reasoning_tokens"] == 5
+    # completion_tokens = saída FATURADA (candidates + thoughts)
+    assert seen["completion_tokens"] == 15
 
 
 def test_memory_repassa_cache_e_reasoning(monkeypatch):
     from app.agent import memory_manager, token_tracker
     seen = {}
     monkeypatch.setattr(token_tracker, "track_token_usage", lambda **k: seen.update(k))
-    resp = types.SimpleNamespace(usage=_usage_ns(cached=33, reasoning=7))
-    memory_manager._track_memory_usage(resp, "L1", "atacado", "gemini-2.5-flash-lite")
+    result = fake_text("dossie", usage=fake_usage(prompt=100, out=10, thoughts=7, cached=33))
+    memory_manager._track_memory_usage(result, "L1", "atacado", "gemini-2.5-flash-lite")
     assert seen["cached_tokens"] == 33
     assert seen["reasoning_tokens"] == 7
+    assert seen["completion_tokens"] == 17
 
 
 @pytest.mark.asyncio
@@ -198,14 +204,8 @@ async def test_followup_repassa_cache_e_reasoning(monkeypatch):
     seen = {}
     monkeypatch.setattr(scheduler, "track_token_usage", lambda **k: seen.update(k))
 
-    resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].message.content = "oi"
-    resp.choices[0].finish_reason = "stop"
-    resp.usage = _usage_ns(cached=90, reasoning=0)
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
-    monkeypatch.setattr(scheduler, "get_gemini_client", lambda *a, **k: client)
+    result = fake_text("oi", usage=fake_usage(prompt=100, out=10, thoughts=0, cached=90))
+    monkeypatch.setattr(scheduler, "generate", AsyncMock(side_effect=[result]))
 
     await scheduler._generate_followup_message(
         [{"role": "user", "content": "oi"}], 2, lead_id="L1", stage="atacado",
@@ -224,15 +224,11 @@ async def test_orchestrator_inicial_repassa_cache_e_reasoning(monkeypatch):
     monkeypatch.setattr(orchestrator, "get_products_by_funnel", lambda *a, **k: "")
     monkeypatch.setattr(orchestrator, "get_tools_for_stage", lambda *_: [])
 
-    msg = MagicMock()
-    msg.content = "resposta"
-    msg.tool_calls = None
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg, finish_reason="stop")]
-    resp.usage = _usage_ns(prompt=30_000, completion=200, cached=25_000, reasoning=150)
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
-    monkeypatch.setattr(orchestrator, "_get_client", lambda _m: client)
+    result = fake_text(
+        "resposta",
+        usage=fake_usage(prompt=30_000, out=200, thoughts=150, cached=25_000),
+    )
+    monkeypatch.setattr(orchestrator, "generate", AsyncMock(side_effect=[result]))
 
     out = await orchestrator.run_agent(
         {"id": "c1", "stage": "secretaria", "leads": {"id": "L1"}}, "oi",

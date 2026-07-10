@@ -123,44 +123,44 @@ def test_get_tools_for_stage_includes_marcar_interesse(stage):
     from app.agent.tools import get_tools_for_stage
 
     tools = get_tools_for_stage(stage)
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "marcar_interesse" in names, (
         f"marcar_interesse ausente no stage '{stage}'. Tools presentes: {names}"
     )
 
 
 # ---------------------------------------------------------------------------
-# 3. Tool schema is present in TOOLS_SCHEMA
+# 3. Tool schema is present in TOOL_DECLARATIONS
 # ---------------------------------------------------------------------------
 
 def test_marcar_interesse_in_tools_schema():
-    """TOOLS_SCHEMA must contain an entry named 'marcar_interesse'."""
-    from app.agent.tools import TOOLS_SCHEMA
+    """TOOL_DECLARATIONS must contain an entry named 'marcar_interesse'."""
+    from app.agent.tools import TOOL_DECLARATIONS
 
-    names = [t["function"]["name"] for t in TOOLS_SCHEMA]
+    names = [t["name"] for t in TOOL_DECLARATIONS]
     assert "marcar_interesse" in names
 
 
 def test_marcar_interesse_schema_structure():
     """marcar_interesse schema must have expected parameters."""
-    from app.agent.tools import TOOLS_SCHEMA
+    from app.agent.tools import TOOL_DECLARATIONS
 
     schema = next(
-        t for t in TOOLS_SCHEMA if t["function"]["name"] == "marcar_interesse"
+        t for t in TOOL_DECLARATIONS if t["name"] == "marcar_interesse"
     )
-    params = schema["function"]["parameters"]
+    params = schema["parameters"]
     assert "nivel" in params["properties"]
     assert "motivo" in params["properties"]
     # required is [] (both params optional)
-    assert schema["function"]["parameters"].get("required", []) == []
+    assert schema["parameters"].get("required", []) == []
 
 
 def test_marcar_interesse_nivel_enum():
     """nivel parameter must be an enum with 'morno' and 'quente'."""
-    from app.agent.tools import TOOLS_SCHEMA
+    from app.agent.tools import TOOL_DECLARATIONS
 
     schema = next(
-        t for t in TOOLS_SCHEMA if t["function"]["name"] == "marcar_interesse"
+        t for t in TOOL_DECLARATIONS if t["name"] == "marcar_interesse"
     )
-    nivel_prop = schema["function"]["parameters"]["properties"]["nivel"]
+    nivel_prop = schema["parameters"]["properties"]["nivel"]
     assert set(nivel_prop["enum"]) == {"morno", "quente"}

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.gemini_fakes import fake_text
+
 
 # ── render_dossier (saída determinística, sem preâmbulo — D6) ────────────────
 def test_render_dossier_produces_fixed_markdown_template():
@@ -42,22 +44,22 @@ def test_render_dossier_fills_missing_fields_with_placeholder():
 
 # ── build_memory_messages (delta-only — D4) ─────────────────────────────────
 def test_build_memory_messages_includes_prior_summary_and_only_delta():
-    from app.agent.memory_manager import build_memory_messages
+    from app.agent.memory_manager import _SYSTEM_PROMPT, build_memory_messages
 
     prior = "## DOSSIÊ DO LEAD\n* **Perfil / Empresa:** Cafeteria em BH"
     delta = [
         {"role": "user", "content": "achei o frete caro"},
         {"role": "assistant", "content": "consigo melhorar pra volume maior"},
     ]
-    messages = build_memory_messages(prior, delta)
+    system_instruction, user_msg = build_memory_messages(prior, delta)
 
-    assert messages[0]["role"] == "system"
-    user_msg = next(m for m in messages if m["role"] == "user")
+    # o prompt do memorialista vai como system_instruction nativo
+    assert system_instruction == _SYSTEM_PROMPT
     # o dossiê anterior tem que ir no contexto
-    assert "Cafeteria em BH" in user_msg["content"]
+    assert "Cafeteria em BH" in user_msg
     # o delta tem que ir no contexto
-    assert "achei o frete caro" in user_msg["content"]
-    assert "consigo melhorar pra volume maior" in user_msg["content"]
+    assert "achei o frete caro" in user_msg
+    assert "consigo melhorar pra volume maior" in user_msg
 
 
 # ── generate_rolling_summary (structured output + fail-soft) ─────────────────
@@ -72,51 +74,46 @@ async def test_generate_rolling_summary_renders_json_into_dossier():
         "estagio_negocio": "Negociando",
         "proximo_passo": "Proposta",
     }
-    choice = MagicMock()
-    choice.message.content = json.dumps(payload)
-    resp = MagicMock()
-    resp.choices = [choice]
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
-
-    out = await generate_rolling_summary(
-        "prior", [{"role": "user", "content": "oi"}], client, "gemini-2.5-flash"
-    )
+    with patch(
+        "app.agent.memory_manager.generate",
+        new=AsyncMock(side_effect=[fake_text(json.dumps(payload))]),
+    ) as m_gen:
+        out = await generate_rolling_summary(
+            "prior", [{"role": "user", "content": "oi"}], "gemini-2.5-flash"
+        )
 
     assert out.startswith("## DOSSIÊ DO LEAD")
     assert "Cafeteria em BH" in out
-    # structured output: pediu JSON ao modelo
-    kwargs = client.chat.completions.create.call_args.kwargs
-    assert kwargs["response_format"] == {"type": "json_object"}
+    # structured output: pediu JSON DE VERDADE ao modelo (json_mode nativo →
+    # response_mime_type="application/json"; a fachada engolia response_format — burn 08/07)
+    kwargs = m_gen.await_args.kwargs
+    assert kwargs["json_mode"] is True
+    # merge mecânico: thinking desligado no knob nativo
+    assert kwargs["thinking_off"] is True
 
 
 @pytest.mark.asyncio
 async def test_generate_rolling_summary_empty_delta_skips_llm_and_keeps_prior():
     from app.agent.memory_manager import generate_rolling_summary
 
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock()
-
-    out = await generate_rolling_summary("PRIOR", [], client, "gemini-2.5-flash")
+    with patch("app.agent.memory_manager.generate", new=AsyncMock()) as m_gen:
+        out = await generate_rolling_summary("PRIOR", [], "gemini-2.5-flash")
 
     assert out == "PRIOR"
-    client.chat.completions.create.assert_not_called()
+    m_gen.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_generate_rolling_summary_invalid_json_failsoft_to_prior():
     from app.agent.memory_manager import generate_rolling_summary
 
-    choice = MagicMock()
-    choice.message.content = "Aqui está o dossiê: blá blá (não é JSON)"
-    resp = MagicMock()
-    resp.choices = [choice]
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
-
-    out = await generate_rolling_summary(
-        "PRIOR", [{"role": "user", "content": "oi"}], client, "gemini-2.5-flash"
-    )
+    with patch(
+        "app.agent.memory_manager.generate",
+        new=AsyncMock(side_effect=[fake_text("Aqui está o dossiê: blá blá (não é JSON)")]),
+    ):
+        out = await generate_rolling_summary(
+            "PRIOR", [{"role": "user", "content": "oi"}], "gemini-2.5-flash"
+        )
 
     assert out == "PRIOR"
 
@@ -125,12 +122,13 @@ async def test_generate_rolling_summary_invalid_json_failsoft_to_prior():
 async def test_generate_rolling_summary_llm_exception_failsoft_to_prior():
     from app.agent.memory_manager import generate_rolling_summary
 
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(side_effect=RuntimeError("timeout"))
-
-    out = await generate_rolling_summary(
-        "PRIOR", [{"role": "user", "content": "oi"}], client, "gemini-2.5-flash"
-    )
+    with patch(
+        "app.agent.memory_manager.generate",
+        new=AsyncMock(side_effect=RuntimeError("timeout")),
+    ):
+        out = await generate_rolling_summary(
+            "PRIOR", [{"role": "user", "content": "oi"}], "gemini-2.5-flash"
+        )
 
     assert out == "PRIOR"
 
@@ -184,7 +182,7 @@ async def test_refresh_lead_memory_claims_and_releases_lock_on_success():
          patch.object(mm, "get_history", return_value=[{"role": "user", "content": "nova msg"}]), \
          patch.object(mm, "generate_rolling_summary", new=AsyncMock(return_value="NOVO DOSSIÊ")), \
          patch.object(mm, "update_lead") as upd:
-        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        ok = await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     assert ok is True
     assert store["calls"] == ["claim", "release"]  # claim primeiro, release no finally
@@ -203,7 +201,7 @@ async def test_refresh_lead_memory_lock_held_skips_llm_and_does_not_release():
     with patch.object(mm, "get_supabase", return_value=_FakeLockSupabase(store)), \
          patch.object(mm, "get_history") as hist, \
          patch.object(mm, "generate_rolling_summary", new=gen):
-        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        ok = await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     assert ok is False
     assert store["calls"] == ["claim"]  # não conseguiu o lock → não libera o que não pegou
@@ -218,7 +216,7 @@ async def test_refresh_lead_memory_releases_lock_even_on_exception():
     store = {"claimable": True, "calls": []}
     with patch.object(mm, "get_supabase", return_value=_FakeLockSupabase(store)), \
          patch.object(mm, "get_lead", side_effect=RuntimeError("db down")):
-        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        ok = await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     assert ok is False
     assert store["calls"] == ["claim", "release"]  # release no finally apesar da exceção
@@ -235,7 +233,7 @@ async def test_refresh_lead_memory_noop_when_no_delta():
          patch.object(mm, "get_history", return_value=[]), \
          patch.object(mm, "generate_rolling_summary", new=gen), \
          patch.object(mm, "update_lead") as upd:
-        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        ok = await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     assert ok is False
     gen.assert_not_called()
@@ -254,7 +252,7 @@ async def test_refresh_lead_memory_passes_updated_at_as_since():
          patch.object(mm, "get_history", return_value=[{"role": "user", "content": "x"}]) as hist, \
          patch.object(mm, "generate_rolling_summary", new=AsyncMock(return_value="N")), \
          patch.object(mm, "update_lead"):
-        await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     _, kwargs = hist.call_args
     assert kwargs.get("since") == "2026-06-26T10:00:00+00:00"
@@ -277,7 +275,7 @@ async def test_refresh_lead_memory_advances_watermark_even_when_summary_unchange
          patch.object(mm, "get_history", return_value=delta), \
          patch.object(mm, "generate_rolling_summary", new=AsyncMock(return_value="MESMO")), \
          patch.object(mm, "update_lead") as upd:
-        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        ok = await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     assert ok is False  # não gravou dossiê novo
     upd.assert_called_once()  # mas AVANÇOU a marca d'água
@@ -302,7 +300,7 @@ async def test_refresh_lead_memory_watermark_uses_last_delta_created_at_on_write
          patch.object(mm, "get_history", return_value=delta), \
          patch.object(mm, "generate_rolling_summary", new=AsyncMock(return_value="NOVO")), \
          patch.object(mm, "update_lead") as upd:
-        ok = await mm.refresh_lead_memory("l1", client=MagicMock(), model="gemini-2.5-flash")
+        ok = await mm.refresh_lead_memory("l1", model="gemini-2.5-flash")
 
     assert ok is True
     _, kwargs = upd.call_args

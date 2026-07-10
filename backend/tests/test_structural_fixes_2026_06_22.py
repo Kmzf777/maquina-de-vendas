@@ -55,40 +55,25 @@ def test_audio_mime_type_strips_codecs():
     assert _audio_mime_type(None) == "audio/ogg"
 
 
-class _FakeResp:
-    def __init__(self, data):
-        self._data = data
-    def raise_for_status(self):
-        return None
-    def json(self):
-        return self._data
-
-
-class _FakeClient:
-    def __init__(self, data):
-        self._data = data
-    async def __aenter__(self):
-        return self
-    async def __aexit__(self, *a):
-        return False
-    async def post(self, *a, **k):
-        return _FakeResp(self._data)
-
-
+# Migração 09/07 (Gemini 100% nativo): a transcrição deixou o REST httpx e passou a
+# delegar a gemini_client.transcribe_audio — os testes exercitam o mesmo contrato
+# (parse do texto; levanta em resposta vazia) pelo novo caminho.
 @pytest.mark.asyncio
 async def test_transcribe_audio_parses_generate_content():
+    from unittest.mock import AsyncMock
     from app.buffer import processor
-    data = {"candidates": [{"content": {"parts": [{"text": "olá tudo bem"}]}}]}
-    with patch("app.buffer.processor.httpx.AsyncClient", return_value=_FakeClient(data)):
+    with patch("app.buffer.processor.transcribe_audio",
+               new=AsyncMock(return_value=("olá tudo bem", None))):
         out = await processor._transcribe_audio(b"\x00\x01", "audio/ogg; codecs=opus")
     assert out == "olá tudo bem"
 
 
 @pytest.mark.asyncio
 async def test_transcribe_audio_levanta_em_resposta_vazia():
+    from unittest.mock import AsyncMock
     from app.buffer import processor
-    data = {"candidates": [{"content": {"parts": []}, "finishReason": "SAFETY"}]}
-    with patch("app.buffer.processor.httpx.AsyncClient", return_value=_FakeClient(data)):
+    with patch("app.buffer.processor.transcribe_audio",
+               new=AsyncMock(return_value=("", None))):
         with pytest.raises(Exception):
             await processor._transcribe_audio(b"\x00\x01", "audio/ogg")
 

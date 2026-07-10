@@ -151,16 +151,16 @@ async def debug_agent():
     result = {"gemini_key_set": bool(settings.gemini_api_key)}
 
     try:
-        from app.agent.orchestrator import get_ai_client
+        from app.agent.gemini_client import generate, user_content
 
-        client = get_ai_client("gemini-2.5-flash")
-        resp = await client.chat.completions.create(
-            model="gemini-2.5-flash",
-            messages=[{"role": "user", "content": "ping"}],
-            max_tokens=5,
+        resp = await generate(
+            "gemini-2.5-flash",
+            contents=[user_content("ping")],
+            max_output_tokens=8,
+            thinking_off=True,
         )
         result["gemini_test"] = "ok"
-        result["gemini_response"] = resp.choices[0].message.content
+        result["gemini_response"] = resp.text
     except Exception as e:
         result["gemini_test"] = "error"
         result["gemini_error"] = str(e)

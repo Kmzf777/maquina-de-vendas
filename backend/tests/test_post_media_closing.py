@@ -10,7 +10,7 @@ Strategy:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -49,36 +49,17 @@ def test_safety_fallback_media_constant_content():
 
 # ---------------------------------------------------------------------------
 # Integration: run_agent uses _SAFETY_FALLBACK_MEDIA after media tool + empty LLM
+#
+# Contrato Gemini nativo (migração 09/07/2026): as chamadas ao LLM saem por
+# `app.agent.orchestrator.generate` (gemini_client) — fakes de tests/gemini_fakes.py.
 # ---------------------------------------------------------------------------
 
-def _make_tool_call(name: str, call_id: str = "tc-001") -> MagicMock:
-    """Build a minimal OpenAI-style tool_call mock."""
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = name
-    tc.function.arguments = "{}"
-    return tc
-
-
-def _make_response(content: str | None, tool_calls=None) -> MagicMock:
-    """Build a minimal chat completion response mock."""
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": content,
-        "tool_calls": None,
-    }
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
+from tests.gemini_fakes import fake_text, fake_tool_call
 
 
 @pytest.mark.asyncio
 async def test_run_agent_media_tool_then_empty_uses_media_fallback():
-    """LLM returns enviar_fotos tool_call then empty text → _SAFETY_FALLBACK_MEDIA."""
+    """LLM returns enviar_fotos function_call then empty text → _SAFETY_FALLBACK_MEDIA."""
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MEDIA
 
     conversation = {
@@ -92,25 +73,17 @@ async def test_run_agent_media_tool_then_empty_uses_media_fallback():
         },
     }
 
-    tool_call = _make_tool_call("enviar_fotos", "tc-enviar-001")
-
     # Call sequence:
-    # 1st create → tool call (enviar_fotos)
-    # 2nd create (after tool result) → empty text  [triggers AGENT EMPTY AFTER TOOLS]
-    # 3rd create (retry-on-empty, no thinking) → empty
-    # 4th create (retry2, Etapa 2, temperatura elevada) → empty  [triggers safety fallback]
-    resp_with_tool = _make_response(content=None, tool_calls=[tool_call])
-    resp_empty_after_tool = _make_response(content="", tool_calls=None)
-    resp_empty_retry1 = _make_response(content="", tool_calls=None)
-    resp_empty_fallback = _make_response(content="", tool_calls=None)
-
-    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_retry1, resp_empty_fallback]
-    call_index = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[call_index["i"]]
-        call_index["i"] += 1
-        return resp
+    # 1st generate → tool call (enviar_fotos)
+    # 2nd generate (after tool result) → empty text  [triggers AGENT EMPTY AFTER TOOLS]
+    # 3rd generate (retry-on-empty, no thinking) → empty
+    # 4th generate (retry2, Etapa 2, temperatura elevada) → empty  [triggers safety fallback]
+    m_gen = AsyncMock(side_effect=[
+        fake_tool_call("enviar_fotos", {}),
+        fake_text(""),
+        fake_text(""),
+        fake_text(""),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=[
         {
@@ -129,11 +102,11 @@ async def test_run_agent_media_tool_then_empty_uses_media_fallback():
              "phone": "5511900000001",
              "ai_enabled": True,
          }), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new=AsyncMock(return_value="2 fotos enfileiradas para envio após o texto")), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.generate", new=m_gen):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "me manda as fotos")
 
     assert result == _SAFETY_FALLBACK_MEDIA
@@ -156,20 +129,13 @@ async def test_run_agent_non_media_tool_then_empty_uses_generic_fallback():
         },
     }
 
-    tool_call = _make_tool_call("marcar_interesse", "tc-interesse-001")
-
-    resp_with_tool = _make_response(content=None, tool_calls=[tool_call])
-    resp_empty_after_tool = _make_response(content="", tool_calls=None)
-    resp_empty_retry1 = _make_response(content="", tool_calls=None)
-    resp_empty_fallback = _make_response(content="", tool_calls=None)  # retry2 (Etapa 2) também vazio
-
-    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_retry1, resp_empty_fallback]
-    call_index = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[call_index["i"]]
-        call_index["i"] += 1
-        return resp
+    # tool não-mídia + turnos vazios (pós-tool, retry1, retry2 — Etapa 2)
+    m_gen = AsyncMock(side_effect=[
+        fake_tool_call("marcar_interesse", {}),
+        fake_text(""),
+        fake_text(""),
+        fake_text(""),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=[
         {
@@ -188,11 +154,11 @@ async def test_run_agent_non_media_tool_then_empty_uses_generic_fallback():
              "phone": "5511900000002",
              "ai_enabled": True,
          }), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new=AsyncMock(return_value="interesse registrado")), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.generate", new=m_gen):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "quero saber os preços")
 
     # Change C: nunca mais retorna "" para um turno com histórico — usa o genérico honesto
@@ -216,20 +182,13 @@ async def test_run_agent_enviar_foto_produto_also_triggers_media_fallback():
         },
     }
 
-    tool_call = _make_tool_call("enviar_foto_produto", "tc-foto-prod-001")
-
-    resp_with_tool = _make_response(content=None, tool_calls=[tool_call])
-    resp_empty_after_tool = _make_response(content="", tool_calls=None)
-    resp_empty_retry1 = _make_response(content="", tool_calls=None)
-    resp_empty_fallback = _make_response(content="", tool_calls=None)  # retry2 (Etapa 2) também vazio
-
-    call_responses = [resp_with_tool, resp_empty_after_tool, resp_empty_retry1, resp_empty_fallback]
-    call_index = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[call_index["i"]]
-        call_index["i"] += 1
-        return resp
+    # enviar_foto_produto + turnos vazios (pós-tool, retry1, retry2 — Etapa 2)
+    m_gen = AsyncMock(side_effect=[
+        fake_tool_call("enviar_foto_produto", {}),
+        fake_text(""),
+        fake_text(""),
+        fake_text(""),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=[
         {
@@ -248,11 +207,11 @@ async def test_run_agent_enviar_foto_produto_also_triggers_media_fallback():
              "phone": "5511900000003",
              "ai_enabled": True,
          }), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new=AsyncMock(return_value="foto do produto enfileirada para envio após o texto")), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.generate", new=m_gen):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "tem foto do produto?")
 
     assert result == _SAFETY_FALLBACK_MEDIA

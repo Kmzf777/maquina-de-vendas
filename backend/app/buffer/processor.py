@@ -18,6 +18,7 @@ from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
     update_conversation, save_message,
 )
+from app.agent.gemini_client import transcribe_audio
 from app.agent.orchestrator import run_agent, resolve_prompt_key, LLMUnavailableError
 from app.alerts.service import create_system_alert
 from app.agent.persona import resolve_persona_prompt_key
@@ -223,13 +224,11 @@ def _apply_media_signal(resolved_text: str | None, message_type: str | None) -> 
         return text
     return _MEDIA_MARKERS.get(message_type or "", text)
 
-# Transcrição de áudio: o endpoint OpenAI-compat do Gemini NÃO expõe
+# Transcrição de áudio: o endpoint OpenAI-compat do Gemini NÃO expunha
 # /audio/transcriptions (Whisper) — a chamada antiga falhava 100% (auditoria
-# 2026-06-22: 9 falhas/dia). O caminho suportado é generateContent com inline_data,
-# que aceita OGG/opus (formato do áudio do WhatsApp).
-_GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-
+# 2026-06-22: 9 falhas/dia). O caminho suportado é generate_content com bytes
+# inline (aceita OGG/opus, formato do áudio do WhatsApp) — hoje via núcleo
+# nativo `app.agent.gemini_client.transcribe_audio` (thinking off + teto 2048).
 def _audio_mime_type(content_type: str | None) -> str:
     """Normaliza o content-type p/ um mime aceito pelo Gemini.
 
@@ -244,70 +243,38 @@ async def _transcribe_audio(
     audio_bytes: bytes, content_type: str | None,
     lead_id: str | None = None, stage: str = "",
 ) -> str:
-    """Transcreve áudio via Gemini generateContent (inline_data). Levanta em falha.
+    """Transcreve áudio via núcleo Gemini nativo (bytes inline). Levanta em falha.
 
     FinOps 08/07: transcrição é tarefa MECÂNICA — thinking dinâmico aqui era raciocínio
-    pago à toa (era o único caminho LLM sem generationConfig nenhum). thinkingBudget=0 +
-    maxOutputTokens limitado, e o usageMetadata (antes descartado) vira linha de
-    token_usage (call_type=media_transcription) para o gasto parar de ser invisível ao
-    budget_guard. `lead_id`/`stage` chegam de process_buffered_messages via _resolve_media;
+    pago à toa. O núcleo (`gemini_client.transcribe_audio`) já chama com thinking OFF +
+    saída limitada, e o usage_metadata (antes descartado) vira linha de token_usage
+    (call_type=media_transcription) para o gasto parar de ser invisível ao budget_guard.
+    `lead_id`/`stage` chegam de process_buffered_messages via _resolve_media;
     contabilidade é fail-soft — jamais derruba a transcrição.
     """
     mime = _audio_mime_type(content_type)
-    b64 = base64.b64encode(audio_bytes).decode()
-    url = _GEMINI_GENERATE_URL.format(model=settings.transcription_model)
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": "Transcreva o áudio a seguir em português do Brasil. "
-                        "Responda APENAS com a transcrição literal, sem comentários, "
-                        "aspas ou rótulos.",
-                    },
-                    {"inline_data": {"mime_type": mime, "data": b64}},
-                ]
-            }
-        ],
-        # Um áudio de voz de vários minutos rende ~1K tokens de transcrição — 2048 dá
-        # folga sem deixar a saída aberta. thinkingBudget=0 = thinking OFF (REST camelCase).
-        "generationConfig": {
-            "thinkingConfig": {"thinkingBudget": 0},
-            "maxOutputTokens": 2048,
-        },
-    }
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, params={"key": settings.gemini_api_key}, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    transcript, um = await transcribe_audio(settings.transcription_model, audio_bytes, mime)
 
     # Contabilidade ANTES da validação de vazio: os tokens foram consumidos mesmo quando a
-    # transcrição volta vazia. Espelha a fachada (thinking cobrado como output).
+    # transcrição volta vazia (o núcleo devolve o usage mesmo sem texto).
     try:
-        um = data.get("usageMetadata") or {}
-        visible = um.get("candidatesTokenCount", 0) or 0
-        thoughts = um.get("thoughtsTokenCount", 0) or 0
         from app.agent.token_tracker import track_token_usage
         track_token_usage(
             lead_id=lead_id,
             stage=stage or "",
             model=settings.transcription_model,
             call_type="media_transcription",
-            prompt_tokens=um.get("promptTokenCount", 0) or 0,
-            completion_tokens=visible + thoughts,
-            cached_tokens=um.get("cachedContentTokenCount", 0) or 0,
-            reasoning_tokens=thoughts,
+            prompt_tokens=um.prompt_token_count if um else 0,
+            # thinking é COBRADO como saída → completion = candidates + thoughts
+            completion_tokens=um.billed_output_tokens if um else 0,
+            cached_tokens=um.cached_content_token_count if um else 0,
+            reasoning_tokens=um.thoughts_token_count if um else 0,
         )
     except Exception as exc:  # contabilidade nunca derruba a transcrição
         logger.warning("[AUDIO] falha ao registrar token_usage da transcrição (ignorado): %s", exc)
 
-    candidate = (data.get("candidates") or [{}])[0]
-    parts = (candidate.get("content") or {}).get("parts") or []
-    transcript = "".join(p.get("text", "") for p in parts).strip()
     if not transcript:
-        raise RuntimeError(
-            f"transcrição vazia (finishReason={candidate.get('finishReason')!r})"
-        )
+        raise RuntimeError("transcrição vazia")
     return transcript
 
 

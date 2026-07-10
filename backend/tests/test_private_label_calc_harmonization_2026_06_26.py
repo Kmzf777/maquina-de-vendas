@@ -9,7 +9,7 @@ from app.agent.prompts import get_stage_prompts
 
 
 def test_private_label_expoe_calcular_orcamento():
-    names = [t["function"]["name"] for t in get_tools_for_stage("private_label")]
+    names = [t["name"] for t in get_tools_for_stage("private_label")]
     assert "calcular_orcamento" in names
 
 

@@ -10,20 +10,14 @@ Comportamento desejado:
   2. se o retry trouxer texto → usa o texto (lead recebe resposta normal);
   3. se ainda vier vazio e não houver contexto coerente → aborta em silêncio (retorna ""),
      NUNCA o "chegou cortada".
+
+Migração 09/07 (Gemini 100% nativo): o mock agora é `app.agent.orchestrator.generate`
+(GenerateResult fakes) — a fachada OpenAI (.choices/.usage) não existe mais.
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-
-def _make_response(content, tool_calls=None):
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
+from tests.gemini_fakes import fake_text
 
 
 def _conversation():
@@ -48,24 +42,19 @@ async def test_empty_initial_then_retry_recovers_text():
     from app.agent.orchestrator import run_agent
 
     call_responses = [
-        _make_response(content=""),                  # inicial — thinking on, 0 tokens
-        _make_response(content="bom dia Anderson\n\nme conta o que te trouxe aqui"),  # retry off
+        fake_text(""),                  # inicial — thinking on, 0 tokens visíveis
+        fake_text("bom dia Anderson\n\nme conta o que te trouxe aqui"),  # retry off
     ]
-    idx = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[idx["i"]]
-        idx["i"] += 1
-        return resp
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-and", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=call_responses)) as m_gen:
         result = await run_agent(_conversation(), "oi bom dia sim me chamo Anderson")
 
     assert result == "bom dia Anderson\n\nme conta o que te trouxe aqui"
-    assert idx["i"] == 2, "deve ter feito exatamente o retry silencioso"
+    assert m_gen.await_count == 2, "deve ter feito exatamente o retry silencioso"
 
 
 @pytest.mark.asyncio
@@ -77,20 +66,13 @@ async def test_empty_initial_and_empty_retry_never_sends_chegou_cortada():
 
     # Etapa 2: inicial + retry1 vazios ainda disparam o retry2 (temperatura elevada) antes
     # do fallback final — também vazio aqui, para o teste chegar ao fallback genérico.
-    call_responses = [
-        _make_response(content=""), _make_response(content=""), _make_response(content=""),
-    ]
-    idx = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[idx["i"]]
-        idx["i"] += 1
-        return resp
+    call_responses = [fake_text(""), fake_text(""), fake_text("")]
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-and", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=call_responses)) as m_gen:
         result = await run_agent(_conversation(), "oi bom dia sim me chamo Anderson")
 
     # Change C: genérico honesto em vez de silêncio total
@@ -99,3 +81,4 @@ async def test_empty_initial_and_empty_retry_never_sends_chegou_cortada():
     assert result != _SAFETY_FALLBACK_MESSAGE
     assert "chegou cortada" not in result
     assert "cortada" not in result
+    assert m_gen.await_count == 3, "inicial + retry silencioso + retry2 antes do fallback"

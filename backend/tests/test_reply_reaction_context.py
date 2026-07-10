@@ -8,7 +8,7 @@ that the history-building loop in run_agent emits the marker in the messages lis
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -205,12 +205,19 @@ def test_render_reaction_truncates_long_target():
 
 
 # ---------------------------------------------------------------------------
-# Integration: history-building loop emits reply marker in messages list
+# Integration: history-building loop emits reply marker in the contents list
+#
+# Contrato Gemini nativo (migração 09/07/2026): as chamadas ao LLM saem por
+# `app.agent.orchestrator.generate` (gemini_client) com contents (types.Content;
+# texto em .parts[0].text) — fakes de tests/gemini_fakes.py.
 # ---------------------------------------------------------------------------
+
+from tests.gemini_fakes import fake_text
+
 
 @pytest.mark.asyncio
 async def test_run_agent_history_reply_marker_in_messages():
-    """run_agent deve incluir o marcador de reply nos messages enviados ao LLM."""
+    """run_agent deve incluir o marcador de reply nos contents enviados ao LLM."""
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -244,15 +251,11 @@ async def test_run_agent_history_reply_marker_in_messages():
         },
     ]
 
-    captured_messages: list = []
+    captured_contents: list = []
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(tool_calls=None, content="claro!"))]
-    mock_response.usage = None
-
-    async def fake_create(**kwargs):
-        captured_messages.extend(kwargs.get("messages", []))
-        return mock_response
+    async def fake_generate(**kwargs):
+        captured_contents.extend(kwargs.get("contents", []))
+        return fake_text("claro!")
 
     with patch("app.agent.orchestrator.get_history", return_value=fake_history), \
          patch("app.agent.orchestrator.get_lead", return_value={
@@ -260,18 +263,21 @@ async def test_run_agent_history_reply_marker_in_messages():
          }), \
          patch("app.agent.orchestrator.resolve_message_text_by_wamid",
                return_value="Você conhece nossos produtos?"), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=AsyncMock(side_effect=fake_generate)):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         await run_agent(conversation, "Me manda o catálogo")
 
-    # Find the history user message (the one with "Sim, quero saber mais!")
-    user_msgs = [m for m in captured_messages if m.get("role") == "user"]
-    # First user message in the list should have the reply marker
+    # Find the history user content (the one with "Sim, quero saber mais!")
+    user_texts = [
+        c.parts[0].text for c in captured_contents
+        if c.role == "user" and c.parts and c.parts[0].text
+    ]
+    # First user content in the list should have the reply marker
     assert any(
-        '[Em resposta a: "Você conhece nossos produtos?"]' in m["content"]
-        for m in user_msgs
-    ), f"Marker not found in user messages: {user_msgs}"
+        '[Em resposta a: "Você conhece nossos produtos?"]' in t
+        for t in user_texts
+    ), f"Marker not found in user contents: {user_texts}"
 
 
 # ---------------------------------------------------------------------------
@@ -305,15 +311,11 @@ async def test_run_agent_current_message_reply_marker():
         },
     ]
 
-    captured_messages: list = []
+    captured_contents: list = []
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(tool_calls=None, content="ótimo!"))]
-    mock_response.usage = None
-
-    async def fake_create(**kwargs):
-        captured_messages.extend(kwargs.get("messages", []))
-        return mock_response
+    async def fake_generate(**kwargs):
+        captured_contents.extend(kwargs.get("contents", []))
+        return fake_text("ótimo!")
 
     with patch("app.agent.orchestrator.get_history", return_value=fake_history), \
          patch("app.agent.orchestrator.get_lead", return_value={
@@ -321,16 +323,19 @@ async def test_run_agent_current_message_reply_marker():
          }), \
          patch("app.agent.orchestrator.resolve_message_text_by_wamid",
                return_value="Quer saber sobre nosso plano premium?"), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=AsyncMock(side_effect=fake_generate)):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         await run_agent(conversation, user_text)
 
-    # The last user message in the captured list should be the enriched current message
-    user_msgs = [m for m in captured_messages if m.get("role") == "user"]
-    last_user = user_msgs[-1]
-    assert '[Em resposta a: "Quer saber sobre nosso plano premium?"]' in last_user["content"]
-    assert user_text in last_user["content"]
+    # The last user content in the captured list should be the enriched current message
+    user_texts = [
+        c.parts[0].text for c in captured_contents
+        if c.role == "user" and c.parts and c.parts[0].text
+    ]
+    last_user = user_texts[-1]
+    assert '[Em resposta a: "Quer saber sobre nosso plano premium?"]' in last_user
+    assert user_text in last_user
 
 
 # ---------------------------------------------------------------------------

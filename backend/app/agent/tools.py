@@ -183,479 +183,431 @@ _SUPERVISOR_PHONE = SUPERVISOR_PHONE
 # Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
 _MAX_DESPEDIDA_LEN = 600
 
-TOOLS_SCHEMA = [
+TOOL_DECLARATIONS: list[dict] = [
     {
-        "type": "function",
-        "function": {
-            "name": "salvar_nome",
-            "description": "Salva o nome do lead quando descoberto durante a conversa",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Nome do lead"}
-                },
-                "required": ["name"],
+        "name": "salvar_nome",
+        "description": "Salva o nome do lead quando descoberto durante a conversa",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nome do lead"}
             },
+            "required": ["name"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "mudar_stage",
-            "description": (
-                "Transfere o lead para outro stage de forma silenciosa — nunca avise o cliente sobre a mudanca. "
-                "Gatilhos por stage: "
-                "atacado — lead menciona revenda, distribuidora, cafeteria, restaurante ou qualquer negocio querendo cafe em volume; "
-                "private_label — lead quer marca propria, embalagem personalizada ou produto com identidade visual propria; "
-                "exportacao — lead menciona mercado externo, exportacao ou pais de destino; "
-                "consumo — pessoa fisica comprando para uso proprio, sem fins comerciais. "
-                "Execute imediatamente ao identificar o gatilho, sem perguntar ao cliente."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "stage": {
-                        "type": "string",
-                        "enum": ["secretaria", "atacado", "private_label", "exportacao", "consumo"],
-                        "description": "Stage de destino",
-                    }
-                },
-                "required": ["stage"],
+        "name": "mudar_stage",
+        "description": (
+            "Transfere o lead para outro stage de forma silenciosa — nunca avise o cliente sobre a mudanca. "
+            "Gatilhos por stage: "
+            "atacado — lead menciona revenda, distribuidora, cafeteria, restaurante ou qualquer negocio querendo cafe em volume; "
+            "private_label — lead quer marca propria, embalagem personalizada ou produto com identidade visual propria; "
+            "exportacao — lead menciona mercado externo, exportacao ou pais de destino; "
+            "consumo — pessoa fisica comprando para uso proprio, sem fins comerciais. "
+            "Execute imediatamente ao identificar o gatilho, sem perguntar ao cliente."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "stage": {
+                    "type": "string",
+                    "enum": ["secretaria", "atacado", "private_label", "exportacao", "consumo"],
+                    "description": "Stage de destino",
+                }
             },
+            "required": ["stage"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "encaminhar_humano",
-            "description": (
-                "Registra o encerramento da interacao e transfere o controle para o supervisor Joao. "
-                "USE nos seguintes casos: "
-                "(1) lead qualificado e pronto para fechar — passe vendedor e motivo; "
-                "(2) lead REJEITOU explicitamente o modelo de negocio — passe motivo='Cliente nao aceitou o modelo de negocio'; "
-                "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ turnos no stage private_label — chame imediatamente. "
-                "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
-                "ANTES de chamar, escreva uma mensagem de despedida/transbordo natural e personalizada com base no "
-                "contexto da conversa e passe-a no argumento `mensagem_despedida` (curta — no maximo 2-3 frases). "
-                "O sistema envia essa mensagem ao lead e, logo em seguida, o cartao de contato do Joao automaticamente "
-                "— NAO cole telefone, link ou wa.me na mensagem. "
-                "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "mensagem_despedida": {
+        "name": "encaminhar_humano",
+        "description": (
+            "Registra o encerramento da interacao e transfere o controle para o supervisor Joao. "
+            "USE nos seguintes casos: "
+            "(1) lead qualificado e pronto para fechar — passe vendedor e motivo; "
+            "(2) lead REJEITOU explicitamente o modelo de negocio — passe motivo='Cliente nao aceitou o modelo de negocio'; "
+            "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ turnos no stage private_label — chame imediatamente. "
+            "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
+            "ANTES de chamar, escreva uma mensagem de despedida/transbordo natural e personalizada com base no "
+            "contexto da conversa e passe-a no argumento `mensagem_despedida` (curta — no maximo 2-3 frases). "
+            "O sistema envia essa mensagem ao lead e, logo em seguida, o cartao de contato do Joao automaticamente "
+            "— NAO cole telefone, link ou wa.me na mensagem. "
+            "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mensagem_despedida": {
+                    "type": "string",
+                    "description": (
+                        "Mensagem de despedida/transbordo curta e personalizada para o lead, escrita com base no "
+                        "contexto da conversa. Sera enviada como texto, seguida do cartao de contato do Joao. "
+                        "DIRECIONE A ACAO PRO LEAD: o cartao do Joao aparece em seguida e e o LEAD que toca nele "
+                        "pra chamar — convide-o a fazer isso. NAO use 'vou te conectar'/'ja te transfiro'/'vou passar "
+                        "seu contato' (da falsa impressao de que voce faz a ponte). NAO inclua telefone, link nem wa.me."
+                    ),
+                },
+                "vendedor": {"type": "string", "description": "Nome do vendedor (opcional — omita em casos de rejeicao)"},
+                "motivo": {"type": "string", "description": "Motivo do encaminhamento ou encerramento"},
+            },
+            "required": ["mensagem_despedida"],
+        },
+    },
+    {
+        "name": "qualificar_lead",
+        "description": (
+            "Registra as ÂNCORAS de qualificação do lead à medida que voce as descobre na "
+            "conversa. Chame assim que captar cada uma — NAO espere o lead pedir pra comprar. "
+            "Âncoras: finalidade (para que o lead quer o cafe: revenda, cafeteria, restaurante, "
+            "marca propria, etc.), volume (quanto pretende: kg, pacotes, fardos, pedido mensal), "
+            "urgencia (quando pretende comprar/decidir). Passe apenas as que ja souber; pode "
+            "chamar de novo depois pra completar. Quando finalidade E volume ja estiverem "
+            "definidos, o sistema transfere o lead pro vendedor automaticamente — voce NAO "
+            "precisa chamar encaminhar_humano nesse caso."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "finalidade": {"type": "string", "description": "Para que o lead quer o cafe (revenda, cafeteria, restaurante, marca propria, etc.)"},
+                "volume": {"type": "string", "description": "Volume/quantidade pretendida (kg, pacotes, fardos, pedido mensal)"},
+                "urgencia": {"type": "string", "description": "Prazo/urgencia da compra ou decisao (opcional)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "registrar_optout",
+        "description": (
+            "HARD OPT-OUT (descarte definitivo). Use SOMENTE quando o lead PROIBIR explicitamente o contato: "
+            "pedir para parar de receber mensagens, sair da lista, 'me tira da lista', ameacar ('vou processar', "
+            "'vou denunciar'), ou clicar no botao 'Parar mensagens'. "
+            "Efeito: marca opt_out=true, desativa a IA, joga o lead na Blacklist (sem notificar o time, sem negocio). "
+            "NAO confunda com falta de interesse no momento ('to sem grana', 'ja fechei com outro') — isso NAO e "
+            "opt-out: nesse caso use registrar_sem_interesse_atual. "
+            "Antes de chamar esta tool, escreva UMA mensagem de despedida respeitosa no texto do turno. "
+            "Apos chamar, NAO envie mais nenhuma mensagem."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "motivo": {
+                    "type": "string",
+                    "description": (
+                        "O que o lead disse, com o maximo de detalhe: pedido/ameaca exata e contexto "
+                        "(ex: 'clicou parar mensagens', 'pediu para sair da lista — disse que recebe spam demais'). "
+                        "Evite generico; capture as palavras reais do lead."
+                    ),
+                }
+            },
+            "required": ["motivo"],
+        },
+    },
+    {
+        "name": "registrar_sem_interesse_atual",
+        "description": (
+            "SOFT REJECTION (perda, NAO e opt-out). Use quando o lead nao quer avancar a compra AGORA mas NAO "
+            "proibiu o contato: ex. 'to sem grana', 'ja fechei com outro fornecedor', 'agora nao da', "
+            "'deixa pra mais pra frente', ou objecao de preco/momento que voce nao conseguiu contornar. "
+            "Efeito: tira o lead do funil (stage=perdido, IA desativada, human_control, deal movido para o stage "
+            "Perdido do pipeline), MAS mantem o lead na base para reativacao futura — opt_out continua FALSE, "
+            "SEM blacklist. "
+            "NUNCA use se o lead pediu para parar de receber mensagens ou proibiu contato — nesse caso use registrar_optout. "
+            "Antes de chamar, escreva UMA mensagem de despedida cordial deixando a porta aberta. "
+            "Apos chamar, NAO envie mais nenhuma mensagem."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "motivo": {
+                    "type": "string",
+                    "description": (
+                        "Motivo DETALHADO e analitico da perda — nunca generico ('nao quis'). Capture: a objecao real "
+                        "nao superada, o concorrente atual se citado, o volume/ticket discutido, e a dor ou contexto "
+                        "por tras (ex: 'objecao de preco — achou caro vs fornecedor atual X que entrega a R$18/kg; "
+                        "compra ~30kg/mes pra cafeteria; quer reavaliar no proximo trimestre')."
+                    ),
+                }
+            },
+            "required": ["motivo"],
+        },
+    },
+    {
+        "name": "registrar_numero_errado",
+        "description": (
+            "NUMERO POSSIVELMENTE ERRADO (higiene, NAO e opt-out). Use quando quem responde NEGA ser a pessoa "
+            "do cadastro SEM se identificar ('nao sou eu', 'numero errado', 'nao conheco', 'esse celular nao e "
+            "mais da/do X'). Efeito: marca o numero para higiene automatica — se NINGUEM responder em 72h, o "
+            "sistema registra opt-out sozinho e o numero nunca mais recebe disparo. NAO desativa a IA nem "
+            "encerra a conversa: continue o arco normal (desculpa leve + UMA pergunta de re-engajamento). "
+            "Se a pessoa se identificar depois, o marcador e limpo automaticamente. "
+            "NAO use quando a pessoa AFIRMA o proprio nome (isso e correcao de cadastro — use salvar_nome)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "contexto": {
+                    "type": "string",
+                    "description": (
+                        "O que a pessoa disse, literal (ex.: \"clicou Nao e escreveu 'nao conheco'\", "
+                        "\"disse que esse celular nao e mais da Magda\")."
+                    ),
+                }
+            },
+            "required": ["contexto"],
+        },
+    },
+    {
+        "name": "registrar_indicacao",
+        "description": (
+            "INDICACAO / REFERRAL. Use quando o lead indicar OUTRA pessoa como o contato certo para o negocio: "
+            "vendeu/fechou a loja e diz quem ficou com ela, 'quem cuida disso agora e o Fulano', 'fala com meu "
+            "socio', ou oferece repassar seu contato ao sucessor. Efeito: grava a indicacao no CRM (nota + tag) "
+            "para o time humano acionar o indicado — a tool NAO cria lead novo nem dispara mensagem a terceiro. "
+            "Chame UMA vez por indicacao, assim que o lead der a informacao; capture nome/telefone se ele der, "
+            "mas o contexto sozinho ja vale o registro. Depois de chamar, agradeca com naturalidade."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "contexto": {
+                    "type": "string",
+                    "description": (
+                        "A historia da indicacao com as palavras do lead (ex.: 'vendeu a Divina Terra em maio; "
+                        "quem assumiu foi o antigo gerente, vai continuar com cafe especial')."
+                    ),
+                },
+                "nome": {
+                    "type": "string",
+                    "description": "Nome do indicado, se o lead informou. Vazio se nao deu.",
+                },
+                "telefone": {
+                    "type": "string",
+                    "description": "Telefone/WhatsApp do indicado, se o lead informou. Vazio se nao deu.",
+                },
+            },
+            "required": ["contexto"],
+        },
+    },
+    {
+        "name": "enviar_fotos",
+        "description": "Envia catalogo de fotos dos produtos ao lead",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "categoria": {
+                    "type": "string",
+                    "enum": ["atacado", "private_label"],
+                    "description": "Categoria do catalogo",
+                }
+            },
+            "required": ["categoria"],
+        },
+    },
+    {
+        "name": "enviar_foto_produto",
+        "description": "Envia a foto de UM produto especifico ao lead com descricao. Use para intercalar texto e foto na conversa.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "categoria": {
+                    "type": "string",
+                    "enum": ["atacado", "private_label"],
+                    "description": "Categoria do produto",
+                },
+                "produto": {
+                    "type": "string",
+                    "description": "Nome do produto (ex: classico, suave, canela, microlote, drip, capsulas, embalagem, standup, silk, final)",
+                },
+            },
+            "required": ["categoria", "produto"],
+        },
+    },
+    {
+        "name": "marcar_interesse",
+        "description": (
+            "Marca que o lead demonstrou INTERESSE COMERCIAL CLARO nesta conversa "
+            "(ex: perguntou preço/condições, pediu detalhes para comprar, demonstrou intenção real de avançar). "
+            "NÃO use para resposta educada, 'ok', 'obrigado', 'vou pensar', saudação, ou curiosidade vaga. "
+            "Só o interesse genuíno habilita o follow-up automático."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "nivel": {
+                    "type": "string",
+                    "enum": ["morno", "quente"],
+                    "description": "Nivel de interesse do lead",
+                },
+                "motivo": {
+                    "type": "string",
+                    "description": "Breve descricao do sinal de interesse observado",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "adicionar_tag_lead",
+        "description": (
+            "Etiqueta o lead com uma ou mais tags do CRM ao identificar perfil, intencao "
+            "ou objecao durante a conversa. Use SOMENTE tags da lista permitida (enum abaixo) "
+            "— nunca invente variacoes (ex.: 'b2b', 'cliente novo'). Pode chamar mais de uma "
+            "vez na conversa; tags repetidas sao ignoradas. Aplicacao silenciosa: nao avise "
+            "o cliente sobre a marcacao."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
                         "type": "string",
-                        "description": (
-                            "Mensagem de despedida/transbordo curta e personalizada para o lead, escrita com base no "
-                            "contexto da conversa. Sera enviada como texto, seguida do cartao de contato do Joao. "
-                            "DIRECIONE A ACAO PRO LEAD: o cartao do Joao aparece em seguida e e o LEAD que toca nele "
-                            "pra chamar — convide-o a fazer isso. NAO use 'vou te conectar'/'ja te transfiro'/'vou passar "
-                            "seu contato' (da falsa impressao de que voce faz a ponte). NAO inclua telefone, link nem wa.me."
-                        ),
+                        "enum": [
+                            "B2B", "B2C", "Revenda", "Marca Própria", "Exportação",
+                            "Urgente", "Já é Cliente", "Pediu Humano",
+                            "Objeção: Preço", "Objeção: Prazo",
+                        ],
                     },
-                    "vendedor": {"type": "string", "description": "Nome do vendedor (opcional — omita em casos de rejeicao)"},
-                    "motivo": {"type": "string", "description": "Motivo do encaminhamento ou encerramento"},
+                    "description": "Tags a aplicar (apenas valores do enum).",
+                }
+            },
+            "required": ["tags"],
+        },
+    },
+    {
+        "name": "retomar_contato_vendedor",
+        "description": (
+            "Reconecta ao vendedor Joao Bras um lead que JA teve atendimento com ele no passado e esfriou "
+            "(cenario de reativacao). USE somente apos as 3 etapas: "
+            "(1) voce investigou por que o atendimento anterior nao avancou e contornou a objecao; "
+            "(2) o lead demonstrou que quer retomar; "
+            "(3) voce perguntou EXPLICITAMENTE se pode encaminha-lo de novo ao Joao e o lead respondeu SIM. "
+            "Esta ferramenta dispara uma mensagem pelo numero do Joao para o lead — AGORA se em horario comercial "
+            "(09h-16h, dias uteis), senao AGENDA para o proximo dia util — e ENCERRA a conversa automatica (desativa a IA). "
+            "O retorno informa se o disparo foi AGORA ou AGENDADO: use isso para se despedir corretamente "
+            "('o Joao acabou de te chamar' vs 'o Joao vai te chamar amanha de manha'). "
+            "Apos chama-la, escreva APENAS a mensagem de despedida e NAO envie mais nada. "
+            "NAO use sem o SIM explicito do lead. Para handoff de lead novo/qualificado, use encaminhar_humano."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "motivo": {
+                    "type": "string",
+                    "description": "Breve resumo do que esfriou o atendimento anterior e do que o lead quer retomar",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "agendar_retorno",
+        "description": (
+            "Agenda VOCE MESMA um retorno futuro a este lead quando ele pede para falar "
+            "depois (ex.: 'me chama sexta', 'volta amanha de manha', 'daqui a 2 horas'). "
+            "No horario combinado voce reabre a conversa automaticamente — NAO dependa do "
+            "follow-up generico nem peca para um humano lembrar. "
+            "REGRAS: passe `data_hora` em ISO 8601 COM fuso (-03:00), ex. "
+            "'2026-06-27T14:00:00-03:00'; calcule a data real a partir de hoje "
+            "(2026) — nunca use datas vagas. Horarios fora do comercial (09h-16h, dias "
+            "uteis) sao automaticamente ajustados para o proximo horario valido. "
+            "Apos agendar, confirme ao lead de forma natural que voce volta a falar nesse "
+            "momento e siga a conversa normalmente (esta tool NAO encerra o atendimento "
+            "nem desativa a IA)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data_hora": {
+                    "type": "string",
+                    "description": (
+                        "Data e hora do retorno em ISO 8601 com fuso de Brasilia (-03:00). "
+                        "Ex.: '2026-06-27T14:00:00-03:00'. Calcule a partir da data de hoje."
+                    ),
                 },
-                "required": ["mensagem_despedida"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "qualificar_lead",
-            "description": (
-                "Registra as ÂNCORAS de qualificação do lead à medida que voce as descobre na "
-                "conversa. Chame assim que captar cada uma — NAO espere o lead pedir pra comprar. "
-                "Âncoras: finalidade (para que o lead quer o cafe: revenda, cafeteria, restaurante, "
-                "marca propria, etc.), volume (quanto pretende: kg, pacotes, fardos, pedido mensal), "
-                "urgencia (quando pretende comprar/decidir). Passe apenas as que ja souber; pode "
-                "chamar de novo depois pra completar. Quando finalidade E volume ja estiverem "
-                "definidos, o sistema transfere o lead pro vendedor automaticamente — voce NAO "
-                "precisa chamar encaminhar_humano nesse caso."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "finalidade": {"type": "string", "description": "Para que o lead quer o cafe (revenda, cafeteria, restaurante, marca propria, etc.)"},
-                    "volume": {"type": "string", "description": "Volume/quantidade pretendida (kg, pacotes, fardos, pedido mensal)"},
-                    "urgencia": {"type": "string", "description": "Prazo/urgencia da compra ou decisao (opcional)"},
+                "motivo": {
+                    "type": "string",
+                    "description": (
+                        "O que ficou combinado / por que retornar (ex.: 'lead pediu retorno "
+                        "na sexta para fechar pedido de 30kg')."
+                    ),
                 },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "registrar_optout",
-            "description": (
-                "HARD OPT-OUT (descarte definitivo). Use SOMENTE quando o lead PROIBIR explicitamente o contato: "
-                "pedir para parar de receber mensagens, sair da lista, 'me tira da lista', ameacar ('vou processar', "
-                "'vou denunciar'), ou clicar no botao 'Parar mensagens'. "
-                "Efeito: marca opt_out=true, desativa a IA, joga o lead na Blacklist (sem notificar o time, sem negocio). "
-                "NAO confunda com falta de interesse no momento ('to sem grana', 'ja fechei com outro') — isso NAO e "
-                "opt-out: nesse caso use registrar_sem_interesse_atual. "
-                "Antes de chamar esta tool, escreva UMA mensagem de despedida respeitosa no texto do turno. "
-                "Apos chamar, NAO envie mais nenhuma mensagem."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "motivo": {
-                        "type": "string",
-                        "description": (
-                            "O que o lead disse, com o maximo de detalhe: pedido/ameaca exata e contexto "
-                            "(ex: 'clicou parar mensagens', 'pediu para sair da lista — disse que recebe spam demais'). "
-                            "Evite generico; capture as palavras reais do lead."
-                        ),
-                    }
+                "contexto": {
+                    "type": "string",
+                    "description": (
+                        "Opcional: contexto extra para voce usar na volta (objecao pendente, "
+                        "produto de interesse, volume discutido)."
+                    ),
                 },
-                "required": ["motivo"],
             },
+            "required": ["data_hora", "motivo"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "registrar_sem_interesse_atual",
-            "description": (
-                "SOFT REJECTION (perda, NAO e opt-out). Use quando o lead nao quer avancar a compra AGORA mas NAO "
-                "proibiu o contato: ex. 'to sem grana', 'ja fechei com outro fornecedor', 'agora nao da', "
-                "'deixa pra mais pra frente', ou objecao de preco/momento que voce nao conseguiu contornar. "
-                "Efeito: tira o lead do funil (stage=perdido, IA desativada, human_control, deal movido para o stage "
-                "Perdido do pipeline), MAS mantem o lead na base para reativacao futura — opt_out continua FALSE, "
-                "SEM blacklist. "
-                "NUNCA use se o lead pediu para parar de receber mensagens ou proibiu contato — nesse caso use registrar_optout. "
-                "Antes de chamar, escreva UMA mensagem de despedida cordial deixando a porta aberta. "
-                "Apos chamar, NAO envie mais nenhuma mensagem."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "motivo": {
-                        "type": "string",
-                        "description": (
-                            "Motivo DETALHADO e analitico da perda — nunca generico ('nao quis'). Capture: a objecao real "
-                            "nao superada, o concorrente atual se citado, o volume/ticket discutido, e a dor ou contexto "
-                            "por tras (ex: 'objecao de preco — achou caro vs fornecedor atual X que entrega a R$18/kg; "
-                            "compra ~30kg/mes pra cafeteria; quer reavaliar no proximo trimestre')."
-                        ),
-                    }
-                },
-                "required": ["motivo"],
-            },
+        "name": "consultar_relacionamento",
+        "description": (
+            "Consulta o histórico de relacionamento do lead no CRM: se já é cliente ativo, "
+            "quando foi a última compra e qual produto. "
+            "CHAME ANTES de qualificar o lead quando: o <crm_data> ou <lead_memory> sugerir "
+            "que pode ser cliente antigo; o lead usar termos de recompra ('repor', 'novo pedido', "
+            "'mais um pedido', 'de novo', 'sempre compro'); ou houver QUALQUER suspeita de cliente "
+            "antigo. Retorna string descritiva — use para decidir se trata como "
+            "reabastecimento/upsell (NÃO rode funil de lead novo com cliente ativo) ou prospecto frio."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "registrar_numero_errado",
-            "description": (
-                "NUMERO POSSIVELMENTE ERRADO (higiene, NAO e opt-out). Use quando quem responde NEGA ser a pessoa "
-                "do cadastro SEM se identificar ('nao sou eu', 'numero errado', 'nao conheco', 'esse celular nao e "
-                "mais da/do X'). Efeito: marca o numero para higiene automatica — se NINGUEM responder em 72h, o "
-                "sistema registra opt-out sozinho e o numero nunca mais recebe disparo. NAO desativa a IA nem "
-                "encerra a conversa: continue o arco normal (desculpa leve + UMA pergunta de re-engajamento). "
-                "Se a pessoa se identificar depois, o marcador e limpo automaticamente. "
-                "NAO use quando a pessoa AFIRMA o proprio nome (isso e correcao de cadastro — use salvar_nome)."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "contexto": {
-                        "type": "string",
-                        "description": (
-                            "O que a pessoa disse, literal (ex.: \"clicou Nao e escreveu 'nao conheco'\", "
-                            "\"disse que esse celular nao e mais da Magda\")."
-                        ),
-                    }
-                },
-                "required": ["contexto"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "registrar_indicacao",
-            "description": (
-                "INDICACAO / REFERRAL. Use quando o lead indicar OUTRA pessoa como o contato certo para o negocio: "
-                "vendeu/fechou a loja e diz quem ficou com ela, 'quem cuida disso agora e o Fulano', 'fala com meu "
-                "socio', ou oferece repassar seu contato ao sucessor. Efeito: grava a indicacao no CRM (nota + tag) "
-                "para o time humano acionar o indicado — a tool NAO cria lead novo nem dispara mensagem a terceiro. "
-                "Chame UMA vez por indicacao, assim que o lead der a informacao; capture nome/telefone se ele der, "
-                "mas o contexto sozinho ja vale o registro. Depois de chamar, agradeca com naturalidade."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "contexto": {
-                        "type": "string",
-                        "description": (
-                            "A historia da indicacao com as palavras do lead (ex.: 'vendeu a Divina Terra em maio; "
-                            "quem assumiu foi o antigo gerente, vai continuar com cafe especial')."
-                        ),
-                    },
-                    "nome": {
-                        "type": "string",
-                        "description": "Nome do indicado, se o lead informou. Vazio se nao deu.",
-                    },
-                    "telefone": {
-                        "type": "string",
-                        "description": "Telefone/WhatsApp do indicado, se o lead informou. Vazio se nao deu.",
-                    },
-                },
-                "required": ["contexto"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "enviar_fotos",
-            "description": "Envia catalogo de fotos dos produtos ao lead",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "categoria": {
-                        "type": "string",
-                        "enum": ["atacado", "private_label"],
-                        "description": "Categoria do catalogo",
-                    }
-                },
-                "required": ["categoria"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "enviar_foto_produto",
-            "description": "Envia a foto de UM produto especifico ao lead com descricao. Use para intercalar texto e foto na conversa.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "categoria": {
-                        "type": "string",
-                        "enum": ["atacado", "private_label"],
-                        "description": "Categoria do produto",
-                    },
-                    "produto": {
-                        "type": "string",
-                        "description": "Nome do produto (ex: classico, suave, canela, microlote, drip, capsulas, embalagem, standup, silk, final)",
-                    },
-                },
-                "required": ["categoria", "produto"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "marcar_interesse",
-            "description": (
-                "Marca que o lead demonstrou INTERESSE COMERCIAL CLARO nesta conversa "
-                "(ex: perguntou preço/condições, pediu detalhes para comprar, demonstrou intenção real de avançar). "
-                "NÃO use para resposta educada, 'ok', 'obrigado', 'vou pensar', saudação, ou curiosidade vaga. "
-                "Só o interesse genuíno habilita o follow-up automático."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "nivel": {
-                        "type": "string",
-                        "enum": ["morno", "quente"],
-                        "description": "Nivel de interesse do lead",
-                    },
-                    "motivo": {
-                        "type": "string",
-                        "description": "Breve descricao do sinal de interesse observado",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "adicionar_tag_lead",
-            "description": (
-                "Etiqueta o lead com uma ou mais tags do CRM ao identificar perfil, intencao "
-                "ou objecao durante a conversa. Use SOMENTE tags da lista permitida (enum abaixo) "
-                "— nunca invente variacoes (ex.: 'b2b', 'cliente novo'). Pode chamar mais de uma "
-                "vez na conversa; tags repetidas sao ignoradas. Aplicacao silenciosa: nao avise "
-                "o cliente sobre a marcacao."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": [
-                                "B2B", "B2C", "Revenda", "Marca Própria", "Exportação",
-                                "Urgente", "Já é Cliente", "Pediu Humano",
-                                "Objeção: Preço", "Objeção: Prazo",
-                            ],
-                        },
-                        "description": "Tags a aplicar (apenas valores do enum).",
-                    }
-                },
-                "required": ["tags"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "retomar_contato_vendedor",
-            "description": (
-                "Reconecta ao vendedor Joao Bras um lead que JA teve atendimento com ele no passado e esfriou "
-                "(cenario de reativacao). USE somente apos as 3 etapas: "
-                "(1) voce investigou por que o atendimento anterior nao avancou e contornou a objecao; "
-                "(2) o lead demonstrou que quer retomar; "
-                "(3) voce perguntou EXPLICITAMENTE se pode encaminha-lo de novo ao Joao e o lead respondeu SIM. "
-                "Esta ferramenta dispara uma mensagem pelo numero do Joao para o lead — AGORA se em horario comercial "
-                "(09h-16h, dias uteis), senao AGENDA para o proximo dia util — e ENCERRA a conversa automatica (desativa a IA). "
-                "O retorno informa se o disparo foi AGORA ou AGENDADO: use isso para se despedir corretamente "
-                "('o Joao acabou de te chamar' vs 'o Joao vai te chamar amanha de manha'). "
-                "Apos chama-la, escreva APENAS a mensagem de despedida e NAO envie mais nada. "
-                "NAO use sem o SIM explicito do lead. Para handoff de lead novo/qualificado, use encaminhar_humano."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "motivo": {
-                        "type": "string",
-                        "description": "Breve resumo do que esfriou o atendimento anterior e do que o lead quer retomar",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "agendar_retorno",
-            "description": (
-                "Agenda VOCE MESMA um retorno futuro a este lead quando ele pede para falar "
-                "depois (ex.: 'me chama sexta', 'volta amanha de manha', 'daqui a 2 horas'). "
-                "No horario combinado voce reabre a conversa automaticamente — NAO dependa do "
-                "follow-up generico nem peca para um humano lembrar. "
-                "REGRAS: passe `data_hora` em ISO 8601 COM fuso (-03:00), ex. "
-                "'2026-06-27T14:00:00-03:00'; calcule a data real a partir de hoje "
-                "(2026) — nunca use datas vagas. Horarios fora do comercial (09h-16h, dias "
-                "uteis) sao automaticamente ajustados para o proximo horario valido. "
-                "Apos agendar, confirme ao lead de forma natural que voce volta a falar nesse "
-                "momento e siga a conversa normalmente (esta tool NAO encerra o atendimento "
-                "nem desativa a IA)."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "data_hora": {
-                        "type": "string",
-                        "description": (
-                            "Data e hora do retorno em ISO 8601 com fuso de Brasilia (-03:00). "
-                            "Ex.: '2026-06-27T14:00:00-03:00'. Calcule a partir da data de hoje."
-                        ),
-                    },
-                    "motivo": {
-                        "type": "string",
-                        "description": (
-                            "O que ficou combinado / por que retornar (ex.: 'lead pediu retorno "
-                            "na sexta para fechar pedido de 30kg')."
-                        ),
-                    },
-                    "contexto": {
-                        "type": "string",
-                        "description": (
-                            "Opcional: contexto extra para voce usar na volta (objecao pendente, "
-                            "produto de interesse, volume discutido)."
-                        ),
-                    },
-                },
-                "required": ["data_hora", "motivo"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "consultar_relacionamento",
-            "description": (
-                "Consulta o histórico de relacionamento do lead no CRM: se já é cliente ativo, "
-                "quando foi a última compra e qual produto. "
-                "CHAME ANTES de qualificar o lead quando: o <crm_data> ou <lead_memory> sugerir "
-                "que pode ser cliente antigo; o lead usar termos de recompra ('repor', 'novo pedido', "
-                "'mais um pedido', 'de novo', 'sempre compro'); ou houver QUALQUER suspeita de cliente "
-                "antigo. Retorna string descritiva — use para decidir se trata como "
-                "reabastecimento/upsell (NÃO rode funil de lead novo com cliente ativo) ou prospecto frio."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calcular_orcamento",
-            "description": (
-                "Calcula o orçamento determinístico do pedido a partir de um carrinho de produtos do setor atacado. "
-                "É OBRIGATÓRIO chamar esta ferramenta para QUALQUER pergunta de preço, valor de pedido, frete, "
-                "total ou pedido mínimo — é PROIBIDO somar, multiplicar, estimar ou inventar qualquer valor de "
-                "cabeça. Nunca calcule de cabeça. "
-                "Se faltar a quantidade ou o estado, pergunte antes de calcular. "
-                "Recebe um carrinho (`itens`: lista de objetos com `produto` e `quantidade`), "
-                "`estado` (sigla UF, ex.: SP) e `cidade` opcionais. "
-                "Retorna orçamento com breakdown item a item, subtotal global, frete e total."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "itens": {
-                        "type": "array",
-                        "description": "Lista de produtos do carrinho com nome e quantidade",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "produto": {
-                                    "type": "string",
-                                    "description": "Nome ou parte do nome do produto desejado",
-                                },
-                                "quantidade": {
-                                    "type": "integer",
-                                    "description": "Quantidade do produto (deve ser > 0)",
-                                },
+        "name": "calcular_orcamento",
+        "description": (
+            "Calcula o orçamento determinístico do pedido a partir de um carrinho de produtos do setor atacado. "
+            "É OBRIGATÓRIO chamar esta ferramenta para QUALQUER pergunta de preço, valor de pedido, frete, "
+            "total ou pedido mínimo — é PROIBIDO somar, multiplicar, estimar ou inventar qualquer valor de "
+            "cabeça. Nunca calcule de cabeça. "
+            "Se faltar a quantidade ou o estado, pergunte antes de calcular. "
+            "Recebe um carrinho (`itens`: lista de objetos com `produto` e `quantidade`), "
+            "`estado` (sigla UF, ex.: SP) e `cidade` opcionais. "
+            "Retorna orçamento com breakdown item a item, subtotal global, frete e total."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "itens": {
+                    "type": "array",
+                    "description": "Lista de produtos do carrinho com nome e quantidade",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "produto": {
+                                "type": "string",
+                                "description": "Nome ou parte do nome do produto desejado",
                             },
-                            "required": ["produto", "quantidade"],
+                            "quantidade": {
+                                "type": "integer",
+                                "description": "Quantidade do produto (deve ser > 0)",
+                            },
                         },
-                    },
-                    "estado": {
-                        "type": "string",
-                        "description": (
-                            "Sigla do estado (UF), ex.: SP, MG, BA. "
-                            "Opcional — pergunte ao lead se não souber."
-                        ),
-                    },
-                    "cidade": {
-                        "type": "string",
-                        "description": (
-                            "Cidade do lead. Opcional — necessário apenas para cidades com "
-                            "frete especial (ex.: Uberlândia, frete flat R$15)."
-                        ),
+                        "required": ["produto", "quantidade"],
                     },
                 },
-                "required": ["itens"],
+                "estado": {
+                    "type": "string",
+                    "description": (
+                        "Sigla do estado (UF), ex.: SP, MG, BA. "
+                        "Opcional — pergunte ao lead se não souber."
+                    ),
+                },
+                "cidade": {
+                    "type": "string",
+                    "description": (
+                        "Cidade do lead. Opcional — necessário apenas para cidades com "
+                        "frete especial (ex.: Uberlândia, frete flat R$15)."
+                    ),
+                },
             },
+            "required": ["itens"],
         },
     },
 ]
@@ -674,7 +626,7 @@ def get_tools_for_stage(stage: str) -> list[dict]:
         "consumo":       ["salvar_nome", "mudar_stage", "registrar_optout", "marcar_interesse", "adicionar_tag_lead", "agendar_retorno", "consultar_relacionamento"],
     }
     allowed = stage_tools.get(stage, ["salvar_nome"])
-    return [t for t in TOOLS_SCHEMA if t["function"]["name"] in allowed]
+    return [t for t in TOOL_DECLARATIONS if t["name"] in allowed]
 
 
 def _normalize_text(s: str | None) -> str:
@@ -953,14 +905,14 @@ async def execute_tool(
         # Gera e armazena resumo estruturado da qualificação
         try:
             from app.agent.summary import generate_qualification_summary
-            from app.agent.orchestrator import get_ai_client, DEFAULT_MODEL
+            from app.agent.orchestrator import DEFAULT_MODEL
             from app.db.supabase import get_supabase
             conv_history = get_conversation_history(conversation_id, limit=100)
             fresh_lead = get_lead(lead_id) or {}
             _model = DEFAULT_MODEL
             _handoff_at = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
             summary_text = await generate_qualification_summary(
-                conv_history, fresh_lead, get_ai_client(_model), _model,
+                conv_history, fresh_lead, _model,
                 motivo=motivo,
                 handoff_at=_handoff_at,
             )

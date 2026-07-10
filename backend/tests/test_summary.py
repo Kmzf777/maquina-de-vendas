@@ -1,36 +1,39 @@
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
+
 from app.agent.summary import generate_qualification_summary
+from tests.gemini_fakes import fake_text
 
 
-def _make_client(response_text: str) -> MagicMock:
-    choice = MagicMock()
-    choice.message.content = response_text
-    completion = MagicMock()
-    completion.choices = [choice]
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=completion)
-    return client
+def _patch_generate(response_text: str) -> "patch":
+    return patch(
+        "app.agent.summary.generate",
+        new=AsyncMock(side_effect=[fake_text(response_text)]),
+    )
+
+
+def _user_text(m: AsyncMock) -> str:
+    """Texto do turno de usuário enviado ao núcleo nativo (contents[0])."""
+    return m.await_args.kwargs["contents"][0].parts[0].text
 
 
 @pytest.mark.asyncio
 async def test_empty_history_returns_fallback():
-    client = _make_client("irrelevante")
-    result = await generate_qualification_summary([], {}, client, "gpt-4o-mini")
+    with _patch_generate("irrelevante") as m_gen:
+        result = await generate_qualification_summary([], {}, "gemini-2.5-flash")
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
     assert "Nenhuma mensagem" in result
-    client.chat.completions.create.assert_not_called()
+    m_gen.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_history_without_user_or_assistant_returns_fallback():
     history = [{"role": "system", "content": "stage alterado"}]
-    client = _make_client("irrelevante")
-    result = await generate_qualification_summary(history, {}, client, "gpt-4o-mini")
+    with _patch_generate("irrelevante") as m_gen:
+        result = await generate_qualification_summary(history, {}, "gemini-2.5-flash")
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
     assert "sem mensagens relevantes" in result
-    client.chat.completions.create.assert_not_called()
+    m_gen.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -42,60 +45,63 @@ async def test_calls_llm_and_returns_response():
     ]
     lead = {"name": "Carlos", "stage": "atacado"}
     expected = "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n* **Nome do Lead:** Carlos"
-    client = _make_client(expected)
 
-    result = await generate_qualification_summary(history, lead, client, "gemini-2.5-flash")
+    with _patch_generate(expected) as m_gen:
+        result = await generate_qualification_summary(history, lead, "gemini-2.5-flash")
 
     assert result == expected
-    client.chat.completions.create.assert_called_once()
-    call_kwargs = client.chat.completions.create.call_args
-    messages_sent = call_kwargs.kwargs["messages"]
-    user_msg = next(m for m in messages_sent if m["role"] == "user")
-    assert "Carlos" in user_msg["content"]
-    assert "atacado" in user_msg["content"]
-    assert "[Lead]: Quero comprar café" in user_msg["content"]
+    assert m_gen.await_count == 1
+    user_msg = _user_text(m_gen)
+    assert "Carlos" in user_msg
+    assert "atacado" in user_msg
+    assert "[Lead]: Quero comprar café" in user_msg
+    # o prompt de sistema vai como system_instruction nativo, fora dos contents
+    assert "briefings de vendas" in m_gen.await_args.kwargs["system_instruction"]
 
 
 @pytest.mark.asyncio
 async def test_gemini_25_disables_thinking_and_has_token_headroom():
     """Regressão: o resumo era cortado em '26/06/' porque gemini-2.5-flash gastava o
-    budget de saída pensando (max_tokens=700 sem reasoning_effort). Garante que a chamada
-    desliga o thinking e tem folga de tokens, igual ao orchestrator."""
+    budget de saída pensando (max_tokens=700 sem desligar o thinking). Garante que a
+    chamada desliga o thinking (knob nativo thinking_off → ThinkingConfig(thinking_budget=0))
+    e tem folga de tokens, igual ao orchestrator."""
     history = [{"role": "user", "content": "Quero comprar café no atacado"}]
-    client = _make_client("## NOVO LEAD QUALIFICADO PELA VALÉRIA\n**Data/Hora:** 26/06/2026 11:59")
 
-    await generate_qualification_summary(history, {"name": "João"}, client, "gemini-2.5-flash")
+    with _patch_generate("## NOVO LEAD QUALIFICADO PELA VALÉRIA\n**Data/Hora:** 26/06/2026 11:59") as m_gen:
+        await generate_qualification_summary(history, {"name": "João"}, "gemini-2.5-flash")
 
-    kwargs = client.chat.completions.create.call_args.kwargs
-    assert kwargs.get("reasoning_effort") == "none"
-    assert kwargs["max_tokens"] >= 2048
+    kwargs = m_gen.await_args.kwargs
+    assert kwargs["thinking_off"] is True
+    assert kwargs["max_output_tokens"] >= 2048
 
 
 @pytest.mark.asyncio
-async def test_non_gemini_does_not_send_reasoning_effort():
-    """Modelos OpenAI e gemini-2.5-pro/3.x rejeitam reasoning_effort='none' (400).
-    Para esses, o kwarg NÃO deve ser enviado."""
+async def test_no_facade_kwargs_leak_into_native_call():
+    """Herdeiro do teste 'non_gemini_does_not_send_reasoning_effort': na era da fachada,
+    kwargs OpenAI-shape (reasoning_effort) vazando p/ modelos que os rejeitam davam 400.
+    O núcleo nativo tem assinatura FECHADA — nada de reasoning_effort/response_format/
+    max_tokens; o controle de thinking é exclusivamente o knob nativo thinking_off."""
     history = [{"role": "user", "content": "Interesse em private label"}]
-    client = _make_client("## NOVO LEAD QUALIFICADO PELA VALÉRIA")
 
-    await generate_qualification_summary(history, {"name": "Ana"}, client, "gpt-4o-mini")
+    with _patch_generate("## NOVO LEAD QUALIFICADO PELA VALÉRIA") as m_gen:
+        await generate_qualification_summary(history, {"name": "Ana"}, "gemini-2.5-flash")
 
-    kwargs = client.chat.completions.create.call_args.kwargs
+    kwargs = m_gen.await_args.kwargs
     assert "reasoning_effort" not in kwargs
+    assert "response_format" not in kwargs
+    assert "max_tokens" not in kwargs  # nome nativo: max_output_tokens
 
 
 @pytest.mark.asyncio
 async def test_llm_failure_returns_graceful_fallback():
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(side_effect=Exception("timeout"))
     lead = {"name": "Ana", "stage": "private_label"}
 
-    result = await generate_qualification_summary(
-        [{"role": "user", "content": "Interesse em private label"}],
-        lead,
-        client,
-        "gemini-2.5-flash",
-    )
+    with patch("app.agent.summary.generate", new=AsyncMock(side_effect=Exception("timeout"))):
+        result = await generate_qualification_summary(
+            [{"role": "user", "content": "Interesse em private label"}],
+            lead,
+            "gemini-2.5-flash",
+        )
 
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
     assert "Erro" in result

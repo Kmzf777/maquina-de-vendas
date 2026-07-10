@@ -43,7 +43,7 @@ async def test_tool_marca_wrong_number_at():
 
 
 def test_tool_disponivel_na_secretaria():
-    names = [t["function"]["name"] for t in tools.get_tools_for_stage("secretaria")]
+    names = [t["name"] for t in tools.get_tools_for_stage("secretaria")]
     assert "registrar_numero_errado" in names
 
 

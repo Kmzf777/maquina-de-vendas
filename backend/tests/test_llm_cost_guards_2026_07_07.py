@@ -25,18 +25,20 @@ def _fake_resp(candidates: int, thoughts: int):
 
 
 def test_completion_tokens_inclui_thoughts():
-    from app.agent.gemini_native import _parse_response
-    parsed = _parse_response(_fake_resp(candidates=50, thoughts=2000))
-    assert parsed.usage.completion_tokens == 2050  # visível + thinking
-    assert parsed.usage.reasoning_tokens == 2000
-    assert parsed.usage.prompt_tokens == 100
+    # Núcleo nativo (migração 09/07): a saída FATURADA (visível + thinking) vem de
+    # usage_metadata.billed_output_tokens — mesmo invariante do incidente 1-6/jul.
+    from app.agent.gemini_client import parse_result
+    parsed = parse_result(_fake_resp(candidates=50, thoughts=2000))
+    assert parsed.usage_metadata.billed_output_tokens == 2050  # visível + thinking
+    assert parsed.usage_metadata.thoughts_token_count == 2000
+    assert parsed.usage_metadata.prompt_token_count == 100
 
 
 def test_completion_tokens_sem_thoughts_inalterado():
-    from app.agent.gemini_native import _parse_response
-    parsed = _parse_response(_fake_resp(candidates=42, thoughts=0))
-    assert parsed.usage.completion_tokens == 42
-    assert parsed.usage.reasoning_tokens == 0
+    from app.agent.gemini_client import parse_result
+    parsed = parse_result(_fake_resp(candidates=42, thoughts=0))
+    assert parsed.usage_metadata.billed_output_tokens == 42
+    assert parsed.usage_metadata.thoughts_token_count == 0
 
 
 # ── 2. Kill-switch de orçamento diário ──────────────────────────────────────────
@@ -62,37 +64,35 @@ def test_budget_abaixo_do_teto_permite(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_with_retry_levanta_budget_error(monkeypatch):
-    """Estourado o teto, _create_with_retry levanta ANTES de chamar o provedor, e o erro
+async def test_generate_with_retry_levanta_budget_error(monkeypatch):
+    """Estourado o teto, _generate_with_retry levanta ANTES de chamar o provedor, e o erro
     é subclasse de LLMUnavailableError (reusa o fallback de handoff)."""
+    from unittest.mock import AsyncMock
     from app.agent import orchestrator, budget_guard
     monkeypatch.setattr(budget_guard, "is_exceeded", lambda: True)
     monkeypatch.setattr(budget_guard, "today_spend_usd", lambda force=False: 99.0)
     monkeypatch.setattr(budget_guard, "daily_cost_limit_usd", lambda: 10.0)
 
-    class _BoomClient:  # se for chamado, falha o teste
-        class chat:
-            class completions:
-                @staticmethod
-                async def create(**_):
-                    raise AssertionError("provedor NÃO deveria ser chamado com budget estourado")
+    boom = AsyncMock(side_effect=AssertionError("provedor NÃO deveria ser chamado com budget estourado"))
+    monkeypatch.setattr(orchestrator, "generate", boom)
 
     with pytest.raises(orchestrator.LLMUnavailableError):
-        await orchestrator._create_with_retry(_BoomClient(), model="gemini-2.5-flash", messages=[])
+        await orchestrator._generate_with_retry(model="gemini-2.5-flash", contents=[])
+    boom.assert_not_awaited()
 
 
 # ── 3. Knob de thinking inicial ─────────────────────────────────────────────────
 
 def test_initial_thinking_default_ligado(monkeypatch):
-    from app.agent.orchestrator import _initial_thinking_kwargs
+    from app.agent.orchestrator import _initial_thinking_off
     monkeypatch.delenv("LLM_INITIAL_THINKING", raising=False)
-    assert _initial_thinking_kwargs("gemini-2.5-flash") == {}  # ligado = sem reasoning_effort
+    assert _initial_thinking_off("gemini-2.5-flash") is False  # ligado = pensa na 1ª
 
 
 def test_initial_thinking_desligado_por_env(monkeypatch):
-    from app.agent.orchestrator import _initial_thinking_kwargs
+    from app.agent.orchestrator import _initial_thinking_off
     monkeypatch.setenv("LLM_INITIAL_THINKING", "off")
-    assert _initial_thinking_kwargs("gemini-2.5-flash") == {"reasoning_effort": "none"}
+    assert _initial_thinking_off("gemini-2.5-flash") is True
 
 
 # ── 4. Segregação de chave Gemini dev/prod ──────────────────────────────────────

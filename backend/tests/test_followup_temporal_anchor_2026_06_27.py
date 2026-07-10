@@ -5,9 +5,11 @@ Produção (lead Johny): follow-up disse 'a gente se falou rapidinho outro dia' 
 contato foi na mesma manhã. Injetamos Δt da última mensagem + proibição de inventar período.
 """
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
+
+from tests.gemini_fakes import fake_text
 
 from app.follow_up import scheduler
 from app.follow_up.scheduler import _build_followup_system_prompt, _humanize_elapsed
@@ -47,15 +49,7 @@ async def test_generate_computa_e_repassa_last_msg_age(monkeypatch):
 
     monkeypatch.setattr(scheduler, "_build_followup_system_prompt", fake_build)
     monkeypatch.setattr(scheduler, "track_token_usage", lambda **k: None)
-
-    resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].message.content = "oi"
-    resp.choices[0].finish_reason = "stop"
-    resp.usage = None
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
-    monkeypatch.setattr(scheduler, "get_gemini_client", lambda *a, **k: client)
+    monkeypatch.setattr(scheduler, "generate", AsyncMock(return_value=fake_text("oi")))
 
     now = datetime(2026, 6, 26, 14, 47, tzinfo=timezone.utc)
     history = [{"role": "user", "content": "oi", "created_at": "2026-06-26T12:47:00+00:00"}]
