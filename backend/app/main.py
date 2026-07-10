@@ -10,13 +10,13 @@ from fastapi.responses import HTMLResponse
 from app.config import settings
 from app.buffer.flusher import run_flusher
 from app.buffer.recovery import recover_orphaned_buffers
+from app.logging_setup import setup_logging
+from app.observability import init_sentry
 from app.watchdog.service import run_watchdog
 from app.whatsapp.meta import close_shared_client
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+setup_logging()
+init_sentry()
 
 logger = logging.getLogger(__name__)
 
