@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Message } from "@/lib/types";
 
 function formatTime(ts: string): string {
@@ -104,7 +105,7 @@ interface EventCardProps {
   message: Message;
 }
 
-export function EventCard({ message }: EventCardProps) {
+function EventCardImpl({ message }: EventCardProps) {
   const { type, label, bg, color } = parseEvent(message.content);
   const time = formatTime(message.created_at);
 
@@ -124,3 +125,5 @@ export function EventCard({ message }: EventCardProps) {
     </div>
   );
 }
+
+export const EventCard = memo(EventCardImpl);
