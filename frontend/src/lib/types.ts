@@ -133,37 +133,6 @@ export interface QuickReply {
   updated_at: string;
 }
 
-export interface EvolutionChat {
-  id: string;
-  remoteJid: string;
-  pushName: string | null;
-  profilePicUrl: string | null;
-  lastMessage: {
-    content: string;
-    timestamp: number;
-  } | null;
-  unreadCount: number;
-}
-
-export interface EvolutionMessage {
-  key: {
-    remoteJid: string;
-    fromMe: boolean;
-    id: string;
-  };
-  message: {
-    conversation?: string;
-    imageMessage?: { caption?: string; url?: string };
-    audioMessage?: { url?: string };
-    documentMessage?: { fileName?: string; url?: string };
-    stickerMessage?: Record<string, unknown>;
-    videoMessage?: { caption?: string; url?: string };
-  };
-  messageType?: string;
-  messageTimestamp: number;
-  pushName?: string;
-}
-
 export interface Broadcast {
   id: string;
   name: string;

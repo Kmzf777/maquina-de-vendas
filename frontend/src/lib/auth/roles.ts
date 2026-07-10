@@ -28,7 +28,6 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
 // Prefixos de API route restritos a admin
 export const ADMIN_API_PREFIXES = [
   "/api/stats",
-  "/api/evolution",
   "/api/admin",
   "/api/users",
   "/api/model-pricing",
