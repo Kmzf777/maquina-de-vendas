@@ -1,5 +1,7 @@
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text
 
 
 @pytest.mark.asyncio
@@ -19,15 +21,10 @@ async def test_run_agent_usa_history_limit_60():
         captured_limit["limit"] = limit
         return []
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(tool_calls=None, content="oi"))]
-    mock_response.usage = None
-
     with patch("app.agent.orchestrator.get_history", side_effect=fake_get_history), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-001", "phone": "5511999990000", "human_control": False}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-
-        mock_client.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=AsyncMock(return_value=fake_text("oi"))):
         await run_agent(conversation, "oi")
 
     assert captured_limit.get("limit") == 60, (

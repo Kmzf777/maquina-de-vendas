@@ -8,9 +8,14 @@ conversão B2C óbvia perdida por um loop de script.
 
 A guarda detecta a pergunta repetida no texto final e faz UMA regeneração
 corretiva ancorada; se a correção vier limpa, ela substitui o texto.
+
+Contrato Gemini nativo (migração 09/07/2026): as chamadas ao LLM saem por
+`app.agent.orchestrator.generate` (gemini_client) — fakes de tests/gemini_fakes.py.
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text
 
 _PERGUNTA = (
     "café pra você é mais um prazer do dia a dia ou tem a ver com algum projeto seu?"
@@ -29,17 +34,6 @@ _CORRIGIDA = (
 )
 
 _USER_TEXT = "Eu tinha uma cafeteria mas fechei."
-
-
-def _make_response(content):
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = None
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
 
 
 def _conversation():
@@ -63,21 +57,15 @@ def _history():
 async def test_pergunta_repetida_dispara_regeneracao_corretiva():
     from app.agent.orchestrator import run_agent
 
-    calls = {"n": 0}
-    responses = [_make_response(_REPETIDA), _make_response(_CORRIGIDA)]
-
-    async def fake_create(**kwargs):
-        resp = responses[calls["n"]]
-        calls["n"] += 1
-        return resp
+    m_gen = AsyncMock(side_effect=[fake_text(_REPETIDA), fake_text(_CORRIGIDA)])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-luciano", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation(), _USER_TEXT)
 
-    assert calls["n"] == 2, "deve ter feito exatamente UMA regeneração corretiva"
+    assert m_gen.await_count == 2, "deve ter feito exatamente UMA regeneração corretiva"
     assert "continua tomando um café especial" in result
     assert "prazer do dia a dia" not in result
 
@@ -87,21 +75,15 @@ async def test_correcao_ainda_repetida_envia_mesmo_assim():
     """Fail-open: se a regeneração também repetir, entrega o texto (nunca silêncio)."""
     from app.agent.orchestrator import run_agent
 
-    calls = {"n": 0}
-    responses = [_make_response(_REPETIDA), _make_response(_REPETIDA)]
-
-    async def fake_create(**kwargs):
-        resp = responses[calls["n"]]
-        calls["n"] += 1
-        return resp
+    m_gen = AsyncMock(side_effect=[fake_text(_REPETIDA), fake_text(_REPETIDA)])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-luciano", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation(), _USER_TEXT)
 
-    assert calls["n"] == 2
+    assert m_gen.await_count == 2
     assert result, "fail-open: melhor repetir do que fantasmar o lead"
 
 
@@ -109,17 +91,13 @@ async def test_correcao_ainda_repetida_envia_mesmo_assim():
 async def test_pergunta_inedita_nao_regenera():
     from app.agent.orchestrator import run_agent
 
-    calls = {"n": 0}
-
-    async def fake_create(**kwargs):
-        calls["n"] += 1
-        return _make_response(_CORRIGIDA)
+    m_gen = AsyncMock(return_value=fake_text(_CORRIGIDA))
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-luciano", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation(), _USER_TEXT)
 
-    assert calls["n"] == 1, "sem repetição não há chamada extra"
+    assert m_gen.await_count == 1, "sem repetição não há chamada extra"
     assert "continua tomando um café especial" in result

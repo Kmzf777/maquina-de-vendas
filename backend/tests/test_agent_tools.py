@@ -6,7 +6,7 @@ from app.agent.tools import get_tools_for_stage, PHOTO_CAPTIONS, PRODUTO_PHOTO_M
 
 def test_secretaria_tools():
     tools = get_tools_for_stage("secretaria")
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "salvar_nome" in names
     assert "mudar_stage" in names
     assert "encaminhar_humano" in names
@@ -14,7 +14,7 @@ def test_secretaria_tools():
 
 def test_atacado_tools():
     tools = get_tools_for_stage("atacado")
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "salvar_nome" in names
     assert "encaminhar_humano" in names
     assert "enviar_fotos" in names
@@ -22,7 +22,7 @@ def test_atacado_tools():
 
 def test_consumo_tools():
     tools = get_tools_for_stage("consumo")
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "salvar_nome" in names
     assert "mudar_stage" in names
     assert "registrar_optout" in names
@@ -54,19 +54,19 @@ def test_produto_photo_map_has_classico():
 
 def test_atacado_tools_include_enviar_foto_produto():
     tools = get_tools_for_stage("atacado")
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "enviar_foto_produto" in names
 
 
 def test_private_label_tools_include_enviar_foto_produto():
     tools = get_tools_for_stage("private_label")
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "enviar_foto_produto" in names
 
 
 def test_secretaria_tools_exclude_enviar_foto_produto():
     tools = get_tools_for_stage("secretaria")
-    names = [t["function"]["name"] for t in tools]
+    names = [t["name"] for t in tools]
     assert "enviar_foto_produto" not in names
 
 
@@ -133,17 +133,17 @@ async def test_enviar_fotos_nao_reenfileira_quando_ja_enviado():
 
 
 def test_registrar_pedido_simples_removida_do_schema():
-    """registrar_pedido_simples não deve existir no TOOLS_SCHEMA — é dead code."""
-    from app.agent.tools import TOOLS_SCHEMA
-    names = [t["function"]["name"] for t in TOOLS_SCHEMA]
+    """registrar_pedido_simples não deve existir no TOOL_DECLARATIONS — é dead code."""
+    from app.agent.tools import TOOL_DECLARATIONS
+    names = [t["name"] for t in TOOL_DECLARATIONS]
     assert "registrar_pedido_simples" not in names
 
 
 def test_mudar_stage_description_contem_gatilhos():
     """description de mudar_stage deve conter os gatilhos por stage."""
-    from app.agent.tools import TOOLS_SCHEMA
-    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "mudar_stage")
-    desc = schema["function"]["description"]
+    from app.agent.tools import TOOL_DECLARATIONS
+    schema = next(t for t in TOOL_DECLARATIONS if t["name"] == "mudar_stage")
+    desc = schema["description"]
     assert "atacado" in desc
     assert "private_label" in desc
     assert "exportacao" in desc
@@ -153,9 +153,9 @@ def test_mudar_stage_description_contem_gatilhos():
 
 def test_encaminhar_humano_description_contem_casos():
     """description de encaminhar_humano deve cobrir qualificado, rejeição e circuit breaker."""
-    from app.agent.tools import TOOLS_SCHEMA
-    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "encaminhar_humano")
-    desc = schema["function"]["description"]
+    from app.agent.tools import TOOL_DECLARATIONS
+    schema = next(t for t in TOOL_DECLARATIONS if t["name"] == "encaminhar_humano")
+    desc = schema["description"]
     assert "qualificado" in desc
     assert "REJEITOU" in desc
     assert "turnos" in desc
@@ -166,15 +166,15 @@ def test_registrar_optout_presente_em_todos_os_stages():
     """registrar_optout deve estar disponível em todos os stages."""
     for stage in ["secretaria", "atacado", "private_label", "exportacao", "consumo"]:
         tools = get_tools_for_stage(stage)
-        names = [t["function"]["name"] for t in tools]
+        names = [t["name"] for t in tools]
         assert "registrar_optout" in names, f"registrar_optout ausente no stage '{stage}'"
 
 
 def test_registrar_optout_schema():
     """registrar_optout deve ter schema correto com campo motivo obrigatório."""
-    from app.agent.tools import TOOLS_SCHEMA
-    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "registrar_optout")
-    fn = schema["function"]
+    from app.agent.tools import TOOL_DECLARATIONS
+    schema = next(t for t in TOOL_DECLARATIONS if t["name"] == "registrar_optout")
+    fn = schema
     assert fn["name"] == "registrar_optout"
     assert "motivo" in fn["parameters"]["properties"]
     assert "motivo" in fn["parameters"]["required"]
@@ -259,18 +259,18 @@ def test_registrar_sem_interesse_presente_nos_stages():
     varejo B2C não é 'lead perdido', então consumo nunca auto-descarta (auditoria 5551991295543)."""
     for stage in ["secretaria", "atacado", "private_label", "exportacao"]:
         tools = get_tools_for_stage(stage)
-        names = [t["function"]["name"] for t in tools]
+        names = [t["name"] for t in tools]
         assert "registrar_sem_interesse_atual" in names, f"ausente no stage '{stage}'"
     # consumo NÃO tem a ferramenta de descarte
-    consumo_names = [t["function"]["name"] for t in get_tools_for_stage("consumo")]
+    consumo_names = [t["name"] for t in get_tools_for_stage("consumo")]
     assert "registrar_sem_interesse_atual" not in consumo_names
 
 
 def test_registrar_sem_interesse_schema():
     """Schema do soft rejection: motivo obrigatório e descrição que o distingue do opt-out."""
-    from app.agent.tools import TOOLS_SCHEMA
-    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "registrar_sem_interesse_atual")
-    fn = schema["function"]
+    from app.agent.tools import TOOL_DECLARATIONS
+    schema = next(t for t in TOOL_DECLARATIONS if t["name"] == "registrar_sem_interesse_atual")
+    fn = schema
     assert "motivo" in fn["parameters"]["properties"]
     assert "motivo" in fn["parameters"]["required"]
     desc = fn["description"]

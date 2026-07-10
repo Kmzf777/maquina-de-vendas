@@ -12,10 +12,11 @@ pré-53bcdf2 a marca d'água nunca avançava (o loop). Estes testes travam:
 import json
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
 
 from app.agent import memory_manager
 from app.agent.memory_manager import _extract_json_object, generate_rolling_summary
+from tests.gemini_fakes import fake_text
 
 _FIELDS = {
     "perfil_empresa": "Nayara, cafeteria em Pirassununga",
@@ -45,22 +46,20 @@ def test_conteudo_sem_json_levanta():
         _extract_json_object("desculpe, não posso ajudar com isso")
 
 
-def _fake_client(content: str):
-    msg = MagicMock()
-    msg.content = content
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
-    return client
+def _patch_generate(content: str):
+    """Patch do núcleo nativo (app.agent.memory_manager.generate) devolvendo `content`."""
+    return patch(
+        "app.agent.memory_manager.generate",
+        new=AsyncMock(side_effect=[fake_text(content)]),
+    )
 
 
 @pytest.mark.asyncio
 async def test_generate_persiste_dossie_mesmo_com_cerca():
     content = "```json\n" + json.dumps(_FIELDS, ensure_ascii=False) + "\n```"
     delta = [{"role": "user", "content": "quero repor o drip"}]
-    result = await generate_rolling_summary("", delta, _fake_client(content), "gemini-2.5-flash-lite")
+    with _patch_generate(content):
+        result = await generate_rolling_summary("", delta, "gemini-2.5-flash-lite")
     assert "## DOSSIÊ DO LEAD" in result
     assert "Drip Coffee" in result
 
@@ -70,8 +69,9 @@ async def test_generate_lixo_preserva_prior_e_alerta(monkeypatch):
     fired = {}
     monkeypatch.setattr(memory_manager, "_fire_memory_parse_alert", lambda *a, **k: fired.setdefault("x", True))
     delta = [{"role": "user", "content": "oi"}]
-    result = await generate_rolling_summary(
-        "## DOSSIÊ DO LEAD\nanterior", delta, _fake_client("não consigo gerar isso"), "gemini-2.5-flash-lite",
-    )
+    with _patch_generate("não consigo gerar isso"):
+        result = await generate_rolling_summary(
+            "## DOSSIÊ DO LEAD\nanterior", delta, "gemini-2.5-flash-lite",
+        )
     assert result == "## DOSSIÊ DO LEAD\nanterior"
     assert fired.get("x") is True

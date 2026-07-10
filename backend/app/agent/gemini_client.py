@@ -1,7 +1,7 @@
 """Núcleo LLM 100% nativo Google/Gemini (SDK `google-genai`) — SEM forma OpenAI.
 
-Substitui a fachada `gemini_native.py` (que expunha `.chat.completions.create` →
-`.choices/.usage`). Decisão executiva de 09/07/2026: nada que remeta à OpenAI — nem
+Substitui a fachada `gemini_native.py` (que expunha a forma de chat do SDK da OpenAI →
+`.choices`/`.usage`). Decisão executiva de 09/07/2026: nada que remeta à OpenAI — nem
 forma, nem nomenclatura — permanece na base. Este módulo é a ÚNICA porta de saída
 para o Gemini; todo o vocabulário é o do próprio SDK: `contents`/`parts`,
 `system_instruction`, `GenerateContentConfig`, `FunctionDeclaration`,

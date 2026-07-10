@@ -20,6 +20,10 @@ Transporte OpenAI (o SDK/pacote openai, agora banido — usamos só google-genai
 - "from openai"          -> import de símbolos do pacote openai
 - "AsyncOpenAI"          -> a classe-cliente do SDK openai
 - "v1beta/openai"        -> o path do endpoint de compatibilidade (transporte legado)
+Forma/shape OpenAI (a fachada `.chat.completions` está sendo erradicada — Gemini nativo):
+- "chat.completions"     -> call shape `client.chat.completions...` (SDK ou fachada)
+- ".choices["            -> leitura de resposta no shape OpenAI (`resp.choices[0]...`)
+- "completions.create"   -> a chamada `...completions.create(...)` em qualquer cliente
 
 Menções em PROSA à palavra "OpenAI" (ex.: docstring explicando o que foi substituído, ou o
 param `openai_tools` que descreve o SHAPE do schema) são permitidas — só os padrões acima,
@@ -43,7 +47,13 @@ FORBIDDEN_MARKERS = [
     "'gpt-",
     "AsyncOpenAI",
     "v1beta/openai",
+    "chat.completions",
+    ".choices[",
+    "completions.create",
 ]
+
+# Arquivos ignorados pela varredura (temporário, durante a migração Gemini-nativo).
+_SKIP_FILES: set[str] = set()  # gemini_native.py foi deletado — nenhuma exceção restante
 
 # Import statements do pacote openai — regex para não capturar prosa que contenha as palavras.
 FORBIDDEN_PATTERNS = [
@@ -59,6 +69,8 @@ def test_no_openai_provider_markers_in_app():
         if not scan_dir.is_dir():
             continue
         for path in sorted(scan_dir.rglob("*.py")):
+            if path.name in _SKIP_FILES:
+                continue
             text = path.read_text(encoding="utf-8")
             for marker in FORBIDDEN_MARKERS:
                 if marker in text:

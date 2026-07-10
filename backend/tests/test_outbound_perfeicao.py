@@ -235,6 +235,7 @@ async def test_processor_plumba_regiao_e_company():
 @pytest.mark.asyncio
 async def test_orchestrator_injeta_campaign_segment_no_primeiro_turno():
     """run_agent outbound deve repassar campaign_segment do lead_context ao contexto de 1º turno."""
+    from tests.gemini_fakes import fake_text
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -243,22 +244,20 @@ async def test_orchestrator_injeta_campaign_segment_no_primeiro_turno():
     }
     lead_context = {"campaign_message": "Ola, aqui e a Valeria.", "campaign_segment": "atacado"}
 
-    def _resp():
-        msg = MagicMock(); msg.tool_calls = None; msg.content = "ok"
-        r = MagicMock(); r.choices = [MagicMock(message=msg)]; r.usage = None
-        return r
-    create_mock = AsyncMock(return_value=_resp())
+    m_gen = AsyncMock(return_value=fake_text("ok"))
 
     with patch("app.agent.orchestrator.get_lead", return_value={
             "id": "lead-seg", "name": "Ana", "phone": "5531900000001", "ai_enabled": True}), \
          patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = create_mock
+         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gemini-2.5-flash"}), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         await run_agent(conversation, "sim", lead_context=lead_context, agent_profile_id="p")
 
-    messages = create_mock.call_args_list[0].kwargs["messages"]
-    assert "atacado" in messages[1]["content"].lower(), "segmento da campanha não foi injetado no 1º turno"
+    # Contrato nativo: o system vive em system_instruction; contents[0] é o contexto
+    # de 1º turno outbound (role user), contents[1] é o user_text.
+    contents = m_gen.await_args_list[0].kwargs["contents"]
+    assert "atacado" in contents[0].parts[0].text.lower(), "segmento da campanha não foi injetado no 1º turno"
 
 
 # ===========================================================================

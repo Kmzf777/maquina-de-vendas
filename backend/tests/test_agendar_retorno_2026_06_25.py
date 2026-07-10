@@ -86,7 +86,7 @@ def test_agendar_retorno_disponivel_em_todos_os_stages_de_conversa():
     from app.agent.tools import get_tools_for_stage
 
     for stage in ("secretaria", "atacado", "private_label", "exportacao", "consumo"):
-        names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
+        names = [t["name"] for t in get_tools_for_stage(stage)]
         assert "agendar_retorno" in names, f"agendar_retorno ausente no stage {stage}"
 
 

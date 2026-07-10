@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 
-from app.agent.gemini_native import get_client as get_gemini_client
+from app.agent.gemini_client import generate, user_content
 from app.config import settings
 from app.follow_up.service import get_due_followups, should_proactive_handoff, _ENV_TAG
 from app.leads.service import resolve_send_target, create_deal, record_dispatch_note, strip_greeting_prefix
@@ -299,12 +299,12 @@ async def _health_check_via_logs(now: datetime) -> None:
 
 
 _FOLLOWUP_MODEL = "gemini-2.5-flash"  # sunset REAL do 2.5 e 16/10/2026 — migrar p/ 3.x antes
-# gemini-2.5-flash conta tokens de thinking + texto no MESMO budget via API de compatibilidade.
-# Com max_tokens baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
+# gemini-2.5-flash conta tokens de thinking + texto no MESMO budget de saída.
+# Com teto baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
 # (auditoria leads 5566999975586 / 5531996039118, 2026-06-25: "...o que te fez pensar em").
-# A cura é DUPLA e espelha o orchestrator (MAX_OUTPUT_TOKENS=4096 + _gemini_thinking_off):
-#   1) desligar o thinking na chamada (reasoning_effort="none", via _gemini_thinking_off);
-#   2) dar teto folgado (4096). Mesmo assim, finish_reason="length" é barrado em
+# A cura é DUPLA e espelha o orchestrator (MAX_OUTPUT_TOKENS=4096 + thinking off):
+#   1) desligar o thinking na chamada (thinking_off=True → thinking_budget=0 nativo);
+#   2) dar teto folgado (4096). Mesmo assim, finish_reason="MAX_TOKENS" é barrado em
 #      process_due_followups — nunca enviamos mensagem pela metade.
 _FOLLOWUP_MAX_TOKENS = 4096
 
@@ -477,16 +477,10 @@ async def _generate_followup_message(
 
     Retorna `(texto, finish_reason)`. O `finish_reason` é vital: gemini-2.5-flash conta
     thinking + texto no mesmo budget, então mesmo com o thinking desligado um histórico
-    longo pode estourar o teto — `finish_reason="length"` sinaliza corte e o chamador
-    (process_due_followups) ABORTA o envio em vez de mandar mensagem pela metade.
-
-    `_gemini_thinking_off` é importado tardiamente para evitar o ciclo de import
-    scheduler → orchestrator → tools → scheduler (mesmo motivo do `run_agent` lazy).
+    longo pode estourar o teto — `finish_reason="MAX_TOKENS"` (nome nativo do Gemini)
+    sinaliza corte e o chamador (process_due_followups) ABORTA o envio em vez de mandar
+    mensagem pela metade.
     """
-    from app.agent.orchestrator import _gemini_thinking_off
-
-    client = get_gemini_client()
-
     messages_text = "\n".join(
         f"{'Cliente' if m['role'] == 'user' else 'Vendedor'}: {m['content']}"
         for m in history
@@ -507,40 +501,38 @@ async def _generate_followup_message(
     if objective_prompt:
         system_prompt = f"{system_prompt}\n\nOBJETIVO DESTE TOQUE (Next Best Action): {objective_prompt}"
 
-    resp = await client.chat.completions.create(
-        model=_FOLLOWUP_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:",
-            },
+    result = await generate(
+        _FOLLOWUP_MODEL,
+        contents=[
+            user_content(f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:"),
         ],
-        max_tokens=_FOLLOWUP_MAX_TOKENS,
+        system_instruction=system_prompt,
+        max_output_tokens=_FOLLOWUP_MAX_TOKENS,
         temperature=0.8,
         # Desliga o thinking do Gemini 2.5 — sem isso o budget é gasto pensando e a saída corta.
-        **_gemini_thinking_off(_FOLLOWUP_MODEL),
+        thinking_off=True,
     )
 
     # Observabilidade: o follow-up nunca rastreava custo (a tabela token_usage só via o
     # agente principal). Sem isto, cortes/anomalias do follow-up ficam invisíveis no banco.
-    if resp.usage and lead_id:
+    usage = result.usage_metadata
+    if usage and lead_id:
         try:
             track_token_usage(
                 lead_id=lead_id,
                 stage=stage or "followup",
                 model=_FOLLOWUP_MODEL,
                 call_type="followup",
-                prompt_tokens=resp.usage.prompt_tokens,
-                completion_tokens=resp.usage.completion_tokens,
-                cached_tokens=getattr(resp.usage, "cached_tokens", 0) or 0,
-                reasoning_tokens=getattr(resp.usage, "reasoning_tokens", 0) or 0,
+                prompt_tokens=usage.prompt_token_count,
+                # thinking é COBRADO como saída → completion = candidates + thoughts
+                completion_tokens=usage.billed_output_tokens,
+                cached_tokens=usage.cached_content_token_count,
+                reasoning_tokens=usage.thoughts_token_count,
             )
         except Exception as exc:
             logger.error("[FOLLOWUP] falha ao registrar token_usage: %s", exc)
 
-    choice = resp.choices[0]
-    return (choice.message.content or "").strip(), choice.finish_reason
+    return (result.text or "").strip(), result.finish_reason
 
 
 async def process_due_followups(now: datetime | None = None) -> None:
@@ -700,13 +692,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
             continue
 
         # GUARDRAIL TÉCNICO: corte por budget. gemini-2.5-flash pode estourar o teto mesmo com
-        # o thinking off (histórico longo), devolvendo finish_reason="length" com a frase pela
-        # metade. NUNCA enviar mensagem truncada ao cliente (auditoria leads 5566999975586 /
-        # 5531996039118: "...o que te fez pensar em"). Cancela; o próximo ciclo tenta de novo.
-        if finish_reason == "length":
+        # o thinking off (histórico longo), devolvendo finish_reason="MAX_TOKENS" (nome nativo;
+        # a fachada antiga traduzia p/ "length") com a frase pela metade. NUNCA enviar mensagem
+        # truncada ao cliente (auditoria leads 5566999975586 / 5531996039118: "...o que te fez
+        # pensar em"). Cancela; o próximo ciclo tenta de novo.
+        if finish_reason == "MAX_TOKENS":
             _cancel_job(job["id"], "length_truncated")
             logger.warning(
-                "[FOLLOWUP] resposta cortada (finish_reason=length) — cancelando sem enviar "
+                "[FOLLOWUP] resposta cortada (finish_reason=MAX_TOKENS) — cancelando sem enviar "
                 "seq=%s conversation=%s: %r",
                 sequence, conversation_id, message[-80:],
             )
