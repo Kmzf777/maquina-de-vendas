@@ -385,9 +385,10 @@ async def test_process_stale_skips_leads_already_summarized_past_last_message():
         # dossiê ATRASADO (updated_at < last_msg) → processa
         {"id": "novo", "last_customer_message_at": "2026-07-08T18:00:00+00:00",
          "rolling_summary_updated_at": "2026-07-08T17:00:00+00:00"},
-        # dossiê EM DIA (updated_at >= last_msg) → pula
+        # dossiê EM DIA (updated_at >= last_msg E texto gravado) → pula
         {"id": "em_dia", "last_customer_message_at": "2026-07-08T18:00:00+00:00",
-         "rolling_summary_updated_at": "2026-07-08T18:00:00+00:00"},
+         "rolling_summary_updated_at": "2026-07-08T18:00:00+00:00",
+         "rolling_summary": "## DOSSIÊ DO LEAD\n- em dia"},
         # nunca resumido (updated_at null) → processa
         {"id": "virgem", "last_customer_message_at": "2026-07-08T18:00:00+00:00",
          "rolling_summary_updated_at": None},

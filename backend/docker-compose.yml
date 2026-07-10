@@ -10,6 +10,13 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+    # Intervalos conservadores (VPS única): 30s + start_period cobre boot sem drenar CPU.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     networks:
       - canastrainteligencia
     deploy:
@@ -39,6 +46,13 @@ services:
       - redis_data:/data
       - ./redis.conf:/etc/redis/redis.conf:ro
     restart: unless-stopped
+    # PING autenticado: extrai o requirepass do conf montado (sem senha no compose).
+    healthcheck:
+      test: ["CMD-SHELL", "P=$$(sed -n 's/^requirepass //p' /etc/redis/redis.conf); if [ -n \"$$P\" ]; then redis-cli -a \"$$P\" --no-auth-warning ping; else redis-cli ping; fi | grep -q PONG"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     networks:
       - canastrainteligencia
 

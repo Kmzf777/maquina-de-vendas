@@ -4,6 +4,10 @@ from app.worker.main import run_worker
 
 if __name__ == "__main__":
     import asyncio
-    import logging
-    logging.basicConfig(level=logging.INFO)
+
+    from app.logging_setup import setup_logging
+    from app.observability import init_sentry
+
+    setup_logging()
+    init_sentry()
     asyncio.run(run_worker())

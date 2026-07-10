@@ -508,6 +508,10 @@ async def main():
     )
 
     log.info(f"Artefatos em: {run_dir}")
+    # Gate de CI: espelha rehearsal_runner.py — qualquer archetype reprovado
+    # (hard checks/forbids) derruba o processo com exit 1.
+    any_fail = any(v.get("status") != "passed" for v in verifications)
+    sys.exit(1 if any_fail else 0)
 
 
 if __name__ == "__main__":
