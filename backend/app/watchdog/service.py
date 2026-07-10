@@ -440,6 +440,34 @@ def _handoff_sla_alerted_conversation_ids(now: datetime) -> set:
         return set()
 
 
+def _last_customer_message_is_reaction(sb, conversation_id: str) -> bool:
+    """True se a ÚLTIMA mensagem do lead nesta conversa é uma REAÇÃO (👍 etc.).
+
+    Reação após a resposta do vendedor é encerramento social, não pergunta pendente —
+    contá-la como "mensagem sem resposta" gera SLA falso (caso Nayara 10/07: 👍 no
+    áudio do João disparou handoff_sla_breach 80min depois). Consultada SÓ para
+    conversas já em violação (N pequeno). Fail-open: erro → False (na dúvida o alerta
+    fica — ruído é melhor que a cegueira que escondeu o caso Juliana).
+    """
+    try:
+        res = (
+            sb.table("messages")
+            .select("message_type")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data) and res.data[0].get("message_type") == "reaction"
+    except Exception as exc:
+        logger.warning(
+            "[WATCHDOG] falha ao checar reação-tail conv=%s: %s — fail-open",
+            conversation_id, exc,
+        )
+        return False
+
+
 def check_handoff_sla(now: datetime) -> int:
     """Check 5 (caso Juliana, 02/07) — SLA de resposta HUMANA pos-handoff.
 
@@ -500,6 +528,8 @@ def check_handoff_sla(now: datetime) -> int:
         if raw_seller_ts and _parse_ts(raw_seller_ts) >= customer_ts:
             continue  # vendedor respondeu DEPOIS da ultima msg do lead — ok
         conv_id = row["id"]
+        if _last_customer_message_is_reaction(sb, conv_id):
+            continue  # 👍 pos-resposta e encerramento social, nao pergunta pendente
         violated.append(conv_id)
         lead_names[conv_id] = ((row.get("leads") or {}).get("name") or "").strip()
 
