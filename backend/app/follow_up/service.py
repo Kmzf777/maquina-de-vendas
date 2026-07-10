@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
+from app.events.bus import emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,7 @@ def schedule_followup(
         raise RuntimeError(
             f"Falha ao criar follow-up jobs para conversa {conversation_id}"
         ) from exc
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
 
     logger.info(f"[FOLLOWUP] Agendados {len(jobs)} toques de cadência conversation={conversation_id}")
 
@@ -365,6 +367,7 @@ def schedule_handoff_rescue(
         raise RuntimeError(
             f"Falha ao agendar job de resgate para lead {lead_id}"
         ) from exc
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
     logger.info(
         f"[HANDOFF_RESCUE] Agendado em {delay_minutes}min lead={lead_id} conversation={conversation_id} fire_at={fire_at.isoformat()}"
     )
@@ -408,6 +411,7 @@ def schedule_ai_return(
             "[AI_SCHEDULED_RETURN] Erro ao inserir job p/ lead %s: %s", lead_id, exc
         )
         raise RuntimeError(f"Falha ao agendar retorno para lead {lead_id}") from exc
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
     logger.info(
         "[AI_SCHEDULED_RETURN] Agendado lead=%s conv=%s fire_at=%s",
         lead_id, conversation_id, clamped.isoformat(),

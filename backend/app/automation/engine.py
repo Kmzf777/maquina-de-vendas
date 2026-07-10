@@ -164,7 +164,7 @@ def _fail_enrollment(enrollment_id: str, retry_count: int, error: str, now: date
 
 async def process_due_enrollments(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
-    enrollments = get_due_enrollments(now)
+    enrollments = await asyncio.to_thread(get_due_enrollments, now)
     enrollments.sort(key=lambda e: (e.get("campaigns") or {}).get("priority", 5), reverse=True)
     for enrollment in enrollments:
         await _process_one(enrollment, now)

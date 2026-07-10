@@ -38,35 +38,19 @@ from app.buffer.lead_lock import lead_run_lock
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
-from app.db.supabase import get_supabase, run_with_retry
+from app.db.supabase import get_supabase, run_with_retry, db_call
 
 logger = logging.getLogger(__name__)
 
 
 # Conexões HTTP/2 com Supabase/Meta às vezes recebem GOAWAY sob concorrência
 # (rajada de disparo), derrubando o save e PERDENDO a mensagem do agente (regressão
-# observada: Micheli, João). Retry simples preserva o estado no banco sem refatorar
-# o cliente HTTP. httpx.TransportError cobre RemoteProtocolError/ConnectError/ReadError
-# mas NÃO HTTPStatusError — então erros de aplicação (4xx/5xx) não são mascarados.
-_DB_RETRY_ATTEMPTS = 3
-_DB_RETRY_DELAY = 2  # segundos
-
-
+# observada: Micheli, João). A política de retry vive em db_call/run_with_retry
+# (app/db/supabase.py) — única no repositório; este wrapper existe só para manter
+# a assinatura histórica (label primeiro) usada pelos call-sites e testes.
 async def _save_with_retry(label: str, fn, *args, **kwargs):
-    """Executa uma operação de persistência síncrona com retry em drops de conexão."""
-    last_exc: Exception | None = None
-    for attempt in range(1, _DB_RETRY_ATTEMPTS + 1):
-        try:
-            return fn(*args, **kwargs)
-        except httpx.TransportError as exc:
-            last_exc = exc
-            logger.warning(
-                "[DB RETRY] %s — tentativa %d/%d falhou (conexão): %s",
-                label, attempt, _DB_RETRY_ATTEMPTS, exc,
-            )
-            if attempt < _DB_RETRY_ATTEMPTS:
-                await asyncio.sleep(_DB_RETRY_DELAY)
-    raise last_exc
+    """Persistência síncrona fora do event loop, com retry de transporte unificado."""
+    return await db_call(fn, *args, label=label, **kwargs)
 
 
 # Delays ASSIMÉTRICOS — limite real da Meta API: o "digitando…" NÃO re-renderiza no
@@ -951,9 +935,8 @@ async def process_buffered_messages(
     # ingestion would re-allow them after a flush, so this DB check is the last-resort backstop).
     # NOT race-safe: two concurrent deliveries of the same wamid can both pass here before either
     # saves. The Redis SETNX layer handles that race; this DB layer is last-resort only.
-    # TODO: wrap blocking Supabase call in asyncio.to_thread (same pre-existing pattern as _is_recent_duplicate)
     if wamid:  # empty-string wamids are intentionally treated as absent (same as None)
-        if _wamid_already_processed(wamid):
+        if await asyncio.to_thread(_wamid_already_processed, wamid):
             logger.warning(
                 "[DEDUP-DB] wamid=%s já persistido no banco — descartando duplicata para phone=%s",
                 wamid, phone,

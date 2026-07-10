@@ -1,5 +1,6 @@
-# Legacy entry point — delegates to broadcast worker
-from app.broadcast.worker import run_worker
+# Legacy entry point (docker-compose: python -m app.campaign.worker) —
+# delega para o runtime por domínios isolados.
+from app.worker.main import run_worker
 
 if __name__ == "__main__":
     import asyncio

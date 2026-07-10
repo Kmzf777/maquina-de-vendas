@@ -1,4 +1,5 @@
 # backend/app/follow_up/scheduler.py
+import asyncio
 import logging
 import unicodedata
 from datetime import datetime, timezone, timedelta
@@ -541,14 +542,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
     # Crash-recovery: devolve p/ 'pending' jobs presos em 'processing' (worker morreu
     # após reivindicar, ou falha transitória sem estado terminal) ANTES de buscar os
     # devidos — assim eles reentram na fila deste tick. Espelha broadcast/worker.py.
-    _recover_stale_followup_jobs(now)
-    jobs = get_due_followups(now)
+    await asyncio.to_thread(_recover_stale_followup_jobs, now)
+    jobs = await asyncio.to_thread(get_due_followups, now)
 
     for job in jobs:
         # Reivindicação atômica (anti-duplicidade multi-worker): só ESTE processo segue
         # com o job. Se outro worker já o pegou (claim perdido), pula sem processar —
         # evita template/mensagem duplicados caso o worker seja escalado para N réplicas.
-        if not _claim_followup_job(job["id"]):
+        if not await asyncio.to_thread(_claim_followup_job, job["id"]):
             logger.info("[FOLLOWUP] job %s já reivindicado por outro worker — pulando", job["id"])
             continue
 

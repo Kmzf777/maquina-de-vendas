@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 import time
@@ -56,3 +57,15 @@ def run_with_retry(fn, *args, label: str = "db", **kwargs):
             if attempt < _DB_RETRY_ATTEMPTS:
                 time.sleep(_DB_RETRY_BASE_DELAY * attempt)
     raise last_exc
+
+
+async def db_call(fn, *args, label: str = "db", **kwargs):
+    """Chamada Supabase síncrona FORA do event loop, com retry de transporte unificado.
+
+    Resolve as duas pendências dos hot paths num helper só: (1) o cliente supabase-py
+    é síncrono e bloqueia o loop asyncio quando chamado direto; (2) havia políticas de
+    retry divergentes espalhadas. O executor default do to_thread REUSA threads, então
+    o cliente por thread (threading.local acima) é reaproveitado entre chamadas — não
+    há criação de cliente por request.
+    """
+    return await asyncio.to_thread(run_with_retry, fn, *args, label=label, **kwargs)
