@@ -298,6 +298,60 @@ def is_repeated_question(text: str, prior_assistant_texts: list[str] | None) -> 
 
 
 # ---------------------------------------------------------------------------
+# 5b. strip_consecutive_vocative_name (auditoria 2026-07-10 — caso Marisete)
+# ---------------------------------------------------------------------------
+# A Valéria abriu 3 turnos consecutivos com o vocativo do lead ("boa, Marisete" →
+# "que legal, Marisete" → "vale a pena conhecer, Marisete, ...") apesar da regra
+# explícita do prompt ("nunca repita o nome em mensagens consecutivas — padrão de
+# telemarketing") e do item 13 do checklist. Guarda determinística: se o nome já
+# apareceu nas últimas falas do assistente, remove APENAS as ocorrências vocativas
+# (", Nome" delimitado por pontuação/fim, ou "Nome, " abrindo linha) do texto novo.
+# Usos semânticos ("o pedido da Marisete") não casam com os padrões e ficam intactos.
+
+_VOCATIVE_PRIOR_WINDOW = 3  # bolhas anteriores do assistente que contam como "turno anterior"
+_VOCATIVE_MIN_NAME_LEN = 3  # nomes de 1-2 letras colidem com palavras comuns
+
+
+def strip_consecutive_vocative_name(
+    text: str, lead_name: str | None, prior_assistant_texts: list[str] | None,
+) -> str:
+    """Remove o vocativo do nome quando o turno anterior do assistente já o usou.
+
+    Mesma técnica de spans de strip_prohibited_phrases: casa na versão normalizada
+    (minúsculas, sem diacríticos) e remove do texto ORIGINAL. Conservador: só padrões
+    inequivocamente vocativos; se o resultado esvaziar, devolve o original (fail-open).
+    Função pura — sem I/O, testável isoladamente.
+    """
+    if not text or not lead_name:
+        return text
+    parts = lead_name.strip().split()
+    if not parts:
+        return text
+    first = parts[0]
+    if len(first) < _VOCATIVE_MIN_NAME_LEN:
+        return text
+
+    name_norm = re.escape(_normalize(first))
+    name_word_re = re.compile(r"\b" + name_norm + r"\b")
+    recent = [t for t in (prior_assistant_texts or []) if t][-_VOCATIVE_PRIOR_WINDOW:]
+    if not any(name_word_re.search(_normalize(t)) for t in recent):
+        return text
+
+    vocative_patterns = (
+        # ", nome" seguido de pontuação, quebra de linha ou fim do texto
+        re.compile(r",\s*" + name_norm + r"\b(?=\s*(?:[,.!?\n]|$))"),
+        # "nome, " abrindo o texto ou uma linha/bolha
+        re.compile(r"^" + name_norm + r"\b,\s*", re.MULTILINE),
+    )
+    result = text
+    for pattern in vocative_patterns:
+        for m in reversed(list(pattern.finditer(_normalize(result)))):
+            result = result[: m.start()] + result[m.end():]
+    result = _collapse_whitespace_and_punctuation(result)
+    return result if result else text
+
+
+# ---------------------------------------------------------------------------
 # 6. find_verbatim_prompt_echo (auditoria 2026-07-08 — carimbo do exemplo)
 # ---------------------------------------------------------------------------
 # O "exemplo vencedor" do prompt foi copiado byte a byte para 5 leads no mesmo

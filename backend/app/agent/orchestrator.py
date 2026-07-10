@@ -28,6 +28,7 @@ from app.agent.adherence import (
     find_verbatim_prompt_echo,
     is_repeated_question,
     normalize_orthography,
+    strip_consecutive_vocative_name,
     strip_prohibited_phrases,
 )
 from app.conversations.service import (
@@ -1288,6 +1289,22 @@ async def run_agent(
                     "[PROMPT ECHO] conv %s copiou semente do prompt literalmente: %.80s",
                     conversation_id, _echo,
                 )
+        except Exception:
+            pass
+        # Super-nomeação (auditoria 10/07 — caso Marisete): o prompt proíbe repetir o
+        # nome em mensagens consecutivas (base.py, checklist 13) mas o modelo violou em
+        # 3 turnos seguidos. Guarda determinística: remove o vocativo quando o turno
+        # anterior do assistente já nomeou. Fail-open: erro mantém o texto original.
+        try:
+            _denamed = strip_consecutive_vocative_name(
+                assistant_text, lead.get("name"), _prior_assistant,
+            )
+            if _denamed != assistant_text:
+                logger.info(
+                    "[NAME REPEAT GUARD] vocativo repetido removido em conv %s (lead=%s)",
+                    conversation_id, lead_id,
+                )
+                assistant_text = _denamed
         except Exception:
             pass
 
