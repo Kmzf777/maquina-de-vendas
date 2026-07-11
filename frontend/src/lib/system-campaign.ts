@@ -10,13 +10,19 @@ export function isSystemCampaign(campaignId: string | null | undefined): boolean
   return campaignId === VALERIA_CADENCE_CAMPAIGN_ID;
 }
 
-/** Aplica o toggle de visibilidade do espelho do motor (decisão executiva 10/07):
- *  quando oculto, o espelho some das listagens; campanhas convencionais nunca são
- *  afetadas. Só apresentação — status/guardas do backend intactos. */
-export function visibleCampaigns<T extends { id: string }>(
-  campaigns: T[],
+/** Semântica do toggle EMBUTIDO no card de cadência (padronização 11/07):
+ *  card convencional → liga/desliga a campanha (activate/pause do automation engine);
+ *  card do espelho do motor → aciona a regra de visibilidade/estado já existente
+ *  (Redis via /api/cadence/mirror-visibility) — NUNCA activate/pause: a ativação da
+ *  campanha de sistema segue bloqueada (409) no backend, impedindo execução dupla. */
+export type CardToggle = { kind: "mirror" | "campaign"; on: boolean };
+
+export function cardToggleState(
+  campaign: { id: string; status: string },
   mirrorVisible: boolean,
-): T[] {
-  if (mirrorVisible) return campaigns;
-  return campaigns.filter((c) => !isSystemCampaign(c.id));
+): CardToggle {
+  if (isSystemCampaign(campaign.id)) {
+    return { kind: "mirror", on: mirrorVisible };
+  }
+  return { kind: "campaign", on: campaign.status === "active" };
 }

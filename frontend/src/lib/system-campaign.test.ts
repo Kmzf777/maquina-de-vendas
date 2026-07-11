@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VALERIA_CADENCE_CAMPAIGN_ID, isSystemCampaign, visibleCampaigns } from "./system-campaign";
+import { VALERIA_CADENCE_CAMPAIGN_ID, cardToggleState, isSystemCampaign } from "./system-campaign";
 import { toRFEdges } from "@/components/campaigns/cadence-flow/helpers";
 import type { CampaignNode } from "@/lib/types";
 
@@ -16,18 +16,22 @@ describe("VALERIA_CADENCE_CAMPAIGN_ID", () => {
   });
 });
 
-describe("visibleCampaigns — toggle de visibilidade do espelho (10/07)", () => {
-  const mirror = { id: VALERIA_CADENCE_CAMPAIGN_ID };
-  const comum = { id: "camp-1" };
+describe("cardToggleState — toggle embutido em TODO card (padronização 11/07)", () => {
+  const mirror = { id: VALERIA_CADENCE_CAMPAIGN_ID, status: "draft" };
 
-  it("oculto (default executivo): espelho some, convencionais ficam", () => {
-    expect(visibleCampaigns([mirror, comum], false)).toEqual([comum]);
+  it("card do espelho: kind=mirror e estado vem da flag de visibilidade (nunca do status)", () => {
+    expect(cardToggleState(mirror, true)).toEqual({ kind: "mirror", on: true });
+    expect(cardToggleState(mirror, false)).toEqual({ kind: "mirror", on: false });
   });
-  it("exibido: lista intacta", () => {
-    expect(visibleCampaigns([mirror, comum], true)).toEqual([mirror, comum]);
+
+  it("card convencional: kind=campaign e ligado = status active", () => {
+    expect(cardToggleState({ id: "c1", status: "active" }, false)).toEqual({ kind: "campaign", on: true });
+    expect(cardToggleState({ id: "c1", status: "paused" }, true)).toEqual({ kind: "campaign", on: false });
+    expect(cardToggleState({ id: "c1", status: "draft" }, true)).toEqual({ kind: "campaign", on: false });
   });
-  it("sem espelho na lista, o toggle é neutro", () => {
-    expect(visibleCampaigns([comum], false)).toEqual([comum]);
+
+  it("espelho NUNCA é kind=campaign — a rota activate/pause não pode ser alcançada por ele", () => {
+    expect(cardToggleState(mirror, true).kind).toBe("mirror");
   });
 });
 
