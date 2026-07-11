@@ -58,6 +58,34 @@ function CampanhasPageInner() {
   const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
+  // Estado do espelho do motor (regra Redis /api/cadence/mirror-visibility). O
+  // controle agora é o toggle EMBUTIDO no card de sistema (padronização 11/07) —
+  // só apresentação: activate/pause do espelho segue bloqueado (409) no backend.
+  const [mirrorVisible, setMirrorVisible] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/cadence/mirror-visibility")
+      .then(r => r.json())
+      .then(d => setMirrorVisible(Boolean(d.visible)))
+      .catch(() => setMirrorVisible(false));
+  }, []);
+
+  const toggleMirrorVisibility = async () => {
+    const next = !mirrorVisible;
+    setMirrorVisible(next); // otimista
+    try {
+      const res = await fetch("/api/cadence/mirror-visibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: next }),
+      });
+      const d = await res.json();
+      if (!res.ok) setMirrorVisible(!next); // rollback
+      else setMirrorVisible(Boolean(d.visible));
+    } catch {
+      setMirrorVisible(!next);
+    }
+  };
   // Load connected channels once on mount
   useEffect(() => {
     fetch("/api/channels")
@@ -245,7 +273,14 @@ function CampanhasPageInner() {
         )}
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
-        {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={() => {}} />}
+        {activeTab === "cadencias" && (
+          <CadenceList
+            campaigns={campaigns}
+            onRefresh={() => {}}
+            mirrorVisible={mirrorVisible}
+            onToggleMirror={toggleMirrorVisibility}
+          />
+        )}
         {activeTab === "follow-up" && <FollowupBoard />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>

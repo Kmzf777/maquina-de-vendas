@@ -15,7 +15,7 @@ describe("describeNode — linguagem de operador por tipo de nó", () => {
     ).toContain("preço, catálogo");
   });
 
-  it("send: template, idioma e reação à resposta", () => {
+  it("send: template, idioma, reação à resposta e regra da janela", () => {
     const s = describeNode("send", {
       template_name: "utilidade_geral_confirmacao_v1",
       template_language: "en_US",
@@ -24,13 +24,16 @@ describe("describeNode — linguagem de operador por tipo de nó", () => {
     expect(s).toContain('"utilidade_geral_confirmacao_v1"');
     expect(s).toContain("(en_US)");
     expect(s).toContain("PAUSA");
+    expect(s).toContain("janela de 24h fechada");
   });
 
-  it("send_text: prévia truncada e cancelamento na resposta", () => {
+  it("send_text: prévia truncada, cancelamento na resposta e exigência de janela aberta", () => {
     const longo = "a".repeat(200);
     const s = describeNode("send_text", { message_text: longo, on_reply: "cancel" });
     expect(s).toContain("a".repeat(140) + "…");
     expect(s).toContain("CANCELADO");
+    expect(s).toContain("janela de 24h");
+    expect(s).toContain("ABERTA");
   });
 
   it("send_text vazio avisa em vez de mostrar aspas vazias", () => {

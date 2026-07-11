@@ -9,11 +9,32 @@ Os JOBS vivos (follow_up_jobs) não passam por aqui: o CRM os lê direto do Supa
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.follow_up.cadence import CADENCE, MIN_GAP, OUTBOUND_NUDGE, Touch
 
 router = APIRouter(prefix="/api/cadence", tags=["cadence"])
+
+# Visibilidade do ESPELHO do motor no CRM (decisão executiva 10/07: oculto até a
+# análise interna concluir; religável pela própria interface, sem deploy). Mesmo
+# padrão Redis do /api/buffer (config:buffer_enabled). SÓ APRESENTAÇÃO: não toca o
+# status da campanha nem as guardas 409 — impossível causar execução dupla por aqui.
+_MIRROR_VISIBILITY_KEY = "config:cadence_mirror_visible"
+
+
+@router.get("/mirror-visibility")
+async def get_mirror_visibility(request: Request) -> dict:
+    """Default OCULTO: só é visível com opt-in explícito ('1') gravado no Redis."""
+    val = await request.app.state.redis.get(_MIRROR_VISIBILITY_KEY)
+    return {"visible": val == "1"}
+
+
+@router.post("/mirror-visibility")
+async def set_mirror_visibility(request: Request) -> dict:
+    body = await request.json()
+    visible = bool(body.get("visible", False))
+    await request.app.state.redis.set(_MIRROR_VISIBILITY_KEY, "1" if visible else "0")
+    return {"visible": visible}
 
 
 def _touch_payload(touch: Touch) -> dict:

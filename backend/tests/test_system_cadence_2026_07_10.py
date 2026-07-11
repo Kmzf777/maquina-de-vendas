@@ -95,9 +95,33 @@ def test_fidelity_reply_cancels_and_window_condition():
             assert n["config"]["on_reply"] == "cancel", (
                 "resposta do lead cancela/re-arma a cadência (schedule_followup)"
             )
-    condition = next(n for n in nodes if n["type"] == "condition")
-    assert condition["config"] == {"condition_type": "replied_recently", "days": 1}
-    assert condition["yes_node_id"] and condition["no_node_id"]
+    conditions = [n for n in nodes if n["type"] == "condition"]
+    assert len(conditions) == 4, "cada toque livre tem a SUA checagem de janela"
+    for condition in conditions:
+        assert condition["config"] == {"condition_type": "replied_recently", "days": 1}
+        assert condition["yes_node_id"] and condition["no_node_id"]
+
+
+def test_meta_24h_invariant_no_free_text_without_window_check():
+    """INVARIANTE da Meta: NENHUM texto livre sem uma checagem de janela imediatamente
+    antes (ramo SIM de uma condition replied_recently). Foi a falha representacional
+    apontada na auditoria: T3/T4 apareciam como texto livre após waits de 2/4 dias."""
+    _, nodes = _graph()
+    yes_targets = {n["yes_node_id"] for n in nodes if n["type"] == "condition"}
+    for n in nodes:
+        if n["type"] == "send_text":
+            assert n["id"] in yes_targets, (
+                "send_text sem condição de janela apontando para ele — "
+                "texto livre com janela fechada é rejeitado pela Meta"
+            )
+
+
+def test_meta_24h_invariant_all_no_branches_converge_on_reopen_template():
+    """Janela fechada → o ÚNICO caminho é o template aprovado de reabertura."""
+    _, nodes = _graph()
+    reopen = next(n for n in nodes if n["type"] == "send")
+    no_targets = [n["no_node_id"] for n in nodes if n["type"] == "condition"]
+    assert no_targets == [reopen["id"]] * 4
 
 
 def test_fidelity_reopen_node_matches_scheduler_constants():

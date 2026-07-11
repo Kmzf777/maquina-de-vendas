@@ -8,6 +8,10 @@ import { CadenceCard } from "./cadence-card";
 interface CadenceListProps {
   campaigns: Campaign[];
   onRefresh: () => void;
+  /** Estado/handler da regra de visibilidade do espelho do motor — repassados ao
+   *  card de sistema (o toggle fica embutido no próprio card, como nos demais). */
+  mirrorVisible?: boolean;
+  onToggleMirror?: () => void | Promise<void>;
 }
 
 const FILTERS = [
@@ -18,7 +22,7 @@ const FILTERS = [
   { key: "archived", label: "Arquivadas" },
 ];
 
-export function CadenceList({ campaigns, onRefresh }: CadenceListProps) {
+export function CadenceList({ campaigns, onRefresh, mirrorVisible, onToggleMirror }: CadenceListProps) {
   const router = useRouter();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -64,6 +68,8 @@ export function CadenceList({ campaigns, onRefresh }: CadenceListProps) {
               campaign={c}
               onClick={() => router.push(`/campanhas/cadencias/${c.id}`)}
               onRefresh={onRefresh}
+              mirrorVisible={mirrorVisible}
+              onToggleMirror={onToggleMirror}
             />
           ))}
         </div>

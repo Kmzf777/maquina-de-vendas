@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VALERIA_CADENCE_CAMPAIGN_ID, isSystemCampaign } from "./system-campaign";
+import { VALERIA_CADENCE_CAMPAIGN_ID, cardToggleState, isSystemCampaign } from "./system-campaign";
 import { toRFEdges } from "@/components/campaigns/cadence-flow/helpers";
 import type { CampaignNode } from "@/lib/types";
 
@@ -13,6 +13,25 @@ describe("VALERIA_CADENCE_CAMPAIGN_ID", () => {
     expect(isSystemCampaign("outro-id")).toBe(false);
     expect(isSystemCampaign(null)).toBe(false);
     expect(isSystemCampaign(undefined)).toBe(false);
+  });
+});
+
+describe("cardToggleState — toggle embutido em TODO card (padronização 11/07)", () => {
+  const mirror = { id: VALERIA_CADENCE_CAMPAIGN_ID, status: "draft" };
+
+  it("card do espelho: kind=mirror e estado vem da flag de visibilidade (nunca do status)", () => {
+    expect(cardToggleState(mirror, true)).toEqual({ kind: "mirror", on: true });
+    expect(cardToggleState(mirror, false)).toEqual({ kind: "mirror", on: false });
+  });
+
+  it("card convencional: kind=campaign e ligado = status active", () => {
+    expect(cardToggleState({ id: "c1", status: "active" }, false)).toEqual({ kind: "campaign", on: true });
+    expect(cardToggleState({ id: "c1", status: "paused" }, true)).toEqual({ kind: "campaign", on: false });
+    expect(cardToggleState({ id: "c1", status: "draft" }, true)).toEqual({ kind: "campaign", on: false });
+  });
+
+  it("espelho NUNCA é kind=campaign — a rota activate/pause não pode ser alcançada por ele", () => {
+    expect(cardToggleState(mirror, true).kind).toBe("mirror");
   });
 });
 

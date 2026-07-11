@@ -5,6 +5,7 @@ import { AGENT_STAGES } from "@/lib/constants";
 import type { InspectorProps } from "./types";
 import { NODE_META, ACTION_LABELS } from "./constants";
 import { describeNode } from "./describe-node";
+import { renderTemplateBody } from "./render-template-body";
 
 export function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorProps) {
   const { templates, allStages, tags, users } = data;
@@ -61,9 +62,47 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", color: meta.color, marginBottom: 4 }}>
             O que este nó faz
           </div>
+          {/* Distinção INEQUÍVOCA Template × Texto Livre (regra da janela de 24h da Meta) */}
+          {(node.type === "send" || node.type === "send_text") && (
+            <span style={{
+              display: "inline-block", marginBottom: 6, padding: "2px 8px",
+              borderRadius: 4, fontSize: 9.5, fontWeight: 700, letterSpacing: ".4px",
+              textTransform: "uppercase",
+              background: node.type === "send" ? "rgba(232,93,38,.14)" : "rgba(15,118,110,.12)",
+              color: node.type === "send" ? "#E85D26" : "#0F766E",
+              border: `1px solid ${node.type === "send" ? "rgba(232,93,38,.35)" : "rgba(15,118,110,.3)"}`,
+            }}>
+              {node.type === "send"
+                ? "Template aprovado · vale com janela fechada"
+                : "Texto livre · exige janela de 24h aberta"}
+            </span>
+          )}
           <div style={{ fontSize: 12.5, lineHeight: 1.5, color: "#3d3a36", whiteSpace: "pre-wrap" }}>
             {describeNode(node.type, c)}
           </div>
+          {/* Texto REAL do template selecionado (body vindo de message_templates via
+              /api/templates), com as variáveis configuradas já substituídas — o
+              operador vê exatamente o que a Meta vai entregar. */}
+          {node.type === "send" && (() => {
+            const tpl = templates.find(t => t.name === (c.template_name as string));
+            if (!c.template_name) return null;
+            return (
+              <div style={{ marginTop: 8, padding: "8px 10px", background: "#fff", border: "1px solid #e8e4df", borderRadius: 6 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".4px", textTransform: "uppercase", color: "#9b9590", marginBottom: 4 }}>
+                  Texto real do template
+                </div>
+                {tpl?.body ? (
+                  <div style={{ fontSize: 12, lineHeight: 1.55, color: "#111", whiteSpace: "pre-wrap" }}>
+                    {renderTemplateBody(tpl.body, c.template_variables as Record<string, string> | undefined)}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: "#9b9590" }}>
+                    Corpo não sincronizado no catálogo local — confira na aba Templates.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {node.type === "trigger" && (
