@@ -12,7 +12,7 @@ import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
 import { FollowupBoard } from "@/components/campaigns/followup-board";
 import { campaignNodeCount } from "@/lib/campaign-node-count";
-import { isSystemCampaign } from "@/lib/system-campaign";
+import { isSystemCampaign, visibleCampaigns } from "@/lib/system-campaign";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -58,6 +58,39 @@ function CampanhasPageInner() {
   const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
+  // Visibilidade do espelho do motor (decisão executiva 10/07): default OCULTO;
+  // religável por este toggle sem deploy. Só apresentação — guardas do backend intactas.
+  const [mirrorVisible, setMirrorVisible] = useState(false);
+  const [mirrorSaving, setMirrorSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/cadence/mirror-visibility")
+      .then(r => r.json())
+      .then(d => setMirrorVisible(Boolean(d.visible)))
+      .catch(() => setMirrorVisible(false));
+  }, []);
+
+  const toggleMirrorVisibility = async () => {
+    const next = !mirrorVisible;
+    setMirrorSaving(true);
+    setMirrorVisible(next); // otimista
+    try {
+      const res = await fetch("/api/cadence/mirror-visibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: next }),
+      });
+      const d = await res.json();
+      if (!res.ok) setMirrorVisible(!next); // rollback
+      else setMirrorVisible(Boolean(d.visible));
+    } catch {
+      setMirrorVisible(!next);
+    } finally {
+      setMirrorSaving(false);
+    }
+  };
+
+  const shownCampaigns = visibleCampaigns(campaigns, mirrorVisible);
   // Load connected channels once on mount
   useEffect(() => {
     fetch("/api/channels")
@@ -225,7 +258,7 @@ function CampanhasPageInner() {
                 </button>
               </div>
               <div className="space-y-3">
-                {campaigns.slice(0, 3).map((c) => (
+                {shownCampaigns.slice(0, 3).map((c) => (
                   <div
                     key={c.id}
                     className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity"
@@ -236,7 +269,7 @@ function CampanhasPageInner() {
                     <span className="text-[12px] text-[#7b7b78]">{campaignNodeCount(c)} nós</span>
                   </div>
                 ))}
-                {campaigns.length === 0 && (
+                {shownCampaigns.length === 0 && (
                   <p className="text-[14px] text-[#7b7b78] py-4 text-center">Nenhuma cadência ainda</p>
                 )}
               </div>
@@ -245,7 +278,39 @@ function CampanhasPageInner() {
         )}
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
-        {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={() => {}} />}
+        {activeTab === "cadencias" && (
+          <div className="space-y-4">
+            {/* Toggle do espelho do motor: exibir/ocultar a cadência de sistema.
+                Só apresentação — a ativação continua bloqueada (409) no backend. */}
+            <div className="flex items-center justify-between bg-white border border-[#dedbd6] rounded-[8px] px-4 py-3">
+              <div>
+                <p className="text-[13px] font-medium text-[#111111]">Espelho do motor da Valéria</p>
+                <p className="text-[12px] text-[#7b7b78]">
+                  {mirrorVisible
+                    ? "Exibido na lista — fluxo somente-leitura do follow-up automático"
+                    : "Oculto temporariamente (em análise interna) — a cadência real segue rodando no worker"}
+                </p>
+              </div>
+              <button
+                onClick={toggleMirrorVisibility}
+                disabled={mirrorSaving}
+                role="switch"
+                aria-checked={mirrorVisible}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  mirrorVisible ? "bg-[#ff5600]" : "bg-[#dedbd6]"
+                }`}
+                title={mirrorVisible ? "Ocultar espelho do motor" : "Exibir espelho do motor"}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    mirrorVisible ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+            <CadenceList campaigns={shownCampaigns} onRefresh={() => {}} />
+          </div>
+        )}
         {activeTab === "follow-up" && <FollowupBoard />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>

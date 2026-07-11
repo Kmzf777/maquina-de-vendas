@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VALERIA_CADENCE_CAMPAIGN_ID, isSystemCampaign } from "./system-campaign";
+import { VALERIA_CADENCE_CAMPAIGN_ID, isSystemCampaign, visibleCampaigns } from "./system-campaign";
 import { toRFEdges } from "@/components/campaigns/cadence-flow/helpers";
 import type { CampaignNode } from "@/lib/types";
 
@@ -13,6 +13,21 @@ describe("VALERIA_CADENCE_CAMPAIGN_ID", () => {
     expect(isSystemCampaign("outro-id")).toBe(false);
     expect(isSystemCampaign(null)).toBe(false);
     expect(isSystemCampaign(undefined)).toBe(false);
+  });
+});
+
+describe("visibleCampaigns — toggle de visibilidade do espelho (10/07)", () => {
+  const mirror = { id: VALERIA_CADENCE_CAMPAIGN_ID };
+  const comum = { id: "camp-1" };
+
+  it("oculto (default executivo): espelho some, convencionais ficam", () => {
+    expect(visibleCampaigns([mirror, comum], false)).toEqual([comum]);
+  });
+  it("exibido: lista intacta", () => {
+    expect(visibleCampaigns([mirror, comum], true)).toEqual([mirror, comum]);
+  });
+  it("sem espelho na lista, o toggle é neutro", () => {
+    expect(visibleCampaigns([comum], false)).toEqual([comum]);
   });
 });
 
