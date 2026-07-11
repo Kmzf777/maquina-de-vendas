@@ -824,6 +824,24 @@ _SOCIAL_CLOSING_TOKENS = frozenset({
 _SOCIAL_CLOSING_MAX_TOKENS = 6
 _SOCIAL_CLOSING_EMOJI = "❤️"
 
+# Vocabulário de negócio da ponte (auditoria 11/07, casos Mateus/Leonardo): pergunta
+# substantiva ("Qual o valor da unidade", "valor das sacas no grão") recebia o carimbo
+# estático — aborrece o lead e enterra a pergunta que o humano deveria ler. Tokens SEM
+# acento (o texto é normalizado antes de comparar). Deliberadamente ABRANGENTE, ao
+# contrário do vocabulário social (estreito): aqui superabranger é o fail-safe — um
+# silêncio a mais custa menos que um carimbo em cima de pergunta de preço.
+_BUSINESS_QUESTION_TOKENS = frozenset({
+    "preco", "precos", "valor", "valores", "custo", "custos", "custa", "custam",
+    "caro", "cara", "barato", "barata", "quanto", "quantos", "quantas",
+    "minimo", "minima", "moq", "lote", "lotes", "tabela", "orcamento",
+    "frete", "prazo", "prazos", "entrega", "desconto", "pagamento",
+    "pix", "boleto", "parcela", "parcelas", "parcelado",
+    "pedido", "pedidos", "unidade", "unidades", "saca", "sacas",
+    "kg", "quilo", "quilos", "kilo", "kilos", "grama", "gramas",
+    "grao", "graos", "embalagem", "embalagens", "catalogo",
+    "exportacao", "exporta", "exportam", "importacao", "cnpj", "nota", "orcar",
+})
+
 
 def _is_social_closing(text: str | None) -> bool:
     """True para mensagens de encerramento social ("obrigado", "valeu", emoji só).
@@ -850,6 +868,29 @@ def _is_social_closing(text: str | None) -> bool:
     if len(tokens) > _SOCIAL_CLOSING_MAX_TOKENS:
         return False
     return all(t in _SOCIAL_CLOSING_TOKENS for t in tokens)
+
+
+def _looks_like_business_question(text: str | None) -> bool:
+    """True para mensagem pós-handoff com cara de pergunta/assunto de negócio.
+
+    Regras (função pura, sem I/O — mesma normalização de _is_social_closing):
+    - None/vazio → False;
+    - "?" em QUALQUER posição → True (um único "?" basta);
+    - qualquer token no vocabulário _BUSINESS_QUESTION_TOKENS → True;
+    - senão → False.
+
+    Fail-safe por diretriz: na dúvida a mensagem fica INTOCADA para o humano ler.
+    Superabranger é aceitável — o custo de um silêncio a mais é menor que um
+    carimbo em cima de pergunta de preço (casos Mateus/Leonardo 11/07).
+    """
+    if not text or not text.strip():
+        return False
+    if "?" in text:
+        return True
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    return any(t in _BUSINESS_QUESTION_TOKENS for t in tokens)
 
 
 async def _react_to_social_closing(
@@ -931,6 +972,30 @@ async def _maybe_send_handoff_bridge(
             return False
         if _is_social_closing(inbound_text):
             await _react_to_social_closing(lead, phone, conversation, provider, inbound_wamid)
+            return False
+
+        # Escada de decisão da ponte (11/07): reação → silêncio; encerramento social
+        # → ❤️; PERGUNTA DE NEGÓCIO → silêncio total (o humano precisa ler e responder
+        # — carimbar por cima enterra a pergunta, casos Mateus/Leonardo); resto (vácuo
+        # puro tipo Maycon/Juliana SEM "?") → carimbo + cartão. Não consome o cooldown:
+        # um vácuo puro logo depois ainda recebe a ponte normalmente.
+        if _looks_like_business_question(inbound_text):
+            logger.warning(
+                "[BRIDGE] pergunta de negócio pós-handoff — silêncio (aguardando humano) conv=%s",
+                conversation.get("id"),
+            )
+            try:
+                # Marcador system p/ QA/watchdog — telemetria, nunca pode quebrar o fluxo.
+                save_message(
+                    conversation.get("id"), lead.get("id"), "system",
+                    "[ponte] pergunta de negócio detectada — silêncio, aguardando resposta humana",
+                    conversation.get("stage"), sent_by="bridge",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[BRIDGE] falha ao salvar marcador de pergunta de negócio (fail-soft) conv=%s: %s",
+                    conversation.get("id"), exc,
+                )
             return False
 
         conversation_id = conversation.get("id")

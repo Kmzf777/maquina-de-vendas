@@ -23,7 +23,7 @@ from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.catalog import get_products_by_funnel
-from app.agent.tools import get_tools_for_stage, execute_tool
+from app.agent.tools import get_tools_for_stage, execute_tool, HANDOFF_RESULT_PREFIX
 from app.agent.adherence import (
     find_verbatim_prompt_echo,
     handoff_without_answer,
@@ -310,9 +310,11 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
 # encaminhar_humano, o lead fica parado — o cartão de contato nunca sai e a IA
 # continua ativa. Este guard detecta o CTA no texto final e força o handoff.
 #
-# Invariante: se o código chegou até _looks_like_handoff_announcement, encaminhar_humano
-# NÃO foi executado neste turno (uma tool call real teria retornado None sentinel mais
-# cedo no loop) — não há risco de double-firing.
+# Invariante: se o código chegou até _looks_like_handoff_announcement, NENHUM handoff
+# foi executado neste turno — nem por tool call explícita de encaminhar_humano, nem em
+# CASCATA via qualificar_lead (o sentinel detecta ambos: pelo fc.name OU pelo
+# HANDOFF_RESULT_PREFIX no retorno da tool, e retorna None mais cedo no loop) — não há
+# risco de double-firing (fix S1 11/07, caso Prof. Sebastião).
 #
 # Frases que NÃO disparam (menções informacionais):
 #   "quem prepara isso é o Joao Bras"
@@ -949,6 +951,10 @@ async def run_agent(
         # (preserva thought_signature — 400 da família 3 impossível por construção).
         if result.content is not None:
             contents.append(result.content)
+        # Flag por RODADA de function_calls: handoff explícito (fc.name) OU em cascata
+        # (tool_result com HANDOFF_RESULT_PREFIX — qualificar_lead chama encaminhar_humano
+        # por dentro do execute_tool e o nome nunca aparece na lista). Fix S1 11/07.
+        handoff_executed = False
         for fc in result.function_calls:
             func_name = fc.name
             if func_name in _MEDIA_TOOL_NAMES:
@@ -983,25 +989,38 @@ async def run_agent(
                 # re-executar esta tool no retry, em vez de bloquear achando que já foi enviada.
                 if func_name in _MEDIA_TOOL_NAMES:
                     media_exec_failed = True
+            if func_name == "encaminhar_humano" or (
+                isinstance(tool_result, str) and tool_result.startswith(HANDOFF_RESULT_PREFIX)
+            ):
+                handoff_executed = True
             contents.append(function_response_content(func_name, tool_result))
 
         # encaminhar_humano sends the handoff message directly inside execute_tool.
         # Return None (sentinel) so the processor can distinguish an intentional
-        # handoff from an unexpected empty response.
-        if any(fc.name == "encaminhar_humano" for fc in result.function_calls):
+        # handoff from an unexpected empty response. Detecção pela flag acumulada
+        # (fix S1 11/07): cobre também o handoff em CASCATA via qualificar_lead —
+        # detectá-lo só pelo fc.name deixava o turno seguir pra chamada pós-tool,
+        # o LLM verbalizava a transferência e a guarda verbalizada disparava um
+        # SEGUNDO encaminhar_humano (2ª despedida + 2º cartão, caso Prof. Sebastião).
+        if handoff_executed:
             # Telemetria log-only [HANDOFF SEM RESPOSTA] (auditoria 11/07, Cat. 2):
             # o lead fez a pergunta mais quente (preço/lote/prazo) e recebeu o cartão
             # do João no lugar da resposta. Heurística simples e fail-open (adherence);
-            # NUNCA bloqueia o handoff — só sinaliza p/ QA.
+            # NUNCA bloqueia o handoff — só sinaliza p/ QA. Só quando há fc EXPLÍCITO
+            # de encaminhar_humano: na cascata não existe mensagem_despedida a avaliar.
             try:
-                _hfc = next(fc for fc in result.function_calls if fc.name == "encaminhar_humano")
-                _farewell = _hfc.args.get("mensagem_despedida") if isinstance(_hfc.args, dict) else None
-                if handoff_without_answer(user_text, _farewell):
-                    logger.warning(
-                        "[HANDOFF SEM RESPOSTA] conv %s lead %s — lead perguntou e a despedida "
-                        "não respondeu (sem número/R$): despedida=%.120s",
-                        conversation_id, lead_id, _farewell or "",
-                    )
+                _hfc = next(
+                    (fc for fc in result.function_calls if fc.name == "encaminhar_humano"),
+                    None,
+                )
+                if _hfc is not None:
+                    _farewell = _hfc.args.get("mensagem_despedida") if isinstance(_hfc.args, dict) else None
+                    if handoff_without_answer(user_text, _farewell):
+                        logger.warning(
+                            "[HANDOFF SEM RESPOSTA] conv %s lead %s — lead perguntou e a despedida "
+                            "não respondeu (sem número/R$): despedida=%.120s",
+                            conversation_id, lead_id, _farewell or "",
+                        )
             except Exception:
                 pass
             return None
@@ -1116,6 +1135,7 @@ async def run_agent(
                 # reprocessaria só o vazio e reincidiria no genérico (caso Karl 2026-07-01).
                 if retry_result.content is not None:
                     contents.append(retry_result.content)
+                _retry_handoff_executed = False
                 for _fc in retry_result.function_calls:
                     _rname = _fc.name
                     # Guarda de idempotência POR TURNO (Etapa 2 Task 3, caso Samuel 01/07
@@ -1182,12 +1202,18 @@ async def run_agent(
                         # tool de mídia recuperada aqui também falhe.
                         if _rname in _MEDIA_TOOL_NAMES:
                             media_exec_failed = True
+                    # Mesma detecção do loop principal (fix S1 11/07): nome explícito OU
+                    # resultado com HANDOFF_RESULT_PREFIX (cascata via qualificar_lead).
+                    if _rname == "encaminhar_humano" or (
+                        isinstance(_rresult, str) and _rresult.startswith(HANDOFF_RESULT_PREFIX)
+                    ):
+                        _retry_handoff_executed = True
                     contents.append(function_response_content(_rname, _rresult))
                 # Tools terminais recuperadas no retry — mesma ordem e contrato do loop principal,
                 # ANTES da chamada pós-tool (senão o lead recebe despedida + continuação juntos).
                 _retry_names = {_fc.name for _fc in retry_result.function_calls}
-                # encaminhar_humano → sentinel None (handoff; card enviado dentro de execute_tool)
-                if "encaminhar_humano" in _retry_names:
+                # handoff (explícito ou em cascata) → sentinel None (card enviado dentro de execute_tool)
+                if _retry_handoff_executed:
                     return None
                 # registrar_optout → despedida sanitizada (mesmo default do loop principal)
                 if "registrar_optout" in _retry_names:
@@ -1407,10 +1433,12 @@ async def run_agent(
     # GUARDA DETERMINÍSTICA DE HANDOFF VERBALIZADO (2026-06-30)
     # -----------------------------------------------------------------------
     # Se o texto final contém um CTA de transferência ("vou te conectar",
-    # "vou deixar o contato dele aqui", etc.) mas encaminhar_humano NÃO foi
-    # chamado (caso contrário teríamos retornado None sentinel antes), forçamos
-    # o handoff agora. Invariante: chegar aqui garante que encaminhar_humano
-    # não rodou neste turno — sem risco de double-firing.
+    # "vou deixar o contato dele aqui", etc.) mas nenhum handoff rodou (caso
+    # contrário teríamos retornado None sentinel antes), forçamos o handoff agora.
+    # Invariante (restaurado no fix S1 11/07): chegar aqui garante que NENHUM
+    # handoff rodou neste turno — nem encaminhar_humano explícito, nem a cascata
+    # via qualificar_lead (o sentinel detecta ambas pelo nome OU pelo
+    # HANDOFF_RESULT_PREFIX no retorno) — sem risco de double-firing.
     if _looks_like_handoff_announcement(assistant_text):
         logger.warning(
             "[HANDOFF VERBAL GUARD] texto final anuncia transferência sem tool-call "

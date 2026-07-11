@@ -171,6 +171,14 @@ _HANDOFF_MSG = (
     "assim que você chamar, ele já recebe seu contato e segue contigo"
 )
 
+# Marcador de handoff no RETORNO da tool (fix S1, caso Prof. Sebastião 11/07): o
+# sentinel do orchestrator detecta handoff também quando ele acontece em CASCATA
+# (qualificar_lead com âncoras completas chama encaminhar_humano por dentro e propaga
+# este retorno verbatim) — o nome da tool não aparece nos function_calls do turno.
+# A string final ("Lead encaminhado para <vendedor>") deve permanecer IDÊNTICA: o
+# watchdog/telemetria de QA casa com 'Lead encaminhado%' em system messages.
+HANDOFF_RESULT_PREFIX = "Lead encaminhado para "
+
 # Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é
 # enviado automaticamente logo após a mensagem de despedida no encaminhar_humano.
 # Públicas (Frente B1): a ponte pós-handoff do buffer/processor.py também consome estas
@@ -1076,7 +1084,7 @@ async def execute_tool(
                 "encaminhar_humano: nenhum canal ativo para lead %s — mensagem de handoff e rescue job ignorados",
                 lead_id,
             )
-        return f"Lead encaminhado para {vendedor}"
+        return f"{HANDOFF_RESULT_PREFIX}{vendedor}"
 
     elif tool_name == "registrar_optout":
         motivo = args.get("motivo", "opt-out solicitado pelo lead")

@@ -175,7 +175,14 @@ async def test_bridge_reacao_inbound_silencio():
 
 @pytest.mark.asyncio
 async def test_bridge_duvida_real_segue_enviando_texto():
-    """Dúvida real → comportamento intacto: texto da ponte + cartão."""
+    """Vácuo puro → comportamento intacto: texto da ponte + cartão.
+
+    Mudança de contrato (S2, 11/07): o inbound original deste teste era
+    "e o orçamento que pedi?" — sob o novo contrato isso é pergunta de negócio
+    ("?" + token "orcamento") e agora SILENCIA para o humano ler (ver
+    test_bridge_business_question_2026_07_11.py). O carimbo ficou reservado ao
+    vácuo puro (sem "?" nem termo de negócio), então o inbound aqui virou um.
+    """
     lead = _make_lead()
     conversation = _make_conversation()
     channel = _make_channel()
@@ -186,7 +193,7 @@ async def test_bridge_duvida_real_segue_enviando_texto():
          patch("app.buffer.processor.save_message"):
         sent = await P._maybe_send_handoff_bridge(
             lead, lead["phone"], conversation, channel, provider,
-            inbound_text="e o orçamento que pedi?", inbound_wamid="wamid.LEAD4",
+            inbound_text="alô, tem alguém aí", inbound_wamid="wamid.LEAD4",
             inbound_message_type="text",
         )
 
