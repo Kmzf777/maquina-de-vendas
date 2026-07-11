@@ -1,0 +1,21 @@
+-- =============================================================================
+-- RLS enable-only em public.schema_migrations (ledger do runner de migrações).
+--
+-- Contexto: a tabela foi criada pelo próprio apply_migrations.py (baseline de
+-- 11/07 em homolog e prod) e disparou o ERROR `rls_disabled_in_public` no
+-- advisor de segurança do Supabase.
+--
+-- Enable-only, SEM policy — deliberado: a tabela é acessada EXCLUSIVAMENTE via
+--   1. Management API do runner (executa como postgres/owner — RLS não se
+--      aplica a owner sem FORCE);
+--   2. service_role (tem bypassrls).
+-- Nenhum caminho anon/authenticated consome o ledger, então default-deny (RLS
+-- ligado sem policy = nega tudo para roles comuns) é exatamente o comportamento
+-- desejado. Diferente da armadilha `channels` de 07/07: lá havia consumidores
+-- authenticated reais via subquery de policy; aqui não há nenhum.
+--
+-- Rollback:
+--   alter table public.schema_migrations disable row level security;
+-- =============================================================================
+
+alter table public.schema_migrations enable row level security;
