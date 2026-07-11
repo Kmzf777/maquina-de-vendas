@@ -354,6 +354,41 @@ def get_latest_inbound_wamid(conversation_id: str) -> str | None:
         return None
 
 
+# Placeholder textual por message_type quando content vem vazio (mídia sem legenda).
+# Auditoria 10/07: envio de mídia pelo vendedor gravava content="" — LLM/dossiê/QA liam
+# um "nada" onde na verdade havia um áudio/imagem enviado. Mapeia só quando content é
+# vazio; texto normal (mesmo vazio) não é tocado — ver describe_media_placeholder.
+_MEDIA_PLACEHOLDERS = {
+    "audio": "[áudio]",
+    "image": "[imagem]",
+    "video": "[vídeo]",
+    "document": "[documento]",
+    # "[figurinha]" e não "[sticker]": é o marcador que a persona reconhece (base.py,
+    # seção TRATAMENTO DE MÍDIA) e o mesmo usado no inbound (_MEDIA_MARKERS do processor).
+    "sticker": "[figurinha]",
+    "location": "[localização]",
+    "contact": "[contato]",
+    "contacts": "[contato]",
+}
+
+
+def describe_media_placeholder(row: dict[str, Any]) -> str:
+    """Preenche content vazio de mensagens de mídia com um placeholder legível.
+
+    content não-vazio (após strip) volta intocado. content vazio/None só vira
+    placeholder quando message_type é de mídia conhecida; ausência de message_type
+    ou message_type="text" preserva o content original (comportamento pré-fix, para
+    não mexer em mensagens de texto legítimas que hoje vêm vazias por algum outro motivo).
+    """
+    content = row.get("content")
+    if content and str(content).strip():
+        return content
+    message_type = row.get("message_type")
+    if not message_type or message_type == "text":
+        return content
+    return _MEDIA_PLACEHOLDERS.get(message_type, "[mídia]")
+
+
 def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
     sb = get_supabase()
     result = (
@@ -365,7 +400,10 @@ def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
         .execute()
     )
     rows = result.data or []
-    return list(reversed(rows))           # volta à ordem cronológica ascendente (contrato inalterado)
+    ordered = list(reversed(rows))        # volta à ordem cronológica ascendente (contrato inalterado)
+    for row in ordered:
+        row["content"] = describe_media_placeholder(row)
+    return ordered
 
 
 def reset_unread_count(conversation_id: str) -> dict[str, Any]:

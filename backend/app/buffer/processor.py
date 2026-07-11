@@ -34,8 +34,9 @@ from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 from app.agent.tools import (
     pop_deferred_media, pop_interest_marked, pop_quote_executed, SUPERVISOR_NAME, SUPERVISOR_PHONE,
-    record_deferred_media_delivery,
+    record_deferred_media_delivery, apply_stage_transition,
 )
+from app.buffer.prefill import match_prefill_stage
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -1132,6 +1133,35 @@ async def process_buffered_messages(
             return
     except Exception as exc:
         logger.warning("[AUTORESPONDER] gate falhou p/ %s (segue fluxo normal): %s", phone, exc)
+
+    # GATILHO DETERMINÍSTICO DE PREFILL (B1, auditoria 10/07): a frase fixa de prefill de um
+    # anúncio ("Olá! Quero saber mais sobre ter a Marca Própria de Café.") deveria mover o lead
+    # pro funil certo já na entrada, mas dependia do LLM chamar mudar_stage — falhou em 1 de 4
+    # leads (João Marcos preso em pending por 2 turnos, sem catálogo). Aqui o efeito é código:
+    # só em stage de ENTRADA (None/''/pending/secretaria) e por IGUALDADE de frase (nunca
+    # substring), aplicamos a transição pelo MESMO efeito de mudar_stage e atualizamos
+    # conversation["stage"] para o turno atual já enxergar o funil novo (run_agent lê daí).
+    # Fail-open: qualquer erro só loga e segue o fluxo normal do LLM.
+    try:
+        _cur_stage = conversation.get("stage")
+        if (_cur_stage or "") in ("", "pending", "secretaria"):
+            _matched_stage = None
+            for _line in resolved_text.split("\n"):
+                _matched_stage = match_prefill_stage(_line)
+                if _matched_stage:
+                    break
+            if _matched_stage and _matched_stage != _cur_stage:
+                if apply_stage_transition(lead["id"], conversation["id"], _matched_stage):
+                    conversation["stage"] = _matched_stage
+                    logger.info(
+                        "[PREFILL STAGE] frase de prefill moveu conv %s (lead %s) de %r p/ %r",
+                        conversation["id"], lead["id"], _cur_stage, _matched_stage,
+                    )
+    except Exception as exc:
+        logger.warning(
+            "[PREFILL STAGE] gatilho de prefill falhou p/ conv %s (fail-open, segue LLM): %s",
+            conversation.get("id"), exc,
+        )
 
     # Resolve agent profile: conversation takes priority over channel default
     # None means no explicit profile — orchestrator defaults to valeria_inbound

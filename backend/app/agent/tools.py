@@ -204,7 +204,10 @@ TOOL_DECLARATIONS: list[dict] = [
             "private_label — lead quer marca propria, embalagem personalizada ou produto com identidade visual propria; "
             "exportacao — lead menciona mercado externo, exportacao ou pais de destino; "
             "consumo — pessoa fisica comprando para uso proprio, sem fins comerciais. "
-            "Execute imediatamente ao identificar o gatilho, sem perguntar ao cliente."
+            "Execute imediatamente ao identificar o gatilho, sem perguntar ao cliente. "
+            "Mude o stage SOMENTE com declaracao EXPLICITA do lead sobre a propria "
+            "necessidade; fala ambigua, social ou audio truncado NAO e gatilho. Voltar a um "
+            "stage anterior da mesma conversa exige correcao explicita do lead ('na verdade eu quero X')."
         ),
         "parameters": {
             "type": "object",
@@ -223,7 +226,12 @@ TOOL_DECLARATIONS: list[dict] = [
         "description": (
             "Registra o encerramento da interacao e transfere o controle para o supervisor Joao. "
             "USE nos seguintes casos: "
-            "(1) lead qualificado e pronto para fechar — passe vendedor e motivo; "
+            "(1) lead qualificado e pronto para avancar — SOMENTE quando o lead declarou "
+            "finalidade concreta (o que quer fazer com o cafe/marca) E deu sinal ativo de "
+            "avanco (pergunta de preco/prazo/pedido, confirmacao verbal explicita). Emojis, "
+            "aplausos, monossilabos ('sim', 'ok', 'top') e simpatia social NAO qualificam "
+            "sozinhos — nesses casos continue a descoberta ou use qualificar_lead para "
+            "registrar ancoras; "
             "(2) lead REJEITOU explicitamente o modelo de negocio — passe motivo='Cliente nao aceitou o modelo de negocio'; "
             "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ turnos no stage private_label — chame imediatamente. "
             "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
@@ -718,6 +726,69 @@ def _despedida_ja_enviada(conversation_id: str, despedida: str) -> bool:
     return False
 
 
+def apply_stage_transition(lead_id: str, conversation_id: str, new_stage: str) -> bool:
+    """Efeito CANÔNICO de uma troca de stage — extraído do executor `mudar_stage` para ser
+    reusado pelo gatilho determinístico de prefill (Trilha B, auditoria 10/07). Retorna True
+    quando a transição foi aplicada, False no no-op idempotente.
+
+    Idempotência (auditoria 10/07, caso Marisete): só é no-op quando lead E conversa já estão
+    no stage pedido — divergência ainda re-sincroniza. O marcador system duplicado
+    realimentaria o prompt e geraria writes redundantes. Fail-open: erro no fetch segue o
+    caminho normal (aplica). `ensure_segment_deal` é fail-soft: nunca derruba a troca de stage.
+    """
+    try:
+        _lead_stage = (get_lead(lead_id) or {}).get("stage")
+        _conv_stage = (
+            (get_conversation(conversation_id) or {}).get("stage")
+            if conversation_id else _lead_stage
+        )
+        if _lead_stage == new_stage and _conv_stage == new_stage:
+            return False
+    except Exception:
+        pass
+    if conversation_id:
+        update_conversation(conversation_id, stage=new_stage)
+    update_lead(lead_id, stage=new_stage)
+    # CRIAÇÃO ADIADA: ao classificar o segmento, o lead inbound (que não tinha card) ganha um
+    # no funil correspondente. No-op p/ stage não-segmento ('pending'/'secretaria') ou se já
+    # houver card. Fail-soft: nunca derruba a troca de stage.
+    try:
+        ensure_segment_deal(lead_id, new_stage)
+    except Exception as exc:
+        logger.error(
+            "apply_stage_transition: falha ao garantir card de segmento (lead %s, stage %s): %s",
+            lead_id, new_stage, exc, exc_info=True,
+        )
+    save_message(lead_id, "system", f"stage alterado para: {new_stage}", conversation_id=conversation_id)
+    return True
+
+
+def _recent_stage_marker_exists(conversation_id: str, stage: str, minutes: int = 15) -> bool:
+    """True se há um marcador system `stage alterado para: <stage>` nos últimos `minutes` desta
+    conversa — ou seja, o lead JÁ passou por esse stage recentemente (sinal de flapping quando
+    a próxima mudança volta para ele). Telemetria pura (B2); fail-open=False: sem
+    conversation_id ou erro de leitura, não sinaliza nada. NUNCA bloqueia a transição.
+    """
+    if not conversation_id:
+        return False
+    try:
+        from app.db.supabase import get_supabase
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        res = (
+            get_supabase().table("messages").select("id")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "system")
+            .eq("content", f"stage alterado para: {stage}")
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:
+        logger.debug("[STAGE FLAP] falha ao checar marcador recente p/ conv %s: %s", conversation_id, exc)
+        return False
+
+
 async def execute_tool(
     tool_name: str,
     args: dict[str, Any],
@@ -766,36 +837,21 @@ async def execute_tool(
 
     elif tool_name == "mudar_stage":
         new_stage = args["stage"]
-        # Idempotência (auditoria 10/07, caso Marisete): o modelo re-chama a tool com o
-        # stage ATUAL e o marcador "stage alterado" sai duplicado na transcrição (que
-        # realimenta o prompt), além dos writes redundantes. Só é no-op quando lead E
-        # conversa já estão no stage pedido — divergência ainda re-sincroniza. Fail-open:
-        # qualquer erro no fetch segue o caminho normal.
-        try:
-            _lead_stage = (get_lead(lead_id) or {}).get("stage")
-            _conv_stage = (
-                (get_conversation(conversation_id) or {}).get("stage")
-                if conversation_id else _lead_stage
+        # Telemetria de FLAPPING (B2, auditoria 10/07 — caso Nilson: private_label → atacado →
+        # private_label em ~3 min reagindo a áudios ambíguos). SEM bloqueio: se já existe um
+        # marcador recente "stage alterado para: <new_stage>" nesta conversa, esta chamada está
+        # REVERTENDO para um stage por onde já passamos há pouco — só logamos para medir a
+        # frequência. A transição SEMPRE prossegue (diretriz do usuário: precisão sem engessar).
+        if _recent_stage_marker_exists(conversation_id, new_stage):
+            logger.warning(
+                "[STAGE FLAP] mudar_stage revertendo p/ stage recente '%s' (lead=%s, conv=%s) — "
+                "possível flapping por sinal ambíguo; transição mantida (sem bloqueio).",
+                new_stage, lead_id, conversation_id,
             )
-            if _lead_stage == new_stage and _conv_stage == new_stage:
-                return f"Lead já está no stage {new_stage} — nenhuma alteração necessária"
-        except Exception:
-            pass
-        if conversation_id:
-            update_conversation(conversation_id, stage=new_stage)
-        update_lead(lead_id, stage=new_stage)
-        # CRIAÇÃO ADIADA: ao classificar o segmento, o lead inbound (que não tinha card) ganha
-        # um no funil correspondente. No-op p/ stage não-segmento ('pending'/'secretaria') ou
-        # se já houver card. Fail-soft: nunca derruba a troca de stage.
-        try:
-            ensure_segment_deal(lead_id, new_stage)
-        except Exception as exc:
-            logger.error(
-                "mudar_stage: falha ao garantir card de segmento (lead %s, stage %s): %s",
-                lead_id, new_stage, exc, exc_info=True,
-            )
-        save_message(lead_id, "system", f"stage alterado para: {new_stage}", conversation_id=conversation_id)
-        return f"Stage alterado para: {new_stage}"
+        # Efeito canônico (idempotente, fail-soft) — compartilhado com o gatilho de prefill.
+        if apply_stage_transition(lead_id, conversation_id, new_stage):
+            return f"Stage alterado para: {new_stage}"
+        return f"Lead já está no stage {new_stage} — nenhuma alteração necessária"
 
     elif tool_name == "qualificar_lead":
         # Item 3: persiste as âncoras de qualificação e, quando finalidade E volume já estão

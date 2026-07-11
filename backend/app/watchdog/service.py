@@ -802,6 +802,13 @@ def _qa_collect_metrics(now: datetime) -> dict:
         # messages ("Lead encaminhado..." + "cartão de contato enviado") — o LIKE
         # amplo dobrava a contagem (relatório de 10/07 mostrou 14 p/ 7 reais).
         "handoffs": _qa_count(_msgs("[encaminhar_humano] Lead encaminhado%", role="system")),
+        # B4 (Trilha B, auditoria 10/07): frequência da GUARDA determinística de handoff
+        # verbalizado (orchestrator força encaminhar_humano quando o texto anuncia a
+        # transferência sem tool-call — motivo "handoff verbalizado sem tool-call"). Contagem
+        # PRÓPRIA: reutilizar/alargar o LIKE de 'Lead encaminhado%' inflaria os handoffs (lição
+        # do relatório de 10/07). Os verbalizados são um SUBCONJUNTO dos handoffs — medi-los à
+        # parte revela quantas transferências saíram da guarda, não de uma tool-call limpa.
+        "handoffs_verbalizados": _qa_count(_msgs("%handoff verbalizado sem tool-call%", role="system")),
         "optouts": _qa_count(_msgs("[registrar_optout]%", role="system")),
         "numero_errado_marcados": _distinct_leads("[registrar_numero_errado]%"),
         "indicacoes": _qa_count(_msgs("[registrar_indicacao]%", role="system")),
@@ -843,7 +850,10 @@ def check_daily_qa(now: datetime) -> bool:
     resumo = (
         f"QA diário {dia}: {metrics['respostas_ia']} respostas da IA e "
         f"{metrics['followups_enviados']} follow-ups para {metrics['inbounds']} mensagens de leads; "
-        f"{metrics['handoffs']} handoffs, {metrics['optouts']} opt-outs, "
+        f"{metrics['handoffs']} handoffs "
+        # `.get` tolerante: metrics legado/parcial (sem a chave nova) não pode quebrar o relatório.
+        f"(dos quais {metrics.get('handoffs_verbalizados', -1)} por guarda de handoff verbalizado), "
+        f"{metrics['optouts']} opt-outs, "
         f"{metrics['perguntas_repetidas_corrigidas']} perguntas repetidas corrigidas pela guarda; "
         f"{metrics['dossies_atualizados']} dossiês atualizados; "
         f"{metrics['disparos_enviados']} templates disparados; "
