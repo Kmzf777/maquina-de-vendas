@@ -126,6 +126,24 @@ def _already_touched_today(conversation_id: str, now: datetime) -> bool:
         return False
 
 
+def lead_marked_wrong_number(lead: dict | None) -> bool:
+    """True se o lead está marcado como número errado (`metadata.wrong_number_at`).
+
+    A marca nasce em `registrar_numero_errado` e é removida quando o dono real
+    responde (broadcast/worker.process_wrong_number_deadends limpa a chave) — então
+    a checagem pontual reflete o estado vigente. Caso Maria (10/07): negou ser a
+    dona do número e AINDA recebeu o reopen D+1, porque nada entre a marcação e o
+    deadend de 72h suprimia cadência/reopen. Fail-safe: lead None/sem metadata →
+    False (na dúvida, o fluxo normal segue).
+    """
+    if not isinstance(lead, dict):
+        return False
+    meta = lead.get("metadata") or {}
+    if not isinstance(meta, dict):
+        return False
+    return bool(meta.get("wrong_number_at"))
+
+
 def schedule_followup(
     conversation_id: str,
     lead_id: str,
@@ -164,6 +182,40 @@ def schedule_followup(
         raise ValueError(
             f"conversation_id '{conversation_id}' não existe na tabela conversations"
         )
+
+    # Número errado (caso Maria, 10/07): quem negou ser o dono do número não recebe
+    # cadência nem reopen. Cancela os pending (mesma lista de preservação do
+    # reschedule) e NÃO insere toques novos — a marca vale até o deadend de 72h
+    # (broadcast/worker.process_wrong_number_deadends) resolver o destino do lead.
+    # Fail-open: erro na releitura nunca bloqueia o agendamento.
+    try:
+        lead_row = (
+            sb.table("leads").select("id, metadata").eq("id", lead_id).single().execute().data
+        )
+    except Exception as exc:
+        logger.warning(
+            "[FOLLOWUP] falha ao checar wrong_number do lead %s: %s — fail-open",
+            lead_id, exc,
+        )
+        lead_row = None
+    if lead_marked_wrong_number(lead_row):
+        try:
+            sb.table("follow_up_jobs").update({
+                "status": "cancelled",
+                "cancel_reason": "wrong_number",
+            }).eq("conversation_id", conversation_id).eq("status", "pending").not_.in_(
+                "job_type", ["handoff_rescue", "lp_welcome", "ai_scheduled_return"]
+            ).execute()
+        except Exception as exc:
+            logger.error(
+                "[FOLLOWUP] erro ao cancelar pending de lead wrong_number conv=%s: %s",
+                conversation_id, exc,
+            )
+        logger.info(
+            "[FOLLOWUP] lead %s marcado wrong_number — cadência suprimida conversation=%s",
+            lead_id, conversation_id,
+        )
+        return
 
     # Cancela pending da mesma conversa (idempotência).
     # Preserva lp_welcome — é independente do ciclo de follow-up manual.

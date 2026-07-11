@@ -8,7 +8,12 @@ import httpx
 
 from app.agent.gemini_client import generate, user_content
 from app.config import settings
-from app.follow_up.service import get_due_followups, should_proactive_handoff, _ENV_TAG
+from app.follow_up.service import (
+    get_due_followups,
+    lead_marked_wrong_number,
+    should_proactive_handoff,
+    _ENV_TAG,
+)
 from app.leads.service import (
     resolve_send_target, create_deal, record_dispatch_note,
     strip_greeting_prefix, sanitize_display_name,
@@ -620,8 +625,32 @@ async def process_due_followups(now: datetime | None = None) -> None:
         # por _claim_followup_job, por isso cancelamos explicitamente no fim).
         # Fail-soft: qualquer erro aqui é logado e o ciclo segue para o follow-up padrão —
         # nunca derruba o tick por causa deste backstop.
+        # Relê o lead UMA vez para os dois guards seguintes (número errado + backstop
+        # pós-catálogo). Fail-soft: erro na releitura → None e nenhum guard age (o
+        # job segue para o fluxo padrão — nunca derruba o tick).
         try:
             fresh_lead = _fetch_lead_for_backstop(job["lead_id"])
+        except Exception as exc:
+            logger.error(
+                "[FOLLOWUP] falha ao reler lead %s para os guards do toque — seguindo "
+                "para o follow-up padrão: %s",
+                job["lead_id"], exc, exc_info=True,
+            )
+            fresh_lead = None
+
+        # Guard: número errado (caso Maria, 10/07) — quem negou ser o dono do número
+        # não recebe toque de cadência NEM reopen (o reopen dispara deste mesmo
+        # caminho, no guard de janela abaixo). Roda ANTES do backstop: wrong_number
+        # com catalog_shown não pode virar handoff proativo.
+        if lead_marked_wrong_number(fresh_lead):
+            _cancel_job(job["id"], "wrong_number")
+            logger.info(
+                "[FOLLOWUP] lead %s marcado wrong_number — toque suprimido seq=%s conversation=%s",
+                job["lead_id"], sequence, conversation_id,
+            )
+            continue
+
+        try:
             if should_proactive_handoff(fresh_lead):
                 await _fire_proactive_handoff(job, fresh_lead, phone=lead.get("phone", ""))
                 continue

@@ -100,6 +100,14 @@ _SP_TZ = ZoneInfo("America/Sao_Paulo")
 # resultado ANTES desse teto (defesa primaria); os filtros Python de lookback/SLA/
 # dedup permanecem como defesa em profundidade.
 HANDOFF_SLA_FETCH_LIMIT = 1000
+# Escalonamento por ACÚMULO (pré-canário do disparo frios, 11/07): 1 breach isolado
+# e ruido de operacao (warning = Sentry + banner ambar no CRM); fila EM PE com
+# >= THRESHOLD conversas violadas e incidente de plantao → 1 alerta `critical`
+# (Sentry + WhatsApp do admin via alerts._notify_external/T2), com dedup global de
+# DEDUP_HOURS enquanto a fila nao baixar. Motivacao: 50 warnings em 3 dias (49 nao
+# resolvidos) sem NENHUM ping ativo ao operador — a deteccao existia, o sino nao.
+HANDOFF_SLA_ESCALATION_THRESHOLD = 3
+HANDOFF_SLA_ESCALATION_DEDUP_HOURS = 2
 
 # --- Check 6 (cadence_dead, incidente 26/06→09/07) -------------------------------
 # A cadencia 4-touch ficou MORTA por 13 dias (26/06→09/07): a constraint 23514
@@ -580,6 +588,24 @@ def check_handoff_sla(now: datetime) -> int:
                 "Casos reais: Juliana 02/07 ('o João visualiza e não responde').",
                 severity="warning",
                 metadata={"conversation_ids": new_violations[:10]},
+            )
+        # Escalonamento por acúmulo: mede a fila EM PÉ (`violated` inteira, não só as
+        # novas) — mesmo com todas as conversas já cobertas pelo dedup por conversa,
+        # a fila parada re-escala a cada HANDOFF_SLA_ESCALATION_DEDUP_HOURS até o
+        # plantão agir (foi o drumbeat que faltou nos 49 warnings ignorados de 11/07).
+        if n >= HANDOFF_SLA_ESCALATION_THRESHOLD and not _alert_recently_fired(
+            "handoff_sla_escalation", dedup_hours=HANDOFF_SLA_ESCALATION_DEDUP_HOURS
+        ):
+            create_system_alert(
+                "handoff_sla_escalation",
+                f"Fila humana acumulando: {n} lead(s) sem resposta pós-handoff",
+                f"{n} conversa(s) no canal humano aguardando resposta do vendedor há "
+                f"mais de {HANDOFF_SLA_MINUTES}min — no limiar de escalonamento "
+                f"({HANDOFF_SLA_ESCALATION_THRESHOLD}+). O plantão precisa assumir a "
+                f"fila agora; este alerta repete a cada "
+                f"{HANDOFF_SLA_ESCALATION_DEDUP_HOURS}h enquanto a fila não baixar.",
+                severity="critical",
+                metadata={"count": n, "conversation_ids": violated[:10]},
             )
     return n
 

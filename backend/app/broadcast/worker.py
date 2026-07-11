@@ -1006,6 +1006,11 @@ def _template_dedup_guardrail(
 
     Re-blast idêntico em poucos dias queima a lista (caso Daniel, 08/07). Janela
     configurável via BROADCAST_TEMPLATE_DEDUP_DAYS (default 14). Fail-open.
+
+    O filtro cobre o ciclo de vida INTEIRO do envio bem-sucedido — o webhook de
+    delivery-status promove broadcast_leads de 'sent' para 'delivered'/'read'
+    (service._handle mark_broadcast_lead_delivered), então filtrar só 'sent'
+    deixava justamente os leads ENTREGUES escaparem do dedup (go/no-go 11/07).
     """
     if not lead_id or not template_name:
         return None
@@ -1017,7 +1022,7 @@ def _template_dedup_guardrail(
             sb.table("broadcast_leads")
             .select("id, broadcasts!inner(template_name)")
             .eq("lead_id", lead_id)
-            .eq("status", "sent")
+            .in_("status", ["sent", "delivered", "read"])
             .eq("broadcasts.template_name", template_name)
             .gte("sent_at", cutoff)
             .limit(1)
