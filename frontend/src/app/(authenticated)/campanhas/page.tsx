@@ -11,6 +11,7 @@ import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-mo
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
 import { FollowupBoard } from "@/components/campaigns/followup-board";
+import { campaignNodeCount } from "@/lib/campaign-node-count";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -229,7 +230,7 @@ function CampanhasPageInner() {
                   >
                     <StatusBadge status={c.status} />
                     <span className="text-[14px] text-[#111111] flex-1 mx-3 truncate">{c.name}</span>
-                    <span className="text-[12px] text-[#7b7b78]">{c.nodes?.length ?? 0} nós</span>
+                    <span className="text-[12px] text-[#7b7b78]">{campaignNodeCount(c)} nós</span>
                   </div>
                 ))}
                 {campaigns.length === 0 && (

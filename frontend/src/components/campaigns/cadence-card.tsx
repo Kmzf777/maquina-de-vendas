@@ -1,6 +1,7 @@
 "use client";
 
 import type { Campaign } from "@/lib/types";
+import { campaignNodeCount } from "@/lib/campaign-node-count";
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   draft:    { bg: "bg-[#f0ede8]",       text: "text-[#7b7b78]",   label: "Rascunho" },
@@ -17,7 +18,7 @@ interface CadenceCardProps {
 
 export function CadenceCard({ campaign, onClick }: CadenceCardProps) {
   const st = STATUS_STYLES[campaign.status] ?? STATUS_STYLES.draft;
-  const nodeCount = campaign.nodes?.length ?? 0;
+  const nodeCount = campaignNodeCount(campaign);
 
   return (
     <div

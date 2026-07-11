@@ -350,6 +350,9 @@ export interface Campaign {
   created_at: string;
   updated_at: string;
   nodes?: CampaignNode[];
+  /** Contagem agregada de nós (rota de LISTAGEM via embed campaign_nodes(count)) —
+   *  o detalhe embute `nodes` completos; use campaignNodeCount() para exibir. */
+  nodes_count?: number;
 }
 
 export interface CampaignEnrollment {
