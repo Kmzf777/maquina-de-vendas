@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -806,9 +807,89 @@ _BRIDGE_TEXT = (
     "se preferir, chama ele direto no contato que te mandei aqui em cima que ele te responde por lá"
 )
 
+# Filtro de intenção da ponte (auditoria 11/07): "obrigado" pós-handoff recebia o
+# texto de transbordo — ruído em cima de um encerramento social. Vocabulário
+# ESTREITO e sem acentos (o texto é normalizado antes): a frase inteira precisa
+# ser composta só destes tokens (dúvida real sempre carrega outra palavra ou "?").
+_SOCIAL_CLOSING_TOKENS = frozenset({
+    "obrigado", "obrigada", "obrigadao", "obg", "brigado", "brigada", "brigadao",
+    "agradecido", "agradecida", "agradeco", "gratidao", "valeu", "vlw",
+    "ok", "okay", "okk", "blz", "beleza", "show", "top", "joia", "otimo",
+    "perfeito", "certo", "entendi", "entendido", "tranquilo", "suave",
+    "fechou", "fechado", "combinado", "tamo", "tmj", "junto", "juntos",
+    "de", "nada", "disponha", "abraco", "abracos", "abs",
+    "amem", "deus", "abencoe", "abencoado", "muito", "muita", "mto",
+    "te", "pela", "pelo", "atencao", "ate", "mais", "logo", "breve",
+})
+_SOCIAL_CLOSING_MAX_TOKENS = 6
+_SOCIAL_CLOSING_EMOJI = "❤️"
+
+
+def _is_social_closing(text: str | None) -> bool:
+    """True para mensagens de encerramento social ("obrigado", "valeu", emoji só).
+
+    Regras (função pura, sem I/O):
+    - "?" em qualquer lugar → dúvida, nunca encerramento.
+    - Só emoji (sem letra/dígito e sem "?") → encerramento (👍, 🙏…).
+    - Senão: normaliza (minúsculas, sem acento), tokeniza por letras/dígitos e
+      exige que TODOS os tokens (máx. _SOCIAL_CLOSING_MAX_TOKENS) estejam no
+      vocabulário estreito. Qualquer palavra fora dele → dúvida real → ponte.
+    """
+    if not text or not text.strip():
+        return False
+    if "?" in text:
+        return False
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    if not tokens:
+        # Sem nenhuma palavra: sobra emoji/pontuação. Emoji-only é encerramento;
+        # pontuação-só ("...", "!!") não sinaliza dúvida nem pede ponte — também ❤️?
+        # Não: exigimos ao menos um emoji de verdade (categoria Symbol) para reagir.
+        return any(unicodedata.category(ch).startswith("S") for ch in text)
+    if len(tokens) > _SOCIAL_CLOSING_MAX_TOKENS:
+        return False
+    return all(t in _SOCIAL_CLOSING_TOKENS for t in tokens)
+
+
+async def _react_to_social_closing(
+    lead: dict, phone: str, conversation: dict, provider, inbound_wamid: str | None,
+) -> bool:
+    """Reage com ❤️ ao encerramento social do lead pós-handoff (fail-soft total).
+
+    Sem wamid não há alvo → silêncio. Janela de 24h fechada, provider sem suporte
+    (Evolution herda o default NotImplementedError do base) ou qualquer erro da
+    Meta → silêncio; nunca degrada de volta para o texto da ponte.
+    """
+    if not inbound_wamid:
+        return False
+    try:
+        send_to = resolve_send_target(lead, phone)
+        result = await provider.send_reaction(send_to, inbound_wamid, _SOCIAL_CLOSING_EMOJI)
+        save_message(
+            conversation.get("id"), lead.get("id"), "assistant",
+            _SOCIAL_CLOSING_EMOJI, conversation.get("stage"),
+            sent_by="bridge", message_type="reaction",
+            metadata={"emoji": _SOCIAL_CLOSING_EMOJI, "target_wamid": inbound_wamid},
+            wamid=extract_wamid(result),
+        )
+        logger.info(
+            "[BRIDGE] encerramento social — reação %s enviada conv=%s target=%s",
+            _SOCIAL_CLOSING_EMOJI, conversation.get("id"), inbound_wamid,
+        )
+        return True
+    except Exception as exc:
+        logger.info(
+            "[BRIDGE] reação de encerramento falhou (fail-soft, silêncio) conv=%s: %s",
+            conversation.get("id"), exc,
+        )
+        return False
+
 
 async def _maybe_send_handoff_bridge(
     lead: dict, phone: str, conversation: dict, channel: dict, provider,
+    inbound_text: str | None = None, inbound_wamid: str | None = None,
+    inbound_message_type: str | None = None,
 ) -> bool:
     """Ponte estática pós-handoff: avisa o lead que o atendimento já é com o João.
 
@@ -836,6 +917,20 @@ async def _maybe_send_handoff_bridge(
             and lead.get("stage") != "perdido"
             and os.environ.get("REHEARSAL_MODE") != "true"
         ):
+            return False
+
+        # Filtro de intenção (11/07): encerramento social não é dúvida — o texto de
+        # roteamento aqui era ruído ("obrigado" → "seu atendimento tá com o João…").
+        # Reação inbound: silêncio (a Meta rejeita reação-sobre-reação; e reagir a
+        # uma mensagem nossa também não é dúvida). Nenhum dos dois consome o
+        # cooldown: a próxima dúvida REAL ainda recebe a ponte normalmente.
+        if inbound_message_type == "reaction":
+            logger.debug(
+                "[BRIDGE] inbound é reação — silêncio conv=%s", conversation.get("id"),
+            )
+            return False
+        if _is_social_closing(inbound_text):
+            await _react_to_social_closing(lead, phone, conversation, provider, inbound_wamid)
             return False
 
         conversation_id = conversation.get("id")
@@ -1108,7 +1203,13 @@ async def process_buffered_messages(
         # Ponte pós-handoff (Frente B1): sem isso, um lead já transbordado pro João que
         # continua escrevendo NESTE número cai no vácuo (casos reais Maycon/Juliana,
         # 01-02/07) — a IA está muda por contrato, mas ninguém avisa o lead disso.
-        await _maybe_send_handoff_bridge(lead, phone, conversation, channel, provider)
+        # O contexto do inbound alimenta o filtro de intenção: encerramento social
+        # recebe reação ❤️ em vez do texto de roteamento (auditoria 11/07).
+        await _maybe_send_handoff_bridge(
+            lead, phone, conversation, channel, provider,
+            inbound_text=resolved_text, inbound_wamid=wamid,
+            inbound_message_type=_message_type,
+        )
         _update_last_msg(conversation["id"])
         return
 
@@ -1564,16 +1665,42 @@ async def _dispatch_deferred_media(provider, send_to: str, conversation: dict, l
             groups.append(g)
         g["total"] += 1
         try:
-            await provider.send_image_base64(
+            send_result = await provider.send_image_base64(
                 send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
             )
             g["sent"] += 1
             g["catalog"] = g["catalog"] or bool(item.get("catalog"))
-            await asyncio.sleep(1)
         except Exception as _e:
             logger.error(
                 "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
             )
+            continue
+        # Persistência por imagem (auditoria 11/07): sem esta linha em `messages`,
+        # um reply do lead à foto era irresolvível (frontend "Mensagem original não
+        # disponível"; prompt com marcador genérico) e o CRM nem mostrava a foto.
+        # O wamid é o que torna a citação resolvível; a cópia no Storage dá a URL
+        # permanente da bolha. Fail-soft: a mídia JÁ foi entregue — falha aqui
+        # nunca escala nem impede o marcador k/n.
+        try:
+            storage_url = _upload_image_to_storage(
+                base64.b64decode(item["b64"]), item.get("mimetype") or "image/jpeg",
+            )
+            save_message(
+                conversation.get("id"), lead.get("id"), "assistant",
+                item.get("caption", "") or "",
+                conversation.get("stage"),
+                sent_by="agent",
+                message_type="image",
+                media_url=storage_url,
+                media_mime=item.get("mimetype"),
+                wamid=extract_wamid(send_result),
+            )
+        except Exception as _persist_exc:
+            logger.error(
+                "Falha ao persistir foto diferida (envio OK) conv=%s: %s",
+                conversation.get("id"), _persist_exc, exc_info=True,
+            )
+        await asyncio.sleep(1)
     try:
         record_deferred_media_delivery(lead["id"], conversation["id"], groups)
     except Exception as _e:
@@ -1711,6 +1838,29 @@ def _sync_conversation_persona(conversation: dict, agent_persona: str) -> None:
             "[PERSONA] falha ao sincronizar agent_persona conv=%s: %s",
             conversation.get("id"), exc,
         )
+
+
+def _upload_image_to_storage(image_bytes: bytes, mimetype: str) -> str | None:
+    """Cópia permanente de uma imagem outbound no Storage (bucket whatsapp-media).
+
+    Mesmo bucket/prefixo do send-media do CRM — a bolha do frontend renderiza
+    qualquer media_url http diretamente. Fail-soft: None em erro (a linha da
+    mensagem ainda nasce; só degrada para o ícone de imagem).
+    """
+    try:
+        import uuid
+        from app.db.supabase import get_supabase
+        sb = get_supabase()
+        ext = "png" if "png" in (mimetype or "") else "jpg"
+        path = f"outbound/agent_{uuid.uuid4().hex}.{ext}"
+        sb.storage.from_("whatsapp-media").upload(
+            path, image_bytes,
+            file_options={"content-type": mimetype or "image/jpeg", "x-upsert": "true"},
+        )
+        return sb.storage.from_("whatsapp-media").get_public_url(path)
+    except Exception as e:
+        logger.warning(f"Failed to upload outbound image to storage: {e}")
+        return None
 
 
 def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: str, ext: str) -> str | None:

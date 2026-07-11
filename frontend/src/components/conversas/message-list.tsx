@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from "react";
 import type { Message } from "@/lib/types";
 import { DaySeparator } from "@/components/conversas/day-separator";
 import { MessageBubble } from "@/components/conversas/message-bubble";
@@ -26,6 +26,7 @@ interface MessageListProps {
   loading: boolean;
   conversationId: string;
   onReply?: (msg: Message) => void;
+  onReact?: (msg: Message, emoji: string) => void;
   onContactDispatch?: (phone: string) => void;
   hasMore?: boolean;
   loadingOlder?: boolean;
@@ -56,9 +57,15 @@ function isGrouped(current: Message, previous: Message | undefined): boolean {
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
   function MessageList(
-    { messages, loading, conversationId, onReply, onContactDispatch, hasMore, loadingOlder, onLoadOlder },
+    { messages: rawMessages, loading, conversationId, onReply, onReact, onContactDispatch, hasMore, loadingOlder, onLoadOlder },
     ref,
   ) {
+    // Reações cujo alvo está na janela viram badge na bolha alvo (estilo
+    // WhatsApp) — a bolha própria da reação sai da thread para não duplicar.
+    const messages = useMemo(
+      () => rawMessages.filter((m) => !m.reaction_attached),
+      [rawMessages],
+    );
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
@@ -213,6 +220,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                     isGrouped={grouped}
                     conversationId={conversationId}
                     onReply={onReply}
+                    onReact={onReact}
                     onScrollToMessage={scrollToMessageId}
                     onContactDispatch={onContactDispatch}
                   />

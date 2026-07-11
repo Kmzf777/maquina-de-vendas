@@ -265,6 +265,10 @@ def save_message(
 def resolve_message_text_by_wamid(wamid: str) -> str | None:
     """Return the content of a previously stored message by its Meta wamid, or None.
 
+    Mídia sem legenda (content vazio) resolve para o placeholder legível
+    ("[imagem]", "[áudio]"…) via describe_media_placeholder — sem isso, um reply
+    a uma foto degradava o marcador do prompt para o genérico.
+
     Fail-open: returns None on any error (missing row, DB hiccup) so callers
     degrade gracefully — they should fall back to a soft marker.
     """
@@ -276,13 +280,13 @@ def resolve_message_text_by_wamid(wamid: str) -> str | None:
         sb = get_supabase()
         result = (
             sb.table("messages")
-            .select("content")
+            .select("content, message_type")
             .eq("wamid", wamid)
             .limit(1)
             .execute()
         )
         if result.data:
-            return result.data[0]["content"]
+            return describe_media_placeholder(result.data[0])
         return None
     except Exception as exc:
         logger.warning(
@@ -306,12 +310,12 @@ def resolve_message_texts_by_wamids(wamids: list[str]) -> dict[str, str]:
         sb = get_supabase()
         result = (
             sb.table("messages")
-            .select("wamid, content")
+            .select("wamid, content, message_type")
             .in_("wamid", unique)
             .execute()
         )
         return {
-            row["wamid"]: row["content"]
+            row["wamid"]: describe_media_placeholder(row)
             for row in (result.data or [])
             if row.get("wamid")
         }
