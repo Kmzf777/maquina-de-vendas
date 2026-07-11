@@ -118,7 +118,19 @@ def _ensure_question_mark(bubble: str) -> str:
 
     O matching usa fronteira de palavra (\b) para que "qualquer" não bata em "qual" e
     "queria" não bata em "quer".
+
+    Duas guardas de NÃO-ação (lead 5561999119005, 11/07): a bolha "o que está incluso é..."
+    foi fundida pelo clamp de overflow com o parágrafo seguinte e ganhou "?" indevido —
+    o starter do 1º parágrafo não descreve o fim do último parágrafo fundido.
     """
+    # Guarda 1: bolha fundida pelo clamp de overflow (tem "\n\n" interno) — o início e o
+    # fim são parágrafos diferentes, o starter do início não fala sobre o fim.
+    if "\n\n" in bubble:
+        return bubble
+    # Guarda 2: bolha longa — a classe de falha que a rede corrige é uma pergunta curta que
+    # perdeu o "?" (caso 5531999844461); declarativas clivadas longas ficam de fora.
+    if len(bubble) > 120:
+        return bubble
     b = bubble.rstrip()
     if not b or b[-1] in ".?!…":
         return bubble
