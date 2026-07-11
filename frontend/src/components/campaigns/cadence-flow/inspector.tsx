@@ -336,7 +336,23 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
           </>
         )}
         {node.type === "wait" && (
-          <div style={field}><label style={label}>Dias de espera</label><input type="number" style={input} value={(c.days as number) ?? 1} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
+          <>
+            {/* Granularidade dupla (11/07): dias E horas somam — "0 dias + 3 horas"
+                é espera sub-diária; nós antigos sem `hours` seguem valendo só dias. */}
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ ...field, flex: 1 }}>
+                <label style={label}>Dias</label>
+                <input type="number" style={input} value={(c.days as number) ?? 1} onChange={e => set("days", Math.max(0, Number(e.target.value)))} min={0} />
+              </div>
+              <div style={{ ...field, flex: 1 }}>
+                <label style={label}>Horas</label>
+                <input type="number" style={input} value={(c.hours as number) ?? 0} onChange={e => set("hours", Math.max(0, Math.min(23, Number(e.target.value))))} min={0} max={23} />
+              </div>
+            </div>
+            <p style={{ fontSize: 10, color: "#9b9590", marginTop: -6, marginBottom: 14, lineHeight: 1.4 }}>
+              Os dois campos somam (ex.: 3 dias + 20 horas). Se o alvo cair fora da janela de envio, o passo é empurrado para a próxima abertura.
+            </p>
+          </>
         )}
         {node.type === "condition" && (
           <>

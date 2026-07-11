@@ -10,7 +10,7 @@ export function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<s
       return { trigger_type: subtype || "no_message", days: 30 };
     case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
     case "send_text": return { message_text: "", on_reply: "pause" };
-    case "wait":      return { days: 3, send_start_hour: 7, send_end_hour: 18 };
+    case "wait":      return { days: 3, hours: 0, send_start_hour: 7, send_end_hour: 18 };
     case "condition": return { condition_type: subtype || "replied_recently", days: 5 };
     case "action": {
       const at = subtype || "move_stage";
@@ -40,7 +40,13 @@ export function nodeDetail(type: CampaignNodeType, config: Record<string, unknow
     case "trigger":   return TRIGGER_LABELS[config.trigger_type as string] ?? (config.trigger_type as string) ?? "";
     case "send":      return (config.template_name as string) || "template não definido";
     case "send_text": return (config.message_text as string)?.slice(0, 40) || "texto não definido";
-    case "wait":      return `${config.days ?? 1} dia(s)`;
+    case "wait": {
+      const d = Number(config.days ?? 1);
+      const h = Number(config.hours ?? 0);
+      if (d && h) return `${d} dia(s) + ${h}h`;
+      if (!d && h) return `${h} hora(s)`;
+      return `${d} dia(s)`;
+    }
     case "condition": return (config.condition_type as string) ?? "";
     case "action":    return ACTION_LABELS[config.action_type as string] ?? (config.action_type as string) ?? "";
     case "end":       return (config.label as string) || "Encerrar";

@@ -92,8 +92,8 @@ describe("getDefaultConfig", () => {
     });
   });
 
-  it("wait tem 3 dias e janela de horário 7-18", () => {
-    expect(getDefaultConfig("wait")).toEqual({ days: 3, send_start_hour: 7, send_end_hour: 18 });
+  it("wait tem 3 dias + 0 horas e janela de horário 7-18", () => {
+    expect(getDefaultConfig("wait")).toEqual({ days: 3, hours: 0, send_start_hour: 7, send_end_hour: 18 });
   });
 
   it("condition usa subtype ou replied_recently", () => {

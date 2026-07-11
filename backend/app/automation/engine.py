@@ -55,6 +55,24 @@ def _next_window_start(now_utc: datetime, start_hour: int = 7) -> datetime:
     return target - BRT_OFFSET
 
 
+def _wait_target(cfg: dict, now: datetime) -> datetime:
+    """Instante do próximo passo após um nó `wait` — função PURA (testável).
+
+    Granularidade em DIAS *e* HORAS (11/07): `hours` é opcional e retrocompatível —
+    nós antigos só têm `days` (default 1, preservado). `days: 0` + `hours: N` permite
+    esperas sub-diárias; ambos zero = segue no próximo tick (o clamp de janela
+    comercial ainda se aplica). Valores negativos/lixo são saneados para 0.
+    """
+    days = max(0, int(cfg.get("days", 1) or 0))
+    hours = max(0, int(cfg.get("hours", 0) or 0))
+    start_h = cfg.get("send_start_hour", 7)
+    end_h = cfg.get("send_end_hour", 18)
+    target = now + timedelta(days=days, hours=hours)
+    if not _is_within_window(target, start_h, end_h):
+        target = _next_window_start(target, start_h)
+    return target
+
+
 def _compare(actual: float, op: str, target: float) -> bool:
     return {
         "gte": actual >= target,
@@ -215,12 +233,7 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             record_daily_send(lead["id"])
 
         elif node_type == "wait":
-            days    = cfg.get("days", 1)
-            start_h = cfg.get("send_start_hour", 7)
-            end_h   = cfg.get("send_end_hour", 18)
-            target  = now + timedelta(days=days)
-            if not _is_within_window(target, start_h, end_h):
-                target = _next_window_start(target, start_h)
+            target = _wait_target(cfg, now)
             _update(enrollment["id"], next_execute_at=target.isoformat())
             return
 

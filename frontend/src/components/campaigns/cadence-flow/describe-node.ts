@@ -93,7 +93,13 @@ export function describeNode(type: CampaignNodeType, config: Config): string {
     case "wait": {
       const hIni = config.send_start_hour ?? 7;
       const hFim = config.send_end_hour ?? 18;
-      return `Espera ${dias(config.days)} antes do próximo passo; o passo seguinte só sai entre ${hIni}h e ${hFim}h.`;
+      const d = Number(config.days ?? 1);
+      const h = Number(config.hours ?? 0);
+      const espera =
+        d && h ? `${dias(d)} e ${h === 1 ? "1 hora" : `${h} horas`}`
+        : !d && h ? (h === 1 ? "1 hora" : `${h} horas`)
+        : dias(d);
+      return `Espera ${espera} antes do próximo passo; o passo seguinte só sai entre ${hIni}h e ${hFim}h.`;
     }
     case "condition":
       return describeCondition(config);

@@ -47,6 +47,18 @@ describe("describeNode — linguagem de operador por tipo de nó", () => {
     expect(describeNode("wait", { days: 3, send_start_hour: 7, send_end_hour: 18 })).toContain("3 dias");
   });
 
+  it("wait com HORAS: combinação dias+horas e espera sub-diária (11/07)", () => {
+    expect(describeNode("wait", { days: 3, hours: 20, send_start_hour: 9, send_end_hour: 16 })).toContain(
+      "Espera 3 dias e 20 horas",
+    );
+    expect(describeNode("wait", { days: 0, hours: 2, send_start_hour: 9, send_end_hour: 16 })).toContain(
+      "Espera 2 horas",
+    );
+    expect(describeNode("wait", { days: 0, hours: 1, send_start_hour: 9, send_end_hour: 16 })).toContain(
+      "Espera 1 hora ",
+    );
+  });
+
   it("condition replied_recently menciona a regra e os ramos", () => {
     const s = describeNode("condition", { condition_type: "replied_recently", days: 1 });
     expect(s).toContain("respondeu nos últimos 1 dia");

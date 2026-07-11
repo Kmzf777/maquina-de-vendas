@@ -138,8 +138,9 @@ def test_fidelity_reopen_node_matches_scheduler_constants():
 
 def test_fidelity_wait_offsets():
     _, nodes = _graph()
-    waits = [n["config"]["days"] for n in nodes if n["type"] == "wait"]
-    assert waits == [1, 2, 4]  # D+1; +2 (→D+3); +4 (≈D+6h20)
+    waits = [(n["config"]["days"], n["config"]["hours"]) for n in nodes if n["type"] == "wait"]
+    # D+1; +2d (→D+3); +3d20h (→D+6h20 EXATO, fidelidade total ao offset de cadence.py)
+    assert waits == [(1, 0), (2, 0), (3, 20)]
     for n in nodes:
         if n["type"] == "wait":
             assert (n["config"]["send_start_hour"], n["config"]["send_end_hour"]) == (9, 16)
