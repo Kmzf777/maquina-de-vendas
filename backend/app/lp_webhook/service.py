@@ -91,7 +91,15 @@ def _sanitize_lead_name(raw_name: str | None) -> tuple[str | None, str | None, s
         or len(stripped.split()) > _MAX_NAME_WORDS
     )
     if not looks_dirty:
-        return stripped, None, None
+        # Funil final compartilhado (forense 11/07, lead "Sim"): mesmo passando nas
+        # heurísticas de formato, o valor ainda pode ser resposta conversacional
+        # ("Sim", "ok"), handle ou lixo de import — sanitize_display_name decide.
+        # None → cai no caminho dirty (preserva o texto cru em lp_message e deixa
+        # o backfill de push_name preencher o nome depois).
+        from app.leads.service import sanitize_display_name
+        clean = sanitize_display_name(stripped)
+        if clean:
+            return clean, None, None
     email_match = _EMAIL_RE.search(name)
     return None, name, (email_match.group(0) if email_match else None)
 

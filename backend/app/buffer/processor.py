@@ -893,6 +893,27 @@ def _looks_like_business_question(text: str | None) -> bool:
     return any(t in _BUSINESS_QUESTION_TOKENS for t in tokens)
 
 
+_REACTION_ONLY_RE = re.compile(r"^\[reagiu com [^\]]*\]$")
+
+
+def _is_reaction_only_turn(text: str | None, message_type: str | None) -> bool:
+    """True quando o inbound é UMA reação isolada (sem texto do lead junto).
+
+    Forense 11/07 (caso Anderson): a reação 🙏 rodava run_agent completo e a IA
+    emitia um turno de venda novo — "falando sozinha" na percepção da operação.
+    Reação isolada = message_type "reaction" E o texto resolvido é só o marcador
+    "[reagiu com X]" (ou vazio, quando o decode do metadata falhou). Texto real
+    coalescido junto da reação → turno normal (há pergunta do lead no pacote).
+    Função pura — sem I/O.
+    """
+    if message_type != "reaction":
+        return False
+    stripped = (text or "").strip()
+    if not stripped:
+        return True
+    return bool(_REACTION_ONLY_RE.match(stripped))
+
+
 async def _react_to_social_closing(
     lead: dict, phone: str, conversation: dict, provider, inbound_wamid: str | None,
 ) -> bool:
@@ -1242,6 +1263,19 @@ async def process_buffered_messages(
         )
     except Exception as e:
         logger.warning(f"Failed to increment unread_count for {conversation['id']}: {e}")
+
+    # Gate de reação isolada (forense 11/07, caso Anderson): reação do lead NÃO é
+    # turno de conversa — rodar a IA aqui gerava um turno de venda novo sem o lead
+    # ter dito nada. A reação já foi persistida acima (contexto p/ CRM e para o
+    # enriquecimento "[O lead reagiu com X]" dos PRÓXIMOS turnos); daqui em diante,
+    # silêncio. Roda antes de todos os gates de IA — vale p/ pré e pós-handoff.
+    if _is_reaction_only_turn(resolved_text, _message_type):
+        logger.info(
+            "[REACTION GATE] inbound é reação isolada — sem turno de IA conv=%s phone=%s",
+            conversation["id"], phone,
+        )
+        _update_last_msg(conversation["id"])
+        return
 
     # Channel-level gate: human channels never run AI or schedule follow-ups
     if channel.get("mode", "ai") == "human":

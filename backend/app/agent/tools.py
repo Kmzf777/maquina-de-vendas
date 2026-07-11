@@ -191,6 +191,20 @@ _SUPERVISOR_PHONE = SUPERVISOR_PHONE
 # Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
 _MAX_DESPEDIDA_LEN = 600
 
+# Despedidas default dos DESCARTES — enviadas pela PRÓPRIA tool (forense 11/07):
+# as tools desligam ai_enabled no meio do turno e a trava B2 do processor
+# (_ai_still_enabled) aborta as bolhas do próprio turno, então a despedida escrita
+# no texto do turno NUNCA sai. Paridade com o handoff (_HANDOFF_MSG): a tool envia
+# antes de desligar a flag. Voz da persona: minúsculas, sem ponto final.
+_SEM_INTERESSE_MSG = (
+    "tranquilo, sem problema\n\n"
+    "fico por aqui à disposição — quando fizer sentido, é só me chamar"
+)
+_OPTOUT_MSG = (
+    "sem problema, não te mando mais mensagem por aqui\n\n"
+    "qualquer coisa, é só chamar"
+)
+
 TOOL_DECLARATIONS: list[dict] = [
     {
         "name": "salvar_nome",
@@ -304,8 +318,9 @@ TOOL_DECLARATIONS: list[dict] = [
             "Efeito: marca opt_out=true, desativa a IA, joga o lead na Blacklist (sem notificar o time, sem negocio). "
             "NAO confunda com falta de interesse no momento ('to sem grana', 'ja fechei com outro') — isso NAO e "
             "opt-out: nesse caso use registrar_sem_interesse_atual. "
-            "Antes de chamar esta tool, escreva UMA mensagem de despedida respeitosa no texto do turno. "
-            "Apos chamar, NAO envie mais nenhuma mensagem."
+            "A despedida vai no parametro mensagem_despedida — a PROPRIA tool envia por voce. "
+            "NAO escreva a despedida no texto do turno (ela seria descartada) e, apos chamar, "
+            "NAO envie mais nenhuma mensagem."
         ),
         "parameters": {
             "type": "object",
@@ -317,7 +332,15 @@ TOOL_DECLARATIONS: list[dict] = [
                         "(ex: 'clicou parar mensagens', 'pediu para sair da lista — disse que recebe spam demais'). "
                         "Evite generico; capture as palavras reais do lead."
                     ),
-                }
+                },
+                "mensagem_despedida": {
+                    "type": "string",
+                    "description": (
+                        "UMA mensagem de despedida respeitosa e breve, na sua voz (minuscula, sem ponto "
+                        "final). Ex: 'sem problema, nao te mando mais mensagem por aqui\\n\\nqualquer "
+                        "coisa, e so chamar'. A tool envia este texto ao lead antes de encerrar."
+                    ),
+                },
             },
             "required": ["motivo"],
         },
@@ -332,8 +355,14 @@ TOOL_DECLARATIONS: list[dict] = [
             "Perdido do pipeline), MAS mantem o lead na base para reativacao futura — opt_out continua FALSE, "
             "SEM blacklist. "
             "NUNCA use se o lead pediu para parar de receber mensagens ou proibiu contato — nesse caso use registrar_optout. "
-            "Antes de chamar, escreva UMA mensagem de despedida cordial deixando a porta aberta. "
-            "Apos chamar, NAO envie mais nenhuma mensagem."
+            "NUNCA use para ADIAMENTO MORNO — lead que pede tempo e PROMETE voltar ('vou analisar e te "
+            "chamo', 'vou pensar e te falo', 'te dou um retorno', 'vou ver com meu socio') NAO e rejeicao: "
+            "responda curto e cordial e, se houver prazo, use agendar_retorno; sem prazo, apenas encerre o "
+            "turno SEM tool (o follow-up automatico cuida). So registre sem interesse quando o lead "
+            "REAFIRMAR a negativa ou ela for definitiva. "
+            "A despedida vai no parametro mensagem_despedida — a PROPRIA tool envia por voce. "
+            "NAO escreva a despedida no texto do turno (ela seria descartada) e, apos chamar, "
+            "NAO envie mais nenhuma mensagem."
         ),
         "parameters": {
             "type": "object",
@@ -346,7 +375,15 @@ TOOL_DECLARATIONS: list[dict] = [
                         "por tras (ex: 'objecao de preco — achou caro vs fornecedor atual X que entrega a R$18/kg; "
                         "compra ~30kg/mes pra cafeteria; quer reavaliar no proximo trimestre')."
                     ),
-                }
+                },
+                "mensagem_despedida": {
+                    "type": "string",
+                    "description": (
+                        "UMA mensagem de despedida cordial deixando a PORTA ABERTA, na sua voz (minuscula, "
+                        "sem ponto final). Ex: 'sem problema, fico a disposicao\\n\\nquando fizer sentido, "
+                        "e so me chamar aqui'. A tool envia este texto ao lead antes de encerrar."
+                    ),
+                },
             },
             "required": ["motivo"],
         },
@@ -739,6 +776,52 @@ def _despedida_ja_enviada(conversation_id: str, despedida: str) -> bool:
     return False
 
 
+async def _send_despedida_descarte(
+    lead_id: str, phone: str, conversation_id: str | None, args: dict, default_msg: str,
+) -> None:
+    """Envia a despedida do turno de descarte PELA PRÓPRIA TOOL, ANTES de desligar a IA.
+
+    Forense 11/07 (leads 'Sim' e Anderson): as tools de descarte setam
+    ai_enabled=False no meio do turno e a trava B2 do processor (_ai_still_enabled)
+    aborta as bolhas do PRÓPRIO turno — a despedida pedida ao LLM no prompt nunca
+    saía e o lead educado recebia silêncio. Paridade com encaminhar_humano:
+    despedida do LLM via `mensagem_despedida` (fallback estático), teto de tamanho,
+    dedup contra bolha ~idêntica já enviada. Fail-soft TOTAL: nenhuma falha aqui
+    pode impedir o descarte em si.
+    """
+    try:
+        channel = get_channel_for_lead(lead_id)
+        if not channel:
+            logger.warning(
+                "_send_despedida_descarte: nenhum canal ativo p/ lead %s — sem despedida",
+                lead_id,
+            )
+            return
+        despedida = (args.get("mensagem_despedida") or "").strip() or default_msg
+        if len(despedida) > _MAX_DESPEDIDA_LEN:
+            despedida = despedida[:_MAX_DESPEDIDA_LEN].rstrip() + "…"
+        if _despedida_ja_enviada(conversation_id, despedida):
+            logger.info(
+                "[DESCARTE DEDUP] despedida ~idêntica a bolha já enviada — pulando send "
+                "(conv=%s)", conversation_id,
+            )
+            return
+        lead = get_lead(lead_id) or {}
+        provider = get_provider(channel)
+        send_to = resolve_send_target(lead, phone)
+        send_result = await provider.send_text(send_to, despedida)
+        save_message(
+            lead_id, "assistant", despedida, sent_by="agent",
+            conversation_id=conversation_id, wamid=extract_wamid(send_result),
+        )
+        logger.info("_send_despedida_descarte: despedida enviada p/ lead %s", lead_id)
+    except Exception as exc:
+        logger.error(
+            "_send_despedida_descarte: falha ao enviar despedida p/ lead %s (descarte segue): %s",
+            lead_id, exc, exc_info=True,
+        )
+
+
 def apply_stage_transition(lead_id: str, conversation_id: str, new_stage: str) -> bool:
     """Efeito CANÔNICO de uma troca de stage — extraído do executor `mudar_stage` para ser
     reusado pelo gatilho determinístico de prefill (Trilha B, auditoria 10/07). Retorna True
@@ -1100,9 +1183,13 @@ async def execute_tool(
             )
             return await execute_tool(
                 "registrar_sem_interesse_atual",
-                {"motivo": f"[rebaixado de opt-out pelo guardrail] {motivo}"},
+                {"motivo": f"[rebaixado de opt-out pelo guardrail] {motivo}",
+                 "mensagem_despedida": args.get("mensagem_despedida", "")},
                 lead_id, phone, conversation_id,
             )
+        # Despedida ANTES de desligar a IA — depois disso a trava B2 do processor
+        # aborta qualquer bolha deste turno (forense 11/07).
+        await _send_despedida_descarte(lead_id, phone, conversation_id, args, _OPTOUT_MSG)
         try:
             update_lead(lead_id, ai_enabled=False, opt_out=True)
         except Exception as exc:
@@ -1131,6 +1218,10 @@ async def execute_tool(
             logger.info(
                 "[CLIENTE ATIVO GUARDRAIL] registrar_sem_interesse_atual em cliente ativo %s — "
                 "encerrando sem marcar perdido (motivo=%r)", lead_id, motivo,
+            )
+            # Despedida ANTES de desligar a IA (trava B2 engole bolhas pós-flag).
+            await _send_despedida_descarte(
+                lead_id, phone, conversation_id, args, _SEM_INTERESSE_MSG,
             )
             try:
                 # Encerra o bot desta abordagem, mas NÃO mexe no stage nem no human_control
@@ -1166,6 +1257,10 @@ async def execute_tool(
             )
 
         # Soft rejection (lead frio): tira do funil mas mantem opt_out=False (lead reativavel, sem blacklist).
+        # Despedida ANTES de desligar a IA — depois disso a trava B2 do processor
+        # aborta qualquer bolha deste turno (forense 11/07: leads 'Sim' e Anderson
+        # se despediram educadamente e receberam silêncio).
+        await _send_despedida_descarte(lead_id, phone, conversation_id, args, _SEM_INTERESSE_MSG)
         try:
             update_lead(lead_id, stage="perdido", ai_enabled=False, human_control=True, opt_out=False)
         except Exception as exc:
