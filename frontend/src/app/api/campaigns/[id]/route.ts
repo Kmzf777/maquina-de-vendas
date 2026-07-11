@@ -1,7 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { isSystemCampaign } from "@/lib/system-campaign";
 
 type Params = { params: Promise<{ id: string }> };
+
+function systemCampaignBlock() {
+  return NextResponse.json(
+    { error: "Cadência de sistema (espelho do motor da Valéria) — somente leitura" },
+    { status: 409 },
+  );
+}
 
 export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
@@ -14,6 +22,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (isSystemCampaign(id)) return systemCampaignBlock();
   const body = await request.json();
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
@@ -28,6 +37,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (isSystemCampaign(id)) return systemCampaignBlock();
   const supabase = await getServiceSupabase();
   const { data: camp } = await supabase.from("campaigns").select("status").eq("id", id).single();
   if (camp && !["draft", "archived"].includes(camp.status)) {
