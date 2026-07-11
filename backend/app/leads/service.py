@@ -4,6 +4,7 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from app.conversations.service import describe_media_placeholder
 from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
@@ -1542,13 +1543,20 @@ def get_history(
     sb = get_supabase()
     query = (
         sb.table("messages")
-        .select("role, content, stage, created_at")
+        # message_type entra no select p/ describe_media_placeholder conseguir mapear
+        # content vazio de mídia (áudio/imagem do vendedor) num placeholder legível —
+        # sem essa coluna o dossiê/QA liam "nada" onde o vendedor mandou um áudio.
+        .select("role, content, stage, created_at, message_type")
         .eq("lead_id", lead_id)
     )
     if since:
         query = query.gt("created_at", since)
     if latest:
         result = query.order("created_at", desc=True).limit(limit).execute()
-        return list(reversed(result.data))
-    result = query.order("created_at", desc=False).limit(limit).execute()
-    return result.data
+        rows = list(reversed(result.data))
+    else:
+        result = query.order("created_at", desc=False).limit(limit).execute()
+        rows = result.data
+    for row in rows:
+        row["content"] = describe_media_placeholder(row)
+    return rows
