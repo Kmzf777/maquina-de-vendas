@@ -123,6 +123,18 @@ _PUSHNAME_ENDEARMENTS = frozenset({
     "vida", "eu", "eu mesmo", "eu mesma",
 })
 
+# Respostas conversacionais que chegam como "nome" (forense 11/07 — lead cadastrado
+# como "Sim" pelo formulário da LP virou vocativo "olá Sim" na Valéria). Mesmo
+# regime do _PUSHNAME_ENDEARMENTS: match EXATO do nome inteiro normalizado, nunca
+# substring — "Simone", "Simão", "Okada", "Testolini" e "Sim Silva" passam.
+_CONVERSATIONAL_NON_NAMES = frozenset({
+    "sim", "nao", "ok", "okay", "okey", "blz", "beleza",
+    "teste", "test", "testando",
+    "quero", "quero sim", "sim quero", "nao sei", "sei nao",
+    "obrigado", "obrigada", "valeu", "oi",
+    "cliente", "lead", "contato", "whatsapp", "nome", "meu nome",
+})
+
 
 def _normalize_name_for_blocklist(text: str) -> str:
     nfd = unicodedata.normalize("NFD", text.lower().strip())
@@ -155,7 +167,10 @@ def sanitize_display_name(name: str | None) -> str | None:
         return None
     if _IMPORT_GARBAGE_RE.search(n):
         return None
-    if _normalize_name_for_blocklist(n) in _PUSHNAME_ENDEARMENTS:
+    normalized = _normalize_name_for_blocklist(n)
+    if normalized in _PUSHNAME_ENDEARMENTS:
+        return None
+    if normalized in _CONVERSATIONAL_NON_NAMES:
         return None
     return n
 
