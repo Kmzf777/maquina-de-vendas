@@ -416,7 +416,11 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   }, [testNodeStates, setRFNodes]);
 
   const selectedDbNode = selectedNodeId ? dbNodes.find(n => n.id === selectedNodeId) ?? null : null;
-  const st = campaign ? (STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft) : STATUS_COLORS.draft;
+  // Espelho do motor: o chip mostra "Sistema" (âmbar do selo) em vez de "Rascunho" —
+  // o draft é proteção de backend, não um fluxo inacabado.
+  const st = isSystemCampaign(campaignId)
+    ? { bg: "#fff7f2", color: "#ff5600", border: "#ff5600" }
+    : campaign ? (STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft) : STATUS_COLORS.draft;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'Outfit', sans-serif" }}>
@@ -451,7 +455,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             fontSize: 11, fontWeight: 500, color: st.color,
             letterSpacing: ".2px", textTransform: "uppercase",
           }}>
-            {STATUS_LABELS[campaign.status] ?? campaign.status}
+            {isSystemCampaign(campaignId) ? "Sistema" : (STATUS_LABELS[campaign.status] ?? campaign.status)}
           </span>
         )}
 

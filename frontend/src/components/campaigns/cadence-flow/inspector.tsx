@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { AGENT_STAGES } from "@/lib/constants";
 import type { InspectorProps } from "./types";
 import { NODE_META, ACTION_LABELS } from "./constants";
+import { describeNode } from "./describe-node";
 
 export function Inspector({ node, saving, data, onSave, onDelete, onClose }: InspectorProps) {
   const { templates, allStages, tags, users } = data;
@@ -50,6 +51,21 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
 
       {/* Body */}
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        {/* O que este nó faz — resumo em linguagem de operador, VIVO com o rascunho
+            (atualiza enquanto edita, antes de salvar). */}
+        <div style={{
+          marginBottom: 16, padding: "10px 12px",
+          background: meta.iconBg, borderLeft: `3px solid ${meta.color}`,
+          borderRadius: 7,
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", color: meta.color, marginBottom: 4 }}>
+            O que este nó faz
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.5, color: "#3d3a36", whiteSpace: "pre-wrap" }}>
+            {describeNode(node.type, c)}
+          </div>
+        </div>
+
         {node.type === "trigger" && (
           <>
             <div style={field}>

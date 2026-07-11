@@ -12,6 +12,7 @@ import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
 import { FollowupBoard } from "@/components/campaigns/followup-board";
 import { campaignNodeCount } from "@/lib/campaign-node-count";
+import { isSystemCampaign } from "@/lib/system-campaign";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -22,10 +23,12 @@ function StatusBadge({ status }: { status: string }) {
     failed: "bg-[#c41c1c]/10 text-[#c41c1c] border-[#c41c1c]/20",
     active: "bg-[#0bdf50]/10 text-[#0bdf50] border-[#0bdf50]/20",
     archived: "bg-[#f0ede8] text-[#7b7b78] border-[#dedbd6]",
+    system: "bg-[#ff5600]/10 text-[#ff5600] border-[#ff5600]/20",
   };
   const labels: Record<string, string> = {
     draft: "Rascunho", running: "Rodando", paused: "Pausado",
     completed: "Completo", failed: "Falhou", active: "Ativa", archived: "Arquivada",
+    system: "Sistema",
   };
   return (
     <span className={`inline-flex items-center text-[10px] font-medium uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border flex-shrink-0 ${styles[status] ?? styles.draft}`}>
@@ -228,7 +231,7 @@ function CampanhasPageInner() {
                     className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity"
                     onClick={() => router.push(`/campanhas/cadencias/${c.id}`)}
                   >
-                    <StatusBadge status={c.status} />
+                    <StatusBadge status={isSystemCampaign(c.id) ? "system" : c.status} />
                     <span className="text-[14px] text-[#111111] flex-1 mx-3 truncate">{c.name}</span>
                     <span className="text-[12px] text-[#7b7b78]">{campaignNodeCount(c)} nós</span>
                   </div>
