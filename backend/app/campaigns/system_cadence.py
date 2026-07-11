@@ -115,10 +115,10 @@ def build_valeria_cadence_graph() -> tuple[dict, list[dict]]:
             "next_node_id": ids[next_key], "yes_node_id": None, "no_node_id": None,
         }
 
-    def _wait(key: str, x: int, days: int, next_key: str) -> dict:
+    def _wait(key: str, x: int, days: int, next_key: str, hours: int = 0) -> dict:
         return {
             "id": ids[key], "type": "wait",
-            "config": {"days": days, "send_start_hour": 9, "send_end_hour": 16},
+            "config": {"days": days, "hours": hours, "send_start_hour": 9, "send_end_hour": 16},
             "position_x": x, "position_y": 200,
             "next_node_id": ids[next_key], "yes_node_id": None, "no_node_id": None,
         }
@@ -148,7 +148,8 @@ def build_valeria_cadence_graph() -> tuple[dict, list[dict]]:
         _wait("wait_d3", 1160, 2, "cond_t3"),
         _window_condition("cond_t3", 1460, "t3"),
         _free_touch("t3", 1460, f"T3 · PROVA SOCIAL — D+3. {_guard_note}", t3.objective_prompt, "wait_d6"),
-        _wait("wait_d6", 1760, 4, "cond_t4"),
+        # D+6h20 EXATO desde que o wait suporta horas (antes aproximava com 4 dias).
+        _wait("wait_d6", 1760, 3, "cond_t4", hours=20),
         _window_condition("cond_t4", 2060, "t4"),
         _free_touch("t4", 2060, f"T4 · ÚLTIMA CHAMADA — D+6h20 do início. {_guard_note}", t4.objective_prompt, "end_done"),
         {
