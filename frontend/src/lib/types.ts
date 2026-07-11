@@ -83,9 +83,16 @@ export interface Deal {
 }
 
 export interface ReactionTarget {
+  id: string;
   content: string | null;
   role: string;
   message_type?: string | null;
+}
+
+/** Badge de reação ancorado na bolha alvo (estilo WhatsApp). */
+export interface MessageReaction {
+  emoji: string;
+  role: string; // "user" = lead reagiu; "assistant" = nós reagimos
 }
 
 export interface Message {
@@ -108,6 +115,10 @@ export interface Message {
   quoted_message_id?: string | null;
   quoted_message?: QuotedMessage | null;
   reaction_target?: ReactionTarget | null;
+  /** Reações recebidas por ESTA mensagem (derivado no client, não é coluna). */
+  reactions?: MessageReaction[];
+  /** true quando a reação já aparece como badge na bolha alvo (não renderizar bolha própria). */
+  reaction_attached?: boolean;
 }
 
 export interface QuotedMessage {

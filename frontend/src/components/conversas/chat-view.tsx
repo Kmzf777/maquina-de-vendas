@@ -150,6 +150,26 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
   const handleReply = useCallback((msg: Message) => setReplyingTo(msg), []);
 
+  // Reação do operador: fire-and-forget — o INSERT chega via realtime e vira
+  // badge na bolha alvo. Fail-soft: janela 24h fechada volta 422 com mensagem
+  // acionável da rota; nada de estado otimista para um gesto tão pequeno.
+  const handleReact = useCallback(async (msg: Message, emoji: string) => {
+    if (!msg.wamid) return;
+    try {
+      const res = await fetch(`/api/conversations/${conversation.id}/react`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_wamid: msg.wamid, emoji }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Falha ao enviar reação");
+      }
+    } catch {
+      alert("Falha ao enviar reação");
+    }
+  }, [conversation.id]);
+
   async function handleOptOut() {
     if (optOutLoading) return;
     const confirmed = window.confirm(
@@ -583,6 +603,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         conversationId={conversation.id}
         onContactDispatch={handleContactDispatch}
         onReply={handleReply}
+        onReact={handleReact}
         hasMore={hasMore}
         loadingOlder={loadingOlder}
         onLoadOlder={loadOlder}

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   MESSAGE_PAGE_SIZE,
+  collectUnresolvedWamids,
   enrichWithQuotedMessages,
   mergeOlderPage,
   normalizeOrder,
@@ -28,6 +29,17 @@ export function useRealtimeMessages(conversationId: string | null) {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+  // Fallback de resolução de wamid (citação/reação mais antiga que a janela):
+  // linhas buscadas dirigidamente no banco, só para enriquecimento — nunca
+  // entram na thread. `missing` evita refetch eterno de wamids inexistentes
+  // (legado pré-10/07 sem wamid gravado = irrecuperável, fail-soft).
+  const lookupRef = useRef<Map<string, Message>>(new Map());
+  const missingRef = useRef<Set<string>>(new Set());
+
+  const reEnrich = useCallback(
+    (msgs: Message[]) => enrichWithQuotedMessages(msgs, [...lookupRef.current.values()]),
+    [],
+  );
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) {
@@ -48,11 +60,11 @@ export function useRealtimeMessages(conversationId: string | null) {
 
     if (convRef.current !== conversationId) return; // resposta obsoleta
     if (data) {
-      setMessages(enrichWithQuotedMessages([...data].reverse() as Message[]));
+      setMessages(reEnrich([...data].reverse() as Message[]));
       setHasMore(pageHasMore(data.length));
     }
     setLoading(false);
-  }, [conversationId, supabase]);
+  }, [conversationId, supabase, reEnrich]);
 
   /** Pagina para trás: busca a página anterior ao cursor e faz prepend. */
   const loadOlder = useCallback(async () => {
@@ -69,18 +81,53 @@ export function useRealtimeMessages(conversationId: string | null) {
         .limit(MESSAGE_PAGE_SIZE);
       if (convRef.current !== conversationId || !data) return;
       const olderAsc = [...data].reverse() as Message[];
-      setMessages((prev) => mergeOlderPage(prev, olderAsc));
+      setMessages((prev) => mergeOlderPage(prev, olderAsc, [...lookupRef.current.values()]));
       setHasMore(pageHasMore(data.length));
     } finally {
       setLoadingOlder(false);
     }
   }, [conversationId, supabase]);
 
+  // Resolução dirigida: wamids citados/reagidos que a janela não contém são
+  // buscados uma única vez no banco e entram no cache de lookup; wamids que o
+  // banco também não tem entram em `missing` e mantêm o fallback visual.
+  useEffect(() => {
+    if (!conversationId || messages.length === 0) return;
+    const unresolved = collectUnresolvedWamids(messages).filter(
+      (w) => !lookupRef.current.has(w) && !missingRef.current.has(w),
+    );
+    if (unresolved.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("messages")
+        .select("id, wamid, content, role, message_type, created_at")
+        .eq("conversation_id", conversationId)
+        .in("wamid", unresolved);
+      if (cancelled || convRef.current !== conversationId) return;
+      for (const w of unresolved) missingRef.current.add(w);
+      const rows = (data ?? []) as Message[];
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        if (row.wamid) {
+          lookupRef.current.set(row.wamid, row);
+          missingRef.current.delete(row.wamid);
+        }
+      }
+      setMessages((prev) => reEnrich(prev));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, conversationId, supabase, reEnrich]);
+
   useEffect(() => {
     // Reset state immediately on conversationId change to avoid stale message flash
     setMessages([]);
     setLoading(true);
     setHasMore(false);
+    lookupRef.current = new Map();
+    missingRef.current = new Set();
     fetchMessages();
 
     if (!conversationId) return;
@@ -96,7 +143,7 @@ export function useRealtimeMessages(conversationId: string | null) {
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
-          setMessages((prev) => enrichWithQuotedMessages(normalizeOrder([...prev, payload.new as Message])));
+          setMessages((prev) => reEnrich(normalizeOrder([...prev, payload.new as Message])));
         }
       )
       .subscribe();
@@ -104,7 +151,7 @@ export function useRealtimeMessages(conversationId: string | null) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [conversationId, fetchMessages, supabase]);
+  }, [conversationId, fetchMessages, supabase, reEnrich]);
 
   return { messages, loading, refetch: fetchMessages, hasMore, loadOlder, loadingOlder };
 }

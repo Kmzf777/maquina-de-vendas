@@ -299,6 +299,21 @@ class MetaCloudClient(WhatsAppProvider):
         image_bytes = base64.b64decode(base64_data)
         return await self.send_image_bytes(to, image_bytes, mimetype, caption=caption)
 
+    async def send_reaction(self, to: str, target_wamid: str, emoji: str) -> dict:
+        """Reage a uma mensagem (type=reaction). Exige o wamid da mensagem alvo.
+
+        Restrições da Meta: janela de 24h aberta e alvo não pode ser outra reação.
+        Emoji vazio ("") remove uma reação previamente enviada.
+        """
+        if not target_wamid:
+            raise ValueError("send_reaction exige target_wamid (mensagem alvo)")
+        return await self._post({
+            "messaging_product": "whatsapp",
+            **_recipient_field(to),
+            "type": "reaction",
+            "reaction": {"message_id": target_wamid, "emoji": emoji},
+        }, request_type="send_reaction")
+
     async def send_audio(self, to: str, audio_url: str) -> dict:
         return await self._post({
             "messaging_product": "whatsapp",
