@@ -237,6 +237,9 @@ TOOL_DECLARATIONS: list[dict] = [
             "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
             "ANTES de chamar, escreva uma mensagem de despedida/transbordo natural e personalizada com base no "
             "contexto da conversa e passe-a no argumento `mensagem_despedida` (curta — no maximo 2-3 frases). "
+            "SE a ultima mensagem do lead contem uma pergunta que voce sabe responder (preco, lote minimo, prazo, "
+            "formato), a `mensagem_despedida` COMECA respondendo essa pergunta e SO depois faz o transbordo — NUNCA "
+            "encaminhe deixando a pergunta do lead sem resposta (o lead nao pode receber o cartao no lugar da resposta). "
             "O sistema envia essa mensagem ao lead e, logo em seguida, o cartao de contato do Joao automaticamente "
             "— NAO cole telefone, link ou wa.me na mensagem. "
             "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
@@ -249,6 +252,8 @@ TOOL_DECLARATIONS: list[dict] = [
                     "description": (
                         "Mensagem de despedida/transbordo curta e personalizada para o lead, escrita com base no "
                         "contexto da conversa. Sera enviada como texto, seguida do cartao de contato do Joao. "
+                        "Se o lead acabou de perguntar preco/lote/prazo, a resposta vem PRIMEIRO, na propria mensagem "
+                        "(ex.: 'o 250g fica por volta de R$25,70 com lote minimo de 100 unidades — e pra detalhar tudo...'). "
                         "DIRECIONE A ACAO PRO LEAD: o cartao do Joao aparece em seguida e e o LEAD que toca nele "
                         "pra chamar — convide-o a fazer isso. NAO use 'vou te conectar'/'ja te transfiro'/'vou passar "
                         "seu contato' (da falsa impressao de que voce faz a ponte). NAO inclua telefone, link nem wa.me."

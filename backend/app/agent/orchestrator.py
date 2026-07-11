@@ -26,8 +26,10 @@ from app.agent.catalog import get_products_by_funnel
 from app.agent.tools import get_tools_for_stage, execute_tool
 from app.agent.adherence import (
     find_verbatim_prompt_echo,
+    handoff_without_answer,
     is_repeated_question,
     normalize_orthography,
+    price_without_cta,
     strip_consecutive_vocative_name,
     strip_prohibited_phrases,
 )
@@ -987,6 +989,21 @@ async def run_agent(
         # Return None (sentinel) so the processor can distinguish an intentional
         # handoff from an unexpected empty response.
         if any(fc.name == "encaminhar_humano" for fc in result.function_calls):
+            # Telemetria log-only [HANDOFF SEM RESPOSTA] (auditoria 11/07, Cat. 2):
+            # o lead fez a pergunta mais quente (preço/lote/prazo) e recebeu o cartão
+            # do João no lugar da resposta. Heurística simples e fail-open (adherence);
+            # NUNCA bloqueia o handoff — só sinaliza p/ QA.
+            try:
+                _hfc = next(fc for fc in result.function_calls if fc.name == "encaminhar_humano")
+                _farewell = _hfc.args.get("mensagem_despedida") if isinstance(_hfc.args, dict) else None
+                if handoff_without_answer(user_text, _farewell):
+                    logger.warning(
+                        "[HANDOFF SEM RESPOSTA] conv %s lead %s — lead perguntou e a despedida "
+                        "não respondeu (sem número/R$): despedida=%.120s",
+                        conversation_id, lead_id, _farewell or "",
+                    )
+            except Exception:
+                pass
             return None
 
         # registrar_optout sets ai_enabled=False silently. The farewell Valéria
@@ -1367,6 +1384,22 @@ async def run_agent(
                     conversation_id, lead_id,
                 )
                 assistant_text = _denamed
+        except Exception:
+            pass
+
+        # Preço nunca solto (auditoria 11/07 — Cat. 3, caso Sandro): o turno entregou
+        # preço e terminou sem pergunta de fechamento — o lead ficou no vácuo. Telemetria
+        # log-only (função pura de adherence). Chegar aqui já garante que NÃO houve handoff
+        # via tool (encaminhar_humano retornou None mais cedo); ainda assim isentamos o
+        # texto que será convertido em handoff pela guarda verbalizada logo abaixo.
+        # Fail-open: NUNCA muta a resposta.
+        try:
+            if not _looks_like_handoff_announcement(assistant_text) and price_without_cta(assistant_text):
+                logger.warning(
+                    "[PRECO SEM CTA] conv %s lead %s — preço entregue sem pergunta de "
+                    "fechamento na última bolha: %.120s",
+                    conversation_id, lead_id, assistant_text,
+                )
         except Exception:
             pass
 

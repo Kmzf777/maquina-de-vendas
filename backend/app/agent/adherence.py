@@ -370,3 +370,55 @@ def find_verbatim_prompt_echo(
         if len(snippet_norm) >= min_len and snippet_norm in text_norm:
             return snippet
     return None
+
+
+# ---------------------------------------------------------------------------
+# 7. price_without_cta (auditoria 2026-07-11 — Cat. 3, caso Sandro)
+# ---------------------------------------------------------------------------
+# O turno entregou preço (R$26,70/100un) e terminou SEM pergunta de fechamento —
+# o lead ficou no vácuo. Detecta, no TEXTO COMPLETO do turno, presença de preço
+# ("R$" + dígito) com a última bolha não terminando em "?". Multi-bolha com o
+# preço numa bolha inicial e a pergunta na última NÃO dispara (o check é sobre o
+# turno inteiro terminar em "?"). Separador de milhar (R$1.000) não confunde: a
+# detecção é só "há preço?", e o veredito é sobre a última linha. Telemetria
+# log-only — NUNCA muta a resposta.
+_PRICE_RE = re.compile(r"R\$\s?\d")
+
+
+def price_without_cta(text: str) -> bool:
+    """True quando o texto entrega preço mas não termina com pergunta de fechamento.
+
+    Preço = 'R$' (com espaço opcional) seguido de dígito. A "última bolha" é a
+    última linha não-vazia do turno; se ela terminar com '?', há CTA. Função pura.
+    """
+    if not text or not _PRICE_RE.search(text):
+        return False
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    return not lines[-1].endswith("?")
+
+
+# ---------------------------------------------------------------------------
+# 8. handoff_without_answer (auditoria 2026-07-11 — Cat. 2)
+# ---------------------------------------------------------------------------
+# O lead fez a pergunta mais quente da conversa (preço/lote mínimo/prazo) e
+# recebeu o cartão do João no lugar da resposta. Heurística DELIBERADAMENTE simples
+# e fail-open (sinal p/ QA, não métrica exata): a última msg do lead contém "?" E a
+# mensagem_despedida não traz número nem "R$". Falso-negativo aceitável (pergunta
+# não-numérica respondida em texto); falso-positivo aceitável (resposta sem número).
+# Telemetria log-only — NUNCA bloqueia o handoff.
+_DIGIT_RE = re.compile(r"\d")
+
+
+def handoff_without_answer(last_lead_text: str | None, farewell_text: str | None) -> bool:
+    """True quando o lead terminou com pergunta e a despedida não traz número/R$.
+
+    Função pura — sem I/O. Ver heurística no comentário acima.
+    """
+    if not last_lead_text or "?" not in last_lead_text:
+        return False
+    farewell = farewell_text or ""
+    if "R$" in farewell or _DIGIT_RE.search(farewell):
+        return False
+    return True
