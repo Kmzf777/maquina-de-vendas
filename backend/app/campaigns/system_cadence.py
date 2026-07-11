@@ -61,12 +61,16 @@ def build_valeria_cadence_graph() -> tuple[dict, list[dict]]:
     """(campanha, nós) do espelho — função PURA, fonte = cadence.py + scheduler.
 
     Mapa de fidelidade:
+    - INVARIANTE DA JANELA DE 24h (Meta): NENHUM texto livre sem uma checagem de
+      janela imediatamente antes. O motor real checa a janela no fire-time de CADA
+      toque (fechada → template de reabertura); o grafo espelha isso com uma
+      condition `replied_recently days=1` ("lead respondeu nas últimas 24h" =
+      janela aberta) na frente de CADA send_text, e TODOS os ramos NÃO convergem no
+      mesmo nó de template de reabertura (com os valores REAIS do scheduler).
     - `on_reply: "cancel"` nos toques livres = resposta do lead cancela/re-arma a
       cadência (comportamento real de schedule_followup).
-    - condition `replied_recently days=1` = "janela de 24h da Meta aberta?" — decisiva
-      no T2 (o D+1 vence sempre ~24h+ε após a última msg do lead, ver spec Rodada 5).
-    - Ramo "no" = template de reabertura com os valores REAIS do scheduler; T3/T4 se
-      dobram nele (R1) — por isso o ramo termina em `end` "aguardando reabertura".
+    - Depois do template de reabertura vale a R1: os toques seguintes se dobram nele
+      — por isso o ramo termina em `end` "aguardando reabertura".
     """
     # Import local: evita ciclo (scheduler importa half do app) e mantém a fonte única.
     from app.follow_up.scheduler import _REOPEN_TEMPLATE_LANGUAGE, _REOPEN_TEMPLATE_NAME, _REOPEN_TOPIC
@@ -84,103 +88,81 @@ def build_valeria_cadence_graph() -> tuple[dict, list[dict]]:
     }
 
     ids = {k: _node_id(k) for k in (
-        "trigger", "t1", "wait_d1", "window", "t2", "wait_d3", "t3", "wait_d6", "t4",
+        "trigger",
+        "cond_t1", "t1", "wait_d1",
+        "cond_t2", "t2", "wait_d3",
+        "cond_t3", "t3", "wait_d6",
+        "cond_t4", "t4",
         "end_done", "reopen", "end_reopen",
     )}
+
+    def _window_condition(key: str, x: int, yes_key: str) -> dict:
+        """Checagem de janela na frente de CADA toque livre (invariante da Meta):
+        lead respondeu nas últimas 24h = janela ABERTA → texto livre; senão → o nó
+        único de template de reabertura (todos os ramos NÃO convergem nele)."""
+        return {
+            "id": ids[key], "type": "condition",
+            "config": {"condition_type": "replied_recently", "days": 1},
+            "position_x": x, "position_y": 200,
+            "next_node_id": None, "yes_node_id": ids[yes_key], "no_node_id": ids["reopen"],
+        }
+
+    def _free_touch(key: str, x: int, header: str, prompt: str, next_key: str, footer: str | None = None) -> dict:
+        return {
+            "id": ids[key], "type": "send_text",
+            "config": {"message_text": _touch_text(header, prompt, footer), "on_reply": "cancel"},
+            "position_x": x, "position_y": 60,
+            "next_node_id": ids[next_key], "yes_node_id": None, "no_node_id": None,
+        }
+
+    def _wait(key: str, x: int, days: int, next_key: str) -> dict:
+        return {
+            "id": ids[key], "type": "wait",
+            "config": {"days": days, "send_start_hour": 9, "send_end_hour": 16},
+            "position_x": x, "position_y": 200,
+            "next_node_id": ids[next_key], "yes_node_id": None, "no_node_id": None,
+        }
+
+    _guard_note = "Texto livre SÓ sai com a janela de 24h da Meta aberta — a checagem é o nó anterior; fechada, sai o template de reabertura."
 
     nodes = [
         {
             "id": ids["trigger"], "type": "trigger",
             "config": {"trigger_type": "no_message", "days": 0},
             "position_x": 0, "position_y": 200,
-            "next_node_id": ids["t1"], "yes_node_id": None, "no_node_id": None,
+            "next_node_id": ids["cond_t1"], "yes_node_id": None, "no_node_id": None,
         },
-        {
-            "id": ids["t1"], "type": "send_text",
-            "config": {
-                "message_text": _touch_text(
-                    f"T1 · REENGAJAR — mesmo dia, +{t1.jitter_minutes[0]}–{t1.jitter_minutes[1]}min "
-                    f"de jitter humano ({_JANELA}). Texto livre gerado pelo LLM em runtime:",
-                    t1.objective_prompt,
-                    "Fluxo outbound 'sim-e-sumiu': este toque é substituído pelo NUDGE "
-                    f"+{int(OUTBOUND_NUDGE.offset.total_seconds() // 3600)}h (dentro da janela de 24h da Meta).",
-                ),
-                "on_reply": "cancel",
-            },
-            "position_x": 260, "position_y": 200,
-            "next_node_id": ids["wait_d1"], "yes_node_id": None, "no_node_id": None,
-        },
-        {
-            "id": ids["wait_d1"], "type": "wait",
-            "config": {"days": 1, "send_start_hour": 9, "send_end_hour": 16},
-            "position_x": 520, "position_y": 200,
-            "next_node_id": ids["window"], "yes_node_id": None, "no_node_id": None,
-        },
-        {
-            "id": ids["window"], "type": "condition",
-            # Semântica: lead respondeu nas últimas 24h = janela da Meta ABERTA.
-            "config": {"condition_type": "replied_recently", "days": 1},
-            "position_x": 780, "position_y": 200,
-            "next_node_id": None, "yes_node_id": ids["t2"], "no_node_id": ids["reopen"],
-        },
-        {
-            "id": ids["t2"], "type": "send_text",
-            "config": {
-                "message_text": _touch_text(
-                    "T2 · REFORÇO DE VALOR — D+1 (janela aberta → texto livre):",
-                    t2.objective_prompt,
-                ),
-                "on_reply": "cancel",
-            },
-            "position_x": 1040, "position_y": 80,
-            "next_node_id": ids["wait_d3"], "yes_node_id": None, "no_node_id": None,
-        },
-        {
-            "id": ids["wait_d3"], "type": "wait",
-            "config": {"days": 2, "send_start_hour": 9, "send_end_hour": 16},
-            "position_x": 1300, "position_y": 80,
-            "next_node_id": ids["t3"], "yes_node_id": None, "no_node_id": None,
-        },
-        {
-            "id": ids["t3"], "type": "send_text",
-            "config": {
-                "message_text": _touch_text(
-                    "T3 · PROVA SOCIAL — D+3 (a mesma checagem de janela do T2 se aplica):",
-                    t3.objective_prompt,
-                ),
-                "on_reply": "cancel",
-            },
-            "position_x": 1560, "position_y": 80,
-            "next_node_id": ids["wait_d6"], "yes_node_id": None, "no_node_id": None,
-        },
-        {
-            "id": ids["wait_d6"], "type": "wait",
-            "config": {"days": 4, "send_start_hour": 9, "send_end_hour": 16},
-            "position_x": 1820, "position_y": 80,
-            "next_node_id": ids["t4"], "yes_node_id": None, "no_node_id": None,
-        },
-        {
-            "id": ids["t4"], "type": "send_text",
-            "config": {
-                "message_text": _touch_text(
-                    "T4 · ÚLTIMA CHAMADA — D+6h20 do início:",
-                    t4.objective_prompt,
-                ),
-                "on_reply": "cancel",
-            },
-            "position_x": 2080, "position_y": 80,
-            "next_node_id": ids["end_done"], "yes_node_id": None, "no_node_id": None,
-        },
+        _window_condition("cond_t1", 260, "t1"),
+        _free_touch(
+            "t1", 260,
+            f"T1 · REENGAJAR — mesmo dia, +{t1.jitter_minutes[0]}–{t1.jitter_minutes[1]}min "
+            f"de jitter humano ({_JANELA}). {_guard_note} Texto gerado pelo LLM em runtime:",
+            t1.objective_prompt,
+            "wait_d1",
+            "Fluxo outbound 'sim-e-sumiu': este toque é substituído pelo NUDGE "
+            f"+{int(OUTBOUND_NUDGE.offset.total_seconds() // 3600)}h (dentro da janela de 24h da Meta).",
+        ),
+        _wait("wait_d1", 560, 1, "cond_t2"),
+        _window_condition("cond_t2", 860, "t2"),
+        _free_touch("t2", 860, f"T2 · REFORÇO DE VALOR — D+1. {_guard_note}", t2.objective_prompt, "wait_d3"),
+        _wait("wait_d3", 1160, 2, "cond_t3"),
+        _window_condition("cond_t3", 1460, "t3"),
+        _free_touch("t3", 1460, f"T3 · PROVA SOCIAL — D+3. {_guard_note}", t3.objective_prompt, "wait_d6"),
+        _wait("wait_d6", 1760, 4, "cond_t4"),
+        _window_condition("cond_t4", 2060, "t4"),
+        _free_touch("t4", 2060, f"T4 · ÚLTIMA CHAMADA — D+6h20 do início. {_guard_note}", t4.objective_prompt, "end_done"),
         {
             "id": ids["end_done"], "type": "end",
             "config": {"label": "Cadência concluída — contato pausado com elegância", "final_actions": []},
-            "position_x": 2340, "position_y": 80,
+            "position_x": 2360, "position_y": 60,
             "next_node_id": None, "yes_node_id": None, "no_node_id": None,
         },
         {
             "id": ids["reopen"], "type": "send",
             # Valores REAIS do reopen (Rodada 5): template utility aprovado, locale da
-            # aprovação e 3 params posicionais determinísticos.
+            # aprovação e 3 params posicionais determinísticos. É o ÚNICO formato
+            # permitido pela Meta com a janela de 24h fechada — todos os ramos NÃO
+            # das checagens de janela convergem aqui.
             "config": {
                 "template_name": _REOPEN_TEMPLATE_NAME,
                 "template_language": _REOPEN_TEMPLATE_LANGUAGE,
@@ -193,16 +175,16 @@ def build_valeria_cadence_graph() -> tuple[dict, list[dict]]:
                 "on_reply": "pause",
                 "channel_id": None,
             },
-            "position_x": 1040, "position_y": 330,
+            "position_x": 1160, "position_y": 400,
             "next_node_id": ids["end_reopen"], "yes_node_id": None, "no_node_id": None,
         },
         {
             "id": ids["end_reopen"], "type": "end",
             "config": {
-                "label": "Aguardando reabertura — R1: T3/T4 se dobram neste template (contexto vivo por 7 dias)",
+                "label": "Aguardando reabertura — R1: os toques seguintes se dobram neste template (contexto vivo por 7 dias)",
                 "final_actions": [],
             },
-            "position_x": 1300, "position_y": 330,
+            "position_x": 1460, "position_y": 400,
             "next_node_id": None, "yes_node_id": None, "no_node_id": None,
         },
     ]

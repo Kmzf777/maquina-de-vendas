@@ -75,13 +75,20 @@ export function describeNode(type: CampaignNodeType, config: Config): string {
       const nome = (config.template_name as string) || "(template não escolhido)";
       const lang = (config.template_language as string) || "pt_BR";
       const reply = ON_REPLY[(config.on_reply as string) ?? "pause"] ?? ON_REPLY.pause;
-      return `Envia o template aprovado "${nome}" (${lang}) pela Meta. Se o lead responder, ${reply}.`;
+      return (
+        `Envia o template aprovado "${nome}" (${lang}) pela Meta — o único formato aceito ` +
+        `mesmo com a janela de 24h fechada. Se o lead responder, ${reply}.`
+      );
     }
     case "send_text": {
       const texto = ((config.message_text as string) || "").trim();
       const previa = texto ? `"${texto.length > 140 ? texto.slice(0, 140) + "…" : texto}"` : "(mensagem vazia)";
       const reply = ON_REPLY[(config.on_reply as string) ?? "pause"] ?? ON_REPLY.pause;
-      return `Envia mensagem de texto livre: ${previa}. Se o lead responder, ${reply}.`;
+      return (
+        `Envia mensagem de TEXTO LIVRE: ${previa}. Só é aceito pela Meta com a janela de 24h ` +
+        `ABERTA (lead falou há menos de 24h) — fora dela o motor bloqueia o envio. ` +
+        `Se o lead responder, ${reply}.`
+      );
     }
     case "wait": {
       const hIni = config.send_start_hour ?? 7;
