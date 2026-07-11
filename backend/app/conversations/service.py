@@ -363,7 +363,9 @@ _MEDIA_PLACEHOLDERS = {
     "image": "[imagem]",
     "video": "[vídeo]",
     "document": "[documento]",
-    "sticker": "[sticker]",
+    # "[figurinha]" e não "[sticker]": é o marcador que a persona reconhece (base.py,
+    # seção TRATAMENTO DE MÍDIA) e o mesmo usado no inbound (_MEDIA_MARKERS do processor).
+    "sticker": "[figurinha]",
     "location": "[localização]",
     "contact": "[contato]",
     "contacts": "[contato]",

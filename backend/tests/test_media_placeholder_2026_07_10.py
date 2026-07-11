@@ -24,7 +24,9 @@ from app.conversations.service import describe_media_placeholder
         ({"content": "", "message_type": "image"}, "[imagem]"),
         ({"content": "", "message_type": "video"}, "[vídeo]"),
         ({"content": "", "message_type": "document"}, "[documento]"),
-        ({"content": "", "message_type": "sticker"}, "[sticker]"),
+        # [figurinha] (não [sticker]): alinhado ao marcador que a persona reconhece
+        # (base.py, TRATAMENTO DE MÍDIA) e ao inbound (_MEDIA_MARKERS do processor).
+        ({"content": "", "message_type": "sticker"}, "[figurinha]"),
         ({"content": "", "message_type": "location"}, "[localização]"),
         ({"content": "", "message_type": "contact"}, "[contato]"),
         ({"content": "", "message_type": "contacts"}, "[contato]"),
