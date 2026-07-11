@@ -7,6 +7,7 @@ import { writeFile, readFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
+import { describeOutboundMediaContent } from '@/lib/media-message-content';
 
 const META_API_VERSION = "v21.0";
 const MAX_SIZE_MEDIA = 16 * 1024 * 1024;   // 16MB — áudio e imagem
@@ -208,6 +209,17 @@ export async function POST(
       );
     }
 
+    // wamid da resposta da Meta — paridade com send/route.ts (sendViaMeta). Sem isso,
+    // o histórico ficava sem wamid p/ mensagens de mídia (auditoria 10/07). Tolera
+    // ausência do campo: envio já foi aceito pela Meta, não falha o request por isto.
+    let sentWamid: string | null = null;
+    try {
+      const sendJson = (await sendResp.json()) as { messages?: { id?: string }[] };
+      sentWamid = sendJson?.messages?.[0]?.id ?? null;
+    } catch (parseErr) {
+      console.warn("[send-media] failed to parse Meta send response JSON:", parseErr);
+    }
+
     // Step 3: Upload a copy to Supabase Storage for permanent playback URL
     let storageUrl: string | null = null;
     try {
@@ -232,15 +244,22 @@ export async function POST(
     }
 
     // Step 4: Save to DB
-    await supabase.from("messages").insert({
+    const insertData: Record<string, unknown> = {
       lead_id: lead.id,
       conversation_id: conversationId,
       role: "assistant",
-      content: messageType === "document" ? originalFilename : "",
+      content: describeOutboundMediaContent(messageType, originalFilename),
       sent_by: "seller",
       message_type: messageType,
       media_url: storageUrl ?? mediaId,
-    });
+    };
+    if (sentWamid) {
+      insertData.wamid = sentWamid;
+      // "accepted" = aceito pela fila da Meta (HTTP 200 + wamid), NÃO entregue — mesma
+      // semântica de send/route.ts. O webhook de status promove p/ sent/delivered/read.
+      insertData.delivery_status = "accepted";
+    }
+    await supabase.from("messages").insert(insertData);
 
     await supabase
       .from("conversations")
