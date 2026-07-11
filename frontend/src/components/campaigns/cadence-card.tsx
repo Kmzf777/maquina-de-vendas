@@ -1,6 +1,8 @@
 "use client";
 
 import type { Campaign } from "@/lib/types";
+import { campaignNodeCount } from "@/lib/campaign-node-count";
+import { isSystemCampaign } from "@/lib/system-campaign";
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   draft:    { bg: "bg-[#f0ede8]",       text: "text-[#7b7b78]",   label: "Rascunho" },
@@ -16,8 +18,12 @@ interface CadenceCardProps {
 }
 
 export function CadenceCard({ campaign, onClick }: CadenceCardProps) {
-  const st = STATUS_STYLES[campaign.status] ?? STATUS_STYLES.draft;
-  const nodeCount = campaign.nodes?.length ?? 0;
+  // O espelho do motor da Valéria é tecnicamente draft (proteção de backend contra
+  // execução dupla), mas "Rascunho" sugere fluxo inacabado — o selo vira "Sistema".
+  const st = isSystemCampaign(campaign.id)
+    ? { bg: "bg-[#ff5600]/10", text: "text-[#ff5600]", label: "Sistema" }
+    : (STATUS_STYLES[campaign.status] ?? STATUS_STYLES.draft);
+  const nodeCount = campaignNodeCount(campaign);
 
   return (
     <div

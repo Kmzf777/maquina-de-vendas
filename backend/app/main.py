@@ -69,6 +69,11 @@ async def lifespan(app: FastAPI):
 
     await recover_orphaned_buffers(app.state.redis, require_no_deadline=False, source="startup")
 
+    # Espelho visual do motor de follow-up no builder de Cadências (fail-open: o sync
+    # loga warning e segue — a API nunca deixa de subir por causa da representação).
+    from app.campaigns.system_cadence import sync_valeria_cadence_campaign
+    await asyncio.to_thread(sync_valeria_cadence_campaign)
+
     flusher_task = asyncio.create_task(run_flusher(app))
     watchdog_task = asyncio.create_task(run_watchdog(app))
 

@@ -28,6 +28,7 @@ import type { Campaign, CampaignNode, CampaignNodeType } from "@/lib/types";
 import type { PaletteItem, FlowBuilderData, FlowTemplate, FlowTag, FlowUser, TestNodeState, TestEvent, TestLogEntry } from "./types";
 import { FONT_STYLE, NODE_META, STATUS_LABELS, STATUS_COLORS, PALETTE_TRIGGERS, PALETTE_ACTIONS } from "./constants";
 import { getDefaultConfig, toRFNode, toRFEdges } from "./helpers";
+import { isSystemCampaign } from "@/lib/system-campaign";
 import { NODE_TYPES, EDGE_TYPES, PaletteItemComp, setFlowHandlers, takeDragPayload } from "./graph-elements";
 import { Inspector } from "./inspector";
 
@@ -415,7 +416,11 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   }, [testNodeStates, setRFNodes]);
 
   const selectedDbNode = selectedNodeId ? dbNodes.find(n => n.id === selectedNodeId) ?? null : null;
-  const st = campaign ? (STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft) : STATUS_COLORS.draft;
+  // Espelho do motor: o chip mostra "Sistema" (âmbar do selo) em vez de "Rascunho" —
+  // o draft é proteção de backend, não um fluxo inacabado.
+  const st = isSystemCampaign(campaignId)
+    ? { bg: "#fff7f2", color: "#ff5600", border: "#ff5600" }
+    : campaign ? (STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft) : STATUS_COLORS.draft;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'Outfit', sans-serif" }}>
@@ -450,7 +455,7 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
             fontSize: 11, fontWeight: 500, color: st.color,
             letterSpacing: ".2px", textTransform: "uppercase",
           }}>
-            {STATUS_LABELS[campaign.status] ?? campaign.status}
+            {isSystemCampaign(campaignId) ? "Sistema" : (STATUS_LABELS[campaign.status] ?? campaign.status)}
           </span>
         )}
 
@@ -469,19 +474,36 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
           ⚡ Testar
         </button>
 
-        <button
-          onClick={toggleActivation}
-          style={{
-            height: 34, padding: "0 16px", borderRadius: 7,
-            background: campaign?.status === "active" ? "#f5f2ed" : "#111",
-            color: campaign?.status === "active" ? "#555" : "#fff",
-            border: campaign?.status === "active" ? "1px solid #e0dbd4" : "none",
-            fontFamily: "'Outfit', sans-serif", fontSize: 13, fontWeight: 500,
-            cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
-          }}
-        >
-          {campaign?.status === "active" ? "⏸ Pausar" : "▶ Ativar campanha"}
-        </button>
+        {isSystemCampaign(campaignId) ? (
+          // Espelho do motor de follow-up (system_cadence.py): nunca ativável — a
+          // execução real é do worker; o grafo é re-sincronizado a cada deploy.
+          <span
+            title="Espelho somente-leitura do motor de follow-up da Valéria (cadence.py). Re-sincronizado a cada deploy; a execução real é do worker de follow-up."
+            style={{
+              height: 34, padding: "0 14px", borderRadius: 7,
+              background: "#fff7f2", border: "1px solid #ff5600",
+              color: "#ff5600", fontFamily: "'Outfit', sans-serif",
+              fontSize: 12, fontWeight: 600, letterSpacing: ".3px",
+              display: "flex", alignItems: "center", gap: 6,
+            }}
+          >
+            ⚙ MOTOR DA VALÉRIA · SOMENTE LEITURA
+          </span>
+        ) : (
+          <button
+            onClick={toggleActivation}
+            style={{
+              height: 34, padding: "0 16px", borderRadius: 7,
+              background: campaign?.status === "active" ? "#f5f2ed" : "#111",
+              color: campaign?.status === "active" ? "#555" : "#fff",
+              border: campaign?.status === "active" ? "1px solid #e0dbd4" : "none",
+              fontFamily: "'Outfit', sans-serif", fontSize: 13, fontWeight: 500,
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+            }}
+          >
+            {campaign?.status === "active" ? "⏸ Pausar" : "▶ Ativar campanha"}
+          </button>
+        )}
       </div>
 
       {/* ── Workspace ────────────────────────────────────────────────── */}
