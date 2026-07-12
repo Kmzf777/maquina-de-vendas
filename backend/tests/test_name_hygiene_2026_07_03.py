@@ -129,8 +129,10 @@ def test_sanitize_display_name_descarta_apelido_de_pushname(raw):
 
 
 @pytest.mark.parametrize("raw", [
-    # Nomes reais que CONTÊM (mas não SÃO) termos da blocklist — jamais descartar
-    "Amora", "Vidal", "Eugênio", "Eunice", "Vida Nova Cafés",
+    # Nomes reais que CONTÊM (mas não SÃO) termos da blocklist — jamais descartar.
+    # "Vida Nova Cafés" saiu desta lista na varredura 12/07: nome de EMPRESA como
+    # vocativo é a falha (caso "fechado, Empório Da Canastra") — agora cai em sem-nome.
+    "Amora", "Vidal", "Eugênio", "Eunice",
 ])
 def test_sanitize_display_name_preserva_nomes_parecidos_com_apelido(raw):
     assert sanitize_display_name(raw) == raw

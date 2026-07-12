@@ -63,9 +63,12 @@ async def _run(tool, args, patches):
 async def test_sem_interesse_envia_despedida_do_llm_antes_de_desligar_ia():
     calls: list = []
     provider = _provider()
+    # Motivo de REJEIÇÃO legítima: "lead vai analisar" era adiamento morno e agora é
+    # recusado pela guarda 18C (varredura 12/07, caso Rogério) — este teste valida a
+    # MECÂNICA da despedida, então usa um motivo que passa pela guarda.
     result, mocks = await _run(
         "registrar_sem_interesse_atual",
-        {"motivo": "lead vai analisar", "mensagem_despedida": "tranquilo, fico por aqui\n\nquando quiser é só chamar"},
+        {"motivo": "lead reafirmou que nao tem interesse, achou caro", "mensagem_despedida": "tranquilo, fico por aqui\n\nquando quiser é só chamar"},
         _patches(provider, calls),
     )
     assert "sem interesse" in result.lower() or "Lead marcado" in result

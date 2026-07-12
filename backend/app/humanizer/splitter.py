@@ -65,6 +65,16 @@ def split_into_bubbles(text: str) -> list[str]:
         expanded.extend(_split_leading_greeting(b))
     bubbles = expanded
 
+    # --- Step 3.6: pergunta roteirizada colada no meio da bolha (varredura 12/07) ---
+    # A pergunta de descoberta do funil ("voce ja tem uma marca criada...") é roteirizada
+    # verbatim nos prompts de estagio, e o modelo às vezes a cola no fim do pitch com \n
+    # simples (colapsado em espaço pelo Step 3). Seam determinística: se ela aparece no
+    # MEIO de uma bolha, vira bolha própria. Também pré-clamp.
+    expanded = []
+    for b in bubbles:
+        expanded.extend(_split_scripted_question(b))
+    bubbles = expanded
+
     # --- Step 4: clamp to MAX_BUBBLES (merge overflow into last bucket) ---
     if len(bubbles) > MAX_BUBBLES:
         # Keep the first (MAX_BUBBLES - 1) bubbles intact, merge the rest.
@@ -112,6 +122,32 @@ def _split_leading_greeting(bubble: str) -> list[str]:
     if len(rest) < _GREETING_MIN_REST:
         return [bubble]
     return [m.group(1), rest]
+
+
+# Perguntas roteirizadas dos prompts de estágio que o modelo cola no fim do pitch.
+# O seam corta ANTES da pergunta quando ela aparece no meio da bolha (>= _SEAM_MIN_PREFIX
+# chars antes dela); no início da bolha não há nada a fazer.
+_SCRIPTED_QUESTION_SEAM_RE = re.compile(
+    r"\s(?=voc[eê] j[aá] tem uma marca)",
+    re.IGNORECASE,
+)
+_SEAM_MIN_PREFIX = 20
+
+
+def _split_scripted_question(bubble: str) -> list[str]:
+    """Descola a pergunta roteirizada do funil quando colada no meio da bolha.
+
+    Retorna [prefixo, pergunta] quando o seam existe após >= _SEAM_MIN_PREFIX chars;
+    caso contrário devolve a bolha intacta. Função pura — sem I/O.
+    """
+    m = _SCRIPTED_QUESTION_SEAM_RE.search(bubble)
+    if not m or m.start() < _SEAM_MIN_PREFIX:
+        return [bubble]
+    prefix = bubble[:m.start()].rstrip()
+    question = bubble[m.end():].strip()
+    if not prefix or not question:
+        return [bubble]
+    return [prefix, question]
 
 
 def _strip_terminal_period(bubble: str) -> str:
