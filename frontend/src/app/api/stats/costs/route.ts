@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { mapCostsSummary, type CostsSummaryRow } from "@/lib/stats-mappers";
+import {
+  mapCostsSummary,
+  resolveBrlMultiplier,
+  type CostsSummaryRow,
+} from "@/lib/stats-mappers";
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -22,7 +26,10 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const row = (Array.isArray(data) ? data[0] : data) as CostsSummaryRow | undefined;
-  return NextResponse.json(mapCostsSummary(row));
+  // Estimativa em R$ p/ conciliação com a fatura Google Brasil (câmbio+impostos).
+  // Knob server-side; default 5,73 = conciliação real de 11/07 ($2,39 → R$13,70).
+  const brlMultiplier = resolveBrlMultiplier(process.env.CUSTO_IA_MULTIPLICADOR_BRL);
+  return NextResponse.json(mapCostsSummary(row, brlMultiplier));
 }
 
 function defaultStart() {

@@ -24,6 +24,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+import { formatBRL } from "@/lib/stats-mappers";
+
 const API_BASE = "";
 const MARKETING_PRICE = 0.0617;
 const UTILITY_PRICE = 0.0067;
@@ -59,6 +61,10 @@ interface AISummary {
   total_tokens: number;
   total_prompt_tokens: number;
   total_completion_tokens: number;
+  // Estimativa em R$ da fatura Google (câmbio+impostos) — aditivo, USD intocado.
+  // Opcionais: toleram payload antigo em cache durante o rollout.
+  total_cost_brl?: number;
+  brl_multiplier?: number;
 }
 
 interface DailyAI {
@@ -207,6 +213,8 @@ export default function EstatisticasPage() {
       <Alert className="rounded-none border-x-0 border-t-0 border-b border-amber-200 bg-amber-50 py-2.5 px-8 text-amber-800">
         <AlertDescription className="text-xs">
           Todos os valores estão em dólar americano (USD) — moeda de cobrança da Meta e dos modelos de IA.
+          O custo de IA exibe também uma estimativa em R$ (câmbio + impostos da fatura Google Brasil,
+          ajustável via CUSTO_IA_MULTIPLICADOR_BRL).
         </AlertDescription>
       </Alert>
 
@@ -319,6 +327,14 @@ export default function EstatisticasPage() {
               <p className="text-[24px] font-normal text-[#111111] leading-none">
                 {formatUSD(ai?.total_cost ?? 0)}
               </p>
+              {ai?.total_cost_brl !== undefined && (
+                <p className="text-[13px] text-[#111111] mt-1.5 leading-none">
+                  ≈ {formatBRL(ai.total_cost_brl)}
+                  <span className="text-[11px] text-[#7b7b78] ml-1.5">
+                    est. câmbio+impostos
+                  </span>
+                </p>
+              )}
               <p className="text-[12px] text-[#7b7b78] mt-1">
                 {ai?.total_calls ?? 0} chamadas ·{" "}
                 {(ai?.total_tokens ?? 0).toLocaleString()} tokens
@@ -477,6 +493,11 @@ export default function EstatisticasPage() {
                 </TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] py-3">
                   {formatUSD(ai?.total_cost ?? 0)}
+                  {ai?.total_cost_brl !== undefined && (
+                    <span className="block text-[11px] text-[#7b7b78] mt-0.5">
+                      ≈ {formatBRL(ai.total_cost_brl)}
+                    </span>
+                  )}
                 </TableCell>
               </TableRow>
 

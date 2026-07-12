@@ -7,6 +7,27 @@
 const MARKETING_PRICE = 0.0617;
 const UTILITY_PRICE = 0.0067;
 
+// Conversão USD→BRL "de fatura" para o custo de IA: câmbio médio + impostos embutidos
+// pelo Google Cloud Brasil (IOF/ISS). Derivado da conciliação real de 11/07/2026:
+// $2,39 rastreados no token_usage ⇒ R$ 13,70 na fatura ⇒ multiplicador efetivo ~5,73.
+// É ESTIMATIVA de conciliação, não cotação — ajustável via env CUSTO_IA_MULTIPLICADOR_BRL
+// (lido na rota, server-side) quando câmbio/imposto mudarem.
+export const DEFAULT_USD_TO_BRL_WITH_TAX = 5.73;
+
+/** Parse defensivo do env CUSTO_IA_MULTIPLICADOR_BRL: lixo/zero/negativo → default. */
+export function resolveBrlMultiplier(raw?: string | null): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_USD_TO_BRL_WITH_TAX;
+}
+
+/** Formata em Real (pt-BR): 13.7 → "R$ 13,70". */
+export function formatBRL(value: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(value);
+}
+
 function round6(x: number): number {
   return Math.round(x * 1e6) / 1e6;
 }
@@ -41,9 +62,17 @@ export interface CostsSummaryResponse {
   total_tokens: number;
   unique_leads: number;
   avg_cost_per_lead: number;
+  /** Estimativa em R$ da fatura Google (USD × multiplicador câmbio+impostos). ADITIVO:
+   * os campos em USD acima permanecem intocados — Regra de Ouro da conciliação. */
+  total_cost_brl: number;
+  /** Multiplicador usado (p/ rótulo/auditoria no front). */
+  brl_multiplier: number;
 }
 
-export function mapCostsSummary(row: CostsSummaryRow | null | undefined): CostsSummaryResponse {
+export function mapCostsSummary(
+  row: CostsSummaryRow | null | undefined,
+  brlMultiplier: number = DEFAULT_USD_TO_BRL_WITH_TAX
+): CostsSummaryResponse {
   const totalCost = toNum(row?.total_cost);
   const totalCalls = toNum(row?.total_calls);
   const totalPrompt = toNum(row?.total_prompt_tokens);
@@ -59,6 +88,8 @@ export function mapCostsSummary(row: CostsSummaryRow | null | undefined): CostsS
     total_tokens: totalPrompt + totalCompletion,
     unique_leads: uniqueLeads,
     avg_cost_per_lead: round6(avgCostPerLead),
+    total_cost_brl: round4(totalCost * brlMultiplier),
+    brl_multiplier: brlMultiplier,
   };
 }
 
