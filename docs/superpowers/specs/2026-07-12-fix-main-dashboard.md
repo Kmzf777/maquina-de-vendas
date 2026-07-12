@@ -1,71 +1,83 @@
-# Fix do Dashboard Principal (/dashboard) — diagnóstico e arquitetura da correção
+# Novo Dashboard Principal (/dashboard) — KPIs de operação IA+SDR
 
-**Data:** 2026-07-12 · **Branch:** `fix/main-dashboard-data` · **Status:** DIAGNÓSTICO APROVADO PENDENTE — nenhuma alteração de código feita.
-**Método:** leitura do código (página, 2 hooks, 7 subcomponentes, constants, migrações) + queries read-only no Supabase de PRODUÇÃO comparando a UI com a verdade do banco.
+**Data:** 2026-07-12 (v2 — escopo de produto redefinido pelo usuário após o cardápio de KPIs) · **Branch:** `fix/main-dashboard-data` · **Status:** spec aprovada em escopo, AGUARDANDO ordem de implementação.
 
----
+## 1. Por que o dashboard atual mente (diagnóstico resumido, provado em prod)
 
-## 1. POR QUE o dashboard está errado — os furos, com prova de produção
+1. KPIs de deals leem `deals.stage` (texto legado, congelado em `'novo'` — 0 ocorrências de `fechado_ganho` em 1.515 deals); a verdade é `stage_id → pipeline_stages`.
+2. Hooks sem paginação → teto max-rows 1.000 (1.293 leads reais) + ordenação por coluna NULL = janela arbitrária → "Leads hoje" mostrava 0 com 17 reais.
+3. `leads.first_response_at` (0/1.293) e `leads.last_msg_at` (10/1.293) são campos mortos — KPIs "Tempo de resposta" e "Chats sem resposta" nunca funcionaram.
+4. Realtime table-wide com refetch completo (classe egress).
 
-### F1 (CRÍTICO) — Todos os KPIs de deals leem a coluna ERRADA
-`page.tsx:83-117` e `funnel-movement.tsx:28-47` filtram por **`deals.stage`** (texto legado, default `'novo'`) usando as keys hardcoded de `DEAL_STAGES` (`constants.ts:9-16`). A fonte de verdade desde a migração `012_multi_pipeline` é **`deals.stage_id → pipeline_stages`** — é o que o Kanban usa, e NADA no sistema atualiza `deals.stage` (insert grava `'novo'` fixo; o PATCH do Kanban só manda `stage_id`).
-**Prova (prod):** distribuição real de `deals.stage`: `novo=1300, respondeu=105, ja_chamado=52, qualificado=37, perdido=20, fechado_perdido=1` — **`fechado_ganho` = 0 ocorrências**; enquanto `pipeline_stages` tem 52 stages reais em 10 pipelines (com "Fechado Ganho"/"Perdido" e `stage_id` populado em 1515/1515 deals).
-**Efeito na tela:** "Deals ganhos" = 0 para sempre; "Deals perdidos" ≈ 0; "Deals ativos" conta e soma TUDO (inflado); FunnelChart joga ~86% dos deals na coluna "Novo"; FunnelMovement "Perdidos no período" = 0 para sempre.
+**Decisão de produto:** em vez de consertar KPIs de vaidade, o dashboard é RECRIADO com 13 métricas escolhidas pelo usuário. Componentes antigos quebrados (`FunnelChart`, `LeadSourcesChart`, `FunnelMovement`, os 6 KpiCards atuais) saem; `SlaTable`, `OverdueLeadsSection`, `OnlineUsersSection` e `ConversionsSection` (corretos) permanecem como drill-down abaixo dos novos blocos.
 
-### F2 (CRÍTICO) — Teto silencioso de 1.000 linhas + janela arbitrária
-`use-realtime-leads.ts` e `use-realtime-deals.ts` fazem `select("*")` **sem `.limit()`/`.range()`** → o max-rows do PostgREST corta em 1.000 (mesma assinatura do incidente do /estatisticas).
-**Prova (prod):** existem **1.293 leads** e **1.515 deals**. Pior: o hook de leads ordena por `last_msg_at` — que é NULL em 99% das linhas (ver F4) — então a janela de 1.000 é **arbitrária**: medido, ela cobre 27/02→11/07 e **os 17 leads criados HOJE ficam FORA**.
-**Efeito na tela:** **"Leads hoje" renderiza 0 com 17 leads reais** — a queixa "não está atualizado" é literalmente isso. Todos os KPIs/gráficos de leads operam sobre ~77% dos dados, virados para o passado.
+## 2. Os 13 KPIs escolhidos e sua verdade no banco (validada em produção 12/07)
 
-### F3 (CRÍTICO) — KPI "Tempo de resposta" lê um campo MORTO
-`page.tsx:97-104` usa `leads.first_response_at`. **Prova (prod): 0 de 1.293 leads têm o campo preenchido** — grep no backend confirma que NENHUM código escreve nele.
-**Efeito:** KPI mostra "—" desde sempre.
+### Cards de topo — Linha 1 "O motor hoje"
+| # | KPI | Lógica (fonte validada) |
+|---|---|---|
+| 1 | **Leads novos hoje** (+tendência vs ontem) | `count(leads)` por dia LOCAL (`created_at AT TIME ZONE p_tz`); delta % vs dia anterior |
+| 2 | **Leads ativos com a Valéria** (snapshot AGORA) | `leads.ai_enabled=true AND opt_out=false AND stage<>'perdido'` **E** `EXISTS` mensagem `role='user'` nas últimas 24h na(s) conversa(s) do lead. Drill-down no card: quantos "aguardando lead" (última msg é da IA) |
+| 3 | **Conversas atendidas pela IA hoje** | `count(distinct conversation_id)` com ≥1 msg `role='user'` E ≥1 `role='assistant' AND sent_by='ai'` no dia local |
+| 4 | **Handoffs (período)** | `count(messages)` com `role='system' AND content LIKE '[encaminhar_humano] Lead encaminhado%'` — marcador REAL validado (o `'Lead encaminhado%'` cru retorna 0; o prefixo da tool vem antes) |
 
-### F4 (CRÍTICO) — KPI "Chats sem resposta" lê coluna que o backend não popula
-`page.tsx:92-95` usa `leads.last_msg_at`; o backend escreve em **`conversations.last_msg_at`** (o campo de leads tem 10/1.293 preenchidos, resíduo legado). Além disso a lógica está conceitualmente errada: `last_msg_at < 1h atrás && !human_control` marcaria como "sem resposta" qualquer conversa antiga — não distingue quem falou por último.
-**Efeito:** KPI = 0 sempre (falso negativo permanente).
+### Cards de topo — Linha 2 "Qualidade e custo"
+| # | KPI | Lógica |
+|---|---|---|
+| 5 | **Taxa de qualificação da IA** (período) | conversas com marcador `'[qualificar_lead]%'` ÷ conversas atendidas (item 3) no período |
+| 6 | **SLA de resposta humana pós-handoff** (mediana em HORÁRIO COMERCIAL) | Por handoff (item 4): primeira msg `sent_by='human'` posterior na MESMA conversa; tempo = `business_seconds(handoff_ts, resposta_ts)` — função SQL que soma APENAS a interseção com janelas seg–sex 10h–16h BRT (ver §4). `percentile_cont(0.5)` + p95 como tooltip. Handoffs sem resposta ficam FORA da mediana (métrica de fila não foi escolhida) |
+| 7 | **Custo de IA por handoff** (período) | `sum(token_usage.total_cost)` do período ÷ handoffs do período |
+| 8 | **Custo por atendimento hoje** | `sum(total_cost where call_type LIKE 'response%')` ÷ `count(distinct lead_id)` dessas chamadas, no dia — mesma definição da auditoria de unit economics |
 
-### F5 (ESTRUTURAL) — Realtime caro e inútil
-`use-realtime-deals` assina `postgres_changes` **table-wide** e refaz o fetch COMPLETO (com joins de leads+stages) a cada mudança de qualquer deal — padrão da classe do incidente de egress. Já `leads` nem está na publicação realtime e o hook não assina nada → os KPIs de leads só atualizam no mount.
+### Bloco "Conversão fim-a-fim" (gráfico de 3 estágios)
+| 9 | **Lead → Handoff → Ganho** | Coorte por `leads.created_at` no período: total criados; % com handoff (item 4 por lead); % com deal `pipeline_stages.key='fechado_ganho'` (via `stage_id`, NUNCA `deals.stage`). Barras com contagem + % |
 
-### F6 (MENOR) — Gráfico de origens com buckets fantasmas
-`LeadSourcesChart` agrupa por `leads.metadata->>origem`, mas: (a) só leads de LP têm o campo; (b) as keys de `LP_ORIGINS` (`graocafeteria/atacado/terceirizacao`) divergem dos valores crus que a LP grava (`landing-page-atacado`, `terceirizacaocafe`, `cafeatacado`) → quase tudo cai em "Não identificado".
+### Bloco "Outbound Frio" (funil de disparo)
+| 10 | **Entregabilidade do disparo** | De `broadcasts` (filtro `template_name LIKE 'utilidade_%'` — restrição do usuário; template real validado: `utilidade_22_04_2026_16_40`) × `broadcast_leads`: `sent_at`/`delivered_at` → taxas sent→delivered |
+| 11 | **Taxa de resposta do disparo frio** | `broadcast_leads.first_replied_at IS NOT NULL` ÷ `sent_at IS NOT NULL`, mesmo filtro `utilidade_%` (campo purpose-built validado em prod) |
 
-### F7 (MENOR/cosmético) — Nomes reais hardcoded
-`online-users-section.tsx:27-38`: cores de avatar chumbadas para "Arthur/Rafael/Kelwin/João".
+### Bloco "Esteira de Follow-up"
+| 12 | **Follow-ups agendados vs executados hoje** | `follow_up_jobs`: `count(fire_at::date local = hoje)` vs `count(sent_at::date local = hoje)` + abertos `status='pending'` vencidos — é o histograma-detector do postmortem da cadência morta, agora visível |
+| 13 | **Retornos agendados pendentes** | `follow_up_jobs` `job_type IN ('ai_scheduled_return')` + jobs de `agendar_retorno` com `status='pending'`: contagem + próximo `fire_at` |
 
-### O que JÁ está correto (não mexer)
-`SlaTable` e `OverdueLeadsSection` (paginam com `.range()` em loop — únicos imunes ao teto — e escopam por papel), `ConversionsSection` (proxy → FastAPI, dados reais), `FunnelChart`/`KpiCard` (apresentacionais puros). Não há mocks de dados nos componentes — o dashboard mente por ler colunas mortas e janelas truncadas, não por dados fake.
+**Descartados pelo usuário:** origem de leads (mapeamento fraco), tempo de resposta da IA, funil por stage (explicado — pode entrar depois), categoria H inteira, aging, motivos de perda, composição da base.
 
----
+## 3. Arquitetura — 4 RPCs + 1 helper (padrão /estatisticas)
 
-## 2. Arquitetura da correção (mesmo playbook que salvou o /estatisticas)
+Migração `20260712_dashboard_rpcs.sql` (aplicar prod+homolog via runner/Management API com autorização; `LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public`):
 
-**Princípio: agrega no Postgres, exibe no cliente.** Nenhuma tabela inteira viaja ao browser para virar `filter/reduce`.
+1. **`dashboard_business_seconds(t_start timestamptz, t_end timestamptz)`** — helper IMMUTABLE (ver §4).
+2. **`dashboard_kpis(p_start date, p_end date, p_tz text)`** → 1 linha com itens 1,2,3,4,5,6,7,8 (item 2 é snapshot e ignora o período; itens com "hoje" fixo usam o dia local corrente; os demais respeitam p_start/p_end do seletor Hoje/7d/30d).
+3. **`dashboard_funnel_conversion(p_start,p_end,p_tz)`** → item 9 (coorte).
+4. **`dashboard_outbound_frio(p_start,p_end)`** → itens 10-11 (join broadcasts×broadcast_leads, filtro `template_name LIKE 'utilidade_%'`).
+5. **`dashboard_followups(p_tz)`** → itens 12-13.
 
-### 2.1 Migração `20260712_dashboard_rpcs.sql` — 3 RPCs SQL (STABLE, mesmo padrão de `20260711_stats_aggregation_rpcs`)
-1. **`dashboard_kpis(p_tz text default 'America/Sao_Paulo')`** → 1 linha: `leads_today` (contagem por dia LOCAL, não UTC), `active_deals_count/value`, `won_deals_count/value`, `lost_deals_count/value` — **via `stage_id → pipeline_stages.key`** (`fechado_ganho`/`fechado_perdido`; ativos = resto), `unanswered_chats` (de **`conversations`**: última mensagem é do cliente E sem resposta há >1h E `ai_enabled=false` OU sem humano atribuído — definição correta de "esperando resposta"), `avg_first_response_minutes` (janela 30d, window function sobre `messages`: primeira `assistant/human` após a primeira `user` de cada conversa — cálculo real, sem depender do campo morto).
-2. **`dashboard_funnel()`** → contagem + soma de `value` por `pipeline_stages` (agregado por `label` normalizado, com `order_index` e por pipeline p/ filtro futuro), lendo `stage_id`.
-3. **`dashboard_lead_sources()`** → contagem por `coalesce(metadata->>'origem','whatsapp')` com normalização dos valores REAIS gravados pela LP (mapear `landing-page-atacado`→Atacado etc.) feita no SQL.
+Rotas Next finas `/api/dashboard/{kpis,conversion,outbound,followups}` + mapper puro `src/lib/dashboard-mappers.ts` (testes vitest de contrato) + **matcher no `proxy.ts`** (obrigatório p/ rota /api/* nova). Página: fetch das 4 rotas com seletor de período (Hoje/7d/30d, mesmo padrão do /estatisticas), polling 60s, ZERO fetch de tabela inteira. `useRealtimeLeads`/`useRealtimeDeals` saem da página (permanecem p/ o Kanban).
 
-### 2.2 Rotas Next `/api/dashboard/kpis|funnel|sources`
-Finas: `sb.rpc(...)` + mapper puro em `src/lib/dashboard-mappers.ts` (testável em vitest, mesmo padrão de `stats-mappers`). **Atenção obrigatória:** rota `/api/*` nova exige matcher no `proxy.ts` (lição registrada do painel Follow-up).
+## 4. SLA em horário comercial — a técnica SQL
 
-### 2.3 Página
-- KPIs/FunnelChart/LeadSourcesChart/FunnelMovement passam a ler as rotas agregadas (fetch único + `useEffect`), removendo `useRealtimeLeads`/`useRealtimeDeals` da página (os hooks PERMANECEM para o Kanban, que os usa por pipeline).
-- Atualização: polling leve de 60s + refresh no focus (agregados custam ~1 query cada) — substitui o realtime table-wide. Zero mudança visual de layout.
-- `FunnelMovement` "perdidos no período" via `closed_at` + `key='fechado_perdido'` (dados já existem).
-- LeadSourcesChart consome a RPC (buckets normalizados no SQL).
-- F7: derivar cor de avatar por hash da inicial (remove nomes chumbados).
+Função pura de "segundos úteis" entre dois timestamps, janela seg–sex 10h–16h BRT:
 
-### 2.4 Decisões explícitas
-- **NÃO ressuscitar** `leads.first_response_at`/`leads.last_msg_at` (colunas mortas; a verdade vive em `conversations`/`messages` — criar writer novo duplicaria estado). Documentá-las como deprecated.
-- **NÃO segmentar por vendedor nesta fase**: leads é deliberadamente não-segmentado (decisão RLS registrada) e os KPIs são visão de operação; SLA/Overdue continuam com o escopo por papel que já têm.
-- RPCs com `security definer` + `set search_path` espelhando as stats RPCs (RLS-safe), aplicadas em prod+homolog com ledger do runner.
-- `DEAL_STAGES` legado: manter apenas se outro consumidor usar (verificar no plano); o dashboard deixa de importá-lo.
+```sql
+-- Para cada dia entre início e fim (em BRT), soma a interseção do intervalo
+-- [t_start, t_end] com a janela [dia 10:00, dia 16:00], pulando sáb/dom:
+SELECT coalesce(sum(
+  GREATEST(0, EXTRACT(EPOCH FROM (
+    LEAST(t_end AT TIME ZONE 'America/Sao_Paulo', d + time '16:00')
+    - GREATEST(t_start AT TIME ZONE 'America/Sao_Paulo', d + time '10:00')
+  )))
+), 0)
+FROM generate_series(
+  date_trunc('day', t_start AT TIME ZONE 'America/Sao_Paulo'),
+  date_trunc('day', t_end   AT TIME ZONE 'America/Sao_Paulo'),
+  interval '1 day') AS d
+WHERE EXTRACT(ISODOW FROM d) BETWEEN 1 AND 5;
+```
 
-### 2.5 Critérios de aceite
-- "Leads hoje" do dashboard == `select count(*) from leads where created_at::date (BRT) = hoje` (17 no dia da auditoria).
-- Ganhos/perdidos/ativos batem com o Kanban (contagem por `stage_id`).
-- Nenhuma query da página retorna >100 linhas ao browser.
-- vitest verde (mappers novos + existentes); página sem regressão visual de layout.
+Semântica resultante (a pinar em teste SQL): handoff sexta 20h respondido segunda 10h05 → SLA = 5 min (o relógio só anda dentro da janela); handoff e resposta dentro da mesma janela → diferença direta; resposta fora da janela → conta só o trecho útil decorrido. Feriados NÃO são tratados (sem tabela de feriados — limitação aceita e documentada no tooltip do card).
+
+## 5. Critérios de aceite
+- Cada RPC validada contra queries diretas de produção ANTES do frontend (leads hoje = contagem real; handoffs batem com o daily_qa; broadcast batem com contadores da tabela `broadcasts`).
+- `business_seconds` com teste SQL de 4 cenários (mesma janela, overnight, fim de semana, resposta fora da janela).
+- Nenhuma resposta de rota > algumas dezenas de linhas; página sem `select("*")` de tabela.
+- vitest verde (mappers novos + regressão); layout segue o design system atual (cards 2×4 + 3 blocos).

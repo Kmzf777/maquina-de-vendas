@@ -1,28 +1,27 @@
-# Plano — Fix do Dashboard Principal
+# Plano — Novo Dashboard Principal (13 KPIs de operação IA+SDR)
 
-Spec: `docs/superpowers/specs/2026-07-12-fix-main-dashboard.md` · Branch: `fix/main-dashboard-data`.
-**Gate:** aguardando aprovação do diagnóstico pelo usuário antes de qualquer código.
+Spec (v2): `docs/superpowers/specs/2026-07-12-fix-main-dashboard.md` · Branch: `fix/main-dashboard-data`.
+**Gate:** aguardando ordem de implementação do usuário.
 
-## Etapa 1 — Migração SQL (`supabase/migrations/20260712_dashboard_rpcs.sql`)
-1. `dashboard_kpis(p_tz)`: leads_today (dia local), ativos/ganhos/perdidos count+value via `deals.stage_id → pipeline_stages.key`, `unanswered_chats` (conversations: último turno do cliente >1h sem resposta), `avg_first_response_minutes` (30d, window sobre messages).
-2. `dashboard_funnel()`: count+sum(value) por stage real (label + order_index + pipeline_id).
-3. `dashboard_lead_sources()`: bucket normalizado de `metadata->>'origem'` (mapear valores crus da LP; default 'whatsapp').
-4. Padrão das stats RPCs: `LANGUAGE sql STABLE SECURITY DEFINER SET search_path`. Aplicar em prod+homolog via runner/Management API (com autorização) e registrar no ledger.
-5. Antes de fechar o SQL: validar as 3 queries read-only contra prod (números devem bater com a auditoria: 17 leads hoje, 1515 deals, stages reais).
+## Etapa 1 — SQL (`supabase/migrations/20260712_dashboard_rpcs.sql`)
+1. `dashboard_business_seconds(t_start,t_end)` (IMMUTABLE, seg–sex 10h–16h BRT) + testes SQL dos 4 cenários (mesma janela / overnight / fim de semana / resposta fora da janela).
+2. `dashboard_kpis(p_start,p_end,p_tz)` — itens 1-8 da spec (leads hoje+tendência, ativos c/ Valéria [snapshot 24h], conversas atendidas, handoffs via `'[encaminhar_humano] Lead encaminhado%'`, taxa qualificação, SLA humano mediana/p95 útil, custo/handoff, custo/atendimento).
+3. `dashboard_funnel_conversion` (coorte lead→handoff→ganho via `stage_id`/`key='fechado_ganho'`).
+4. `dashboard_outbound_frio` (broadcasts×broadcast_leads, `template_name LIKE 'utilidade_%'`: sent/delivered/replied + taxas).
+5. `dashboard_followups(p_tz)` (agendados vs executados hoje por job_type + pendings vencidos + retornos agendados com próximo fire_at).
+6. Validar CADA RPC contra produção com queries diretas ANTES de seguir (aceites da spec §5). Aplicar prod+homolog (runner/Management API, com autorização) + ledger.
 
 ## Etapa 2 — Rotas + mappers
-6. `src/lib/dashboard-mappers.ts` (puro) + testes vitest (contrato, tipos string→number do PostgREST, buckets).
-7. Rotas `frontend/src/app/api/dashboard/{kpis,funnel,sources}/route.ts` (finas, sb.rpc).
-8. **Adicionar matcher das rotas novas no `proxy.ts`** (lição 841bc31 — sem isso a rota 404 em prod).
+7. `src/lib/dashboard-mappers.ts` (puros; tipos string→number do PostgREST) + testes vitest de contrato (incl. divisões por zero → 0, períodos vazios).
+8. Rotas `/api/dashboard/{kpis,conversion,outbound,followups}` finas (sb.rpc).
+9. **Matcher das 4 rotas no `proxy.ts`** (lição registrada — sem isso, 404 em produção).
 
 ## Etapa 3 — Página `/dashboard`
-9. Trocar `useRealtimeLeads`/`useRealtimeDeals` por fetch das 3 rotas (`useEffect` + polling 60s + refresh on focus). Hooks NÃO são apagados (Kanban usa).
-10. KpiCards: ligar aos campos da RPC (mesmos 6 cards, layout intocado); "Tempo de resposta" e "Chats sem resposta" passam a ter dado real.
-11. FunnelChart/FunnelMovement por stages reais (label/order_index; perdidos no período via closed_at+key).
-12. LeadSourcesChart consome `/api/dashboard/sources`.
-13. Avatar colors por hash (remove nomes hardcoded).
-14. Verificar consumidores restantes de `DEAL_STAGES`; remover import da página.
+10. Remover: 6 KpiCards atuais, `FunnelChart`, `LeadSourcesChart`, `FunnelMovement`, e os hooks `useRealtimeLeads`/`useRealtimeDeals` DA PÁGINA (ficam no Kanban). Verificar consumidores restantes de `DEAL_STAGES`.
+11. Novo layout: seletor de período (Hoje/7d/30d, padrão /estatisticas) → Linha 1 "Motor" (4 cards) → Linha 2 "Qualidade e custo" (4 cards) → blocos "Conversão fim-a-fim" (3 estágios), "Outbound Frio" (funil sent→delivered→replied), "Esteira de Follow-up" (agendados×executados + retornos). Tooltips: SLA explica horário comercial e ausência de feriados.
+12. Manter abaixo (intocados): `SlaTable`, `OverdueLeadsSection`, `OnlineUsersSection`, `ConversionsSection`.
+13. Polling 60s + refresh on focus; estados de loading/erro por bloco (um bloco com erro não derruba a página).
 
-## Etapa 4 — Validação
-15. vitest completo (novos + regressão). Conferência manual: KPIs vs queries SQL diretas (aceite da spec). Lighthouse rápido opcional: payload da página deve despencar (hoje: 1000 leads + 1000 deals com joins no mount).
-16. Commit → pull → push master (mediante autorização) → acompanhar deploy → validar números em produção contra o banco.
+## Etapa 4 — Validação e deploy
+14. vitest completo; conferência manual RPC×UI×SQL direto (3 números por bloco).
+15. Commit → pull → push master (mediante autorização) → acompanhar deploy → conferir números em produção.
