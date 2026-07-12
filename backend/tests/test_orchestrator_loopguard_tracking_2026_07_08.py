@@ -28,15 +28,21 @@ async def test_loopguard_fallback_rastreado(monkeypatch):
     )
     monkeypatch.setattr(orchestrator, "execute_tool", AsyncMock(return_value="ok"))
 
+    # Args DIFERENTES a cada rodada: o dedup de tool-call por turno (FinOps P2, 12/07)
+    # encerra loops de chamada REPETIDA bem antes do guard — para exercitar o loop-guard,
+    # o loop patológico precisa ser de chamadas sempre novas.
+    _seq = {"n": 0}
+
     async def fake_generate(**kwargs):
-        # Com tools: devolve SEMPRE tool_call (força estourar MAX_TOOL_ITERATIONS).
+        # Com tools: devolve SEMPRE tool_call novo (força estourar MAX_TOOL_ITERATIONS).
         # Sem tools (chamada do loop-guard): devolve o texto de recuperação.
         if kwargs.get("tools") is None:
             return fake_text(
                 "recuperado",
                 usage=fake_usage(prompt=9000, out=30, thoughts=5, cached=7000),
             )
-        return fake_tool_call("salvar_nome", {"name": "Zé"})
+        _seq["n"] += 1
+        return fake_tool_call("salvar_nome", {"name": f"Zé {_seq['n']}"})
 
     monkeypatch.setattr(orchestrator, "generate", AsyncMock(side_effect=fake_generate))
 

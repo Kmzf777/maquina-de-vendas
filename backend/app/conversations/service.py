@@ -393,12 +393,32 @@ def describe_media_placeholder(row: dict[str, Any]) -> str:
     return _MEDIA_PLACEHOLDERS.get(message_type, "[mídia]")
 
 
-def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
+def get_history(
+    conversation_id: str,
+    limit: int = 30,
+    roles: tuple[str, ...] | None = None,
+    char_budget: int | None = None,
+) -> list[dict[str, Any]]:
+    """Histórico da conversa (query desc, retorno cronológico ascendente).
+
+    FinOps P2 (12/07) — parâmetros opcionais usados pelo orchestrator (demais chamadores
+    mantêm o contrato antigo intacto):
+      roles: filtra na QUERY (ex.: ("user","assistant")). Antes, system-rows compravam
+        janela do `limit` e eram descartadas na montagem do prompt — janela útil < limit.
+      char_budget: teto de caracteres do histórico (~3,4 chars/token). Descarta as linhas
+        mais ANTIGAS acima do teto (a mais recente entra sempre); a memória longa fica a
+        cargo do Dossiê (leads.rolling_summary). None/<=0 = sem teto.
+    """
     sb = get_supabase()
-    result = (
+    query = (
         sb.table("messages")
         .select("role, content, stage, created_at, wamid, quoted_wamid, message_type, metadata, sent_by")
         .eq("conversation_id", conversation_id)
+    )
+    if roles:
+        query = query.in_("role", list(roles))
+    result = (
+        query
         .order("created_at", desc=True)   # 60 MAIS RECENTES
         .limit(limit)
         .execute()
@@ -407,6 +427,16 @@ def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
     ordered = list(reversed(rows))        # volta à ordem cronológica ascendente (contrato inalterado)
     for row in ordered:
         row["content"] = describe_media_placeholder(row)
+    if char_budget and char_budget > 0:
+        kept: list[dict[str, Any]] = []
+        total = 0
+        for row in reversed(ordered):     # da mais recente para trás, até estourar o teto
+            size = len(row.get("content") or "")
+            if kept and total + size > char_budget:
+                break
+            kept.append(row)
+            total += size
+        ordered = list(reversed(kept))
     return ordered
 
 

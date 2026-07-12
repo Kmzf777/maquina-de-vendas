@@ -220,16 +220,16 @@ TOOL_DECLARATIONS: list[dict] = [
     {
         "name": "mudar_stage",
         "description": (
-            "Transfere o lead para outro stage de forma silenciosa — nunca avise o cliente sobre a mudanca. "
-            "Gatilhos por stage: "
-            "atacado — lead menciona revenda, distribuidora, cafeteria, restaurante ou qualquer negocio querendo cafe em volume; "
-            "private_label — lead quer marca propria, embalagem personalizada ou produto com identidade visual propria; "
-            "exportacao — lead menciona mercado externo, exportacao ou pais de destino; "
-            "consumo — pessoa fisica comprando para uso proprio, sem fins comerciais. "
-            "Execute imediatamente ao identificar o gatilho, sem perguntar ao cliente. "
-            "Mude o stage SOMENTE com declaracao EXPLICITA do lead sobre a propria "
-            "necessidade; fala ambigua, social ou audio truncado NAO e gatilho. Voltar a um "
-            "stage anterior da mesma conversa exige correcao explicita do lead ('na verdade eu quero X')."
+            "Transfere o lead para outro stage de forma silenciosa — nunca avise o cliente. "
+            "Gatilhos: "
+            "atacado — revenda, distribuidora, cafeteria, restaurante ou negocio querendo cafe em volume; "
+            "private_label — marca propria, embalagem personalizada ou identidade visual propria; "
+            "exportacao — mercado externo ou pais de destino; "
+            "consumo — pessoa fisica para uso proprio. "
+            "Execute ao identificar o gatilho, sem perguntar. "
+            "Mude SOMENTE com declaracao EXPLICITA do lead sobre a propria necessidade; "
+            "fala ambigua, social ou audio truncado NAO e gatilho. Voltar a um stage "
+            "anterior exige correcao explicita do lead ('na verdade eu quero X')."
         ),
         "parameters": {
             "type": "object",
@@ -247,24 +247,20 @@ TOOL_DECLARATIONS: list[dict] = [
         "name": "encaminhar_humano",
         "description": (
             "Registra o encerramento da interacao e transfere o controle para o supervisor Joao. "
-            "USE nos seguintes casos: "
-            "(1) lead qualificado e pronto para avancar — SOMENTE quando o lead declarou "
-            "finalidade concreta (o que quer fazer com o cafe/marca) E deu sinal ativo de "
-            "avanco (pergunta de preco/prazo/pedido, confirmacao verbal explicita). Emojis, "
-            "aplausos, monossilabos ('sim', 'ok', 'top') e simpatia social NAO qualificam "
-            "sozinhos — nesses casos continue a descoberta ou use qualificar_lead para "
-            "registrar ancoras; "
+            "USE quando: "
+            "(1) lead qualificado e pronto para avancar — SOMENTE com finalidade concreta declarada "
+            "(o que quer fazer com o cafe/marca) E sinal ativo de avanco (pergunta de "
+            "preco/prazo/pedido, confirmacao verbal explicita). Emojis, monossilabos ('sim', 'ok') "
+            "e simpatia social NAO qualificam sozinhos — continue a descoberta ou use qualificar_lead; "
             "(2) lead REJEITOU explicitamente o modelo de negocio — passe motivo='Cliente nao aceitou o modelo de negocio'; "
-            "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ turnos no stage private_label — chame imediatamente. "
-            "NAO use para despedida amigavel ('obrigado', 'logo te procuro', 'vou pensar') — essas NAO sao rejeicao. "
-            "ANTES de chamar, escreva uma mensagem de despedida/transbordo natural e personalizada com base no "
-            "contexto da conversa e passe-a no argumento `mensagem_despedida` (curta — no maximo 2-3 frases). "
-            "SE a ultima mensagem do lead contem uma pergunta que voce sabe responder (preco, lote minimo, prazo, "
-            "formato), a `mensagem_despedida` COMECA respondendo essa pergunta e SO depois faz o transbordo — NUNCA "
-            "encaminhe deixando a pergunta do lead sem resposta (o lead nao pode receber o cartao no lugar da resposta). "
-            "O sistema envia essa mensagem ao lead e, logo em seguida, o cartao de contato do Joao automaticamente "
-            "— NAO cole telefone, link ou wa.me na mensagem. "
-            "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem de texto."
+            "(3) circuit breaker: 6+ turnos no stage atacado sem handoff, ou 8+ no private_label — chame imediatamente. "
+            "NAO use para despedida amigavel ('obrigado', 'vou pensar') — nao e rejeicao. "
+            "Passe no argumento `mensagem_despedida` uma despedida/transbordo curta (2-3 frases) baseada no contexto. "
+            "SE a ultima mensagem do lead tem pergunta que voce sabe responder (preco, lote minimo, prazo), "
+            "a `mensagem_despedida` COMECA respondendo-a e SO depois faz o transbordo — NUNCA deixe a pergunta sem "
+            "resposta (o lead nao pode receber o cartao no lugar da resposta). "
+            "O sistema envia a mensagem e, em seguida, o cartao do Joao — NAO cole telefone, link ou wa.me. "
+            "Esta ferramenta ENCERRA a conversa automatica: apos chama-la, NAO envie mais nenhuma mensagem."
         ),
         "parameters": {
             "type": "object",
@@ -272,13 +268,11 @@ TOOL_DECLARATIONS: list[dict] = [
                 "mensagem_despedida": {
                     "type": "string",
                     "description": (
-                        "Mensagem de despedida/transbordo curta e personalizada para o lead, escrita com base no "
-                        "contexto da conversa. Sera enviada como texto, seguida do cartao de contato do Joao. "
-                        "Se o lead acabou de perguntar preco/lote/prazo, a resposta vem PRIMEIRO, na propria mensagem "
-                        "(ex.: 'o 250g fica por volta de R$25,70 com lote minimo de 100 unidades — e pra detalhar tudo...'). "
-                        "DIRECIONE A ACAO PRO LEAD: o cartao do Joao aparece em seguida e e o LEAD que toca nele "
-                        "pra chamar — convide-o a fazer isso. NAO use 'vou te conectar'/'ja te transfiro'/'vou passar "
-                        "seu contato' (da falsa impressao de que voce faz a ponte). NAO inclua telefone, link nem wa.me."
+                        "Despedida/transbordo curta e personalizada, enviada como texto seguida do cartao do Joao. "
+                        "Se o lead acabou de perguntar preco/lote/prazo, a resposta vem PRIMEIRO, na propria mensagem. "
+                        "DIRECIONE A ACAO PRO LEAD: e o LEAD que toca no cartao pra chamar — convide-o a isso. "
+                        "NAO use 'vou te conectar'/'ja te transfiro' (falsa impressao de que voce faz a ponte). "
+                        "NAO inclua telefone, link nem wa.me."
                     ),
                 },
                 "vendedor": {"type": "string", "description": "Nome do vendedor (opcional — omita em casos de rejeicao)"},
@@ -313,14 +307,13 @@ TOOL_DECLARATIONS: list[dict] = [
         "name": "registrar_optout",
         "description": (
             "HARD OPT-OUT (descarte definitivo). Use SOMENTE quando o lead PROIBIR explicitamente o contato: "
-            "pedir para parar de receber mensagens, sair da lista, 'me tira da lista', ameacar ('vou processar', "
-            "'vou denunciar'), ou clicar no botao 'Parar mensagens'. "
-            "Efeito: marca opt_out=true, desativa a IA, joga o lead na Blacklist (sem notificar o time, sem negocio). "
+            "pedir para parar de receber mensagens, 'me tira da lista', ameacar processar/denunciar, "
+            "ou clicar no botao 'Parar mensagens'. "
+            "Efeito: opt_out=true, IA desativada, lead na Blacklist. "
             "NAO confunda com falta de interesse no momento ('to sem grana', 'ja fechei com outro') — isso NAO e "
-            "opt-out: nesse caso use registrar_sem_interesse_atual. "
+            "opt-out: use registrar_sem_interesse_atual. "
             "A despedida vai no parametro mensagem_despedida — a PROPRIA tool envia por voce. "
-            "NAO escreva a despedida no texto do turno (ela seria descartada) e, apos chamar, "
-            "NAO envie mais nenhuma mensagem."
+            "NAO a escreva no texto do turno (seria descartada) e, apos chamar, NAO envie mais nenhuma mensagem."
         ),
         "parameters": {
             "type": "object",
@@ -349,20 +342,18 @@ TOOL_DECLARATIONS: list[dict] = [
         "name": "registrar_sem_interesse_atual",
         "description": (
             "SOFT REJECTION (perda, NAO e opt-out). Use quando o lead nao quer avancar a compra AGORA mas NAO "
-            "proibiu o contato: ex. 'to sem grana', 'ja fechei com outro fornecedor', 'agora nao da', "
-            "'deixa pra mais pra frente', ou objecao de preco/momento que voce nao conseguiu contornar. "
-            "Efeito: tira o lead do funil (stage=perdido, IA desativada, human_control, deal movido para o stage "
-            "Perdido do pipeline), MAS mantem o lead na base para reativacao futura — opt_out continua FALSE, "
-            "SEM blacklist. "
-            "NUNCA use se o lead pediu para parar de receber mensagens ou proibiu contato — nesse caso use registrar_optout. "
+            "proibiu o contato: 'to sem grana', 'ja fechei com outro fornecedor', 'agora nao da', "
+            "ou objecao de preco/momento nao contornada. "
+            "Efeito: tira o lead do funil (stage=perdido, IA desativada, deal movido para Perdido), MAS mantem "
+            "o lead na base para reativacao futura — opt_out continua FALSE, SEM blacklist. "
+            "NUNCA use se o lead proibiu o contato — nesse caso use registrar_optout. "
             "NUNCA use para ADIAMENTO MORNO — lead que pede tempo e PROMETE voltar ('vou analisar e te "
-            "chamo', 'vou pensar e te falo', 'te dou um retorno', 'vou ver com meu socio') NAO e rejeicao: "
-            "responda curto e cordial e, se houver prazo, use agendar_retorno; sem prazo, apenas encerre o "
-            "turno SEM tool (o follow-up automatico cuida). So registre sem interesse quando o lead "
+            "chamo', 'te dou um retorno', 'vou ver com meu socio') NAO e rejeicao: "
+            "responda curto e cordial e, se houver prazo, use agendar_retorno; sem prazo, encerre o "
+            "turno SEM tool (o follow-up automatico cuida). So registre quando o lead "
             "REAFIRMAR a negativa ou ela for definitiva. "
             "A despedida vai no parametro mensagem_despedida — a PROPRIA tool envia por voce. "
-            "NAO escreva a despedida no texto do turno (ela seria descartada) e, apos chamar, "
-            "NAO envie mais nenhuma mensagem."
+            "NAO a escreva no texto do turno (seria descartada) e, apos chamar, NAO envie mais nenhuma mensagem."
         ),
         "parameters": {
             "type": "object",
@@ -370,10 +361,9 @@ TOOL_DECLARATIONS: list[dict] = [
                 "motivo": {
                     "type": "string",
                     "description": (
-                        "Motivo DETALHADO e analitico da perda — nunca generico ('nao quis'). Capture: a objecao real "
-                        "nao superada, o concorrente atual se citado, o volume/ticket discutido, e a dor ou contexto "
-                        "por tras (ex: 'objecao de preco — achou caro vs fornecedor atual X que entrega a R$18/kg; "
-                        "compra ~30kg/mes pra cafeteria; quer reavaliar no proximo trimestre')."
+                        "Motivo DETALHADO e analitico da perda — nunca generico ('nao quis'). Capture: objecao real "
+                        "nao superada, concorrente citado, volume/ticket discutido e o contexto por tras "
+                        "(ex: 'objecao de preco vs fornecedor a R$18/kg; ~30kg/mes pra cafeteria; reavalia no proximo trimestre')."
                     ),
                 },
                 "mensagem_despedida": {
@@ -534,17 +524,17 @@ TOOL_DECLARATIONS: list[dict] = [
     {
         "name": "retomar_contato_vendedor",
         "description": (
-            "Reconecta ao vendedor Joao Bras um lead que JA teve atendimento com ele no passado e esfriou "
-            "(cenario de reativacao). USE somente apos as 3 etapas: "
-            "(1) voce investigou por que o atendimento anterior nao avancou e contornou a objecao; "
+            "Reconecta ao vendedor Joao Bras um lead que JA teve atendimento com ele e esfriou "
+            "(reativacao). USE somente apos as 3 etapas: "
+            "(1) investigou por que o atendimento anterior nao avancou e contornou a objecao; "
             "(2) o lead demonstrou que quer retomar; "
-            "(3) voce perguntou EXPLICITAMENTE se pode encaminha-lo de novo ao Joao e o lead respondeu SIM. "
-            "Esta ferramenta dispara uma mensagem pelo numero do Joao para o lead — AGORA se em horario comercial "
+            "(3) perguntou EXPLICITAMENTE se pode encaminha-lo ao Joao e o lead respondeu SIM. "
+            "Dispara mensagem pelo numero do Joao — AGORA se em horario comercial "
             "(09h-16h, dias uteis), senao AGENDA para o proximo dia util — e ENCERRA a conversa automatica (desativa a IA). "
-            "O retorno informa se o disparo foi AGORA ou AGENDADO: use isso para se despedir corretamente "
+            "O retorno informa se foi AGORA ou AGENDADO: use isso na despedida "
             "('o Joao acabou de te chamar' vs 'o Joao vai te chamar amanha de manha'). "
-            "Apos chama-la, escreva APENAS a mensagem de despedida e NAO envie mais nada. "
-            "NAO use sem o SIM explicito do lead. Para handoff de lead novo/qualificado, use encaminhar_humano."
+            "Apos chama-la, escreva APENAS a despedida e NAO envie mais nada. "
+            "NAO use sem o SIM explicito. Para lead novo/qualificado, use encaminhar_humano."
         ),
         "parameters": {
             "type": "object",
@@ -561,16 +551,14 @@ TOOL_DECLARATIONS: list[dict] = [
         "name": "agendar_retorno",
         "description": (
             "Agenda VOCE MESMA um retorno futuro a este lead quando ele pede para falar "
-            "depois (ex.: 'me chama sexta', 'volta amanha de manha', 'daqui a 2 horas'). "
+            "depois (ex.: 'me chama sexta', 'daqui a 2 horas'). "
             "No horario combinado voce reabre a conversa automaticamente — NAO dependa do "
-            "follow-up generico nem peca para um humano lembrar. "
-            "REGRAS: passe `data_hora` em ISO 8601 COM fuso (-03:00), ex. "
-            "'2026-06-27T14:00:00-03:00'; calcule a data real a partir de hoje "
-            "(2026) — nunca use datas vagas. Horarios fora do comercial (09h-16h, dias "
-            "uteis) sao automaticamente ajustados para o proximo horario valido. "
-            "Apos agendar, confirme ao lead de forma natural que voce volta a falar nesse "
-            "momento e siga a conversa normalmente (esta tool NAO encerra o atendimento "
-            "nem desativa a IA)."
+            "follow-up generico nem de humano. "
+            "Passe `data_hora` em ISO 8601 COM fuso (-03:00), calculada a partir de hoje "
+            "(2026) — nunca data vaga. Horarios fora do comercial (09h-16h, dias uteis) sao "
+            "ajustados para o proximo valido. "
+            "Apos agendar, confirme ao lead com naturalidade e siga a conversa (NAO encerra "
+            "o atendimento nem desativa a IA)."
         ),
         "parameters": {
             "type": "object",
@@ -604,11 +592,10 @@ TOOL_DECLARATIONS: list[dict] = [
         "name": "consultar_relacionamento",
         "description": (
             "Consulta o histórico de relacionamento do lead no CRM: se já é cliente ativo, "
-            "quando foi a última compra e qual produto. "
-            "CHAME ANTES de qualificar o lead quando: o <crm_data> ou <lead_memory> sugerir "
-            "que pode ser cliente antigo; o lead usar termos de recompra ('repor', 'novo pedido', "
-            "'mais um pedido', 'de novo', 'sempre compro'); ou houver QUALQUER suspeita de cliente "
-            "antigo. Retorna string descritiva — use para decidir se trata como "
+            "última compra e produto. "
+            "CHAME ANTES de qualificar quando: o <crm_data> ou <lead_memory> sugerir cliente "
+            "antigo; o lead usar termos de recompra ('repor', 'novo pedido', 'sempre compro'); "
+            "ou houver QUALQUER suspeita. Retorna string descritiva — decida entre "
             "reabastecimento/upsell (NÃO rode funil de lead novo com cliente ativo) ou prospecto frio."
         ),
         "parameters": {
@@ -623,7 +610,7 @@ TOOL_DECLARATIONS: list[dict] = [
             "Calcula o orçamento determinístico do pedido a partir de um carrinho de produtos do setor atacado. "
             "É OBRIGATÓRIO chamar esta ferramenta para QUALQUER pergunta de preço, valor de pedido, frete, "
             "total ou pedido mínimo — é PROIBIDO somar, multiplicar, estimar ou inventar qualquer valor de "
-            "cabeça. Nunca calcule de cabeça. "
+            "cabeça. "
             "Se faltar a quantidade ou o estado, pergunte antes de calcular. "
             "Recebe um carrinho (`itens`: lista de objetos com `produto` e `quantidade`), "
             "`estado` (sigla UF, ex.: SP) e `cidade` opcionais. "
@@ -1072,11 +1059,13 @@ async def execute_tool(
         # Gera e armazena resumo estruturado da qualificação
         try:
             from app.agent.summary import generate_qualification_summary
-            from app.agent.orchestrator import DEFAULT_MODEL
+            from app.config import settings
             from app.db.supabase import get_supabase
             conv_history = get_conversation_history(conversation_id, limit=100)
             fresh_lead = get_lead(lead_id) or {}
-            _model = DEFAULT_MODEL
+            # Briefing de handoff é extração mecânica — flash-lite (FinOps P2, 12/07);
+            # env SUMMARY_MODEL reverte sem deploy (mesmo padrão MEMORY/TRANSCRIPTION_MODEL).
+            _model = settings.summary_model
             _handoff_at = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
             summary_text = await generate_qualification_summary(
                 conv_history, fresh_lead, _model,

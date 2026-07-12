@@ -842,7 +842,15 @@ async def run_agent(
             reasoning_tokens=um.thoughts_token_count,
         )
 
-    history = get_history(conversation_id, limit=60)
+    # FinOps P2 (12/07): roles filtrado na QUERY (system-rows compravam janela das 60 e
+    # eram descartadas no builder abaixo — janela útil real < 60) + teto de caracteres
+    # (HISTORY_CHAR_BUDGET; corta as linhas mais antigas — o Dossiê é a memória longa).
+    history = get_history(
+        conversation_id,
+        limit=60,
+        roles=("user", "assistant"),
+        char_budget=settings.history_char_budget,
+    )
     # processor.py saves user message before calling run_agent, so history already
     # includes the current message — strip it to avoid sending it twice.
     # Capture quoted_wamid of the current turn BEFORE stripping so we can enrich
@@ -967,6 +975,12 @@ async def run_agent(
     # ai_enabled=False). Se o turno terminar vazio, o silêncio é correto — NÃO o re-engajamento
     # genérico da Change C, que reabriria a conversa com um lead que acabou de ser descartado.
     soft_reject_used = False
+    # DEDUP DE TOOL-CALL POR TURNO (FinOps P2, 12/07): chamada repetida (mesmo nome +
+    # mesmos args) no MESMO turno não re-executa — devolve o resultado da 1ª execução.
+    # Medição: turnos com ≥5 chamadas eram 23% dos turnos e 51% do custo de resposta
+    # (máx observado: 18 chamadas), tipicamente o modelo re-pedindo a mesma tool. Se uma
+    # iteração inteira for só de repetições, tools=None força a fala e encerra o loop.
+    executed_tool_cache: dict[tuple[str, str], str] = {}
     while result.function_calls:
         tool_iterations += 1
         if tool_iterations > MAX_TOOL_ITERATIONS:
@@ -1002,6 +1016,8 @@ async def run_agent(
         # (tool_result com HANDOFF_RESULT_PREFIX — qualificar_lead chama encaminhar_humano
         # por dentro do execute_tool e o nome nunca aparece na lista). Fix S1 11/07.
         handoff_executed = False
+        iteration_had_fresh_call = False
+        iteration_had_duplicate = False
         for fc in result.function_calls:
             func_name = fc.name
             if func_name in _MEDIA_TOOL_NAMES:
@@ -1021,6 +1037,23 @@ async def run_agent(
                     func_name, f"erro: argumentos inválidos para {func_name} — tente novamente",
                 ))
                 continue
+            _dedup_key = (func_name, json.dumps(func_args, sort_keys=True, ensure_ascii=False, default=str))
+            if _dedup_key in executed_tool_cache:
+                iteration_had_duplicate = True
+                # Repetição exata no mesmo turno: devolve o resultado anterior sem
+                # re-executar (efeitos colaterais e latência zero; o modelo recebe o
+                # mesmo dado e tende a parar de insistir).
+                logger.info(
+                    "[TOOL DEDUP] %s repetida com os mesmos args no turno (conv %s) — "
+                    "reusando resultado sem re-executar",
+                    func_name, conversation_id,
+                )
+                contents.append(function_response_content(
+                    func_name,
+                    f"(ja executada neste turno — resultado anterior) {executed_tool_cache[_dedup_key]}",
+                ))
+                continue
+            iteration_had_fresh_call = True
             try:
                 tool_result = await execute_tool(
                     func_name, func_args, lead_id, lead.get("phone", ""), conversation_id
@@ -1036,6 +1069,9 @@ async def run_agent(
                 # re-executar esta tool no retry, em vez de bloquear achando que já foi enviada.
                 if func_name in _MEDIA_TOOL_NAMES:
                     media_exec_failed = True
+            else:
+                if isinstance(tool_result, str) and not tool_result.startswith("erro"):
+                    executed_tool_cache[_dedup_key] = tool_result
             if func_name == "encaminhar_humano" or (
                 isinstance(tool_result, str) and tool_result.startswith(HANDOFF_RESULT_PREFIX)
             ):
@@ -1109,6 +1145,19 @@ async def run_agent(
                     # Gatilho B: consolida o Dossiê do lead após a transição de segmento.
                     _schedule_memory_refresh(lead_id)
                 break
+
+        # Iteração composta SÓ de repetições: o modelo está em loop pedindo o que já tem.
+        # tools=None na continuação força a fala humana e encerra o ciclo — sem esperar as
+        # 5 iterações do loop-guard (cada uma re-paga o prompt inteiro). NÃO dispara em
+        # iteração só-malformada: esse caso precisa manter as tools para a recuperação
+        # legítima do Change B (re-execução com args válidos no retry).
+        if iteration_had_duplicate and not iteration_had_fresh_call:
+            logger.warning(
+                "[TOOL DEDUP] iteração %d só com chamadas repetidas (conv %s) — "
+                "tools=None p/ forçar resposta em texto e encerrar o loop",
+                tool_iterations, conversation_id,
+            )
+            tools = None
 
         # Chamada PÓS-TOOL: desliga o thinking — é aqui que o modelo gastava o budget
         # pensando e devolvia saída visível zero (Bug 2).

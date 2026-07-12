@@ -52,6 +52,13 @@ if PYDANTIC_V2:
         # Modelo do Dossiê do Lead (rolling summary) — merge estruturado de JSON, tarefa
         # mecânica de worker: flash-lite por default; override por env MEMORY_MODEL.
         memory_model: str = "gemini-2.5-flash-lite"
+        # Modelo do resumo de qualificação do handoff (briefing p/ o vendedor) — tarefa
+        # mecânica de extração; flash-lite por default (FinOps P2, 12/07); env SUMMARY_MODEL.
+        summary_model: str = "gemini-2.5-flash-lite"
+        # Teto de caracteres do histórico enviado ao agente (~3,4 chars/token; 36000 ≈
+        # 10,5K tokens). Corta as linhas mais ANTIGAS; o Dossiê compensa a memória longa.
+        # 0 = sem teto (comportamento pré-FinOps P2). Env HISTORY_CHAR_BUDGET.
+        history_char_budget: int = 36000
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
 
@@ -90,6 +97,13 @@ else:
         # Modelo do Dossiê do Lead (rolling summary) — merge estruturado de JSON, tarefa
         # mecânica de worker: flash-lite por default; override por env MEMORY_MODEL.
         memory_model: str = "gemini-2.5-flash-lite"
+        # Modelo do resumo de qualificação do handoff (briefing p/ o vendedor) — tarefa
+        # mecânica de extração; flash-lite por default (FinOps P2, 12/07); env SUMMARY_MODEL.
+        summary_model: str = "gemini-2.5-flash-lite"
+        # Teto de caracteres do histórico enviado ao agente (~3,4 chars/token; 36000 ≈
+        # 10,5K tokens). Corta as linhas mais ANTIGAS; o Dossiê compensa a memória longa.
+        # 0 = sem teto (comportamento pré-FinOps P2). Env HISTORY_CHAR_BUDGET.
+        history_char_budget: int = 36000
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
 
