@@ -1,7 +1,12 @@
 # Gate de regressão do agente (Valéria): roda os 10 arquétipos do harness de
 # rehearsal (T1-T6 inbound + O1-O4 outbound) contra o Supabase HOMOLOG com a
 # Meta 100% mockada (REHEARSAL_MODE). NÃO roda no push — custo de LLM — apenas
-# agendado (diário) ou disparo manual.
+# agendado (2x/semana) ou disparo manual.
+#
+# CUSTO (FinOps 12/07): um run completo = 10 arquétipos × até 20 turnos × persona
+# ~30K tokens (backend) + juiz gemini-2.5-pro — estimados US$2-5/run, INVISÍVEIS na
+# telemetria de prod (chaves isoladas). Por isso a cadência é ter/sex, não diária.
+# Precisa de mais? workflow_dispatch (de preferência pré-deploy de mudança de prompt).
 #
 # Secrets exigidos (todos de HOMOLOG/isolados — os guards do harness abortam
 # com URL/chave de produção):
@@ -13,7 +18,7 @@ name: Rehearsal Gate (Agente)
 
 on:
   schedule:
-    - cron: '0 9 * * *'   # 06:00 BRT, fora do horário comercial de disparo
+    - cron: '0 9 * * 2,5'   # ter/sex 06:00 BRT, fora do horário comercial de disparo
   workflow_dispatch:
     inputs:
       only:

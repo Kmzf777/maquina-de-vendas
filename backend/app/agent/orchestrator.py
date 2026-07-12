@@ -19,7 +19,7 @@ from app.agent.gemini_client import (
     user_content,
 )
 from app.config import settings
-from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
+from app.agent.prompts.base import BASE_STATIC, FINAL_INSTRUCTION, build_context_block
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.catalog import get_products_by_funnel
@@ -507,17 +507,20 @@ class LLMQuotaExhaustedError(LLMExhaustedError):
 def _initial_thinking_off(model: str) -> bool:
     """Thinking da PRIMEIRA chamada (raciocínio inicial / escolha de tools).
 
-    Por design endurecido por incidentes, o thinking já fica DESLIGADO em todas as chamadas
-    mecânicas (pós-tool, follow-up, summary, memória) e LIGADO só nesta, a de alto esforço.
-    Este knob permite desligá-lo TAMBÉM aqui via env, trocando qualidade de raciocínio por
-    custo, sem deploy:
-        LLM_INITIAL_THINKING=off  → thinking off também na 1ª chamada.
-    Default (ausente/qualquer outro valor) = LIGADO — preserva o comportamento atual e a
-    decisão testada em test_gemini_thinking_off_post_tool.py.
+    FinOps P0 (12/07): default INVERTIDO para DESLIGADO. Medição pós-fix de preço mostrou
+    thoughts = 78% do output das respostas e 10,5% de iniciais vazias (thinking dividia o
+    budget de MAX_OUTPUT_TOKENS e "queimava o budget pensando" — ver bloco RETRY-ON-EMPTY).
+    O texto visível ao lead já era gerado sem thinking (pós-tool e retries sempre rodaram
+    thinking-off), então a 1ª chamada era a única exceção — e a mais cara. A rede de
+    segurança para turnos difíceis é o FALLBACK CONDICIONAL: se a inicial (sem thinking)
+    vier vazia, o retry silencioso roda COM thinking (política oposta à da inicial).
+        LLM_INITIAL_THINKING=on   → restaura o comportamento antigo (inicial pensa,
+                                    retry sem thinking), sem deploy — rollback integral.
+    Default (ausente/qualquer outro valor) = DESLIGADO.
     """
-    if os.environ.get("LLM_INITIAL_THINKING", "on").strip().lower() == "off":
-        return _thinking_off_for(model)
-    return False
+    if os.environ.get("LLM_INITIAL_THINKING", "off").strip().lower() == "on":
+        return False
+    return _thinking_off_for(model)
 
 
 def _genai_status_code(exc: genai_errors.APIError) -> int | None:
@@ -701,21 +704,28 @@ def build_system_prompt(
     catalog_text: str | None = None,
 ) -> str:
     now = datetime.now(TZ_BR)
-    base = build_base_prompt(
-        lead_name=lead.get("name"),
-        lead_company=lead.get("company"),
-        now=now,
-        lead_context=lead_context,
-    )
     stage_prompts = get_stage_prompts(prompt_key)
     stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
-    # Ordem hierarquica: base (persona) -> estagio (roteiro do funil) -> catalogo
-    # dinamico -> instrucao final.
+    # ORDEM CACHE-FIRST (FinOps P1, 12/07): todo o conteudo ESTATICO vem primeiro —
+    # BASE_STATIC (persona) -> estagio (roteiro do funil) -> catalogo (TTL 5min) — e SO
+    # ENTAO o bloco volatil <context> (data, nome, CRM, dossie). Assim o prefixo
+    # byte-identico entre chamadas cobre base+estagio+catalogo (~30K tokens) e o implicit
+    # caching do Gemini desconta 75% dele. NAO insira nenhum byte volatil antes do
+    # <context> — qualquer variacao no prefixo quebra o cache (hit medido: 9,9% quando o
+    # <context> ficava no meio da cadeia).
     # FINAL_INSTRUCTION fica por ultimo para que <final_instruction> seja literalmente a
     # ultima tag da string, preservando a hierarquia XML esperada pelo Gemini.
-    parts = [base, stage_prompt]
+    parts = [BASE_STATIC, stage_prompt]
     if catalog_text:
         parts.append(_build_catalog_block(catalog_text))
+    parts.append(
+        build_context_block(
+            lead_name=lead.get("name"),
+            lead_company=lead.get("company"),
+            now=now,
+            lead_context=lead_context,
+        )
+    )
     parts.append(FINAL_INSTRUCTION)
     return "\n\n".join(parts)
 
@@ -891,6 +901,7 @@ async def run_agent(
         enriched_user_text = user_text
     contents.append(user_content(enriched_user_text))
 
+    initial_thinking_off = _initial_thinking_off(model)
     result = await _generate_with_retry(
         model=model,
         contents=contents,
@@ -899,7 +910,7 @@ async def run_agent(
         temperature=0.4,
         max_output_tokens=MAX_OUTPUT_TOKENS,
         stop_sequences=_STOP_SEQUENCES,
-        thinking_off=_initial_thinking_off(model),
+        thinking_off=initial_thinking_off,
     )
     _track("response", result)
 
@@ -1088,12 +1099,17 @@ async def run_agent(
     assistant_text = _sanitize_assistant_text(assistant_text, conversation_id, stage, source="initial")
 
     # RETRY-ON-EMPTY (unificado — auditoria 2026-06-24, leads 5549984064339 / 5551984772757,
-    # reincidência da Carla). gemini-2.5-flash às vezes queima o budget pensando e devolve
-    # completion_tokens=0, MESMO num input perfeitamente válido. A chamada inicial deste turno
-    # NÃO desliga o thinking, então o vazio é justamente o turno em que o modelo "pensou demais".
-    # Vale para QUALQUER turno vazio (com ou sem tool — antes só reentrávamos após tool, e o turno
-    # normal vazio caía no stall enganoso). Tentamos UM retry silencioso com o thinking 100% off,
-    # que costuma recuperar o texto real. NUNCA derruba o turno por exceção — só loga.
+    # reincidência da Carla). gemini-2.5-flash às vezes devolve completion_tokens=0 MESMO num
+    # input perfeitamente válido. Vale para QUALQUER turno vazio (com ou sem tool — antes só
+    # reentrávamos após tool, e o turno normal vazio caía no stall enganoso). Tentamos UM
+    # retry silencioso. NUNCA derruba o turno por exceção — só loga.
+    #
+    # FALLBACK CONDICIONAL DE THINKING (FinOps P0, 12/07): o retry usa a política OPOSTA à
+    # da 1ª chamada do turno. No default novo (inicial SEM thinking), o vazio não é
+    # thinking-burn — então o retry LIGA o thinking e dá ao turno difícil o budget de
+    # raciocínio completo na 2ª tentativa. Com LLM_INITIAL_THINKING=on (rollback), a inicial
+    # pensa e o vazio é o clássico "queimou o budget pensando" — o retry roda thinking-off,
+    # exatamente o comportamento histórico.
     #
     # Change A (2026-06-30): o retry mantém as tools do stage, EXCETO quando o vazio veio de um
     # loop de tools descontrolado (tool_iterations > MAX_TOOL_ITERATIONS), único caso genuinamente
@@ -1103,11 +1119,13 @@ async def run_agent(
     # auditoria 2026-06-30).
     if not assistant_text:
         logger.warning(
-            "[AGENT EMPTY] resposta vazia (tool_iterations=%d) para conv %s — retry silencioso sem thinking",
+            "[AGENT EMPTY] resposta vazia (tool_iterations=%d) para conv %s — retry silencioso (thinking no fallback condicional)",
             tool_iterations, conversation_id,
         )
         # Change A: preserva tools salvo em loop descontrolado
         retry_tools = None if tool_iterations > MAX_TOOL_ITERATIONS else tools
+        # Fallback condicional (FinOps P0): política de thinking oposta à da 1ª chamada.
+        retry_thinking_off = _thinking_off_for(model) if not initial_thinking_off else False
         try:
             retry_result = await _generate_with_retry(
                 model=model,
@@ -1117,7 +1135,7 @@ async def run_agent(
                 temperature=0.4,
                 max_output_tokens=MAX_OUTPUT_TOKENS,
                 stop_sequences=_STOP_SEQUENCES,
-                thinking_off=_thinking_off_for(model),
+                thinking_off=retry_thinking_off,
             )
             # Etapa 2: chamadas do 1º degrau de retry (este + a continuação pós-tool do
             # Change B abaixo) passam a "response_retry" — a inicial e as pós-tool do

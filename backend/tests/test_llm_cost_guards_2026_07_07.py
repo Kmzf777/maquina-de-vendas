@@ -43,10 +43,18 @@ def test_completion_tokens_sem_thoughts_inalterado():
 
 # ── 2. Kill-switch de orçamento diário ──────────────────────────────────────────
 
-def test_budget_desligado_quando_limite_zero(monkeypatch):
+def test_budget_default_armado_em_8_usd(monkeypatch):
+    """FinOps P0 (12/07): env AUSENTE arma o teto default de 8 USD — o kill-switch não
+    nasce mais desligado (o runaway do rolling_summary queimou ~R$149 com ele desarmado)."""
     from app.agent import budget_guard
     monkeypatch.delenv("LLM_DAILY_COST_LIMIT_USD", raising=False)
-    assert budget_guard.is_exceeded() is False  # sem env → desligado, sem tocar no banco
+    assert budget_guard.daily_cost_limit_usd() == 8.0
+
+
+def test_budget_desligado_quando_limite_zero(monkeypatch):
+    from app.agent import budget_guard
+    monkeypatch.setenv("LLM_DAILY_COST_LIMIT_USD", "0")
+    assert budget_guard.is_exceeded() is False  # 0 explícito → desligado, sem tocar no banco
 
 
 def test_budget_estourado_bloqueia(monkeypatch):
@@ -83,16 +91,32 @@ async def test_generate_with_retry_levanta_budget_error(monkeypatch):
 
 # ── 3. Knob de thinking inicial ─────────────────────────────────────────────────
 
-def test_initial_thinking_default_ligado(monkeypatch):
+def test_initial_thinking_default_desligado(monkeypatch):
+    """FinOps P0 (12/07): default INVERTIDO — a 1ª chamada roda sem thinking (thoughts eram
+    78% do output e causavam ~10% de vazias); o retry-on-empty vira o fallback COM thinking."""
     from app.agent.orchestrator import _initial_thinking_off
     monkeypatch.delenv("LLM_INITIAL_THINKING", raising=False)
+    assert _initial_thinking_off("gemini-2.5-flash") is True  # desligado por default
+
+
+def test_initial_thinking_ligado_por_env(monkeypatch):
+    """LLM_INITIAL_THINKING=on = rollback integral do comportamento pré-12/07."""
+    from app.agent.orchestrator import _initial_thinking_off
+    monkeypatch.setenv("LLM_INITIAL_THINKING", "on")
     assert _initial_thinking_off("gemini-2.5-flash") is False  # ligado = pensa na 1ª
 
 
-def test_initial_thinking_desligado_por_env(monkeypatch):
+def test_initial_thinking_off_explicito(monkeypatch):
     from app.agent.orchestrator import _initial_thinking_off
     monkeypatch.setenv("LLM_INITIAL_THINKING", "off")
     assert _initial_thinking_off("gemini-2.5-flash") is True
+
+
+def test_initial_thinking_off_nao_afeta_pro(monkeypatch):
+    """Modelos *pro* não suportam thinking_budget=0 — o default off não pode pedi-lo."""
+    from app.agent.orchestrator import _initial_thinking_off
+    monkeypatch.delenv("LLM_INITIAL_THINKING", raising=False)
+    assert _initial_thinking_off("gemini-2.5-pro") is False
 
 
 # ── 4. Segregação de chave Gemini dev/prod ──────────────────────────────────────
