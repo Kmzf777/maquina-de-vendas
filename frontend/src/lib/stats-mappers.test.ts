@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  DEFAULT_USD_TO_BRL_WITH_TAX,
+  resolveBrlMultiplier,
+  formatBRL,
   mapCostsSummary,
   fillDailyCosts,
   mapCostsBreakdown,
@@ -25,6 +28,8 @@ describe("mapCostsSummary", () => {
       total_tokens: 1500,
       unique_leads: 4,
       avg_cost_per_lead: 0.308642, // 1.23456789/4 round6
+      total_cost_brl: 7.0741, // 1.23456789 * 5.73 round4
+      brl_multiplier: DEFAULT_USD_TO_BRL_WITH_TAX,
     });
   });
 
@@ -38,6 +43,8 @@ describe("mapCostsSummary", () => {
       total_tokens: 0,
       unique_leads: 0,
       avg_cost_per_lead: 0,
+      total_cost_brl: 0,
+      brl_multiplier: DEFAULT_USD_TO_BRL_WITH_TAX,
     });
   });
 
@@ -52,6 +59,47 @@ describe("mapCostsSummary", () => {
     expect(r.total_cost).toBe(2.5);
     expect(r.total_calls).toBe(3);
     expect(r.avg_cost_per_lead).toBe(2.5);
+  });
+
+  it("total_cost_brl usa o multiplicador injetado sem tocar nos campos USD", () => {
+    const base = {
+      total_cost: 2.39,
+      total_calls: 60,
+      total_prompt_tokens: 100,
+      total_completion_tokens: 50,
+      unique_leads: 5,
+    };
+    const r = mapCostsSummary(base, 5.73);
+    // conciliacao real de 11/07: $2,39 -> R$ 13,70
+    expect(r.total_cost_brl).toBe(13.6947);
+    expect(r.brl_multiplier).toBe(5.73);
+    expect(r.total_cost).toBe(2.39); // USD intocado (Regra de Ouro)
+  });
+});
+
+describe("resolveBrlMultiplier (env CUSTO_IA_MULTIPLICADOR_BRL)", () => {
+  it("sem env -> default da conciliacao", () => {
+    expect(resolveBrlMultiplier(undefined)).toBe(DEFAULT_USD_TO_BRL_WITH_TAX);
+    expect(resolveBrlMultiplier(null)).toBe(DEFAULT_USD_TO_BRL_WITH_TAX);
+  });
+
+  it("valor valido do env e respeitado", () => {
+    expect(resolveBrlMultiplier("5.85")).toBe(5.85);
+  });
+
+  it("lixo/zero/negativo -> fallback ao default (nunca NaN no dashboard)", () => {
+    expect(resolveBrlMultiplier("abc")).toBe(DEFAULT_USD_TO_BRL_WITH_TAX);
+    expect(resolveBrlMultiplier("0")).toBe(DEFAULT_USD_TO_BRL_WITH_TAX);
+    expect(resolveBrlMultiplier("-2")).toBe(DEFAULT_USD_TO_BRL_WITH_TAX);
+  });
+});
+
+describe("formatBRL", () => {
+  it("formata em pt-BR com virgula decimal", () => {
+    // Intl usa NBSP entre simbolo e valor — normaliza p/ comparar
+    expect(formatBRL(13.7).replace(/ /g, " ")).toBe("R$ 13,70");
+    expect(formatBRL(0.4).replace(/ /g, " ")).toBe("R$ 0,40");
+    expect(formatBRL(1234.5).replace(/ /g, " ")).toBe("R$ 1.234,50");
   });
 });
 
