@@ -382,7 +382,7 @@ def _looks_like_handoff_announcement(text: str) -> bool:
 # UMA foto de produto ("enviei a foto do classico") fica fora — forçar o catálogo
 # inteiro nesse caso seria pior que a omissão.
 _PHOTO_SEND_CLAIM_RE = re.compile(
-    r"(?:acabei de (?:enviar|mandar)|enviei|mandei)"
+    r"(?:acabei de (?:enviar|mandar)|enviei|mandei|(?:estou|to|tou)\s+(?:te\s+)?(?:mandando|enviando))"
     r"[^.!?\n]{0,60}\b(?:fotos|imagens|catalogo|portfolio)\b"
 )
 
