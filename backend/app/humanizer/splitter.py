@@ -55,6 +55,16 @@ def split_into_bubbles(text: str) -> list[str]:
         if collapsed:
             bubbles.append(collapsed)
 
+    # --- Step 3.5: saudação colada em run-on (auditoria 12/07, caso humbertocarvao) ---
+    # Quando o modelo separa saudação/pitch/pergunta com \n SIMPLES, o Step 3 cola tudo
+    # numa bolha corrida sem pontuação ("bom dia marca própria e o que..."). Descolamos
+    # a saudação para a própria bolha — ANTES do clamp, para o teto de bolhas continuar
+    # valendo. Resto curto (vocativo, "pra você também") fica junto: só age em run-on real.
+    expanded: list[str] = []
+    for b in bubbles:
+        expanded.extend(_split_leading_greeting(b))
+    bubbles = expanded
+
     # --- Step 4: clamp to MAX_BUBBLES (merge overflow into last bucket) ---
     if len(bubbles) > MAX_BUBBLES:
         # Keep the first (MAX_BUBBLES - 1) bubbles intact, merge the rest.
@@ -77,6 +87,31 @@ def split_into_bubbles(text: str) -> list[str]:
     bubbles = [_ensure_question_mark(b) for b in bubbles]
 
     return bubbles
+
+
+# Saudações que abrem bolha. O resto precisa ser LONGO (run-on de verdade) para o
+# split agir — "bom dia pra você também" e "boa tarde Ana" ficam intactas.
+_GREETING_SPLIT_RE = re.compile(
+    r"^(oi|ol[aá]|bom dia|boa tarde|boa noite)[,!]?\s+(?=\S)",
+    re.IGNORECASE,
+)
+_GREETING_MIN_REST = 40
+
+
+def _split_leading_greeting(bubble: str) -> list[str]:
+    """Descola a saudação inicial quando ela abre uma bolha corrida longa.
+
+    Retorna [saudação, resto] apenas quando o resto tem >= _GREETING_MIN_REST
+    caracteres (run-on real); em qualquer outro caso devolve a bolha intacta.
+    Função pura — sem I/O.
+    """
+    m = _GREETING_SPLIT_RE.match(bubble)
+    if not m:
+        return [bubble]
+    rest = bubble[m.end():].strip()
+    if len(rest) < _GREETING_MIN_REST:
+        return [bubble]
+    return [m.group(1), rest]
 
 
 def _strip_terminal_period(bubble: str) -> str:
