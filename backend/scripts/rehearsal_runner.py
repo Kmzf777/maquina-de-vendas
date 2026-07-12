@@ -407,6 +407,7 @@ async def main():
     )
 
     log.info(f"Run completo. Artefatos em: {run_dir}")
+    print(gemini_actor.usage_summary())  # custo do run no log do CI (FinOps 12/07)
     any_fail = any(v.get("status") != "passed" for v in verifications)
     sys.exit(1 if any_fail else 0)
 
