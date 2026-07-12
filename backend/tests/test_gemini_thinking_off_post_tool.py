@@ -8,7 +8,11 @@ Migração 09/07 (Gemini 100% nativo): o knob era `reasoning_effort="none"` na f
 OpenAI (`_gemini_thinking_off(model) -> dict`); hoje é `thinking_off=True` na chamada
 nativa (`_thinking_off_for(model) -> bool` → ThinkingConfig(thinking_budget=0) no
 gemini_client). Vale para a família flash/lite; os modelos *pro* seguem pensando.
-A INTENÇÃO original é a mesma: pós-tool sem thinking, 1ª chamada com thinking.
+
+FinOps P0 (12/07): a política da 1ª chamada foi INVERTIDA — default agora é thinking OFF
+também nela (thoughts eram 78% do output das respostas; o vazio por thinking-burn
+alimentava a escada de retry). O caminho antigo (1ª chamada pensa) continua coberto aqui
+via LLM_INITIAL_THINKING=on, o rollback integral. Pós-tool: sempre OFF, inalterado.
 """
 
 import pytest
@@ -47,12 +51,23 @@ def test_thinking_off_false_for_non_gemini_model():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_post_tool_call_disables_thinking_first_call_keeps_it(monkeypatch):
+@pytest.mark.parametrize(
+    "env_value, first_call_thinking_off",
+    [
+        (None, True),   # default FinOps P0 (12/07): 1ª chamada SEM thinking
+        ("on", False),  # rollback integral: 1ª chamada pensa (comportamento pré-12/07)
+    ],
+)
+async def test_post_tool_call_disables_thinking_first_call_keeps_it(
+    monkeypatch, env_value, first_call_thinking_off
+):
     from app.agent.orchestrator import run_agent
 
-    # Baseline hermético: garante o default (thinking LIGADO na 1ª chamada),
-    # independente de LLM_INITIAL_THINKING no ambiente do dev.
-    monkeypatch.delenv("LLM_INITIAL_THINKING", raising=False)
+    # Baseline hermético, independente de LLM_INITIAL_THINKING no ambiente do dev.
+    if env_value is None:
+        monkeypatch.delenv("LLM_INITIAL_THINKING", raising=False)
+    else:
+        monkeypatch.setenv("LLM_INITIAL_THINKING", env_value)
 
     conversation = {
         "id": "conv-think-001",
@@ -83,7 +98,7 @@ async def test_post_tool_call_disables_thinking_first_call_keeps_it(monkeypatch)
         await run_agent(conversation, "tenho cafeteria")
 
     assert m_gen.await_count == 2
-    # First call: thinking preserved (thinking_off=False)
-    assert m_gen.await_args_list[0].kwargs["thinking_off"] is False
-    # Second call (post-tool): thinking disabled
+    # First call: segue a política do env (default off; "on" = rollback pensa)
+    assert m_gen.await_args_list[0].kwargs["thinking_off"] is first_call_thinking_off
+    # Second call (post-tool): thinking disabled SEMPRE
     assert m_gen.await_args_list[1].kwargs["thinking_off"] is True

@@ -24,120 +24,16 @@ def get_greeting(hour: int) -> str:
     return "boa noite"
 
 
-def build_base_prompt(
-    lead_name: str | None,
-    lead_company: str | None,
-    now: datetime,
-    lead_context: dict | None = None,
-) -> str:
-    greeting = get_greeting(now.hour)
-    today = now.strftime("%d/%m/%Y")
-    weekday = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"][now.weekday()]
-
-    # lead_context overrides individual params when present
-    if lead_context:
-        lead_name = lead_context.get("name") or lead_name
-        lead_company = lead_context.get("company") or lead_company
-
-    # Não tratar handle/username (ex.: "Brunor_barista") como nome próprio — cai em "sem nome".
-    from app.leads.service import sanitize_display_name
-    lead_name = sanitize_display_name(lead_name)
-
-    if lead_name:
-        name_instruction = (
-            f"O nome do lead e {lead_name}. "
-            "USE O NOME COM EXTREMA MODERACAO — no maximo 1 vez a cada 4-5 turnos. "
-            "NUNCA use o nome em mensagens consecutivas — se usou no turno anterior, proibido usar agora. "
-            "Momentos permitidos: primeira saudacao da conversa, retomada apos pausa de horas ou dias, "
-            "mensagem final de handoff. "
-            "Em TODOS os outros turnos: nao use o nome. Fale normalmente sem ele. "
-            "CORRECAO DE IDENTIDADE: se o lead indicar que nao e a pessoa deste nome "
-            "(ex: 'nao sou o Fulano', 'aqui e o/a X', 'meu nome e Y', 'quem fala e Y'), "
-            "pare imediatamente de usar o nome antigo. "
-            "Se o novo nome ja foi dito na mesma mensagem, chame salvar_nome com esse nome direto. "
-            "Se o novo nome nao foi dito, pergunte de forma natural ('pode me dizer seu nome?') "
-            "e chame salvar_nome assim que souber. Use o novo nome dali em diante."
-        )
-    else:
-        name_instruction = (
-            "Voce NAO sabe o nome do lead. Nao invente ou assuma. "
-            "Descubra naturalmente durante a conversa, como 'com quem eu estou falando?' ou 'qual seu nome?'. "
-            "Use a ferramenta salvar_nome assim que descobrir. "
-            "Se o cadastro tiver um nome que parece saudacao ('Olá, boa tarde'), trate como SEM nome — "
-            "descubra o nome real e chame salvar_nome."
-        )
-
-    company_line = f"Empresa do lead: {lead_company}" if lead_company else ""
-
-    # Extra context from CRM (previous stage, notes)
-    extra_lines = []
-    if lead_context:
-        prev_stage = lead_context.get("previous_stage")
-        notes = lead_context.get("notes")
-        prior_handoff = lead_context.get("handoff_summary") or lead_context.get("prior_handoff_joao")
-        lead_region = lead_context.get("lead_region")
-        if lead_region:
-            extra_lines.append(
-                f"Região provável do lead (derivada do DDD do telefone, NÃO confirmada): {lead_region}. "
-                "Você PODE usar isso para puxar conexão regional de um jeito orgânico e casual, como "
-                "uma vendedora real faria — JAMAIS soando como consulta automática. "
-                f"Ex.: \"pelo número, imagino que você seja de {lead_region}, acertei?\" ou "
-                f"\"o pessoal de {lead_region} curte muito o nosso café\". "
-                "PROIBIDO dizer 'DDD' ao lead ou explicar de forma técnica que você consultou o número "
-                "(soa como robô); o jeito casual \"pelo número\" do exemplo acima é o limite. "
-                "PROIBIDO afirmar como certeza (\"você é de X\") — é só uma hipótese pelo número, que "
-                "pode estar portado. NÃO transforme em pergunta de qualificação pesada (vale a regra de "
-                "aquecer antes de qualificar)."
-            )
-        if prev_stage:
-            extra_lines.append(f"Interesse anterior identificado: {prev_stage}")
-        if notes:
-            extra_lines.append(f"Notas do CRM: {notes}")
-        if prior_handoff:
-            extra_lines.append(
-                "LEAD RETORNANDO: este lead JA teve atendimento anterior com o vendedor Joao Bras "
-                "e esfriou sem avancar. Conduza conforme a secao RETOMADA DE LEAD."
-            )
-        sched_return = lead_context.get("scheduled_return_context")
-        if sched_return:
-            # Eixo 3B: retomada de um retorno agendado cuja janela 24h havia fechado e foi
-            # reaberta pela resposta do lead. Bloco de contexto já formatado pelo scheduler.
-            extra_lines.append(sched_return)
-        if lead_context.get("lead_is_customer"):
-            extra_lines.append(
-                "LEAD JA E CLIENTE / EM TRATATIVA: este lead ja compra da Cafe Canastra ou ja "
-                "esta em atendimento. NAO rode o funil de lead novo (qualificacao do zero, fotos, "
-                "pitch de 'ja pensou em oferecer cafe especial?'). Reconheca e pergunte no que pode "
-                "ajudar hoje. Ver regra 26."
-            )
-
-    extra_context = ""
-    if extra_lines:
-        extra_context = "\n\n<crm_data>\n" + "\n".join(extra_lines) + "\n</crm_data>"
-
-    # Memória de longo prazo (Dossiê do Lead) — resumo rolante consolidado cross-canal,
-    # mantido por app/agent/memory_manager.py. Bloco distinto do <crm_data>: é a memória
-    # viva da Valéria (o que ela "sabe" do cliente), não só campos de CRM.
-    lead_memory = ""
-    rolling_summary = (lead_context or {}).get("rolling_summary")
-    if rolling_summary:
-        lead_memory = (
-            "\n\n<lead_memory>\n"
-            "Esta é a sua memória de longo prazo consolidada deste lead (todos os canais, "
-            "todo o histórico). Trate como verdade de base sobre quem ele é e o que já "
-            "conversaram. MAS confirme especificidades de forma natural antes de assumir "
-            "(regra anti-premissa) e NUNCA recite este dossiê ao lead.\n\n"
-            f"{rolling_summary}\n"
-            "</lead_memory>"
-        )
-
-    # ORDEM P/ IMPLICIT CACHING DO GEMINI: todo o conteudo ESTATICO (<role>, <constraints>,
-    # <instructions>, <examples> — ~25K tokens identicos a cada chamada) vem PRIMEIRO, e o unico
-    # bloco VOLATIL por lead (<context>: data, nome, empresa, CRM, dossie) vai por ULTIMO. Assim o
-    # prefixo estatico e byte-identico entre chamadas e o Gemini aplica o desconto de cache (~75%)
-    # sobre ele — input e ~99% do custo por atendimento (saida ~300 tokens/turno). NAO reintroduza
-    # nenhum {campo} volatil antes de <context>: qualquer variacao no prefixo quebra o cache.
-    prompt = f"""<role>
+# ORDEM P/ IMPLICIT CACHING DO GEMINI (FinOps P1, 12/07): todo o conteudo ESTATICO vem
+# PRIMEIRO na cadeia montada por orchestrator.build_system_prompt — BASE_STATIC (este
+# literal) -> prompt de estagio -> catalogo -> <context> (build_context_block) ->
+# FINAL_INSTRUCTION. O unico bloco VOLATIL por lead (<context>: data, nome, empresa, CRM,
+# dossie) vai no FIM da cadeia, entao o prefixo byte-identico entre chamadas cobre
+# base+estagio+catalogo (~30K tokens) e o Gemini aplica o desconto de cache (~75%) sobre
+# ele — input e ~96% do custo por atendimento. NAO reintroduza nenhum campo volatil neste
+# literal nem em nada que entre na cadeia antes do <context>: qualquer variacao no prefixo
+# quebra o cache (hit-rate medido em 9,9% quando o <context> ficava no meio).
+BASE_STATIC = """<role>
 Voce e Valeria, do comercial da Cafe Canastra. Voce conversa no WhatsApp como uma vendedora real — profissional, amigavel, gente boa, com personalidade e jogo de cintura. Voce vende cafe especial (atacado, private label, exportacao), mas nunca parece vendedora forcada. Voce sempre oferece para o lead COMPRAR, ao inves de oferecer ajuda.
 
 # SOBRE A CAFE CANASTRA
@@ -1132,9 +1028,121 @@ Assistant: "boa, que fase boa essa de montar o negocio\\n\\nvoce ja tem ideia de
 
 User: "100 unidades fica salgado pra eu revender, nao fecha minha margem"
 Assistant: "faz sentido pensar na margem antes de fechar\\n\\npor quanto voce pretende revender a unidade? assim eu vejo com voce se o que pesa é o preco ou o tamanho do primeiro lote"
-</examples>
+</examples>"""
 
-<context>
+
+def build_context_block(
+    lead_name: str | None,
+    lead_company: str | None,
+    now: datetime,
+    lead_context: dict | None = None,
+) -> str:
+    """Bloco <context> — o UNICO trecho volatil do system prompt (data/saudacao, nome,
+    empresa, <crm_data>, <lead_memory>). O orchestrator o anexa DEPOIS de todo o conteudo
+    estatico (base + estagio + catalogo) para preservar o prefixo cacheavel (ver o
+    comentario acima de BASE_STATIC)."""
+    greeting = get_greeting(now.hour)
+    today = now.strftime("%d/%m/%Y")
+    weekday = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"][now.weekday()]
+
+    # lead_context overrides individual params when present
+    if lead_context:
+        lead_name = lead_context.get("name") or lead_name
+        lead_company = lead_context.get("company") or lead_company
+
+    # Não tratar handle/username (ex.: "Brunor_barista") como nome próprio — cai em "sem nome".
+    from app.leads.service import sanitize_display_name
+    lead_name = sanitize_display_name(lead_name)
+
+    if lead_name:
+        name_instruction = (
+            f"O nome do lead e {lead_name}. "
+            "USE O NOME COM EXTREMA MODERACAO — no maximo 1 vez a cada 4-5 turnos. "
+            "NUNCA use o nome em mensagens consecutivas — se usou no turno anterior, proibido usar agora. "
+            "Momentos permitidos: primeira saudacao da conversa, retomada apos pausa de horas ou dias, "
+            "mensagem final de handoff. "
+            "Em TODOS os outros turnos: nao use o nome. Fale normalmente sem ele. "
+            "CORRECAO DE IDENTIDADE: se o lead indicar que nao e a pessoa deste nome "
+            "(ex: 'nao sou o Fulano', 'aqui e o/a X', 'meu nome e Y', 'quem fala e Y'), "
+            "pare imediatamente de usar o nome antigo. "
+            "Se o novo nome ja foi dito na mesma mensagem, chame salvar_nome com esse nome direto. "
+            "Se o novo nome nao foi dito, pergunte de forma natural ('pode me dizer seu nome?') "
+            "e chame salvar_nome assim que souber. Use o novo nome dali em diante."
+        )
+    else:
+        name_instruction = (
+            "Voce NAO sabe o nome do lead. Nao invente ou assuma. "
+            "Descubra naturalmente durante a conversa, como 'com quem eu estou falando?' ou 'qual seu nome?'. "
+            "Use a ferramenta salvar_nome assim que descobrir. "
+            "Se o cadastro tiver um nome que parece saudacao ('Olá, boa tarde'), trate como SEM nome — "
+            "descubra o nome real e chame salvar_nome."
+        )
+
+    company_line = f"Empresa do lead: {lead_company}" if lead_company else ""
+
+    # Extra context from CRM (previous stage, notes)
+    extra_lines = []
+    if lead_context:
+        prev_stage = lead_context.get("previous_stage")
+        notes = lead_context.get("notes")
+        prior_handoff = lead_context.get("handoff_summary") or lead_context.get("prior_handoff_joao")
+        lead_region = lead_context.get("lead_region")
+        if lead_region:
+            extra_lines.append(
+                f"Região provável do lead (derivada do DDD do telefone, NÃO confirmada): {lead_region}. "
+                "Você PODE usar isso para puxar conexão regional de um jeito orgânico e casual, como "
+                "uma vendedora real faria — JAMAIS soando como consulta automática. "
+                f"Ex.: \"pelo número, imagino que você seja de {lead_region}, acertei?\" ou "
+                f"\"o pessoal de {lead_region} curte muito o nosso café\". "
+                "PROIBIDO dizer 'DDD' ao lead ou explicar de forma técnica que você consultou o número "
+                "(soa como robô); o jeito casual \"pelo número\" do exemplo acima é o limite. "
+                "PROIBIDO afirmar como certeza (\"você é de X\") — é só uma hipótese pelo número, que "
+                "pode estar portado. NÃO transforme em pergunta de qualificação pesada (vale a regra de "
+                "aquecer antes de qualificar)."
+            )
+        if prev_stage:
+            extra_lines.append(f"Interesse anterior identificado: {prev_stage}")
+        if notes:
+            extra_lines.append(f"Notas do CRM: {notes}")
+        if prior_handoff:
+            extra_lines.append(
+                "LEAD RETORNANDO: este lead JA teve atendimento anterior com o vendedor Joao Bras "
+                "e esfriou sem avancar. Conduza conforme a secao RETOMADA DE LEAD."
+            )
+        sched_return = lead_context.get("scheduled_return_context")
+        if sched_return:
+            # Eixo 3B: retomada de um retorno agendado cuja janela 24h havia fechado e foi
+            # reaberta pela resposta do lead. Bloco de contexto já formatado pelo scheduler.
+            extra_lines.append(sched_return)
+        if lead_context.get("lead_is_customer"):
+            extra_lines.append(
+                "LEAD JA E CLIENTE / EM TRATATIVA: este lead ja compra da Cafe Canastra ou ja "
+                "esta em atendimento. NAO rode o funil de lead novo (qualificacao do zero, fotos, "
+                "pitch de 'ja pensou em oferecer cafe especial?'). Reconheca e pergunte no que pode "
+                "ajudar hoje. Ver regra 26."
+            )
+
+    extra_context = ""
+    if extra_lines:
+        extra_context = "\n\n<crm_data>\n" + "\n".join(extra_lines) + "\n</crm_data>"
+
+    # Memória de longo prazo (Dossiê do Lead) — resumo rolante consolidado cross-canal,
+    # mantido por app/agent/memory_manager.py. Bloco distinto do <crm_data>: é a memória
+    # viva da Valéria (o que ela "sabe" do cliente), não só campos de CRM.
+    lead_memory = ""
+    rolling_summary = (lead_context or {}).get("rolling_summary")
+    if rolling_summary:
+        lead_memory = (
+            "\n\n<lead_memory>\n"
+            "Esta é a sua memória de longo prazo consolidada deste lead (todos os canais, "
+            "todo o histórico). Trate como verdade de base sobre quem ele é e o que já "
+            "conversaram. MAS confirme especificidades de forma natural antes de assumir "
+            "(regra anti-premissa) e NUNCA recite este dossiê ao lead.\n\n"
+            f"{rolling_summary}\n"
+            "</lead_memory>"
+        )
+
+    return f"""<context>
 # CONTEXTO TEMPORAL
 
 Hoje e: {weekday}, {today}
@@ -1148,4 +1156,20 @@ Para consultas sensíveis ao tempo que requerem informações atualizadas, você
 </context>
 """
 
-    return prompt
+
+def build_base_prompt(
+    lead_name: str | None,
+    lead_company: str | None,
+    now: datetime,
+    lead_context: dict | None = None,
+) -> str:
+    """Persona completa no formato historico (estatico + <context>) — byte-identica ao
+    layout pre-fatiamento (FinOps P1, 12/07). Mantida para compatibilidade com chamadores
+    fora do turno principal; o orchestrator monta a cadeia cache-first por conta propria
+    com BASE_STATIC + build_context_block."""
+    return BASE_STATIC + "\n\n" + build_context_block(
+        lead_name=lead_name,
+        lead_company=lead_company,
+        now=now,
+        lead_context=lead_context,
+    )

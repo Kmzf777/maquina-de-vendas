@@ -6,7 +6,10 @@ converte esse bloqueio no MESMO fallback do llm_down (encaminhar_humano ao João
 o lead nunca é fantasmado — só deixa de queimar cota.
 
 Configuração (env):
-    LLM_DAILY_COST_LIMIT_USD   teto de custo/dia em USD. Ausente/0 = DESLIGADO (default seguro).
+    LLM_DAILY_COST_LIMIT_USD   teto de custo/dia em USD. Default (env ausente) = 8 USD
+    (~3x o pico diário observado em 07/2026 — FinOps P0, 12/07: o kill-switch nasceu
+    desarmado e o runaway do rolling_summary queimou ~R$149 antes de detecção manual).
+    `0` explícito DESLIGA o kill-switch.
 
 Fonte de verdade: soma de `token_usage.total_cost` do dia corrente (UTC). Cache in-process
 curto (_CACHE_TTL_SECS) evita uma query por chamada. FAIL-OPEN: qualquer erro de leitura
@@ -35,9 +38,10 @@ _alert_state: dict = {"exceeded_day": None, "warning_day": None, "autoresolve_da
 
 
 def daily_cost_limit_usd() -> float:
-    """Teto diário em USD lido do env. <= 0 (ou inválido) desliga o kill-switch."""
+    """Teto diário em USD lido do env. <= 0 explícito (ou inválido) desliga o kill-switch;
+    env AUSENTE arma o default de 8 USD (FinOps P0, 12/07)."""
     try:
-        return float(os.environ.get("LLM_DAILY_COST_LIMIT_USD", "0") or 0)
+        return float(os.environ.get("LLM_DAILY_COST_LIMIT_USD", "8") or 0)
     except (TypeError, ValueError):
         return 0.0
 
