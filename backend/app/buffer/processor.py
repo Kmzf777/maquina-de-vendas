@@ -815,6 +815,7 @@ _SOCIAL_CLOSING_TOKENS = frozenset({
     "obrigado", "obrigada", "obrigadao", "obg", "brigado", "brigada", "brigadao",
     "agradecido", "agradecida", "agradeco", "gratidao", "valeu", "vlw",
     "ok", "okay", "okk", "blz", "beleza", "show", "top", "joia", "otimo",
+    "ta", "to",  # "tá joia", "tô junto" — auditoria 12/07 (casos Bianca/Rosângela)
     "perfeito", "certo", "entendi", "entendido", "tranquilo", "suave",
     "fechou", "fechado", "combinado", "tamo", "tmj", "junto", "juntos",
     "de", "nada", "disponha", "abraco", "abracos", "abs",
@@ -834,6 +835,7 @@ _BUSINESS_QUESTION_TOKENS = frozenset({
     "preco", "precos", "valor", "valores", "custo", "custos", "custa", "custam",
     "caro", "cara", "barato", "barata", "quanto", "quantos", "quantas",
     "minimo", "minima", "moq", "lote", "lotes", "tabela", "orcamento",
+    "orcamentos",  # plural — auditoria 12/07 (caso Ana Weiss: "vou esperar os outros orçamentos")
     "frete", "prazo", "prazos", "entrega", "desconto", "pagamento",
     "pix", "boleto", "parcela", "parcelas", "parcelado",
     "pedido", "pedidos", "unidade", "unidades", "saca", "sacas",

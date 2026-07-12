@@ -368,6 +368,42 @@ def _looks_like_handoff_announcement(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Guarda determinística de fotos verbalizadas (auditoria 12/07, caso Ana Weiss)
+# ---------------------------------------------------------------------------
+# Mesma classe de defesa da guarda de handoff verbalizado: o modelo escreveu
+# "enviei aqui algumas fotos..." SEM chamar enviar_fotos — zero imagens em toda
+# a história do lead. A guarda detecta a alegação em 1ª pessoa no texto final e
+# FORÇA enviar_fotos(categoria=stage). A idempotência da tool absorve os casos
+# legítimos: fotos já enviadas na conversa (marcador [enviar_fotos] no histórico)
+# ou já enfileiradas neste turno viram no-op. O texto do turno é preservado —
+# as fotos saem logo depois pela fila diferida, tornando a frase verdadeira.
+#
+# Substantivos coletivos apenas (fotos/imagens/catalogo/portfolio): alegação de
+# UMA foto de produto ("enviei a foto do classico") fica fora — forçar o catálogo
+# inteiro nesse caso seria pior que a omissão.
+_PHOTO_SEND_CLAIM_RE = re.compile(
+    r"(?:acabei de (?:enviar|mandar)|enviei|mandei|(?:estou|to|tou)\s+(?:te\s+)?(?:mandando|enviando))"
+    r"[^.!?\n]{0,60}\b(?:fotos|imagens|catalogo|portfolio)\b"
+)
+
+# Stages com catálogo real em app/photos/<categoria> (enum da tool enviar_fotos).
+_PHOTO_GUARD_STAGES = ("atacado", "private_label")
+
+
+def _looks_like_photo_send_claim(text: str | None) -> bool:
+    """True quando o texto ALEGA (1ª pessoa, passado) ter enviado fotos/imagens/catálogo.
+
+    Acento- e caixa-insensitivo (mesma normalização da guarda de handoff).
+    Não casa ofertas futuras ("quer que eu te mostre"), recebimento de mídia do
+    lead ("recebi sua foto") nem envio de coisas que não são mídia ("enviei sua
+    solicitação"). Função pura — sem I/O, testável sem mocks.
+    """
+    if not text:
+        return False
+    return bool(_PHOTO_SEND_CLAIM_RE.search(_normalize_for_handoff_re(text)))
+
+
+# ---------------------------------------------------------------------------
 # Helpers for reply/reaction context enrichment (prompt-only, never persisted)
 # ---------------------------------------------------------------------------
 
@@ -1495,6 +1531,45 @@ async def run_agent(
                 )
         except Exception:
             pass
+
+    # -----------------------------------------------------------------------
+    # GUARDA DETERMINÍSTICA DE FOTOS VERBALIZADAS (auditoria 12/07, caso Ana Weiss)
+    # -----------------------------------------------------------------------
+    # Texto final alega envio de fotos mas NENHUMA tool de mídia rodou neste
+    # turno (media_tool_used cobre enviar_fotos/enviar_foto_produto — se rodou,
+    # a alegação é verdadeira e a guarda não se aplica; invariante do
+    # once-per-turn de 02/07). Fotos já enviadas ANTES na conversa viram no-op
+    # pela idempotência da própria tool (marcador [enviar_fotos] no histórico).
+    # Roda ANTES da guarda de handoff: num turno que verbaliza os dois, as
+    # fotos entram na fila antes do handoff decidir o destino do texto.
+    if (
+        stage in _PHOTO_GUARD_STAGES
+        and not media_tool_used
+        and _looks_like_photo_send_claim(assistant_text)
+    ):
+        logger.warning(
+            "[FOTOS VERBAL GUARD] texto final alega envio de fotos sem tool-call "
+            "para conv %s (stage=%s) — forçando enviar_fotos. text=%.200s",
+            conversation_id, stage, assistant_text,
+        )
+        try:
+            _foto_result = await execute_tool(
+                "enviar_fotos",
+                {"categoria": stage},
+                lead_id,
+                lead.get("phone", ""),
+                conversation_id,
+            )
+            logger.info(
+                "[FOTOS VERBAL GUARD] enviar_fotos forçado para conv %s: %s",
+                conversation_id, _foto_result,
+            )
+        except Exception as _foto_guard_exc:
+            # Fail-soft: não derruba o turno; entrega o texto como estava.
+            logger.error(
+                "[FOTOS VERBAL GUARD] execute_tool falhou para conv %s: %s",
+                conversation_id, _foto_guard_exc,
+            )
 
     # -----------------------------------------------------------------------
     # GUARDA DETERMINÍSTICA DE HANDOFF VERBALIZADO (2026-06-30)
