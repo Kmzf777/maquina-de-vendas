@@ -714,6 +714,26 @@ def _motivo_indica_cliente(motivo: str | None) -> bool:
     return any(s in n for s in _CLIENTE_ATIVO_SIGNALS)
 
 
+# Guarda 18C (caso Rogério 12/07): o modelo descartou um lead quente com um motivo que
+# CONFESSAVA o erro ("Não é rejeição, mas pedido de tempo para decisão") — a regra 18C
+# já proibia, mas prompt sozinho não segurou. Sinais em texto normalizado (sem acento,
+# minúsculo). Falso positivo custa pouco: o descarte é abortado e o modelo re-chama com
+# um motivo de rejeição real se for o caso.
+_ADIAMENTO_MORNO_SIGNALS: tuple[str, ...] = (
+    "nao e rejeicao", "nao e uma rejeicao",
+    "pedido de tempo", "pediu tempo",
+    "vai retornar", "vai voltar", "promete retornar", "promete voltar",
+    "vai apresentar", "vai analisar", "vai pensar",
+    "vai conversar com o socio", "vai conversar com a esposa", "vai conversar com o genro",
+)
+
+
+def _motivo_indica_adiamento(motivo: str | None) -> bool:
+    """True se o motivo do descarte descreve ADIAMENTO MORNO (pedido de tempo), não rejeição."""
+    n = _normalize_text(motivo)
+    return any(s in n for s in _ADIAMENTO_MORNO_SIGNALS)
+
+
 def _looks_like_soft_rejection(motivo: str | None) -> bool:
     """True se o motivo de opt-out tem cara de SOFT rejection sem proibição explícita.
 
@@ -1197,6 +1217,27 @@ async def execute_tool(
 
     elif tool_name == "registrar_sem_interesse_atual":
         motivo = args.get("motivo", "lead sem interesse no momento")
+
+        # GUARDA 18C (caso Rogério 12/07): motivo que descreve pedido de tempo/promessa de
+        # retorno NÃO é rejeição — abortamos o descarte ANTES de qualquer efeito (sem
+        # despedida, sem stage=perdido, sem cancelar follow-up) e devolvemos a instrução
+        # da regra 18C ao modelo. Marcador QA persistido para auditoria.
+        if _motivo_indica_adiamento(motivo):
+            logger.warning(
+                "[GUARDA 18C] registrar_sem_interesse_atual abortado para lead %s — "
+                "motivo indica adiamento morno: %r", lead_id, motivo,
+            )
+            save_message(
+                lead_id, "system",
+                f"[registrar_sem_interesse_atual] ABORTADO pela guarda 18C — motivo indica adiamento morno: {motivo}",
+                conversation_id=conversation_id,
+            )
+            return (
+                "DESCARTE RECUSADO (guarda 18C): o seu proprio motivo descreve um adiamento "
+                "morno (pedido de tempo / promessa de retorno), nao uma rejeicao. NAO descarte. "
+                "Responda curto confirmando disponibilidade; se o lead deu prazo, chame "
+                "agendar_retorno; sem prazo, encerre o turno sem ferramenta."
+            )
 
         # GUARDRAIL (item 2, auditoria 2026-06-22): CLIENTE ATIVO não vira "perdido".
         # Se o lead já tem relacionamento ativo (deal pós-handoff/closed-won) OU o próprio

@@ -141,6 +141,23 @@ def _normalize_name_for_blocklist(text: str) -> str:
     return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
 
 
+# Pushname de EMPRESA usado como vocativo soa robótico ("fechado, Empório Da Canastra" —
+# varredura 12/07). Match por PALAVRA INTEIRA no nome normalizado: qualquer um destes
+# tokens torna o nome um nome de NEGÓCIO → cai em "sem nome" e a Valéria pergunta o nome
+# da pessoa (o negócio em si ela descobre e registra na conversa). Deliberadamente sem
+# termos que colidam com nome próprio.
+_BUSINESS_NAME_TOKENS = frozenset({
+    "emporio", "distribuidora", "cafeteria", "torrefacao", "comercio", "comercial",
+    "ltda", "cafe", "cafes", "restaurante", "padaria", "mercearia", "mercado",
+    "atacado", "atacadista", "loja", "alimentos", "industria", "supermercado",
+})
+
+
+def _looks_like_business_name(normalized: str) -> bool:
+    """True se o nome normalizado contém uma palavra inteira de negócio."""
+    return any(w in _BUSINESS_NAME_TOKENS for w in normalized.split())
+
+
 def sanitize_display_name(name: str | None) -> str | None:
     """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username,
     apelido de pushname ou lixo de import.
@@ -171,6 +188,8 @@ def sanitize_display_name(name: str | None) -> str | None:
     if normalized in _PUSHNAME_ENDEARMENTS:
         return None
     if normalized in _CONVERSATIONAL_NON_NAMES:
+        return None
+    if _looks_like_business_name(normalized):
         return None
     return n
 
