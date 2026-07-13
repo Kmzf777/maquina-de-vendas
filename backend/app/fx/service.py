@@ -35,7 +35,10 @@ FX_CACHE_TTL_SECONDS = 6 * 60 * 60
 _AWESOME_URL = "https://economia.awesomeapi.com.br/json/last/USD-BRL"
 _HTTP_TIMEOUT_SECONDS = 5.0
 
-DEFAULT_FALLBACK_RATE = 5.50
+# Piso de último recurso quando nem FX_USD_BRL_FALLBACK existe (dev, homolog, deploy
+# novo). Colhido da AwesomeAPI em 13/07/2026. Envelhece: em produção o valor autoritativo
+# é o da env, e todo uso deste caminho vai marcado como stale ("aprox.") na UI.
+DEFAULT_FALLBACK_RATE = 5.1488
 
 # Faixa de sanidade. Uma cotação fora disso é lixo da fonte (0, negativo, campo
 # trocado) e não pode virar valor financeiro no painel.
