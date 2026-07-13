@@ -203,17 +203,29 @@ _WON_DEAL_STAGES: tuple[str, ...] = ("fechado_ganho",)
 _LOST_DEAL_STAGES: tuple[str, ...] = ("perdido", "fechado_perdido")
 
 
-def lead_has_active_relationship(lead_id: str) -> bool:
-    """True se o lead já é cliente / está em tratativa humana.
+def _won_stage_ids(sb) -> list[str]:
+    """IDs dos `pipeline_stages` de ganho (key='fechado_ganho'), em todos os pipelines.
 
-    Sinal de "já é cliente / já em atendimento", usado para (a) excluir de disparo frio
-    de prospecção e (b) avisar a Valéria (lead_is_customer). Fail-open=False: em erro,
-    retorna False (não bloqueia o fluxo nem o disparo por causa da checagem).
+    A key é o contrato estável do estágio; o label é editável pelo operador e o
+    `deals.stage` legado está morto. Sem cache: a lista é minúscula e um cache aqui
+    envelheceria justamente quando um pipeline novo fosse criado.
+    """
+    res = sb.table("pipeline_stages").select("id").eq("key", "fechado_ganho").execute()
+    if not isinstance(res.data, list):
+        return []
+    return [row["id"] for row in res.data if row.get("id")]
 
-    Ponte runtime do Gap E (sem alterar schema): além do estágio de tratativa, consulta a
-    tabela `sales` (qualquer venda registrada = cliente definitivo) e os deals em
-    closed-won (`fechado_ganho`), pegando clientes reais que o disparo tratava como frios
-    (auditoria 2026-06-22: Jéssica e Kadi Guth, clientes ativas com deal ainda em 'novo').
+
+def lead_is_customer(lead_id: str) -> bool:
+    """True se o lead é CLIENTE CONSOLIDADO — venda registrada ou negócio ganho.
+
+    Sinal ESTREITO e atemporal, separado de propósito do "falou com um humano
+    recentemente" (`lead_recently_engaged`). É a trava dura do disparo frio: cliente
+    não recebe prospecção fria nem que o último contato tenha sido há um ano
+    (casos Nayara e Kadi Guth). Fail-open=False.
+
+    NÃO inclui `ja_chamado`: tratativa humana em aberto é sinal de CONTATO, não de
+    venda — quem decide sobre esse lead é a janela temporal do chamador.
     """
     if not lead_id:
         return False
@@ -225,16 +237,61 @@ def lead_has_active_relationship(lead_id: str) -> bool:
         sale = sb.table("sales").select("id").eq("lead_id", lead_id).limit(1).execute()
         if isinstance(sale.data, list) and sale.data:
             return True
-        # (2) Deal em tratativa humana (ja_chamado) ou fechado-ganho (closed-won).
+        # (2) Deal em estágio de GANHO. A verdade do estágio é `deals.stage_id` ->
+        # `pipeline_stages.key`; a coluna legada `deals.stage` está CONGELADA (auditoria
+        # 13/07: zero linhas no banco inteiro com stage='fechado_ganho', e deals do
+        # estágio real "Perdido" carregam stage='novo'/'ja_chamado'). Ler a coluna legada
+        # aqui é o que fazia a heurística de closed_at classificar deal perdido como
+        # cliente — e um dia deixaria passar um cliente de verdade.
+        won_stage_ids = _won_stage_ids(sb)
+        if won_stage_ids:
+            won = (
+                sb.table("deals").select("id")
+                .eq("lead_id", lead_id)
+                .in_("stage_id", won_stage_ids)
+                .limit(1).execute()
+            )
+            if isinstance(won.data, list) and won.data:
+                return True
+        return False
+    except Exception as exc:
+        logger.warning("leads.service: lead_is_customer falhou p/ %s: %s", lead_id, exc)
+        return False
+
+
+def lead_has_active_relationship(lead_id: str) -> bool:
+    """True se o lead já é cliente / está em tratativa humana.
+
+    Sinal LARGO = cliente consolidado OU tratativa humana em aberto (`ja_chamado`) OU
+    contato humano nos últimos 90 dias. Usado pelo guardrail de descarte em
+    `agent/tools.py` (caso Kadi Guth), que precisa da rede mais ampla: descartar um
+    lead como "perdido" é pior do que deixar de descartar.
+
+    O worker de broadcast NÃO usa este sinal — ele compõe `lead_is_customer` (trava
+    absoluta) com uma janela temporal curta, porque lá o custo é o inverso: reter um
+    lead frio de mais é perder receita. Fail-open=False.
+    """
+    if not lead_id:
+        return False
+    try:
+        if lead_is_customer(lead_id):
+            return True
+        sb = get_supabase()
+        # Deal em tratativa humana em aberto (ja_chamado) — não é venda, mas para o
+        # descarte conta como relacionamento vivo.
         deal = (
             sb.table("deals").select("id")
             .eq("lead_id", lead_id)
-            .in_("stage", list(_ACTIVE_DEAL_STAGES + _WON_DEAL_STAGES))
+            .in_("stage", list(_ACTIVE_DEAL_STAGES))
             .limit(1).execute()
         )
         if isinstance(deal.data, list) and deal.data:
             return True
-        # (3) Heurística legada: deal fechado (closed_at setado) que NÃO é de perda.
+        # Heurística legada de closed-won por `closed_at` sobre a coluna `stage`. Ela é
+        # IMPRECISA (a coluna está congelada — ver `lead_is_customer`) e por isso NÃO
+        # entra na trava do disparo frio. Aqui ela fica de propósito: no descarte, errar
+        # para o lado de "tem relacionamento" só impede um lead de ser marcado perdido,
+        # o que é barato; o erro caro é o inverso (caso Kadi Guth).
         closed_won = (
             sb.table("deals").select("id")
             .eq("lead_id", lead_id)
@@ -244,7 +301,7 @@ def lead_has_active_relationship(lead_id: str) -> bool:
         )
         if isinstance(closed_won.data, list) and closed_won.data:
             return True
-        # (4) Contato humano recente (mensagens de seller <90d) — caso Nayara 08/07:
+        # Contato humano recente (mensagens de seller <90d) — caso Nayara 08/07:
         # compra em maio nunca virou `sales` nem deal fechado, mas as MENSAGENS do
         # vendedor estavam lá; ela entrou na lista fria e levou template 3x em 13 dias.
         return lead_recently_engaged(lead_id)
@@ -258,18 +315,25 @@ def lead_has_active_relationship(lead_id: str) -> bool:
 _RECENT_ENGAGEMENT_DAYS = 90
 
 
-def lead_recently_engaged(lead_id: str, days: int = _RECENT_ENGAGEMENT_DAYS) -> bool:
-    """True se um vendedor humano trocou mensagem com o lead nos últimos `days` dias.
+def lead_recently_engaged(
+    lead_id: str, days: int = _RECENT_ENGAGEMENT_DAYS, hours: int | None = None,
+) -> bool:
+    """True se um vendedor humano trocou mensagem com o lead na janela informada.
 
     Sinal complementar ao `lead_has_active_relationship`: cobre o cliente real cuja
     compra nunca virou `sales`/deal fechado no CRM (caso Nayara, 08/07/2026).
+
+    `hours` tem precedência sobre `days` quando informado — o disparo frio usa uma
+    janela curta (horas) para distinguir "em conversa AGORA" de "trabalhado no mês
+    passado", enquanto o descarte segue na janela larga de 90 dias.
     Fail-open=False: erro de checagem nunca bloqueia o fluxo.
     """
     if not lead_id:
         return False
     try:
         sb = get_supabase()
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        delta = timedelta(hours=hours) if hours is not None else timedelta(days=days)
+        cutoff = (datetime.now(timezone.utc) - delta).isoformat()
         res = (
             sb.table("messages").select("id")
             .eq("lead_id", lead_id)

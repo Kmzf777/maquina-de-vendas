@@ -24,7 +24,8 @@ from app.conversations.service import get_or_create_conversation, update_convers
 from app.templates.intent import dispatch_metadata, classify_template_intent, COLD_REACTIVATION
 from app.leads.service import (
     update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
-    lead_has_active_relationship, apply_optout_side_effects, append_lead_observation,
+    lead_is_customer, lead_recently_engaged, apply_optout_side_effects,
+    append_lead_observation,
 )
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
@@ -978,9 +979,25 @@ def _has_open_billing_alert(sb) -> bool:
 _TEMPLATE_DEDUP_DAYS = int(os.environ.get("BROADCAST_TEMPLATE_DEDUP_DAYS", "14"))
 
 
+# Janela (horas) do sinal "contato humano recente" no disparo FRIO (diretriz 13/07).
+# Separada da janela de 90 dias do descarte (leads.service._RECENT_ENGAGEMENT_DAYS) de
+# propósito: aqui a pergunta é "o vendedor está conversando com ele AGORA?", não "esse
+# lead já foi trabalhado alguma vez?". O lote de 13/07 mostrou o custo de fundir as duas
+# perguntas — 47 de 49 leads retidos por um contato humano de 18 dias atrás, sem nenhuma
+# negociação viva. Configurável via env para não exigir deploy em ajuste de política.
+_HUMAN_CONTACT_WINDOW_HOURS = int(os.environ.get("BROADCAST_HUMAN_CONTACT_WINDOW_HOURS", "72"))
+
+
 def _hot_lead_guardrail(lead: dict, broadcast_intent: str) -> str | None:
-    """Camada 2 da higiene de lista fria (auditoria 08/07, caso Nayara): lead com
-    relacionamento ativo/contato humano recente NÃO recebe disparo FRIO.
+    """Camada 2 da higiene de lista fria — TRAVA DUPLA (diretriz 13/07).
+
+    TRAVA A (absoluta): cliente consolidado (venda em `sales`, deal `fechado_ganho` ou
+    closed-won) NUNCA recebe disparo frio, independente de quando falou com alguém.
+    É a trava dos casos Nayara e Kadi Guth e ela não tem janela de tempo.
+
+    TRAVA B (temporal): lead SEM venda cujo vendedor humano falou com ele nas últimas
+    `_HUMAN_CONTACT_WINDOW_HOURS` — atropelar uma conversa viva queima o lead. Fora da
+    janela, ele é reabordável pela Valéria.
 
     Só se aplica a broadcasts de intent COLD_REACTIVATION — campanhas de reativação
     de clientes (reativacao_*) miram leads quentes DE PROPÓSITO e passam direto.
@@ -988,13 +1005,19 @@ def _hot_lead_guardrail(lead: dict, broadcast_intent: str) -> str | None:
     """
     if broadcast_intent != COLD_REACTIVATION:
         return None
+    lead_id = lead.get("id")
     try:
-        if lead_has_active_relationship(lead.get("id")):
-            return "lead quente (relacionamento ativo/contato humano <90d) — excluído do disparo frio"
+        if lead_is_customer(lead_id):
+            return "cliente consolidado (venda registrada/negócio ganho) — excluído do disparo frio"
+        if lead_recently_engaged(lead_id, hours=_HUMAN_CONTACT_WINDOW_HOURS):
+            return (
+                f"conversa humana viva (contato do vendedor <{_HUMAN_CONTACT_WINDOW_HOURS}h) "
+                "— excluído do disparo frio"
+            )
     except Exception as exc:
         logger.warning(
             "[BROADCAST][HOT] checagem de relacionamento falhou p/ %s: %s (fail-open)",
-            lead.get("id"), exc,
+            lead_id, exc,
         )
     return None
 

@@ -67,22 +67,29 @@ def test_active_relationship_inclui_contato_recente_de_seller(monkeypatch):
 # broadcast.worker guardrails (camada de envio)
 # ---------------------------------------------------------------------------
 
+# NB (13/07): o guardrail passou a compor DOIS sinais em vez de um
+# (`lead_has_active_relationship`) — ver test_broadcast_trava_dupla_2026_07_13.py.
+# Cliente consolidado é trava absoluta; contato humano vira janela curta em horas.
+
 def test_hot_guardrail_bloqueia_lead_quente_em_disparo_frio(monkeypatch):
     from app.broadcast import worker
-    monkeypatch.setattr(worker, "lead_has_active_relationship", lambda _id: True)
+    monkeypatch.setattr(worker, "lead_is_customer", lambda _id: True)
+    monkeypatch.setattr(worker, "lead_recently_engaged", lambda *a, **k: False)
     reason = worker._hot_lead_guardrail({"id": "L1", "phone": "55349"}, COLD_REACTIVATION)
     assert reason
 
 
 def test_hot_guardrail_nao_bloqueia_intent_generico(monkeypatch):
     from app.broadcast import worker
-    monkeypatch.setattr(worker, "lead_has_active_relationship", lambda _id: True)
+    monkeypatch.setattr(worker, "lead_is_customer", lambda _id: True)
+    monkeypatch.setattr(worker, "lead_recently_engaged", lambda *a, **k: True)
     assert worker._hot_lead_guardrail({"id": "L1"}, GENERIC) is None
 
 
 def test_hot_guardrail_libera_lead_frio(monkeypatch):
     from app.broadcast import worker
-    monkeypatch.setattr(worker, "lead_has_active_relationship", lambda _id: False)
+    monkeypatch.setattr(worker, "lead_is_customer", lambda _id: False)
+    monkeypatch.setattr(worker, "lead_recently_engaged", lambda *a, **k: False)
     assert worker._hot_lead_guardrail({"id": "L1"}, COLD_REACTIVATION) is None
 
 
