@@ -35,6 +35,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from app.agent.handoff import QA_HANDOFF_MARKER_LIKE
 from app.alerts.service import create_system_alert
 from app.buffer.recovery import recover_orphaned_buffers
 from app.config import get_settings
@@ -827,7 +828,9 @@ def _qa_collect_metrics(now: datetime) -> dict:
         # Só o marcador de handoff em si: cada encaminhar_humano grava DUAS system
         # messages ("Lead encaminhado..." + "cartão de contato enviado") — o LIKE
         # amplo dobrava a contagem (relatório de 10/07 mostrou 14 p/ 7 reais).
-        "handoffs": _qa_count(_msgs("[encaminhar_humano] Lead encaminhado%", role="system")),
+        # Padrão derivado do MESMO vocabulário que emite o marcador (app/agent/
+        # handoff.py) — impossível divergir da string persistida (Card 2, 12/07).
+        "handoffs": _qa_count(_msgs(QA_HANDOFF_MARKER_LIKE, role="system")),
         # B4 (Trilha B, auditoria 10/07): frequência da GUARDA determinística de handoff
         # verbalizado (orchestrator força encaminhar_humano quando o texto anuncia a
         # transferência sem tool-call — motivo "handoff verbalizado sem tool-call"). Contagem

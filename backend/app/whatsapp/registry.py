@@ -1,12 +1,13 @@
 import os
 
 from app.whatsapp.base import WhatsAppProvider
-from app.whatsapp.evolution import EvolutionClient
 from app.whatsapp.meta import MetaCloudClient
 from app.whatsapp.mock_provider import MockProvider
 
+# Evolution API removido do registry (Card 1, 12/07): adapter morto desde a migração
+# para a Meta Graph API (CLAUDE.md §6). Canal legado com provider="evolution" falha
+# alto no ValueError abaixo — nunca silenciosamente.
 _PROVIDERS: dict[str, type[WhatsAppProvider]] = {
-    "evolution": EvolutionClient,
     "meta_cloud": MetaCloudClient,
 }
 

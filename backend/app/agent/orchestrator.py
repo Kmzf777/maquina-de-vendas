@@ -23,7 +23,13 @@ from app.agent.prompts.base import BASE_STATIC, FINAL_INSTRUCTION, build_context
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.catalog import get_products_by_funnel
-from app.agent.tools import get_tools_for_stage, execute_tool, HANDOFF_RESULT_PREFIX
+from app.agent.tools import get_tools_for_stage, execute_tool
+from app.agent.handoff import (
+    is_handoff,
+    looks_like_handoff_announcement,
+    _normalize_for_handoff_re,  # também usado pelo guard de fotos (_PHOTO_SEND_CLAIM_RE)
+    _strip_diacritics,
+)
 from app.agent.adherence import (
     find_verbatim_prompt_echo,
     handoff_without_answer,
@@ -305,66 +311,14 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
 # ---------------------------------------------------------------------------
 # Guarda determinística de handoff verbalizado (2026-06-30)
 # ---------------------------------------------------------------------------
-# Defesa em profundidade: quando a Valéria ANUNCIA a transferência no texto comum
-# ("vou te conectar com o João", "vou deixar o contato dele aqui") SEM chamar
-# encaminhar_humano, o lead fica parado — o cartão de contato nunca sai e a IA
-# continua ativa. Este guard detecta o CTA no texto final e força o handoff.
-#
-# Invariante: se o código chegou até _looks_like_handoff_announcement, NENHUM handoff
-# foi executado neste turno — nem por tool call explícita de encaminhar_humano, nem em
-# CASCATA via qualificar_lead (o sentinel detecta ambos: pelo fc.name OU pelo
-# HANDOFF_RESULT_PREFIX no retorno da tool, e retorna None mais cedo no loop) — não há
-# risco de double-firing (fix S1 11/07, caso Prof. Sebastião).
-#
-# Frases que NÃO disparam (menções informacionais):
-#   "quem prepara isso é o Joao Bras"
-#   "vou deixar salvo pro Joao dar uma olhada"
-#   "você já tá em boas mãos com o time"
-#   "qualquer coisa é só chamar"
-# O guard é construído em torno do CTA de CONTATO/CONECTAR/TRANSFERIR, nunca do
-# nome "João Bras" isolado.
-
-def _strip_diacritics(text: str) -> str:
-    """Remove diacríticos via NFD + filtro de combining marks (Mn)."""
-    nfd = unicodedata.normalize("NFD", text)
-    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-
-
-def _normalize_for_handoff_re(text: str) -> str:
-    """Lowercase + remoção de diacríticos para matching acento-insensitivo."""
-    return _strip_diacritics(text.lower())
-
-
-# Padrões compilados uma vez; operam sobre texto já normalizado (lowercase, sem acentos).
-_HANDOFF_ANNOUNCEMENT_RE = re.compile(
-    r"(?:"
-    r"vou te conectar"
-    r"|deixa.{0,10}eu te conectar"   # "deixa eu te conectar" / "deixa-eu te conectar"
-    r"|te conectar com o joao"
-    r"|vou deixar o contato"          # "vou deixar o contato dele aqui"
-    r"|deixando o contato"
-    r"|te passar o contato"
-    r"|contato dele aqui"
-    r"|contato do joao aqui"
-    r"|vou transferir"
-    r"|vou te transferir"
-    r"|vou te passar (?:pro|para o) joao"
-    r")"
-)
-
-
-def _looks_like_handoff_announcement(text: str) -> bool:
-    """Return True ONLY for unambiguous transfer-CTA phrasing.
-
-    Accent- and case-insensitive (via diacritic stripping + lowercase).
-    Returns False for mere informational mentions of the seller that are NOT
-    a transfer CTA — e.g. "quem cuida disso é o Joao Bras", "em boas mãos".
-
-    Função pura — sem I/O, testável sem mocks.
-    """
-    if not text:
-        return False
-    return bool(_HANDOFF_ANNOUNCEMENT_RE.search(_normalize_for_handoff_re(text)))
+# Movida para o deep module app/agent/handoff.py (refatoração Card 2, 12/07),
+# junto com o restante do vocabulário/detecção de handoff. O invariante segue:
+# se o código chegou até looks_like_handoff_announcement no rabo do run_agent,
+# NENHUM handoff foi executado neste turno — is_handoff() detecta o explícito
+# (fc.name) e a cascata (prefixo no retorno) e retorna None mais cedo no loop —
+# não há risco de double-firing (fix S1 11/07, caso Prof. Sebastião).
+# Alias privado mantido: testes de incidente importam o nome antigo daqui.
+_looks_like_handoff_announcement = looks_like_handoff_announcement
 
 
 # ---------------------------------------------------------------------------
@@ -1072,9 +1026,7 @@ async def run_agent(
             else:
                 if isinstance(tool_result, str) and not tool_result.startswith("erro"):
                     executed_tool_cache[_dedup_key] = tool_result
-            if func_name == "encaminhar_humano" or (
-                isinstance(tool_result, str) and tool_result.startswith(HANDOFF_RESULT_PREFIX)
-            ):
+            if is_handoff(func_name, tool_result):
                 handoff_executed = True
             contents.append(function_response_content(func_name, tool_result))
 
@@ -1305,11 +1257,9 @@ async def run_agent(
                         # tool de mídia recuperada aqui também falhe.
                         if _rname in _MEDIA_TOOL_NAMES:
                             media_exec_failed = True
-                    # Mesma detecção do loop principal (fix S1 11/07): nome explícito OU
-                    # resultado com HANDOFF_RESULT_PREFIX (cascata via qualificar_lead).
-                    if _rname == "encaminhar_humano" or (
-                        isinstance(_rresult, str) and _rresult.startswith(HANDOFF_RESULT_PREFIX)
-                    ):
+                    # Mesma detecção do loop principal (fix S1 11/07): is_handoff cobre o
+                    # nome explícito E a cascata via qualificar_lead (prefixo no retorno).
+                    if is_handoff(_rname, _rresult):
                         _retry_handoff_executed = True
                     contents.append(function_response_content(_rname, _rresult))
                 # Tools terminais recuperadas no retry — mesma ordem e contrato do loop principal,

@@ -85,28 +85,5 @@ class TestRecordDispatchNote:
             record_dispatch_note("lead-1", "algum_template")
 
 
-# ── integração: cada caminho de disparo chama record_dispatch_note ──────────
-
-class TestDispatchSitesRecordNote:
-    @pytest.mark.asyncio
-    async def test_outbound_records_note_after_send(self):
-        import app.outbound.dispatcher as dispatcher
-
-        provider = MagicMock()
-
-        async def _send_text(phone, text):
-            return {"messages": [{"id": "wamid.x"}]}
-
-        provider.send_text = _send_text
-
-        with patch.object(dispatcher, "get_channel_by_id", return_value={"id": "ch1"}), \
-             patch.object(dispatcher, "get_provider", return_value=provider), \
-             patch.object(dispatcher, "get_or_create_lead", return_value={"id": "lead-1"}), \
-             patch.object(dispatcher, "update_lead"), \
-             patch.object(dispatcher, "get_or_create_conversation", return_value={"id": "conv1"}), \
-             patch.object(dispatcher, "update_conversation"), \
-             patch.object(dispatcher, "save_message"), \
-             patch.object(dispatcher, "record_dispatch_note") as mock_record:
-            await dispatcher.dispatch_to_lead("+5511999999999", {"channel_id": "ch1"})
-
-        mock_record.assert_called_once_with("lead-1", dispatcher.OUTBOUND_TEMPLATE_NAME)
+# O teste de integração do app.outbound.dispatcher foi removido junto com o módulo
+# (Card 1, 12/07): dispatch manual vestigial, superado por follow_up/broadcast.
