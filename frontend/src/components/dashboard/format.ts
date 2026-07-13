@@ -5,12 +5,7 @@ export function fmtPct(rate: number): string {
   return `${(rate * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
 }
 
-/** Custo em USD → "$0.42" (4 casas abaixo de 1 centavo); null → "—". */
-export function fmtUSD(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "—";
-  if (value > 0 && value < 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
+// Moeda mora em ./currency.ts (dono único de formatação e conversão USD↔BRL).
 
 /** Minutos → formato humano "38m" / "2h 10m". */
 export function fmtDuration(minutes: number): string {

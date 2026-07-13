@@ -15,7 +15,8 @@ import { SlaTable } from "@/components/dashboard/sla-table";
 import { OverdueLeadsSection } from "@/components/dashboard/overdue-leads-section";
 import { OnlineUsersSection } from "@/components/dashboard/online-users-section";
 import { ConversionsSection } from "@/components/dashboard/conversions-section";
-import { fmtDuration, fmtInt, fmtPct, fmtUSD } from "@/components/dashboard/format";
+import { fmtDuration, fmtInt, fmtPct } from "@/components/dashboard/format";
+import { dualFromUsd, type FxRate } from "@/components/dashboard/currency";
 import type {
   DashboardConversion,
   DashboardFollowups,
@@ -163,6 +164,10 @@ export default function DashboardPage() {
   const [followups, setFollowups] =
     useState<BlockState<DashboardFollowups>>(INITIAL_BLOCK);
 
+  // Câmbio: bloco à parte, sem skeleton. Enquanto não chega (ou se falhar), os
+  // cards de custo mostram só a moeda nativa — o painel nunca espera o câmbio.
+  const [fx, setFx] = useState<FxRate | null>(null);
+
   // Descarta respostas de fetches antigos (troca de período em voo).
   const runIdRef = useRef(0);
 
@@ -197,6 +202,15 @@ export default function DashboardPage() {
       fetchBlock<DashboardConversion>(`/api/dashboard/conversion?${q}`, setConversion);
       fetchBlock<DashboardOutbound>(`/api/dashboard/outbound?${q}`, setOutbound);
       fetchBlock<DashboardFollowups>(`/api/dashboard/followups`, setFollowups);
+
+      // Câmbio não depende do período e não derruba nada: falhou, fica null.
+      fetch(`/api/dashboard/fx`)
+        .then((res) => (res.ok ? (res.json() as Promise<FxRate>) : null))
+        .then((data) => {
+          if (runIdRef.current !== runId) return;
+          if (data) setFx(data);
+        })
+        .catch(() => {});
     },
     [period],
   );
@@ -329,14 +343,15 @@ export default function DashboardPage() {
                   }
                 />
                 <KpiCard
-                  label="Custo IA por handoff (US$)"
-                  value={fmtUSD(k.cost_per_handoff_usd)}
+                  label="Custo IA por handoff"
+                  value={dualFromUsd(k.cost_per_handoff_usd, fx).primary}
+                  subtitle={dualFromUsd(k.cost_per_handoff_usd, fx).secondary}
                   icon={DollarIcon}
                 />
                 <KpiCard
                   label={`Custo por atendimento (${isToday ? "hoje" : "no período"})`}
-                  value={fmtUSD(k.cost_per_atendimento_usd)}
-                  subtitle="US$"
+                  value={dualFromUsd(k.cost_per_atendimento_usd, fx).primary}
+                  subtitle={dualFromUsd(k.cost_per_atendimento_usd, fx).secondary}
                   icon={DollarIcon}
                 />
               </div>
