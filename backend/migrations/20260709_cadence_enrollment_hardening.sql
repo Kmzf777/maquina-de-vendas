@@ -65,4 +65,15 @@ CREATE INDEX IF NOT EXISTS idx_campaign_exec_log_campaign
 CREATE INDEX IF NOT EXISTS idx_campaign_exec_log_enrollment
     ON campaign_execution_log (enrollment_id, created_at DESC);
 
-ALTER PUBLICATION supabase_realtime ADD TABLE campaign_execution_log;
+-- ALTER PUBLICATION não aceita IF NOT EXISTS — guardamos manualmente p/ reaplicação segura.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'campaign_execution_log'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE campaign_execution_log;
+    END IF;
+END $$;
