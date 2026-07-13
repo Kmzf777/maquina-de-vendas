@@ -110,9 +110,10 @@ from app.webhook.router import router as webhook_router
 from app.webhook.meta_router import router as meta_webhook_router
 from app.leads.router import router as leads_router
 from app.broadcast.router import router as broadcast_router
-from app.stats.router import router as stats_router
+# app.stats.router (agregação client-side truncada pelo max-rows=1000) e
+# app.outbound (dispatch manual vestigial) deletados na limpeza de arquitetura
+# 12/07 (Card 1) — /api/stats/* é servido pelas rotas Next.js via RPCs SQL.
 from app.stats.pricing_router import router as pricing_router
-from app.outbound.router import router as outbound_router
 from app.channels.router import router as channels_router
 from app.agent_profiles.router import router as agent_profiles_router
 from app.conversations.router import router as conversations_router
@@ -129,9 +130,7 @@ app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
 app.include_router(leads_router)
 app.include_router(broadcast_router)
-app.include_router(stats_router)
 app.include_router(pricing_router)
-app.include_router(outbound_router)
 app.include_router(channels_router)
 app.include_router(agent_profiles_router)
 app.include_router(conversations_router)

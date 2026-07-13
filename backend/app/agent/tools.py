@@ -171,13 +171,15 @@ _HANDOFF_MSG = (
     "assim que você chamar, ele já recebe seu contato e segue contigo"
 )
 
-# Marcador de handoff no RETORNO da tool (fix S1, caso Prof. Sebastião 11/07): o
-# sentinel do orchestrator detecta handoff também quando ele acontece em CASCATA
-# (qualificar_lead com âncoras completas chama encaminhar_humano por dentro e propaga
-# este retorno verbatim) — o nome da tool não aparece nos function_calls do turno.
-# A string final ("Lead encaminhado para <vendedor>") deve permanecer IDÊNTICA: o
-# watchdog/telemetria de QA casa com 'Lead encaminhado%' em system messages.
-HANDOFF_RESULT_PREFIX = "Lead encaminhado para "
+# Vocabulário de handoff (marcador, sentinel, detecção) agora mora no deep module
+# app/agent/handoff.py (refatoração Card 2, 12/07) — único dono das strings que o
+# orchestrator detecta e o watchdog casa por LIKE. Re-export mantido: testes e call
+# sites legados importam HANDOFF_RESULT_PREFIX daqui.
+from app.agent.handoff import (  # noqa: F401  (re-export de retrocompatibilidade)
+    HANDOFF_RESULT_PREFIX,
+    handoff_result,
+    handoff_system_marker,
+)
 
 # Supervisor para quem o atendimento é transbordado — o cartão de contato (vCard) é
 # enviado automaticamente logo após a mensagem de despedida no encaminhar_humano.
@@ -1057,7 +1059,7 @@ async def execute_tool(
                 "encaminhar_humano failed to create deal for lead %s: %s",
                 lead_id, exc, exc_info=True,
             )
-        save_message(lead_id, "system", f"[encaminhar_humano] Lead encaminhado para {vendedor}: {motivo}", conversation_id=conversation_id)
+        save_message(lead_id, "system", handoff_system_marker(vendedor, motivo), conversation_id=conversation_id)
         # Item 2: carimbo ESTRUTURADO do handoff (legível por máquina), independente do LLM de
         # resumo. Torna a cascata Qualificados/Aceites contável por evento real de handoff, sem
         # depender do estágio do kanban (contaminado por desqualificações suaves).
@@ -1176,7 +1178,7 @@ async def execute_tool(
                 "encaminhar_humano: nenhum canal ativo para lead %s — mensagem de handoff e rescue job ignorados",
                 lead_id,
             )
-        return f"{HANDOFF_RESULT_PREFIX}{vendedor}"
+        return handoff_result(vendedor)
 
     elif tool_name == "registrar_optout":
         motivo = args.get("motivo", "opt-out solicitado pelo lead")
