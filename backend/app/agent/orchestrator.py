@@ -269,6 +269,39 @@ def _strip_leaked_tool_code(text: str) -> str:
     return cleaned.strip()
 
 
+# Rede de segurança contra vazamento de RACIOCÍNIO INTERNO (lead 56958450295, 13/07)
+# ---------------------------------------------------------------------------
+# A REPEAT QUESTION GUARD injeta um nudge de sistema ("Reescreva a resposta INTEIRA...") como
+# turno de user. O modelo respondeu meta-raciocinando e escreveu o plano DENTRO do content:
+#   <scratchpad> O lead perguntou "De onde vcs é?" ... </scratchpad> boa noite, a gente é da...
+# O sanitizer só conhecia <tool_code>/```/print(/default_api., então o chain-of-thought passou,
+# o splitter fatiou pelos \n\n internos do bloco e o lead recebeu 3 bolhas de raciocínio.
+# A Valéria NUNCA expõe raciocínio: qualquer bloco destes é vazamento e morre antes do envio.
+_REASONING_TAGS = "scratchpad|thinking|thought|thoughts|reasoning|plan|planning|internal_monologue|monologue"
+_REASONING_BLOCK_RE = re.compile(rf"<\s*({_REASONING_TAGS})\s*>.*?<\s*/\s*\1\s*>", re.DOTALL | re.IGNORECASE)
+# Abertura órfã (MAX_TOKENS cortou o bloco): tudo DEPOIS dela é raciocínio.
+_REASONING_OPEN_RE = re.compile(rf"<\s*({_REASONING_TAGS})\s*>.*\Z", re.DOTALL | re.IGNORECASE)
+# Fechamento órfão (a abertura ficou fora da janela): tudo ANTES dele é raciocínio.
+_REASONING_CLOSE_RE = re.compile(rf"\A.*<\s*/\s*({_REASONING_TAGS})\s*>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_leaked_reasoning(text: str) -> str:
+    """Remove blocos de raciocínio interno do texto final, preservando a fala da Valéria.
+
+    Função pura (unit-testável sem run_agent). Trata as três formas observadas:
+      - bloco fechado: <scratchpad>...</scratchpad> (removido, a fala em volta fica)
+      - abertura órfã: <scratchpad> sem fechamento → corta da abertura até o fim
+      - fechamento órfão: </scratchpad> sem abertura → descarta tudo que vem antes
+    """
+    if not text:
+        return text
+    cleaned = _REASONING_BLOCK_RE.sub("", text)
+    cleaned = _REASONING_CLOSE_RE.sub("", cleaned)
+    cleaned = _REASONING_OPEN_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None, source: str) -> str:
     """Passa QUALQUER texto de saída do agente pela rede anti-tool_code e loga o vazamento.
 
@@ -284,6 +317,16 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "[TOOL_CODE LEAK] Gemini vazou function-call como texto em conv %s "
             "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
             conversation_id, source, stage, pre,
+        )
+    # Raciocínio interno (<scratchpad>/<thinking>/...) NUNCA vai ao cliente — falha real
+    # 13/07 (lead 56958450295): o CoT foi fatiado pelo splitter e entregue em 3 bolhas.
+    before_reasoning = cleaned
+    cleaned = _strip_leaked_reasoning(cleaned)
+    if cleaned != before_reasoning:
+        logger.error(
+            "[REASONING LEAK] Gemini vazou raciocínio interno como texto em conv %s "
+            "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, before_reasoning,
         )
     # Guarda de aderência (2026-07-04): remove frases proibidas de jargão de
     # call-center ("pra te direcionar da melhor forma") que fogem da voz da
@@ -1410,7 +1453,12 @@ async def run_agent(
                     "O lead já a respondeu (ou ela não cabe mais). Reescreva a resposta "
                     "INTEIRA: a primeira bolha reage à última mensagem do lead (ancoragem "
                     "no novo, regra 33), sem repetir essa pergunta, sem copiar frases "
-                    "prontas, máximo 3 bolhas, sem ponto final."
+                    "prontas, máximo 3 bolhas, sem ponto final. "
+                    "RESPONDA APENAS COM AS BOLHAS FINAIS DA VALÉRIA, prontas para envio no "
+                    "WhatsApp. PROIBIDO escrever seu raciocínio, seu plano, análise das regras "
+                    "ou qualquer tag como <scratchpad>, <thinking> ou <plan> — o cliente lê "
+                    "literalmente tudo o que você escrever aqui (falha real 13/07: o lead "
+                    "recebeu o seu raciocínio interno em 3 bolhas)."
                 )
                 _fix_result = await _generate_with_retry(
                     model=model,
