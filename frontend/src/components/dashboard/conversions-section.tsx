@@ -17,6 +17,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useCurrentRole } from "@/hooks/use-current-role";
+import { fmtBRL, fmtUSD, brlToUsd, dualFromBrl, type FxRate } from "./currency";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -57,10 +58,6 @@ const COLOR_OPPORTUNITY = "#5b8aad";
 const COLOR_PURCHASE = "#5aad65";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function fmtBRL(v: number): string {
-  return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
-}
 
 function shortDate(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
@@ -138,15 +135,19 @@ function ChartCard({
   );
 }
 
-// Custom tooltip for BRL values
+// Tooltip de valores: o eixo fica só em BRL (dois símbolos num tick de eixo é
+// ilegível), então é aqui que a segunda moeda aparece. `fx` chega via
+// cloneElement do recharts, que injeta active/payload/label por cima.
 function BrlTooltip({
   active,
   payload,
   label,
+  fx,
 }: {
   active?: boolean;
   payload?: Array<{ name: string; value: number; color: string }>;
   label?: string;
+  fx?: FxRate | null;
 }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
@@ -154,11 +155,17 @@ function BrlTooltip({
       {label && (
         <p className="text-[#7b7b78] mb-1">{label}</p>
       )}
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color }}>
-          {p.name}: {fmtBRL(p.value)}
-        </p>
-      ))}
+      {payload.map((p) => {
+        const usd = fx ? brlToUsd(p.value, fx.rate) : null;
+        return (
+          <p key={p.name} style={{ color: p.color }}>
+            {p.name}: {fmtBRL(p.value)}
+            {usd !== null && (
+              <span className="text-[#7b7b78]"> · {fmtUSD(usd)}</span>
+            )}
+          </p>
+        );
+      })}
     </div>
   );
 }
@@ -305,7 +312,13 @@ function TimeseriesChart({ data }: { data: TimeseriesPoint[] }) {
 
 // ── Value by traffic chart ─────────────────────────────────────────────────────
 
-function ValueByTrafficChart({ byTraffic }: { byTraffic: DashboardData["value_by_traffic"] }) {
+function ValueByTrafficChart({
+  byTraffic,
+  fx,
+}: {
+  byTraffic: DashboardData["value_by_traffic"];
+  fx: FxRate | null;
+}) {
   const data = [
     { name: "Pago", value: byTraffic.paid, color: COLOR_PAID },
     { name: "Orgânico", value: byTraffic.organic, color: COLOR_ORGANIC },
@@ -333,7 +346,7 @@ function ValueByTrafficChart({ byTraffic }: { byTraffic: DashboardData["value_by
           tickLine={false}
           width={72}
         />
-        <Tooltip content={<BrlTooltip />} />
+        <Tooltip content={<BrlTooltip fx={fx} />} />
         <Bar dataKey="value" radius={[0, 2, 2, 0]}>
           {data.map((entry) => (
             <Cell key={entry.name} fill={entry.color} />
@@ -357,6 +370,22 @@ type FetchState =
 export function ConversionsSection() {
   const { role, loading: roleLoading } = useCurrentRole();
   const [fetchState, setFetchState] = useState<FetchState>({ status: "idle" });
+  // Câmbio à parte: se falhar, os valores seguem em BRL (moeda nativa daqui).
+  const [fx, setFx] = useState<FxRate | null>(null);
+
+  useEffect(() => {
+    if (roleLoading || role !== "admin") return;
+    let cancelledFx = false;
+    fetch("/api/dashboard/fx")
+      .then((r) => (r.ok ? (r.json() as Promise<FxRate>) : null))
+      .then((data) => {
+        if (!cancelledFx && data) setFx(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelledFx = true;
+    };
+  }, [role, roleLoading]);
 
   useEffect(() => {
     if (roleLoading || role !== "admin") return;
@@ -478,7 +507,8 @@ export function ConversionsSection() {
         />
         <KpiCard
           label="Valor em vendas"
-          value={fmtBRL(data.kpis.purchase_value)}
+          value={dualFromBrl(data.kpis.purchase_value, fx).primary}
+          subtitle={dualFromBrl(data.kpis.purchase_value, fx).secondary}
         />
       </div>
 
@@ -493,7 +523,7 @@ export function ConversionsSection() {
         </ChartCard>
 
         <ChartCard title="Valor por origem">
-          <ValueByTrafficChart byTraffic={data.value_by_traffic} />
+          <ValueByTrafficChart byTraffic={data.value_by_traffic} fx={fx} />
         </ChartCard>
       </div>
 

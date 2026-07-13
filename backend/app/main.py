@@ -125,6 +125,7 @@ from app.campaigns.router import router as campaigns_router
 from app.campaigns.conversions_router import router as conversions_router
 from app.automation.router import router as automation_router
 from app.lp_webhook.router import router as lp_webhook_router
+from app.fx.router import router as fx_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
@@ -142,6 +143,7 @@ app.include_router(campaigns_router)
 app.include_router(conversions_router)
 app.include_router(automation_router)
 app.include_router(lp_webhook_router)
+app.include_router(fx_router)
 
 
 @app.get("/health")
