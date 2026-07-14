@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — maquina-de-vendas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .deepbox { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .modlabel { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-3">
+        <h1 class="font-serif text-4xl tracking-tight">Architecture review — <span class="text-indigo-700">maquina-de-vendas</span></h1>
+        <p class="text-sm text-slate-500">12/07/2026 · backend FastAPI + worker + frontend Next.js · varredura por 3 agentes de exploração</p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-1">
+          <span class="inline-flex items-center gap-1.5"><span class="w-4 h-3 border border-slate-400 bg-white inline-block"></span> module</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-4 h-0 border-t-2 border-dashed border-slate-500 inline-block"></span> seam</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-4 h-0 border-t-2 border-red-600 inline-block"></span> vazamento pelo seam</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-4 h-3 deepbox inline-block rounded-sm"></span> deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- ============ CARD 1 ============ -->
+        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">1 · Aposentar os módulos que falham o deletion test</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">deleção pura</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">backend/app/stats/router.py (343) · backend/app/outbound/ (117) · backend/app/whatsapp/evolution.py (112)</p>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <pre class="mermaid">
+flowchart LR
+  subgraph HOJE["Hoje — duas implementações de /api/stats"]
+    UI[Dashboard CRM] --> NR["Next routes · RPCs SQL<br/>corretas, imunes a volume"]
+    NR --> PG[(Postgres)]
+    FA["FastAPI stats/router.py<br/>.limit 10000 + soma em Python"] -. "montado em main.py<br/>NINGUÉM chama — mas responde" .-> PG
+  end
+  subgraph DEPOIS["Depois"]
+    UI2[Dashboard CRM] --> NR2["Next routes · RPCs SQL"]
+    NR2 --> PG2[(Postgres)]
+  end
+  classDef trap stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class FA trap
+            </pre>
+          </div>
+
+          <p><strong>Problema.</strong> O <code>stats/router.py</code> do backend ainda está montado em <code>main.py</code> mas foi sombreado pelas rotas RPC do frontend — e carrega vivo o bug de truncamento <code>max-rows=1000</code> que a migração <code>20260711_stats_aggregation_rpcs</code> corrigiu (o flag <code>truncated</code> nunca dispara porque o servidor corta em 1000 antes). Qualquer cliente que bater direto no FastAPI recebe números errados. <code>outbound/dispatch</code> é um envio manual vestigial que duplica em miniatura o que follow_up/broadcast já fazem. <code>evolution.py</code> está morto por decisão registrada no CLAUDE.md.</p>
+          <p><strong>Solução.</strong> Deletar os três (e desmontar o router de stats do <code>main.py</code>). Nenhum caller de produção os usa.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Deletion test: complexidade <em>desaparece</em></li>
+            <li>Remove uma armadilha de dados errados ativa</li>
+            <li>~570 linhas a menos para navegar</li>
+            <li>Destrava o re-cut do seam de provider (card 5)</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 2 ============ -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">2 · Um deep module "Handoff" — hoje são 5 arquivos acoplados por uma string</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">agent/tools.py:1003–1080 · agent/orchestrator.py:1075, 1310, 1584–1609 · buffer/processor.py:1554, 1611 · adherence.py:414 · watchdog (LIKE 'Lead encaminhado%')</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Antes — o comportamento mora em 5 lugares</p>
+              <div class="relative space-y-2">
+                <div class="border border-slate-300 rounded p-2 text-xs"><span class="font-mono">tools.py</span> — emite <span class="text-red-600 font-mono">"Lead encaminhado para "</span>, envia cartão, desliga IA</div>
+                <div class="border border-slate-300 rounded p-2 text-xs"><span class="font-mono">orchestrator.py</span> — detecta <span class="text-red-600">a string</span> em 2 loops + guard que re-dispara a tool a partir do texto final; devolve sentinela <code>None</code></div>
+                <div class="border border-slate-300 rounded p-2 text-xs"><span class="font-mono">processor.py</span> — decodifica o <code>None</code>; aborta bolhas se <code>ai_enabled</code> caiu no meio do envio</div>
+                <div class="border border-slate-300 rounded p-2 text-xs"><span class="font-mono">adherence.py</span> — telemetria <code>handoff_without_answer</code></div>
+                <div class="border border-slate-300 rounded p-2 text-xs"><span class="font-mono">watchdog</span> — conta handoffs casando <span class="text-red-600">a mesma string</span> no SQL</div>
+                <p class="text-xs text-red-700 pt-1">Interface implícita = a constante <code>HANDOFF_RESULT_PREFIX</code>. Incidente real: cartão duplo (fix S1, Prof. Sebastião).</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Depois — um module, uma interface</p>
+              <div class="deepbox rounded-lg p-4 text-slate-100">
+                <p class="modlabel text-indigo-300">handoff (module)</p>
+                <p class="text-xs mt-1">interface: <code>request_handoff(...) → HandoffOutcome</code> · <code>detect(result) → bool</code></p>
+                <div class="mt-3 space-y-1 text-xs text-slate-400">
+                  <p>· ordem despedida-antes-de-desligar-IA (invariante interno)</p>
+                  <p>· resolve responsável antes de <code>ai_enabled=False</code></p>
+                  <p>· marcador persistido num formato que o watchdog consome</p>
+                  <p>· detecção única — impossível disparar 2×</p>
+                </div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Orchestrator e processor consomem <code>HandoffOutcome</code> tipado — o sentinela <code>None</code> some.</p>
+            </div>
+          </div>
+
+          <p><strong>Problema.</strong> "Por que este lead recebeu dois cartões de handoff?" exige segurar 5 arquivos na cabeça ao mesmo tempo; a interface real é uma string load-bearing detectada em 3 pontos que precisam se manter sincronizados na mão.</p>
+          <p><strong>Solução.</strong> Extrair um module <code>handoff</code> que é o único emissor e o único detector; devolver um tipo <code>HandoffOutcome</code> pela interface em vez de string-prefixo + sentinela <code>None</code>.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Locality: bugs de handoff concentram num module</li>
+            <li>A interface vira a superfície de teste</li>
+            <li>Ordenação crítica vira invariante interno, não comentário</li>
+            <li>Watchdog para de casar string no SQL</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 3 ============ -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">3 · Registry de tools — colapsar as 3 estruturas paralelas de tools.py</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">agent/tools.py (1943): TOOL_DECLARATIONS · execute_tool (16 elifs) · get_tools_for_stage · _deferred_media/_interest_marked/_quote_executed (globals)</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Antes — 3 colunas sincronizadas por string + canal oculto</p>
+              <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="border border-slate-300 rounded p-2">
+                  <p class="modlabel text-slate-500">declarações</p>
+                  <p class="text-xs mt-1">lista JSON-schema (~658 linhas)</p>
+                </div>
+                <div class="border border-slate-300 rounded p-2">
+                  <p class="modlabel text-slate-500">executor</p>
+                  <p class="text-xs mt-1">if/elif × 16 (~700 linhas)</p>
+                </div>
+                <div class="border border-slate-300 rounded p-2">
+                  <p class="modlabel text-slate-500">allowlist por stage</p>
+                  <p class="text-xs mt-1">dict inline</p>
+                </div>
+              </div>
+              <div class="mt-2 border border-red-300 bg-red-50 rounded p-2 text-xs text-red-700">
+                + efeitos diferidos atravessam tool → processor via <code>dict[conversation_id]</code> global (bug Wander: marcador de fotos mentiroso)
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Depois — 1 declaração por tool, registry deriva o resto</p>
+              <div class="deepbox rounded-lg p-4 text-slate-100">
+                <p class="modlabel text-indigo-300">tool registry (module)</p>
+                <pre class="text-xs mt-2 text-slate-300">Tool(
+  name, schema, executor,
+  stages={...},
+  effects: disables_ai | defers_media | ...
+)</pre>
+                <p class="text-xs text-slate-400 mt-2">declarações Gemini, dispatch e allowlist são <em>views</em> geradas do registry</p>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Mídia diferida vira campo tipado de <code>ToolResult</code> — o processor recebe pelo retorno, não por global.</p>
+            </div>
+          </div>
+
+          <p><strong>Problema.</strong> Adicionar uma tool = editar 3 estruturas acopladas só pelo nome-string; o contrato de efeitos (desliga IA? difere mídia? cascateia em outra tool?) é invisível no call site; e o efeito real atravessa o seam <code>execute_tool → run_agent → processor</code> por estado global mutável.</p>
+          <p><strong>Solução.</strong> Uma declaração <code>Tool</code> co-locando schema, executor, stages e efeitos; o registry gera as três views; efeitos diferidos viajam pelo valor de retorno.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Leverage: 1 declaração, 3 call sites servidos</li>
+            <li>Contrato de efeitos vira parte da interface</li>
+            <li>Canal global oculto eliminado — classe do bug Wander morre</li>
+            <li>Teste por tool sem monkeypatch de 7 símbolos</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 4 ============ -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">4 · Desmembrar meta_router.py e tornar o invariante do Dev Router estrutural</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">Strong</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">webhook/meta_router.py (623) · dev_router/* (156, já deep)</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Antes — 6 preocupações num handler de webhook</p>
+              <div class="space-y-1">
+                <div class="h-9 border-l-4 border-slate-400 bg-stone-100 rounded-r px-3 flex items-center text-xs">verificação de assinatura</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 rounded-r px-3 flex items-center text-xs">dev-route <em>&nbsp;(invariante = ordem textual das linhas 508–544)</em></div>
+                <div class="h-9 border-l-4 border-slate-400 bg-stone-100 rounded-r px-3 flex items-center text-xs">dedup wamid (Redis SETNX + rollback)</div>
+                <div class="h-9 border-l-4 border-amber-500 bg-amber-50 rounded-r px-3 flex items-center text-xs">máquina de estados de delivery-status (~135 linhas: rank, retry 10/30/90s, broadcast, billing)</div>
+                <div class="h-9 border-l-4 border-amber-500 bg-amber-50 rounded-r px-3 flex items-center text-xs">eventos de status de template</div>
+                <div class="h-9 border-l-4 border-amber-500 bg-amber-50 rounded-r px-3 flex items-center text-xs">registro/merge de lead (CTWA/BSUID) + comando !resetar</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Depois — handler fino, subsistemas viram modules</p>
+              <div class="space-y-1">
+                <div class="h-9 border-l-4 border-indigo-500 bg-indigo-50 rounded-r px-3 flex items-center text-xs font-medium">verify → <code class="mx-1">route_raw_payload(payload)</code> → parse → push_to_buffer</div>
+              </div>
+              <div class="mt-3 grid grid-cols-3 gap-2">
+                <div class="deepbox rounded p-2 text-slate-100 text-center"><p class="modlabel text-indigo-300">delivery_status</p><p class="text-[10px] text-slate-400">rank + retry + fan-out</p></div>
+                <div class="deepbox rounded p-2 text-slate-100 text-center"><p class="modlabel text-indigo-300">template_events</p><p class="text-[10px] text-slate-400">status de HSM</p></div>
+                <div class="deepbox rounded p-2 text-slate-100 text-center"><p class="modlabel text-indigo-300">lead_intake</p><p class="text-[10px] text-slate-400">merge CTWA/BSUID</p></div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2"><code>route_raw_payload</code> encapsula o dev-route: o handler <em>não consegue</em> parsear antes de rotear — o parse acontece dentro, depois do desvio.</p>
+            </div>
+          </div>
+
+          <p><strong>Problema.</strong> O router é um contêiner raso de 6 preocupações que só dividem arquivo porque a Meta posta tudo na mesma URL; e o invariante crítico do CLAUDE.md ("dev-route antes do parse") é protegido apenas por ordem de statements + testes — nada estrutural impede uma edição futura de invertê-lo.</p>
+          <p><strong>Solução.</strong> Extrair delivery-status, template-events e lead-intake como modules próprios; introduzir um único ponto de entrada que recebe o payload bruto e só expõe mensagens já parseadas <em>depois</em> do desvio de dev.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Invariante do Dev Router vira estrutura, não convenção</li>
+            <li>Locality: máquina de delivery-status testável isolada</li>
+            <li>Complexidade real, contêiner certo — nada se perde</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 5 ============ -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">5 · Re-cortar o seam WhatsAppProvider em torno do uso real</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">ports &amp; adapters</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">whatsapp/base.py (49) · registry.py (29) · meta.py (440) · mock_provider.py (91) · follow_up/scheduler.py:184, 928, 1046, 1706 (bypasses)</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Antes — interface larga E estreita ao mesmo tempo</p>
+              <div class="flex gap-3 items-end justify-center h-56">
+                <div class="flex flex-col items-center">
+                  <div class="w-24 h-32 border-2 border-slate-500 bg-stone-100 rounded-t flex flex-col items-center justify-center text-center p-1">
+                    <p class="modlabel text-slate-600">interface</p>
+                    <p class="text-[10px] text-slate-500">9 métodos — 3 existem só p/ o Evolution recusar</p>
+                  </div>
+                  <div class="w-24 h-16 border-2 border-t-0 border-slate-500 bg-white rounded-b flex items-center justify-center text-center p-1">
+                    <p class="text-[10px] text-slate-500">1 adapter vivo</p>
+                  </div>
+                  <p class="modlabel text-slate-500 mt-1">shallow</p>
+                </div>
+                <div class="flex flex-col items-center">
+                  <div class="w-32 border-2 border-red-400 bg-red-50 rounded p-2 text-center">
+                    <p class="modlabel text-red-600">vazamento</p>
+                    <p class="text-[10px] text-red-700">upload_media · download_media · extract_wamid · send_image_bytes</p>
+                    <p class="text-[10px] text-red-700 mt-1">→ 5 construções diretas de MetaCloudClient no scheduler</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-400 mb-3">Depois — interface do tamanho do uso, 2 adapters reais</p>
+              <div class="flex gap-3 items-end justify-center h-56">
+                <div class="flex flex-col items-center">
+                  <div class="w-28 h-10 border-2 border-slate-700 bg-stone-100 rounded-t flex items-center justify-center text-center p-1">
+                    <p class="text-[10px] text-slate-600">interface: enviar (texto/mídia/template/reação) + wamid</p>
+                  </div>
+                  <div class="w-28 h-40 deepbox rounded-b flex items-center justify-center text-center p-1">
+                    <p class="text-[10px] text-slate-300">MetaCloudClient — retry, upload, janela 24h, 131026</p>
+                  </div>
+                  <p class="modlabel text-slate-500 mt-1">adapter prod</p>
+                </div>
+                <div class="flex flex-col items-center">
+                  <div class="w-28 h-10 border-2 border-dashed border-slate-400 rounded-t flex items-center justify-center">
+                    <p class="text-[10px] text-slate-500">mesma interface</p>
+                  </div>
+                  <div class="w-28 h-24 border-2 border-t-0 border-slate-300 bg-white rounded-b flex items-center justify-center text-center p-1">
+                    <p class="text-[10px] text-slate-500">MockProvider — rehearsal + testes</p>
+                  </div>
+                  <p class="modlabel text-slate-500 mt-1">adapter fake</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p><strong>Problema.</strong> O seam paga o custo pleno de uma abstração (ABC, registry, defaults <code>NotImplementedError</code>) entregando valor de nenhuma: a interface foi moldada pelo Evolution morto (larga demais) e nunca modelou mídia/wamid (estreita demais), então os callers a contornam construindo <code>MetaCloudClient</code> direto.</p>
+          <p><strong>Solução.</strong> Depois do card 1, re-cortar a interface em torno do que os callers realmente usam — absorvendo mídia e wamid — com Meta e Mock como os dois adapters que justificam o seam ("two adapters means a real one"); eliminar os 5 bypasses do scheduler.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Dois adapters reais justificam o seam</li>
+            <li>Mídia/wamid param de vazar pelo seam</li>
+            <li>Testes de envio injetam o fake, não AsyncMock por método</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 6 ============ -->
+        <article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">6 · Um seam de repositório para messages/conversations</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">local-substitutable</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">db/supabase.py (72, só transporte) · conversations/service.py (455) · meta_router.py · buffer/processor.py · broadcast/service.py — 307 chamadas supabase em 44 arquivos</p>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <pre class="mermaid">
+flowchart LR
+  subgraph HOJE["Hoje — a tabela messages é a interface"]
+    R1[meta_router] -- "rank de delivery_status" --> T[(messages)]
+    S1[conversations/service] -- "accepted no insert" --> T
+    P1[buffer/processor] -- "dedup por wamid" --> T
+    B1[broadcast/service] --> T
+  end
+  subgraph DEPOIS["Depois"]
+    R2[meta_router] --> MS
+    S2[processor] --> MS
+    B2[broadcast] --> MS
+    MS["message_store<br/>dono do invariante delivery_status<br/>+ semântica de wamid"]:::deep --> T2[(messages)]
+    F["fake in-memory<br/>segundo adapter"]:::fake -.-> MS
+  end
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+  classDef fake stroke-dasharray:4 4;
+  linkStyle 0 stroke:#dc2626;
+  linkStyle 1 stroke:#dc2626;
+            </pre>
+          </div>
+
+          <p><strong>Problema.</strong> Não existe module dono de "o que é uma linha de <code>messages</code>": as regras de rank do <code>delivery_status</code> vivem no router, o <code>accepted</code>-no-insert vive no service — duas metades de um invariante em dois arquivos — e os testes mockam a chain fluente do supabase-py (MagicMock devolvendo MagicMock), acoplados à sintaxe do query-builder em vez de a um contrato.</p>
+          <p><strong>Solução.</strong> Começar pequeno: um <code>message_store</code> que seja o único escritor de <code>messages</code>/<code>conversations</code>, com um fake in-memory como segundo adapter. Não é para envolver as 44 fontes de uma vez — só as 4 que mutam as mesmas tabelas.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Invariante de delivery_status inteiro num lugar</li>
+            <li>Testes injetam um fake store, não chains mockadas</li>
+            <li>Leverage: 1 interface, 4 escritores servidos</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 7 ============ -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">7 · Um lifecycle de envio outbound — hoje são 3 cópias + 4 classificadores de erro Meta</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">broadcast/service+worker · campaigns/worker.py · follow_up/scheduler.py (1745) · automation/retry.py</p>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 overflow-x-auto">
+            <table class="text-xs w-full">
+              <thead><tr class="text-left text-slate-500 uppercase tracking-wider">
+                <th class="pr-4 pb-2">conceito idêntico</th><th class="pr-4 pb-2">broadcast</th><th class="pr-4 pb-2">campaigns</th><th class="pr-4 pb-2">follow_up</th>
+              </tr></thead>
+              <tbody class="align-top">
+                <tr class="border-t border-slate-100"><td class="pr-4 py-2 font-medium">claim → send → mark + recovery de stale</td><td class="pr-4 py-2">mark_*_sent/failed/delivered</td><td class="pr-4 py-2">update/complete/cancel_enrollment</td><td class="pr-4 py-2">_claim/_mark_sent/_recover_stale</td></tr>
+                <tr class="border-t border-slate-100"><td class="pr-4 py-2 font-medium">erro Meta permanente × transitório</td><td class="pr-4 py-2 text-red-600">_is_template_error</td><td class="pr-4 py-2 text-red-600">_is_permanent_error</td><td class="pr-4 py-2 text-red-600">inline em cada _process_* (×2)</td></tr>
+                <tr class="border-t border-slate-100"><td class="pr-4 py-2 font-medium">render de template</td><td class="pr-4 py-2">_render_template_body …</td><td class="pr-4 py-2 text-red-600">importa os _helpers privados do broadcast</td><td class="pr-4 py-2">_build_joao_handoff_components</td></tr>
+              </tbody>
+            </table>
+            <p class="text-xs text-slate-500 mt-3">Depois: um deep module <code>outbound_send</code> — <code>classify_meta_error</code> único + lifecycle claim/mark/recover parametrizado por tabela + render publicado como interface (campaigns para de importar <code>_privados</code> do broadcast).</p>
+          </div>
+
+          <p><strong>Problema.</strong> O mesmo fato de domínio (o que é erro permanente da Meta) tem 4 classificadores sutilmente diferentes, e a máquina claim→send→track+recovery existe 3 vezes; o único reuso atual atravessa o seam por helpers privados de outro module.</p>
+          <p><strong>Solução.</strong> Extrair o classificador (ganho imediato, baixo risco) e depois o lifecycle parametrizado por tabela; o dispatch de <code>job_type</code> do scheduler vira registry de handlers em vez de escada if/elif.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Locality: regra de erro Meta muda num lugar só</li>
+            <li>Acoplamento por _helper privado vira interface publicada</li>
+            <li>Novo job_type = 1 registro, não escada + boilerplate</li>
+          </ul>
+        </article>
+
+        <!-- ============ CARD 8 ============ -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">8 · A escada de recuperação de resposta vazia dentro do run_agent</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">agent/orchestrator.py — run_agent (769–1615, ~845 linhas): chamada inicial · retry A/B/C · retry2 (temperatura + nudge) · fallbacks estáticos por stage · +3 guards no rabo</p>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4">
+            <pre class="mermaid">
+flowchart TB
+  subgraph HOJE["Hoje — 4 estágios inline, cada um com seu tool-loop parcial"]
+    direction TB
+    A["chamada inicial + tool loop"] -->|vazio| B["retry Change A/B/C"]
+    B -->|vazio| C["retry2 · temperatura + nudge"]
+    C -->|vazio| D["fallback estático por stage"]
+    B -. "mudar_stage recuperado aqui NÃO reconstrói o prompt — assimetria latente" .-> X[bug]
+  end
+  subgraph DEPOIS["Depois"]
+    E["generate_reply — interface: contexto → texto final<br/>escada declarada como dados: [inicial, retry, retry2, fallback]<br/>UM tool-loop compartilhado por todos os estágios"]:::deep
+  end
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+  classDef bug fill:#fef2f2,stroke:#dc2626,color:#dc2626;
+  class X bug
+            </pre>
+          </div>
+
+          <p><strong>Problema.</strong> O maior ímã de bugs do repo (8+ incidentes datados) são 4 estágios de recuperação empilhados inline com tool-loops semi-duplicados — o retry2 já não reconstrói o prompt após <code>mudar_stage</code> (assimetria documentada como "Minor #4"). Cada fix vira mais um patch no mesmo corpo de 845 linhas; a suíte de testes datada por incidente congela essa forma no lugar.</p>
+          <p><strong>Solução.</strong> Extrair a escada como um module com os estágios declarados como dados e um único tool-loop compartilhado. Os testes de incidente existentes atravessam a mesma interface (<code>generate</code> mockado) — eles são a rede de segurança da refatoração, não obstáculo.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Um tool-loop: a assimetria do retry2 morre por construção</li>
+            <li>Novo estágio de recuperação = dado, não patch</li>
+            <li>run_agent encolhe ~400 linhas</li>
+          </ul>
+          <div class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">⚠ Maior risco do relatório: é o coração da Valéria em produção. Fazer por último, com a suíte de ~300 testes verde antes e depois de cada passo.</div>
+        </article>
+
+        <!-- ============ CARD 9 ============ -->
+        <article id="c9" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">9 · Cadência: remover a cópia SQL do invariante</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2.5 py-1 rounded-full bg-slate-200 text-slate-700 text-xs font-semibold">Speculative</span>
+              <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs">deleção parcial</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">follow_up/cadence.py (119, deep) · follow_up_jobs_sequence_check (SQL) · follow_up/service.py · campaigns/system_cadence.py (216, espelho derivado)</p>
+          <p><strong>Problema.</strong> A regra da cadência vive em 4 linguagens (dataclass Python, scheduler imperativo, CHECK SQL, grafo React Flow). A cópia SQL do invariante de sequência foi a causa dos 13 dias de cadência silenciosamente morta (erro 23514 engolido como warning) — ela não pega nada que <code>build_touch_jobs</code> consiga produzir, só divergir.</p>
+          <p><strong>Solução.</strong> Soltar (ou afrouxar de vez) o <code>sequence_check</code> — <code>cadence.py</code> já é a fonte de verdade e o watchdog Check 6 já cobre a classe de falha. O espelho React Flow fica: é view derivada deliberada, paga por não executar.</p>
+          <ul class="list-disc list-inside text-sm space-y-1 text-slate-700">
+            <li>Uma cópia a menos do invariante para divergir</li>
+            <li>Já protegido: Check 6 detecta cadência morta</li>
+          </ul>
+        </article>
+
+      </section>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="rounded-xl deepbox text-slate-100 p-8 space-y-4">
+        <p class="modlabel text-indigo-300">Recomendação principal</p>
+        <h2 class="font-serif text-3xl">Comece pelo card <a href="#c1" class="underline decoration-indigo-400">1</a> hoje; o primeiro deepening de verdade é o <a href="#c2" class="underline decoration-indigo-400">2 · Handoff</a></h2>
+        <p class="text-slate-300 text-sm leading-relaxed">O card 1 é meia hora de trabalho, risco zero e remove uma armadilha ativa de dados errados — o deletion test já deu o veredito. Mas o deepening de maior alavancagem é o <strong>Handoff</strong>: é o comportamento com pior locality do sistema (5 arquivos, interface implícita numa string detectada em 3 pontos), já produziu incidentes reais em produção (cartão duplo S1, handoffs cegos), tem escopo delimitado — e cada um dos outros ímãs de bug (cards 3 e 8) fica mais fácil depois que o handoff tiver uma interface tipada, porque o sentinela <code>None</code> e o prefixo-string hoje atravessam exatamente esses modules. Os testes de incidente existentes atravessam o seam do <code>generate</code>, então sobrevivem à refatoração e servem de rede.</p>
+        <p class="text-slate-400 text-xs">Ordem sugerida: 1 (deletar) → 2 (handoff) → 3 (tool registry) → 4 (meta_router) → 5 (provider) → 7 (classificador de erro) → 6 (repository) → 8 (escada de retry, por último) · 9 oportunista.</p>
+      </section>
+
+      <footer class="text-xs text-slate-400 pb-8">Gerado em 12/07/2026 · vocabulário: /codebase-design (module, interface, depth, seam, adapter, leverage, locality) · três agentes Explore: núcleo do agente, pipeline de mensagens, worker/cadência/frontend.</footer>
+    </main>
+  </body>
+</html>
