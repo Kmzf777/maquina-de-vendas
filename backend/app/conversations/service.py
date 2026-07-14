@@ -376,6 +376,26 @@ _MEDIA_PLACEHOLDERS = {
 }
 
 
+# Rótulo (+ gênero) por message_type para a LEGENDA de mídia — falha real 13/07, lead
+# 5564999289099: as legendas das 4 fotos que a Valéria enviou (enviar_fotos) entravam no
+# histórico como TEXTO NU no turno do model ("Modelo de embalagem standup"). O lead voltou
+# 34h depois com "Oi" e o Gemini fechou a lacuna narrativa inventando a autoria:
+# "recebi suas fotos aqui". O mesmo texto nu contaminou o rolling_summary, que passou a
+# afirmar preferências que o lead nunca declarou. Legenda sem tipo e sem autoria é uma
+# frase órfã — o modelo SEMPRE vai adotá-la como fala de alguém.
+# ÁUDIO NÃO ENTRA AQUI: o content de áudio é a TRANSCRIÇÃO (fala real, marcador próprio no
+# prompt) — envelopar viraria metadado. Só mídia visual/arquivo tem LEGENDA.
+_MEDIA_CAPTION_LABELS = {
+    "image": ("Foto", "a"),
+    "video": ("Vídeo", "o"),
+    "document": ("Documento", "o"),
+    "sticker": ("Figurinha", "a"),
+    "location": ("Localização", "a"),
+    "contact": ("Contato", "o"),
+    "contacts": ("Contato", "o"),
+}
+
+
 def describe_media_placeholder(row: dict[str, Any]) -> str:
     """Preenche content vazio de mensagens de mídia com um placeholder legível.
 
@@ -383,6 +403,9 @@ def describe_media_placeholder(row: dict[str, Any]) -> str:
     placeholder quando message_type é de mídia conhecida; ausência de message_type
     ou message_type="text" preserva o content original (comportamento pré-fix, para
     não mexer em mensagens de texto legítimas que hoje vêm vazias por algum outro motivo).
+
+    NÃO envelopa legenda: quem lê texto CRU (resolver de citação/reply, UI) depende disso.
+    Para o texto que o LLM lê, use render_history_content (abaixo).
     """
     content = row.get("content")
     if content and str(content).strip():
@@ -391,6 +414,41 @@ def describe_media_placeholder(row: dict[str, Any]) -> str:
     if not message_type or message_type == "text":
         return content
     return _MEDIA_PLACEHOLDERS.get(message_type, "[mídia]")
+
+
+def render_history_content(row: dict[str, Any]) -> str:
+    """Renderiza o content de uma mensagem para LEITURA DO LLM (histórico + dossiê).
+
+    Camada sobre describe_media_placeholder, aplicada pelos DOIS get_history:
+      - texto puro: intocado;
+      - mídia SEM legenda: placeholder ("[imagem]", "[áudio]"…);
+      - mídia visual/arquivo COM legenda: legenda ENVELOPADA com tipo e autoria —
+        '[Foto enviada por você: "Modelo de embalagem standup"]' (role=assistant) /
+        '[Foto recebida do lead: "essa é minha logo"]' (role=user).
+
+    ÁUDIO fica de fora do envelope de propósito: o content de um áudio é a TRANSCRIÇÃO (a
+    fala real da pessoa, com marcador próprio no prompt), não uma legenda — embrulhá-la
+    transformaria fala em metadado.
+
+    Idempotente: content que já começa com "[" é marcador do pipeline ("[imagem]" do
+    _apply_media_signal, "[audio transcrito: ...]") ou envelope já aplicado — volta intocado.
+    """
+    content = describe_media_placeholder(row)
+    message_type = row.get("message_type")
+    if not message_type or message_type not in _MEDIA_CAPTION_LABELS:
+        return content
+
+    caption = str(content or "").strip()
+    if not caption or caption.startswith("["):
+        return content
+
+    label, gender = _MEDIA_CAPTION_LABELS[message_type]
+    role = row.get("role")
+    if role == "assistant":
+        return f'[{label} enviad{gender} por você: "{caption}"]'
+    if role == "user":
+        return f'[{label} recebid{gender} do lead: "{caption}"]'
+    return f'[{label}: "{caption}"]'
 
 
 def get_history(
@@ -426,7 +484,7 @@ def get_history(
     rows = result.data or []
     ordered = list(reversed(rows))        # volta à ordem cronológica ascendente (contrato inalterado)
     for row in ordered:
-        row["content"] = describe_media_placeholder(row)
+        row["content"] = render_history_content(row)
     if char_budget and char_budget > 0:
         kept: list[dict[str, Any]] = []
         total = 0
