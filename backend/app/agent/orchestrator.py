@@ -31,12 +31,15 @@ from app.agent.handoff import (
     _strip_diacritics,
 )
 from app.agent.adherence import (
+    contains_open_question,
     find_verbatim_prompt_echo,
     handoff_without_answer,
     is_repeated_question,
+    media_result_is_no_send,
     normalize_orthography,
     price_without_cta,
     strip_consecutive_vocative_name,
+    strip_kitchen_leak,
     strip_prohibited_phrases,
 )
 from app.conversations.service import (
@@ -327,6 +330,18 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "[REASONING LEAK] Gemini vazou raciocínio interno como texto em conv %s "
             "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
             conversation_id, source, stage, before_reasoning,
+        )
+    # "O cliente NUNCA vê a cozinha" (auditoria 14/07, caso Thiago): a saída interna
+    # de calcular_orcamento ("o sistema não encontrou o 'X' no catálogo de atacado")
+    # vazou LITERALMENTE 2×. Backstop determinístico — remove só o trecho-vazamento,
+    # preservando o resto útil da frase. Função pura em app.agent.adherence.
+    before_kitchen = cleaned
+    cleaned = strip_kitchen_leak(cleaned)
+    if cleaned != before_kitchen:
+        logger.error(
+            "[KITCHEN LEAK] Gemini expôs cozinha (sistema/catálogo/erro) ao cliente em "
+            "conv %s (source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, before_kitchen,
         )
     # Guarda de aderência (2026-07-04): remove frases proibidas de jargão de
     # call-center ("pra te direcionar da melhor forma") que fogem da voz da
@@ -1051,6 +1066,25 @@ async def run_agent(
                 ))
                 continue
             iteration_had_fresh_call = True
+            # GUARDA PERGUNTA ABERTA (#3, auditoria 14/07 — caso Gilberto Medeiros): não
+            # descartar um lead que acabou de fazer uma pergunta. Aborta o descarte quando o
+            # inbound deste turno contém pergunta genuína e devolve ao modelo a instrução de
+            # RESPONDER antes de qualquer descarte (mesma filosofia da Guarda 18C: falso-
+            # positivo custa pouco — só força responder primeiro). Função pura em adherence.
+            if func_name == "registrar_sem_interesse_atual" and contains_open_question(user_text):
+                logger.warning(
+                    "[GUARDA PERGUNTA ABERTA] registrar_sem_interesse_atual abortado em conv %s "
+                    "(lead %s) — lead fez pergunta ainda não respondida: %.120s",
+                    conversation_id, lead_id, user_text,
+                )
+                contents.append(function_response_content(
+                    func_name,
+                    "[ABORTADO — GUARDA PERGUNTA ABERTA] O lead acabou de fazer uma pergunta que "
+                    "ainda não foi respondida. RESPONDA a pergunta com a informação do catálogo "
+                    "(preço, lote mínimo, como funciona) ANTES de qualquer descarte. Nunca "
+                    "classifique como 'sem interesse' quem está perguntando.",
+                ))
+                continue
             try:
                 tool_result = await execute_tool(
                     func_name, func_args, lead_id, lead.get("phone", ""), conversation_id
@@ -1069,6 +1103,19 @@ async def run_agent(
             else:
                 if isinstance(tool_result, str) and not tool_result.startswith("erro"):
                     executed_tool_cache[_dedup_key] = tool_result
+                # media_exec_failed reflete o ÚLTIMO desfecho de mídia (auditoria 14/07,
+                # caso Marcelo): enviar_foto_produto/enviar_fotos retornam "nao encontrada"/
+                # "nenhuma foto" SEM exceção — a intenção (media_tool_used) não virou envio.
+                # Um envio real posterior LIMPA a falha (False), pra guarda de fotos
+                # verbalizadas só disparar quando de fato nada foi enviado.
+                if func_name in _MEDIA_TOOL_NAMES and not str(tool_result).startswith("erro"):
+                    media_exec_failed = media_result_is_no_send(tool_result)
+                    if media_exec_failed:
+                        logger.warning(
+                            "[MEDIA NO-SEND] %s não enviou nada em conv %s (resultado=%.80s) — "
+                            "guarda de fotos verbalizadas fica ciente",
+                            func_name, conversation_id, tool_result,
+                        )
             if is_handoff(func_name, tool_result):
                 handoff_executed = True
             contents.append(function_response_content(func_name, tool_result))
@@ -1300,6 +1347,13 @@ async def run_agent(
                         # tool de mídia recuperada aqui também falhe.
                         if _rname in _MEDIA_TOOL_NAMES:
                             media_exec_failed = True
+                    else:
+                        # Envio real recuperado no retry LIMPA a falha anterior (auditoria
+                        # 14/07): se a mídia foi de fato enviada aqui, a guarda de fotos
+                        # verbalizadas não deve mais forçar reenvio. No-send ("nao
+                        # encontrada") mantém a falha marcada.
+                        if _rname in _MEDIA_TOOL_NAMES and not str(_rresult).startswith("erro"):
+                            media_exec_failed = media_result_is_no_send(_rresult)
                     # Mesma detecção do loop principal (fix S1 11/07): is_handoff cobre o
                     # nome explícito E a cascata via qualificar_lead (prefixo no retorno).
                     if is_handoff(_rname, _rresult):
@@ -1542,7 +1596,7 @@ async def run_agent(
     # fotos entram na fila antes do handoff decidir o destino do texto.
     if (
         stage in _PHOTO_GUARD_STAGES
-        and not media_tool_used
+        and (not media_tool_used or media_exec_failed)
         and _looks_like_photo_send_claim(assistant_text)
     ):
         logger.warning(

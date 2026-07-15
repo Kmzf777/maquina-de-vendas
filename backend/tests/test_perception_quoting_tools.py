@@ -294,7 +294,9 @@ async def test_product_not_found_returns_clear_error():
     with patch("app.agent.tools._fetch_active_products", return_value=_FAKE_PRODUCTS):
         result = await _exec("calcular_orcamento", args)
 
-    assert "não encontrado" in result.lower() or "confirme o nome" in result.lower()
+    # Reescrita 14/07 (caso Thiago): mensagem INTERNA, sem vazar "não encontrado no
+    # catálogo" ao cliente — marca [INTERNO] + "não existe" + instrução de tom.
+    assert "interno" in result.lower() or "não existe" in result.lower()
     assert "produto inexistente xyz" in result.lower() or "produto" in result.lower()
 
 
