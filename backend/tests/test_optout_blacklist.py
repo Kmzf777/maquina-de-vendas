@@ -183,7 +183,11 @@ def test_apply_optout_side_effects_moves_and_cancels():
         apply_optout_side_effects("lead-h1", "5511999990000", reason="optout")
 
     mock_move.assert_called_once_with("lead-h1")
-    mock_cancel.assert_called_once_with("5511999990000", reason="optout")
+    # Parada terminal: NÃO preserva ai_scheduled_return (um lead que optou por sair não
+    # pode receber um retorno proativo prometido depois).
+    mock_cancel.assert_called_once_with(
+        "5511999990000", reason="optout", preserve_scheduled_return=False
+    )
 
 
 def test_apply_optout_side_effects_skips_cancel_without_phone():

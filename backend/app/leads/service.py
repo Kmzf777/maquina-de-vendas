@@ -1565,7 +1565,9 @@ def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
     if phone:
         try:
             from app.follow_up.service import cancel_followups_by_phone
-            cancel_followups_by_phone(phone, reason=reason)
+            # Parada terminal (opt-out): também cancela `ai_scheduled_return` — um lead
+            # que pediu para sair não pode receber um retorno proativo depois.
+            cancel_followups_by_phone(phone, reason=reason, preserve_scheduled_return=False)
         except Exception as exc:
             logger.error(
                 "apply_optout_side_effects: falha ao cancelar follow-ups para lead %s (phone %s): %s",

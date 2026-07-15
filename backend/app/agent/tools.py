@@ -599,7 +599,7 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
     # receber uma mensagem automática da Valéria depois de já ter sido passado pro
     # vendedor (o handoff_rescue é preservado — cancel_followups_by_phone o exclui).
     try:
-        cancel_followups_by_phone(phone, reason="handoff")
+        cancel_followups_by_phone(phone, reason="handoff", preserve_scheduled_return=False)
     except Exception as exc:
         logger.error(
             "encaminhar_humano: falha ao cancelar follow-ups para lead %s (phone %s): %s",
@@ -838,7 +838,7 @@ async def _t_registrar_sem_interesse_atual(ctx: ToolContext) -> str:
             )
             return f"ERRO ao registrar sem interesse: {exc}"
         try:
-            cancel_followups_by_phone(phone, reason="cliente_ativo_sem_demanda")
+            cancel_followups_by_phone(phone, reason="cliente_ativo_sem_demanda", preserve_scheduled_return=False)
         except Exception as exc:
             logger.error(
                 "registrar_sem_interesse_atual (cliente ativo): falha ao cancelar follow-ups p/ %s: %s",
@@ -874,7 +874,7 @@ async def _t_registrar_sem_interesse_atual(ctx: ToolContext) -> str:
         return f"ERRO ao registrar sem interesse: {exc}"
     move_lead_deals_to_perdido(lead_id, reason=motivo)
     try:
-        cancel_followups_by_phone(phone, reason="sem_interesse_atual")
+        cancel_followups_by_phone(phone, reason="sem_interesse_atual", preserve_scheduled_return=False)
     except Exception as exc:
         logger.error(
             "registrar_sem_interesse_atual: falha ao cancelar follow-ups para lead %s: %s",

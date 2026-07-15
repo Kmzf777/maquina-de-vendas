@@ -576,6 +576,33 @@ async def process_due_followups(now: datetime | None = None) -> None:
             logger.info("[FOLLOWUP] job %s já reivindicado por outro worker — pulando", job["id"])
             continue
 
+        # REDE DE SEGURANÇA DE PARADA (defesa em profundidade) — roda para QUALQUER
+        # job_type, logo após a reivindicação e ANTES de qualquer despacho. A interrupção
+        # da cadência não pode depender só do cancelamento-na-escrita ter alcançado a
+        # linha certa (caso 5511910402026, 15/07: a cliente pediu ao humano para a IA
+        # parar, mas nada disso virou estado — opt_out/ai_enabled intactos — e os toques
+        # seguiram). Aqui relemos o lead e, se ele está marcado para parar (opt-out,
+        # blacklist, número errado, IA desligada), cancelamos o job seja qual for o tipo
+        # ou estado, sem enviar. Fail-soft: releitura falha → None → não age (o job segue
+        # para o fluxo normal, exatamente como antes).
+        stop_lead_id = job.get("lead_id")
+        if stop_lead_id:
+            try:
+                stop_reason = _lead_stop_reason(_fetch_lead_for_backstop(stop_lead_id))
+            except Exception as exc:
+                logger.error(
+                    "[FOLLOWUP] falha no backstop de parada (lead %s) — seguindo para o "
+                    "fluxo normal: %s", stop_lead_id, exc, exc_info=True,
+                )
+                stop_reason = None
+            if stop_reason:
+                _cancel_job(job["id"], stop_reason)
+                logger.info(
+                    "[FOLLOWUP] lead %s marcado para parar (%s) — job %s (%s) suprimido no envio",
+                    stop_lead_id, stop_reason, job["id"], job.get("job_type"),
+                )
+                continue
+
         # Rota jobs de resgate de handoff para handler dedicado (antes de qualquer guard padrão)
         if job.get("job_type") == "handoff_rescue":
             await _process_handoff_rescue(job, now)
@@ -801,20 +828,45 @@ async def process_due_followups(now: datetime | None = None) -> None:
         logger.info(f"[FOLLOWUP] Enviado seq={sequence} lead={lead['phone']}")
 
 
-def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
-    """Relê o lead com `stage`/`metadata` para a decisão `should_proactive_handoff`.
+def _lead_stop_reason(lead: dict | None) -> str | None:
+    """Motivo de PARADA do lead, ou None se ele deve seguir recebendo follow-up.
 
-    O select de `get_due_followups` (join `leads!inner(...)`) não traz `stage` nem
-    `metadata` — só id/phone/name/last_customer_message_at/wa_id — então a decisão
-    precisa reler o lead à parte, mesmo padrão de `_process_ai_reengage`/
-    `_process_ai_scheduled_return`. Fail-soft: erro de DB → None (`should_proactive_handoff`
-    trata `None` como não-elegível, então o lead segue para o follow-up padrão).
+    Fonte única do backstop de envio de `process_due_followups`. Ordem de prioridade dá
+    o `cancel_reason` gravado (preserva a semântica de analytics já existente: `opt_out`,
+    `wrong_number`, `ai_disabled`). Função PURA e fail-open: lead None/sem flags → None
+    (na dúvida, o fluxo normal segue). `ai_enabled` só para quando é EXPLICITAMENTE False
+    (ausente/None não dispara — o lead veio de um select que pode não trazer o campo).
+    """
+    if not isinstance(lead, dict):
+        return None
+    if lead.get("opt_out"):
+        return "opt_out"
+    meta = lead.get("metadata") or {}
+    if isinstance(meta, dict):
+        if meta.get("blacklisted_at"):
+            return "blacklisted"
+        if meta.get("wrong_number_at"):
+            return "wrong_number"
+    if lead.get("ai_enabled") is False:
+        return "ai_disabled"
+    return None
+
+
+def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
+    """Relê o lead para os backstops de parada e a decisão `should_proactive_handoff`.
+
+    O select de `get_due_followups` (join `leads!inner(...)`) não traz `stage`, `metadata`,
+    `opt_out` nem `ai_enabled` — só id/phone/name/last_customer_message_at/wa_id — então a
+    decisão precisa reler o lead à parte, mesmo padrão de `_process_ai_reengage`/
+    `_process_ai_scheduled_return`. Fail-soft: erro de DB → None (tanto `_lead_stop_reason`
+    quanto `should_proactive_handoff` tratam `None` como não-elegível, então o lead segue
+    para o follow-up padrão).
     """
     try:
         sb = get_supabase()
         res = (
             sb.table("leads")
-            .select("id, phone, stage, metadata")
+            .select("id, phone, stage, opt_out, ai_enabled, metadata")
             .eq("id", lead_id)
             .single()
             .execute()
