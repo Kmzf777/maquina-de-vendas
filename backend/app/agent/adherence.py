@@ -422,3 +422,181 @@ def handoff_without_answer(last_lead_text: str | None, farewell_text: str | None
     if "R$" in farewell or _DIGIT_RE.search(farewell):
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# 9. strip_kitchen_leak (auditoria 2026-07-14 — caso Thiago Romanini)
+# ---------------------------------------------------------------------------
+# A Valéria repassou LITERALMENTE, 2×, a saída interna de calcular_orcamento:
+# "opa, o sistema não encontrou o 'Café Canastra 250g…' no catálogo de atacado…".
+# O prompt de atacado (valeria_inbound/atacado.py) proíbe: "o cliente NUNCA vê a
+# cozinha". Backstop determinístico: remove o TRECHO-vazamento (o span que expõe
+# sistema/catálogo/erro), preservando o resto útil da frase — mesma técnica de
+# spans de strip_prohibited_phrases (casa no texto normalizado, remove do ORIGINAL;
+# NFD + filtro de Mn preserva os índices de caracteres não-combinantes).
+#
+# CONSERVADOR: só casa "sistema/catálogo/erro" no CONTEXTO de falha de máquina.
+# Usos de venda legítimos ("sistema Nespresso", "nosso sistema de torra") ficam
+# intactos porque exigem o verbo/estado de erro colado (encontrou/achou/travou/
+# fora/deu erro), não a palavra "sistema" isolada.
+_KITCHEN_LEAK_RES: tuple[re.Pattern, ...] = (
+    # "o sistema (nao) encontrou/achou/... [o 'X'] no catalogo de Y" — o fim ancora
+    # em "no catalogo[ de Y]" OU na fronteira da cláusula (o que vier primeiro, lazy),
+    # preservando o trecho útil que costuma vir depois ("ele tem as opções de…").
+    re.compile(
+        r"\b(?:o\s+)?sistema\s+(?:nao\s+)?(?:encontrou|achou|acha|localizou|encontra|localiza)\b"
+        r"[^.?!\n]*?(?:\bno\s+catalogo(?:\s+de\s+[a-z_]+)?[,.]?|(?=[,.?!\n]|$))\s*"
+    ),
+    # "(nao) encontrei/achei/localizei ... no catalogo ..."
+    re.compile(
+        r"\b(?:nao\s+)?(?:encontrei|achei|localizei|acho)\b[^.?!\n]*?"
+        r"\bno\s+catalogo(?:\s+de\s+[a-z_]+)?[,.]?\s*"
+    ),
+    # "o sistema travou / esta fora / fora do ar / caiu / bugou"
+    re.compile(
+        r"\b(?:o\s+)?sistema\s+(?:travou|caiu|esta\s+fora|ta\s+fora|fora\s+do\s+ar|bugou)\b"
+        r"[^,.?!\n]*[,.]?\s*"
+    ),
+    # "deu (um) erro (aqui/no sistema) ..." até a próxima vírgula/fim de cláusula
+    re.compile(r"\bdeu\s+(?:um\s+)?erro\b[^,.?!\n]*[,.]?\s*"),
+    re.compile(r"\berro\s+(?:no\s+sistema|aqui|interno|de\s+sistema)\b[^,.?!\n]*[,.]?\s*"),
+)
+
+
+def strip_kitchen_leak(text: str) -> str:
+    """Remove trechos que expõem a 'cozinha' (sistema/catálogo/erro) ao cliente.
+
+    Casa sobre a versão normalizada (minúsculas, sem diacríticos) e remove os spans
+    do texto ORIGINAL, preservando acentos/caixa do restante. Fail-open: se a
+    remoção esvaziar a mensagem, devolve o texto ORIGINAL (a rede primária é a
+    reescrita do retorno interno da tool). Função pura — sem I/O, testável isolada.
+    """
+    if not text:
+        return text
+
+    normalized = _normalize(text)
+    spans: list[tuple[int, int]] = []
+    for pattern in _KITCHEN_LEAK_RES:
+        for m in pattern.finditer(normalized):
+            spans.append((m.start(), m.end()))
+    if not spans:
+        return text
+
+    # Une spans sobrepostos e remove em ordem inversa (índices batem 1:1 entre
+    # normalized e text — NFD+Mn nunca insere/remove não-combinante).
+    spans.sort()
+    merged: list[list[int]] = []
+    for s, e in spans:
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+
+    result = text
+    for s, e in reversed(merged):
+        result = result[:s] + result[e:]
+
+    result = _collapse_whitespace_and_punctuation(result)
+    return result if result.strip() else text
+
+
+# ---------------------------------------------------------------------------
+# 10. media_result_is_no_send (auditoria 2026-07-14 — caso Marcelo Dummel)
+# ---------------------------------------------------------------------------
+# media_tool_used marca INTENÇÃO (tool chamada), não ENVIO. enviar_foto_produto/
+# enviar_fotos retornam "nao encontrada"/"Nenhuma foto" SEM levantar exceção — a
+# flag virava True, a guarda de fotos verbalizadas era pulada, e a promessa "to
+# mandando as fotos" saía sem foto. Este detector distingue o retorno de NÃO-envio
+# do de sucesso/idempotência ("enfileirada", "ja enviada" = fotos já existem).
+_MEDIA_NO_SEND_SIGNALS = ("nao encontrada", "nao encontrado", "nenhuma foto")
+
+
+def media_result_is_no_send(result: str | None) -> bool:
+    """True quando o retorno de uma tool de mídia indica que NADA foi enviado.
+
+    False para sucesso ("enfileirada(s)") e para no-op idempotente ("ja
+    enviada/enfileirada" — fotos já presentes na conversa). Função pura.
+    """
+    n = _normalize(result or "")
+    return any(sig in n for sig in _MEDIA_NO_SEND_SIGNALS)
+
+
+# ---------------------------------------------------------------------------
+# 11. contains_open_question (auditoria 2026-07-14 — caso Gilberto Medeiros)
+# ---------------------------------------------------------------------------
+# O lead perguntou "Tenho que investir?" e foi descartado (registrar_sem_interesse_
+# atual) SEM resposta. Detecta uma pergunta GENUÍNA (interrogativo ou termo de
+# negócio dentro de um trecho terminado em "?"), ignorando cortesia pura ("tudo
+# bem?", "ok?", "né?"). Deliberadamente conservador do lado do lead: só bloqueia o
+# descarte quando há sinal claro de pergunta — falso-positivo custa pouco (o modelo
+# responde antes), falso-negativo mantém o comportamento atual.
+_OPEN_QUESTION_MARKERS = (
+    # interrogativos
+    "qual", "quais", "quanto", "quanta", "quantos", "quantas", "como", "quando",
+    "onde", "quem", "por que", "porque", "pq",
+    # verbos/termos de negócio comuns em pergunta de compra
+    "tem ", "teria", "posso", "poderia", "consigo", "da pra", "preciso", "precisa",
+    "precisaria", "investir", "funciona", "custa", "vale", "possivel", "minimo",
+    "valor", "preco", "quanto custa", "e possivel",
+)
+
+
+def contains_open_question(text: str | None) -> bool:
+    """True quando o texto do LEAD contém uma pergunta genuína (não só cortesia).
+
+    Exige um trecho terminado em "?" cujo conteúdo normalizado contenha um
+    interrogativo ou termo de negócio de `_OPEN_QUESTION_MARKERS`. Cortesia curta
+    ("tudo bem?", "ok?") não casa. Função pura — sem I/O.
+    """
+    if not text or "?" not in text:
+        return False
+    normalized = _normalize(text)
+    for chunk in _QUESTION_CHUNK_RE.findall(normalized):
+        if any(marker in chunk for marker in _OPEN_QUESTION_MARKERS):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# 12. strip_media_history_markers (auditoria 2026-07-14 — caso Noelson)
+# ---------------------------------------------------------------------------
+# render_history_content (app.conversations.service) envelopa a legenda de mídia p/
+# o LLM: '[Foto enviada por você: "Modelo de embalagem standup"]' (role=assistant) /
+# '[Foto recebida do lead: "..."]' (role=user). Isso é DELIBERADO e correto p/ o
+# histórico do LLM (fix 13/07, evita o modelo inventar autoria). O bug: o modelo
+# ECOOU esse marcador como texto da resposta e ele chegou ao WhatsApp do cliente
+# (onde "você" lê como se o CLIENTE tivesse enviado — autoria aparentemente
+# invertida). Backstop: remove QUALQUER marcador-envelope de mídia do texto de SAÍDA.
+# O formato do histórico permanece intocado — só a fala final é higienizada.
+#
+# Casa os rótulos de _MEDIA_CAPTION_LABELS (Foto/Vídeo/Documento/Figurinha/
+# Localização/Contato) + autoria (enviad_ por você | recebid_ do lead) + legenda
+# entre aspas. Acento/caixa-insensitive (casa no normalizado, remove do original).
+_MEDIA_MARKER_RE = re.compile(
+    r"\[\s*(?:foto|video|documento|figurinha|localizacao|contato)\s+"
+    r"(?:enviad[oa]\s+por\s+voce|recebid[oa]\s+do\s+lead)\s*:\s*"
+    r'"[^"\]]*"\s*\]'
+)
+
+
+def strip_media_history_markers(text: str) -> str:
+    """Remove marcadores-envelope de mídia do histórico que vazaram no texto de saída.
+
+    Ex.: '[Foto enviada por você: "standup"]'. Preserva o resto da mensagem. Se a
+    remoção esvaziar o texto (bolha era só marcador — ruído puro), devolve o
+    resultado vazio de propósito (o pipeline trata saída vazia como silêncio/
+    fallback). Função pura — sem I/O, testável isoladamente.
+    """
+    if not text:
+        return text
+
+    normalized = _normalize(text)
+    matches = list(_MEDIA_MARKER_RE.finditer(normalized))
+    if not matches:
+        return text
+
+    result = text
+    for m in reversed(matches):
+        result = result[: m.start()] + result[m.end():]
+
+    return _collapse_whitespace_and_punctuation(result)

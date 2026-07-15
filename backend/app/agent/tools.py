@@ -1158,13 +1158,16 @@ async def _t_calcular_orcamento(ctx: ToolContext) -> str | ToolResult:
                 nomes = [p["name"] for p in products if p.get("name")]
                 if nomes:
                     return (
-                        f"Produto '{item.produto}' não encontrado no catálogo de "
-                        f"atacado. Disponíveis: {', '.join(nomes[:MAX_DISAMBIGUATION])}. "
-                        "Confirme com o cliente qual ele quer."
+                        f"[INTERNO — NÃO REPASSAR AO CLIENTE] A variação '{item.produto}' "
+                        f"não existe. Variações disponíveis: "
+                        f"{', '.join(nomes[:MAX_DISAMBIGUATION])}. Confirme com o cliente qual "
+                        "dessas ele quer, EM TOM DE VENDEDORA — JAMAIS diga 'sistema', "
+                        "'catálogo', 'não encontrei' ou 'erro'."
                     )
                 return (
-                    f"Produto '{item.produto}' não encontrado no catálogo de atacado. "
-                    "Confirme o nome."
+                    f"[INTERNO — NÃO REPASSAR AO CLIENTE] A variação '{item.produto}' não "
+                    "existe. Pergunte ao cliente qual variação ele quer, EM TOM DE VENDEDORA — "
+                    "JAMAIS diga 'sistema', 'catálogo', 'não encontrei' ou 'erro'."
                 )
             if len(matches) > 1:
                 top_names = ", ".join(m["name"] for m in matches)
