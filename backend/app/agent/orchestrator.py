@@ -40,6 +40,7 @@ from app.agent.adherence import (
     price_without_cta,
     strip_consecutive_vocative_name,
     strip_kitchen_leak,
+    strip_media_history_markers,
     strip_prohibited_phrases,
 )
 from app.conversations.service import (
@@ -342,6 +343,17 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "[KITCHEN LEAK] Gemini expôs cozinha (sistema/catálogo/erro) ao cliente em "
             "conv %s (source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
             conversation_id, source, stage, before_kitchen,
+        )
+    # Marcador-envelope de mídia do histórico ('[Foto enviada por você: "..."]')
+    # ecoado como fala (auditoria 14/07, caso Noelson): NUNCA vai ao cliente — o
+    # formato do histórico é correto p/ o LLM, mas é ruído/autoria-confusa se vaza.
+    before_media_marker = cleaned
+    cleaned = strip_media_history_markers(cleaned)
+    if cleaned != before_media_marker:
+        logger.error(
+            "[MEDIA MARKER LEAK] Gemini ecoou marcador de mídia do histórico ao cliente em "
+            "conv %s (source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, before_media_marker,
         )
     # Guarda de aderência (2026-07-04): remove frases proibidas de jargão de
     # call-center ("pra te direcionar da melhor forma") que fogem da voz da

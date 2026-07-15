@@ -118,6 +118,36 @@ entrada inbound.
 
 ---
 
+## Rodada 2 — itens BAIXOS (#6, #7, #8) — "limpar a mesa"
+
+Prompts (#6, #8) seguem estritamente `gemini-prompting-strategies.md` (Gemini 3): estrutura
+consistente com o estilo do arquivo, constraint imperativo (o que fazer E não fazer), few-shot
+bad→good variado, instruções críticas em destaque.
+
+### #6 — Prova social incoerente (atacado inbound + outbound)
+A linha fixa "Benchmark de mercado" pressupõe que o lead já vende café. Regra CONDICIONAL
+adicionada logo após ela: SE o lead já vende café → benchmark atual; SE está começando do zero
+/ ainda não vende → PROIBIDO "o café que vendia", usar prova social de ENTRADA (diferenciação/
+fuga da guerra de preço); na dúvida, versão neutra de entrada. Few-shot com 2 situações
+(bad→good). Arquivos: `valeria_inbound/atacado.py`, `valeria_outbound/atacado.py`.
+
+### #7 — Vazamento de marcador de mídia do histórico (backend + teste)
+`render_history_content` envelopa a legenda de foto como `[Foto enviada por você: "…"]` — formato
+CORRETO e deliberado para o LLM (fix 13/07, evita o modelo inventar autoria). O bug real: o
+modelo ECOOU o marcador como fala e ele chegou ao cliente (onde "você" lê como se o cliente
+tivesse enviado). **Decisão técnica:** NÃO alterar o formato do histórico (regrediria o fix
+13/07 e o teste `test_history_media_captions_2026_07_13`). Fix definitivo = backstop
+determinístico `adherence.strip_media_history_markers` no `_sanitize_assistant_text`, que remove
+o marcador-envelope da SAÍDA (nunca chega ao WhatsApp), preservando o resto útil da bolha.
+Teste `test_media_marker_leak_2026_07_14.py` (7 casos, inclui a bolha real da CONV 04).
+
+### #8 — Presunção de gênero (base.py)
+Nova subseção `## Linguagem neutra de genero` em destaque no bloco `<constraints>`: proíbe
+adjetivos/particípios flexionados aplicados ao lead enquanto o gênero não for óbvio pelo nome
+próprio (em DOBRO para PJ/empresa); dá alternativas neutras e calorosas ("você tem toda razão",
+"faz total sentido"); ressalva que a auto-referência da Valéria segue no feminino; few-shot
+bad→good. Mantém o tom caloroso.
+
 ## Riscos e mitigação
 - Mudanças de código são todas **funções puras + wiring mínimo**, fail-open, cobertas por
   testes. Nenhuma altera contrato de tool nem schema.

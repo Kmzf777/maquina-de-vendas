@@ -555,3 +555,48 @@ def contains_open_question(text: str | None) -> bool:
         if any(marker in chunk for marker in _OPEN_QUESTION_MARKERS):
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# 12. strip_media_history_markers (auditoria 2026-07-14 — caso Noelson)
+# ---------------------------------------------------------------------------
+# render_history_content (app.conversations.service) envelopa a legenda de mídia p/
+# o LLM: '[Foto enviada por você: "Modelo de embalagem standup"]' (role=assistant) /
+# '[Foto recebida do lead: "..."]' (role=user). Isso é DELIBERADO e correto p/ o
+# histórico do LLM (fix 13/07, evita o modelo inventar autoria). O bug: o modelo
+# ECOOU esse marcador como texto da resposta e ele chegou ao WhatsApp do cliente
+# (onde "você" lê como se o CLIENTE tivesse enviado — autoria aparentemente
+# invertida). Backstop: remove QUALQUER marcador-envelope de mídia do texto de SAÍDA.
+# O formato do histórico permanece intocado — só a fala final é higienizada.
+#
+# Casa os rótulos de _MEDIA_CAPTION_LABELS (Foto/Vídeo/Documento/Figurinha/
+# Localização/Contato) + autoria (enviad_ por você | recebid_ do lead) + legenda
+# entre aspas. Acento/caixa-insensitive (casa no normalizado, remove do original).
+_MEDIA_MARKER_RE = re.compile(
+    r"\[\s*(?:foto|video|documento|figurinha|localizacao|contato)\s+"
+    r"(?:enviad[oa]\s+por\s+voce|recebid[oa]\s+do\s+lead)\s*:\s*"
+    r'"[^"\]]*"\s*\]'
+)
+
+
+def strip_media_history_markers(text: str) -> str:
+    """Remove marcadores-envelope de mídia do histórico que vazaram no texto de saída.
+
+    Ex.: '[Foto enviada por você: "standup"]'. Preserva o resto da mensagem. Se a
+    remoção esvaziar o texto (bolha era só marcador — ruído puro), devolve o
+    resultado vazio de propósito (o pipeline trata saída vazia como silêncio/
+    fallback). Função pura — sem I/O, testável isoladamente.
+    """
+    if not text:
+        return text
+
+    normalized = _normalize(text)
+    matches = list(_MEDIA_MARKER_RE.finditer(normalized))
+    if not matches:
+        return text
+
+    result = text
+    for m in reversed(matches):
+        result = result[: m.start()] + result[m.end():]
+
+    return _collapse_whitespace_and_punctuation(result)

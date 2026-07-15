@@ -35,8 +35,19 @@ Arquivo de teste novo: `backend/tests/test_valeria_qa_fixes_2026_07_14.py`.
   `valeria_outbound/secretaria.py`.
 - [ ] Regra de não-reiniciar-com-histórico em `valeria_inbound/private_label.py` (e entrada).
 
-## Fase 5 — Validação e deploy
-- [ ] `pytest` completo (backend) verde.
-- [ ] `git add` + commit descritivo.
-- [ ] `git pull origin master` → `git push origin fix/valeria-qa-1407:master`.
-- [ ] Confirmar Action de deploy disparada.
+## Fase 5 — Validação e deploy (rodada 1)
+- [x] `pytest` completo (backend) verde.
+- [x] commit + `git pull origin master` → `git push origin fix/valeria-qa-1407:master`.
+- [x] Deploy VPS verde (merge 31f4b4a).
+
+## Fase 6 — Itens BAIXOS (#6, #7, #8) — branch fix/valeria-qa-baixos-1407
+Guia obrigatório lido: `gemini-prompting-strategies.md`.
+- [x] #7 (backend, TDD): `strip_media_history_markers` em adherence.py + wiring no sanitizer
+  (`_sanitize_assistant_text`) + `test_media_marker_leak_2026_07_14.py`. Formato do histórico
+  PRESERVADO.
+- [x] #6 (subagente): prova social condicional em `valeria_inbound/atacado.py` e
+  `valeria_outbound/atacado.py` (constraint + few-shot, guia Gemini).
+- [x] #8 (subagente): `## Linguagem neutra de genero` em `base.py` (constraint + few-shot).
+- [ ] `pytest` completo verde.
+- [ ] commit + `git pull origin master` + `git push origin fix/valeria-qa-baixos-1407:master`.
+- [ ] Deploy VPS verde.
