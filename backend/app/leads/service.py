@@ -88,18 +88,43 @@ _GREETING_WORD_RE = re.compile(
 # espacos em geral.
 _LEADING_NOISE_RE = re.compile(r"^[\s,.…!?;:\-]+")
 
+# Prefixo de APRESENTACAO ("meu nome é Ricardo", "me chamo Ana", "sou o Carlos") — o lead
+# digita a frase inteira no campo nome e sem tratamento o `.split()[0]` do broadcast/LP
+# pega "meu"/"me"/"sou" como se fosse o nome ("olá meu" — auditoria 15/07). Removido do
+# INICIO junto com a saudacao, no mesmo laço iterativo (cobre "Olá, meu nome é Ricardo").
+# Case-insensitivo (re.IGNORECASE cobre o casefold de "É"/"é"); o RESTANTE preserva a
+# grafia/caixa original. Cada alternativa consome pelo menos um separador (\s+/hifen) para
+# nao truncar nomes que apenas COMEÇAM parecido ("Souza", "Eduardo", "Meurer").
+_PRESENTATION_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"meu\s+nome\s+(?:é|eh|e)\s+"        # "meu nome é/eh/e Ricardo"
+    r"|meu\s+nome\s+"                     # "meu nome Ricardo" (sem verbo)
+    r"|me\s+chamo\s+"                     # "me chamo Ana"
+    r"|chamo-me\s+"                       # "chamo-me Ana"
+    r"|eu\s+sou\s+(?:o\s+|a\s+)?"         # "eu sou / eu sou o / eu sou a"
+    r"|sou\s+(?:o|a|eu)\s+"               # "sou o / sou a / sou eu"
+    r"|aqui\s+(?:é|eh|e)\s+(?:o|a)\s+"    # "aqui é o / aqui é a"
+    r"|pode\s+me\s+chamar\s+de\s+"        # "pode me chamar de"
+    r"|pode\s+chamar\s+de\s+"             # "pode chamar de"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def strip_greeting_prefix(name: str | None) -> str | None:
-    """Remove um prefixo de saudação (e a pontuação/reticências que o acompanha) do
-    início de `name`, de forma ITERATIVA — cobre saudações compostas ("Olá, boa tarde"
-    remove "Olá" e depois "boa tarde").
+    """Remove um prefixo de saudação e/ou de APRESENTAÇÃO (e a pontuação/reticências que o
+    acompanha) do início de `name`, de forma ITERATIVA — cobre saudações compostas ("Olá,
+    boa tarde" remove "Olá" e depois "boa tarde") e apresentações após saudação ("Olá, meu
+    nome é Ricardo" remove "Olá," e depois "meu nome é " -> "Ricardo").
 
     Retorna o restante — preservando a grafia/caixa original (não força title-case) —
-    ou None se sobrar vazio, ou seja, se `name` era SÓ saudação.
+    ou None se sobrar vazio, ou seja, se `name` era SÓ saudação/apresentação.
 
-    Casos reais (auditoria 01-02/07): "Boa tarde.... Luiz" -> "Luiz" (recupera o nome
-    real colado após a saudação); "Olá, boa tarde" -> None; "Boa tarde." -> None;
-    "Maycon" -> "Maycon" (intocado, sem saudação para remover).
+    Casos reais: "Boa tarde.... Luiz" -> "Luiz" (recupera o nome real colado após a
+    saudação); "Olá, boa tarde" -> None; "Boa tarde." -> None; "Maycon" -> "Maycon"
+    (intocado); "meu nome é Ricardo" -> "Ricardo" (auditoria 15/07 — o "olá meu"). O
+    RESTANTE ainda passa pelas checagens de `sanitize_display_name` (ex.: "meu nome é sim"
+    -> "sim" -> cai em _CONVERSATIONAL_NON_NAMES -> None).
     """
     if not name:
         return None
@@ -107,9 +132,14 @@ def strip_greeting_prefix(name: str | None) -> str | None:
     while True:
         remainder = _LEADING_NOISE_RE.sub("", remainder)
         match = _GREETING_WORD_RE.match(remainder)
-        if not match:
-            break
-        remainder = remainder[match.end():]
+        if match:
+            remainder = remainder[match.end():]
+            continue
+        match = _PRESENTATION_PREFIX_RE.match(remainder)
+        if match:
+            remainder = remainder[match.end():]
+            continue
+        break
     remainder = remainder.strip()
     return remainder or None
 

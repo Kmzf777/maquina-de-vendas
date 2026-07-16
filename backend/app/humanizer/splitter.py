@@ -166,10 +166,14 @@ def _strip_terminal_period(bubble: str) -> str:
 # só re-adicionamos "?" quando a bolha ABRE com um destes — evita falso-positivo em declarativas.
 # Nota: "que " foi removido — bare "que" é ambíguo ("que bonito!", "que saudade") e a fronteira
 # de palavra não resolve isso; "o que" e "o quê" cobrem o caso interrogativo relevante.
+# Nota (15/07): "te interessa" e "faz sentido" foram removidos — o roteiro os usa em AFIRMAÇÕES
+# de acolhimento ("faz sentido querer alcançar todo mundo") que viravam pergunta indevidamente.
+# O modelo já anexa "?" nas perguntas reais e _ensure_question_mark retorna cedo quando a bolha
+# já termina em "?", então perguntas legítimas ("faz sentido pra você?") não perdem o "?".
 _QUESTION_STARTERS = (
     "qual", "quais", "o que", "o quê", "como", "quando", "onde", "quanto",
     "quantos", "quantas", "quem", "por que", "por quê", "quer", "prefere", "poderia",
-    "consegue", "seria", "te interessa", "faz sentido",
+    "consegue", "seria",
 )
 
 # Regex compilada com fronteira de palavra (\b) para evitar falso-positivo em prefixos:

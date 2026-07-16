@@ -13,7 +13,7 @@ from app.leads.service import (
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
     add_tags_to_lead, move_deal_to_vendor_pipeline, vendor_user_id_for_segment,
     ensure_segment_deal, mark_deal_qualificado,
-    get_relationship_summary,
+    get_relationship_summary, sanitize_display_name,
 )
 from pydantic import ValidationError as _PydanticValidationError
 from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
@@ -127,13 +127,28 @@ def pop_quote_executed(conversation_id: str) -> bool:
     return _quote_executed.pop(conversation_id, False)
 
 
+# Fonte de verdade ÚNICA das notas sensoriais do setor Atacado (banco `products`,
+# 15/07/2026). As legendas de foto (PHOTO_CAPTIONS) e o mapa produto→foto
+# (PRODUTO_PHOTO_MAP) são DERIVADOS deste dicionário — a auditoria QA de 15/07 pegou
+# a tríade banco × prosa de prompt × legenda divergindo (a legenda dizia "Suave —
+# melaco e frutas amarelas", mas melaco é do Microlote; o banco diz Suave =
+# achocolatadas). Mantido o estilo sem acento do arquivo. Alterar a nota é aqui e só
+# aqui; ambos os mapas herdam automaticamente.
+SENSORY_CAPTIONS_ATACADO: dict[str, str] = {
+    "classico": "Classico — torra escura, notas caramelizadas e achocolatadas",
+    "suave": "Suave — torra media, notas achocolatadas",
+    "canela": "Canela — torra escura, caramelizado com canela natural",
+    "microlote": "Microlote — 86 SCA, notas de cacau, melaco e citrico",
+    "drip": "Drip Coffee e Capsulas Nespresso",
+}
+
 PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
     "atacado": {
-        "foto_1": "Classico — torra media-escura, notas achocolatadas",
-        "foto_2": "Suave — torra media, notas de melaco e frutas amarelas",
-        "foto_3": "Canela — caramelizado com toque de canela",
-        "foto_4": "Microlote — notas de mel, caramelo e cacau",
-        "foto_5": "Drip Coffee e Capsulas Nespresso",
+        "foto_1": SENSORY_CAPTIONS_ATACADO["classico"],
+        "foto_2": SENSORY_CAPTIONS_ATACADO["suave"],
+        "foto_3": SENSORY_CAPTIONS_ATACADO["canela"],
+        "foto_4": SENSORY_CAPTIONS_ATACADO["microlote"],
+        "foto_5": SENSORY_CAPTIONS_ATACADO["drip"],
     },
     "private_label": {
         "foto_1": "Embalagem personalizada com sua marca",
@@ -145,12 +160,13 @@ PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
 
 PRODUTO_PHOTO_MAP: dict[str, dict[str, dict[str, str]]] = {
     "atacado": {
-        "classico": {"file": "foto_1.jpg", "caption": "Classico — torra media-escura, notas achocolatadas"},
-        "suave": {"file": "foto_2.jpg", "caption": "Suave — torra media, notas de melaco e frutas amarelas"},
-        "canela": {"file": "foto_3.png", "caption": "Canela — caramelizado com toque de canela"},
-        "microlote": {"file": "foto_4.jpg", "caption": "Microlote — notas de mel, caramelo e cacau"},
-        "drip": {"file": "foto_5.jpg", "caption": "Drip Coffee e Capsulas Nespresso"},
-        "capsulas": {"file": "foto_5.jpg", "caption": "Drip Coffee e Capsulas Nespresso"},
+        "classico": {"file": "foto_1.jpg", "caption": SENSORY_CAPTIONS_ATACADO["classico"]},
+        "suave": {"file": "foto_2.jpg", "caption": SENSORY_CAPTIONS_ATACADO["suave"]},
+        "canela": {"file": "foto_3.png", "caption": SENSORY_CAPTIONS_ATACADO["canela"]},
+        "microlote": {"file": "foto_4.jpg", "caption": SENSORY_CAPTIONS_ATACADO["microlote"]},
+        "drip": {"file": "foto_5.jpg", "caption": SENSORY_CAPTIONS_ATACADO["drip"]},
+        # capsulas compartilha foto_5 e legenda com drip (produto real do Atacado).
+        "capsulas": {"file": "foto_5.jpg", "caption": SENSORY_CAPTIONS_ATACADO["drip"]},
     },
     "private_label": {
         "embalagem": {"file": "foto_1.jpg", "caption": "Embalagem personalizada com sua marca"},
@@ -452,8 +468,16 @@ def _recent_stage_marker_exists(conversation_id: str, stage: str, minutes: int =
 async def _t_salvar_nome(ctx: ToolContext) -> str:
     args = ctx.args
     lead_id = ctx.lead_id
-    update_lead(lead_id, name=args["name"])
-    return f"Nome salvo: {args['name']}"
+    # Sanitização de INGRESSO (auditoria 15/07 — "olá meu"): o modelo às vezes passa a
+    # frase crua ("meu nome é Ricardo", "boa tarde") como nome. sanitize_display_name
+    # extrai o nome real ("Ricardo") ou devolve None p/ saudação/lixo. Quando None, NÃO
+    # sobrescrevemos um nome bom já persistido com lixo — só ignoramos.
+    raw = args["name"]
+    clean = sanitize_display_name(raw)
+    if not clean:
+        return f"Nome ignorado (nao parece um nome real): {raw}"
+    update_lead(lead_id, name=clean)
+    return f"Nome salvo: {clean}"
 
 
 async def _t_adicionar_tag_lead(ctx: ToolContext) -> str:
