@@ -22,13 +22,13 @@ from app.agent import tools as T
 from app.agent.tool_registry import Tool, ToolEffects, ToolResult, TurnEffects
 
 
-# Contrato congelado: os 16 nomes que existiam na escada de elifs antes da refatoração.
+# Contrato: os 16 nomes originais + escalar_reclamacao (auditoria 15/07, caso Aislan).
 EXPECTED_TOOLS = {
     "salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead",
     "registrar_optout", "registrar_sem_interesse_atual", "registrar_numero_errado",
     "registrar_indicacao", "enviar_fotos", "enviar_foto_produto", "marcar_interesse",
     "adicionar_tag_lead", "retomar_contato_vendedor", "agendar_retorno",
-    "consultar_relacionamento", "calcular_orcamento",
+    "consultar_relacionamento", "calcular_orcamento", "escalar_reclamacao",
 }
 
 # Allowlist por stage exatamente como estava no dict inline de get_tools_for_stage.
@@ -37,27 +37,27 @@ EXPECTED_STAGE_TOOLS = {
         "salvar_nome", "mudar_stage", "encaminhar_humano", "registrar_optout",
         "registrar_sem_interesse_atual", "registrar_numero_errado", "registrar_indicacao",
         "marcar_interesse", "retomar_contato_vendedor", "adicionar_tag_lead",
-        "agendar_retorno", "consultar_relacionamento",
+        "agendar_retorno", "consultar_relacionamento", "escalar_reclamacao",
     },
     "atacado": {
         "salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead",
         "registrar_optout", "registrar_sem_interesse_atual", "registrar_indicacao",
         "enviar_fotos", "enviar_foto_produto", "marcar_interesse",
         "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno",
-        "consultar_relacionamento", "calcular_orcamento",
+        "consultar_relacionamento", "calcular_orcamento", "escalar_reclamacao",
     },
     "private_label": {
         "salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead",
         "registrar_optout", "registrar_sem_interesse_atual", "registrar_indicacao",
         "enviar_fotos", "enviar_foto_produto", "marcar_interesse",
         "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno",
-        "consultar_relacionamento", "calcular_orcamento",
+        "consultar_relacionamento", "calcular_orcamento", "escalar_reclamacao",
     },
     "exportacao": {
         "salvar_nome", "mudar_stage", "encaminhar_humano", "qualificar_lead",
         "registrar_optout", "registrar_sem_interesse_atual", "marcar_interesse",
         "retomar_contato_vendedor", "adicionar_tag_lead", "agendar_retorno",
-        "consultar_relacionamento",
+        "consultar_relacionamento", "escalar_reclamacao",
     },
     # Varejo B2C NÃO auto-descarta: sem registrar_sem_interesse_atual, sem handoff.
     "consumo": {
@@ -68,7 +68,7 @@ EXPECTED_STAGE_TOOLS = {
 
 
 # ---------------------------------------------------------------- o registry existe
-def test_registry_conhece_exatamente_as_16_tools():
+def test_registry_conhece_exatamente_as_tools_esperadas():
     assert set(T.REGISTRY.names()) == EXPECTED_TOOLS
 
 

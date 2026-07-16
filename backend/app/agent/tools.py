@@ -37,6 +37,7 @@ from app.conversations.service import update_conversation, get_conversation, get
 from app.whatsapp.registry import get_provider
 from app.whatsapp.meta import extract_wamid
 from app.channels.service import get_channel_for_lead
+from app.alerts.service import create_system_alert
 from app.follow_up.service import (
     schedule_handoff_rescue, cancel_followups_by_phone, schedule_ai_return,
     find_pending_ai_return,
@@ -169,6 +170,16 @@ _HANDOFF_MSG = (
     "com prioridade\n"
     "http://wa.me/553491461669\n\n"
     "assim que você chamar, ele já recebe seu contato e segue contigo"
+)
+
+# Despedida default do ESCALONAMENTO DE RECLAMAÇÃO (caso Aislan/Sirli, auditoria 15/07):
+# reconhece a frustração e avisa que o time foi acionado com prioridade — NÃO o pitch
+# padrão de handoff. O cartão do João segue por trás (única supervisão cadastrada); o
+# ganho é o alerta crítico à gerência, que passa a VER a reclamação em vez dela morrer.
+_ESCALATION_HANDOFF_MSG = (
+    "poxa, sinto muito de verdade por essa experiência — isso não é o que a gente quer pra você\n\n"
+    "já sinalizei aqui internamente pra nossa equipe olhar o seu caso com prioridade\n\n"
+    "vou deixar o contato do João logo abaixo pra agilizar; pode chamar que já vamos resolver"
 )
 
 # Vocabulário de handoff (marcador, sentinel, detecção) agora mora no deep module
@@ -956,6 +967,76 @@ async def _t_registrar_indicacao(ctx: ToolContext) -> str:
     )
     logger.info("registrar_indicacao: lead %s — nome=%r tel=%r", lead_id, nome, telefone)
     return "indicacao registrada no CRM — agradeca com naturalidade e siga a conversa"
+
+
+async def _t_escalar_reclamacao(ctx: ToolContext) -> str:
+    """Escalonamento de reclamação sobre o ATENDIMENTO HUMANO / pedido não entregue.
+
+    Casos Aislan/Sirli (auditoria 15/07): lead com pedido fechado e não entregue, ou
+    ignorado pelo vendedor, era devolvido ao MESMO gargalo (handoff normal) em silêncio
+    para a gestão. Aqui a reclamação vira um ALERTA CRÍTICO externo (WhatsApp ao
+    ADMIN_ALERT_PHONE + Sentry + system_alerts) ANTES do transbordo, pra gerência ver
+    e intervir — depois cascateia para o handoff formal com uma despedida empática.
+
+    Distinto da "reclamação de robô" (base.py), que é handoff normal. Fail-soft: nem o
+    alerta nem o carimbo podem impedir o transbordo em si.
+    """
+    args = ctx.args
+    lead_id = ctx.lead_id
+    phone = ctx.phone
+    conversation_id = ctx.conversation_id
+    motivo = (args.get("motivo") or "reclamação sobre atendimento").strip()
+    lead = get_lead(lead_id) or {}
+    nome = (lead.get("name") or "sem nome").strip()
+    _ts = datetime.now(_TZ_BR).strftime("%d/%m/%Y %H:%M")
+
+    # 1) Alerta CRÍTICO externo p/ a gerência — best-effort, nunca bloqueia o handoff.
+    try:
+        create_system_alert(
+            type="lead_complaint_escalation",
+            title="Reclamacao de lead sobre atendimento — escalonar",
+            message=(
+                f"{nome} ({phone}) reclamou do atendimento e foi escalonado em {_ts}.\n"
+                f"Motivo: {motivo}\n"
+                f"Revisar com prioridade — lead insatisfeito com o time humano."
+            ),
+            severity="critical",
+            metadata={
+                "lead_id": lead_id, "phone": phone,
+                "conversation_id": conversation_id, "motivo": motivo,
+            },
+        )
+    except Exception as exc:
+        logger.error("escalar_reclamacao: falha ao disparar alerta p/ lead %s: %s", lead_id, exc)
+
+    # 2) Carimbo no lead (observação + tag) para o CRM — fail-soft.
+    try:
+        append_lead_observation(lead_id, f"⚠️ [ESCALONAMENTO — RECLAMAÇÃO] {_ts}: {motivo}")
+        add_tags_to_lead(lead_id, ["escalonamento"])
+    except Exception as exc:
+        logger.error("escalar_reclamacao: falha ao carimbar lead %s: %s", lead_id, exc)
+
+    save_message(
+        lead_id, "system",
+        f"[escalar_reclamacao] reclamacao escalonada para gerencia: {motivo}",
+        conversation_id=conversation_id,
+    )
+    logger.warning("escalar_reclamacao: lead %s escalonado — motivo=%r", lead_id, motivo)
+
+    # 3) Cascata para o handoff formal (card/rescue/deal + desliga IA), com despedida
+    # empática — reconhece a frustração e avisa que o time foi acionado com prioridade.
+    despedida = (args.get("mensagem_despedida") or "").strip() or _ESCALATION_HANDOFF_MSG
+    if ctx.invoke is None:
+        # Sem porta de cascata (chamada isolada em teste): registra o resultado.
+        return "ESCALONAMENTO registrado — reclamacao sinalizada para a gerencia."
+    return await ctx.invoke(
+        "encaminhar_humano",
+        {
+            "vendedor": "Joao Bras",
+            "motivo": f"ESCALONAMENTO — reclamacao sobre atendimento: {motivo}",
+            "mensagem_despedida": despedida,
+        },
+    )
 
 
 async def _t_enviar_fotos(ctx: ToolContext) -> str | ToolResult:
@@ -1910,6 +1991,51 @@ REGISTRY.register(Tool(
     },
     stages=frozenset({"secretaria", "atacado", "private_label"}),
     handler=_t_registrar_indicacao,
+))
+
+REGISTRY.register(Tool(
+    name="escalar_reclamacao",
+    description=(
+        "ESCALONAMENTO DE RECLAMACAO sobre o ATENDIMENTO HUMANO. Use SOMENTE quando o lead "
+        "reclama de que a EQUIPE/o vendedor o deixou na mao: 'ninguem me responde', "
+        "'visualizam e nao respondem', 'faz semanas/meses tentando falar e nao consigo', "
+        "'fechei o pedido e nao me entregaram nada', 'ja tentei varias vezes e nao tive retorno', "
+        "descaso ou promessa nao cumprida do time. "
+        "NAO use para: reclamacao de ROBO/pedir humano (isso e encaminhar_humano), objecao de "
+        "preco simples, ou lead so pesquisando. "
+        "Efeito: dispara um ALERTA CRITICO para a gerencia e transfere o atendimento com "
+        "prioridade, com uma despedida que reconhece a frustracao. "
+        "Passe em `motivo` o resumo da reclamacao com as palavras do lead. Opcional "
+        "`mensagem_despedida`: se a ultima mensagem do lead tem pergunta que voce sabe responder, "
+        "responda-a ANTES do transbordo. Esta ferramenta ENCERRA a conversa automatica: apos "
+        "chama-la, NAO envie mais nenhuma mensagem."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "motivo": {
+                "type": "string",
+                "description": (
+                    "Resumo da reclamacao com as palavras do lead (ex.: 'fechou pedido ha "
+                    "meses e nunca recebeu; diz que os vendedores visualizam e nao respondem')."
+                ),
+            },
+            "mensagem_despedida": {
+                "type": "string",
+                "description": (
+                    "Despedida curta e empatica (2-3 frases). Se a ultima mensagem do lead tem "
+                    "pergunta respondivel (preco, prazo), comece respondendo-a. Vazio usa o default."
+                ),
+            },
+        },
+        "required": ["motivo"],
+    },
+    # Não-consumo: o varejo B2C (consumo) nunca faz handoff (opt-out é a única saída);
+    # escalonamento cascateia para encaminhar_humano, então fica fora do consumo. As
+    # reclamações que exigem escalonamento (pedido/deal em aberto) são inerentemente B2B.
+    stages=_STAGES_NAO_CONSUMO,
+    effects=ToolEffects(disables_ai=True, may_cascade_to=("encaminhar_humano",)),
+    handler=_t_escalar_reclamacao,
 ))
 
 REGISTRY.register(Tool(
