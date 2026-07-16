@@ -1,0 +1,76 @@
+{
+  "started_at": "2026-06-24T02:32:51.994480+00:00",
+  "finished_at": "2026-06-24T02:34:58.689342+00:00",
+  "git_sha": "96174134030146d465597c96e17ae0693eb4df9c",
+  "archetypes": [
+    "O1"
+  ],
+  "dev_backend_url": "http://127.0.0.1:8001",
+  "phones": {
+    "O1": "5521900000090"
+  },
+  "gemini_model": "gemini-2.5-pro",
+  "verifications": [
+    {
+      "archetype_id": "O1",
+      "archetype_slug": "confirmacao-qualificado",
+      "status": "failed",
+      "hard_checks": [
+        {
+          "name": "reached_atacado",
+          "passed": false,
+          "reason": "stage atacado NAO alcancado"
+        },
+        {
+          "name": "has_encaminhar_humano",
+          "passed": false,
+          "reason": "encaminhar_humano nao foi chamada"
+        },
+        {
+          "name": "min_3_turns",
+          "passed": false,
+          "reason": "apenas 2 turno(s)"
+        }
+      ],
+      "forbids": [
+        {
+          "name": "forbid_pix",
+          "passed": true,
+          "reason": "PIX: sem violação"
+        },
+        {
+          "name": "forbid_preco_frete",
+          "passed": true,
+          "reason": "PRECO_FRETE: sem violação"
+        },
+        {
+          "name": "forbid_prazo",
+          "passed": true,
+          "reason": "PRAZO: sem violação"
+        },
+        {
+          "name": "forbid_desconto",
+          "passed": true,
+          "reason": "DESCONTO: sem violação"
+        },
+        {
+          "name": "forbid_papel",
+          "passed": true,
+          "reason": "PAPEL: sem violação"
+        }
+      ],
+      "soft_check": {
+        "bot_score_1_10": 8,
+        "linhas_robotizadas": [
+          "show, cadastro confirmado"
+        ],
+        "resposta_incorreta_ou_inventada": null,
+        "veredito_curto": "O bot reconheceu corretamente o perfil de atacado e personalizou a resposta com informações do lead, conduzindo bem a conversa para a próxima etapa."
+      },
+      "turns_count": 2,
+      "terminated_by": "timeout",
+      "stages_visited": []
+    }
+  ],
+  "mode": "parallel_execution"
+}

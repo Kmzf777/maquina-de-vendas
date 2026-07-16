@@ -1,0 +1,60 @@
+{
+  "archetype_id": "T1",
+  "archetype_slug": "b2b-revenda",
+  "status": "failed",
+  "hard_checks": [
+    {
+      "name": "reached_atacado",
+      "passed": false,
+      "reason": "stage atacado NAO alcancado"
+    },
+    {
+      "name": "has_encaminhar_humano",
+      "passed": false,
+      "reason": "encaminhar_humano nao foi chamada"
+    },
+    {
+      "name": "min_5_turns",
+      "passed": false,
+      "reason": "apenas 2 turno(s)"
+    }
+  ],
+  "forbids": [
+    {
+      "name": "forbid_pix",
+      "passed": true,
+      "reason": "PIX: sem violação"
+    },
+    {
+      "name": "forbid_preco_frete",
+      "passed": true,
+      "reason": "PRECO_FRETE: sem violação"
+    },
+    {
+      "name": "forbid_prazo",
+      "passed": true,
+      "reason": "PRAZO: sem violação"
+    },
+    {
+      "name": "forbid_desconto",
+      "passed": true,
+      "reason": "DESCONTO: sem violação"
+    },
+    {
+      "name": "forbid_papel",
+      "passed": true,
+      "reason": "PAPEL: sem violação"
+    }
+  ],
+  "soft_check": {
+    "bot_score_1_10": 8,
+    "linhas_robotizadas": [
+      "pra gente comecar, me conta uma coisa: o cafe que voce vende atualmente atende as expectativas dos seus clientes ou voce sente que poderia oferecer algo mais diferenciado pra fidelizar a clientela?"
+    ],
+    "resposta_incorreta_ou_inventada": "O bot presumiu incorretamente que o lead já vendia café ao perguntar sobre o produto atual, sendo que o lead informou que 'quer começar a revender'.",
+    "veredito_curto": "O bot tem um tom de voz excelente e humano, mas cometeu um erro de interpretação sobre a situação atual do lead, fazendo uma pergunta que foi ignorada."
+  },
+  "turns_count": 2,
+  "terminated_by": "timeout",
+  "stages_visited": []
+}
