@@ -1,27 +1,22 @@
 """Vazamento de tool_code no retry (lead 5567996264477): a rede deve cobrir o retry e o optout.
 
 Falha real: 1a resposta = tool_code puro -> strip -> vazio -> retry reincidiu no tool_code ->
-retornado cru (L719 nao sanitizava) -> vazou. Apos a centralizacao, o codigo cru NUNCA chega
-ao cliente. A partir de 2026-06-30 (Change C), o turno generico vazio NAO aborta mais em
-silencio: devolve o fallback generico honesto (_SAFETY_FALLBACK_GENERIC) em vez de "". O
-invariante critico permanece: o texto entregue jamais contem 'tool_code' nem 'default_api'.
+retornado cru (o caminho de retry nao sanitizava) -> vazou. Apos a centralizacao, o codigo cru
+NUNCA chega ao cliente. A partir de 2026-06-30 (Change C), o turno generico vazio NAO aborta
+mais em silencio: devolve o fallback generico honesto (_SAFETY_FALLBACK_GENERIC) em vez de "".
+O invariante critico permanece: o texto entregue jamais contem 'tool_code' nem 'default_api'.
+
+Contrato Gemini nativo (migração 09/07/2026): as chamadas ao LLM saem por
+`app.agent.orchestrator.generate` (gemini_client) — fakes de tests/gemini_fakes.py.
+O vazamento continua possível: o modelo serializa o function-call como CÓDIGO no texto
+(function_calls vazio), e a rede anti-tool_code segue sendo a defesa determinística.
 """
-import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text, fake_tool_call
 
 _LEAK = "<tool_code> print(default_api.salvar_nome(nome='João Paulo Nogueira Alves')) </tool_code>"
-
-
-def _make_response(content, tool_calls=None):
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
 
 
 def _conversation():
@@ -47,20 +42,14 @@ async def test_toolcode_leak_inicial_e_retry_devolve_fallback_generico():
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
     # Etapa 2: inicial + retry1 vazando tool_code (ambos sanitizados para "") ainda disparam
     # o retry2 (temperatura elevada) — também vaza aqui, para o teste chegar ao fallback.
-    call_responses = [
-        _make_response(content=_LEAK), _make_response(content=_LEAK), _make_response(content=_LEAK),
-    ]
-    idx = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[idx["i"]]
-        idx["i"] += 1
-        return resp
+    m_gen = AsyncMock(side_effect=[
+        fake_text(_LEAK), fake_text(_LEAK), fake_text(_LEAK),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-jp", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation(), "Sim\nJOÃO PAULO NOGUEIRA ALVES")
 
     assert result == _SAFETY_FALLBACK_GENERIC, (
@@ -68,28 +57,22 @@ async def test_toolcode_leak_inicial_e_retry_devolve_fallback_generico():
     )
     assert "tool_code" not in result
     assert "default_api" not in result
-    assert idx["i"] == 3, "deve ter feito o retry e o retry2 (Etapa 2)"
+    assert m_gen.await_count == 3, "deve ter feito o retry e o retry2 (Etapa 2)"
 
 
 @pytest.mark.asyncio
 async def test_toolcode_leak_inicial_retry_limpo_recupera_texto():
     """Inicial vaza tool_code → strip vazio → retry traz texto humano limpo → usa o texto."""
     from app.agent.orchestrator import run_agent
-    call_responses = [
-        _make_response(content=_LEAK),
-        _make_response(content="boa Paulo, prazer\n\nsua demanda é pro mercado brasileiro ou exportação?"),
-    ]
-    idx = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[idx["i"]]
-        idx["i"] += 1
-        return resp
+    m_gen = AsyncMock(side_effect=[
+        fake_text(_LEAK),
+        fake_text("boa Paulo, prazer\n\nsua demanda é pro mercado brasileiro ou exportação?"),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history()), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-jp", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation(), "Sim\nJOÃO PAULO NOGUEIRA ALVES")
 
     assert result == "boa Paulo, prazer\n\nsua demanda é pro mercado brasileiro ou exportação?"
@@ -101,23 +84,16 @@ async def test_optout_com_tool_code_cai_no_fallback_estatico():
     """Se a despedida do optout vier como tool_code puro, o strip esvazia → fallback estático."""
     from app.agent.orchestrator import run_agent
 
-    tc = MagicMock()
-    tc.function.name = "registrar_optout"
-    tc.function.arguments = json.dumps({"motivo": "clicou parar"})
-    tc.id = "tc-1"
-    msg = MagicMock()
-    msg.tool_calls = [tc]
-    msg.content = _LEAK  # despedida veio como tool_code
-    msg.model_dump.return_value = {"role": "assistant", "content": _LEAK, "tool_calls": []}
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
+    # registrar_optout com a despedida vazada como tool_code no texto do MESMO turno
+    m_gen = AsyncMock(return_value=fake_tool_call(
+        "registrar_optout", {"motivo": "clicou parar"}, text=_LEAK,
+    ))
 
     with patch("app.agent.orchestrator.get_history", return_value=[]), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-jp", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client, \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen), \
          patch("app.agent.orchestrator.execute_tool", new_callable=AsyncMock, return_value="ok"):
-        mock_client.return_value.chat.completions.create = AsyncMock(return_value=resp)
         result = await run_agent(_conversation(), "para de me mandar mensagem")
 
     assert "tool_code" not in result

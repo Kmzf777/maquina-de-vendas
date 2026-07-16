@@ -16,6 +16,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
+from app.events.bus import emit_event
 from app.leads.service import (
     normalize_phone,
     get_or_create_lead,
@@ -90,7 +91,15 @@ def _sanitize_lead_name(raw_name: str | None) -> tuple[str | None, str | None, s
         or len(stripped.split()) > _MAX_NAME_WORDS
     )
     if not looks_dirty:
-        return stripped, None, None
+        # Funil final compartilhado (forense 11/07, lead "Sim"): mesmo passando nas
+        # heurísticas de formato, o valor ainda pode ser resposta conversacional
+        # ("Sim", "ok"), handle ou lixo de import — sanitize_display_name decide.
+        # None → cai no caminho dirty (preserva o texto cru em lp_message e deixa
+        # o backfill de push_name preencher o nome depois).
+        from app.leads.service import sanitize_display_name
+        clean = sanitize_display_name(stripped)
+        if clean:
+            return clean, None, None
     email_match = _EMAIL_RE.search(name)
     return None, name, (email_match.group(0) if email_match else None)
 
@@ -343,6 +352,7 @@ def _schedule_lp_welcome(
             f"lp_welcome insert returned empty data for lead {lead_id}"
         )
 
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
     logger.info(
         "[LP_WELCOME] Agendado em %dmin lead=%s conversation=%s",
         delay_minutes, lead_id, conversation_id,

@@ -1,34 +1,9 @@
 """Gatilho B: mudar_stage agenda um refresh do Dossiê (fire-and-forget) — Camada de Memória."""
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
-def _text_response(content):
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = None
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
-
-
-def _tool_response(name, arguments):
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = ""
-    tc = MagicMock()
-    tc.id = "tc1"
-    tc.function.name = name
-    tc.function.arguments = json.dumps(arguments)
-    msg.tool_calls = [tc]
-    msg.model_dump.return_value = {"role": "assistant", "content": "", "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
+from tests.gemini_fakes import fake_text, fake_tool_call
 
 
 def _conversation():
@@ -44,23 +19,16 @@ async def test_mudar_stage_schedules_memory_refresh():
     from app.agent.orchestrator import run_agent
 
     responses = [
-        _tool_response("mudar_stage", {"stage": "atacado"}),
-        _text_response("show, vamos falar de atacado então"),
+        fake_tool_call("mudar_stage", {"stage": "atacado"}),
+        fake_text("show, vamos falar de atacado então"),
     ]
-    idx = {"i": 0}
-
-    async def fake_create(**kwargs):
-        r = responses[idx["i"]]
-        idx["i"] += 1
-        return r
 
     with patch("app.agent.orchestrator.get_history", return_value=[]), \
          patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-1", "ai_enabled": True}), \
          patch("app.agent.orchestrator.update_lead"), \
          patch("app.agent.orchestrator.execute_tool", new=AsyncMock(return_value="ok")), \
          patch("app.agent.orchestrator._schedule_memory_refresh") as sched, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate", new=AsyncMock(side_effect=responses)):
         result = await run_agent(_conversation(), "quero comprar em grande quantidade")
 
     assert result == "show, vamos falar de atacado então"

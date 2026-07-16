@@ -9,6 +9,7 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
     "/campanhas",
     "/qualificacao",
     "/vendas",
+    "/painel-vendas",
     "/canais",
     "/estatisticas",
     "/config",
@@ -20,15 +21,17 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
     "/campanhas",
     "/qualificacao",
     "/vendas",
+    "/painel-vendas",
   ],
 };
 
 // Prefixos de API route restritos a admin
 export const ADMIN_API_PREFIXES = [
   "/api/stats",
-  "/api/evolution",
   "/api/admin",
   "/api/users",
+  "/api/model-pricing",
+  "/api/lp-webhook",
 ];
 
 export function isAdminOnlyPage(pathname: string): boolean {

@@ -13,6 +13,19 @@ from app.campaigns.execution_log import list_execution_log
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
 
+def _reject_system_campaign(campaign_id: str, action: str) -> None:
+    """A campanha-espelho do motor de follow-up (system_cadence) é somente-leitura:
+    ativá-la faria o automation engine DUPLICAR os toques que o worker de follow-up
+    já envia; enroll/delete corrompem o espelho (re-sincronizado a cada deploy)."""
+    from app.campaigns.system_cadence import VALERIA_CADENCE_CAMPAIGN_ID
+    if campaign_id == VALERIA_CADENCE_CAMPAIGN_ID:
+        raise HTTPException(
+            409,
+            f"Campanha de sistema (espelho do motor de follow-up) — {action} não permitido. "
+            "A execução real é do worker de follow-up.",
+        )
+
+
 class CampaignCreate(BaseModel):
     name: str
     description: str | None = None
@@ -58,6 +71,7 @@ async def api_update_campaign(campaign_id: str, body: dict):
 
 @router.delete("/{campaign_id}")
 async def api_delete_campaign(campaign_id: str):
+    _reject_system_campaign(campaign_id, "delete")
     camp = get_campaign(campaign_id)
     if not camp:
         raise HTTPException(404, "Campaign não encontrada")
@@ -69,6 +83,7 @@ async def api_delete_campaign(campaign_id: str):
 
 @router.post("/{campaign_id}/activate")
 async def api_activate_campaign(campaign_id: str):
+    _reject_system_campaign(campaign_id, "activate")
     camp = get_campaign(campaign_id)
     if not camp:
         raise HTTPException(404, "Campaign não encontrada")
@@ -115,6 +130,7 @@ async def api_list_enrollments(campaign_id: str, status: str | None = None):
 
 @router.post("/{campaign_id}/enrollments")
 async def api_enroll_lead(campaign_id: str, body: EnrollRequest):
+    _reject_system_campaign(campaign_id, "enroll")
     if is_already_enrolled(campaign_id, body.lead_id):
         raise HTTPException(400, "Lead já está nesta campanha")
     camp = get_campaign(campaign_id)

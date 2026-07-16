@@ -9,19 +9,38 @@ from datetime import datetime, timezone, timedelta
 import httpx
 from google.genai import errors as genai_errors
 
-from app.agent import gemini_native
 from app.agent import budget_guard
-from app.agent.gemini_native import GeminiNativeClient
+from app.agent.gemini_client import (
+    GenerateResult,
+    build_tools,
+    function_response_content,
+    generate,
+    model_content,
+    user_content,
+)
 from app.config import settings
-from app.agent.prompts.base import build_base_prompt, FINAL_INSTRUCTION
+from app.agent.prompts.base import BASE_STATIC, FINAL_INSTRUCTION, build_context_block
 from app.agent.prompts import get_stage_prompts
 from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
 from app.agent.catalog import get_products_by_funnel
 from app.agent.tools import get_tools_for_stage, execute_tool
+from app.agent.handoff import (
+    is_handoff,
+    looks_like_handoff_announcement,
+    _normalize_for_handoff_re,  # também usado pelo guard de fotos (_PHOTO_SEND_CLAIM_RE)
+    _strip_diacritics,
+)
 from app.agent.adherence import (
+    contains_open_question,
     find_verbatim_prompt_echo,
+    handoff_without_answer,
     is_repeated_question,
+    media_result_is_no_send,
     normalize_orthography,
+    price_without_cta,
+    strip_consecutive_vocative_name,
+    strip_kitchen_leak,
+    strip_media_history_markers,
     strip_prohibited_phrases,
 )
 from app.conversations.service import (
@@ -36,6 +55,11 @@ from app.leads.service import get_lead, sanitize_display_name, update_lead
 logger = logging.getLogger(__name__)
 
 TZ_BR = timezone(timedelta(hours=-3))
+# 09/07/2026: INCIDENTE Google das 15:15-17:40 BRT — o v1beta devolveu 404 "no longer
+# available" p/ os 2.5 com mensagem ENGANOSA de sunset (o sunset real e 16/10/2026,
+# docs/deprecations; sucessores oficiais: 3.5-flash e 3.1-flash-lite, JA validados na
+# chave com function calling — migrar com calma ANTES de outubro). Revertido ao 2.5
+# pos-recuperacao por custo (3.5 e 5x input / 3.6x output).
 DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_TOOL_ITERATIONS = 5
 # gemini-2.5-flash conta tokens de "thinking" no MESMO budget que a saída via API
@@ -249,6 +273,39 @@ def _strip_leaked_tool_code(text: str) -> str:
     return cleaned.strip()
 
 
+# Rede de segurança contra vazamento de RACIOCÍNIO INTERNO (lead 56958450295, 13/07)
+# ---------------------------------------------------------------------------
+# A REPEAT QUESTION GUARD injeta um nudge de sistema ("Reescreva a resposta INTEIRA...") como
+# turno de user. O modelo respondeu meta-raciocinando e escreveu o plano DENTRO do content:
+#   <scratchpad> O lead perguntou "De onde vcs é?" ... </scratchpad> boa noite, a gente é da...
+# O sanitizer só conhecia <tool_code>/```/print(/default_api., então o chain-of-thought passou,
+# o splitter fatiou pelos \n\n internos do bloco e o lead recebeu 3 bolhas de raciocínio.
+# A Valéria NUNCA expõe raciocínio: qualquer bloco destes é vazamento e morre antes do envio.
+_REASONING_TAGS = "scratchpad|thinking|thought|thoughts|reasoning|plan|planning|internal_monologue|monologue"
+_REASONING_BLOCK_RE = re.compile(rf"<\s*({_REASONING_TAGS})\s*>.*?<\s*/\s*\1\s*>", re.DOTALL | re.IGNORECASE)
+# Abertura órfã (MAX_TOKENS cortou o bloco): tudo DEPOIS dela é raciocínio.
+_REASONING_OPEN_RE = re.compile(rf"<\s*({_REASONING_TAGS})\s*>.*\Z", re.DOTALL | re.IGNORECASE)
+# Fechamento órfão (a abertura ficou fora da janela): tudo ANTES dele é raciocínio.
+_REASONING_CLOSE_RE = re.compile(rf"\A.*<\s*/\s*({_REASONING_TAGS})\s*>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_leaked_reasoning(text: str) -> str:
+    """Remove blocos de raciocínio interno do texto final, preservando a fala da Valéria.
+
+    Função pura (unit-testável sem run_agent). Trata as três formas observadas:
+      - bloco fechado: <scratchpad>...</scratchpad> (removido, a fala em volta fica)
+      - abertura órfã: <scratchpad> sem fechamento → corta da abertura até o fim
+      - fechamento órfão: </scratchpad> sem abertura → descarta tudo que vem antes
+    """
+    if not text:
+        return text
+    cleaned = _REASONING_BLOCK_RE.sub("", text)
+    cleaned = _REASONING_CLOSE_RE.sub("", cleaned)
+    cleaned = _REASONING_OPEN_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None, source: str) -> str:
     """Passa QUALQUER texto de saída do agente pela rede anti-tool_code e loga o vazamento.
 
@@ -264,6 +321,39 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "[TOOL_CODE LEAK] Gemini vazou function-call como texto em conv %s "
             "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
             conversation_id, source, stage, pre,
+        )
+    # Raciocínio interno (<scratchpad>/<thinking>/...) NUNCA vai ao cliente — falha real
+    # 13/07 (lead 56958450295): o CoT foi fatiado pelo splitter e entregue em 3 bolhas.
+    before_reasoning = cleaned
+    cleaned = _strip_leaked_reasoning(cleaned)
+    if cleaned != before_reasoning:
+        logger.error(
+            "[REASONING LEAK] Gemini vazou raciocínio interno como texto em conv %s "
+            "(source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, before_reasoning,
+        )
+    # "O cliente NUNCA vê a cozinha" (auditoria 14/07, caso Thiago): a saída interna
+    # de calcular_orcamento ("o sistema não encontrou o 'X' no catálogo de atacado")
+    # vazou LITERALMENTE 2×. Backstop determinístico — remove só o trecho-vazamento,
+    # preservando o resto útil da frase. Função pura em app.agent.adherence.
+    before_kitchen = cleaned
+    cleaned = strip_kitchen_leak(cleaned)
+    if cleaned != before_kitchen:
+        logger.error(
+            "[KITCHEN LEAK] Gemini expôs cozinha (sistema/catálogo/erro) ao cliente em "
+            "conv %s (source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, before_kitchen,
+        )
+    # Marcador-envelope de mídia do histórico ('[Foto enviada por você: "..."]')
+    # ecoado como fala (auditoria 14/07, caso Noelson): NUNCA vai ao cliente — o
+    # formato do histórico é correto p/ o LLM, mas é ruído/autoria-confusa se vaza.
+    before_media_marker = cleaned
+    cleaned = strip_media_history_markers(cleaned)
+    if cleaned != before_media_marker:
+        logger.error(
+            "[MEDIA MARKER LEAK] Gemini ecoou marcador de mídia do histórico ao cliente em "
+            "conv %s (source=%s, stage=%s) — sanitizado antes do envio. Vazamento: %.200s",
+            conversation_id, source, stage, before_media_marker,
         )
     # Guarda de aderência (2026-07-04): remove frases proibidas de jargão de
     # call-center ("pra te direcionar da melhor forma") que fogem da voz da
@@ -291,64 +381,50 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
 # ---------------------------------------------------------------------------
 # Guarda determinística de handoff verbalizado (2026-06-30)
 # ---------------------------------------------------------------------------
-# Defesa em profundidade: quando a Valéria ANUNCIA a transferência no texto comum
-# ("vou te conectar com o João", "vou deixar o contato dele aqui") SEM chamar
-# encaminhar_humano, o lead fica parado — o cartão de contato nunca sai e a IA
-# continua ativa. Este guard detecta o CTA no texto final e força o handoff.
+# Movida para o deep module app/agent/handoff.py (refatoração Card 2, 12/07),
+# junto com o restante do vocabulário/detecção de handoff. O invariante segue:
+# se o código chegou até looks_like_handoff_announcement no rabo do run_agent,
+# NENHUM handoff foi executado neste turno — is_handoff() detecta o explícito
+# (fc.name) e a cascata (prefixo no retorno) e retorna None mais cedo no loop —
+# não há risco de double-firing (fix S1 11/07, caso Prof. Sebastião).
+# Alias privado mantido: testes de incidente importam o nome antigo daqui.
+_looks_like_handoff_announcement = looks_like_handoff_announcement
+
+
+# ---------------------------------------------------------------------------
+# Guarda determinística de fotos verbalizadas (auditoria 12/07, caso Ana Weiss)
+# ---------------------------------------------------------------------------
+# Mesma classe de defesa da guarda de handoff verbalizado: o modelo escreveu
+# "enviei aqui algumas fotos..." SEM chamar enviar_fotos — zero imagens em toda
+# a história do lead. A guarda detecta a alegação em 1ª pessoa no texto final e
+# FORÇA enviar_fotos(categoria=stage). A idempotência da tool absorve os casos
+# legítimos: fotos já enviadas na conversa (marcador [enviar_fotos] no histórico)
+# ou já enfileiradas neste turno viram no-op. O texto do turno é preservado —
+# as fotos saem logo depois pela fila diferida, tornando a frase verdadeira.
 #
-# Invariante: se o código chegou até _looks_like_handoff_announcement, encaminhar_humano
-# NÃO foi executado neste turno (uma tool call real teria retornado None sentinel mais
-# cedo no loop) — não há risco de double-firing.
-#
-# Frases que NÃO disparam (menções informacionais):
-#   "quem prepara isso é o Joao Bras"
-#   "vou deixar salvo pro Joao dar uma olhada"
-#   "você já tá em boas mãos com o time"
-#   "qualquer coisa é só chamar"
-# O guard é construído em torno do CTA de CONTATO/CONECTAR/TRANSFERIR, nunca do
-# nome "João Bras" isolado.
-
-def _strip_diacritics(text: str) -> str:
-    """Remove diacríticos via NFD + filtro de combining marks (Mn)."""
-    nfd = unicodedata.normalize("NFD", text)
-    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-
-
-def _normalize_for_handoff_re(text: str) -> str:
-    """Lowercase + remoção de diacríticos para matching acento-insensitivo."""
-    return _strip_diacritics(text.lower())
-
-
-# Padrões compilados uma vez; operam sobre texto já normalizado (lowercase, sem acentos).
-_HANDOFF_ANNOUNCEMENT_RE = re.compile(
-    r"(?:"
-    r"vou te conectar"
-    r"|deixa.{0,10}eu te conectar"   # "deixa eu te conectar" / "deixa-eu te conectar"
-    r"|te conectar com o joao"
-    r"|vou deixar o contato"          # "vou deixar o contato dele aqui"
-    r"|deixando o contato"
-    r"|te passar o contato"
-    r"|contato dele aqui"
-    r"|contato do joao aqui"
-    r"|vou transferir"
-    r"|vou te transferir"
-    r"|vou te passar (?:pro|para o) joao"
-    r")"
+# Substantivos coletivos apenas (fotos/imagens/catalogo/portfolio): alegação de
+# UMA foto de produto ("enviei a foto do classico") fica fora — forçar o catálogo
+# inteiro nesse caso seria pior que a omissão.
+_PHOTO_SEND_CLAIM_RE = re.compile(
+    r"(?:acabei de (?:enviar|mandar)|enviei|mandei|(?:estou|to|tou)\s+(?:te\s+)?(?:mandando|enviando))"
+    r"[^.!?\n]{0,60}\b(?:fotos|imagens|catalogo|portfolio)\b"
 )
 
+# Stages com catálogo real em app/photos/<categoria> (enum da tool enviar_fotos).
+_PHOTO_GUARD_STAGES = ("atacado", "private_label")
 
-def _looks_like_handoff_announcement(text: str) -> bool:
-    """Return True ONLY for unambiguous transfer-CTA phrasing.
 
-    Accent- and case-insensitive (via diacritic stripping + lowercase).
-    Returns False for mere informational mentions of the seller that are NOT
-    a transfer CTA — e.g. "quem cuida disso é o Joao Bras", "em boas mãos".
+def _looks_like_photo_send_claim(text: str | None) -> bool:
+    """True quando o texto ALEGA (1ª pessoa, passado) ter enviado fotos/imagens/catálogo.
 
-    Função pura — sem I/O, testável sem mocks.
+    Acento- e caixa-insensitivo (mesma normalização da guarda de handoff).
+    Não casa ofertas futuras ("quer que eu te mostre"), recebimento de mídia do
+    lead ("recebi sua foto") nem envio de coisas que não são mídia ("enviei sua
+    solicitação"). Função pura — sem I/O, testável sem mocks.
     """
     if not text:
         return False
-    return bool(_HANDOFF_ANNOUNCEMENT_RE.search(_normalize_for_handoff_re(text)))
+    return bool(_PHOTO_SEND_CLAIM_RE.search(_normalize_for_handoff_re(text)))
 
 
 # ---------------------------------------------------------------------------
@@ -433,33 +509,21 @@ def _is_gemini_model(model: str) -> bool:
     return model.startswith("gemini-")
 
 
-def _gemini_thinking_off(model: str) -> dict:
-    """Kwargs que desligam o 'thinking' do Gemini 2.5 (flash/flash-lite) nas chamadas pós-tool.
+def _thinking_off_for(model: str) -> bool:
+    """True quando o 'thinking' deve ser DESLIGADO nas chamadas mecânicas (pós-tool,
+    retries) — via ThinkingConfig(thinking_budget=0) no gemini_client.
 
-    Causa raiz do Bug 2: gemini-2.5-flash gasta o budget de saída pensando e devolve
-    completion_tokens=0 logo após executar uma tool, deixando o lead mudo. A doc oficial
-    (OpenAI-compat) permite `reasoning_effort="none"` para DESLIGAR o thinking nos modelos
-    2.5 — mas NÃO em 2.5-pro nem 3.x, que rejeitam o valor. Por isso retornamos {} nesses
-    casos (2.5-pro e 3.x), evitando um 400 em produção.
+    Causa raiz do Bug 2: o flash gasta o budget de saída pensando e devolve saída
+    visível zero logo após executar uma tool, deixando o lead mudo. Vale para a
+    família flash/lite (2.5 e 3.x); os modelos *pro* seguem pensando (False).
     """
-    if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
-        return {"reasoning_effort": "none"}
-    return {}
-
-
-def _get_gemini() -> GeminiNativeClient:
-    """Cliente Gemini nativo (SDK google-genai). Singleton mantido em gemini_native."""
-    return gemini_native.get_client()
-
-
-def _get_client(model: str) -> GeminiNativeClient:
-    return _get_gemini()
+    return model.startswith("gemini-") and "pro" not in model and ("flash" in model or "lite" in model)
 
 
 # Drops de conexão HTTP/2 (GOAWAY) sob concorrência (rajada de disparo) derrubavam
 # chamadas ao LLM. Retry localizado é mais seguro que reexecutar o turno inteiro no
 # processor — este reexecutaria tools já aplicadas (encaminhar_humano, mudar_stage).
-# Chamadas a chat.completions.create() não têm efeitos colaterais → seguras para retry.
+# Chamadas a gemini_client.generate() não têm efeitos colaterais → seguras para retry.
 _LLM_RETRY_ATTEMPTS = 3
 _LLM_RETRY_DELAY = 2  # segundos
 
@@ -472,26 +536,51 @@ class LLMUnavailableError(Exception):
     """
 
 
-class LLMBudgetExceededError(LLMUnavailableError):
-    """Teto diário de gasto atingido (kill-switch). Subclasse de LLMUnavailableError para
-    reusar o MESMO fallback de handoff — o lead cai no João em vez de ser fantasmado, e o
-    sistema para de queimar cota até a virada do dia (UTC). Ver app/agent/budget_guard.py."""
+class LLMExhaustedError(LLMUnavailableError):
+    """Exaustão LONGA do LLM — não volta em minutos (wartime 10/07/2026).
+
+    Distingue "cofre vazio" (teto de gasto interno, quota diária/billing do Google) de
+    um outage transitório de segundos. Antes, tudo herdava só de LLMUnavailableError e
+    caía no MESMO parking de 30min: como o bloqueio dura até a virada do dia, todo lead
+    que respondia ao disparo após o estouro era estacionado por 30min e recebia handoff
+    CEGO definitivo (ai_enabled=false) — repetição industrializada do incidente de 08/07
+    (2/9 respostas queimadas em 13min de outage). Com esta categoria, o parking usa um
+    deadline de reset (virada do dia) em vez da janela curta. Continua sendo
+    LLMUnavailableError por retrocompatibilidade: todo `except LLMUnavailableError`
+    existente segue capturando."""
 
 
-def _initial_thinking_kwargs(model: str) -> dict:
+class LLMBudgetExceededError(LLMExhaustedError):
+    """Teto diário de gasto atingido (kill-switch INTERNO). Reclassificado (10/07) de
+    LLMUnavailableError para LLMExhaustedError: o bloqueio dura até a virada do dia (UTC),
+    então o turno deve ser estacionado até o reset do budget_guard — não por 30min.
+    Ver app/agent/budget_guard.py."""
+
+
+class LLMQuotaExhaustedError(LLMExhaustedError):
+    """Quota diária/billing esgotada do LADO GOOGLE (429 com marcador de quota diária,
+    ou 403 persistente). Retry em minutos é inútil (o reset é na virada do dia
+    America/Los_Angeles, fuso das quotas diárias da Gemini API) e só queima RPM —
+    o parking usa esse horizonte como deadline. Wartime 10/07/2026."""
+
+
+def _initial_thinking_off(model: str) -> bool:
     """Thinking da PRIMEIRA chamada (raciocínio inicial / escolha de tools).
 
-    Por design endurecido por incidentes, o thinking já fica DESLIGADO em todas as chamadas
-    mecânicas (pós-tool, follow-up, summary, memória) e LIGADO só nesta, a de alto esforço.
-    Este knob permite desligá-lo TAMBÉM aqui via env, trocando qualidade de raciocínio por
-    custo, sem deploy:
-        LLM_INITIAL_THINKING=off  → reasoning_effort="none" também na 1ª chamada.
-    Default (ausente/qualquer outro valor) = LIGADO — preserva o comportamento atual e a
-    decisão testada em test_gemini_thinking_off_post_tool.py.
+    FinOps P0 (12/07): default INVERTIDO para DESLIGADO. Medição pós-fix de preço mostrou
+    thoughts = 78% do output das respostas e 10,5% de iniciais vazias (thinking dividia o
+    budget de MAX_OUTPUT_TOKENS e "queimava o budget pensando" — ver bloco RETRY-ON-EMPTY).
+    O texto visível ao lead já era gerado sem thinking (pós-tool e retries sempre rodaram
+    thinking-off), então a 1ª chamada era a única exceção — e a mais cara. A rede de
+    segurança para turnos difíceis é o FALLBACK CONDICIONAL: se a inicial (sem thinking)
+    vier vazia, o retry silencioso roda COM thinking (política oposta à da inicial).
+        LLM_INITIAL_THINKING=on   → restaura o comportamento antigo (inicial pensa,
+                                    retry sem thinking), sem deploy — rollback integral.
+    Default (ausente/qualquer outro valor) = DESLIGADO.
     """
-    if os.environ.get("LLM_INITIAL_THINKING", "on").strip().lower() == "off":
-        return _gemini_thinking_off(model)
-    return {}
+    if os.environ.get("LLM_INITIAL_THINKING", "off").strip().lower() == "on":
+        return False
+    return _thinking_off_for(model)
 
 
 def _genai_status_code(exc: genai_errors.APIError) -> int | None:
@@ -500,8 +589,30 @@ def _genai_status_code(exc: genai_errors.APIError) -> int | None:
     return code if isinstance(code, int) else None
 
 
-async def _create_with_retry(client: GeminiNativeClient, **kwargs):
-    """generate_content (via fachada .chat.completions.create) com retry transitório.
+# Marcador de quota DIÁRIA num 429 do Google: a mensagem cita o eixo do limite, e os
+# formatos observados variam ("per day", "PerDay" em métricas camelCase tipo
+# GenerateRequestsPerDayPerProjectPerModel, "per_day" em nomes snake_case). O regex
+# cobre os três — case-insensitive — sem casar "per minute"/"PerMinute" (rate-limit
+# comum, que continua retentável).
+_DAILY_QUOTA_RE = re.compile(r"per[\s_-]?day", re.IGNORECASE)
+
+
+def _is_daily_quota_429(status: int | None, exc: Exception) -> bool:
+    """True quando o erro é um 429 de quota DIÁRIA esgotada (não rate-limit de minuto).
+
+    Retentar aqui é inútil (o reset é só na virada do dia do Google) e ainda queima o
+    RPM que sobrou — por isso _generate_with_retry converte em LLMQuotaExhaustedError
+    IMEDIATO, sem gastar as 3 tentativas."""
+    if status != 429:
+        return False
+    try:
+        return bool(_DAILY_QUOTA_RE.search(str(exc)))
+    except Exception:
+        return False
+
+
+async def _generate_with_retry(**gen_kwargs) -> GenerateResult:
+    """`gemini_client.generate(...)` com retry transitório.
 
     Retenta drops de conexão (GOAWAY/timeout via httpx) E erros HTTP transitórios do
     provedor (429 rate-limit/quota, 403 billing/permissão negada, 5xx) com backoff
@@ -525,7 +636,7 @@ async def _create_with_retry(client: GeminiNativeClient, **kwargs):
     for attempt in range(1, _LLM_RETRY_ATTEMPTS + 1):
         _delay = _LLM_RETRY_DELAY * (2 ** (attempt - 1))
         try:
-            return await client.chat.completions.create(**kwargs)
+            return await generate(**gen_kwargs)
         except httpx.TransportError as exc:
             last_exc = exc
             logger.warning(
@@ -534,6 +645,12 @@ async def _create_with_retry(client: GeminiNativeClient, **kwargs):
             )
         except genai_errors.APIError as exc:
             status = _genai_status_code(exc)
+            if _is_daily_quota_429(status, exc):
+                # Quota DIÁRIA esgotada (wartime 10/07): retry é inútil até a virada do
+                # dia e queima o RPM restante → classifica como exaustão longa na hora.
+                raise LLMQuotaExhaustedError(
+                    f"Quota diária do provedor esgotada (429 per-day): {exc}"
+                ) from exc
             if status not in (403, 429) and not (isinstance(status, int) and status >= 500):
                 raise  # 4xx não-retentável (400/401/404/...) → relança cru
             last_exc = exc
@@ -548,14 +665,21 @@ async def _create_with_retry(client: GeminiNativeClient, **kwargs):
             )
         if attempt < _LLM_RETRY_ATTEMPTS:
             await asyncio.sleep(_delay)
+    # Classificação do esgotamento (wartime 10/07): 403 persistente é billing/permissão —
+    # historicamente NUNCA é transitório de segundos (o reset depende de ação humana ou da
+    # virada do dia) → exaustão longa. O 429-diário já foi convertido em
+    # LLMQuotaExhaustedError na 1ª ocorrência acima; o check aqui é cinto de segurança
+    # caso ele apareça só na última tentativa intercalado com erros de conexão.
+    if isinstance(last_exc, genai_errors.APIError):
+        _last_status = _genai_status_code(last_exc)
+        if _last_status == 403 or _is_daily_quota_429(_last_status, last_exc):
+            raise LLMQuotaExhaustedError(
+                f"Quota/billing do provedor esgotado após {_LLM_RETRY_ATTEMPTS} "
+                f"tentativas (HTTP {_last_status}): {last_exc}"
+            ) from last_exc
     raise LLMUnavailableError(
         f"LLM indisponível após {_LLM_RETRY_ATTEMPTS} tentativas: {last_exc}"
     ) from last_exc
-
-
-def get_ai_client(model: str) -> GeminiNativeClient:
-    """Public accessor — returns the appropriate AI client for the given model."""
-    return _get_client(model)
 
 
 def _schedule_memory_refresh(lead_id: str) -> None:
@@ -640,21 +764,28 @@ def build_system_prompt(
     catalog_text: str | None = None,
 ) -> str:
     now = datetime.now(TZ_BR)
-    base = build_base_prompt(
-        lead_name=lead.get("name"),
-        lead_company=lead.get("company"),
-        now=now,
-        lead_context=lead_context,
-    )
     stage_prompts = get_stage_prompts(prompt_key)
     stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
-    # Ordem hierarquica: base (persona) -> estagio (roteiro do funil) -> catalogo
-    # dinamico -> instrucao final.
+    # ORDEM CACHE-FIRST (FinOps P1, 12/07): todo o conteudo ESTATICO vem primeiro —
+    # BASE_STATIC (persona) -> estagio (roteiro do funil) -> catalogo (TTL 5min) — e SO
+    # ENTAO o bloco volatil <context> (data, nome, CRM, dossie). Assim o prefixo
+    # byte-identico entre chamadas cobre base+estagio+catalogo (~30K tokens) e o implicit
+    # caching do Gemini desconta 75% dele. NAO insira nenhum byte volatil antes do
+    # <context> — qualquer variacao no prefixo quebra o cache (hit medido: 9,9% quando o
+    # <context> ficava no meio da cadeia).
     # FINAL_INSTRUCTION fica por ultimo para que <final_instruction> seja literalmente a
     # ultima tag da string, preservando a hierarquia XML esperada pelo Gemini.
-    parts = [base, stage_prompt]
+    parts = [BASE_STATIC, stage_prompt]
     if catalog_text:
         parts.append(_build_catalog_block(catalog_text))
+    parts.append(
+        build_context_block(
+            lead_name=lead.get("name"),
+            lead_company=lead.get("company"),
+            now=now,
+            lead_context=lead_context,
+        )
+    )
     parts.append(FINAL_INSTRUCTION)
     return "\n\n".join(parts)
 
@@ -712,13 +843,38 @@ async def run_agent(
     else:
         logger.info("Using Gemini model '%s' via native Google GenAI SDK", model)
 
-    tools = get_tools_for_stage(stage)
+    tools = build_tools(get_tools_for_stage(stage))
     catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)
     system_prompt = build_system_prompt(
         lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text
     )
 
-    history = get_history(conversation_id, limit=60)
+    def _track(call_type: str, result: GenerateResult) -> None:
+        """Contabiliza usage nativo no token_usage (colunas do banco inalteradas:
+        completion_tokens = saída FATURADA = candidates + thoughts)."""
+        um = result.usage_metadata
+        if not um:
+            return
+        track_token_usage(
+            lead_id=lead_id,
+            stage=stage,
+            model=model,
+            call_type=call_type,
+            prompt_tokens=um.prompt_token_count,
+            completion_tokens=um.billed_output_tokens,
+            cached_tokens=um.cached_content_token_count,
+            reasoning_tokens=um.thoughts_token_count,
+        )
+
+    # FinOps P2 (12/07): roles filtrado na QUERY (system-rows compravam janela das 60 e
+    # eram descartadas no builder abaixo — janela útil real < 60) + teto de caracteres
+    # (HISTORY_CHAR_BUDGET; corta as linhas mais antigas — o Dossiê é a memória longa).
+    history = get_history(
+        conversation_id,
+        limit=60,
+        roles=("user", "assistant"),
+        char_budget=settings.history_char_budget,
+    )
     # processor.py saves user message before calling run_agent, so history already
     # includes the current message — strip it to avoid sending it twice.
     # Capture quoted_wamid of the current turn BEFORE stripping so we can enrich
@@ -746,15 +902,22 @@ async def run_agent(
     # Collapse consecutive assistant bubbles into a single turn so the AI sees
     # one coherent response per turn regardless of how many bubbles were saved.
     # Reply/reaction enrichment is applied via _render_history_content (reads the batch cache).
-    messages = [{"role": "system", "content": system_prompt}]
+    # O turno vive como estado NATIVO: system_instruction (string, fora dos contents)
+    # + contents (list[types.Content]) — sem round-trip por dicts (thought_signature
+    # da família Gemini 3 viaja por construção no Content cru do candidato).
+    convo_turns: list[dict] = []
     for msg in history:
         if msg["role"] not in ("user", "assistant"):
             continue
         enriched_content = _render_history_content(msg, resolved_wamids)
-        if messages and messages[-1]["role"] == "assistant" == msg["role"]:
-            messages[-1]["content"] += "\n\n" + enriched_content
+        if convo_turns and convo_turns[-1]["role"] == "assistant" == msg["role"]:
+            convo_turns[-1]["content"] += "\n\n" + enriched_content
         else:
-            messages.append({"role": msg["role"], "content": enriched_content})
+            convo_turns.append({"role": msg["role"], "content": enriched_content})
+    contents = [
+        user_content(t["content"]) if t["role"] == "user" else model_content(t["content"])
+        for t in convo_turns
+    ]
 
     is_outbound = prompt_key == "valeria_outbound"
     # Primeiro turno REAL = o lead ainda não tem nenhuma mensagem 'user' no histórico
@@ -796,7 +959,7 @@ async def run_agent(
             template_intent=dispatch_intent,
             lp_message=(lead_context or {}).get("lp_message"),
         )
-        messages.append({"role": "user", "content": ctx})
+        contents.append(user_content(ctx))
 
     # Apply reply marker to the current user message when it was a reply
     if current_quoted_wamid:
@@ -804,31 +967,20 @@ async def run_agent(
         enriched_user_text = f"{marker}\n{user_text}"
     else:
         enriched_user_text = user_text
-    messages.append({"role": "user", "content": enriched_user_text})
+    contents.append(user_content(enriched_user_text))
 
-    response = await _create_with_retry(_get_client(model),
+    initial_thinking_off = _initial_thinking_off(model)
+    result = await _generate_with_retry(
         model=model,
-        messages=messages,
-        tools=tools if tools else None,
+        contents=contents,
+        system_instruction=system_prompt,
+        tools=tools,
         temperature=0.4,
-        max_tokens=MAX_OUTPUT_TOKENS,
-        stop=_STOP_SEQUENCES,
-        **_initial_thinking_kwargs(model),
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+        stop_sequences=_STOP_SEQUENCES,
+        thinking_off=initial_thinking_off,
     )
-
-    if response.usage:
-        track_token_usage(
-            lead_id=lead_id,
-            stage=stage,
-            model=model,
-            call_type="response",
-            prompt_tokens=response.usage.prompt_tokens,
-            completion_tokens=response.usage.completion_tokens,
-            cached_tokens=response.usage.cached_tokens,
-            reasoning_tokens=response.usage.reasoning_tokens,
-        )
-
-    message = response.choices[0].message
+    _track("response", result)
 
     tool_iterations = 0
     media_tool_used = False
@@ -847,66 +999,106 @@ async def run_agent(
     # ai_enabled=False). Se o turno terminar vazio, o silêncio é correto — NÃO o re-engajamento
     # genérico da Change C, que reabriria a conversa com um lead que acabou de ser descartado.
     soft_reject_used = False
-    while message.tool_calls:
+    # DEDUP DE TOOL-CALL POR TURNO (FinOps P2, 12/07): chamada repetida (mesmo nome +
+    # mesmos args) no MESMO turno não re-executa — devolve o resultado da 1ª execução.
+    # Medição: turnos com ≥5 chamadas eram 23% dos turnos e 51% do custo de resposta
+    # (máx observado: 18 chamadas), tipicamente o modelo re-pedindo a mesma tool. Se uma
+    # iteração inteira for só de repetições, tools=None força a fala e encerra o loop.
+    executed_tool_cache: dict[tuple[str, str], str] = {}
+    while result.function_calls:
         tool_iterations += 1
         if tool_iterations > MAX_TOOL_ITERATIONS:
             logger.error(
                 "[LOOP GUARD] max tool iterations (%d) reached for conv %s — forcing text response",
                 MAX_TOOL_ITERATIONS, conversation_id,
             )
-            if not message.content:
+            if not result.text:
                 try:
-                    fallback = await _create_with_retry(_get_client(model),
+                    fallback = await _generate_with_retry(
                         model=model,
-                        messages=messages,
+                        contents=contents,
+                        system_instruction=system_prompt,
                         tools=None,
                         temperature=0.4,
-                        max_tokens=MAX_OUTPUT_TOKENS,
-                        stop=_STOP_SEQUENCES,
-                        **_gemini_thinking_off(model),
+                        max_output_tokens=MAX_OUTPUT_TOKENS,
+                        stop_sequences=_STOP_SEQUENCES,
+                        thinking_off=_thinking_off_for(model),
                     )
                     # Turno patológico é o mais caro (histórico cheio reenviado N vezes) —
                     # esta era a única chamada do run_agent com usage DESCARTADO. call_type
                     # próprio p/ monitorar a frequência do loop descontrolado (FinOps 08/07).
-                    if fallback.usage:
-                        track_token_usage(
-                            lead_id=lead_id,
-                            stage=stage,
-                            model=model,
-                            call_type="response_loopguard",
-                            prompt_tokens=fallback.usage.prompt_tokens,
-                            completion_tokens=fallback.usage.completion_tokens,
-                            cached_tokens=fallback.usage.cached_tokens,
-                            reasoning_tokens=fallback.usage.reasoning_tokens,
-                        )
-                    message = fallback.choices[0].message
+                    _track("response_loopguard", fallback)
+                    result = fallback
                 except Exception as _exc:
                     logger.error("[LOOP GUARD] fallback call failed for conv %s: %s", conversation_id, _exc)
             break
-        messages.append(message.model_dump(exclude_none=True))
-        for tool_call in message.tool_calls:
-            func_name = tool_call.function.name
+        # Round-trip nativo: o Content CRU do candidato entra no histórico do turno
+        # (preserva thought_signature — 400 da família 3 impossível por construção).
+        if result.content is not None:
+            contents.append(result.content)
+        # Flag por RODADA de function_calls: handoff explícito (fc.name) OU em cascata
+        # (tool_result com HANDOFF_RESULT_PREFIX — qualificar_lead chama encaminhar_humano
+        # por dentro do execute_tool e o nome nunca aparece na lista). Fix S1 11/07.
+        handoff_executed = False
+        iteration_had_fresh_call = False
+        iteration_had_duplicate = False
+        for fc in result.function_calls:
+            func_name = fc.name
             if func_name in _MEDIA_TOOL_NAMES:
                 media_tool_used = True
-            try:
-                func_args = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError as exc:
+            func_args = fc.args
+            if not isinstance(func_args, dict):
+                # Defesa herdada dos args malformados da era OpenAI (arguments era string
+                # JSON): o SDK nativo entrega dict, mas um shape inesperado não pode
+                # chamar a tool (salvar_nome faz args["name"] → KeyError silencioso).
                 logger.error(
-                    "Malformed JSON args for tool %s in conv %s: %s",
-                    func_name, conversation_id, exc,
+                    "Malformed args for tool %s in conv %s: %r",
+                    func_name, conversation_id, func_args,
                 )
-                # args malformados = mídia NÃO executou — re-execução no retry é legítima,
-                # mesma classe do except de execute_tool (fast-follow review 2026-07-03).
                 if func_name in _MEDIA_TOOL_NAMES:
                     media_exec_failed = True
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": f"erro: argumentos inválidos para {func_name} — tente novamente",
-                })
+                contents.append(function_response_content(
+                    func_name, f"erro: argumentos inválidos para {func_name} — tente novamente",
+                ))
+                continue
+            _dedup_key = (func_name, json.dumps(func_args, sort_keys=True, ensure_ascii=False, default=str))
+            if _dedup_key in executed_tool_cache:
+                iteration_had_duplicate = True
+                # Repetição exata no mesmo turno: devolve o resultado anterior sem
+                # re-executar (efeitos colaterais e latência zero; o modelo recebe o
+                # mesmo dado e tende a parar de insistir).
+                logger.info(
+                    "[TOOL DEDUP] %s repetida com os mesmos args no turno (conv %s) — "
+                    "reusando resultado sem re-executar",
+                    func_name, conversation_id,
+                )
+                contents.append(function_response_content(
+                    func_name,
+                    f"(ja executada neste turno — resultado anterior) {executed_tool_cache[_dedup_key]}",
+                ))
+                continue
+            iteration_had_fresh_call = True
+            # GUARDA PERGUNTA ABERTA (#3, auditoria 14/07 — caso Gilberto Medeiros): não
+            # descartar um lead que acabou de fazer uma pergunta. Aborta o descarte quando o
+            # inbound deste turno contém pergunta genuína e devolve ao modelo a instrução de
+            # RESPONDER antes de qualquer descarte (mesma filosofia da Guarda 18C: falso-
+            # positivo custa pouco — só força responder primeiro). Função pura em adherence.
+            if func_name == "registrar_sem_interesse_atual" and contains_open_question(user_text):
+                logger.warning(
+                    "[GUARDA PERGUNTA ABERTA] registrar_sem_interesse_atual abortado em conv %s "
+                    "(lead %s) — lead fez pergunta ainda não respondida: %.120s",
+                    conversation_id, lead_id, user_text,
+                )
+                contents.append(function_response_content(
+                    func_name,
+                    "[ABORTADO — GUARDA PERGUNTA ABERTA] O lead acabou de fazer uma pergunta que "
+                    "ainda não foi respondida. RESPONDA a pergunta com a informação do catálogo "
+                    "(preço, lote mínimo, como funciona) ANTES de qualquer descarte. Nunca "
+                    "classifique como 'sem interesse' quem está perguntando.",
+                ))
                 continue
             try:
-                result = await execute_tool(
+                tool_result = await execute_tool(
                     func_name, func_args, lead_id, lead.get("phone", ""), conversation_id
                 )
             except Exception as exc:
@@ -914,55 +1106,91 @@ async def run_agent(
                     "Tool %s raised exception for conv %s: %s",
                     func_name, conversation_id, exc, exc_info=True,
                 )
-                result = f"erro ao executar {func_name} — tente novamente"
+                tool_result = f"erro ao executar {func_name} — tente novamente"
                 # media_exec_failed (follow-up review E2): a intenção (media_tool_used, acima)
                 # não virou execução de fato — libera o guard same-turn do Change B pra
                 # re-executar esta tool no retry, em vez de bloquear achando que já foi enviada.
                 if func_name in _MEDIA_TOOL_NAMES:
                     media_exec_failed = True
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": result,
-            })
+            else:
+                if isinstance(tool_result, str) and not tool_result.startswith("erro"):
+                    executed_tool_cache[_dedup_key] = tool_result
+                # media_exec_failed reflete o ÚLTIMO desfecho de mídia (auditoria 14/07,
+                # caso Marcelo): enviar_foto_produto/enviar_fotos retornam "nao encontrada"/
+                # "nenhuma foto" SEM exceção — a intenção (media_tool_used) não virou envio.
+                # Um envio real posterior LIMPA a falha (False), pra guarda de fotos
+                # verbalizadas só disparar quando de fato nada foi enviado.
+                if func_name in _MEDIA_TOOL_NAMES and not str(tool_result).startswith("erro"):
+                    media_exec_failed = media_result_is_no_send(tool_result)
+                    if media_exec_failed:
+                        logger.warning(
+                            "[MEDIA NO-SEND] %s não enviou nada em conv %s (resultado=%.80s) — "
+                            "guarda de fotos verbalizadas fica ciente",
+                            func_name, conversation_id, tool_result,
+                        )
+            if is_handoff(func_name, tool_result):
+                handoff_executed = True
+            contents.append(function_response_content(func_name, tool_result))
 
         # encaminhar_humano sends the handoff message directly inside execute_tool.
         # Return None (sentinel) so the processor can distinguish an intentional
-        # handoff from an unexpected empty response.
-        if any(tc.function.name == "encaminhar_humano" for tc in message.tool_calls):
+        # handoff from an unexpected empty response. Detecção pela flag acumulada
+        # (fix S1 11/07): cobre também o handoff em CASCATA via qualificar_lead —
+        # detectá-lo só pelo fc.name deixava o turno seguir pra chamada pós-tool,
+        # o LLM verbalizava a transferência e a guarda verbalizada disparava um
+        # SEGUNDO encaminhar_humano (2ª despedida + 2º cartão, caso Prof. Sebastião).
+        if handoff_executed:
+            # Telemetria log-only [HANDOFF SEM RESPOSTA] (auditoria 11/07, Cat. 2):
+            # o lead fez a pergunta mais quente (preço/lote/prazo) e recebeu o cartão
+            # do João no lugar da resposta. Heurística simples e fail-open (adherence);
+            # NUNCA bloqueia o handoff — só sinaliza p/ QA. Só quando há fc EXPLÍCITO
+            # de encaminhar_humano: na cascata não existe mensagem_despedida a avaliar.
+            try:
+                _hfc = next(
+                    (fc for fc in result.function_calls if fc.name == "encaminhar_humano"),
+                    None,
+                )
+                if _hfc is not None:
+                    _farewell = _hfc.args.get("mensagem_despedida") if isinstance(_hfc.args, dict) else None
+                    if handoff_without_answer(user_text, _farewell):
+                        logger.warning(
+                            "[HANDOFF SEM RESPOSTA] conv %s lead %s — lead perguntou e a despedida "
+                            "não respondeu (sem número/R$): despedida=%.120s",
+                            conversation_id, lead_id, _farewell or "",
+                        )
+            except Exception:
+                pass
             return None
 
         # registrar_optout sets ai_enabled=False silently. The farewell Valéria
-        # wrote lives in message.content of this same turn — return it now and skip
+        # wrote lives in result.text of this same turn — return it now and skip
         # the second API call (there is nothing left to say after opt-out).
-        if any(tc.function.name == "registrar_optout" for tc in message.tool_calls):
-            return _sanitize_assistant_text(message.content or "", conversation_id, stage, source="optout") \
+        if any(fc.name == "registrar_optout" for fc in result.function_calls):
+            return _sanitize_assistant_text(result.text or "", conversation_id, stage, source="optout") \
                 or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
 
         # registrar_sem_interesse_atual (soft rejection): NÃO retornamos aqui — o modelo costuma
         # gerar um fechamento gracioso na chamada pós-tool. Só marcamos a flag para que, se o turno
         # terminar EMPTY (modelo mudo), o ramo final caia em silêncio em vez do genérico de
         # re-engajamento (que reabriria a conversa de um lead recém-descartado).
-        if any(tc.function.name == "registrar_sem_interesse_atual" for tc in message.tool_calls):
+        if any(fc.name == "registrar_sem_interesse_atual" for fc in result.function_calls):
             soft_reject_used = True
 
         # If mudar_stage was called, update in-memory state so the next API call
         # uses the correct stage prompt and tools — prevents infinite transition loop.
-        for tc in message.tool_calls:
-            if tc.function.name == "mudar_stage":
-                try:
-                    new_stage = json.loads(tc.function.arguments).get("stage", stage)
-                except json.JSONDecodeError:
+        for fc in result.function_calls:
+            if fc.name == "mudar_stage":
+                if not isinstance(fc.args, dict):
                     break
+                new_stage = fc.args.get("stage", stage)
                 old_stage = stage
                 stage = new_stage
                 transitioned_to_stage = new_stage
-                tools = get_tools_for_stage(stage)
+                tools = build_tools(get_tools_for_stage(stage))
                 catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)
                 system_prompt = build_system_prompt(
                     lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text
                 )
-                messages[0] = {"role": "system", "content": system_prompt}
                 if lead_id:
                     current_meta = lead.get("metadata") or {}
                     updated_meta = {**current_meta, "previous_stage": old_stage}
@@ -972,31 +1200,34 @@ async def run_agent(
                     _schedule_memory_refresh(lead_id)
                 break
 
-        # Chamada PÓS-TOOL: desliga o thinking do Gemini 2.5 — é aqui que o modelo
-        # gastava o budget pensando e devolvia completion_tokens=0 (Bug 2).
-        response = await _create_with_retry(_get_client(model),
-            model=model,
-            messages=messages,
-            tools=tools if tools else None,
-            temperature=0.4,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            stop=_STOP_SEQUENCES,
-            **_gemini_thinking_off(model),
-        )
-        if response.usage:
-            track_token_usage(
-                lead_id=lead_id,
-                stage=stage,
-                model=model,
-                call_type="response",
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                cached_tokens=response.usage.cached_tokens,
-                reasoning_tokens=response.usage.reasoning_tokens,
+        # Iteração composta SÓ de repetições: o modelo está em loop pedindo o que já tem.
+        # tools=None na continuação força a fala humana e encerra o ciclo — sem esperar as
+        # 5 iterações do loop-guard (cada uma re-paga o prompt inteiro). NÃO dispara em
+        # iteração só-malformada: esse caso precisa manter as tools para a recuperação
+        # legítima do Change B (re-execução com args válidos no retry).
+        if iteration_had_duplicate and not iteration_had_fresh_call:
+            logger.warning(
+                "[TOOL DEDUP] iteração %d só com chamadas repetidas (conv %s) — "
+                "tools=None p/ forçar resposta em texto e encerrar o loop",
+                tool_iterations, conversation_id,
             )
-        message = response.choices[0].message
+            tools = None
 
-    assistant_text = message.content or ""
+        # Chamada PÓS-TOOL: desliga o thinking — é aqui que o modelo gastava o budget
+        # pensando e devolvia saída visível zero (Bug 2).
+        result = await _generate_with_retry(
+            model=model,
+            contents=contents,
+            system_instruction=system_prompt,
+            tools=tools,
+            temperature=0.4,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+            stop_sequences=_STOP_SEQUENCES,
+            thinking_off=_thinking_off_for(model),
+        )
+        _track("response", result)
+
+    assistant_text = result.text or ""
 
     # REDE DE SEGURANÇA ANTI-TOOL_CODE (lead 5575992317829, auditoria 2026-06-25). O gemini
     # às vezes vaza o function-call como CÓDIGO no content (tool_calls vazio), e o código cru
@@ -1007,12 +1238,17 @@ async def run_agent(
     assistant_text = _sanitize_assistant_text(assistant_text, conversation_id, stage, source="initial")
 
     # RETRY-ON-EMPTY (unificado — auditoria 2026-06-24, leads 5549984064339 / 5551984772757,
-    # reincidência da Carla). gemini-2.5-flash às vezes queima o budget pensando e devolve
-    # completion_tokens=0, MESMO num input perfeitamente válido. A chamada inicial deste turno
-    # NÃO desliga o thinking, então o vazio é justamente o turno em que o modelo "pensou demais".
-    # Vale para QUALQUER turno vazio (com ou sem tool — antes só reentrávamos após tool, e o turno
-    # normal vazio caía no stall enganoso). Tentamos UM retry silencioso com o thinking 100% off,
-    # que costuma recuperar o texto real. NUNCA derruba o turno por exceção — só loga.
+    # reincidência da Carla). gemini-2.5-flash às vezes devolve completion_tokens=0 MESMO num
+    # input perfeitamente válido. Vale para QUALQUER turno vazio (com ou sem tool — antes só
+    # reentrávamos após tool, e o turno normal vazio caía no stall enganoso). Tentamos UM
+    # retry silencioso. NUNCA derruba o turno por exceção — só loga.
+    #
+    # FALLBACK CONDICIONAL DE THINKING (FinOps P0, 12/07): o retry usa a política OPOSTA à
+    # da 1ª chamada do turno. No default novo (inicial SEM thinking), o vazio não é
+    # thinking-burn — então o retry LIGA o thinking e dá ao turno difícil o budget de
+    # raciocínio completo na 2ª tentativa. Com LLM_INITIAL_THINKING=on (rollback), a inicial
+    # pensa e o vazio é o clássico "queimou o budget pensando" — o retry roda thinking-off,
+    # exatamente o comportamento histórico.
     #
     # Change A (2026-06-30): o retry mantém as tools do stage, EXCETO quando o vazio veio de um
     # loop de tools descontrolado (tool_iterations > MAX_TOOL_ITERATIONS), único caso genuinamente
@@ -1022,49 +1258,43 @@ async def run_agent(
     # auditoria 2026-06-30).
     if not assistant_text:
         logger.warning(
-            "[AGENT EMPTY] resposta vazia (tool_iterations=%d) para conv %s — retry silencioso sem thinking",
+            "[AGENT EMPTY] resposta vazia (tool_iterations=%d) para conv %s — retry silencioso (thinking no fallback condicional)",
             tool_iterations, conversation_id,
         )
         # Change A: preserva tools salvo em loop descontrolado
-        retry_tools = None if tool_iterations > MAX_TOOL_ITERATIONS else (tools or None)
+        retry_tools = None if tool_iterations > MAX_TOOL_ITERATIONS else tools
+        # Fallback condicional (FinOps P0): política de thinking oposta à da 1ª chamada.
+        retry_thinking_off = _thinking_off_for(model) if not initial_thinking_off else False
         try:
-            retry_resp = await _create_with_retry(_get_client(model),
+            retry_result = await _generate_with_retry(
                 model=model,
-                messages=messages,
+                contents=contents,
+                system_instruction=system_prompt,
                 tools=retry_tools,
                 temperature=0.4,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                stop=_STOP_SEQUENCES,
-                **_gemini_thinking_off(model),
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                stop_sequences=_STOP_SEQUENCES,
+                thinking_off=retry_thinking_off,
             )
-            if retry_resp.usage:
-                # Etapa 2: chamadas do 1º degrau de retry (este + a continuação pós-tool do
-                # Change B abaixo) passam a "response_retry" — a inicial e as pós-tool do
-                # loop principal continuam "response". Permite medir o custo/frequência do
-                # retry separadamente (casos Davi/Samuel 01-02/07).
-                track_token_usage(
-                    lead_id=lead_id,
-                    stage=stage,
-                    model=model,
-                    call_type="response_retry",
-                    prompt_tokens=retry_resp.usage.prompt_tokens,
-                    completion_tokens=retry_resp.usage.completion_tokens,
-                    cached_tokens=retry_resp.usage.cached_tokens,
-                    reasoning_tokens=retry_resp.usage.reasoning_tokens,
-                )
-            retry_msg = retry_resp.choices[0].message
+            # Etapa 2: chamadas do 1º degrau de retry (este + a continuação pós-tool do
+            # Change B abaixo) passam a "response_retry" — a inicial e as pós-tool do
+            # loop principal continuam "response". Permite medir o custo/frequência do
+            # retry separadamente (casos Davi/Samuel 01-02/07).
+            _track("response_retry", retry_result)
             # Change B (2026-06-30): se o retry recuperou tool_calls (porque tools foram mantidas),
             # executa a intenção em vez de silenciá-la. Cobre o caso exato do lead private_label:
             # a intenção era encaminhar_humano mas o retry sem tools re-vazava como tool_code.
             # Apenas UM nível de recuperação — não re-inicia o ciclo ReAct completo.
-            if retry_msg.tool_calls and retry_tools is not None:
-                # Espelha o loop principal: registra o turno do assistente e o resultado de cada
-                # tool nas messages, para que a chamada PÓS-TOOL abaixo tenha o contexto e produza
+            if retry_result.function_calls and retry_tools is not None:
+                # Espelha o loop principal: registra o Content do assistente e o resultado de cada
+                # tool nos contents, para que a chamada PÓS-TOOL abaixo tenha o contexto e produza
                 # a fala natural (fechamento do ciclo ReAct). Sem esses appends, a continuação
                 # reprocessaria só o vazio e reincidiria no genérico (caso Karl 2026-07-01).
-                messages.append(retry_msg.model_dump(exclude_none=True))
-                for _tc in retry_msg.tool_calls:
-                    _rname = _tc.function.name
+                if retry_result.content is not None:
+                    contents.append(retry_result.content)
+                _retry_handoff_executed = False
+                for _fc in retry_result.function_calls:
+                    _rname = _fc.name
                     # Guarda de idempotência POR TURNO (Etapa 2 Task 3, caso Samuel 01/07
                     # 08:11-08:12): o Change B roda DEPOIS do loop principal, no MESMO turno —
                     # se uma tool de mídia já executou lá (media_tool_used == True chegando
@@ -1086,33 +1316,26 @@ async def run_agent(
                             "Change B pulando re-execucao para conv %s",
                             _rname, conversation_id,
                         )
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": _tc.id,
-                            "content": "fotos já processadas neste turno — não reenviar",
-                        })
+                        contents.append(function_response_content(
+                            _rname, "fotos já processadas neste turno — não reenviar",
+                        ))
                         continue
                     if _rname in _MEDIA_TOOL_NAMES:
                         media_tool_used = True
-                    try:
-                        _rargs = json.loads(_tc.function.arguments)
-                    except json.JSONDecodeError as _je:
-                        # Mesmo contrato do loop principal: JSON malformado → PULA o tool_call.
-                        # NUNCA chama execute_tool com {} — tools como salvar_nome fazem args["name"]
-                        # e estourariam KeyError (engolido pelo except externo) = corrupção silenciosa.
+                    _rargs = _fc.args
+                    if not isinstance(_rargs, dict):
+                        # Mesmo contrato do loop principal: args com shape inesperado → PULA.
+                        # NUNCA chama execute_tool com {} — tools como salvar_nome fazem
+                        # args["name"] e estourariam KeyError = corrupção silenciosa.
                         logger.error(
-                            "[RETRY TOOL] JSON inválido para %s em conv %s — pulando: %s",
-                            _rname, conversation_id, _je,
+                            "[RETRY TOOL] args inválidos para %s em conv %s — pulando: %r",
+                            _rname, conversation_id, _rargs,
                         )
-                        # args malformados = mídia NÃO executou — re-execução no retry é legítima,
-                        # mesma classe do except de execute_tool (fast-follow review 2026-07-03).
                         if _rname in _MEDIA_TOOL_NAMES:
                             media_exec_failed = True
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": _tc.id,
-                            "content": f"erro: argumentos inválidos para {_rname} — tente novamente",
-                        })
+                        contents.append(function_response_content(
+                            _rname, f"erro: argumentos inválidos para {_rname} — tente novamente",
+                        ))
                         continue
                     # mudar_stage recuperado: rastreia o novo stage (Minor #4) para que, se o turno
                     # ainda terminar vazio, _empty_fallback_text escolha a pergunta de avanço do
@@ -1136,21 +1359,28 @@ async def run_agent(
                         # tool de mídia recuperada aqui também falhe.
                         if _rname in _MEDIA_TOOL_NAMES:
                             media_exec_failed = True
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": _tc.id,
-                        "content": _rresult,
-                    })
+                    else:
+                        # Envio real recuperado no retry LIMPA a falha anterior (auditoria
+                        # 14/07): se a mídia foi de fato enviada aqui, a guarda de fotos
+                        # verbalizadas não deve mais forçar reenvio. No-send ("nao
+                        # encontrada") mantém a falha marcada.
+                        if _rname in _MEDIA_TOOL_NAMES and not str(_rresult).startswith("erro"):
+                            media_exec_failed = media_result_is_no_send(_rresult)
+                    # Mesma detecção do loop principal (fix S1 11/07): is_handoff cobre o
+                    # nome explícito E a cascata via qualificar_lead (prefixo no retorno).
+                    if is_handoff(_rname, _rresult):
+                        _retry_handoff_executed = True
+                    contents.append(function_response_content(_rname, _rresult))
                 # Tools terminais recuperadas no retry — mesma ordem e contrato do loop principal,
                 # ANTES da chamada pós-tool (senão o lead recebe despedida + continuação juntos).
-                _retry_names = {_tc.function.name for _tc in retry_msg.tool_calls}
-                # encaminhar_humano → sentinel None (handoff; card enviado dentro de execute_tool)
-                if "encaminhar_humano" in _retry_names:
+                _retry_names = {_fc.name for _fc in retry_result.function_calls}
+                # handoff (explícito ou em cascata) → sentinel None (card enviado dentro de execute_tool)
+                if _retry_handoff_executed:
                     return None
                 # registrar_optout → despedida sanitizada (mesmo default do loop principal)
                 if "registrar_optout" in _retry_names:
                     return _sanitize_assistant_text(
-                        retry_msg.content or "", conversation_id, stage, source="retry-optout"
+                        retry_result.text or "", conversation_id, stage, source="retry-optout"
                     ) or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
                 # registrar_sem_interesse_atual → silêncio é correto após soft rejection.
                 # A regra "nunca mudo" vale só para turnos normais, não para descarte.
@@ -1161,35 +1391,26 @@ async def run_agent(
                 # peça que faltava: o retry executava a tool mas não gerava a fala, e o turno caía
                 # no genérico (thinking-burn + retry incompleto, lead Karl 2026-07-01). Apenas UM
                 # nível — não re-inicia o loop; se ainda vier vazio, cai no fallback final (Change C).
-                post_resp = await _create_with_retry(_get_client(model),
+                post_result = await _generate_with_retry(
                     model=model,
-                    messages=messages,
+                    contents=contents,
+                    system_instruction=system_prompt,
                     tools=retry_tools,
                     temperature=0.4,
-                    max_tokens=MAX_OUTPUT_TOKENS,
-                    stop=_STOP_SEQUENCES,
-                    **_gemini_thinking_off(model),
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
+                    stop_sequences=_STOP_SEQUENCES,
+                    thinking_off=_thinking_off_for(model),
                 )
-                if post_resp.usage:
-                    # Etapa 2: continuação pós-tool do Change B também é parte do 1º degrau
-                    # de retry — mesmo call_type "response_retry" da chamada retry_resp acima.
-                    track_token_usage(
-                        lead_id=lead_id,
-                        stage=stage,
-                        model=model,
-                        call_type="response_retry",
-                        prompt_tokens=post_resp.usage.prompt_tokens,
-                        completion_tokens=post_resp.usage.completion_tokens,
-                        cached_tokens=post_resp.usage.cached_tokens,
-                        reasoning_tokens=post_resp.usage.reasoning_tokens,
-                    )
+                # Etapa 2: continuação pós-tool do Change B também é parte do 1º degrau
+                # de retry — mesmo call_type "response_retry" da chamada retry_result acima.
+                _track("response_retry", post_result)
                 assistant_text = _sanitize_assistant_text(
-                    post_resp.choices[0].message.content or "",
+                    post_result.text or "",
                     conversation_id, stage, source="retry-post-tool",
                 )
             else:
                 assistant_text = _sanitize_assistant_text(
-                    retry_msg.content or "", conversation_id, stage, source="retry"
+                    retry_result.text or "", conversation_id, stage, source="retry"
                 )
         except Exception as _exc:
             logger.error(
@@ -1218,29 +1439,19 @@ async def run_agent(
             tool_iterations, conversation_id,
         )
         try:
-            retry2_messages = messages + [{"role": "user", "content": _RETRY2_NUDGE}]
-            retry2_resp = await _create_with_retry(_get_client(model),
+            retry2_result = await _generate_with_retry(
                 model=model,
-                messages=retry2_messages,
+                contents=contents + [user_content(_RETRY2_NUDGE)],
+                system_instruction=system_prompt,
                 tools=None,
                 temperature=_RETRY2_TEMPERATURE,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                stop=_STOP_SEQUENCES,
-                **_gemini_thinking_off(model),
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                stop_sequences=_STOP_SEQUENCES,
+                thinking_off=_thinking_off_for(model),
             )
-            if retry2_resp.usage:
-                track_token_usage(
-                    lead_id=lead_id,
-                    stage=stage,
-                    model=model,
-                    call_type="response_retry2",
-                    prompt_tokens=retry2_resp.usage.prompt_tokens,
-                    completion_tokens=retry2_resp.usage.completion_tokens,
-                    cached_tokens=retry2_resp.usage.cached_tokens,
-                    reasoning_tokens=retry2_resp.usage.reasoning_tokens,
-                )
+            _track("response_retry2", retry2_result)
             assistant_text = _sanitize_assistant_text(
-                retry2_resp.choices[0].message.content or "",
+                retry2_result.text or "",
                 conversation_id, stage, source="retry2",
             )
         except Exception as _exc2:
@@ -1308,33 +1519,29 @@ async def run_agent(
                     "O lead já a respondeu (ou ela não cabe mais). Reescreva a resposta "
                     "INTEIRA: a primeira bolha reage à última mensagem do lead (ancoragem "
                     "no novo, regra 33), sem repetir essa pergunta, sem copiar frases "
-                    "prontas, máximo 3 bolhas, sem ponto final."
+                    "prontas, máximo 3 bolhas, sem ponto final. "
+                    "RESPONDA APENAS COM AS BOLHAS FINAIS DA VALÉRIA, prontas para envio no "
+                    "WhatsApp. PROIBIDO escrever seu raciocínio, seu plano, análise das regras "
+                    "ou qualquer tag como <scratchpad>, <thinking> ou <plan> — o cliente lê "
+                    "literalmente tudo o que você escrever aqui (falha real 13/07: o lead "
+                    "recebeu o seu raciocínio interno em 3 bolhas)."
                 )
-                _fix_resp = await _create_with_retry(_get_client(model),
+                _fix_result = await _generate_with_retry(
                     model=model,
-                    messages=messages + [
-                        {"role": "assistant", "content": assistant_text},
-                        {"role": "user", "content": _nudge},
+                    contents=contents + [
+                        model_content(assistant_text),
+                        user_content(_nudge),
                     ],
+                    system_instruction=system_prompt,
                     tools=None,
                     temperature=0.5,
-                    max_tokens=MAX_OUTPUT_TOKENS,
-                    stop=_STOP_SEQUENCES,
-                    **_gemini_thinking_off(model),
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
+                    stop_sequences=_STOP_SEQUENCES,
+                    thinking_off=_thinking_off_for(model),
                 )
-                if _fix_resp.usage:
-                    track_token_usage(
-                        lead_id=lead_id,
-                        stage=stage,
-                        model=model,
-                        call_type="response_retry",
-                        prompt_tokens=_fix_resp.usage.prompt_tokens,
-                        completion_tokens=_fix_resp.usage.completion_tokens,
-                        cached_tokens=_fix_resp.usage.cached_tokens,
-                        reasoning_tokens=_fix_resp.usage.reasoning_tokens,
-                    )
+                _track("response_retry", _fix_result)
                 _fix_text = _sanitize_assistant_text(
-                    (_fix_resp.choices[0].message.content or "") if _fix_resp.choices else "",
+                    _fix_result.text or "",
                     conversation_id, stage, source="repeat-question-fix",
                 )
                 if _fix_text and not is_repeated_question(_fix_text, _prior_assistant):
@@ -1356,15 +1563,88 @@ async def run_agent(
                 )
         except Exception:
             pass
+        # Super-nomeação (auditoria 10/07 — caso Marisete): o prompt proíbe repetir o
+        # nome em mensagens consecutivas (base.py, checklist 13) mas o modelo violou em
+        # 3 turnos seguidos. Guarda determinística: remove o vocativo quando o turno
+        # anterior do assistente já nomeou. Fail-open: erro mantém o texto original.
+        try:
+            _denamed = strip_consecutive_vocative_name(
+                assistant_text, lead.get("name"), _prior_assistant,
+            )
+            if _denamed != assistant_text:
+                logger.info(
+                    "[NAME REPEAT GUARD] vocativo repetido removido em conv %s (lead=%s)",
+                    conversation_id, lead_id,
+                )
+                assistant_text = _denamed
+        except Exception:
+            pass
+
+        # Preço nunca solto (auditoria 11/07 — Cat. 3, caso Sandro): o turno entregou
+        # preço e terminou sem pergunta de fechamento — o lead ficou no vácuo. Telemetria
+        # log-only (função pura de adherence). Chegar aqui já garante que NÃO houve handoff
+        # via tool (encaminhar_humano retornou None mais cedo); ainda assim isentamos o
+        # texto que será convertido em handoff pela guarda verbalizada logo abaixo.
+        # Fail-open: NUNCA muta a resposta.
+        try:
+            if not _looks_like_handoff_announcement(assistant_text) and price_without_cta(assistant_text):
+                logger.warning(
+                    "[PRECO SEM CTA] conv %s lead %s — preço entregue sem pergunta de "
+                    "fechamento na última bolha: %.120s",
+                    conversation_id, lead_id, assistant_text,
+                )
+        except Exception:
+            pass
+
+    # -----------------------------------------------------------------------
+    # GUARDA DETERMINÍSTICA DE FOTOS VERBALIZADAS (auditoria 12/07, caso Ana Weiss)
+    # -----------------------------------------------------------------------
+    # Texto final alega envio de fotos mas NENHUMA tool de mídia rodou neste
+    # turno (media_tool_used cobre enviar_fotos/enviar_foto_produto — se rodou,
+    # a alegação é verdadeira e a guarda não se aplica; invariante do
+    # once-per-turn de 02/07). Fotos já enviadas ANTES na conversa viram no-op
+    # pela idempotência da própria tool (marcador [enviar_fotos] no histórico).
+    # Roda ANTES da guarda de handoff: num turno que verbaliza os dois, as
+    # fotos entram na fila antes do handoff decidir o destino do texto.
+    if (
+        stage in _PHOTO_GUARD_STAGES
+        and (not media_tool_used or media_exec_failed)
+        and _looks_like_photo_send_claim(assistant_text)
+    ):
+        logger.warning(
+            "[FOTOS VERBAL GUARD] texto final alega envio de fotos sem tool-call "
+            "para conv %s (stage=%s) — forçando enviar_fotos. text=%.200s",
+            conversation_id, stage, assistant_text,
+        )
+        try:
+            _foto_result = await execute_tool(
+                "enviar_fotos",
+                {"categoria": stage},
+                lead_id,
+                lead.get("phone", ""),
+                conversation_id,
+            )
+            logger.info(
+                "[FOTOS VERBAL GUARD] enviar_fotos forçado para conv %s: %s",
+                conversation_id, _foto_result,
+            )
+        except Exception as _foto_guard_exc:
+            # Fail-soft: não derruba o turno; entrega o texto como estava.
+            logger.error(
+                "[FOTOS VERBAL GUARD] execute_tool falhou para conv %s: %s",
+                conversation_id, _foto_guard_exc,
+            )
 
     # -----------------------------------------------------------------------
     # GUARDA DETERMINÍSTICA DE HANDOFF VERBALIZADO (2026-06-30)
     # -----------------------------------------------------------------------
     # Se o texto final contém um CTA de transferência ("vou te conectar",
-    # "vou deixar o contato dele aqui", etc.) mas encaminhar_humano NÃO foi
-    # chamado (caso contrário teríamos retornado None sentinel antes), forçamos
-    # o handoff agora. Invariante: chegar aqui garante que encaminhar_humano
-    # não rodou neste turno — sem risco de double-firing.
+    # "vou deixar o contato dele aqui", etc.) mas nenhum handoff rodou (caso
+    # contrário teríamos retornado None sentinel antes), forçamos o handoff agora.
+    # Invariante (restaurado no fix S1 11/07): chegar aqui garante que NENHUM
+    # handoff rodou neste turno — nem encaminhar_humano explícito, nem a cascata
+    # via qualificar_lead (o sentinel detecta ambas pelo nome OU pelo
+    # HANDOFF_RESULT_PREFIX no retorno) — sem risco de double-firing.
     if _looks_like_handoff_announcement(assistant_text):
         logger.warning(
             "[HANDOFF VERBAL GUARD] texto final anuncia transferência sem tool-call "

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, type ChangeEvent } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, type ChangeEvent } from "react";
 import type { Message, Conversation, Tag, QuickReply } from "@/lib/types";
 import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 import { getWindowStatus } from "@/lib/window-status";
@@ -41,7 +41,7 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const lead = conversation.leads;
   const channel = conversation.channels;
 
-  const { messages, loading, refetch } = useRealtimeMessages(conversation.id ?? null);
+  const { messages, loading, refetch, hasMore, loadOlder, loadingOlder } = useRealtimeMessages(conversation.id ?? null);
 
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
@@ -142,9 +142,33 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     [messages, optimisticMessages]
   );
 
-  function handleContactDispatch(phone: string) {
+  // Estáveis (useCallback): MessageBubble é memoizado — callbacks recriados a
+  // cada render invalidariam o memo da thread inteira.
+  const handleContactDispatch = useCallback((phone: string) => {
     setQuickSendPhone(phone);
-  }
+  }, []);
+
+  const handleReply = useCallback((msg: Message) => setReplyingTo(msg), []);
+
+  // Reação do operador: fire-and-forget — o INSERT chega via realtime e vira
+  // badge na bolha alvo. Fail-soft: janela 24h fechada volta 422 com mensagem
+  // acionável da rota; nada de estado otimista para um gesto tão pequeno.
+  const handleReact = useCallback(async (msg: Message, emoji: string) => {
+    if (!msg.wamid) return;
+    try {
+      const res = await fetch(`/api/conversations/${conversation.id}/react`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_wamid: msg.wamid, emoji }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Falha ao enviar reação");
+      }
+    } catch {
+      alert("Falha ao enviar reação");
+    }
+  }, [conversation.id]);
 
   async function handleOptOut() {
     if (optOutLoading) return;
@@ -578,7 +602,11 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         loading={loading}
         conversationId={conversation.id}
         onContactDispatch={handleContactDispatch}
-        onReply={(msg) => setReplyingTo(msg)}
+        onReply={handleReply}
+        onReact={handleReact}
+        hasMore={hasMore}
+        loadingOlder={loadingOlder}
+        onLoadOlder={loadOlder}
       />
 
       <WhatsappWindowIndicator

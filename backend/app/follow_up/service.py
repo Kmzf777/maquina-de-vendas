@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
+from app.events.bus import emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,24 @@ def _already_touched_today(conversation_id: str, now: datetime) -> bool:
         return False
 
 
+def lead_marked_wrong_number(lead: dict | None) -> bool:
+    """True se o lead está marcado como número errado (`metadata.wrong_number_at`).
+
+    A marca nasce em `registrar_numero_errado` e é removida quando o dono real
+    responde (broadcast/worker.process_wrong_number_deadends limpa a chave) — então
+    a checagem pontual reflete o estado vigente. Caso Maria (10/07): negou ser a
+    dona do número e AINDA recebeu o reopen D+1, porque nada entre a marcação e o
+    deadend de 72h suprimia cadência/reopen. Fail-safe: lead None/sem metadata →
+    False (na dúvida, o fluxo normal segue).
+    """
+    if not isinstance(lead, dict):
+        return False
+    meta = lead.get("metadata") or {}
+    if not isinstance(meta, dict):
+        return False
+    return bool(meta.get("wrong_number_at"))
+
+
 def schedule_followup(
     conversation_id: str,
     lead_id: str,
@@ -163,6 +182,40 @@ def schedule_followup(
         raise ValueError(
             f"conversation_id '{conversation_id}' não existe na tabela conversations"
         )
+
+    # Número errado (caso Maria, 10/07): quem negou ser o dono do número não recebe
+    # cadência nem reopen. Cancela os pending (mesma lista de preservação do
+    # reschedule) e NÃO insere toques novos — a marca vale até o deadend de 72h
+    # (broadcast/worker.process_wrong_number_deadends) resolver o destino do lead.
+    # Fail-open: erro na releitura nunca bloqueia o agendamento.
+    try:
+        lead_row = (
+            sb.table("leads").select("id, metadata").eq("id", lead_id).single().execute().data
+        )
+    except Exception as exc:
+        logger.warning(
+            "[FOLLOWUP] falha ao checar wrong_number do lead %s: %s — fail-open",
+            lead_id, exc,
+        )
+        lead_row = None
+    if lead_marked_wrong_number(lead_row):
+        try:
+            sb.table("follow_up_jobs").update({
+                "status": "cancelled",
+                "cancel_reason": "wrong_number",
+            }).eq("conversation_id", conversation_id).eq("status", "pending").not_.in_(
+                "job_type", ["handoff_rescue", "lp_welcome", "ai_scheduled_return"]
+            ).execute()
+        except Exception as exc:
+            logger.error(
+                "[FOLLOWUP] erro ao cancelar pending de lead wrong_number conv=%s: %s",
+                conversation_id, exc,
+            )
+        logger.info(
+            "[FOLLOWUP] lead %s marcado wrong_number — cadência suprimida conversation=%s",
+            lead_id, conversation_id,
+        )
+        return
 
     # Cancela pending da mesma conversa (idempotência).
     # Preserva lp_welcome — é independente do ciclo de follow-up manual.
@@ -203,6 +256,7 @@ def schedule_followup(
         raise RuntimeError(
             f"Falha ao criar follow-up jobs para conversa {conversation_id}"
         ) from exc
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
 
     logger.info(f"[FOLLOWUP] Agendados {len(jobs)} toques de cadência conversation={conversation_id}")
 
@@ -233,23 +287,78 @@ def cancel_followups(conversation_id: str, reason: str) -> None:
     logger.info(f"[FOLLOWUP] Cancelado reason={reason} conversation={conversation_id}")
 
 
-def cancel_followups_by_phone(phone: str, reason: str) -> None:
-    """Cancela follow-ups pending de todas as conversas de um lead pelo phone (ou BSUID).
+def _toggle_ninth_digit(number: str | None) -> str | None:
+    """Alterna a presença do 9º dígito de um móvel BR em E.164 (sem '+').
+
+    13 díg. com 9 → remove o 9 (12 díg.); 12 díg. sem 9 → injeta o 9 (13 díg.).
+    None se não for um móvel BR reconhecível. Espelha broadcast/worker._toggle_br_ninth_digit
+    (reimplementado aqui para não acoplar follow_up ao módulo de broadcast).
+    """
+    if not number:
+        return None
+    d = "".join(ch for ch in number if ch.isdigit())
+    if len(d) == 13 and d.startswith("55") and d[4] == "9":
+        return d[:4] + d[5:]
+    if len(d) == 12 and d.startswith("55"):
+        return d[:4] + "9" + d[4:]
+    return None
+
+
+def _phone_identity_values(phone: str) -> tuple[str, list[str]]:
+    """Resolve a coluna e TODAS as formas que representam a mesma identidade de contato.
+
+    Fragmentação do 9º dígito (caso 5511910402026, 15/07): o mesmo humano pode existir
+    como duas linhas em `leads` — uma com o 9º dígito (13) e outra sem (12). Cancelar
+    por `.eq(phone).limit(1)` limpava só uma delas e a gêmea seguia disparando. Aqui
+    devolvemos as duas formas do móvel BR (via `normalize_phone` + `_toggle_ninth_digit`)
+    para casar ambas. BSUID (adotante de username) não é telefone — devolvido intacto.
+    """
+    from app.leads.service import is_bsuid, normalize_phone
+    if is_bsuid(phone):
+        return "bsuid", [phone.strip()]
+    normalized = normalize_phone(phone)
+    values = {phone, normalized}
+    toggled = _toggle_ninth_digit(normalized)
+    if toggled:
+        values.add(toggled)
+    return "phone", [v for v in values if v]
+
+
+def _preserved_job_types(preserve_scheduled_return: bool) -> list[str]:
+    """Tipos de job que o cancelamento por telefone NÃO deve tocar.
+
+    `handoff_rescue` é SEMPRE preservado: o `encaminhar_humano` cancela a cadência e
+    conta que o aviso ao vendedor (rescue) sobreviva. `ai_scheduled_return` (retorno que
+    a própria IA prometeu via `agendar_retorno`) é preservado apenas em cancelamentos
+    NÃO-terminais (ex.: o cliente respondeu e a cadência é re-armada). Em paradas
+    terminais (opt-out, handoff, sem-interesse) ele TAMBÉM é cancelado — um lead que
+    pediu para sair não pode receber um retorno proativo mesmo que `ai_enabled` volte.
+    """
+    if preserve_scheduled_return:
+        return ["handoff_rescue", "ai_scheduled_return"]
+    return ["handoff_rescue"]
+
+
+def cancel_followups_by_phone(
+    phone: str, reason: str, *, preserve_scheduled_return: bool = True
+) -> None:
+    """Cancela follow-ups pending de TODAS as conversas de TODOS os leads deste número.
 
     `phone` pode ser um BSUID (adotante de username, cujo lead tem phone="" e é keyed
-    pela coluna bsuid). Casa na coluna certa para também cancelar follow-ups de leads
-    só-BSUID.
+    pela coluna bsuid). Resolve as duas formas do 9º dígito BR (ver `_phone_identity_values`)
+    para não deixar um lead gêmeo com cadência viva.
+
+    `preserve_scheduled_return=False` (paradas terminais): também cancela os
+    `ai_scheduled_return` — ver `_preserved_job_types`.
     """
-    from app.leads.service import is_bsuid
     sb = get_supabase()
-    id_col = "bsuid" if is_bsuid(phone) else "phone"
+    id_col, id_values = _phone_identity_values(phone)
 
     try:
         lead_result = (
             sb.table("leads")
             .select("id")
-            .eq(id_col, phone)
-            .limit(1)
+            .in_(id_col, id_values)
             .execute()
         )
     except Exception as exc:
@@ -261,21 +370,21 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
     if not lead_result.data:
         return
 
-    lead_id = lead_result.data[0]["id"]
+    lead_ids = [row["id"] for row in lead_result.data]
 
     try:
         conversations = (
             sb.table("conversations")
             .select("id")
-            .eq("lead_id", lead_id)
+            .in_("lead_id", lead_ids)
             .execute()
         )
     except Exception as exc:
         logger.error(
-            f"[FOLLOWUP] Erro ao buscar conversas do lead {lead_id}: {exc}"
+            f"[FOLLOWUP] Erro ao buscar conversas dos leads {lead_ids}: {exc}"
         )
         raise RuntimeError(
-            f"Falha ao buscar conversas do lead {lead_id}"
+            f"Falha ao buscar conversas dos leads {lead_ids}"
         ) from exc
 
     if not conversations.data:
@@ -287,7 +396,7 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
             "status": "cancelled",
             "cancel_reason": reason,
         }).in_("conversation_id", conv_ids).eq("status", "pending").not_.in_(
-            "job_type", ["handoff_rescue", "ai_scheduled_return"]
+            "job_type", _preserved_job_types(preserve_scheduled_return)
         ).execute()
     except Exception as exc:
         logger.error(
@@ -297,7 +406,10 @@ def cancel_followups_by_phone(phone: str, reason: str) -> None:
             f"Falha ao cancelar follow-up jobs para o phone {phone}"
         ) from exc
 
-    logger.info(f"[FOLLOWUP] Cancelado reason={reason} phone={phone}")
+    logger.info(
+        "[FOLLOWUP] Cancelado reason=%s phone=%s leads=%d preserve_scheduled_return=%s",
+        reason, phone, len(lead_ids), preserve_scheduled_return,
+    )
 
 
 def schedule_handoff_rescue(
@@ -365,6 +477,7 @@ def schedule_handoff_rescue(
         raise RuntimeError(
             f"Falha ao agendar job de resgate para lead {lead_id}"
         ) from exc
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
     logger.info(
         f"[HANDOFF_RESCUE] Agendado em {delay_minutes}min lead={lead_id} conversation={conversation_id} fire_at={fire_at.isoformat()}"
     )
@@ -408,6 +521,7 @@ def schedule_ai_return(
             "[AI_SCHEDULED_RETURN] Erro ao inserir job p/ lead %s: %s", lead_id, exc
         )
         raise RuntimeError(f"Falha ao agendar retorno para lead {lead_id}") from exc
+    emit_event("followups")  # wake-up do worker (fail-open; fallback tick cobre)
     logger.info(
         "[AI_SCHEDULED_RETURN] Agendado lead=%s conv=%s fire_at=%s",
         lead_id, conversation_id, clamped.isoformat(),

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 def test_consumo_nao_tem_registrar_sem_interesse():
     from app.agent.tools import get_tools_for_stage
-    names = {t["function"]["name"] for t in get_tools_for_stage("consumo")}
+    names = {t["name"] for t in get_tools_for_stage("consumo")}
     assert "registrar_sem_interesse_atual" not in names, \
         "varejo B2C nunca vira 'lead perdido' — consumo não pode auto-descartar"
     # opt-out (lead pede pra parar) e handoff continuam sendo a saída legítima do consumo
@@ -26,7 +26,7 @@ def test_outros_stages_mantem_registrar_sem_interesse():
     """A remoção é cirúrgica: só o consumo. Atacado/private_label/etc. mantêm o descarte."""
     from app.agent.tools import get_tools_for_stage
     for stage in ("secretaria", "atacado", "private_label", "exportacao"):
-        names = {t["function"]["name"] for t in get_tools_for_stage(stage)}
+        names = {t["name"] for t in get_tools_for_stage(stage)}
         assert "registrar_sem_interesse_atual" in names, f"{stage} perdeu o descarte indevidamente"
 
 

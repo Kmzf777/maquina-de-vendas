@@ -349,9 +349,14 @@ async def test_bridge_falha_ao_enviar_texto_retorna_false():
 
 @pytest.mark.asyncio
 async def test_processor_gate_aciona_ponte_e_nao_roda_ia_caso_juliana():
-    """Caso Juliana (4 mensagens apos o handoff, culminando em "Tem algum problema
-    voces responderem?"): o gate ai_enabled aciona a ponte e a IA NUNCA roda
-    (run_agent nao e chamado); _update_last_msg + return seguem como hoje."""
+    """Caso Juliana (mensagens de vacuo apos o handoff): o gate ai_enabled aciona a
+    ponte e a IA NUNCA roda (run_agent nao e chamado); _update_last_msg + return
+    seguem como hoje.
+
+    Mudanca de contrato (S2, 11/07): o inbound original era "Tem algum problema
+    voces responderem?" — com o novo filtro de pergunta de negocio, qualquer "?"
+    agora SILENCIA (fica intocado para o humano ler). O carimbo ficou reservado ao
+    vacuo puro (sem "?" nem termo de negocio), entao o inbound aqui virou um."""
     lead = _make_lead()
     channel = _make_channel()
     conversation = _make_conversation()
@@ -372,7 +377,7 @@ async def test_processor_gate_aciona_ponte_e_nao_roda_ia_caso_juliana():
          patch(P_ + "_update_last_msg") as mock_update_last:
 
         await P.process_buffered_messages(
-            lead["phone"], "Tem algum problema vocês responderem?", channel["id"],
+            lead["phone"], "alô, tem alguém aí", channel["id"],
         )
 
     mock_agent.assert_not_called()
@@ -388,7 +393,12 @@ async def test_processor_gate_aciona_ponte_e_nao_roda_ia_caso_juliana():
 @pytest.mark.asyncio
 async def test_processor_gate_segunda_mensagem_no_cooldown_fluxo_retorna_normal():
     """Segunda mensagem do lead ~5 min depois (mesmo cooldown Redis) -> gate NAO
-    reenvia a ponte, mas o processor segue retornando normalmente (sem excecao)."""
+    reenvia a ponte, mas o processor segue retornando normalmente (sem excecao).
+
+    Mudanca de contrato (S2, 11/07): os inbounds originais ("cade a resposta?",
+    "alo?") carregavam "?" e hoje seriam pergunta de negocio -> silencio SEM
+    consumir cooldown, o que quebraria a premissa do teste. Trocados por vacuo
+    puro (sem "?" nem termo de negocio) para seguir exercitando o cooldown."""
     lead = _make_lead()
     channel = _make_channel()
     conversation = _make_conversation()
@@ -408,13 +418,13 @@ async def test_processor_gate_segunda_mensagem_no_cooldown_fluxo_retorna_normal(
          patch(P_ + "_get_buffer_redis", return_value=fake_redis), \
          patch(P_ + "_update_last_msg") as mock_update_last:
 
-        await P.process_buffered_messages(lead["phone"], "cade a resposta?", channel["id"])
+        await P.process_buffered_messages(lead["phone"], "cade a resposta", channel["id"])
         provider.send_text.reset_mock()
         provider.send_contact.reset_mock()
         mock_save.reset_mock()
 
         # 2a mensagem, ~5 min depois -- mesma chave de cooldown ainda ativa no fake redis.
-        await P.process_buffered_messages(lead["phone"], "alo?", channel["id"])
+        await P.process_buffered_messages(lead["phone"], "alo, alguem ai", channel["id"])
 
     mock_agent.assert_not_called()
     provider.send_text.assert_not_awaited()

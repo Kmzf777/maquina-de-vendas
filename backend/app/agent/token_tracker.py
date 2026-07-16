@@ -55,7 +55,6 @@ def track_token_usage(
     call_type: str,
     prompt_tokens: int,
     completion_tokens: int,
-    total_cost_override: float | None = None,
     cached_tokens: int = 0,
     reasoning_tokens: int = 0,
 ):
@@ -79,7 +78,6 @@ def track_token_usage(
             (docs/superpowers/specs/2026-03-30-estatisticas-token-costs-design.md).
         prompt_tokens: Input tokens from response.usage
         completion_tokens: Output tokens from response.usage (JÁ incluem thinking — ver gemini_native)
-        total_cost_override: If set, use this instead of calculating from tokens (ex.: custo de transcrição estimado)
         cached_tokens: Subconjunto de prompt_tokens servido pelo implicit caching do Gemini
             (usage.cached_tokens) — cobrado a CACHED_INPUT_PRICE_FACTOR do preço de input.
         reasoning_tokens: Tokens de thinking (usage.reasoning_tokens), persistidos à parte em
@@ -99,14 +97,13 @@ def track_token_usage(
     billable_cached = min(max(int(cached_tokens or 0), 0), max(int(prompt_tokens or 0), 0))
     full_price_prompt = max(int(prompt_tokens or 0), 0) - billable_cached
 
-    if total_cost_override is not None:
-        total_cost = total_cost_override
-    else:
-        total_cost = (
-            full_price_prompt * float(price_in)
-            + billable_cached * float(price_in) * CACHED_INPUT_PRICE_FACTOR
-            + completion_tokens * float(price_out)
-        )
+    # (total_cost_override removido em 12/07 — era código morto: zero call sites; todo
+    # caminho de custo, inclusive transcrição, é token-based desde f5f7458.)
+    total_cost = (
+        full_price_prompt * float(price_in)
+        + billable_cached * float(price_in) * CACHED_INPUT_PRICE_FACTOR
+        + completion_tokens * float(price_out)
+    )
 
     row = {
         "lead_id": lead_id,

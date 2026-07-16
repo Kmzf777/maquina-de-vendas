@@ -42,8 +42,23 @@ async def test_tool_marca_wrong_number_at():
     assert "72h" in result
 
 
+@pytest.mark.asyncio
+async def test_tool_idempotente_quando_ja_marcado():
+    """Re-execução da tool no MESMO lead (retry do agente — visto 4x no incidente
+    thought_signature de 09/07) não duplica marcador nem system message."""
+    with patch.object(tools, "get_lead", return_value={
+            "id": "lead-1", "metadata": {"wrong_number_at": "2026-07-09T20:03:00+00:00"}}),          patch.object(tools, "update_lead") as m_upd,          patch.object(tools, "save_message") as m_save:
+        result = await tools.execute_tool(
+            "registrar_numero_errado", {"contexto": "disse Nao de novo"},
+            lead_id="lead-1", phone="5527981691402", conversation_id="conv-1",
+        )
+    m_upd.assert_not_called()
+    m_save.assert_not_called()
+    assert "ja marcado" in result or "já marcado" in result
+
+
 def test_tool_disponivel_na_secretaria():
-    names = [t["function"]["name"] for t in tools.get_tools_for_stage("secretaria")]
+    names = [t["name"] for t in tools.get_tools_for_stage("secretaria")]
     assert "registrar_numero_errado" in names
 
 

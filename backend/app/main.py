@@ -10,13 +10,13 @@ from fastapi.responses import HTMLResponse
 from app.config import settings
 from app.buffer.flusher import run_flusher
 from app.buffer.recovery import recover_orphaned_buffers
+from app.logging_setup import setup_logging
+from app.observability import init_sentry
 from app.watchdog.service import run_watchdog
 from app.whatsapp.meta import close_shared_client
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+setup_logging()
+init_sentry()
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,11 @@ async def lifespan(app: FastAPI):
 
     await recover_orphaned_buffers(app.state.redis, require_no_deadline=False, source="startup")
 
+    # Espelho visual do motor de follow-up no builder de Cadências (fail-open: o sync
+    # loga warning e segue — a API nunca deixa de subir por causa da representação).
+    from app.campaigns.system_cadence import sync_valeria_cadence_campaign
+    await asyncio.to_thread(sync_valeria_cadence_campaign)
+
     flusher_task = asyncio.create_task(run_flusher(app))
     watchdog_task = asyncio.create_task(run_watchdog(app))
 
@@ -105,37 +110,40 @@ from app.webhook.router import router as webhook_router
 from app.webhook.meta_router import router as meta_webhook_router
 from app.leads.router import router as leads_router
 from app.broadcast.router import router as broadcast_router
-from app.stats.router import router as stats_router
+# app.stats.router (agregação client-side truncada pelo max-rows=1000) e
+# app.outbound (dispatch manual vestigial) deletados na limpeza de arquitetura
+# 12/07 (Card 1) — /api/stats/* é servido pelas rotas Next.js via RPCs SQL.
 from app.stats.pricing_router import router as pricing_router
-from app.outbound.router import router as outbound_router
 from app.channels.router import router as channels_router
 from app.agent_profiles.router import router as agent_profiles_router
 from app.conversations.router import router as conversations_router
 from app.dev_router.router import router as dev_router
 from app.templates.router import router as templates_router
 from app.follow_up.router import router as follow_up_router
+from app.follow_up.api import router as cadence_api_router
 from app.campaigns.router import router as campaigns_router
 from app.campaigns.conversions_router import router as conversions_router
 from app.automation.router import router as automation_router
 from app.lp_webhook.router import router as lp_webhook_router
+from app.fx.router import router as fx_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
 app.include_router(leads_router)
 app.include_router(broadcast_router)
-app.include_router(stats_router)
 app.include_router(pricing_router)
-app.include_router(outbound_router)
 app.include_router(channels_router)
 app.include_router(agent_profiles_router)
 app.include_router(conversations_router)
 app.include_router(dev_router)
 app.include_router(templates_router)
 app.include_router(follow_up_router)
+app.include_router(cadence_api_router)
 app.include_router(campaigns_router)
 app.include_router(conversions_router)
 app.include_router(automation_router)
 app.include_router(lp_webhook_router)
+app.include_router(fx_router)
 
 
 @app.get("/health")
@@ -151,16 +159,16 @@ async def debug_agent():
     result = {"gemini_key_set": bool(settings.gemini_api_key)}
 
     try:
-        from app.agent.orchestrator import get_ai_client
+        from app.agent.gemini_client import generate, user_content
 
-        client = get_ai_client("gemini-2.5-flash")
-        resp = await client.chat.completions.create(
-            model="gemini-2.5-flash",
-            messages=[{"role": "user", "content": "ping"}],
-            max_tokens=5,
+        resp = await generate(
+            "gemini-2.5-flash",
+            contents=[user_content("ping")],
+            max_output_tokens=8,
+            thinking_off=True,
         )
         result["gemini_test"] = "ok"
-        result["gemini_response"] = resp.choices[0].message.content
+        result["gemini_response"] = resp.text
     except Exception as e:
         result["gemini_test"] = "error"
         result["gemini_error"] = str(e)

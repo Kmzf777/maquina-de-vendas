@@ -22,7 +22,7 @@ async def test_run_agent_bails_when_lead_has_human_control():
         "ai_enabled": False,
         "status": "converted",
     }) as mock_get, \
-         patch("app.agent.orchestrator._get_gemini") as mock_gemini, \
+         patch("app.agent.orchestrator.generate", new=AsyncMock()) as mock_gemini, \
          patch("app.agent.orchestrator.get_history", return_value=[]):
         from app.agent.orchestrator import run_agent
         result = await run_agent(conversation, "eai baoo?")

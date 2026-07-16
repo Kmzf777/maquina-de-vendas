@@ -4,51 +4,36 @@ Contexto forense (lead Karl 5531982950127):
   20:03:52 UTC chamada inicial ao Gemini: completion_tokens=0 (thinking-burn).
   20:03:53 UTC retry (tools mantidas, Change A/B) recuperou uma tool NÃO-terminal
   (salvar_nome) e a EXECUTOU — mas o código NÃO fechava o ciclo ReAct: não havia
-  chamada PÓS-TOOL de continuação. O turno terminava com retry_msg.content vazio →
+  chamada PÓS-TOOL de continuação. O turno terminava com retry vazio →
   _SAFETY_FALLBACK_GENERIC ("opa, me embolei aqui..."), engolindo a fala real.
 
 Correção validada aqui:
   Após executar tool(s) NÃO-terminal(is) recuperada(s) no retry, o orchestrator faz
-  UMA chamada PÓS-TOOL de continuação (espelha a linha ~763 do loop principal),
-  gerando o texto natural. Tools TERMINAIS (encaminhar_humano / registrar_optout /
+  UMA chamada PÓS-TOOL de continuação (espelha o loop principal), gerando o texto
+  natural. Tools TERMINAIS (encaminhar_humano / registrar_optout /
   registrar_sem_interesse_atual) fazem curto-circuito ANTES da chamada pós-tool.
-  Retry com texto puro (sem tool_calls) NÃO dispara chamada pós-tool.
+  Retry com texto puro (sem function_calls) NÃO dispara chamada pós-tool.
 
 Cobertura:
   1. Karl: inicial vazia → retry recupera salvar_nome → PÓS-TOOL gera texto natural.
-     (3 chamadas; execute_tool chamado; resultado da tool entra nas messages do pós-tool.)
+     (3 chamadas; execute_tool chamado; resultado da tool entra nos contents do pós-tool.)
   2. Pós-tool também vazio → cai no fallback genérico honesto (nunca silêncio "").
   3. Regressão: encaminhar_humano recuperado → SEM chamada pós-tool (2 chamadas) → None.
-  4. Regressão: retry com texto puro (sem tool_calls) → SEM chamada pós-tool (2 chamadas).
+  4. Regressão: retry com texto puro (sem function_calls) → SEM chamada pós-tool (2 chamadas).
+
+Contrato Gemini nativo (migração 09/07/2026): as chamadas ao LLM saem por
+`app.agent.orchestrator.generate` (gemini_client) com `contents`/`system_instruction`;
+o resultado de tool viaja como Part.function_response num Content role='user'.
 """
-import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text, fake_tool_call
 
 
 # ---------------------------------------------------------------------------
 # Helpers (espelham o arquivo de retry irmão)
 # ---------------------------------------------------------------------------
-
-def _make_tool_call(name: str, args: dict = None, call_id: str = "tc-001") -> MagicMock:
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = name
-    tc.function.arguments = json.dumps(args or {})
-    return tc
-
-
-def _make_response(content: str | None, tool_calls=None) -> MagicMock:
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls  # None → falsy → loop exits
-    # model_dump devolve um dict serializável com o content deste turno
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
-
 
 def _conversation(stage: str = "secretaria") -> dict:
     return {
@@ -78,15 +63,14 @@ def _history_one_user_msg(content: str = "Karl") -> list:
     ]
 
 
-def _roles_of(messages) -> list:
-    """Snapshot dos papéis das mensagens no momento da chamada (cópia por valor)."""
-    out = []
-    for m in messages or []:
-        if isinstance(m, dict):
-            out.append(m.get("role"))
-        else:
-            out.append(getattr(m, "role", None))
-    return out
+def _has_function_response(contents) -> bool:
+    """True se algum Content do snapshot carrega um Part.function_response —
+    equivalente nativo do antigo role 'tool' nas messages OpenAI."""
+    for c in contents or []:
+        for p in (getattr(c, "parts", None) or []):
+            if getattr(p, "function_response", None) is not None:
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -100,35 +84,35 @@ async def test_retry_nonterminal_tool_completes_react_cycle():
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
 
     natural_text = "prazer, Karl! como posso te ajudar hoje?"
-    salvar_tc = _make_tool_call("salvar_nome", {"name": "Karl"}, "tc-salvar")
 
-    # Snapshot dos papéis por chamada (cópia por valor, imune a mutações posteriores da lista)
-    role_snapshots: list[list] = []
+    # Snapshot por chamada (cópia por valor, imune a mutações posteriores da lista):
+    # a lista `contents` é mutada pelo orchestrator entre as chamadas.
+    fr_snapshots: list[bool] = []
     tools_per_call: list = []
     n = {"i": 0}
 
-    async def fake_create(**kwargs):
+    async def fake_generate(**kwargs):
         n["i"] += 1
-        role_snapshots.append(_roles_of(kwargs.get("messages")))
+        fr_snapshots.append(_has_function_response(kwargs.get("contents")))
         tools_per_call.append(kwargs.get("tools"))
         idx = n["i"]
         if idx == 1:
-            # Chamada inicial → thinking-burn (vazia, sem tool_calls)
-            return _make_response(content="", tool_calls=None)
+            # Chamada inicial → thinking-burn (vazia, sem function_calls)
+            return fake_text("")
         if idx == 2:
-            # Retry (tools mantidas) → recupera salvar_nome, sem content
-            return _make_response(content="", tool_calls=[salvar_tc])
+            # Retry (tools mantidas) → recupera salvar_nome, sem texto
+            return fake_tool_call("salvar_nome", {"name": "Karl"})
         # Chamada PÓS-TOOL de continuação → texto natural real
-        return _make_response(content=natural_text, tool_calls=None)
+        return fake_text(natural_text)
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-karl-001", "phone": "5531982950127", "ai_enabled": True
          }), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="Nome salvo: Karl") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate", new=AsyncMock(side_effect=fake_generate)):
         result = await run_agent(_conversation("secretaria"), "Karl")
 
     # Fez exatamente 3 chamadas: inicial + retry + PÓS-TOOL
@@ -139,14 +123,15 @@ async def test_retry_nonterminal_tool_completes_react_cycle():
     # Devolveu a fala natural — NÃO o genérico de recomeço
     assert result == natural_text, f"esperado o texto natural, got {result!r}"
     assert result != _SAFETY_FALLBACK_GENERIC
-    # A chamada PÓS-TOOL (3ª) recebeu o resultado da tool nas messages (role 'tool' presente),
-    # provando que o ciclo ReAct foi fechado com contexto — e não só uma releitura do vazio.
-    assert "tool" in role_snapshots[2], (
-        f"a chamada pós-tool deve conter o resultado da tool nas messages, roles={role_snapshots[2]}"
+    # A chamada PÓS-TOOL (3ª) recebeu o resultado da tool nos contents (function_response
+    # presente), provando que o ciclo ReAct foi fechado com contexto — e não só uma
+    # releitura do vazio.
+    assert fr_snapshots[2], (
+        "a chamada pós-tool deve conter o resultado da tool (function_response) nos contents"
     )
     # A chamada de RETRY (2ª) ainda NÃO tinha o resultado da tool.
-    assert "tool" not in role_snapshots[1], (
-        f"a chamada de retry não deve conter resultado de tool, roles={role_snapshots[1]}"
+    assert not fr_snapshots[1], (
+        "a chamada de retry não deve conter resultado de tool (function_response)"
     )
     # A chamada PÓS-TOOL manteve as tools do stage (mesmo contrato do loop principal).
     assert tools_per_call[2] is not None, "a chamada pós-tool deve manter as tools do stage"
@@ -162,30 +147,28 @@ async def test_retry_nonterminal_tool_post_tool_empty_falls_to_generic():
     nunca "" (silêncio), pois não houve soft-reject nem suppress."""
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
 
-    salvar_tc = _make_tool_call("salvar_nome", {"name": "Karl"}, "tc-salvar-2")
-    n = {"i": 0}
-
-    async def fake_create(**kwargs):
-        n["i"] += 1
-        if n["i"] == 1:
-            return _make_response(content="", tool_calls=None)      # inicial vazia
-        if n["i"] == 2:
-            return _make_response(content="", tool_calls=[salvar_tc])  # retry → salvar_nome
-        return _make_response(content="", tool_calls=None)          # pós-tool vazio também
+    m_gen = AsyncMock(side_effect=[
+        fake_text(""),                                    # inicial vazia
+        fake_tool_call("salvar_nome", {"name": "Karl"}),  # retry → salvar_nome
+        fake_text(""),                                    # pós-tool vazio também
+        fake_text(""),                                    # retry2 (Etapa 2) vazio
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-karl-001", "phone": "5531982950127", "ai_enabled": True
          }), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="Nome salvo: Karl") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation("secretaria"), "Karl")
 
     # Etapa 2: pós-tool vazio ainda deixa assistant_text vazio → dispara o retry2 (4ª chamada,
     # também vazia neste teste) antes de cair no fallback genérico.
-    assert n["i"] == 4, f"esperado 4 chamadas (inicial+retry+pos-tool+retry2), got {n['i']}"
+    assert m_gen.await_count == 4, (
+        f"esperado 4 chamadas (inicial+retry+pos-tool+retry2), got {m_gen.await_count}"
+    )
     assert mock_exec.called and mock_exec.call_args.args[0] == "salvar_nome"
     assert result == _SAFETY_FALLBACK_GENERIC, f"esperado genérico honesto, got {result!r}"
     assert result != "", "nunca silêncio após tool não-terminal recuperada"
@@ -201,60 +184,56 @@ async def test_retry_encaminhar_humano_no_post_tool_call():
     exatamente 2 chamadas (inicial + retry) e run_agent retorna None."""
     from app.agent.orchestrator import run_agent
 
-    handoff_tc = _make_tool_call(
-        "encaminhar_humano",
-        {"mensagem_despedida": "vou te passar pro João!", "motivo": "ticket alto"},
-        "tc-handoff",
-    )
-    n = {"i": 0}
-
-    async def fake_create(**kwargs):
-        n["i"] += 1
-        if n["i"] == 1:
-            return _make_response(content="", tool_calls=None)
-        return _make_response(content=None, tool_calls=[handoff_tc])
+    m_gen = AsyncMock(side_effect=[
+        fake_text(""),
+        fake_tool_call(
+            "encaminhar_humano",
+            {"mensagem_despedida": "vou te passar pro João!", "motivo": "ticket alto"},
+        ),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-karl-001", "phone": "5531982950127", "ai_enabled": True
          }), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="handoff enviado") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation("secretaria"), "quero fechar um pedido grande")
 
     assert result is None, f"esperado None (handoff sentinel), got {result!r}"
     # CRÍTICO: terminal faz curto-circuito → NENHUMA 3ª chamada pós-tool
-    assert n["i"] == 2, f"terminal não deve disparar chamada pós-tool; esperado 2, got {n['i']}"
+    assert m_gen.await_count == 2, (
+        f"terminal não deve disparar chamada pós-tool; esperado 2, got {m_gen.await_count}"
+    )
     assert mock_exec.called and mock_exec.call_args.args[0] == "encaminhar_humano"
 
 
 # ---------------------------------------------------------------------------
-# Teste 4 (regressão texto puro): retry sem tool_calls → SEM pós-tool
+# Teste 4 (regressão texto puro): retry sem function_calls → SEM pós-tool
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_retry_pure_text_no_post_tool_call():
-    """Quando o retry devolve texto puro (sem tool_calls), NÃO há chamada pós-tool:
+    """Quando o retry devolve texto puro (sem function_calls), NÃO há chamada pós-tool:
     exatamente 2 chamadas e o texto do retry é entregue como está."""
     from app.agent.orchestrator import run_agent
 
-    n = {"i": 0}
-
-    async def fake_create(**kwargs):
-        n["i"] += 1
-        if n["i"] == 1:
-            return _make_response(content="", tool_calls=None)
-        return _make_response(content="oi! me conta o que você precisa", tool_calls=None)
+    m_gen = AsyncMock(side_effect=[
+        fake_text(""),
+        fake_text("oi! me conta o que você precisa"),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-karl-001", "phone": "5531982950127", "ai_enabled": True
          }), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
         result = await run_agent(_conversation("secretaria"), "oi")
 
     assert result == "oi! me conta o que você precisa"
-    assert n["i"] == 2, f"texto puro no retry não deve disparar pós-tool; esperado 2, got {n['i']}"
+    assert m_gen.await_count == 2, (
+        f"texto puro no retry não deve disparar pós-tool; esperado 2, got {m_gen.await_count}"
+    )

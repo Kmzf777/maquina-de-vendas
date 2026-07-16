@@ -84,6 +84,24 @@ def _next_window_start(now_utc: datetime, start_hour: int = 7,
     return target - BRT_OFFSET
 
 
+def _wait_target(cfg: dict, now: datetime) -> datetime:
+    """Instante do próximo passo após um nó `wait` — função PURA (testável).
+
+    Granularidade em DIAS *e* HORAS (11/07): `hours` é opcional e retrocompatível —
+    nós antigos só têm `days` (default 1, preservado). `days: 0` + `hours: N` permite
+    esperas sub-diárias; ambos zero = segue no próximo tick (o clamp de janela
+    comercial ainda se aplica). Valores negativos/lixo são saneados para 0.
+    """
+    days = max(0, int(cfg.get("days", 1) or 0))
+    hours = max(0, int(cfg.get("hours", 0) or 0))
+    start_h = cfg.get("send_start_hour", 7)
+    end_h = cfg.get("send_end_hour", 18)
+    target = now + timedelta(days=days, hours=hours)
+    if not _is_within_window(target, start_h, end_h):
+        target = _next_window_start(target, start_h)
+    return target
+
+
 def _compare(actual: float, op: str, target: float) -> bool:
     return {
         "gte": actual >= target,
@@ -160,6 +178,7 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
         .eq("status", "active")
         .eq("env_tag", env_tag)
         .lte("next_execute_at", now.isoformat())
+        .order("next_execute_at", desc=False)  # F4: fairness — oldest-due first, no starvation
         .limit(limit)
         .execute()
         .data
@@ -184,7 +203,7 @@ async def process_due_enrollments(now: datetime | None = None) -> None:
     from app.campaigns.service import claim_enrollment, recover_stale_enrollments
     now = now or datetime.now(timezone.utc)
     recover_stale_enrollments(now)
-    enrollments = get_due_enrollments(now)
+    enrollments = await asyncio.to_thread(get_due_enrollments, now)
     enrollments.sort(key=lambda e: (e.get("campaigns") or {}).get("priority", 5), reverse=True)
     for enrollment in enrollments:
         if not claim_enrollment(enrollment["id"], now):
@@ -262,15 +281,10 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             _log_exec(enrollment, node, "done", _send_summary)
 
         elif node_type == "wait":
-            days    = cfg.get("days", 1)
-            start_h = cfg.get("send_start_hour", 7)
-            end_h   = cfg.get("send_end_hour", 18)
-            skip_wk = campaign.get("skip_weekends", False)
-            target  = now + timedelta(days=days)
-            if not _is_within_window(target, start_h, end_h, skip_weekends=skip_wk):
-                target = _next_window_start(target, start_h, skip_weekends=skip_wk)
+            target = _wait_target(cfg, now)
             _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
-            _log_exec(enrollment, node, "done", f"aguardando {days} dia(s)")
+            _log_exec(enrollment, node, "done",
+                      f"aguardando (d={cfg.get('days', 1)}, h={cfg.get('hours', 0)})")
             return
 
         elif node_type == "condition":

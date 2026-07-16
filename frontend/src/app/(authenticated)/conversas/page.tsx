@@ -1,7 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView, type SiblingConversationSummary } from "@/components/conversas/chat-view";
@@ -13,166 +18,175 @@ import {
   previewFromMessage,
   type ConversationRow,
 } from "@/lib/conversations-live";
+import { ConversasQueryProvider } from "./query-provider";
 import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
 
 // Espera do refetch integral disparado por eventos que o patch local não cobre
-// (conversa nova/desconhecida). Rajadas colapsam em 1 chamada ao /api/conversations.
+// (conversa nova/desconhecida). Rajadas colapsam em 1 invalidação.
 const REFETCH_DEBOUNCE_MS = 3_000;
 
 export default function ConversasPage() {
+  return (
+    <ConversasQueryProvider>
+      <ConversasContent />
+    </ConversasQueryProvider>
+  );
+}
+
+function ConversasContent() {
   const supabase = createClient();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const router = useRouter();
   const deepLinkApplied = useRef(false);
-  // Cancelamento de fetch + guarda de sequência (latest-wins) para a lista de conversas.
-  // Sem isso, trocar de filtro rápido fazia respostas fora de ordem sobrescreverem a lista.
-  const fetchAbortRef = useRef<AbortController | null>(null);
-  const fetchSeqRef = useRef(0);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
-  const [leadTagsMap, setLeadTagsMap] = useState<Record<string, string[]>>({});
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("todos");
-  const [loading, setLoading] = useState(true);
-  // Primeira carga das conversas concluída (mantém o spinner inicial cobrindo a lista).
-  const [initialConvDone, setInitialConvDone] = useState(false);
-  // Erro ao buscar conversas: mantém a lista anterior e sinaliza, em vez de apagar tudo.
-  const [listError, setListError] = useState(false);
-  // Indicador sutil enquanto a lista do novo filtro carrega.
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [togglingAi, setTogglingAi] = useState(false);
   const [togglingFollowup, setTogglingFollowup] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "chat" | "contact">("list");
-  // Tracks conversations marked-as-read locally so we can override stale realtime payloads
-  // for ~30s. Without this, the Supabase realtime push wins and the badge reappears.
+  // Overrides temporais contra o realtime sobrescrever estado otimista:
+  // mark-read e toggles em voo vencem pushes/refetches por ~30s.
   const recentlyMarkedRef = useRef<Map<string, number>>(new Map());
-  // Tracks ai_enabled value for in-flight toggles so realtime doesn't overwrite the optimistic state.
   const recentlyToggledAiRef = useRef<Map<string, boolean>>(new Map());
-  // Same protection for followup_enabled toggles.
   const recentlyToggledFollowupRef = useRef<Map<string, boolean>>(new Map());
-  // Espelho síncrono da lista para o handler Realtime decidir patch × refetch
-  // sem depender do timing do setState.
-  const conversationsRef = useRef<Conversation[]>([]);
-  useEffect(() => {
-    conversationsRef.current = conversations;
-  }, [conversations]);
 
-  const applyRecentlyMarkedOverride = useCallback((list: Conversation[]): Conversation[] => {
+  const applyOverrides = useCallback((list: Conversation[]): Conversation[] => {
     const now = Date.now();
-    // Drop entries older than 30s
     for (const [id, ts] of recentlyMarkedRef.current) {
       if (now - ts > 30_000) recentlyMarkedRef.current.delete(id);
     }
-    if (recentlyMarkedRef.current.size === 0) return list;
-    return list.map((c) =>
-      recentlyMarkedRef.current.has(c.id) ? { ...c, unread_count: 0 } : c,
-    );
+    return list.map((c) => {
+      let out = c;
+      if (recentlyMarkedRef.current.has(c.id)) out = { ...out, unread_count: 0 };
+      const pendingAi = recentlyToggledAiRef.current.get(c.id);
+      if (pendingAi !== undefined)
+        out = { ...out, leads: { ...(out.leads as Lead), ai_enabled: pendingAi } };
+      const pendingFollowup = recentlyToggledFollowupRef.current.get(c.id);
+      if (pendingFollowup !== undefined) out = { ...out, followup_enabled: pendingFollowup };
+      return out;
+    });
   }, []);
 
-  const fetchConversations = useCallback(async () => {
-    // Cancela a requisição anterior em voo e marca esta como a vigente. Sem isso,
-    // ao alternar filtros uma resposta antiga (mais lenta) sobrescrevia a lista
-    // correta — e um erro virava lista vazia (a "tela em branco" relatada).
-    fetchAbortRef.current?.abort();
-    const ac = new AbortController();
-    fetchAbortRef.current = ac;
-    const seq = ++fetchSeqRef.current;
-    try {
+  // Lista de conversas via React Query: latest-wins/abort/keep-previous que antes
+  // eram coordenados à mão (AbortController + fetchSeqRef + isRefreshing) agora são
+  // semântica nativa da queryKey + placeholderData.
+  const {
+    data: conversations = [],
+    isPending: convPending,
+    isError: listError,
+    isPlaceholderData: isRefreshing,
+    refetch: refetchConversations,
+  } = useQuery({
+    queryKey: ["conversations", selectedChannelId],
+    queryFn: async ({ signal }): Promise<Conversation[]> => {
       const url = selectedChannelId
         ? `/api/conversations?channel_id=${selectedChannelId}`
         : "/api/conversations";
-      const res = await fetch(url, { signal: ac.signal });
-      if (seq !== fetchSeqRef.current) return; // resposta obsoleta — ignora
-      if (!res.ok) {
-        // Erro real (401/500): NÃO apaga a lista — mantém o estado anterior e sinaliza.
-        setListError(true);
-        return;
-      }
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error(`conversations ${res.status}`);
       const data = await res.json();
-      if (seq !== fetchSeqRef.current) return;
-      const raw = Array.isArray(data) ? data : [];
-      const base = applyRecentlyMarkedOverride(raw);
-      // Preserve in-flight toggles so realtime doesn't race against PATCH
-      const list = base.map((c) => {
-        let out = c;
-        const pendingAi = recentlyToggledAiRef.current.get(c.id);
-        if (pendingAi !== undefined) out = { ...out, leads: { ...(out.leads as any), ai_enabled: pendingAi } };
-        const pendingFollowup = recentlyToggledFollowupRef.current.get(c.id);
-        if (pendingFollowup !== undefined) out = { ...out, followup_enabled: pendingFollowup };
-        return out;
-      });
-      setListError(false);
-      setConversations(list);
-      // Sync selectedConversation when its data changes
-      setSelectedConversation((prev: Conversation | null) => {
-        if (!prev) return prev;
-        const updated = list.find((c: Conversation) => c.id === prev.id);
-        return updated ?? prev;
-      });
-    } catch (err) {
-      if ((err as Error)?.name === "AbortError") return; // cancelamento esperado — ignora
-      // Falha de rede: mantém a lista anterior e sinaliza, em vez de apagar.
-      if (seq === fetchSeqRef.current) setListError(true);
-    } finally {
-      // Só a requisição vigente controla os flags de UI (evita flicker de respostas obsoletas).
-      if (seq === fetchSeqRef.current) {
-        setIsRefreshing(false);
-        setInitialConvDone(true);
-      }
-    }
-  }, [selectedChannelId, applyRecentlyMarkedOverride]);
+      return applyOverrides(Array.isArray(data) ? data : []);
+    },
+    placeholderData: keepPreviousData,
+  });
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const { data: channels = [], isPending: channelsPending } = useQuery({
+    queryKey: ["channels"],
+    queryFn: async (): Promise<Channel[]> => {
+      const res = await fetch("/api/channels");
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+  });
 
-  useEffect(() => {
-    fetchConversations();
-    // Aborta o fetch em voo ao trocar de filtro ou desmontar (evita race/leak).
-    return () => fetchAbortRef.current?.abort();
-  }, [fetchConversations]);
+  const { data: tags = [], isPending: tagsPending } = useQuery({
+    queryKey: ["tags"],
+    queryFn: async (): Promise<Tag[]> => {
+      const res = await fetch("/api/tags");
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const { data: leadTagsMap = {}, isPending: leadTagsPending } = useQuery({
+    queryKey: ["lead-tags"],
+    queryFn: async (): Promise<Record<string, string[]>> => {
+      const { data } = await supabase.from("lead_tags").select("lead_id, tag_id");
+      const map: Record<string, string[]> = {};
+      (data ?? []).forEach((row: { lead_id: string; tag_id: string }) => {
+        (map[row.lead_id] ??= []).push(row.tag_id);
+      });
+      return map;
+    },
+  });
+
+  // Patch local no cache da lista vigente (substitui os pares espelhados de
+  // setConversations/setSelectedConversation — a seleção agora é DERIVADA).
+  const patchList = useCallback(
+    (updater: (list: Conversation[]) => Conversation[]) => {
+      queryClient.setQueryData<Conversation[]>(
+        ["conversations", selectedChannelId],
+        (old) => updater(old ?? []),
+      );
+    },
+    [queryClient, selectedChannelId],
+  );
+
+  const patchConversation = useCallback(
+    (id: string, patch: Partial<Conversation> | ((c: Conversation) => Conversation)) => {
+      patchList((list) =>
+        list.map((c) =>
+          c.id === id ? (typeof patch === "function" ? patch(c) : { ...c, ...patch }) : c,
+        ),
+      );
+    },
+    [patchList],
+  );
+
+  // Seleção derivada do cache; fallback para o último objeto conhecido cobre o
+  // instante em que a conversa sai da lista (paridade com o `updated ?? prev` antigo).
+  const lastSelectedRef = useRef<Conversation | null>(null);
+  const selectedConversation = useMemo(() => {
+    const found = conversations.find((c) => c.id === selectedId) ?? null;
+    if (found) lastSelectedRef.current = found;
+    return found ?? (selectedId ? lastSelectedRef.current : null);
+  }, [conversations, selectedId]);
 
   // Deep-link: pre-select conversation by lead_id from URL param
   useEffect(() => {
-    if (deepLinkApplied.current || loading || conversations.length === 0) return;
+    if (deepLinkApplied.current || conversations.length === 0) return;
     const leadId = searchParams.get("lead_id");
     if (!leadId) return;
-    const match = conversations.find((c) => {
-      const lead = c.leads as Lead | undefined | null;
-      return lead?.id === leadId;
-    });
+    const match = conversations.find((c) => (c.leads as Lead | undefined | null)?.id === leadId);
     if (match) {
-      setSelectedConversation(match);
+      setSelectedId(match.id);
       deepLinkApplied.current = true;
       router.replace("/conversas");
     }
-  }, [conversations, loading, searchParams, router]);
+  }, [conversations, searchParams, router]);
 
   // Realtime SEM refetch integral por evento (corte de Egress): o payload do
-  // UPDATE já traz a linha nova de `conversations` — aplicamos o delta local
-  // (ordenação, unread, janela, persona) e o preview vem do INSERT de
-  // `messages`. O refetch integral (debounced) fica reservado para o que o
-  // delta não cobre: conversa nova/desconhecida (precisa dos joins da API).
-  // Antes, cada mensagem do sistema puxava a lista inteira (~1,5-2,5MB) em
-  // cada aba aberta — o maior consumidor de Egress do frontend.
+  // UPDATE já traz a linha nova de `conversations` — aplicamos o delta no cache
+  // e o preview vem do INSERT de `messages`. A invalidação integral (debounced)
+  // fica reservada para o que o delta não cobre: conversa nova/desconhecida
+  // (precisa dos joins da API).
   useEffect(() => {
-    const debouncedRefetch = debounce(fetchConversations, REFETCH_DEBOUNCE_MS);
+    const debouncedInvalidate = debounce(() => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    }, REFETCH_DEBOUNCE_MS);
 
     const applyRowPatch = (row: ConversationRow) => {
       const overrides = {
         forceUnreadZero: recentlyMarkedRef.current.has(row.id),
         pendingFollowup: recentlyToggledFollowupRef.current.get(row.id),
       };
-      setConversations((prev) =>
+      patchList((prev) =>
         sortByLastMsgDesc(
           prev.map((c) => (c.id === row.id ? mergeConversationRow(c, row, overrides) : c)),
         ),
-      );
-      setSelectedConversation((prev) =>
-        prev && prev.id === row.id ? mergeConversationRow(prev, row, overrides) : prev,
       );
     };
 
@@ -185,22 +199,26 @@ export default function ConversasPage() {
           if (payload.eventType === "DELETE") {
             const oldId = (payload.old as { id?: string } | null)?.id;
             if (!oldId) return;
-            setConversations((prev) => prev.filter((c) => c.id !== oldId));
+            patchList((prev) => prev.filter((c) => c.id !== oldId));
             return;
           }
           const row = payload.new as ConversationRow;
           // Filtro de canal ativo: eventos de outros canais não pertencem à lista.
           if (selectedChannelId && row.channel_id !== selectedChannelId) return;
           if (payload.eventType === "INSERT") {
-            debouncedRefetch(); // linha crua não tem lead/channel — precisa da API
+            debouncedInvalidate(); // linha crua não tem lead/channel — precisa da API
             return;
           }
-          if (!conversationsRef.current.some((c) => c.id === row.id)) {
-            debouncedRefetch(); // conversa fora da lista atual (ex.: fetch anterior falhou)
+          const cached = queryClient.getQueryData<Conversation[]>([
+            "conversations",
+            selectedChannelId,
+          ]);
+          if (!cached?.some((c) => c.id === row.id)) {
+            debouncedInvalidate(); // conversa fora da lista atual (ex.: fetch anterior falhou)
             return;
           }
           applyRowPatch(row);
-        }
+        },
       )
       .on(
         "postgres_changes",
@@ -216,79 +234,32 @@ export default function ConversasPage() {
           };
           if (!msg.conversation_id) return;
           const preview = previewFromMessage(msg);
-          setConversations((prev) =>
+          patchList((prev) =>
             prev.map((c) =>
               c.id === msg.conversation_id
                 ? { ...c, last_message_text: preview.text, last_message_direction: preview.direction }
                 : c,
             ),
           );
-        }
+        },
       )
       .subscribe();
 
     return () => {
-      debouncedRefetch.cancel();
+      debouncedInvalidate.cancel();
       supabase.removeChannel(realtimeChannel);
     };
-  }, [fetchConversations, selectedChannelId, supabase]);
-
-  async function loadData() {
-    setLoading(true);
-    // Conversas são carregadas pelo effect dedicado (com cancelamento), não aqui —
-    // evita o duplo-fetch no mount. Aqui só os dados auxiliares.
-    await Promise.all([fetchChannels(), fetchTags(), fetchLeadTags()]);
-    setLoading(false);
-  }
-
-  async function fetchChannels() {
-    try {
-      const res = await fetch("/api/channels");
-      if (res.ok) {
-        const data = await res.json();
-        setChannels(Array.isArray(data) ? data : []);
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  async function fetchLeadTags() {
-    const { data: ltData } = await supabase
-      .from("lead_tags")
-      .select("lead_id, tag_id");
-    if (ltData) {
-      const map: Record<string, string[]> = {};
-      ltData.forEach((row: { lead_id: string; tag_id: string }) => {
-        if (!map[row.lead_id]) map[row.lead_id] = [];
-        map[row.lead_id].push(row.tag_id);
-      });
-      setLeadTagsMap(map);
-    }
-  }
-
-  async function fetchTags() {
-    try {
-      const res = await fetch("/api/tags");
-      if (res.ok) {
-        const data = await res.json();
-        setTags(data);
-      }
-    } catch {
-      // ignore
-    }
-  }
+  }, [selectedChannelId, queryClient, supabase, patchList]);
 
   function handleSelectConversation(conv: Conversation) {
-    setSelectedConversation(conv);
+    setSelectedId(conv.id);
     setPendingScrollMessageId(null);
     setMobileView("chat");
   }
 
   function handleSelectMessageResult(conversationId: string, messageId: string) {
-    const conv = conversations.find((c) => c.id === conversationId);
-    if (!conv) return; // a lista vem completa; ausência => fora do escopo, ignora.
-    setSelectedConversation(conv);
+    if (!conversations.some((c) => c.id === conversationId)) return; // fora do escopo
+    setSelectedId(conversationId);
     setPendingScrollMessageId(messageId);
     setMobileView("chat");
   }
@@ -297,13 +268,7 @@ export default function ConversasPage() {
     // Track immediately so any realtime push that fires before the response
     // can be overridden client-side
     recentlyMarkedRef.current.set(conversationId, Date.now());
-    // Optimistic local zero
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, unread_count: 0 } : c)),
-    );
-    setSelectedConversation((prev) =>
-      prev && prev.id === conversationId ? { ...prev, unread_count: 0 } : prev,
-    );
+    patchConversation(conversationId, { unread_count: 0 });
     try {
       await fetch(`/api/conversations/${conversationId}/mark-read`, { method: "POST" });
     } catch (err) {
@@ -313,45 +278,31 @@ export default function ConversasPage() {
 
   function handleChannelChange(channelId: string) {
     setSelectedChannelId(channelId);
-    setSelectedConversation(null);
+    setSelectedId(null);
     setMobileView("list");
-    setIsRefreshing(true); // feedback até a lista do novo filtro chegar
+    // feedback do filtro novo = isPlaceholderData (keepPreviousData) — sem flag manual
   }
 
-  function handleAgentUpdate(
-    conversationId: string,
-    patch: { ai_enabled?: boolean; agent_profile_id?: string | null }
-  ) {
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, ...patch } : c))
-    );
-    setSelectedConversation((prev) => {
-      if (!prev || prev.id !== conversationId) return prev;
-      return { ...prev, ...patch };
-    });
-  }
+  const patchLeadFlag = useCallback(
+    (conversationId: string, aiEnabled: boolean) => {
+      patchConversation(conversationId, (c) => ({
+        ...c,
+        leads: { ...(c.leads as Lead), ai_enabled: aiEnabled },
+      }));
+    },
+    [patchConversation],
+  );
 
   async function handleToggleAi() {
     if (!selectedConversation || togglingAi) return;
-    const currentAiEnabled = (selectedConversation.leads as any)?.ai_enabled ?? true;
+    const conversationId = selectedConversation.id;
+    const currentAiEnabled = (selectedConversation.leads as Lead | null)?.ai_enabled ?? true;
     const next = !currentAiEnabled;
     setTogglingAi(true);
-    recentlyToggledAiRef.current.set(selectedConversation.id, next);
-    // Optimistic update — mirrors contact-detail.tsx pattern
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === selectedConversation.id
-          ? { ...c, leads: { ...(c.leads as any), ai_enabled: next } }
-          : c
-      )
-    );
-    setSelectedConversation((prev) =>
-      prev && prev.id === selectedConversation.id
-        ? { ...prev, leads: { ...(prev.leads as any), ai_enabled: next } }
-        : prev
-    );
+    recentlyToggledAiRef.current.set(conversationId, next);
+    patchLeadFlag(conversationId, next); // otimista
     try {
-      const res = await fetch(`/api/conversations/${selectedConversation.id}/agent`, {
+      const res = await fetch(`/api/conversations/${conversationId}/agent`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ai_enabled: next }),
@@ -360,83 +311,37 @@ export default function ConversasPage() {
       if (!res.ok) throw new Error(`status ${res.status}`);
       // Confirm against server value — protects against silent backend failures
       const data = await res.json();
-      const confirmed: boolean = data?.leads?.ai_enabled ?? next;
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === selectedConversation.id
-            ? { ...c, leads: { ...(c.leads as any), ai_enabled: confirmed } }
-            : c
-        )
-      );
-      setSelectedConversation((prev) =>
-        prev && prev.id === selectedConversation.id
-          ? { ...prev, leads: { ...(prev.leads as any), ai_enabled: confirmed } }
-          : prev
-      );
+      patchLeadFlag(conversationId, data?.leads?.ai_enabled ?? next);
     } catch (err) {
       console.warn("[toggle-ai] failed:", err);
-      // Roll back optimistic update on failure
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === selectedConversation.id
-            ? { ...c, leads: { ...(c.leads as any), ai_enabled: !next } }
-            : c
-        )
-      );
-      setSelectedConversation((prev) =>
-        prev && prev.id === selectedConversation.id
-          ? { ...prev, leads: { ...(prev.leads as any), ai_enabled: !next } }
-          : prev
-      );
+      patchLeadFlag(conversationId, !next); // rollback
     } finally {
-      recentlyToggledAiRef.current.delete(selectedConversation.id);
+      recentlyToggledAiRef.current.delete(conversationId);
       setTogglingAi(false);
     }
   }
 
   async function handleToggleFollowup() {
     if (!selectedConversation || togglingFollowup) return;
+    const conversationId = selectedConversation.id;
     const current = selectedConversation.followup_enabled ?? true;
     const next = !current;
     setTogglingFollowup(true);
-    recentlyToggledFollowupRef.current.set(selectedConversation.id, next);
-
-    // Optimistic update
-    const patch = { followup_enabled: next };
-    setConversations((prev) =>
-      prev.map((c) => (c.id === selectedConversation.id ? { ...c, ...patch } : c))
-    );
-    setSelectedConversation((prev) =>
-      prev && prev.id === selectedConversation.id ? { ...prev, ...patch } : prev
-    );
-
+    recentlyToggledFollowupRef.current.set(conversationId, next);
+    patchConversation(conversationId, { followup_enabled: next }); // otimista
     try {
-      const res = await fetch(
-        `/api/conversations/${selectedConversation.id}/followup`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ enabled: next }),
-          signal: AbortSignal.timeout(10_000),
-        }
-      );
+      const res = await fetch(`/api/conversations/${conversationId}/followup`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) throw new Error(`status ${res.status}`);
     } catch (err) {
       console.warn("[toggle-followup] failed:", err);
-      // Rollback
-      const rollback = { followup_enabled: current };
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === selectedConversation.id ? { ...c, ...rollback } : c
-        )
-      );
-      setSelectedConversation((prev) =>
-        prev && prev.id === selectedConversation.id
-          ? { ...prev, ...rollback }
-          : prev
-      );
+      patchConversation(conversationId, { followup_enabled: current }); // rollback
     } finally {
-      recentlyToggledFollowupRef.current.delete(selectedConversation.id);
+      recentlyToggledFollowupRef.current.delete(conversationId);
       setTogglingFollowup(false);
     }
   }
@@ -462,12 +367,13 @@ export default function ConversasPage() {
     : [];
 
   function handleLeadUpdate(leadId: string, patch: Partial<Lead>) {
-    const updateConv = (c: Conversation): Conversation =>
-      (c.leads as Lead)?.id === leadId
-        ? { ...c, leads: { ...(c.leads as Lead), ...patch } }
-        : c;
-    setConversations(prev => prev.map(updateConv));
-    setSelectedConversation(prev => prev ? updateConv(prev) : prev);
+    patchList((prev) =>
+      prev.map((c) =>
+        (c.leads as Lead)?.id === leadId
+          ? { ...c, leads: { ...(c.leads as Lead), ...patch } }
+          : c,
+      ),
+    );
   }
 
   async function handleTagToggle(tagId: string, add: boolean) {
@@ -485,11 +391,17 @@ export default function ConversasPage() {
     });
 
     if (res.ok) {
-      setLeadTagsMap((prev) => ({ ...prev, [selectedLead.id]: newTagIds }));
+      queryClient.setQueryData<Record<string, string[]>>(["lead-tags"], (prev) => ({
+        ...(prev ?? {}),
+        [selectedLead.id]: newTagIds,
+      }));
     }
   }
 
-  if (loading || !initialConvDone) {
+  const initialLoading =
+    channelsPending || tagsPending || leadTagsPending || (convPending && !isRefreshing);
+
+  if (initialLoading) {
     return (
       <div className="flex items-center justify-center h-full bg-[#faf9f6]">
         <div className="text-center">
@@ -517,7 +429,7 @@ export default function ConversasPage() {
           onChannelChange={handleChannelChange}
           listError={listError}
           isRefreshing={isRefreshing}
-          onRetry={fetchConversations}
+          onRetry={() => refetchConversations()}
           onSelectMessageResult={handleSelectMessageResult}
         />
       </div>
@@ -527,7 +439,7 @@ export default function ConversasPage() {
           <ChatView
             conversation={selectedConversation}
             tags={tags}
-            aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
+            aiEnabled={(selectedConversation.leads as Lead | null)?.ai_enabled ?? true}
             togglingAi={togglingAi}
             onToggleAi={handleToggleAi}
             followupEnabled={selectedConversation.followup_enabled ?? true}
@@ -555,7 +467,7 @@ export default function ConversasPage() {
             leadTags={selectedLeadTags}
             onTagToggle={handleTagToggle}
             onBack={() => setMobileView("chat")}
-            aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
+            aiEnabled={(selectedConversation.leads as Lead | null)?.ai_enabled ?? true}
             togglingAi={togglingAi}
             onToggleAi={handleToggleAi}
             followupEnabled={selectedConversation.followup_enabled ?? true}
@@ -580,7 +492,7 @@ export default function ConversasPage() {
           onChannelChange={handleChannelChange}
           listError={listError}
           isRefreshing={isRefreshing}
-          onRetry={fetchConversations}
+          onRetry={() => refetchConversations()}
           onSelectMessageResult={handleSelectMessageResult}
         />
         {selectedConversation ? (
@@ -588,7 +500,7 @@ export default function ConversasPage() {
             <ChatView
               conversation={selectedConversation}
               tags={tags}
-              aiEnabled={(selectedConversation.leads as any)?.ai_enabled ?? true}
+              aiEnabled={(selectedConversation.leads as Lead | null)?.ai_enabled ?? true}
               togglingAi={togglingAi}
               onToggleAi={handleToggleAi}
               followupEnabled={selectedConversation.followup_enabled ?? true}

@@ -62,26 +62,13 @@ def test_all_commercial_stages_have_distinct_contextual_messages():
 
 
 # ---------------------------------------------------------------------------
-# Integration helpers (mirror test_post_media_closing.py)
+# Integration (mirror test_post_media_closing.py)
+#
+# Contrato Gemini nativo (migração 09/07/2026): as chamadas ao LLM saem por
+# `app.agent.orchestrator.generate` (gemini_client) — fakes de tests/gemini_fakes.py.
 # ---------------------------------------------------------------------------
 
-def _make_tool_call(name: str, arguments: str = "{}", call_id: str = "tc-001") -> MagicMock:
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = name
-    tc.function.arguments = arguments
-    return tc
-
-
-def _make_response(content: str | None, tool_calls=None) -> MagicMock:
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
+from tests.gemini_fakes import fake_text, fake_tool_call
 
 
 # ---------------------------------------------------------------------------
@@ -100,24 +87,16 @@ async def test_run_agent_mudar_stage_then_empty_uses_stage_fallback():
         "leads": {"id": "lead-s01", "name": "Renato", "phone": "5565996414453", "ai_enabled": True},
     }
 
-    tool_call = _make_tool_call("mudar_stage", arguments='{"stage": "atacado"}', call_id="tc-stage-001")
-
-    # 1st create → mudar_stage tool call
-    # 2nd create (after tool) → empty  [AGENT EMPTY AFTER TOOLS]
-    # 3rd create (retry-on-empty, no thinking) → empty
-    # 4th create (retry2, Etapa 2, temperatura elevada) → empty  [safety fallback fires]
-    call_responses = [
-        _make_response(content=None, tool_calls=[tool_call]),
-        _make_response(content="", tool_calls=None),
-        _make_response(content="", tool_calls=None),
-        _make_response(content="", tool_calls=None),
-    ]
-    call_index = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[call_index["i"]]
-        call_index["i"] += 1
-        return resp
+    # 1st generate → mudar_stage function_call
+    # 2nd generate (after tool) → empty  [AGENT EMPTY AFTER TOOLS]
+    # 3rd generate (retry-on-empty, no thinking) → empty
+    # 4th generate (retry2, Etapa 2, temperatura elevada) → empty  [safety fallback fires]
+    m_gen = AsyncMock(side_effect=[
+        fake_tool_call("mudar_stage", {"stage": "atacado"}),
+        fake_text(""),
+        fake_text(""),
+        fake_text(""),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=[
         {"role": "user", "content": "Ambos, tomo no dia dia e tenho a cafeteria",
@@ -127,11 +106,11 @@ async def test_run_agent_mudar_stage_then_empty_uses_stage_fallback():
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-s01", "phone": "5565996414453", "ai_enabled": True}), \
          patch("app.agent.orchestrator.update_lead", new=MagicMock()), \
+         patch("app.agent.orchestrator.track_token_usage"), \
          patch("app.agent.orchestrator.execute_tool",
                new=AsyncMock(return_value="Stage alterado para: atacado")), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.generate", new=m_gen):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "Ambos, tomo no dia dia e tenho a cafeteria")
 
     assert result == _STAGE_TRANSITION_FALLBACKS["atacado"]
@@ -154,19 +133,13 @@ async def test_run_agent_empty_without_tool_retries_then_uses_generic_fallback()
         "leads": {"id": "lead-v01", "name": "Lanny", "phone": "5511943068615", "ai_enabled": True},
     }
 
-    # create 1 → empty (initial, thinking on); create 2 → empty (retry, thinking off);
-    # create 3 → empty (retry2, Etapa 2, temperatura elevada)
-    call_responses = [
-        _make_response(content="", tool_calls=None),
-        _make_response(content="", tool_calls=None),
-        _make_response(content="", tool_calls=None),
-    ]
-    call_index = {"i": 0}
-
-    async def fake_create(**kwargs):
-        resp = call_responses[call_index["i"]]
-        call_index["i"] += 1
-        return resp
+    # generate 1 → empty (initial, thinking on); generate 2 → empty (retry, thinking off);
+    # generate 3 → empty (retry2, Etapa 2, temperatura elevada)
+    m_gen = AsyncMock(side_effect=[
+        fake_text(""),
+        fake_text(""),
+        fake_text(""),
+    ])
 
     with patch("app.agent.orchestrator.get_history", return_value=[
         {"role": "user", "content": "", "stage": "secretaria",
@@ -175,12 +148,12 @@ async def test_run_agent_empty_without_tool_retries_then_uses_generic_fallback()
     ]), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-v01", "phone": "5511943068615", "ai_enabled": True}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=m_gen):
 
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
         result = await run_agent(conversation, "")
 
     # Change C: nunca mais retorna "" para turno com histórico — usa o genérico honesto
     assert result == _SAFETY_FALLBACK_GENERIC
     assert "cortada" not in result
-    assert call_index["i"] == 3, "deve ter feito o retry silencioso e o retry2 antes do fallback"
+    assert m_gen.await_count == 3, "deve ter feito o retry silencioso e o retry2 antes do fallback"

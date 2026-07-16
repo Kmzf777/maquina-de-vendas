@@ -55,6 +55,26 @@ def split_into_bubbles(text: str) -> list[str]:
         if collapsed:
             bubbles.append(collapsed)
 
+    # --- Step 3.5: saudação colada em run-on (auditoria 12/07, caso humbertocarvao) ---
+    # Quando o modelo separa saudação/pitch/pergunta com \n SIMPLES, o Step 3 cola tudo
+    # numa bolha corrida sem pontuação ("bom dia marca própria e o que..."). Descolamos
+    # a saudação para a própria bolha — ANTES do clamp, para o teto de bolhas continuar
+    # valendo. Resto curto (vocativo, "pra você também") fica junto: só age em run-on real.
+    expanded: list[str] = []
+    for b in bubbles:
+        expanded.extend(_split_leading_greeting(b))
+    bubbles = expanded
+
+    # --- Step 3.6: pergunta roteirizada colada no meio da bolha (varredura 12/07) ---
+    # A pergunta de descoberta do funil ("voce ja tem uma marca criada...") é roteirizada
+    # verbatim nos prompts de estagio, e o modelo às vezes a cola no fim do pitch com \n
+    # simples (colapsado em espaço pelo Step 3). Seam determinística: se ela aparece no
+    # MEIO de uma bolha, vira bolha própria. Também pré-clamp.
+    expanded = []
+    for b in bubbles:
+        expanded.extend(_split_scripted_question(b))
+    bubbles = expanded
+
     # --- Step 4: clamp to MAX_BUBBLES (merge overflow into last bucket) ---
     if len(bubbles) > MAX_BUBBLES:
         # Keep the first (MAX_BUBBLES - 1) bubbles intact, merge the rest.
@@ -77,6 +97,57 @@ def split_into_bubbles(text: str) -> list[str]:
     bubbles = [_ensure_question_mark(b) for b in bubbles]
 
     return bubbles
+
+
+# Saudações que abrem bolha. O resto precisa ser LONGO (run-on de verdade) para o
+# split agir — "bom dia pra você também" e "boa tarde Ana" ficam intactas.
+_GREETING_SPLIT_RE = re.compile(
+    r"^(oi|ol[aá]|bom dia|boa tarde|boa noite)[,!]?\s+(?=\S)",
+    re.IGNORECASE,
+)
+_GREETING_MIN_REST = 40
+
+
+def _split_leading_greeting(bubble: str) -> list[str]:
+    """Descola a saudação inicial quando ela abre uma bolha corrida longa.
+
+    Retorna [saudação, resto] apenas quando o resto tem >= _GREETING_MIN_REST
+    caracteres (run-on real); em qualquer outro caso devolve a bolha intacta.
+    Função pura — sem I/O.
+    """
+    m = _GREETING_SPLIT_RE.match(bubble)
+    if not m:
+        return [bubble]
+    rest = bubble[m.end():].strip()
+    if len(rest) < _GREETING_MIN_REST:
+        return [bubble]
+    return [m.group(1), rest]
+
+
+# Perguntas roteirizadas dos prompts de estágio que o modelo cola no fim do pitch.
+# O seam corta ANTES da pergunta quando ela aparece no meio da bolha (>= _SEAM_MIN_PREFIX
+# chars antes dela); no início da bolha não há nada a fazer.
+_SCRIPTED_QUESTION_SEAM_RE = re.compile(
+    r"\s(?=voc[eê] j[aá] tem uma marca)",
+    re.IGNORECASE,
+)
+_SEAM_MIN_PREFIX = 20
+
+
+def _split_scripted_question(bubble: str) -> list[str]:
+    """Descola a pergunta roteirizada do funil quando colada no meio da bolha.
+
+    Retorna [prefixo, pergunta] quando o seam existe após >= _SEAM_MIN_PREFIX chars;
+    caso contrário devolve a bolha intacta. Função pura — sem I/O.
+    """
+    m = _SCRIPTED_QUESTION_SEAM_RE.search(bubble)
+    if not m or m.start() < _SEAM_MIN_PREFIX:
+        return [bubble]
+    prefix = bubble[:m.start()].rstrip()
+    question = bubble[m.end():].strip()
+    if not prefix or not question:
+        return [bubble]
+    return [prefix, question]
 
 
 def _strip_terminal_period(bubble: str) -> str:
@@ -118,7 +189,19 @@ def _ensure_question_mark(bubble: str) -> str:
 
     O matching usa fronteira de palavra (\b) para que "qualquer" não bata em "qual" e
     "queria" não bata em "quer".
+
+    Duas guardas de NÃO-ação (lead 5561999119005, 11/07): a bolha "o que está incluso é..."
+    foi fundida pelo clamp de overflow com o parágrafo seguinte e ganhou "?" indevido —
+    o starter do 1º parágrafo não descreve o fim do último parágrafo fundido.
     """
+    # Guarda 1: bolha fundida pelo clamp de overflow (tem "\n\n" interno) — o início e o
+    # fim são parágrafos diferentes, o starter do início não fala sobre o fim.
+    if "\n\n" in bubble:
+        return bubble
+    # Guarda 2: bolha longa — a classe de falha que a rede corrige é uma pergunta curta que
+    # perdeu o "?" (caso 5531999844461); declarativas clivadas longas ficam de fora.
+    if len(bubble) > 120:
+        return bubble
     b = bubble.rstrip()
     if not b or b[-1] in ".?!…":
         return bubble

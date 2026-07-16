@@ -1,3 +1,15 @@
+"""Peças vivas do fluxo de campanhas.
+
+O loop próprio deste módulo (check_campaign_triggers / process_campaign_enrollments)
+foi substituído pelo automation engine (app/automation/engine.py) e removido em
+09/07/2026 (~200 linhas mortas). Permanecem apenas as funções consumidas por
+outros módulos:
+
+- `_execute_send_node`  → automation/engine.py (nó `send` das cadências)
+- `handle_campaign_reply` → buffer/processor.py (inbound pausa/cancela enrollment)
+- `decide_failure_update` / `_is_permanent_error` → classificador puro de erro Meta
+  (permanente vs transitório) com suíte própria (test_campaigns_worker_retry.py)
+"""
 import logging
 from datetime import datetime
 
@@ -36,7 +48,7 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         channel = get_channel_for_lead(enrollment["lead_id"])
     if not channel:
         logger.warning("[CAMPAIGNS] No channel for lead %s, skipping send", lead["phone"])
-        return
+        return None
 
     provider = get_provider(channel)
     components = _build_template_components(template_variables, lead)

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "6bd2006d-a70b-4c0f-8032-e2668d0b7a9f",
+    "role": "user",
+    "content": "oi, tenho uma rede de barbearias premium e quero começar a revender café especial para os clientes. como funciona a parceria e quais cafés vocês têm disponíveis?",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:32:12.545991+00:00"
+  },
+  {
+    "id": "a77a10e1-a482-4fac-8f5f-2df9334925eb",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-06-24T02:32:19.381802+00:00"
+  },
+  {
+    "id": "32d436b3-7b7e-45ff-a007-a76ce406e746",
+    "role": "assistant",
+    "content": "que bacana essa ideia de oferecer cafe especial em barbearias premium",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:32:23.187158+00:00"
+  },
+  {
+    "id": "879486e7-c591-4c76-92a5-752a03581a75",
+    "role": "assistant",
+    "content": "cafe especial e um diferencial enorme, a margem e boa e o cliente fideliza",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:32:23.645315+00:00"
+  },
+  {
+    "id": "de1afed1-8131-40e1-822b-e335667b080e",
+    "role": "assistant",
+    "content": "pra gente comecar, me conta uma coisa: o cafe que voce vende atualmente atende as expectativas dos seus clientes ou voce sente que poderia oferecer algo mais diferenciado pra fidelizar a clientela?",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:32:24.10065+00:00"
+  },
+  {
+    "id": "d1f451d3-9f5c-4b34-b9d1-bfab62172cdc",
+    "role": "user",
+    "content": "Excelente, o objetivo é justamente esse. E sobre os cafés disponíveis, vocês trabalham com grãos e moído em embalagens de 250g?",
+    "stage": "atacado",
+    "created_at": "2026-06-24T02:33:12.11672+00:00"
+  },
+  {
+    "id": "9faa29e5-8fad-448c-a4ed-d9098a235fcc",
+    "role": "system",
+    "content": "[enviar_fotos] Fotos de atacado enviadas (5/5)",
+    "stage": null,
+    "created_at": "2026-06-24T02:33:20.595237+00:00"
+  },
+  {
+    "id": "1ae12855-aa4d-471a-be4a-14205c4f2cb7",
+    "role": "assistant",
+    "content": "perfeito, entendi o objetivo",
+    "stage": "atacado",
+    "created_at": "2026-06-24T02:33:22.848276+00:00"
+  },
+  {
+    "id": "595d4584-5a97-45b9-9a57-df9f0b100061",
+    "role": "assistant",
+    "content": "ja te mandei aqui as fotos do nosso portfolio pra voce dar uma olhada",
+    "stage": "atacado",
+    "created_at": "2026-06-24T02:33:23.301311+00:00"
+  },
+  {
+    "id": "5527a410-2481-4950-8450-540057292e1f",
+    "role": "assistant",
+    "content": "a gente trabalha com cafe moido e em graos sim, nas embalagens de 250g e tambem de 500g e 1kg\n\ntemos o Canastra Classico, com notas caramelizadas e achocolatadas, e o Canastra Suave, com notas achocolatadas e finalizacao citrica\n\ntemos tambem o Canastra Canela, que e um cafe encorpado com canela natural, e o nosso Microlote, um cafe especial com 86 pontos SCA\n\nqual desses faz mais sentido pra sua rede de barbearias?",
+    "stage": "atacado",
+    "created_at": "2026-06-24T02:33:23.75843+00:00"
+  }
+]

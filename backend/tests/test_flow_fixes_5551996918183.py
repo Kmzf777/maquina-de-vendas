@@ -14,6 +14,8 @@ import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.gemini_fakes import fake_text, fake_tool_call
+
 
 # ---------------------------------------------------------------------------
 # Fix 1: orchestrator returns None for encaminhar_humano
@@ -21,24 +23,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 @pytest.mark.asyncio
 async def test_run_agent_returns_none_when_encaminhar_humano_called():
-    """run_agent must return None (not '') when encaminhar_humano is in tool_calls."""
+    """run_agent must return None (not '') when encaminhar_humano is in function_calls."""
     from app.agent.orchestrator import run_agent
 
-    tool_call = MagicMock()
-    tool_call.function.name = "encaminhar_humano"
-    tool_call.function.arguments = '{"vendedor": "Joao", "motivo": "qualificado"}'
-    tool_call.id = "tc-1"
-
-    first_message = MagicMock()
-    first_message.tool_calls = [tool_call]
-    first_message.content = None
-
-    first_response = MagicMock()
-    first_response.choices = [MagicMock(message=first_message)]
-    first_response.usage = None
-
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=first_response)
+    first_response = fake_tool_call(
+        "encaminhar_humano", {"vendedor": "Joao", "motivo": "qualificado"}
+    )
 
     conversation = {
         "id": "conv-handoff",
@@ -49,7 +39,8 @@ async def test_run_agent_returns_none_when_encaminhar_humano_called():
 
     with patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-handoff", "ai_enabled": True}), \
          patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator._get_client", return_value=mock_client), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=AsyncMock(return_value=first_response)), \
          patch("app.agent.orchestrator.execute_tool", new=AsyncMock(return_value="encaminhado para Joao")):
         result = await run_agent(conversation, "quero fechar negocio")
 
@@ -67,51 +58,17 @@ async def test_run_agent_fallback_when_empty_after_tool_iterations():
     """When AI returns empty content after a tool call, a second call without tools is made."""
     from app.agent.orchestrator import run_agent
 
-    tool_call = MagicMock()
-    tool_call.function.name = "enviar_fotos"
-    tool_call.function.arguments = '{"categoria": "private_label"}'
-    tool_call.id = "tc-foto"
-
-    # First response: has a tool call
-    msg_with_tool = MagicMock()
-    msg_with_tool.tool_calls = [tool_call]
-    msg_with_tool.content = None
-
-    first_response = MagicMock()
-    first_response.choices = [MagicMock(message=msg_with_tool)]
-    first_response.usage = None
-
-    # Second response (after tool execution): empty content — Gemini bug
-    msg_empty = MagicMock()
-    msg_empty.tool_calls = None
-    msg_empty.content = ""
-
-    second_response = MagicMock()
-    second_response.choices = [MagicMock(message=msg_empty)]
-    second_response.usage = None
-
-    # Third response (fallback without tools): proper text.
-    # tool_calls=None explícito: uma resposta de TEXTO PURO real do SDK traz tool_calls=None
-    # (nunca um MagicMock truthy-vazio). Sem isso, o retry entraria no ramo de tools recuperadas
-    # e dispararia uma chamada pós-tool inexistente (IndexError) — artefato de mock, não de lógica.
-    msg_fallback = MagicMock()
-    msg_fallback.content = "Aqui estao as fotos do private label!"
-    msg_fallback.tool_calls = None
-
-    third_response = MagicMock()
-    third_response.choices = [MagicMock(message=msg_fallback)]
-    third_response.usage = None
-
-    call_count = {"n": 0}
-    responses = [first_response, second_response, third_response]
-
-    async def fake_create(**kwargs):
-        resp = responses[call_count["n"]]
-        call_count["n"] += 1
-        return resp
-
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create = fake_create
+    responses = [
+        # First response: has a tool call
+        fake_tool_call("enviar_fotos", {"categoria": "private_label"}),
+        # Second response (after tool execution): empty content — Gemini bug.
+        # fake_text("") tem function_calls=[] (como uma resposta de TEXTO PURO real do SDK):
+        # sem isso, o retry entraria no ramo de tools recuperadas e dispararia uma chamada
+        # pós-tool inexistente — artefato de mock, não de lógica.
+        fake_text(""),
+        # Third response (retry-on-empty): proper text.
+        fake_text("Aqui estao as fotos do private label!"),
+    ]
 
     conversation = {
         "id": "conv-foto",
@@ -122,12 +79,13 @@ async def test_run_agent_fallback_when_empty_after_tool_iterations():
 
     with patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-foto", "ai_enabled": True}), \
          patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator._get_client", return_value=mock_client), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=AsyncMock(side_effect=responses)) as m_gen, \
          patch("app.agent.orchestrator.execute_tool", new=AsyncMock(return_value="fotos enviadas")):
         result = await run_agent(conversation, "me manda as fotos")
 
     assert result == "Aqui estao as fotos do private label!"
-    assert call_count["n"] == 3, f"Esperava 3 chamadas ao LLM (tool, empty, fallback), mas fez {call_count['n']}"
+    assert m_gen.await_count == 3, f"Esperava 3 chamadas ao LLM (tool, empty, fallback), mas fez {m_gen.await_count}"
 
 
 @pytest.mark.asyncio
@@ -138,23 +96,6 @@ async def test_run_agent_empty_no_tool_retries_then_uses_generic_fallback():
     reincidência da Carla — completion_tokens=0 do Gemini)."""
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
 
-    msg_empty = MagicMock()
-    msg_empty.tool_calls = None
-    msg_empty.content = ""
-
-    response = MagicMock()
-    response.choices = [MagicMock(message=msg_empty)]
-    response.usage = None
-
-    call_count = {"n": 0}
-
-    async def fake_create(**kwargs):
-        call_count["n"] += 1
-        return response
-
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create = fake_create
-
     conversation = {
         "id": "conv-empty",
         "lead_id": "lead-empty",
@@ -164,7 +105,9 @@ async def test_run_agent_empty_no_tool_retries_then_uses_generic_fallback():
 
     with patch("app.agent.orchestrator.get_lead", return_value={"id": "lead-empty", "ai_enabled": True}), \
          patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator._get_client", return_value=mock_client):
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=lambda **_k: fake_text(""))) as m_gen:
         result = await run_agent(conversation, "ola")
 
     # Change C: genérico honesto em vez de silêncio total
@@ -173,8 +116,8 @@ async def test_run_agent_empty_no_tool_retries_then_uses_generic_fallback():
     )
     assert "cortada" not in result
     # Etapa 2: retry silencioso (thinking off) + retry2 (temperatura elevada) — ambos vazios
-    # aqui (fake_create sempre devolve o mesmo response mudo) — antes do fallback final.
-    assert call_count["n"] == 3, "deve tentar o retry silencioso e o retry2 antes do fallback"
+    # aqui (o mock sempre devolve resposta muda) — antes do fallback final.
+    assert m_gen.await_count == 3, "deve tentar o retry silencioso e o retry2 antes do fallback"
 
 
 # ---------------------------------------------------------------------------

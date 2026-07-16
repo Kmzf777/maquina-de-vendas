@@ -70,31 +70,38 @@ def test_secretaria_outbound_mantem_etapas_intermediarias():
 
 
 # ---------------------------------------------------------------------------
-# Task 3 — orchestrator injeta contexto outbound como primeiro user message
+# Task 3 — orchestrator injeta contexto outbound como primeiro content de user
+#
+# Contrato Gemini nativo (migração 09/07/2026): o system prompt vive em
+# system_instruction (fora dos contents); o contexto de campanha e o user_text são
+# types.Content role="user" (texto em .parts[0].text).
 # ---------------------------------------------------------------------------
 
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text
 
 
-def _mock_openai_response(text: str = "resposta da ia"):
-    msg = MagicMock()
-    msg.tool_calls = None
-    msg.content = text
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
+def _capture_generate_kwargs(m_gen):
+    """Retorna os kwargs da primeira chamada a generate."""
+    return m_gen.await_args_list[0].kwargs
 
 
-def _capture_messages(create_mock):
-    """Retorna a lista de messages passada na primeira chamada ao create."""
-    call_args = create_mock.call_args_list[0]
-    return call_args.kwargs.get("messages") or call_args.args[0]
+def _orchestrator_patches(lead: dict, history: list, prompt_key: str, m_gen):
+    return [
+        patch("app.agent.orchestrator.get_lead", return_value=lead),
+        patch("app.agent.orchestrator.get_history", return_value=history),
+        patch("app.agent.orchestrator.get_agent_profile",
+              return_value={"prompt_key": prompt_key, "model": "gemini-2.5-flash"}),
+        patch("app.agent.orchestrator.track_token_usage"),
+        patch("app.agent.orchestrator.generate", new=m_gen),
+    ]
 
 
 @pytest.mark.asyncio
 async def test_outbound_primeiro_turno_injeta_contexto_campanha():
-    """No turno 1 outbound, messages[1] deve ser o contexto da campanha (role user)."""
+    """No turno 1 outbound, contents[0] deve ser o contexto da campanha (role user)."""
+    import contextlib
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -104,30 +111,33 @@ async def test_outbound_primeiro_turno_injeta_contexto_campanha():
     }
     lead_context = {"campaign_message": "Ola, aqui e a Valeria."}
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
+    m_gen = AsyncMock(return_value=fake_text("resposta da ia"))
 
-    with patch("app.agent.orchestrator.get_lead", return_value={
-            "id": "lead-out-1", "name": "Maria", "phone": "5511900000001", "ai_enabled": True,
-         }), \
-         patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-
-        mock_client.return_value.chat.completions.create = create_mock
+    with contextlib.ExitStack() as stack:
+        for p in _orchestrator_patches(
+            {"id": "lead-out-1", "name": "Maria", "phone": "5511900000001", "ai_enabled": True},
+            [], "valeria_outbound", m_gen,
+        ):
+            stack.enter_context(p)
         await run_agent(conversation, "sim", lead_context=lead_context, agent_profile_id="profile-out")
 
-    messages = _capture_messages(create_mock)
-    # messages[0] = system, messages[1] = contexto campanha, messages[2] = user_text
-    assert len(messages) == 3
-    assert messages[1]["role"] == "user"
-    assert "Ola, aqui e a Valeria." in messages[1]["content"]
-    assert "PRIMEIRO turno" in messages[1]["content"]  # arco AIDA (1674bc5)
-    assert messages[2] == {"role": "user", "content": "sim"}
+    kwargs = _capture_generate_kwargs(m_gen)
+    # system vive FORA dos contents (system_instruction);
+    # contents[0] = contexto campanha, contents[1] = user_text
+    assert kwargs.get("system_instruction"), "system prompt deve ir em system_instruction"
+    contents = kwargs["contents"]
+    assert len(contents) == 2
+    assert contents[0].role == "user"
+    assert "Ola, aqui e a Valeria." in contents[0].parts[0].text
+    assert "PRIMEIRO turno" in contents[0].parts[0].text  # arco AIDA (1674bc5)
+    assert contents[1].role == "user"
+    assert contents[1].parts[0].text == "sim"
 
 
 @pytest.mark.asyncio
 async def test_outbound_segundo_turno_nao_injeta_contexto():
     """Com histórico existente (turno 2+), não deve injetar o contexto de campanha."""
+    import contextlib
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -141,28 +151,29 @@ async def test_outbound_segundo_turno_nao_injeta_contexto():
         {"role": "assistant", "content": "Que bom confirmar."},
     ]
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
+    m_gen = AsyncMock(return_value=fake_text("resposta da ia"))
 
-    with patch("app.agent.orchestrator.get_lead", return_value={
-            "id": "lead-out-2", "phone": "5511900000002", "ai_enabled": True,
-         }), \
-         patch("app.agent.orchestrator.get_history", return_value=existing_history), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-
-        mock_client.return_value.chat.completions.create = create_mock
+    with contextlib.ExitStack() as stack:
+        for p in _orchestrator_patches(
+            {"id": "lead-out-2", "phone": "5511900000002", "ai_enabled": True},
+            existing_history, "valeria_outbound", m_gen,
+        ):
+            stack.enter_context(p)
         await run_agent(conversation, "quero saber mais", lead_context=lead_context, agent_profile_id="profile-out")
 
-    messages = _capture_messages(create_mock)
-    # system + 2 history + user_text = 4 mensagens; nenhum role extra de contexto
-    assert len(messages) == 4
-    roles = [m["role"] for m in messages]
-    assert roles == ["system", "user", "assistant", "user"]
+    kwargs = _capture_generate_kwargs(m_gen)
+    contents = kwargs["contents"]
+    # 2 history + user_text = 3 contents (system em system_instruction);
+    # nenhum content extra de contexto
+    assert len(contents) == 3
+    roles = [c.role for c in contents]
+    assert roles == ["user", "model", "user"]
 
 
 @pytest.mark.asyncio
 async def test_inbound_nao_injeta_contexto_de_campanha():
     """Fluxo inbound (valeria_inbound) nunca deve injetar o contexto de campanha."""
+    import contextlib
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -173,26 +184,27 @@ async def test_inbound_nao_injeta_contexto_de_campanha():
     # Mesmo passando campaign_message, inbound não deve injetar
     lead_context = {"campaign_message": "Mensagem que nao deveria aparecer."}
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
+    m_gen = AsyncMock(return_value=fake_text("resposta da ia"))
 
-    with patch("app.agent.orchestrator.get_lead", return_value={
-            "id": "lead-in-1", "phone": "5511900000003", "ai_enabled": True,
-         }), \
-         patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_inbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-
-        mock_client.return_value.chat.completions.create = create_mock
+    with contextlib.ExitStack() as stack:
+        for p in _orchestrator_patches(
+            {"id": "lead-in-1", "phone": "5511900000003", "ai_enabled": True},
+            [], "valeria_inbound", m_gen,
+        ):
+            stack.enter_context(p)
         await run_agent(conversation, "oi", lead_context=lead_context, agent_profile_id="profile-in")
 
-    messages = _capture_messages(create_mock)
-    assert len(messages) == 2  # system + user_text
-    assert all("Mensagem que nao deveria aparecer" not in str(m) for m in messages)
+    kwargs = _capture_generate_kwargs(m_gen)
+    contents = kwargs["contents"]
+    assert len(contents) == 1  # apenas user_text (system em system_instruction)
+    assert all("Mensagem que nao deveria aparecer" not in str(c) for c in contents)
+    assert "Mensagem que nao deveria aparecer" not in (kwargs.get("system_instruction") or "")
 
 
 @pytest.mark.asyncio
 async def test_outbound_sem_campaign_message_nao_injeta():
     """Se campaign_message estiver ausente em lead_context, não deve injetar nada extra."""
+    import contextlib
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -201,21 +213,19 @@ async def test_outbound_sem_campaign_message_nao_injeta():
         "leads": {"id": "lead-out-3", "phone": "5511900000004"},
     }
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
+    m_gen = AsyncMock(return_value=fake_text("resposta da ia"))
 
-    with patch("app.agent.orchestrator.get_lead", return_value={
-            "id": "lead-out-3", "phone": "5511900000004", "ai_enabled": True,
-         }), \
-         patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-
-        mock_client.return_value.chat.completions.create = create_mock
+    with contextlib.ExitStack() as stack:
+        for p in _orchestrator_patches(
+            {"id": "lead-out-3", "phone": "5511900000004", "ai_enabled": True},
+            [], "valeria_outbound", m_gen,
+        ):
+            stack.enter_context(p)
         # lead_context sem campaign_message
         await run_agent(conversation, "oi", lead_context={"name": "Carlos"}, agent_profile_id="profile-out")
 
-    messages = _capture_messages(create_mock)
-    assert len(messages) == 2  # system + user_text apenas
+    kwargs = _capture_generate_kwargs(m_gen)
+    assert len(kwargs["contents"]) == 1  # apenas user_text (system em system_instruction)
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +240,7 @@ async def test_outbound_sem_campaign_message_nao_injeta():
 async def test_outbound_primeiro_turno_nome_saudacao_nao_vaza_para_contexto():
     """Lead com nome-saudacao no cadastro (lead antigo pre-C4): o contexto outbound
     do primeiro turno nao pode carregar a saudacao crua como se fosse nome real."""
+    import contextlib
     from app.agent.orchestrator import run_agent
 
     conversation = {
@@ -239,21 +250,20 @@ async def test_outbound_primeiro_turno_nome_saudacao_nao_vaza_para_contexto():
     }
     lead_context = {"campaign_message": "Ola, aqui e a Valeria."}
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
+    m_gen = AsyncMock(return_value=fake_text("resposta da ia"))
 
-    with patch("app.agent.orchestrator.get_lead", return_value={
-            "id": "lead-out-greeting", "name": "Olá, boa tarde", "phone": "5511900000005", "ai_enabled": True,
-         }), \
-         patch("app.agent.orchestrator.get_history", return_value=[]), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-
-        mock_client.return_value.chat.completions.create = create_mock
+    with contextlib.ExitStack() as stack:
+        for p in _orchestrator_patches(
+            {"id": "lead-out-greeting", "name": "Olá, boa tarde", "phone": "5511900000005", "ai_enabled": True},
+            [], "valeria_outbound", m_gen,
+        ):
+            stack.enter_context(p)
         await run_agent(conversation, "sim", lead_context=lead_context, agent_profile_id="profile-out")
 
-    messages = _capture_messages(create_mock)
-    # messages[0] = system, messages[1] = contexto campanha, messages[2] = user_text
-    assert len(messages) == 3
-    assert messages[1]["role"] == "user"
-    assert "Olá, boa tarde" not in messages[1]["content"]
-    assert "O lead se chama" not in messages[1]["content"]
+    kwargs = _capture_generate_kwargs(m_gen)
+    contents = kwargs["contents"]
+    # contents[0] = contexto campanha, contents[1] = user_text (system em system_instruction)
+    assert len(contents) == 2
+    assert contents[0].role == "user"
+    assert "Olá, boa tarde" not in contents[0].parts[0].text
+    assert "O lead se chama" not in contents[0].parts[0].text

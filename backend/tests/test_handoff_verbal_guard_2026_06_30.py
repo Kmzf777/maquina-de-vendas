@@ -17,27 +17,17 @@ Mudanças validadas aqui:
      (fail-soft, sem crash do turno).
   6. Prompt base contém proibição explícita de handoff verbal sem tool.
 """
-import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+from tests.gemini_fakes import fake_text
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_response(content: str | None, tool_calls=None) -> MagicMock:
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls  # None → falsy → tool loop exits
-    msg.model_dump.return_value = {
-        "role": "assistant", "content": content, "tool_calls": None
-    }
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
-
+# Migração 09/07 (Gemini 100% nativo): resposta só-texto = fake_text(content)
+# (function_calls=[] → o loop de tools sai, como o antigo tool_calls=None).
 
 def _conversation(stage: str = "secretaria") -> dict:
     return {
@@ -186,10 +176,9 @@ async def test_run_agent_cta_texto_sem_tool_dispara_guard():
          }), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="handoff executado") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(
-            return_value=_make_response(content=cta_text, tool_calls=None)
-        )
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text(cta_text))):
         result = await run_agent(_conversation(), "quero saber mais")
 
     # run_agent deve retornar None (sentinel de handoff)
@@ -216,10 +205,9 @@ async def test_run_agent_cta_vitima2_contato_dele_aqui():
          }), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="ok") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(
-            return_value=_make_response(content=cta_text, tool_calls=None)
-        )
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text(cta_text))):
         result = await run_agent(_conversation(), "quero o contato do vendedor")
 
     assert result is None
@@ -244,10 +232,9 @@ async def test_run_agent_informacional_nao_dispara_guard():
          }), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="ok") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(
-            return_value=_make_response(content=info_text, tool_calls=None)
-        )
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text(info_text))):
         result = await run_agent(_conversation(), "quem é o João?")
 
     # run_agent deve retornar o texto normal
@@ -273,10 +260,9 @@ async def test_run_agent_vou_deixar_salvo_nao_dispara_guard():
          }), \
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="ok") as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(
-            return_value=_make_response(content=safe_text, tool_calls=None)
-        )
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text(safe_text))):
         result = await run_agent(_conversation(), "[imagem]")
 
     assert result == safe_text, f"esperado texto original, got {result!r}"
@@ -303,10 +289,9 @@ async def test_run_agent_guard_execute_tool_raises_retorna_texto_original():
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock,
                side_effect=RuntimeError("simulando falha de rede")) as mock_exec, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(
-            return_value=_make_response(content=cta_text, tool_calls=None)
-        )
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text(cta_text))):
         result = await run_agent(_conversation(), "quero falar com alguém")
 
     # Com execute_tool falhando, run_agent deve retornar o texto original (fail-soft)

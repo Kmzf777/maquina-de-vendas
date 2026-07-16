@@ -1,22 +1,7 @@
 import pytest
-from unittest.mock import patch
 
 from app.whatsapp.registry import get_provider
-from app.whatsapp.evolution import EvolutionClient
 from app.whatsapp.meta import MetaCloudClient
-
-
-def test_get_provider_returns_evolution_client():
-    channel = {
-        "provider": "evolution",
-        "provider_config": {
-            "api_url": "http://evolution.local",
-            "api_key": "test-key",
-            "instance": "test-instance",
-        },
-    }
-    provider = get_provider(channel)
-    assert isinstance(provider, EvolutionClient)
 
 
 def test_get_provider_returns_meta_client():
@@ -40,19 +25,17 @@ def test_get_provider_raises_for_unknown():
         get_provider(channel)
 
 
-def test_evolution_client_stores_config():
+def test_get_provider_raises_for_evolution_descontinuado():
+    """Evolution foi removido do registry (Card 1, 12/07): o adapter estava morto
+    (CLAUDE.md §6 — Meta Graph API é a fonte única) e a interface do seam era
+    moldada por ele. Canal legado com provider=evolution deve falhar ALTO e claro,
+    nunca silenciosamente."""
     channel = {
         "provider": "evolution",
-        "provider_config": {
-            "api_url": "http://evo.local",
-            "api_key": "my-key",
-            "instance": "my-instance",
-        },
+        "provider_config": {"api_url": "http://evo.local", "api_key": "k", "instance": "i"},
     }
-    client = get_provider(channel)
-    assert client.base_url == "http://evo.local"
-    assert client.api_key == "my-key"
-    assert client.instance == "my-instance"
+    with pytest.raises(ValueError, match="Unknown provider"):
+        get_provider(channel)
 
 
 def test_meta_client_stores_config():

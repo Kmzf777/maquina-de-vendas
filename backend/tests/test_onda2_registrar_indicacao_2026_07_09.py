@@ -62,5 +62,5 @@ async def test_registrar_indicacao_sem_contato_ainda_registra():
 
 def test_disponivel_nos_stages_comerciais():
     for stage in ("secretaria", "atacado", "private_label"):
-        names = [t["function"]["name"] for t in tools.get_tools_for_stage(stage)]
+        names = [t["name"] for t in tools.get_tools_for_stage(stage)]
         assert "registrar_indicacao" in names, stage

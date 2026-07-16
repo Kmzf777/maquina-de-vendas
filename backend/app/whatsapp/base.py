@@ -28,6 +28,15 @@ class WhatsAppProvider(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} não suporta send_contact")
 
+    async def send_reaction(self, to: str, target_wamid: str, emoji: str) -> dict:
+        """Reage com um emoji a uma mensagem do lead (default não-suportado).
+
+        Como send_contact: apenas os provedores ativos (Meta) e o mock o
+        sobrescrevem; provedores descontinuados (Evolution) herdam este default.
+        Emoji vazio remove a reação (semântica da Meta Cloud API).
+        """
+        raise NotImplementedError(f"{type(self).__name__} não suporta send_reaction")
+
     @abstractmethod
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict: ...
 

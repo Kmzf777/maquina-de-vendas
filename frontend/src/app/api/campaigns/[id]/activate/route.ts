@@ -1,8 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { isSystemCampaign } from "@/lib/system-campaign";
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (isSystemCampaign(id)) {
+    // Espelho do motor de follow-up: ativar duplicaria os toques do worker real.
+    return NextResponse.json(
+      { error: "Cadência de sistema (espelho do motor da Valéria) — não pode ser ativada" },
+      { status: 409 },
+    );
+  }
   const supabase = await getServiceSupabase();
   const { data: nodes } = await supabase.from("campaign_nodes").select("*").eq("campaign_id", id);
   const trigger = nodes?.find((n) => n.type === "trigger");

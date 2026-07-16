@@ -10,5 +10,6 @@ python-dateutil>=2.9.0,<3.0
 google-genai>=1.0.0
 google-generativeai>=0.8.0  # DEPRECATED — usado só por scripts/rehearsal/gemini_actor.py (harness local)
 PyJWT>=2.8.0,<3.0
+sentry-sdk[fastapi]>=2.0,<3.0  # fail-open: sem SENTRY_DSN o init é no-op (app/observability.py)
 # Windows nao possui a base IANA de fusos; zoneinfo (stdlib) precisa do pacote tzdata.
 tzdata; sys_platform == 'win32'

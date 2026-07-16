@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
@@ -53,9 +53,13 @@ interface MessageBubbleProps {
   isGrouped: boolean;
   conversationId: string;
   onReply?: (msg: Message) => void;
+  onReact?: (msg: Message, emoji: string) => void;
   onScrollToMessage?: (messageId: string) => void;
   onContactDispatch?: (phone: string) => void;
 }
+
+// Paleta curta estilo WhatsApp — reagir é um gesto, não um teclado de emojis.
+const REACTION_EMOJIS = ["❤️", "👍", "🙏", "😂", "😮", "✅"];
 
 function getMediaLabel(messageType: string | null | undefined): string {
   switch (messageType) {
@@ -149,11 +153,12 @@ function ReactionTargetBlock({
   );
 }
 
-export function MessageBubble({ message, isGrouped, conversationId, onReply, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
+function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReact, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const badge = senderBadge(message);
 
   const isAudio = message.message_type === "audio";
@@ -221,17 +226,78 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
     </button>
   ) : null;
 
+  // Reagir exige o wamid da mensagem alvo (Meta) — legado sem wamid não oferece o botão.
+  // Reação-sobre-reação a Meta rejeita, então bolhas de reação também ficam de fora.
+  const canReact = Boolean(onReact && !isTemp && message.wamid && !isReaction);
+  const reactBtn = canReact ? (
+    <div className="relative flex-shrink-0 self-center">
+      <button
+        onClick={() => setReactionPickerOpen((v) => !v)}
+        className={`opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-full bg-[#e8e8e8] hover:bg-[#d8d8d8] text-[#666] ${reactionPickerOpen ? "opacity-100" : ""}`}
+        title="Reagir"
+        aria-label="Reagir"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+          <line x1="9" y1="9" x2="9.01" y2="9" />
+          <line x1="15" y1="9" x2="15.01" y2="9" />
+        </svg>
+      </button>
+      {reactionPickerOpen && (
+        <div
+          className={`absolute bottom-full mb-1 ${isFromMe ? "right-0" : "left-0"} z-20 flex items-center gap-0.5 bg-white border border-[#dedbd6] rounded-full px-1.5 py-1 shadow-lg`}
+          onMouseLeave={() => setReactionPickerOpen(false)}
+        >
+          {REACTION_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              onClick={() => {
+                setReactionPickerOpen(false);
+                onReact?.(message, emoji);
+              }}
+              className="text-[16px] leading-none p-1 rounded-full hover:bg-[#f0ede8] transition-colors"
+              aria-label={`Reagir com ${emoji}`}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
+  const reactionBadge = hasReactions ? (
+    <div
+      className={`absolute -bottom-3 ${isFromMe ? "right-2" : "left-2"} flex items-center gap-0.5 bg-white border border-[#dedbd6] rounded-full px-1.5 py-0.5 shadow-sm text-[12px] leading-none`}
+      title={message.reactions!.map((r) => (r.role === "user" ? `Lead: ${r.emoji}` : `Você: ${r.emoji}`)).join(" · ")}
+    >
+      {(() => {
+        const counts = new Map<string, number>();
+        for (const r of message.reactions!) counts.set(r.emoji, (counts.get(r.emoji) ?? 0) + 1);
+        return [...counts.entries()].map(([emoji, count]) => (
+          <span key={emoji}>
+            {emoji}
+            {count > 1 && <span className="text-[10px] text-[#7b7b78] ml-0.5">{count}</span>}
+          </span>
+        ));
+      })()}
+    </div>
+  ) : null;
+
   return (
     <div
       className={`flex group items-end gap-1 ${isFromMe ? "flex-row-reverse" : "flex-row"} ${isGrouped ? "mt-0.5" : "mt-2"}`}
     >
       {replyBtn}
+      {reactBtn}
       <div
-        className={`px-3 py-2 text-[14px] max-w-[75%] rounded-[8px] ${
+        className={`relative px-3 py-2 text-[14px] max-w-[75%] rounded-[8px] ${
           isFromMe
             ? "bg-[#111111] text-white ml-auto"
             : "bg-white border border-[#dedbd6] text-[#111111]"
-        } ${isTemp ? "opacity-70" : ""}`}
+        } ${isTemp ? "opacity-70" : ""} ${hasReactions ? "mb-3" : ""}`}
       >
         {(message.quoted_wamid || message.quoted_message !== undefined) && (
           <QuotedBlock
@@ -478,7 +544,12 @@ export function MessageBubble({ message, isGrouped, conversationId, onReply, onS
             <DeliveryTick status={message.delivery_status} />
           )}
         </div>
+        {reactionBadge}
       </div>
     </div>
   );
 }
+
+// Memo: com a janela paginada + callbacks estáveis, um push realtime re-renderiza
+// O(1) bubbles em vez da thread inteira.
+export const MessageBubble = memo(MessageBubbleImpl);

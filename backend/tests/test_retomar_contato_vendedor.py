@@ -14,19 +14,19 @@ SP_TZ = ZoneInfo("America/Sao_Paulo")
 
 def test_retomar_contato_vendedor_in_commercial_stages():
     for stage in ["secretaria", "atacado", "private_label", "exportacao"]:
-        names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
+        names = [t["name"] for t in get_tools_for_stage(stage)]
         assert "retomar_contato_vendedor" in names, f"ausente no stage '{stage}'"
 
 
 def test_retomar_contato_vendedor_absent_in_consumo():
-    names = [t["function"]["name"] for t in get_tools_for_stage("consumo")]
+    names = [t["name"] for t in get_tools_for_stage("consumo")]
     assert "retomar_contato_vendedor" not in names
 
 
 def test_retomar_contato_vendedor_description_exige_sim_explicito():
-    from app.agent.tools import TOOLS_SCHEMA
-    schema = next(t for t in TOOLS_SCHEMA if t["function"]["name"] == "retomar_contato_vendedor")
-    desc = schema["function"]["description"]
+    from app.agent.tools import TOOL_DECLARATIONS
+    schema = next(t for t in TOOL_DECLARATIONS if t["name"] == "retomar_contato_vendedor")
+    desc = schema["description"]
     assert "SIM" in desc
     assert "Joao" in desc
     assert "AGORA" in desc and "AGENDA" in desc

@@ -1,0 +1,65 @@
+[
+  {
+    "id": "e49515d4-3003-45ba-88b0-921477bbda2c",
+    "role": "user",
+    "content": "Sim",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:28:36.812464+00:00"
+  },
+  {
+    "id": "593356a2-f90e-4a31-ac05-a14fd285e1c5",
+    "role": "assistant",
+    "content": "show, cadastro confirmado",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:28:42.972502+00:00"
+  },
+  {
+    "id": "3f0076d8-e515-482c-b4fb-43dae31495aa",
+    "role": "assistant",
+    "content": "esse cadastro era so pra confirmar que falo contigo por aqui — a gente e a torrefacao de cafe especial da Serra da Canastra, da fazenda pra xicara",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:28:43.457947+00:00"
+  },
+  {
+    "id": "26001c60-99b3-4641-a2fd-ce2952a7c580",
+    "role": "assistant",
+    "content": "cafe faz mais parte do seu dia a dia ou seria mais pro seu negocio",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:28:43.974714+00:00"
+  },
+  {
+    "id": "99a199a2-b337-4d22-9a69-e36d700fec26",
+    "role": "user",
+    "content": "Fala, Valéria! Sim, sou eu mesmo, o João. Tenho uma cafeteria aqui em BH e uso café especial. Me conta, o que a Café Canastra oferece para donos de cafeteria como eu?",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:29:34.19015+00:00"
+  },
+  {
+    "id": "747c25ae-0f39-4d80-b2bb-6e1e43334d40",
+    "role": "system",
+    "content": "stage alterado para: atacado",
+    "stage": null,
+    "created_at": "2026-06-24T02:29:40.294443+00:00"
+  },
+  {
+    "id": "53d5cd16-f683-4f5d-a26e-5cb281edf994",
+    "role": "assistant",
+    "content": "joão, que bacana que você tem uma cafeteria em BH e já trabalha com café especial",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:29:42.886715+00:00"
+  },
+  {
+    "id": "75a890de-371b-4570-8851-5e840ff4016a",
+    "role": "assistant",
+    "content": "o pessoal de minas gerais curte muito o nosso café",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:29:43.369796+00:00"
+  },
+  {
+    "id": "b1cfc1ce-fc3d-4856-ad09-d961f5d10ff2",
+    "role": "assistant",
+    "content": "a gente tem uma linha completa de cafés especiais, 100% arábica, direto da nossa fazenda na serra da canastra\n\nposso te mostrar o nosso catálogo e os valores pra você dar uma olhada no que faz mais sentido pro seu negócio",
+    "stage": "secretaria",
+    "created_at": "2026-06-24T02:29:43.852213+00:00"
+  }
+]

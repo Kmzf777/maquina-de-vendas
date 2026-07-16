@@ -1,14 +1,23 @@
 # backend/app/follow_up/scheduler.py
+import asyncio
 import logging
 import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import httpx
 
-from app.agent.gemini_native import get_client as get_gemini_client
+from app.agent.gemini_client import generate, user_content
 from app.config import settings
-from app.follow_up.service import get_due_followups, should_proactive_handoff, _ENV_TAG
-from app.leads.service import resolve_send_target, create_deal, record_dispatch_note, strip_greeting_prefix
+from app.follow_up.service import (
+    get_due_followups,
+    lead_marked_wrong_number,
+    should_proactive_handoff,
+    _ENV_TAG,
+)
+from app.leads.service import (
+    resolve_send_target, create_deal, record_dispatch_note,
+    strip_greeting_prefix, sanitize_display_name,
+)
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -28,10 +37,18 @@ _HEALTH_CHECK_INTERVAL = timedelta(hours=1)
 
 _BILLING_ERROR_CODE = 131042
 _META_API_BASE = "https://graph.facebook.com/v21.0"
-# Eixo 3B: template utility aprovado (pt_BR, BODY estático + botão QUICK_REPLY, ZERO params)
-# usado para reabrir a janela 24h de um retorno agendado que venceu fora da janela.
-# ATENÇÃO: NÃO tem placeholder — enviar qualquer param de body dá Meta #132000.
-_REOPEN_TEMPLATE_NAME = "continuar_conversa"
+# Eixo 3B / Rodada 5 (10/07): template utility aprovado usado para reabrir a janela 24h
+# quando um toque da cadência (ou retorno agendado) vence com a janela fechada. O antigo
+# `continuar_conversa` pedia desculpas por atraso NOSSO ("não consegui te responder a
+# tempo") num gatilho onde quem silenciou foi o LEAD — incoerência comercial. O novo
+# enquadra a pendência no lead: "O Cafe Canastra esta aguardando sua confirmacao sobre
+# {{2}} desde {{3}}" + QUICK_REPLYs (inclusive saída digna "Nao tenho interesse").
+# ATENÇÃO (locale): a APROVAÇÃO é `en_US` (corpo em português) — o language_code enviado
+# DEVE ser o da aprovação; e o BODY exige exatamente 3 params POSICIONAIS.
+_REOPEN_TEMPLATE_NAME = "utilidade_geral_confirmacao_v1"
+_REOPEN_TEMPLATE_LANGUAGE = "en_US"
+# Assunto ({{2}}) fixo e honesto: há de fato um atendimento em aberto — a conversa.
+_REOPEN_TOPIC = "a continuidade do atendimento"
 
 # agent_profile "ValerIA - Outbound / Recuperacao" (prompt_key=valeria_outbound).
 # Todo job ai_reengage é, por definição, uma recuperação outbound — força esta
@@ -294,17 +311,24 @@ async def _health_check_via_logs(now: datetime) -> None:
                     )
             except Exception as exc:
                 logger.error("[HEALTH] Falha ao auto-resolver alertas de billing: %s", exc)
+            # Billing normalizado → retoma broadcasts pausados por billing (wartime T4).
+            # Fail-soft e import tardio: o health check JAMAIS quebra por causa disto.
+            try:
+                from app.broadcast.service import resume_broadcasts_after_billing
+                resume_broadcasts_after_billing()
+            except Exception as exc:
+                logger.error("[HEALTH] Falha no auto-resume de broadcasts pós-billing: %s", exc)
     except Exception as exc:
         logger.error("[HEALTH] Falha ao escanear logs por billing errors: %s", exc)
 
 
-_FOLLOWUP_MODEL = "gemini-2.5-flash"
-# gemini-2.5-flash conta tokens de thinking + texto no MESMO budget via API de compatibilidade.
-# Com max_tokens baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
+_FOLLOWUP_MODEL = "gemini-2.5-flash"  # sunset REAL do 2.5 e 16/10/2026 — migrar p/ 3.x antes
+# gemini-2.5-flash conta tokens de thinking + texto no MESMO budget de saída.
+# Com teto baixo E thinking ligado, o modelo consome o budget pensando e trunca a saída
 # (auditoria leads 5566999975586 / 5531996039118, 2026-06-25: "...o que te fez pensar em").
-# A cura é DUPLA e espelha o orchestrator (MAX_OUTPUT_TOKENS=4096 + _gemini_thinking_off):
-#   1) desligar o thinking na chamada (reasoning_effort="none", via _gemini_thinking_off);
-#   2) dar teto folgado (4096). Mesmo assim, finish_reason="length" é barrado em
+# A cura é DUPLA e espelha o orchestrator (MAX_OUTPUT_TOKENS=4096 + thinking off):
+#   1) desligar o thinking na chamada (thinking_off=True → thinking_budget=0 nativo);
+#   2) dar teto folgado (4096). Mesmo assim, finish_reason="MAX_TOKENS" é barrado em
 #      process_due_followups — nunca enviamos mensagem pela metade.
 _FOLLOWUP_MAX_TOKENS = 4096
 
@@ -477,16 +501,10 @@ async def _generate_followup_message(
 
     Retorna `(texto, finish_reason)`. O `finish_reason` é vital: gemini-2.5-flash conta
     thinking + texto no mesmo budget, então mesmo com o thinking desligado um histórico
-    longo pode estourar o teto — `finish_reason="length"` sinaliza corte e o chamador
-    (process_due_followups) ABORTA o envio em vez de mandar mensagem pela metade.
-
-    `_gemini_thinking_off` é importado tardiamente para evitar o ciclo de import
-    scheduler → orchestrator → tools → scheduler (mesmo motivo do `run_agent` lazy).
+    longo pode estourar o teto — `finish_reason="MAX_TOKENS"` (nome nativo do Gemini)
+    sinaliza corte e o chamador (process_due_followups) ABORTA o envio em vez de mandar
+    mensagem pela metade.
     """
-    from app.agent.orchestrator import _gemini_thinking_off
-
-    client = get_gemini_client()
-
     messages_text = "\n".join(
         f"{'Cliente' if m['role'] == 'user' else 'Vendedor'}: {m['content']}"
         for m in history
@@ -507,40 +525,38 @@ async def _generate_followup_message(
     if objective_prompt:
         system_prompt = f"{system_prompt}\n\nOBJETIVO DESTE TOQUE (Next Best Action): {objective_prompt}"
 
-    resp = await client.chat.completions.create(
-        model=_FOLLOWUP_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:",
-            },
+    result = await generate(
+        _FOLLOWUP_MODEL,
+        contents=[
+            user_content(f"Histórico da conversa:\n{messages_text}\n\nEscreva o follow-up:"),
         ],
-        max_tokens=_FOLLOWUP_MAX_TOKENS,
+        system_instruction=system_prompt,
+        max_output_tokens=_FOLLOWUP_MAX_TOKENS,
         temperature=0.8,
         # Desliga o thinking do Gemini 2.5 — sem isso o budget é gasto pensando e a saída corta.
-        **_gemini_thinking_off(_FOLLOWUP_MODEL),
+        thinking_off=True,
     )
 
     # Observabilidade: o follow-up nunca rastreava custo (a tabela token_usage só via o
     # agente principal). Sem isto, cortes/anomalias do follow-up ficam invisíveis no banco.
-    if resp.usage and lead_id:
+    usage = result.usage_metadata
+    if usage and lead_id:
         try:
             track_token_usage(
                 lead_id=lead_id,
                 stage=stage or "followup",
                 model=_FOLLOWUP_MODEL,
                 call_type="followup",
-                prompt_tokens=resp.usage.prompt_tokens,
-                completion_tokens=resp.usage.completion_tokens,
-                cached_tokens=getattr(resp.usage, "cached_tokens", 0) or 0,
-                reasoning_tokens=getattr(resp.usage, "reasoning_tokens", 0) or 0,
+                prompt_tokens=usage.prompt_token_count,
+                # thinking é COBRADO como saída → completion = candidates + thoughts
+                completion_tokens=usage.billed_output_tokens,
+                cached_tokens=usage.cached_content_token_count,
+                reasoning_tokens=usage.thoughts_token_count,
             )
         except Exception as exc:
             logger.error("[FOLLOWUP] falha ao registrar token_usage: %s", exc)
 
-    choice = resp.choices[0]
-    return (choice.message.content or "").strip(), choice.finish_reason
+    return (result.text or "").strip(), result.finish_reason
 
 
 async def process_due_followups(now: datetime | None = None) -> None:
@@ -549,16 +565,43 @@ async def process_due_followups(now: datetime | None = None) -> None:
     # Crash-recovery: devolve p/ 'pending' jobs presos em 'processing' (worker morreu
     # após reivindicar, ou falha transitória sem estado terminal) ANTES de buscar os
     # devidos — assim eles reentram na fila deste tick. Espelha broadcast/worker.py.
-    _recover_stale_followup_jobs(now)
-    jobs = get_due_followups(now)
+    await asyncio.to_thread(_recover_stale_followup_jobs, now)
+    jobs = await asyncio.to_thread(get_due_followups, now)
 
     for job in jobs:
         # Reivindicação atômica (anti-duplicidade multi-worker): só ESTE processo segue
         # com o job. Se outro worker já o pegou (claim perdido), pula sem processar —
         # evita template/mensagem duplicados caso o worker seja escalado para N réplicas.
-        if not _claim_followup_job(job["id"]):
+        if not await asyncio.to_thread(_claim_followup_job, job["id"]):
             logger.info("[FOLLOWUP] job %s já reivindicado por outro worker — pulando", job["id"])
             continue
+
+        # REDE DE SEGURANÇA DE PARADA (defesa em profundidade) — roda para QUALQUER
+        # job_type, logo após a reivindicação e ANTES de qualquer despacho. A interrupção
+        # da cadência não pode depender só do cancelamento-na-escrita ter alcançado a
+        # linha certa (caso 5511910402026, 15/07: a cliente pediu ao humano para a IA
+        # parar, mas nada disso virou estado — opt_out/ai_enabled intactos — e os toques
+        # seguiram). Aqui relemos o lead e, se ele está marcado para parar (opt-out,
+        # blacklist, número errado, IA desligada), cancelamos o job seja qual for o tipo
+        # ou estado, sem enviar. Fail-soft: releitura falha → None → não age (o job segue
+        # para o fluxo normal, exatamente como antes).
+        stop_lead_id = job.get("lead_id")
+        if stop_lead_id:
+            try:
+                stop_reason = _lead_stop_reason(_fetch_lead_for_backstop(stop_lead_id))
+            except Exception as exc:
+                logger.error(
+                    "[FOLLOWUP] falha no backstop de parada (lead %s) — seguindo para o "
+                    "fluxo normal: %s", stop_lead_id, exc, exc_info=True,
+                )
+                stop_reason = None
+            if stop_reason:
+                _cancel_job(job["id"], stop_reason)
+                logger.info(
+                    "[FOLLOWUP] lead %s marcado para parar (%s) — job %s (%s) suprimido no envio",
+                    stop_lead_id, stop_reason, job["id"], job.get("job_type"),
+                )
+                continue
 
         # Rota jobs de resgate de handoff para handler dedicado (antes de qualquer guard padrão)
         if job.get("job_type") == "handoff_rescue":
@@ -609,8 +652,32 @@ async def process_due_followups(now: datetime | None = None) -> None:
         # por _claim_followup_job, por isso cancelamos explicitamente no fim).
         # Fail-soft: qualquer erro aqui é logado e o ciclo segue para o follow-up padrão —
         # nunca derruba o tick por causa deste backstop.
+        # Relê o lead UMA vez para os dois guards seguintes (número errado + backstop
+        # pós-catálogo). Fail-soft: erro na releitura → None e nenhum guard age (o
+        # job segue para o fluxo padrão — nunca derruba o tick).
         try:
             fresh_lead = _fetch_lead_for_backstop(job["lead_id"])
+        except Exception as exc:
+            logger.error(
+                "[FOLLOWUP] falha ao reler lead %s para os guards do toque — seguindo "
+                "para o follow-up padrão: %s",
+                job["lead_id"], exc, exc_info=True,
+            )
+            fresh_lead = None
+
+        # Guard: número errado (caso Maria, 10/07) — quem negou ser o dono do número
+        # não recebe toque de cadência NEM reopen (o reopen dispara deste mesmo
+        # caminho, no guard de janela abaixo). Roda ANTES do backstop: wrong_number
+        # com catalog_shown não pode virar handoff proativo.
+        if lead_marked_wrong_number(fresh_lead):
+            _cancel_job(job["id"], "wrong_number")
+            logger.info(
+                "[FOLLOWUP] lead %s marcado wrong_number — toque suprimido seq=%s conversation=%s",
+                job["lead_id"], sequence, conversation_id,
+            )
+            continue
+
+        try:
             if should_proactive_handoff(fresh_lead):
                 await _fire_proactive_handoff(job, fresh_lead, phone=lead.get("phone", ""))
                 continue
@@ -700,13 +767,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
             continue
 
         # GUARDRAIL TÉCNICO: corte por budget. gemini-2.5-flash pode estourar o teto mesmo com
-        # o thinking off (histórico longo), devolvendo finish_reason="length" com a frase pela
-        # metade. NUNCA enviar mensagem truncada ao cliente (auditoria leads 5566999975586 /
-        # 5531996039118: "...o que te fez pensar em"). Cancela; o próximo ciclo tenta de novo.
-        if finish_reason == "length":
+        # o thinking off (histórico longo), devolvendo finish_reason="MAX_TOKENS" (nome nativo;
+        # a fachada antiga traduzia p/ "length") com a frase pela metade. NUNCA enviar mensagem
+        # truncada ao cliente (auditoria leads 5566999975586 / 5531996039118: "...o que te fez
+        # pensar em"). Cancela; o próximo ciclo tenta de novo.
+        if finish_reason == "MAX_TOKENS":
             _cancel_job(job["id"], "length_truncated")
             logger.warning(
-                "[FOLLOWUP] resposta cortada (finish_reason=length) — cancelando sem enviar "
+                "[FOLLOWUP] resposta cortada (finish_reason=MAX_TOKENS) — cancelando sem enviar "
                 "seq=%s conversation=%s: %r",
                 sequence, conversation_id, message[-80:],
             )
@@ -760,20 +828,45 @@ async def process_due_followups(now: datetime | None = None) -> None:
         logger.info(f"[FOLLOWUP] Enviado seq={sequence} lead={lead['phone']}")
 
 
-def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
-    """Relê o lead com `stage`/`metadata` para a decisão `should_proactive_handoff`.
+def _lead_stop_reason(lead: dict | None) -> str | None:
+    """Motivo de PARADA do lead, ou None se ele deve seguir recebendo follow-up.
 
-    O select de `get_due_followups` (join `leads!inner(...)`) não traz `stage` nem
-    `metadata` — só id/phone/name/last_customer_message_at/wa_id — então a decisão
-    precisa reler o lead à parte, mesmo padrão de `_process_ai_reengage`/
-    `_process_ai_scheduled_return`. Fail-soft: erro de DB → None (`should_proactive_handoff`
-    trata `None` como não-elegível, então o lead segue para o follow-up padrão).
+    Fonte única do backstop de envio de `process_due_followups`. Ordem de prioridade dá
+    o `cancel_reason` gravado (preserva a semântica de analytics já existente: `opt_out`,
+    `wrong_number`, `ai_disabled`). Função PURA e fail-open: lead None/sem flags → None
+    (na dúvida, o fluxo normal segue). `ai_enabled` só para quando é EXPLICITAMENTE False
+    (ausente/None não dispara — o lead veio de um select que pode não trazer o campo).
+    """
+    if not isinstance(lead, dict):
+        return None
+    if lead.get("opt_out"):
+        return "opt_out"
+    meta = lead.get("metadata") or {}
+    if isinstance(meta, dict):
+        if meta.get("blacklisted_at"):
+            return "blacklisted"
+        if meta.get("wrong_number_at"):
+            return "wrong_number"
+    if lead.get("ai_enabled") is False:
+        return "ai_disabled"
+    return None
+
+
+def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
+    """Relê o lead para os backstops de parada e a decisão `should_proactive_handoff`.
+
+    O select de `get_due_followups` (join `leads!inner(...)`) não traz `stage`, `metadata`,
+    `opt_out` nem `ai_enabled` — só id/phone/name/last_customer_message_at/wa_id — então a
+    decisão precisa reler o lead à parte, mesmo padrão de `_process_ai_reengage`/
+    `_process_ai_scheduled_return`. Fail-soft: erro de DB → None (tanto `_lead_stop_reason`
+    quanto `should_proactive_handoff` tratam `None` como não-elegível, então o lead segue
+    para o follow-up padrão).
     """
     try:
         sb = get_supabase()
         res = (
             sb.table("leads")
-            .select("id, phone, stage, metadata")
+            .select("id, phone, stage, opt_out, ai_enabled, metadata")
             .eq("id", lead_id)
             .single()
             .execute()
@@ -1522,6 +1615,82 @@ def _pending_reopen_job(conversation_id: str) -> dict | None:
         return None
 
 
+# Cópia fiel do BODY aprovado do template de reabertura — usada como fallback de
+# PERSISTÊNCIA quando message_templates está indisponível. Persistido == enviado
+# (QA 10/07, Rodada 4): gravar placeholder interno como fala da Valéria poluía o
+# CRM e o histórico que o LLM relê nos turnos seguintes.
+_REOPEN_TEMPLATE_BODY_FALLBACK = (
+    "Ola, {{1}}! O Cafe Canastra esta aguardando sua confirmacao sobre {{2}} "
+    "desde {{3}}. Responda essa mensagem para finalizarmos seu atendimento."
+)
+
+
+def _reopen_body_params(lead: dict, job: dict | None = None) -> list[str]:
+    """Os 3 params posicionais do template de reabertura: [nome, assunto, data].
+
+    Nome: sanitizado (saudação/handle/apelido de pushname viram fallback neutro).
+    Assunto: constante honesta (_REOPEN_TOPIC). Data: última mensagem do lead
+    (dd/mm/YYYY, BRT) — fallback `now` quando o embed da conversa não está no job.
+    """
+    clean = sanitize_display_name((lead or {}).get("name"))
+    first_name = clean.split()[0] if clean else _NAME_FALLBACK
+
+    last_ts = ((job or {}).get("conversations") or {}).get("last_customer_message_at")
+    ref = None
+    if last_ts:
+        try:
+            ref = datetime.fromisoformat(str(last_ts).replace("Z", "+00:00"))
+        except Exception:
+            ref = None
+    if ref is None:
+        ref = datetime.now(timezone.utc)
+    date_str = ref.astimezone(_FOLLOWUP_TZ_BR).strftime("%d/%m/%Y")
+
+    return [first_name, _REOPEN_TOPIC, date_str]
+
+
+def _build_reopen_components(params: list[str]) -> list[dict]:
+    """Componentes BODY (params POSICIONAIS) do template de reabertura."""
+    return [{
+        "type": "body",
+        "parameters": [{"type": "text", "text": p} for p in params],
+    }]
+
+
+def _reopen_template_body(params: list[str]) -> str:
+    """BODY real do template de reabertura RENDERIZADO com os params enviados.
+
+    Busca o texto em message_templates (fallback: cópia fiel do corpo aprovado) e
+    substitui {{1}}..{{n}} pelos mesmos valores enviados à Meta — persistido ==
+    enviado, nunca um placeholder interno.
+    """
+    text = _REOPEN_TEMPLATE_BODY_FALLBACK
+    try:
+        res = (
+            get_supabase()
+            .table("message_templates")
+            .select("components")
+            .eq("name", _REOPEN_TEMPLATE_NAME)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            body = next(
+                (c for c in (res.data[0].get("components") or []) if c.get("type") == "BODY"),
+                None,
+            )
+            if body and body.get("text"):
+                text = body["text"]
+    except Exception as exc:
+        logger.warning(
+            "[REOPEN] falha ao buscar corpo do template %s: %s — usando cópia fiel",
+            _REOPEN_TEMPLATE_NAME, exc,
+        )
+    for i, value in enumerate(params, start=1):
+        text = text.replace("{{" + str(i) + "}}", value)
+    return text
+
+
 def _reopen_template_category() -> str | None:
     """Categoria (lowercase) do template de reabertura em message_templates, ou None.
 
@@ -1579,16 +1748,19 @@ async def fire_reopen_template(
         return False
 
     send_to = resolve_send_target(lead, lead.get("phone", ""))
-    # continuar_conversa (pt_BR, approved) é BODY estático + botão QUICK_REPLY, ZERO params.
-    # Enviar qualquer parâmetro de body faz a Meta rejeitar com #132000 ("number of
-    # localizable_params (1) does not match the expected number of params (0)") — foi o que
-    # derrubou o reopen em 08/07 (lead cintia, 554599367983). NÃO montar components: o
-    # send_template omite o array quando components é None. Confirmado em message_templates
-    # (sem placeholder). Diverge dos templates lp_*/João, que TÊM param nomeado obrigatório.
+    # Rodada 5: utilidade_geral_confirmacao_v1 exige EXATAMENTE 3 params POSICIONAIS e o
+    # language_code da APROVAÇÃO (en_US — corpo em português). Contagem ou locale
+    # divergente do aprovado = rejeição da Meta (#132000/404) — a mesma classe de
+    # armadilha que derrubou o reopen antigo em 08/07 (lead cintia, 554599367983) e os
+    # templates lp_* (param nomeado).
+    reopen_params = _reopen_body_params(lead, job)
     try:
         provider_meta = MetaCloudClient(channel["provider_config"])
         send_result = await provider_meta.send_template(
-            send_to, _REOPEN_TEMPLATE_NAME, components=None, language_code="pt_BR"
+            send_to,
+            _REOPEN_TEMPLATE_NAME,
+            components=_build_reopen_components(reopen_params),
+            language_code=_REOPEN_TEMPLATE_LANGUAGE,
         )
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code
@@ -1610,7 +1782,7 @@ async def fire_reopen_template(
         save_message_conv(
             lead_id=job["lead_id"],
             role="assistant",
-            content="continuar a conversa de onde paramos",
+            content=_reopen_template_body(reopen_params),
             sent_by="followup",
             conversation_id=conversation_id,
             wamid=extract_wamid(send_result),

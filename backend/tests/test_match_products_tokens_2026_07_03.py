@@ -215,11 +215,14 @@ async def test_tool_not_found_lista_disponiveis_do_setor():
     args = {"itens": [{"produto": "Microlote em grãos 500g", "quantidade": 4}], "estado": "MG"}
     result = await _exec_orcamento(args, _CATALOGO_EDGAR)
 
-    assert "não encontrado no catálogo de atacado" in result
-    assert "Disponíveis:" in result
+    # Mensagem INTERNA (auditoria 14/07, caso Thiago): reescrita p/ não vazar "não
+    # encontrado no catálogo" ao cliente — marca [INTERNO] + instrução de tom.
+    assert "[INTERNO" in result and "NÃO REPASSAR" in result
+    assert "não existe" in result
+    assert "disponíveis" in result.lower()
     for name in (p["name"] for p in _CATALOGO_EDGAR):
         assert name in result, f"nome disponível ausente da mensagem: {name!r}"
-    assert "Confirme com o cliente qual ele quer" in result
+    assert "Confirme com o cliente" in result
 
 
 async def test_tool_not_found_disponiveis_ordem_estavel_e_cap_5():
@@ -231,7 +234,7 @@ async def test_tool_not_found_disponiveis_ordem_estavel_e_cap_5():
     args = {"itens": [{"produto": "produto inexistente xyz", "quantidade": 1}], "estado": "SP"}
     result = await _exec_orcamento(args, catalogo)
 
-    assert "Disponíveis:" in result
+    assert "disponíveis" in result.lower()
     for i in range(5):
         assert f"Café Linha {i} 250g" in result
     for i in (5, 6):

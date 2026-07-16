@@ -16,6 +16,11 @@ bug matou o turno):
     resposta do vendedor. Cobre o caso em que "o Joao visualiza e nao responde"
     (human_control=true, o estado ESPERADO pos-handoff) — sem este check, ficaria
     1h46 invisivel, como aconteceu com a Juliana.
+  - Check 6 `cadence_dead` (incidente 26/06→09/07): a Valeria conversou nas
+    ultimas 24h mas NENHUM follow_up_job foi criado no periodo — a CRIACAO de
+    jobs morreu (constraint 23514 engolida como warning por 13 dias). O Check 3
+    nao enxerga essa classe porque ele so olha jobs que EXISTEM e estao presos;
+    quando o insert falha, nao ha job nenhum para ficar preso.
 
 Roda como task asyncio no lifespan de main.py, espelhando o padrao de run_flusher
 (app/buffer/flusher.py): loop infinito, sleep entre ticks, cancelado no shutdown.
@@ -30,6 +35,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from app.agent.handoff import QA_HANDOFF_MARKER_LIKE
 from app.alerts.service import create_system_alert
 from app.buffer.recovery import recover_orphaned_buffers
 from app.config import get_settings
@@ -95,6 +101,35 @@ _SP_TZ = ZoneInfo("America/Sao_Paulo")
 # resultado ANTES desse teto (defesa primaria); os filtros Python de lookback/SLA/
 # dedup permanecem como defesa em profundidade.
 HANDOFF_SLA_FETCH_LIMIT = 1000
+# Escalonamento por ACÚMULO (pré-canário do disparo frios, 11/07): 1 breach isolado
+# e ruido de operacao (warning = Sentry + banner ambar no CRM); fila EM PE com
+# >= THRESHOLD conversas violadas e incidente de plantao → 1 alerta `critical`
+# (Sentry + WhatsApp do admin via alerts._notify_external/T2), com dedup global de
+# DEDUP_HOURS enquanto a fila nao baixar. Motivacao: 50 warnings em 3 dias (49 nao
+# resolvidos) sem NENHUM ping ativo ao operador — a deteccao existia, o sino nao.
+HANDOFF_SLA_ESCALATION_THRESHOLD = 3
+HANDOFF_SLA_ESCALATION_DEDUP_HOURS = 2
+
+# --- Check 6 (cadence_dead, incidente 26/06→09/07) -------------------------------
+# A cadencia 4-touch ficou MORTA por 13 dias (26/06→09/07): a constraint 23514
+# fazia o INSERT em follow_up_jobs falhar como warning engolido — os jobs NUNCA
+# eram criados, entao o Check 3 (followup_jobs_stuck), que olha jobs EXISTENTES com
+# fire_at velho, nunca teve o que olhar. O detector correto e a COMBINACAO
+# "operacao viva + zero criacao": mensagens `assistant` novas provam que a Valeria
+# conversou (nao e um dia sem trafego), e zero linhas novas em follow_up_jobs no
+# mesmo periodo provam que NENHUM caminho de agendamento (cadencia 4-touch,
+# handoff_rescue, lp_welcome, ai_scheduled_return, nudge...) gravou nada — a
+# assinatura exata dos 13 dias de silencio.
+CADENCE_DEAD_LOOKBACK_HOURS = 24
+# Dedup mais largo que o ALERT_DEDUP_HOURS global (1h): cadencia morta e um estado
+# ESTRUTURAL que nao muda de hora em hora — 1 alerta nao-resolvido por 24h evita
+# 12 criticals/dia (cada critical acorda WhatsApp+Sentry via T2) enquanto o fix
+# nao sobe.
+CADENCE_DEAD_DEDUP_HOURS = 24
+# Teto do fetch do breakdown de jobs do QA diario (_qa_jobs_breakdown) — mesma
+# disciplina dos outros fetches do watchdog: nunca uma query sem limite explicito.
+# 2000 jobs/dia e uma ordem de grandeza acima do volume atual.
+QA_JOBS_FETCH_LIMIT = 2000
 
 # Mesmo padrao de app/follow_up/service.py:13 — escopa Check 3 ao ambiente atual
 # (dev/production) para nao misturar jobs de teste com os reais.
@@ -136,17 +171,20 @@ def _chunked(seq: list, n: int):
         yield seq[i:i + n]
 
 
-def _alert_recently_fired(alert_type: str) -> bool:
-    """True se ja existe um alerta `alert_type` NAO resolvido criado na ultima hora.
+def _alert_recently_fired(alert_type: str, dedup_hours: int = ALERT_DEDUP_HOURS) -> bool:
+    """True se ja existe um alerta `alert_type` NAO resolvido criado nas ultimas
+    `dedup_hours` horas (default: ALERT_DEDUP_HOURS=1, o padrao dos checks 1/3).
 
     Dedup espelhando o padrao de `processor._fire_llm_down_alert` /
-    `alerts.service.fire_billing_alert`. Fail-open: erro ao consultar -> False (nao
-    bloqueia o alerta — foi o silencio, nao um alerta duplicado, que deixou o
-    apagao de 01-02/07 invisivel).
+    `alerts.service.fire_billing_alert`. `dedup_hours` existe para alertas de
+    estado ESTRUTURAL (ex.: `cadence_dead`, dedup de 24h) que nao devem re-alertar
+    a cada hora. Fail-open: erro ao consultar -> False (nao bloqueia o alerta —
+    foi o silencio, nao um alerta duplicado, que deixou o apagao de 01-02/07
+    invisivel).
     """
     try:
         sb = get_supabase()
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=ALERT_DEDUP_HOURS)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=dedup_hours)).isoformat()
         existing = (
             sb.table("system_alerts")
             .select("id")
@@ -440,6 +478,34 @@ def _handoff_sla_alerted_conversation_ids(now: datetime) -> set:
         return set()
 
 
+def _last_customer_message_is_reaction(sb, conversation_id: str) -> bool:
+    """True se a ÚLTIMA mensagem do lead nesta conversa é uma REAÇÃO (👍 etc.).
+
+    Reação após a resposta do vendedor é encerramento social, não pergunta pendente —
+    contá-la como "mensagem sem resposta" gera SLA falso (caso Nayara 10/07: 👍 no
+    áudio do João disparou handoff_sla_breach 80min depois). Consultada SÓ para
+    conversas já em violação (N pequeno). Fail-open: erro → False (na dúvida o alerta
+    fica — ruído é melhor que a cegueira que escondeu o caso Juliana).
+    """
+    try:
+        res = (
+            sb.table("messages")
+            .select("message_type")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data) and res.data[0].get("message_type") == "reaction"
+    except Exception as exc:
+        logger.warning(
+            "[WATCHDOG] falha ao checar reação-tail conv=%s: %s — fail-open",
+            conversation_id, exc,
+        )
+        return False
+
+
 def check_handoff_sla(now: datetime) -> int:
     """Check 5 (caso Juliana, 02/07) — SLA de resposta HUMANA pos-handoff.
 
@@ -500,6 +566,8 @@ def check_handoff_sla(now: datetime) -> int:
         if raw_seller_ts and _parse_ts(raw_seller_ts) >= customer_ts:
             continue  # vendedor respondeu DEPOIS da ultima msg do lead — ok
         conv_id = row["id"]
+        if _last_customer_message_is_reaction(sb, conv_id):
+            continue  # 👍 pos-resposta e encerramento social, nao pergunta pendente
         violated.append(conv_id)
         lead_names[conv_id] = ((row.get("leads") or {}).get("name") or "").strip()
 
@@ -522,7 +590,105 @@ def check_handoff_sla(now: datetime) -> int:
                 severity="warning",
                 metadata={"conversation_ids": new_violations[:10]},
             )
+        # Escalonamento por acúmulo: mede a fila EM PÉ (`violated` inteira, não só as
+        # novas) — mesmo com todas as conversas já cobertas pelo dedup por conversa,
+        # a fila parada re-escala a cada HANDOFF_SLA_ESCALATION_DEDUP_HOURS até o
+        # plantão agir (foi o drumbeat que faltou nos 49 warnings ignorados de 11/07).
+        if n >= HANDOFF_SLA_ESCALATION_THRESHOLD and not _alert_recently_fired(
+            "handoff_sla_escalation", dedup_hours=HANDOFF_SLA_ESCALATION_DEDUP_HOURS
+        ):
+            create_system_alert(
+                "handoff_sla_escalation",
+                f"Fila humana acumulando: {n} lead(s) sem resposta pós-handoff",
+                f"{n} conversa(s) no canal humano aguardando resposta do vendedor há "
+                f"mais de {HANDOFF_SLA_MINUTES}min — no limiar de escalonamento "
+                f"({HANDOFF_SLA_ESCALATION_THRESHOLD}+). O plantão precisa assumir a "
+                f"fila agora; este alerta repete a cada "
+                f"{HANDOFF_SLA_ESCALATION_DEDUP_HOURS}h enquanto a fila não baixar.",
+                severity="critical",
+                metadata={"count": n, "conversation_ids": violated[:10]},
+            )
     return n
+
+
+def check_cadence_dead(now: datetime) -> int:
+    """Check 6 (incidente 26/06→09/07) — a criação de follow_up_jobs morreu.
+
+    A cadência 4-touch ficou 13 dias sem rodar porque uma constraint (23514) fazia
+    o INSERT em follow_up_jobs falhar como warning engolido: os jobs nunca eram
+    CRIADOS, então o Check 3 (que olha jobs existentes presos há 2h) nunca disparou.
+    Este check observa a assinatura correta — operação viva + zero criação:
+
+      (a) janela útil 08h-20h America/Sao_Paulo (mesma do Check 5): de madrugada é
+          normal não criar job, e um critical acordaria o operador à toa;
+      (b) existe pelo menos 1 mensagem `assistant` nas últimas 24h — a Valéria
+          conversou, então os caminhos que agendam follow-up TIVERAM oportunidade;
+      (c) ZERO linhas criadas em follow_up_jobs (env atual) no mesmo período.
+
+    Fail-open no sentido de NÃO alertar: diferente do dedup (onde o silêncio era o
+    inimigo), uma falha transitória de query aqui não é evidência de cadência morta
+    — alertar critical em cima de erro de leitura seria falso positivo (e o
+    critical do T2 dispara WhatsApp+Sentry). Erro de query → loga warning, retorna 0.
+
+    Retorna o nº de alertas criados neste tick (0 ou 1 — o dedup de 24h decide).
+    """
+    if not _within_sla_window(now):
+        return 0
+
+    cutoff = (now - timedelta(hours=CADENCE_DEAD_LOOKBACK_HOURS)).isoformat()
+    try:
+        sb = get_supabase()
+        alive = (
+            sb.table("messages")
+            .select("id")
+            .eq("role", "assistant")
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        if not alive.data:
+            return 0  # dia sem tráfego — sem operação viva não há sinal de cadência morta
+        jobs = (
+            sb.table("follow_up_jobs")
+            .select("id")
+            .eq("env_tag", _ENV_TAG)
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        if jobs.data:
+            return 0  # pelo menos 1 job criado na janela — a criação está viva
+    except Exception as exc:
+        logger.warning(
+            "[WATCHDOG] check_cadence_dead: falha de query — sem alerta neste tick "
+            "(fail-open): %s", exc
+        )
+        return 0
+
+    logger.warning(
+        "[WATCHDOG] cadence_dead: operação viva (assistant nas últimas %dh) e ZERO "
+        "follow_up_jobs criados (env=%s)",
+        CADENCE_DEAD_LOOKBACK_HOURS, _ENV_TAG,
+    )
+    if _alert_recently_fired("cadence_dead", dedup_hours=CADENCE_DEAD_DEDUP_HOURS):
+        return 0
+    create_system_alert(
+        "cadence_dead",
+        "Cadência de follow-up morta",
+        f"A Valéria conversou nas últimas {CADENCE_DEAD_LOOKBACK_HOURS}h (há mensagens "
+        f"assistant novas), mas ZERO jobs foram criados em follow_up_jobs no mesmo "
+        f"período (env={_ENV_TAG}). Essa é a assinatura do incidente de 26/06→09/07, "
+        "quando a constraint 23514 engoliu os INSERTs como warning por 13 dias e "
+        "nenhum follow-up foi agendado. Verifique os caminhos de agendamento "
+        "(cadência 4-touch, handoff_rescue, lp_welcome, ai_scheduled_return) e os "
+        "warnings de INSERT nos logs do backend/worker.",
+        severity="critical",
+        metadata={
+            "lookback_hours": CADENCE_DEAD_LOOKBACK_HOURS,
+            "env_tag": _ENV_TAG,
+        },
+    )
+    return 1
 
 
 # --- QA diário de aderência (Onda 2, 09/07) --------------------------------------
@@ -562,6 +728,64 @@ def _qa_count(build_query) -> int:
         return -1
 
 
+def _qa_jobs_breakdown(start: str, end: str):
+    """Breakdown por `job_type` dos follow_up_jobs de D-1: CRIADOS (created_at na
+    janela) e EXECUTADOS (status='sent' com sent_at na janela — 'sent' é o estado
+    terminal de sucesso do scheduler, ver follow_up/scheduler._update_job_status).
+
+    Motivação (incidente 26/06→09/07): o QA reportava só `followups_enviados`
+    agregado — um tipo inteiro de job podia sumir (a cadência 4-touch morreu por 13
+    dias) sem que o número agregado denunciasse. O histograma diário por tipo é o
+    detector HUMANO de "um tipo sumiu"; o detector automático em tempo real é o
+    check_cadence_dead. Retorna {job_type: {"criados": n, "executados": n}} ou -1
+    em falha (padrão dos indicadores do QA: um indicador quebrado não derruba o
+    relatório).
+    """
+    try:
+        sb = get_supabase()
+        created_rows = (
+            sb.table("follow_up_jobs").select("job_type")
+            .eq("env_tag", _ENV_TAG)
+            .gte("created_at", start).lt("created_at", end)
+            .limit(QA_JOBS_FETCH_LIMIT).execute()
+        ).data or []
+        sent_rows = (
+            sb.table("follow_up_jobs").select("job_type")
+            .eq("env_tag", _ENV_TAG)
+            .eq("status", "sent")
+            .gte("sent_at", start).lt("sent_at", end)
+            .limit(QA_JOBS_FETCH_LIMIT).execute()
+        ).data or []
+        breakdown: dict = {}
+        for row in created_rows:
+            job_type = row.get("job_type") or "standard"
+            slot = breakdown.setdefault(job_type, {"criados": 0, "executados": 0})
+            slot["criados"] += 1
+        for row in sent_rows:
+            job_type = row.get("job_type") or "standard"
+            slot = breakdown.setdefault(job_type, {"criados": 0, "executados": 0})
+            slot["executados"] += 1
+        return breakdown
+    except Exception as exc:
+        logger.warning("[WATCHDOG] breakdown de jobs do daily_qa falhou: %s", exc)
+        return -1
+
+
+def _fmt_jobs_breakdown(breakdown) -> str:
+    """Renderiza o breakdown de jobs compacto p/ a mensagem do QA
+    ("standard 12/10, handoff_rescue 3/3" = criados/executados). Tolerante a -1
+    (indisponível, padrão dos indicadores) e a dict vazio (nenhum job no dia —
+    sinal que o check_cadence_dead cobre em tempo real, não só no relatório)."""
+    if not isinstance(breakdown, dict):
+        return "indisponível (-1)"
+    if not breakdown:
+        return "nenhum"
+    return ", ".join(
+        f"{job_type} {counts['criados']}/{counts['executados']}"
+        for job_type, counts in sorted(breakdown.items())
+    )
+
+
 def _qa_collect_metrics(now: datetime) -> dict:
     """Consolida os indicadores de D-1 (dia BRT anterior, convertido p/ UTC)."""
     local = now.astimezone(_SP_TZ)
@@ -581,13 +805,41 @@ def _qa_collect_metrics(now: datetime) -> dict:
             return query
         return build
 
+    def _distinct_leads(like_pattern: str) -> int:
+        """Leads DISTINTOS com o marcador na janela — imune a re-execuções do retry
+        do agente (incidente 09/07: registrar_numero_errado gravado 4x no mesmo lead)."""
+        try:
+            res = (
+                get_supabase().table("messages").select("lead_id")
+                .eq("role", "system").like("content", like_pattern)
+                .gte("created_at", start).lt("created_at", end)
+                .limit(1000).execute()
+            )
+            rows = res.data if isinstance(res.data, list) else []
+            return len({r.get("lead_id") for r in rows if r.get("lead_id")})
+        except Exception as exc:
+            logger.warning("[WATCHDOG] métrica distinct do daily_qa falhou: %s", exc)
+            return -1
+
     return {
         "respostas_ia": _qa_count(_msgs(None, role="assistant", sent_by="agent")),
         "followups_enviados": _qa_count(_msgs(None, role="assistant", sent_by="followup")),
         "inbounds": _qa_count(_msgs(None, role="user")),
-        "handoffs": _qa_count(_msgs("[encaminhar_humano]%", role="system")),
+        # Só o marcador de handoff em si: cada encaminhar_humano grava DUAS system
+        # messages ("Lead encaminhado..." + "cartão de contato enviado") — o LIKE
+        # amplo dobrava a contagem (relatório de 10/07 mostrou 14 p/ 7 reais).
+        # Padrão derivado do MESMO vocabulário que emite o marcador (app/agent/
+        # handoff.py) — impossível divergir da string persistida (Card 2, 12/07).
+        "handoffs": _qa_count(_msgs(QA_HANDOFF_MARKER_LIKE, role="system")),
+        # B4 (Trilha B, auditoria 10/07): frequência da GUARDA determinística de handoff
+        # verbalizado (orchestrator força encaminhar_humano quando o texto anuncia a
+        # transferência sem tool-call — motivo "handoff verbalizado sem tool-call"). Contagem
+        # PRÓPRIA: reutilizar/alargar o LIKE de 'Lead encaminhado%' inflaria os handoffs (lição
+        # do relatório de 10/07). Os verbalizados são um SUBCONJUNTO dos handoffs — medi-los à
+        # parte revela quantas transferências saíram da guarda, não de uma tool-call limpa.
+        "handoffs_verbalizados": _qa_count(_msgs("%handoff verbalizado sem tool-call%", role="system")),
         "optouts": _qa_count(_msgs("[registrar_optout]%", role="system")),
-        "numero_errado_marcados": _qa_count(_msgs("[registrar_numero_errado]%", role="system")),
+        "numero_errado_marcados": _distinct_leads("[registrar_numero_errado]%"),
         "indicacoes": _qa_count(_msgs("[registrar_indicacao]%", role="system")),
         "perguntas_repetidas_corrigidas": _qa_count(
             lambda sb: sb.table("token_usage").select("id", count="exact")
@@ -603,6 +855,9 @@ def _qa_collect_metrics(now: datetime) -> dict:
             lambda sb: sb.table("broadcast_leads").select("id", count="exact")
             .gte("sent_at", start).lt("sent_at", end)
         ),
+        # Histograma diário de follow_up_jobs por tipo (criados/executados) — o
+        # detector humano da classe "um job_type sumiu" (incidente 26/06→09/07).
+        "jobs_por_tipo": _qa_jobs_breakdown(start, end),
     }
 
 
@@ -624,12 +879,19 @@ def check_daily_qa(now: datetime) -> bool:
     resumo = (
         f"QA diário {dia}: {metrics['respostas_ia']} respostas da IA e "
         f"{metrics['followups_enviados']} follow-ups para {metrics['inbounds']} mensagens de leads; "
-        f"{metrics['handoffs']} handoffs, {metrics['optouts']} opt-outs, "
+        f"{metrics['handoffs']} handoffs "
+        # `.get` tolerante: metrics legado/parcial (sem a chave nova) não pode quebrar o relatório.
+        f"(dos quais {metrics.get('handoffs_verbalizados', -1)} por guarda de handoff verbalizado), "
+        f"{metrics['optouts']} opt-outs, "
         f"{metrics['perguntas_repetidas_corrigidas']} perguntas repetidas corrigidas pela guarda; "
         f"{metrics['dossies_atualizados']} dossiês atualizados; "
         f"{metrics['disparos_enviados']} templates disparados; "
         f"{metrics['numero_errado_marcados']} números marcados como errados e "
-        f"{metrics['indicacoes']} indicações registradas. (-1 = indicador indisponível)"
+        f"{metrics['indicacoes']} indicações registradas. "
+        # Breakdown por job_type (criados/executados) — `.get` tolerante porque o
+        # relatório não pode quebrar se a chave faltar num metrics antigo/parcial.
+        f"Jobs 24h (criados/executados): {_fmt_jobs_breakdown(metrics.get('jobs_por_tipo', -1))}. "
+        "(-1 = indicador indisponível)"
     )
     create_system_alert(
         "daily_qa_report",
@@ -689,6 +951,13 @@ async def run_watchdog(app) -> None:
             raise
         except Exception as exc:
             logger.error("[WATCHDOG] check check_handoff_sla falhou: %s", exc, exc_info=True)
+
+        try:
+            await asyncio.to_thread(check_cadence_dead, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[WATCHDOG] check check_cadence_dead falhou: %s", exc, exc_info=True)
 
         try:
             await asyncio.to_thread(check_daily_qa, now)

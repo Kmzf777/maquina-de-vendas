@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +137,16 @@ def list_conversations(
 
 
 def update_conversation(conversation_id: str, **fields) -> dict[str, Any]:
-    sb = get_supabase()
-    sb.table("conversations").update(fields).eq("id", conversation_id).execute()
+    # Retry de transporte (GOAWAY sob rajada de disparo perdia o write silenciosamente).
+    # A lambda refaz o request inteiro a cada tentativa — contrato do run_with_retry.
+    run_with_retry(
+        lambda: get_supabase()
+        .table("conversations")
+        .update(fields)
+        .eq("id", conversation_id)
+        .execute(),
+        label="update_conversation",
+    )
     return {}
 
 
@@ -169,7 +177,6 @@ def save_message(
     quoted_wamid: str | None = None,
     agent_persona: str | None = None,
 ) -> dict[str, Any]:
-    sb = get_supabase()
     msg = {
         "conversation_id": conversation_id,
         "lead_id": lead_id,
@@ -193,7 +200,12 @@ def save_message(
         # webhook de status (_handle_delivery_status: accepted→sent→delivered→read/failed).
         # Mensagens presas em "accepted" além do timeout são varridas por
         # reconcile_delivery_timeouts (canal sem webhook de status = silencioso).
-        msg["delivery_status"] = "accepted"
+        # SÓ mensagens NOSSAS (role=assistant) têm ciclo de status: a Meta nunca envia
+        # status para inbound — carimbar o inbound o transformava em 'undelivered'
+        # fantasma no reconciler e disparava alerta CRITICAL falso de canal silencioso
+        # (QA 10/07: o alerta do canal do João era 100% áudios de lead).
+        if role == "assistant":
+            msg["delivery_status"] = "accepted"
     if document_name is not None:
         msg["document_name"] = document_name
     if media_mime is not None:
@@ -204,7 +216,12 @@ def save_message(
         msg["quoted_wamid"] = quoted_wamid
     logger.info(f"[DEBUG-SAVE_MESSAGE] enter payload={msg}")
     try:
-        result = sb.table("messages").insert(msg).execute()
+        # Retry de transporte (GOAWAY sob rajada de disparo perdia a mensagem
+        # silenciosamente). Erro de aplicação (4xx/5xx) propaga sem retry.
+        result = run_with_retry(
+            lambda: get_supabase().table("messages").insert(msg).execute(),
+            label="save_message",
+        )
     except Exception as e:
         logger.error(f"[DEBUG-SAVE_MESSAGE] insert raised {type(e).__name__}: {e}", exc_info=True)
         raise
@@ -229,7 +246,16 @@ def save_message(
             update_fields["unread_count"] = 0
         if role == "user":
             update_fields["last_customer_message_at"] = now_iso
-        sb.table("conversations").update(update_fields).eq("id", conversation_id).execute()
+        # Retry de transporte também no carimbo da conversa — perder last_msg_at/
+        # last_customer_message_at desalinha janela 24h e ordenação do inbox.
+        run_with_retry(
+            lambda: get_supabase()
+            .table("conversations")
+            .update(update_fields)
+            .eq("id", conversation_id)
+            .execute(),
+            label="save_message conv touch",
+        )
     except Exception as e:
         logger.warning(f"[DEBUG-SAVE_MESSAGE] failed to update last_msg_at: {e}")
 
@@ -238,6 +264,10 @@ def save_message(
 
 def resolve_message_text_by_wamid(wamid: str) -> str | None:
     """Return the content of a previously stored message by its Meta wamid, or None.
+
+    Mídia sem legenda (content vazio) resolve para o placeholder legível
+    ("[imagem]", "[áudio]"…) via describe_media_placeholder — sem isso, um reply
+    a uma foto degradava o marcador do prompt para o genérico.
 
     Fail-open: returns None on any error (missing row, DB hiccup) so callers
     degrade gracefully — they should fall back to a soft marker.
@@ -250,13 +280,13 @@ def resolve_message_text_by_wamid(wamid: str) -> str | None:
         sb = get_supabase()
         result = (
             sb.table("messages")
-            .select("content")
+            .select("content, message_type")
             .eq("wamid", wamid)
             .limit(1)
             .execute()
         )
         if result.data:
-            return result.data[0]["content"]
+            return describe_media_placeholder(result.data[0])
         return None
     except Exception as exc:
         logger.warning(
@@ -280,12 +310,12 @@ def resolve_message_texts_by_wamids(wamids: list[str]) -> dict[str, str]:
         sb = get_supabase()
         result = (
             sb.table("messages")
-            .select("wamid, content")
+            .select("wamid, content, message_type")
             .in_("wamid", unique)
             .execute()
         )
         return {
-            row["wamid"]: row["content"]
+            row["wamid"]: describe_media_placeholder(row)
             for row in (result.data or [])
             if row.get("wamid")
         }
@@ -328,18 +358,144 @@ def get_latest_inbound_wamid(conversation_id: str) -> str | None:
         return None
 
 
-def get_history(conversation_id: str, limit: int = 30) -> list[dict[str, Any]]:
+# Placeholder textual por message_type quando content vem vazio (mídia sem legenda).
+# Auditoria 10/07: envio de mídia pelo vendedor gravava content="" — LLM/dossiê/QA liam
+# um "nada" onde na verdade havia um áudio/imagem enviado. Mapeia só quando content é
+# vazio; texto normal (mesmo vazio) não é tocado — ver describe_media_placeholder.
+_MEDIA_PLACEHOLDERS = {
+    "audio": "[áudio]",
+    "image": "[imagem]",
+    "video": "[vídeo]",
+    "document": "[documento]",
+    # "[figurinha]" e não "[sticker]": é o marcador que a persona reconhece (base.py,
+    # seção TRATAMENTO DE MÍDIA) e o mesmo usado no inbound (_MEDIA_MARKERS do processor).
+    "sticker": "[figurinha]",
+    "location": "[localização]",
+    "contact": "[contato]",
+    "contacts": "[contato]",
+}
+
+
+# Rótulo (+ gênero) por message_type para a LEGENDA de mídia — falha real 13/07, lead
+# 5564999289099: as legendas das 4 fotos que a Valéria enviou (enviar_fotos) entravam no
+# histórico como TEXTO NU no turno do model ("Modelo de embalagem standup"). O lead voltou
+# 34h depois com "Oi" e o Gemini fechou a lacuna narrativa inventando a autoria:
+# "recebi suas fotos aqui". O mesmo texto nu contaminou o rolling_summary, que passou a
+# afirmar preferências que o lead nunca declarou. Legenda sem tipo e sem autoria é uma
+# frase órfã — o modelo SEMPRE vai adotá-la como fala de alguém.
+# ÁUDIO NÃO ENTRA AQUI: o content de áudio é a TRANSCRIÇÃO (fala real, marcador próprio no
+# prompt) — envelopar viraria metadado. Só mídia visual/arquivo tem LEGENDA.
+_MEDIA_CAPTION_LABELS = {
+    "image": ("Foto", "a"),
+    "video": ("Vídeo", "o"),
+    "document": ("Documento", "o"),
+    "sticker": ("Figurinha", "a"),
+    "location": ("Localização", "a"),
+    "contact": ("Contato", "o"),
+    "contacts": ("Contato", "o"),
+}
+
+
+def describe_media_placeholder(row: dict[str, Any]) -> str:
+    """Preenche content vazio de mensagens de mídia com um placeholder legível.
+
+    content não-vazio (após strip) volta intocado. content vazio/None só vira
+    placeholder quando message_type é de mídia conhecida; ausência de message_type
+    ou message_type="text" preserva o content original (comportamento pré-fix, para
+    não mexer em mensagens de texto legítimas que hoje vêm vazias por algum outro motivo).
+
+    NÃO envelopa legenda: quem lê texto CRU (resolver de citação/reply, UI) depende disso.
+    Para o texto que o LLM lê, use render_history_content (abaixo).
+    """
+    content = row.get("content")
+    if content and str(content).strip():
+        return content
+    message_type = row.get("message_type")
+    if not message_type or message_type == "text":
+        return content
+    return _MEDIA_PLACEHOLDERS.get(message_type, "[mídia]")
+
+
+def render_history_content(row: dict[str, Any]) -> str:
+    """Renderiza o content de uma mensagem para LEITURA DO LLM (histórico + dossiê).
+
+    Camada sobre describe_media_placeholder, aplicada pelos DOIS get_history:
+      - texto puro: intocado;
+      - mídia SEM legenda: placeholder ("[imagem]", "[áudio]"…);
+      - mídia visual/arquivo COM legenda: legenda ENVELOPADA com tipo e autoria —
+        '[Foto enviada por você: "Modelo de embalagem standup"]' (role=assistant) /
+        '[Foto recebida do lead: "essa é minha logo"]' (role=user).
+
+    ÁUDIO fica de fora do envelope de propósito: o content de um áudio é a TRANSCRIÇÃO (a
+    fala real da pessoa, com marcador próprio no prompt), não uma legenda — embrulhá-la
+    transformaria fala em metadado.
+
+    Idempotente: content que já começa com "[" é marcador do pipeline ("[imagem]" do
+    _apply_media_signal, "[audio transcrito: ...]") ou envelope já aplicado — volta intocado.
+    """
+    content = describe_media_placeholder(row)
+    message_type = row.get("message_type")
+    if not message_type or message_type not in _MEDIA_CAPTION_LABELS:
+        return content
+
+    caption = str(content or "").strip()
+    if not caption or caption.startswith("["):
+        return content
+
+    label, gender = _MEDIA_CAPTION_LABELS[message_type]
+    role = row.get("role")
+    if role == "assistant":
+        return f'[{label} enviad{gender} por você: "{caption}"]'
+    if role == "user":
+        return f'[{label} recebid{gender} do lead: "{caption}"]'
+    return f'[{label}: "{caption}"]'
+
+
+def get_history(
+    conversation_id: str,
+    limit: int = 30,
+    roles: tuple[str, ...] | None = None,
+    char_budget: int | None = None,
+) -> list[dict[str, Any]]:
+    """Histórico da conversa (query desc, retorno cronológico ascendente).
+
+    FinOps P2 (12/07) — parâmetros opcionais usados pelo orchestrator (demais chamadores
+    mantêm o contrato antigo intacto):
+      roles: filtra na QUERY (ex.: ("user","assistant")). Antes, system-rows compravam
+        janela do `limit` e eram descartadas na montagem do prompt — janela útil < limit.
+      char_budget: teto de caracteres do histórico (~3,4 chars/token). Descarta as linhas
+        mais ANTIGAS acima do teto (a mais recente entra sempre); a memória longa fica a
+        cargo do Dossiê (leads.rolling_summary). None/<=0 = sem teto.
+    """
     sb = get_supabase()
-    result = (
+    query = (
         sb.table("messages")
         .select("role, content, stage, created_at, wamid, quoted_wamid, message_type, metadata, sent_by")
         .eq("conversation_id", conversation_id)
+    )
+    if roles:
+        query = query.in_("role", list(roles))
+    result = (
+        query
         .order("created_at", desc=True)   # 60 MAIS RECENTES
         .limit(limit)
         .execute()
     )
     rows = result.data or []
-    return list(reversed(rows))           # volta à ordem cronológica ascendente (contrato inalterado)
+    ordered = list(reversed(rows))        # volta à ordem cronológica ascendente (contrato inalterado)
+    for row in ordered:
+        row["content"] = render_history_content(row)
+    if char_budget and char_budget > 0:
+        kept: list[dict[str, Any]] = []
+        total = 0
+        for row in reversed(ordered):     # da mais recente para trás, até estourar o teto
+            size = len(row.get("content") or "")
+            if kept and total + size > char_budget:
+                break
+            kept.append(row)
+            total += size
+        ordered = list(reversed(kept))
+    return ordered
 
 
 def reset_unread_count(conversation_id: str) -> dict[str, Any]:

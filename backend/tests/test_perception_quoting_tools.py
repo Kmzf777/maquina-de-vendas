@@ -13,7 +13,7 @@ Cases (spec §6 items 7-9):
   9. get_tools_for_stage:
      - calcular_orcamento SOMENTE em atacado
      - consultar_relacionamento em TODOS os stages comerciais
- 10. TOOLS_SCHEMA bem-formado (tipo, required, itens é array de objetos)
+ 10. TOOL_DECLARATIONS bem-formado (tipo, required, itens é array de objetos)
 
 Mocks: _fetch_active_products patchado em app.agent.tools; get_relationship_summary
        patchado em app.agent.tools.
@@ -294,7 +294,9 @@ async def test_product_not_found_returns_clear_error():
     with patch("app.agent.tools._fetch_active_products", return_value=_FAKE_PRODUCTS):
         result = await _exec("calcular_orcamento", args)
 
-    assert "não encontrado" in result.lower() or "confirme o nome" in result.lower()
+    # Reescrita 14/07 (caso Thiago): mensagem INTERNA, sem vazar "não encontrado no
+    # catálogo" ao cliente — marca [INTERNO] + "não existe" + instrução de tom.
+    assert "interno" in result.lower() or "não existe" in result.lower()
     assert "produto inexistente xyz" in result.lower() or "produto" in result.lower()
 
 
@@ -380,11 +382,11 @@ def test_calcular_orcamento_in_atacado_and_private_label():
     from app.agent.tools import get_tools_for_stage
 
     for stage in ("atacado", "private_label"):
-        names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
+        names = [t["name"] for t in get_tools_for_stage(stage)]
         assert "calcular_orcamento" in names, f"calcular_orcamento ausente no stage '{stage}'"
 
     for stage in ("secretaria", "exportacao", "consumo"):
-        names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
+        names = [t["name"] for t in get_tools_for_stage(stage)]
         assert "calcular_orcamento" not in names, (
             f"calcular_orcamento não deve estar em stage '{stage}'"
         )
@@ -400,46 +402,48 @@ def test_consultar_relacionamento_in_all_commercial_stages():
 
     commercial_stages = ("secretaria", "atacado", "private_label", "exportacao", "consumo")
     for stage in commercial_stages:
-        names = [t["function"]["name"] for t in get_tools_for_stage(stage)]
+        names = [t["name"] for t in get_tools_for_stage(stage)]
         assert "consultar_relacionamento" in names, (
             f"consultar_relacionamento deveria estar em stage '{stage}' mas não está"
         )
 
 
 # ===========================================================================
-# 10. TOOLS_SCHEMA — entradas bem-formadas
+# 10. TOOL_DECLARATIONS — entradas bem-formadas
 # ===========================================================================
 
 def test_consultar_relacionamento_schema_well_formed():
-    """consultar_relacionamento deve estar no TOOLS_SCHEMA sem parâmetros obrigatórios."""
-    from app.agent.tools import TOOLS_SCHEMA
+    """consultar_relacionamento deve estar no TOOL_DECLARATIONS sem parâmetros obrigatórios."""
+    from app.agent.tools import TOOL_DECLARATIONS
 
     schema = next(
-        (t for t in TOOLS_SCHEMA if t["function"]["name"] == "consultar_relacionamento"),
+        (t for t in TOOL_DECLARATIONS if t["name"] == "consultar_relacionamento"),
         None,
     )
-    assert schema is not None, "consultar_relacionamento não encontrado no TOOLS_SCHEMA"
-    assert schema["type"] == "function"
-    params = schema["function"]["parameters"]
+    assert schema is not None, "consultar_relacionamento não encontrado no TOOL_DECLARATIONS"
+    # Shape plano de FunctionDeclaration (sem envelope {"type": "function", ...})
+    assert set(schema.keys()) == {"name", "description", "parameters"}
+    params = schema["parameters"]
     assert params["type"] == "object"
     # Sem parâmetros obrigatórios — o lead_id é injetado pelo runtime
     assert params.get("required", []) == []
     # Descrição forte (menciona relacionamento / cliente / percepção)
-    desc = schema["function"]["description"]
+    desc = schema["description"]
     assert len(desc) > 20
 
 
 def test_calcular_orcamento_schema_well_formed():
-    """calcular_orcamento deve estar no TOOLS_SCHEMA com itens como array de objetos."""
-    from app.agent.tools import TOOLS_SCHEMA
+    """calcular_orcamento deve estar no TOOL_DECLARATIONS com itens como array de objetos."""
+    from app.agent.tools import TOOL_DECLARATIONS
 
     schema = next(
-        (t for t in TOOLS_SCHEMA if t["function"]["name"] == "calcular_orcamento"),
+        (t for t in TOOL_DECLARATIONS if t["name"] == "calcular_orcamento"),
         None,
     )
-    assert schema is not None, "calcular_orcamento não encontrado no TOOLS_SCHEMA"
-    assert schema["type"] == "function"
-    params = schema["function"]["parameters"]
+    assert schema is not None, "calcular_orcamento não encontrado no TOOL_DECLARATIONS"
+    # Shape plano de FunctionDeclaration (sem envelope {"type": "function", ...})
+    assert set(schema.keys()) == {"name", "description", "parameters"}
+    params = schema["parameters"]
     assert params["type"] == "object"
 
     # itens é required
@@ -461,15 +465,15 @@ def test_calcular_orcamento_schema_well_formed():
     assert "cidade" not in required
 
     # Descrição forte (menciona obrigatório / proibido / cabeça / preço)
-    desc = schema["function"]["description"].lower()
+    desc = schema["description"].lower()
     assert len(desc) > 50
     # Deve mencionar que é obrigatório para preços
     assert "obrigatório" in desc or "obrigatorio" in desc or "proibido" in desc
 
 
 def test_tools_schema_has_both_new_entries():
-    """Ambas as novas tools devem existir no TOOLS_SCHEMA."""
-    from app.agent.tools import TOOLS_SCHEMA
-    names = [t["function"]["name"] for t in TOOLS_SCHEMA]
+    """Ambas as novas tools devem existir no TOOL_DECLARATIONS."""
+    from app.agent.tools import TOOL_DECLARATIONS
+    names = [t["name"] for t in TOOL_DECLARATIONS]
     assert "consultar_relacionamento" in names
     assert "calcular_orcamento" in names

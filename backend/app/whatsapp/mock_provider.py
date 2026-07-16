@@ -72,6 +72,16 @@ class MockProvider(WhatsAppProvider):
         })
         return {"status": "mock_ok", "method": "send_contact"}
 
+    async def send_reaction(self, to: str, target_wamid: str, emoji: str) -> dict:
+        logger.warning(f"[MOCK] send_reaction to={to} target={target_wamid} emoji={emoji}")
+        _log_entry({
+            "method": "send_reaction",
+            "to": to,
+            "target_wamid": target_wamid,
+            "emoji": emoji,
+        })
+        return {"status": "mock_ok", "method": "send_reaction"}
+
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         _log_entry({"method": "mark_read", "message_id": message_id})
         return {"status": "mock_ok", "method": "mark_read"}

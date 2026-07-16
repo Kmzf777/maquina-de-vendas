@@ -26,6 +26,54 @@ class GeminiFailure(Exception):
     """Raised when Gemini calls fail after max retries."""
 
 
+# ── Telemetria de custo do harness (FinOps Higiene, 12/07) ─────────────────────────
+# Ator/juiz usam chave isolada e NÃO passam pelo token_tracker — o custo era invisível.
+# Acumula usage_metadata por papel; os runners imprimem o resumo no fim (log do CI).
+# Preços USD/token — manter alinhado a model_pricing (migrações 20260708/20260712).
+_USAGE_PRICES = {
+    "actor": (0.0000001, 0.0000004),    # gemini-2.5-flash-lite
+    "judge": (0.00000125, 0.00001),     # gemini-2.5-pro
+}
+usage_totals: dict[str, dict[str, int]] = {
+    "actor": {"calls": 0, "prompt": 0, "output": 0},
+    "judge": {"calls": 0, "prompt": 0, "output": 0},
+}
+
+
+def _accumulate_usage(role: str, response) -> None:
+    """Soma o usage de uma resposta ao total do papel. Fail-open: nunca quebra o run."""
+    try:
+        um = getattr(response, "usage_metadata", None)
+        if um is None:
+            return
+        bucket = usage_totals[role]
+        bucket["calls"] += 1
+        bucket["prompt"] += int(getattr(um, "prompt_token_count", 0) or 0)
+        bucket["output"] += int(getattr(um, "candidates_token_count", 0) or 0) + int(
+            getattr(um, "thoughts_token_count", 0) or 0
+        )
+    except Exception:  # pragma: no cover — contador nunca derruba o harness
+        pass
+
+
+def usage_summary() -> str:
+    """Resumo humano do custo estimado do run (impresso pelos runners → log do CI)."""
+    lines = ["[REHEARSAL COST] custo LLM estimado do run (chave isolada, fora do token_usage):"]
+    total = 0.0
+    for role, bucket in usage_totals.items():
+        pin, pout = _USAGE_PRICES[role]
+        cost = bucket["prompt"] * pin + bucket["output"] * pout
+        total += cost
+        lines.append(
+            f"  {role}: {bucket['calls']} chamadas, {bucket['prompt']:,} tok in, "
+            f"{bucket['output']:,} tok out = ${cost:.4f}"
+        )
+    lines.append(
+        f"  TOTAL = ${total:.4f} (nao inclui o backend Valeria do run — esse grava token_usage no homolog)"
+    )
+    return "\n".join(lines)
+
+
 def require_isolated_gemini_key() -> None:
     """Aborta o harness se não houver uma chave Gemini de DEV isolada da produção.
 
@@ -109,6 +157,7 @@ def generate_next_lead_message(
     def _call():
         model = _get_model(ACTOR_MODEL_NAME)
         response = model.generate_content(prompt, request_options={"timeout": 120})
+        _accumulate_usage("actor", response)
         return response.text.strip() if response.text else ""
 
     text = _with_retry(_call)
@@ -137,6 +186,7 @@ Responda APENAS com um JSON valido (sem explicacao adicional) neste formato:
     def _call():
         model = _get_model()
         response = model.generate_content(prompt, request_options={"timeout": 120})
+        _accumulate_usage("judge", response)
         return response.text or ""
 
     try:

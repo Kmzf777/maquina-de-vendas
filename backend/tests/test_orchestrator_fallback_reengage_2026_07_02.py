@@ -39,35 +39,16 @@ Cobertura (Step 1 do brief):
 Espelha os helpers de test_orchestrator_retry2_2026_07_02.py (fila: initial vazio + retry1
 vazio + retry2 vazio → fallback estático; retry2 é PULADO quando soft_reject_used ou
 suppress_generic_fallback já decidiram o destino do turno).
+
+Nota de conversão (Gemini 100% nativo, 09/07/2026): os mocks OpenAI (choices/usage/
+_get_client) viraram GenerateResult fakes de tests/gemini_fakes com
+patch("app.agent.orchestrator.generate"). Os fakes carregam usage (fake_usage) — o mesmo
+papel do `usage=True` antigo, garantindo que track_token_usage seja chamado.
 """
-import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
-# ---------------------------------------------------------------------------
-# Helpers (espelham test_orchestrator_retry2_2026_07_02.py)
-# ---------------------------------------------------------------------------
-
-def _make_tool_call(name: str, args: dict = None, call_id: str = "tc-001") -> MagicMock:
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = name
-    tc.function.arguments = json.dumps(args or {})
-    return tc
-
-
-def _make_response(content: str | None, tool_calls=None, usage: bool = True) -> MagicMock:
-    """Constrói uma resposta fake. usage=True (default) garante que track_token_usage seja
-    chamado (response.usage truthy), como em test_orchestrator_retry2_2026_07_02.py."""
-    resp = MagicMock()
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tool_calls
-    msg.model_dump.return_value = {"role": "assistant", "content": content, "tool_calls": None}
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = MagicMock(prompt_tokens=100, completion_tokens=(20 if content else 0)) if usage else None
-    return resp
+from tests.gemini_fakes import fake_text, fake_tool_call
 
 
 def _conversation(stage: str = "secretaria") -> dict:
@@ -195,11 +176,8 @@ def test_voice_rules_new_generic_fallback():
 async def test_case1_stage_atacado_empty_after_all_retries_uses_reengage_fallback():
     from app.agent.orchestrator import run_agent, _STAGE_REENGAGE_FALLBACKS
 
-    n = {"i": 0}
-
-    async def fake_create(**kwargs):
-        n["i"] += 1
-        return _make_response(content="", tool_calls=None)  # initial + retry1 + retry2, todos vazios
+    async def fake_generate(**kwargs):
+        return fake_text("")  # initial + retry1 + retry2, todos vazios
 
     with patch("app.agent.orchestrator.get_history",
                return_value=_history_one_user_msg("quanto custa o café em volume?")), \
@@ -207,13 +185,13 @@ async def test_case1_stage_atacado_empty_after_all_retries_uses_reengage_fallbac
              "id": "lead-reengage-001", "phone": "5531900000002", "ai_enabled": True
          }), \
          patch("app.agent.orchestrator.track_token_usage"), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=fake_generate)) as m_gen:
         result = await run_agent(_conversation("atacado"), "quanto custa o café em volume?")
 
     assert result == _STAGE_REENGAGE_FALLBACKS["atacado"], f"esperado reengajamento de atacado, got {result!r}"
     assert "de novo" not in result
-    assert n["i"] == 3, f"esperado 3 chamadas (inicial+retry1+retry2), got {n['i']}"
+    assert m_gen.await_count == 3, f"esperado 3 chamadas (inicial+retry1+retry2), got {m_gen.await_count}"
 
 
 # ---------------------------------------------------------------------------
@@ -224,24 +202,21 @@ async def test_case1_stage_atacado_empty_after_all_retries_uses_reengage_fallbac
 async def test_case2_stage_secretaria_empty_after_all_retries_uses_new_generic():
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_GENERIC
 
-    n = {"i": 0}
-
-    async def fake_create(**kwargs):
-        n["i"] += 1
-        return _make_response(content="", tool_calls=None)
+    async def fake_generate(**kwargs):
+        return fake_text("")
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg("oi, tudo bem?")), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-reengage-001", "phone": "5531900000002", "ai_enabled": True
          }), \
          patch("app.agent.orchestrator.track_token_usage"), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=fake_generate)) as m_gen:
         result = await run_agent(_conversation("secretaria"), "oi, tudo bem?")
 
     assert result == _SAFETY_FALLBACK_GENERIC, f"esperado o genérico novo, got {result!r}"
     assert "me conta de novo" not in result
-    assert n["i"] == 3, f"esperado 3 chamadas (inicial+retry1+retry2), got {n['i']}"
+    assert m_gen.await_count == 3, f"esperado 3 chamadas (inicial+retry1+retry2), got {m_gen.await_count}"
 
 
 # ---------------------------------------------------------------------------
@@ -254,14 +229,13 @@ async def test_case2_stage_secretaria_empty_after_all_retries_uses_new_generic()
 async def test_case3a_stage_transition_still_wins_over_reengage():
     from app.agent.orchestrator import run_agent, _STAGE_TRANSITION_FALLBACKS
 
-    tool_call = _make_tool_call("mudar_stage", {"stage": "atacado"}, "tc-transition-001")
     n = {"i": 0}
 
-    async def fake_create(**kwargs):
+    async def fake_generate(**kwargs):
         n["i"] += 1
         if n["i"] == 1:
-            return _make_response(content=None, tool_calls=[tool_call])  # mudar_stage → atacado
-        return _make_response(content="", tool_calls=None)  # pós-tool + retry1 + retry2, vazios
+            return fake_tool_call("mudar_stage", {"stage": "atacado"})  # mudar_stage → atacado
+        return fake_text("")  # pós-tool + retry1 + retry2, vazios
 
     with patch("app.agent.orchestrator.get_history",
                return_value=_history_one_user_msg("tenho uma cafeteria, quero revender")), \
@@ -272,8 +246,8 @@ async def test_case3a_stage_transition_still_wins_over_reengage():
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="Stage alterado para: atacado"), \
          patch("app.agent.orchestrator.track_token_usage"), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=fake_generate)):
         result = await run_agent(_conversation("secretaria"), "tenho uma cafeteria, quero revender")
 
     assert result == _STAGE_TRANSITION_FALLBACKS["atacado"], (
@@ -291,14 +265,13 @@ async def test_case3a_stage_transition_still_wins_over_reengage():
 async def test_case3b_media_still_wins_over_reengage():
     from app.agent.orchestrator import run_agent, _SAFETY_FALLBACK_MEDIA
 
-    tool_call = _make_tool_call("enviar_fotos", {}, "tc-media-001")
     n = {"i": 0}
 
-    async def fake_create(**kwargs):
+    async def fake_generate(**kwargs):
         n["i"] += 1
         if n["i"] == 1:
-            return _make_response(content=None, tool_calls=[tool_call])  # enviar_fotos
-        return _make_response(content="", tool_calls=None)  # pós-tool + retry1 + retry2, vazios
+            return fake_tool_call("enviar_fotos", {})  # enviar_fotos
+        return fake_text("")  # pós-tool + retry1 + retry2, vazios
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg("me manda fotos")), \
          patch("app.agent.orchestrator.get_lead", return_value={
@@ -307,8 +280,8 @@ async def test_case3b_media_still_wins_over_reengage():
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="fotos enfileiradas para envio após o texto"), \
          patch("app.agent.orchestrator.track_token_usage"), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=fake_generate)):
         result = await run_agent(_conversation("atacado"), "me manda fotos")
 
     assert result == _SAFETY_FALLBACK_MEDIA, f"mídia deve vencer o reengajamento por stage, got {result!r}"
@@ -327,16 +300,13 @@ async def test_case4_soft_reject_used_with_reengage_eligible_stage_returns_empty
     lead recém-descartado. A exceção de silêncio precisa vencer também aqui."""
     from app.agent.orchestrator import run_agent
 
-    sem_int_tc = _make_tool_call(
-        "registrar_sem_interesse_atual", {"motivo": "achou caro"}, "tc-semint-reengage"
-    )
     n = {"i": 0}
 
-    async def fake_create(**kwargs):
+    async def fake_generate(**kwargs):
         n["i"] += 1
         if n["i"] == 1:
-            return _make_response(content=None, tool_calls=[sem_int_tc])  # loop principal: descarte
-        return _make_response(content="", tool_calls=None)  # pós-tool (2) e retry1 (3): mudos
+            return fake_tool_call("registrar_sem_interesse_atual", {"motivo": "achou caro"})  # loop principal: descarte
+        return fake_text("")  # pós-tool (2) e retry1 (3): mudos
 
     with patch("app.agent.orchestrator.get_history",
                return_value=_history_one_user_msg("é caro demais, não quero mais")), \
@@ -346,8 +316,8 @@ async def test_case4_soft_reject_used_with_reengage_eligible_stage_returns_empty
          patch("app.agent.orchestrator.execute_tool",
                new_callable=AsyncMock, return_value="descarte registrado") as mock_exec, \
          patch("app.agent.orchestrator.track_token_usage") as mock_track, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=fake_generate)):
         result = await run_agent(_conversation("atacado"), "é caro demais, não quero mais")
 
     assert result == "", (
@@ -372,17 +342,17 @@ async def test_case5_suppress_generic_fallback_with_reengage_eligible_stage_retu
 
     n = {"i": 0}
 
-    async def fake_create(**kwargs):
+    async def fake_generate(**kwargs):
         n["i"] += 1
-        return _make_response(content="", tool_calls=None)
+        return fake_text("")
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg("[GATILHO INTERNO]")), \
          patch("app.agent.orchestrator.get_lead", return_value={
              "id": "lead-reengage-001", "phone": "5531900000002", "ai_enabled": True
          }), \
          patch("app.agent.orchestrator.track_token_usage") as mock_track, \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = AsyncMock(side_effect=fake_create)
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(side_effect=fake_generate)):
         result = await run_agent(
             _conversation("atacado"), "[GATILHO INTERNO]",
             suppress_generic_fallback=True,

@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -18,7 +19,11 @@ from app.conversations.service import (
     get_or_create_conversation, activate_conversation,
     update_conversation, save_message,
 )
-from app.agent.orchestrator import run_agent, resolve_prompt_key, LLMUnavailableError
+from app.agent.gemini_client import transcribe_audio
+from app.agent.orchestrator import (
+    run_agent, resolve_prompt_key,
+    LLMUnavailableError, LLMBudgetExceededError, LLMQuotaExhaustedError,
+)
 from app.alerts.service import create_system_alert
 from app.agent.persona import resolve_persona_prompt_key
 from app.agent_profiles.service import get_profile_id_by_prompt_key
@@ -30,42 +35,27 @@ from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 from app.agent.tools import (
     pop_deferred_media, pop_interest_marked, pop_quote_executed, SUPERVISOR_NAME, SUPERVISOR_PHONE,
-    record_deferred_media_delivery,
+    record_deferred_media_delivery, apply_stage_transition,
 )
+from app.buffer.prefill import match_prefill_stage
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
 # Kill switch global — mude para True para reativar a Valéria
 VALERIA_ENABLED = True
-from app.db.supabase import get_supabase, run_with_retry
+from app.db.supabase import get_supabase, run_with_retry, db_call
 
 logger = logging.getLogger(__name__)
 
 
 # Conexões HTTP/2 com Supabase/Meta às vezes recebem GOAWAY sob concorrência
 # (rajada de disparo), derrubando o save e PERDENDO a mensagem do agente (regressão
-# observada: Micheli, João). Retry simples preserva o estado no banco sem refatorar
-# o cliente HTTP. httpx.TransportError cobre RemoteProtocolError/ConnectError/ReadError
-# mas NÃO HTTPStatusError — então erros de aplicação (4xx/5xx) não são mascarados.
-_DB_RETRY_ATTEMPTS = 3
-_DB_RETRY_DELAY = 2  # segundos
-
-
+# observada: Micheli, João). A política de retry vive em db_call/run_with_retry
+# (app/db/supabase.py) — única no repositório; este wrapper existe só para manter
+# a assinatura histórica (label primeiro) usada pelos call-sites e testes.
 async def _save_with_retry(label: str, fn, *args, **kwargs):
-    """Executa uma operação de persistência síncrona com retry em drops de conexão."""
-    last_exc: Exception | None = None
-    for attempt in range(1, _DB_RETRY_ATTEMPTS + 1):
-        try:
-            return fn(*args, **kwargs)
-        except httpx.TransportError as exc:
-            last_exc = exc
-            logger.warning(
-                "[DB RETRY] %s — tentativa %d/%d falhou (conexão): %s",
-                label, attempt, _DB_RETRY_ATTEMPTS, exc,
-            )
-            if attempt < _DB_RETRY_ATTEMPTS:
-                await asyncio.sleep(_DB_RETRY_DELAY)
-    raise last_exc
+    """Persistência síncrona fora do event loop, com retry de transporte unificado."""
+    return await db_call(fn, *args, label=label, **kwargs)
 
 
 # Delays ASSIMÉTRICOS — limite real da Meta API: o "digitando…" NÃO re-renderiza no
@@ -239,13 +229,11 @@ def _apply_media_signal(resolved_text: str | None, message_type: str | None) -> 
         return text
     return _MEDIA_MARKERS.get(message_type or "", text)
 
-# Transcrição de áudio: o endpoint OpenAI-compat do Gemini NÃO expõe
+# Transcrição de áudio: o endpoint OpenAI-compat do Gemini NÃO expunha
 # /audio/transcriptions (Whisper) — a chamada antiga falhava 100% (auditoria
-# 2026-06-22: 9 falhas/dia). O caminho suportado é generateContent com inline_data,
-# que aceita OGG/opus (formato do áudio do WhatsApp).
-_GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-
+# 2026-06-22: 9 falhas/dia). O caminho suportado é generate_content com bytes
+# inline (aceita OGG/opus, formato do áudio do WhatsApp) — hoje via núcleo
+# nativo `app.agent.gemini_client.transcribe_audio` (thinking off + teto 2048).
 def _audio_mime_type(content_type: str | None) -> str:
     """Normaliza o content-type p/ um mime aceito pelo Gemini.
 
@@ -260,70 +248,38 @@ async def _transcribe_audio(
     audio_bytes: bytes, content_type: str | None,
     lead_id: str | None = None, stage: str = "",
 ) -> str:
-    """Transcreve áudio via Gemini generateContent (inline_data). Levanta em falha.
+    """Transcreve áudio via núcleo Gemini nativo (bytes inline). Levanta em falha.
 
     FinOps 08/07: transcrição é tarefa MECÂNICA — thinking dinâmico aqui era raciocínio
-    pago à toa (era o único caminho LLM sem generationConfig nenhum). thinkingBudget=0 +
-    maxOutputTokens limitado, e o usageMetadata (antes descartado) vira linha de
-    token_usage (call_type=media_transcription) para o gasto parar de ser invisível ao
-    budget_guard. `lead_id`/`stage` chegam de process_buffered_messages via _resolve_media;
+    pago à toa. O núcleo (`gemini_client.transcribe_audio`) já chama com thinking OFF +
+    saída limitada, e o usage_metadata (antes descartado) vira linha de token_usage
+    (call_type=media_transcription) para o gasto parar de ser invisível ao budget_guard.
+    `lead_id`/`stage` chegam de process_buffered_messages via _resolve_media;
     contabilidade é fail-soft — jamais derruba a transcrição.
     """
     mime = _audio_mime_type(content_type)
-    b64 = base64.b64encode(audio_bytes).decode()
-    url = _GEMINI_GENERATE_URL.format(model=settings.transcription_model)
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": "Transcreva o áudio a seguir em português do Brasil. "
-                        "Responda APENAS com a transcrição literal, sem comentários, "
-                        "aspas ou rótulos.",
-                    },
-                    {"inline_data": {"mime_type": mime, "data": b64}},
-                ]
-            }
-        ],
-        # Um áudio de voz de vários minutos rende ~1K tokens de transcrição — 2048 dá
-        # folga sem deixar a saída aberta. thinkingBudget=0 = thinking OFF (REST camelCase).
-        "generationConfig": {
-            "thinkingConfig": {"thinkingBudget": 0},
-            "maxOutputTokens": 2048,
-        },
-    }
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, params={"key": settings.gemini_api_key}, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    transcript, um = await transcribe_audio(settings.transcription_model, audio_bytes, mime)
 
     # Contabilidade ANTES da validação de vazio: os tokens foram consumidos mesmo quando a
-    # transcrição volta vazia. Espelha a fachada (thinking cobrado como output).
+    # transcrição volta vazia (o núcleo devolve o usage mesmo sem texto).
     try:
-        um = data.get("usageMetadata") or {}
-        visible = um.get("candidatesTokenCount", 0) or 0
-        thoughts = um.get("thoughtsTokenCount", 0) or 0
         from app.agent.token_tracker import track_token_usage
         track_token_usage(
             lead_id=lead_id,
             stage=stage or "",
             model=settings.transcription_model,
             call_type="media_transcription",
-            prompt_tokens=um.get("promptTokenCount", 0) or 0,
-            completion_tokens=visible + thoughts,
-            cached_tokens=um.get("cachedContentTokenCount", 0) or 0,
-            reasoning_tokens=thoughts,
+            prompt_tokens=um.prompt_token_count if um else 0,
+            # thinking é COBRADO como saída → completion = candidates + thoughts
+            completion_tokens=um.billed_output_tokens if um else 0,
+            cached_tokens=um.cached_content_token_count if um else 0,
+            reasoning_tokens=um.thoughts_token_count if um else 0,
         )
     except Exception as exc:  # contabilidade nunca derruba a transcrição
         logger.warning("[AUDIO] falha ao registrar token_usage da transcrição (ignorado): %s", exc)
 
-    candidate = (data.get("candidates") or [{}])[0]
-    parts = (candidate.get("content") or {}).get("parts") or []
-    transcript = "".join(p.get("text", "") for p in parts).strip()
     if not transcript:
-        raise RuntimeError(
-            f"transcrição vazia (finishReason={candidate.get('finishReason')!r})"
-        )
+        raise RuntimeError("transcrição vazia")
     return transcript
 
 
@@ -612,8 +568,25 @@ def _broadcast_recently_active(hours: int = 2) -> bool:
         return False
 
 
+def _llm_down_reason(exc: Exception) -> str:
+    """Mapeia o TIPO da exceção do agente → reason do parking (wartime 10/07).
+
+    Exaustão longa (budget interno / quota-billing do Google) precisa de deadline até
+    a virada do dia, não de 30min — sem essa distinção, todo lead que respondia ao
+    disparo após o estouro era estacionado por 30min e depois recebia handoff cego
+    definitivo (repetição industrializada do incidente de 08/07). A ordem importa:
+    ambas as classes herdam de LLMUnavailableError, então o isinstance vem primeiro.
+    """
+    if isinstance(exc, LLMBudgetExceededError):
+        return "budget"
+    if isinstance(exc, LLMQuotaExhaustedError):
+        return "quota"
+    return "transient"
+
+
 async def _handle_llm_down(
     lead: dict, phone: str, conversation: dict, inbound_text: str | None = None,
+    reason: str = "transient",
 ) -> None:
     """Fallback quando o LLM está fora: encaminha o lead ao humano (cartão do João)
     em vez de fantasmá-lo. Reutiliza encaminhar_humano (desativa IA, cria deal,
@@ -631,6 +604,13 @@ async def _handle_llm_down(
     O contador/alerta continuam rodando ANTES do desvio; o handoff imediato segue
     sendo o fallback quando o parking está off ou o Redis falha, e o próprio drain
     faz o handoff se a janela de parking estourar com o LLM ainda fora.
+
+    Wartime 10/07: `reason` ("transient"/"budget"/"quota", ver _llm_down_reason) é
+    propagado até park_turn, que grava o deadline correspondente (exaustão = virada do
+    dia, não 30min). Com reason="budget" o alerta llm_down é SUPRIMIDO — o alerta
+    dedicado llm_budget_exceeded (budget_guard) já cobre o incidente e um segundo
+    alerta critical seria ruído duplo; o contador de falhas consecutivas continua
+    rodando (é ele que zera no 1º sucesso do drain).
     """
     from app.buffer.parking import park_turn, parking_enabled
     _parking_on = False
@@ -641,7 +621,7 @@ async def _handle_llm_down(
     try:
         _count = await _record_llm_failure()
         _threshold = 2 if _broadcast_recently_active() else _LLM_DOWN_ALERT_THRESHOLD
-        if _count >= _threshold:
+        if _count >= _threshold and reason != "budget":
             _fire_llm_down_alert(_count, handoff_ativo=not _parking_on)
     except Exception as exc:
         logger.warning("[LLM DOWN] falha ao registrar/alertar contador p/ %s: %s", phone, exc)
@@ -657,7 +637,7 @@ async def _handle_llm_down(
         logger.debug("[LLM DOWN] checagem de autoresponder falhou: %s", exc)
     if _parking_on:
         try:
-            if await park_turn(conversation, lead, phone, inbound_text):
+            if await park_turn(conversation, lead, phone, inbound_text, reason=reason):
                 return  # estacionado — o drain do worker responde ou faz o handoff no prazo
         except Exception as exc:
             logger.error("[LLM DOWN] falha ao estacionar turno p/ %s: %s", phone, exc)
@@ -740,6 +720,7 @@ async def _handle_autoresponder(
 
 async def _handle_agent_exhausted(
     lead: dict, phone: str, conversation: dict, inbound_text: str | None = None,
+    reason: str = "transient",
 ) -> None:
     """Ramo terminal do loop de retry do agente ([AGENT FAILED]).
 
@@ -755,12 +736,17 @@ async def _handle_agent_exhausted(
     (`encaminhar_humano` via `_handle_llm_down`, que também registra o contador e dispara
     o alerta llm_down no limiar). Fail-soft de ponta a ponta: nada aqui pode escalar — é
     o último anteparo do turno.
+
+    `reason` (wartime 10/07) segue o mesmo mapeamento de _llm_down_reason. Na prática
+    este ramo só recebe exceções genéricas (as LLM* são capturadas antes pelo `except
+    LLMUnavailableError` do loop) → default "transient"; o parâmetro existe p/ manter o
+    contrato simétrico com _handle_llm_down caso um caller futuro capture diferente.
     """
     conv_id = conversation["id"]
     pop_interest_marked(conv_id)  # não vaza flag p/ o próximo turno
     pop_quote_executed(conv_id)  # idem (Frente B3)
     try:
-        await _handle_llm_down(lead, phone, conversation, inbound_text=inbound_text)
+        await _handle_llm_down(lead, phone, conversation, inbound_text=inbound_text, reason=reason)
     except Exception as exc:  # _handle_llm_down já é fail-soft; guarda extra de segurança
         logger.error(
             "[AGENT FAILED] handoff terminal falhou p/ %s (conv=%s): %s",
@@ -821,9 +807,235 @@ _BRIDGE_TEXT = (
     "se preferir, chama ele direto no contato que te mandei aqui em cima que ele te responde por lá"
 )
 
+# Escudo seguro da ponte (auditoria 15/07, casos Itamar/Aislan). ANTES: pergunta de
+# negócio pós-handoff → silêncio TOTAL (o lead ficava sem NENHUM retorno, dependente do
+# SLA humano). AGORA: aviso curto, NÃO-COMERCIAL, de recebimento — não responde a
+# pergunta (o humano ainda lê e responde), só fecha o vácuo. Estático, sem LLM.
+_BRIDGE_ACK_TEXT = (
+    "recebi sua mensagem!\n\n"
+    "seu atendimento já tá com o João e ele te responde por aqui mesmo, tá?"
+)
+# Reclamação pós-handoff (caso Aislan: cliente queimado devolvido ao mesmo gargalo em
+# silêncio) → aviso de escalonamento ao lead + alerta CRÍTICO à gerência.
+_BRIDGE_ESCALATION_TEXT = (
+    "puxa, sinto muito por isso\n\n"
+    "já sinalizei aqui internamente pra olharem o seu caso com prioridade — o João te responde por aqui"
+)
+_BRIDGE_ACK_COOLDOWN_SECONDS = 3600            # 1 aviso de recebimento a cada 1h por conversa
+_BRIDGE_ESCALATION_COOLDOWN_SECONDS = 12 * 3600  # 1 escalonamento a cada 12h (não spammar a gerência)
+
+# Filtro de intenção da ponte (auditoria 11/07): "obrigado" pós-handoff recebia o
+# texto de transbordo — ruído em cima de um encerramento social. Vocabulário
+# ESTREITO e sem acentos (o texto é normalizado antes): a frase inteira precisa
+# ser composta só destes tokens (dúvida real sempre carrega outra palavra ou "?").
+_SOCIAL_CLOSING_TOKENS = frozenset({
+    "obrigado", "obrigada", "obrigadao", "obg", "brigado", "brigada", "brigadao",
+    "agradecido", "agradecida", "agradeco", "gratidao", "valeu", "vlw",
+    "ok", "okay", "okk", "blz", "beleza", "show", "top", "joia", "otimo",
+    "ta", "to",  # "tá joia", "tô junto" — auditoria 12/07 (casos Bianca/Rosângela)
+    "perfeito", "certo", "entendi", "entendido", "tranquilo", "suave",
+    "fechou", "fechado", "combinado", "tamo", "tmj", "junto", "juntos",
+    "de", "nada", "disponha", "abraco", "abracos", "abs",
+    "amem", "deus", "abencoe", "abencoado", "muito", "muita", "mto",
+    "te", "pela", "pelo", "atencao", "ate", "mais", "logo", "breve",
+})
+_SOCIAL_CLOSING_MAX_TOKENS = 6
+_SOCIAL_CLOSING_EMOJI = "❤️"
+
+# Vocabulário de negócio da ponte (auditoria 11/07, casos Mateus/Leonardo): pergunta
+# substantiva ("Qual o valor da unidade", "valor das sacas no grão") recebia o carimbo
+# estático — aborrece o lead e enterra a pergunta que o humano deveria ler. Tokens SEM
+# acento (o texto é normalizado antes de comparar). Deliberadamente ABRANGENTE, ao
+# contrário do vocabulário social (estreito): aqui superabranger é o fail-safe — um
+# silêncio a mais custa menos que um carimbo em cima de pergunta de preço.
+_BUSINESS_QUESTION_TOKENS = frozenset({
+    "preco", "precos", "valor", "valores", "custo", "custos", "custa", "custam",
+    "caro", "cara", "barato", "barata", "quanto", "quantos", "quantas",
+    "minimo", "minima", "moq", "lote", "lotes", "tabela", "orcamento",
+    "orcamentos",  # plural — auditoria 12/07 (caso Ana Weiss: "vou esperar os outros orçamentos")
+    "frete", "prazo", "prazos", "entrega", "desconto", "pagamento",
+    "pix", "boleto", "parcela", "parcelas", "parcelado",
+    "pedido", "pedidos", "unidade", "unidades", "saca", "sacas",
+    "kg", "quilo", "quilos", "kilo", "kilos", "grama", "gramas",
+    "grao", "graos", "embalagem", "embalagens", "catalogo",
+    "exportacao", "exporta", "exportam", "importacao", "cnpj", "nota", "orcar",
+})
+
+
+def _is_social_closing(text: str | None) -> bool:
+    """True para mensagens de encerramento social ("obrigado", "valeu", emoji só).
+
+    Regras (função pura, sem I/O):
+    - "?" em qualquer lugar → dúvida, nunca encerramento.
+    - Só emoji (sem letra/dígito e sem "?") → encerramento (👍, 🙏…).
+    - Senão: normaliza (minúsculas, sem acento), tokeniza por letras/dígitos e
+      exige que TODOS os tokens (máx. _SOCIAL_CLOSING_MAX_TOKENS) estejam no
+      vocabulário estreito. Qualquer palavra fora dele → dúvida real → ponte.
+    """
+    if not text or not text.strip():
+        return False
+    if "?" in text:
+        return False
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    if not tokens:
+        # Sem nenhuma palavra: sobra emoji/pontuação. Emoji-only é encerramento;
+        # pontuação-só ("...", "!!") não sinaliza dúvida nem pede ponte — também ❤️?
+        # Não: exigimos ao menos um emoji de verdade (categoria Symbol) para reagir.
+        return any(unicodedata.category(ch).startswith("S") for ch in text)
+    if len(tokens) > _SOCIAL_CLOSING_MAX_TOKENS:
+        return False
+    return all(t in _SOCIAL_CLOSING_TOKENS for t in tokens)
+
+
+def _looks_like_business_question(text: str | None) -> bool:
+    """True para mensagem pós-handoff com cara de pergunta/assunto de negócio.
+
+    Regras (função pura, sem I/O — mesma normalização de _is_social_closing):
+    - None/vazio → False;
+    - "?" em QUALQUER posição → True (um único "?" basta);
+    - qualquer token no vocabulário _BUSINESS_QUESTION_TOKENS → True;
+    - senão → False.
+
+    Fail-safe por diretriz: na dúvida a mensagem fica INTOCADA para o humano ler.
+    Superabranger é aceitável — o custo de um silêncio a mais é menor que um
+    carimbo em cima de pergunta de preço (casos Mateus/Leonardo 11/07).
+    """
+    if not text or not text.strip():
+        return False
+    if "?" in text:
+        return True
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    return any(t in _BUSINESS_QUESTION_TOKENS for t in tokens)
+
+
+# Reclamação sobre o atendimento HUMANO pós-handoff (auditoria 15/07, caso Aislan:
+# "faz quase 1 ano tentando negociar e não me enviaram nada… visualizam e não respondem…
+# esse aí é um deles que me deixou várias vezes sem me responder"). Casamento por
+# SUBSTRING no texto normalizado (as reclamações são frases, não tokens isolados).
+# Deliberadamente focado em sinais de FALHA DE SERVIÇO — não confundir com pergunta
+# comercial normal (essa cai no aviso de recebimento, não no escalonamento).
+_BRIDGE_COMPLAINT_PATTERNS = (
+    "nao respond", "nao me respond", "sem me respond", "sem responder", "sem resposta",
+    "nao tive retorno", "sem retorno", "nao me deram retorno", "ninguem respond", "ninguem me",
+    "visualiza", "nao atende", "nao me atende", "nao me atenderam",
+    "nao me enviaram", "nao enviaram", "nao me mandaram", "nao entregaram", "nao entregou",
+    "nao chegou", "nao recebi", "nunca recebi", "nao consigo falar", "nao consigo comprar",
+    "prometeram", "nao cumpriram", "descaso", "me deixou sem", "me deixaram sem",
+    "me deixou varias vezes", "varias vezes sem", "ja tentei varias", "ja tentei de tudo",
+    "faz meses", "faz semanas", "meses tentando", "semanas tentando",
+    "pessimo atendimento", "atendimento pessimo", "atendimento ruim", "mal atendido", "mau atendido",
+    "um absurdo", "que descaso", "enrolando", "enrolacao", "ignoraram", "ignorando", "ta me ignorando",
+    "paguei e nao", "ja paguei e",
+)
+
+
+def _looks_like_complaint(text: str | None) -> bool:
+    """True para reclamação pós-handoff sobre o ATENDIMENTO HUMANO / pedido não entregue.
+
+    Função pura (mesma normalização das demais). Casa por substring no texto sem acento.
+    Fail-safe: escopo estreito em sinais de FALHA DE SERVIÇO — um falso-negativo só cai no
+    aviso de recebimento normal; um falso-positivo apenas aciona um alerta a mais à gerência.
+    """
+    if not text or not text.strip():
+        return False
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return any(pat in normalized for pat in _BRIDGE_COMPLAINT_PATTERNS)
+
+
+_REACTION_ONLY_RE = re.compile(r"^\[reagiu com [^\]]*\]$")
+
+
+def _is_reaction_only_turn(text: str | None, message_type: str | None) -> bool:
+    """True quando o inbound é UMA reação isolada (sem texto do lead junto).
+
+    Forense 11/07 (caso Anderson): a reação 🙏 rodava run_agent completo e a IA
+    emitia um turno de venda novo — "falando sozinha" na percepção da operação.
+    Reação isolada = message_type "reaction" E o texto resolvido é só o marcador
+    "[reagiu com X]" (ou vazio, quando o decode do metadata falhou). Texto real
+    coalescido junto da reação → turno normal (há pergunta do lead no pacote).
+    Função pura — sem I/O.
+    """
+    if message_type != "reaction":
+        return False
+    stripped = (text or "").strip()
+    if not stripped:
+        return True
+    return bool(_REACTION_ONLY_RE.match(stripped))
+
+
+async def _react_to_social_closing(
+    lead: dict, phone: str, conversation: dict, provider, inbound_wamid: str | None,
+) -> bool:
+    """Reage com ❤️ ao encerramento social do lead pós-handoff (fail-soft total).
+
+    Sem wamid não há alvo → silêncio. Janela de 24h fechada, provider sem suporte
+    (Evolution herda o default NotImplementedError do base) ou qualquer erro da
+    Meta → silêncio; nunca degrada de volta para o texto da ponte.
+    """
+    if not inbound_wamid:
+        return False
+    try:
+        send_to = resolve_send_target(lead, phone)
+        result = await provider.send_reaction(send_to, inbound_wamid, _SOCIAL_CLOSING_EMOJI)
+        save_message(
+            conversation.get("id"), lead.get("id"), "assistant",
+            _SOCIAL_CLOSING_EMOJI, conversation.get("stage"),
+            sent_by="bridge", message_type="reaction",
+            metadata={"emoji": _SOCIAL_CLOSING_EMOJI, "target_wamid": inbound_wamid},
+            wamid=extract_wamid(result),
+        )
+        logger.info(
+            "[BRIDGE] encerramento social — reação %s enviada conv=%s target=%s",
+            _SOCIAL_CLOSING_EMOJI, conversation.get("id"), inbound_wamid,
+        )
+        return True
+    except Exception as exc:
+        logger.info(
+            "[BRIDGE] reação de encerramento falhou (fail-soft, silêncio) conv=%s: %s",
+            conversation.get("id"), exc,
+        )
+        return False
+
+
+async def _deliver_bridge_notice(
+    lead: dict, phone: str, conversation: dict, provider, text: str, marker: str,
+) -> bool:
+    """Envia um aviso ESTÁTICO da ponte (recebimento/escalonamento) + marcador de QA.
+
+    O cooldown é do CALLER (cada aviso tem a sua janela). Aqui só sai o texto e o
+    marcador. Fail-soft total: o marcador é telemetria e nunca pode quebrar o fluxo.
+    Retorna True se o texto de fato saiu.
+    """
+    conv_id = conversation.get("id")
+    lead_id = lead.get("id")
+    sent = False
+    try:
+        send_result = await provider.send_text(resolve_send_target(lead, phone), text)
+        save_message(
+            conv_id, lead_id, "assistant", text, conversation.get("stage"),
+            sent_by="bridge", wamid=extract_wamid(send_result),
+        )
+        sent = True
+    except Exception as exc:
+        logger.warning("[BRIDGE] falha ao enviar aviso conv=%s: %s", conv_id, exc)
+    try:
+        save_message(conv_id, lead_id, "system", marker, conversation.get("stage"), sent_by="bridge")
+    except Exception as exc:
+        logger.warning(
+            "[BRIDGE] falha ao salvar marcador de aviso (fail-soft) conv=%s: %s", conv_id, exc,
+        )
+    return sent
+
 
 async def _maybe_send_handoff_bridge(
     lead: dict, phone: str, conversation: dict, channel: dict, provider,
+    inbound_text: str | None = None, inbound_wamid: str | None = None,
+    inbound_message_type: str | None = None,
 ) -> bool:
     """Ponte estática pós-handoff: avisa o lead que o atendimento já é com o João.
 
@@ -852,6 +1064,90 @@ async def _maybe_send_handoff_bridge(
             and os.environ.get("REHEARSAL_MODE") != "true"
         ):
             return False
+
+        # Filtro de intenção (11/07): encerramento social não é dúvida — o texto de
+        # roteamento aqui era ruído ("obrigado" → "seu atendimento tá com o João…").
+        # Reação inbound: silêncio (a Meta rejeita reação-sobre-reação; e reagir a
+        # uma mensagem nossa também não é dúvida). Nenhum dos dois consome o
+        # cooldown: a próxima dúvida REAL ainda recebe a ponte normalmente.
+        if inbound_message_type == "reaction":
+            logger.debug(
+                "[BRIDGE] inbound é reação — silêncio conv=%s", conversation.get("id"),
+            )
+            return False
+        if _is_social_closing(inbound_text):
+            await _react_to_social_closing(lead, phone, conversation, provider, inbound_wamid)
+            return False
+
+        # Escada de decisão da ponte (auditoria 15/07 — ESCUDO SEGURO): reação → silêncio;
+        # encerramento social → ❤️; RECLAMAÇÃO do atendimento humano → escala p/ gerência +
+        # aviso ao lead (caso Aislan); PERGUNTA DE NEGÓCIO → aviso de RECEBIMENTO (não mais
+        # silêncio total — caso Itamar: o humano ainda lê e responde, mas o lead não fica no
+        # vácuo); resto (vácuo puro Maycon/Juliana) → carimbo + cartão.
+        conv_id = conversation.get("id")
+        redis = _get_buffer_redis()
+
+        if _looks_like_complaint(inbound_text):
+            # Escalonamento fail-OPEN de propósito: perder a reclamação de um cliente
+            # queimado é pior que um alerta duplicado raro à gerência (assimetria vs. o
+            # ack abaixo, que é fail-closed). Redis fora → ainda alerta uma vez.
+            try:
+                esc_fresh = await redis.set(
+                    f"bridge_escalation:{conv_id}", "1", nx=True,
+                    ex=_BRIDGE_ESCALATION_COOLDOWN_SECONDS,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[BRIDGE] Redis indisponível p/ escalonamento — fail-open (alerta 1x) conv=%s: %s",
+                    conv_id, exc,
+                )
+                esc_fresh = True
+            if not esc_fresh:
+                logger.debug("[BRIDGE] escalonamento em cooldown — silêncio conv=%s", conv_id)
+                return False
+            logger.warning("[BRIDGE] RECLAMAÇÃO pós-handoff — escalonando p/ gerência conv=%s", conv_id)
+            try:
+                create_system_alert(
+                    type="lead_post_handoff_complaint",
+                    title="Reclamacao de lead pos-handoff — escalonar",
+                    message=(
+                        f"{lead.get('name') or 'sem nome'} ({phone}) reclamou APOS o handoff.\n"
+                        f"Mensagem: {(inbound_text or '')[:400]}\n"
+                        f"Revisar com prioridade — cliente insatisfeito com o time humano."
+                    ),
+                    severity="critical",
+                    metadata={"lead_id": lead.get("id"), "phone": phone, "conversation_id": conv_id},
+                )
+            except Exception as exc:
+                logger.warning("[BRIDGE] falha ao escalar reclamação (fail-soft) conv=%s: %s", conv_id, exc)
+            return await _deliver_bridge_notice(
+                lead, phone, conversation, provider, _BRIDGE_ESCALATION_TEXT,
+                "[ponte] RECLAMAÇÃO pós-handoff — escalonado para gerência + aviso ao lead",
+            )
+
+        if _looks_like_business_question(inbound_text):
+            # Aviso de recebimento (não silêncio). Fail-CLOSED no Redis: sem cooldown
+            # confiável, melhor calar que arriscar repetir o aviso a cada mensagem.
+            try:
+                ack_fresh = await redis.set(
+                    f"bridge_ack:{conv_id}", "1", nx=True, ex=_BRIDGE_ACK_COOLDOWN_SECONDS,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[BRIDGE] Redis indisponível p/ aviso de recebimento — fail-closed conv=%s: %s",
+                    conv_id, exc,
+                )
+                return False
+            if not ack_fresh:
+                logger.debug("[BRIDGE] aviso de recebimento em cooldown — silêncio conv=%s", conv_id)
+                return False
+            logger.info(
+                "[BRIDGE] pergunta de negócio pós-handoff — aviso de recebimento conv=%s", conv_id,
+            )
+            return await _deliver_bridge_notice(
+                lead, phone, conversation, provider, _BRIDGE_ACK_TEXT,
+                "[ponte] pergunta de negócio pós-handoff — aviso de recebimento enviado (João responde)",
+            )
 
         conversation_id = conversation.get("id")
         lead_id = lead.get("id")
@@ -984,9 +1280,8 @@ async def process_buffered_messages(
     # ingestion would re-allow them after a flush, so this DB check is the last-resort backstop).
     # NOT race-safe: two concurrent deliveries of the same wamid can both pass here before either
     # saves. The Redis SETNX layer handles that race; this DB layer is last-resort only.
-    # TODO: wrap blocking Supabase call in asyncio.to_thread (same pre-existing pattern as _is_recent_duplicate)
     if wamid:  # empty-string wamids are intentionally treated as absent (same as None)
-        if _wamid_already_processed(wamid):
+        if await asyncio.to_thread(_wamid_already_processed, wamid):
             logger.warning(
                 "[DEDUP-DB] wamid=%s já persistido no banco — descartando duplicata para phone=%s",
                 wamid, phone,
@@ -1099,6 +1394,19 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning(f"Failed to increment unread_count for {conversation['id']}: {e}")
 
+    # Gate de reação isolada (forense 11/07, caso Anderson): reação do lead NÃO é
+    # turno de conversa — rodar a IA aqui gerava um turno de venda novo sem o lead
+    # ter dito nada. A reação já foi persistida acima (contexto p/ CRM e para o
+    # enriquecimento "[O lead reagiu com X]" dos PRÓXIMOS turnos); daqui em diante,
+    # silêncio. Roda antes de todos os gates de IA — vale p/ pré e pós-handoff.
+    if _is_reaction_only_turn(resolved_text, _message_type):
+        logger.info(
+            "[REACTION GATE] inbound é reação isolada — sem turno de IA conv=%s phone=%s",
+            conversation["id"], phone,
+        )
+        _update_last_msg(conversation["id"])
+        return
+
     # Channel-level gate: human channels never run AI or schedule follow-ups
     if channel.get("mode", "ai") == "human":
         logger.info(
@@ -1124,7 +1432,13 @@ async def process_buffered_messages(
         # Ponte pós-handoff (Frente B1): sem isso, um lead já transbordado pro João que
         # continua escrevendo NESTE número cai no vácuo (casos reais Maycon/Juliana,
         # 01-02/07) — a IA está muda por contrato, mas ninguém avisa o lead disso.
-        await _maybe_send_handoff_bridge(lead, phone, conversation, channel, provider)
+        # O contexto do inbound alimenta o filtro de intenção: encerramento social
+        # recebe reação ❤️ em vez do texto de roteamento (auditoria 11/07).
+        await _maybe_send_handoff_bridge(
+            lead, phone, conversation, channel, provider,
+            inbound_text=resolved_text, inbound_wamid=wamid,
+            inbound_message_type=_message_type,
+        )
         _update_last_msg(conversation["id"])
         return
 
@@ -1149,6 +1463,35 @@ async def process_buffered_messages(
             return
     except Exception as exc:
         logger.warning("[AUTORESPONDER] gate falhou p/ %s (segue fluxo normal): %s", phone, exc)
+
+    # GATILHO DETERMINÍSTICO DE PREFILL (B1, auditoria 10/07): a frase fixa de prefill de um
+    # anúncio ("Olá! Quero saber mais sobre ter a Marca Própria de Café.") deveria mover o lead
+    # pro funil certo já na entrada, mas dependia do LLM chamar mudar_stage — falhou em 1 de 4
+    # leads (João Marcos preso em pending por 2 turnos, sem catálogo). Aqui o efeito é código:
+    # só em stage de ENTRADA (None/''/pending/secretaria) e por IGUALDADE de frase (nunca
+    # substring), aplicamos a transição pelo MESMO efeito de mudar_stage e atualizamos
+    # conversation["stage"] para o turno atual já enxergar o funil novo (run_agent lê daí).
+    # Fail-open: qualquer erro só loga e segue o fluxo normal do LLM.
+    try:
+        _cur_stage = conversation.get("stage")
+        if (_cur_stage or "") in ("", "pending", "secretaria"):
+            _matched_stage = None
+            for _line in resolved_text.split("\n"):
+                _matched_stage = match_prefill_stage(_line)
+                if _matched_stage:
+                    break
+            if _matched_stage and _matched_stage != _cur_stage:
+                if apply_stage_transition(lead["id"], conversation["id"], _matched_stage):
+                    conversation["stage"] = _matched_stage
+                    logger.info(
+                        "[PREFILL STAGE] frase de prefill moveu conv %s (lead %s) de %r p/ %r",
+                        conversation["id"], lead["id"], _cur_stage, _matched_stage,
+                    )
+    except Exception as exc:
+        logger.warning(
+            "[PREFILL STAGE] gatilho de prefill falhou p/ conv %s (fail-open, segue LLM): %s",
+            conversation.get("id"), exc,
+        )
 
     # Resolve agent profile: conversation takes priority over channel default
     # None means no explicit profile — orchestrator defaults to valeria_inbound
@@ -1290,13 +1633,19 @@ async def process_buffered_messages(
                     await _reset_llm_failures()
                     break
                 except LLMUnavailableError as e:
+                    # Wartime 10/07: o tipo da exceção decide o reason do parking —
+                    # budget/quota (exaustão longa) estaciona até a virada do dia;
+                    # o resto mantém a janela transitória de 30min.
+                    _reason = _llm_down_reason(e)
                     logger.error(
-                        "[LLM DOWN] LLM indisponível para %s (conv=%s): %s",
-                        phone, conversation["id"], e, exc_info=True,
+                        "[LLM DOWN] LLM indisponível para %s (conv=%s, reason=%s): %s",
+                        phone, conversation["id"], _reason, e, exc_info=True,
                     )
                     pop_interest_marked(conversation["id"])
                     pop_quote_executed(conversation["id"])  # idem (Frente B3)
-                    await _handle_llm_down(lead, phone, conversation, inbound_text=resolved_text)
+                    await _handle_llm_down(
+                        lead, phone, conversation, inbound_text=resolved_text, reason=_reason,
+                    )
                     _update_last_msg(conversation["id"])
                     return
                 except Exception as e:
@@ -1545,16 +1894,42 @@ async def _dispatch_deferred_media(provider, send_to: str, conversation: dict, l
             groups.append(g)
         g["total"] += 1
         try:
-            await provider.send_image_base64(
+            send_result = await provider.send_image_base64(
                 send_to, item["b64"], item["mimetype"], caption=item.get("caption", "")
             )
             g["sent"] += 1
             g["catalog"] = g["catalog"] or bool(item.get("catalog"))
-            await asyncio.sleep(1)
         except Exception as _e:
             logger.error(
                 "Failed to send deferred media to %s: %s", send_to, _e, exc_info=True
             )
+            continue
+        # Persistência por imagem (auditoria 11/07): sem esta linha em `messages`,
+        # um reply do lead à foto era irresolvível (frontend "Mensagem original não
+        # disponível"; prompt com marcador genérico) e o CRM nem mostrava a foto.
+        # O wamid é o que torna a citação resolvível; a cópia no Storage dá a URL
+        # permanente da bolha. Fail-soft: a mídia JÁ foi entregue — falha aqui
+        # nunca escala nem impede o marcador k/n.
+        try:
+            storage_url = _upload_image_to_storage(
+                base64.b64decode(item["b64"]), item.get("mimetype") or "image/jpeg",
+            )
+            save_message(
+                conversation.get("id"), lead.get("id"), "assistant",
+                item.get("caption", "") or "",
+                conversation.get("stage"),
+                sent_by="agent",
+                message_type="image",
+                media_url=storage_url,
+                media_mime=item.get("mimetype"),
+                wamid=extract_wamid(send_result),
+            )
+        except Exception as _persist_exc:
+            logger.error(
+                "Falha ao persistir foto diferida (envio OK) conv=%s: %s",
+                conversation.get("id"), _persist_exc, exc_info=True,
+            )
+        await asyncio.sleep(1)
     try:
         record_deferred_media_delivery(lead["id"], conversation["id"], groups)
     except Exception as _e:
@@ -1692,6 +2067,29 @@ def _sync_conversation_persona(conversation: dict, agent_persona: str) -> None:
             "[PERSONA] falha ao sincronizar agent_persona conv=%s: %s",
             conversation.get("id"), exc,
         )
+
+
+def _upload_image_to_storage(image_bytes: bytes, mimetype: str) -> str | None:
+    """Cópia permanente de uma imagem outbound no Storage (bucket whatsapp-media).
+
+    Mesmo bucket/prefixo do send-media do CRM — a bolha do frontend renderiza
+    qualquer media_url http diretamente. Fail-soft: None em erro (a linha da
+    mensagem ainda nasce; só degrada para o ícone de imagem).
+    """
+    try:
+        import uuid
+        from app.db.supabase import get_supabase
+        sb = get_supabase()
+        ext = "png" if "png" in (mimetype or "") else "jpg"
+        path = f"outbound/agent_{uuid.uuid4().hex}.{ext}"
+        sb.storage.from_("whatsapp-media").upload(
+            path, image_bytes,
+            file_options={"content-type": mimetype or "image/jpeg", "x-upsert": "true"},
+        )
+        return sb.storage.from_("whatsapp-media").get_public_url(path)
+    except Exception as e:
+        logger.warning(f"Failed to upload outbound image to storage: {e}")
+        return None
 
 
 def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: str, ext: str) -> str | None:

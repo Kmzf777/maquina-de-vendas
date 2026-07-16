@@ -10,6 +10,9 @@ import { CadenceList } from "@/components/campaigns/cadence-list";
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
+import { FollowupBoard } from "@/components/campaigns/followup-board";
+import { campaignNodeCount } from "@/lib/campaign-node-count";
+import { isSystemCampaign } from "@/lib/system-campaign";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -20,10 +23,12 @@ function StatusBadge({ status }: { status: string }) {
     failed: "bg-[#c41c1c]/10 text-[#c41c1c] border-[#c41c1c]/20",
     active: "bg-[#0bdf50]/10 text-[#0bdf50] border-[#0bdf50]/20",
     archived: "bg-[#f0ede8] text-[#7b7b78] border-[#dedbd6]",
+    system: "bg-[#ff5600]/10 text-[#ff5600] border-[#ff5600]/20",
   };
   const labels: Record<string, string> = {
     draft: "Rascunho", running: "Rodando", paused: "Pausado",
     completed: "Completo", failed: "Falhou", active: "Ativa", archived: "Arquivada",
+    system: "Sistema",
   };
   return (
     <span className={`inline-flex items-center text-[10px] font-medium uppercase tracking-[0.6px] px-2 py-0.5 rounded-[4px] border flex-shrink-0 ${styles[status] ?? styles.draft}`}>
@@ -32,7 +37,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-const VALID_TABS = ["visao-geral", "disparos", "cadencias", "templates"] as const;
+const VALID_TABS = ["visao-geral", "disparos", "cadencias", "follow-up", "templates"] as const;
 type TabId = typeof VALID_TABS[number];
 
 function CampanhasPageInner() {
@@ -53,6 +58,34 @@ function CampanhasPageInner() {
   const [frequencyCap, setFrequencyCap] = useState(1);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
+  // Estado do espelho do motor (regra Redis /api/cadence/mirror-visibility). O
+  // controle agora é o toggle EMBUTIDO no card de sistema (padronização 11/07) —
+  // só apresentação: activate/pause do espelho segue bloqueado (409) no backend.
+  const [mirrorVisible, setMirrorVisible] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/cadence/mirror-visibility")
+      .then(r => r.json())
+      .then(d => setMirrorVisible(Boolean(d.visible)))
+      .catch(() => setMirrorVisible(false));
+  }, []);
+
+  const toggleMirrorVisibility = async () => {
+    const next = !mirrorVisible;
+    setMirrorVisible(next); // otimista
+    try {
+      const res = await fetch("/api/cadence/mirror-visibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: next }),
+      });
+      const d = await res.json();
+      if (!res.ok) setMirrorVisible(!next); // rollback
+      else setMirrorVisible(Boolean(d.visible));
+    } catch {
+      setMirrorVisible(!next);
+    }
+  };
   // Load connected channels once on mount
   useEffect(() => {
     fetch("/api/channels")
@@ -163,6 +196,7 @@ function CampanhasPageInner() {
               {tab === "visao-geral" ? "Visão Geral"
                 : tab === "disparos" ? "Disparos"
                 : tab === "cadencias" ? "Cadências"
+                : tab === "follow-up" ? "Follow-up"
                 : "Templates"}
             </button>
           ))}
@@ -225,9 +259,9 @@ function CampanhasPageInner() {
                     className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity"
                     onClick={() => router.push(`/campanhas/cadencias/${c.id}`)}
                   >
-                    <StatusBadge status={c.status} />
+                    <StatusBadge status={isSystemCampaign(c.id) ? "system" : c.status} />
                     <span className="text-[14px] text-[#111111] flex-1 mx-3 truncate">{c.name}</span>
-                    <span className="text-[12px] text-[#7b7b78]">{c.nodes?.length ?? 0} nós</span>
+                    <span className="text-[12px] text-[#7b7b78]">{campaignNodeCount(c)} nós</span>
                   </div>
                 ))}
                 {campaigns.length === 0 && (
@@ -239,7 +273,15 @@ function CampanhasPageInner() {
         )}
 
         {activeTab === "disparos" && <BroadcastList broadcasts={broadcasts} onRefresh={() => {}} />}
-        {activeTab === "cadencias" && <CadenceList campaigns={campaigns} onRefresh={() => {}} />}
+        {activeTab === "cadencias" && (
+          <CadenceList
+            campaigns={campaigns}
+            onRefresh={() => {}}
+            mirrorVisible={mirrorVisible}
+            onToggleMirror={toggleMirrorVisibility}
+          />
+        )}
+        {activeTab === "follow-up" && <FollowupBoard />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>
 

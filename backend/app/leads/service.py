@@ -1,9 +1,11 @@
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from app.db.supabase import get_supabase
+from app.conversations.service import render_history_content
+from app.db.supabase import get_supabase, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -112,14 +114,59 @@ def strip_greeting_prefix(name: str | None) -> str | None:
     return remainder or None
 
 
+# Apelidos afetivos genéricos usados como pushname do WhatsApp (QA 10/07 — lead
+# "querido" virou "boa, querido" numa bolha da Valéria em conversa B2B). Match EXATO
+# do nome inteiro normalizado (minúsculas, sem acento) — nunca substring, para não
+# derrubar nomes legítimos ("Amora", "Vidal", "Vida Nova Cafés").
+_PUSHNAME_ENDEARMENTS = frozenset({
+    "querido", "querida", "amor", "meu amor", "mozao", "bebe",
+    "vida", "eu", "eu mesmo", "eu mesma",
+})
+
+# Respostas conversacionais que chegam como "nome" (forense 11/07 — lead cadastrado
+# como "Sim" pelo formulário da LP virou vocativo "olá Sim" na Valéria). Mesmo
+# regime do _PUSHNAME_ENDEARMENTS: match EXATO do nome inteiro normalizado, nunca
+# substring — "Simone", "Simão", "Okada", "Testolini" e "Sim Silva" passam.
+_CONVERSATIONAL_NON_NAMES = frozenset({
+    "sim", "nao", "ok", "okay", "okey", "blz", "beleza",
+    "teste", "test", "testando",
+    "quero", "quero sim", "sim quero", "nao sei", "sei nao",
+    "obrigado", "obrigada", "valeu", "oi",
+    "cliente", "lead", "contato", "whatsapp", "nome", "meu nome",
+})
+
+
+def _normalize_name_for_blocklist(text: str) -> str:
+    nfd = unicodedata.normalize("NFD", text.lower().strip())
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+
+
+# Pushname de EMPRESA usado como vocativo soa robótico ("fechado, Empório Da Canastra" —
+# varredura 12/07). Match por PALAVRA INTEIRA no nome normalizado: qualquer um destes
+# tokens torna o nome um nome de NEGÓCIO → cai em "sem nome" e a Valéria pergunta o nome
+# da pessoa (o negócio em si ela descobre e registra na conversa). Deliberadamente sem
+# termos que colidam com nome próprio.
+_BUSINESS_NAME_TOKENS = frozenset({
+    "emporio", "distribuidora", "cafeteria", "torrefacao", "comercio", "comercial",
+    "ltda", "cafe", "cafes", "restaurante", "padaria", "mercearia", "mercado",
+    "atacado", "atacadista", "loja", "alimentos", "industria", "supermercado",
+})
+
+
+def _looks_like_business_name(normalized: str) -> bool:
+    """True se o nome normalizado contém uma palavra inteira de negócio."""
+    return any(w in _BUSINESS_NAME_TOKENS for w in normalized.split())
+
+
 def sanitize_display_name(name: str | None) -> str | None:
-    """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username
-    ou lixo de import.
+    """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username,
+    apelido de pushname ou lixo de import.
 
     None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez de
     chamar o lead por um handle; o template do disparo usa "você"). Conservador: só descarta
-    com sinal claro — saudação pura (ex.: "Olá, boa tarde"), handle (dígito/underscore) ou
-    marcador de lixo de importação/CRM — pra não derrubar nomes legítimos como "João Silva".
+    com sinal claro — saudação pura (ex.: "Olá, boa tarde"), handle (dígito/underscore),
+    apelido afetivo genérico de pushname ("querido") ou marcador de lixo de importação/CRM
+    — pra não derrubar nomes legítimos como "João Silva".
 
     Task C-4: o strip de saudação roda ANTES das checagens de handle/import, e sobre o
     RESULTADO do strip — assim "Boa tarde.... Luiz" vira "Luiz" antes de ser validado (e
@@ -137,6 +184,13 @@ def sanitize_display_name(name: str | None) -> str | None:
         return None
     if _IMPORT_GARBAGE_RE.search(n):
         return None
+    normalized = _normalize_name_for_blocklist(n)
+    if normalized in _PUSHNAME_ENDEARMENTS:
+        return None
+    if normalized in _CONVERSATIONAL_NON_NAMES:
+        return None
+    if _looks_like_business_name(normalized):
+        return None
     return n
 
 
@@ -149,17 +203,29 @@ _WON_DEAL_STAGES: tuple[str, ...] = ("fechado_ganho",)
 _LOST_DEAL_STAGES: tuple[str, ...] = ("perdido", "fechado_perdido")
 
 
-def lead_has_active_relationship(lead_id: str) -> bool:
-    """True se o lead já é cliente / está em tratativa humana.
+def _won_stage_ids(sb) -> list[str]:
+    """IDs dos `pipeline_stages` de ganho (key='fechado_ganho'), em todos os pipelines.
 
-    Sinal de "já é cliente / já em atendimento", usado para (a) excluir de disparo frio
-    de prospecção e (b) avisar a Valéria (lead_is_customer). Fail-open=False: em erro,
-    retorna False (não bloqueia o fluxo nem o disparo por causa da checagem).
+    A key é o contrato estável do estágio; o label é editável pelo operador e o
+    `deals.stage` legado está morto. Sem cache: a lista é minúscula e um cache aqui
+    envelheceria justamente quando um pipeline novo fosse criado.
+    """
+    res = sb.table("pipeline_stages").select("id").eq("key", "fechado_ganho").execute()
+    if not isinstance(res.data, list):
+        return []
+    return [row["id"] for row in res.data if row.get("id")]
 
-    Ponte runtime do Gap E (sem alterar schema): além do estágio de tratativa, consulta a
-    tabela `sales` (qualquer venda registrada = cliente definitivo) e os deals em
-    closed-won (`fechado_ganho`), pegando clientes reais que o disparo tratava como frios
-    (auditoria 2026-06-22: Jéssica e Kadi Guth, clientes ativas com deal ainda em 'novo').
+
+def lead_is_customer(lead_id: str) -> bool:
+    """True se o lead é CLIENTE CONSOLIDADO — venda registrada ou negócio ganho.
+
+    Sinal ESTREITO e atemporal, separado de propósito do "falou com um humano
+    recentemente" (`lead_recently_engaged`). É a trava dura do disparo frio: cliente
+    não recebe prospecção fria nem que o último contato tenha sido há um ano
+    (casos Nayara e Kadi Guth). Fail-open=False.
+
+    NÃO inclui `ja_chamado`: tratativa humana em aberto é sinal de CONTATO, não de
+    venda — quem decide sobre esse lead é a janela temporal do chamador.
     """
     if not lead_id:
         return False
@@ -171,16 +237,61 @@ def lead_has_active_relationship(lead_id: str) -> bool:
         sale = sb.table("sales").select("id").eq("lead_id", lead_id).limit(1).execute()
         if isinstance(sale.data, list) and sale.data:
             return True
-        # (2) Deal em tratativa humana (ja_chamado) ou fechado-ganho (closed-won).
+        # (2) Deal em estágio de GANHO. A verdade do estágio é `deals.stage_id` ->
+        # `pipeline_stages.key`; a coluna legada `deals.stage` está CONGELADA (auditoria
+        # 13/07: zero linhas no banco inteiro com stage='fechado_ganho', e deals do
+        # estágio real "Perdido" carregam stage='novo'/'ja_chamado'). Ler a coluna legada
+        # aqui é o que fazia a heurística de closed_at classificar deal perdido como
+        # cliente — e um dia deixaria passar um cliente de verdade.
+        won_stage_ids = _won_stage_ids(sb)
+        if won_stage_ids:
+            won = (
+                sb.table("deals").select("id")
+                .eq("lead_id", lead_id)
+                .in_("stage_id", won_stage_ids)
+                .limit(1).execute()
+            )
+            if isinstance(won.data, list) and won.data:
+                return True
+        return False
+    except Exception as exc:
+        logger.warning("leads.service: lead_is_customer falhou p/ %s: %s", lead_id, exc)
+        return False
+
+
+def lead_has_active_relationship(lead_id: str) -> bool:
+    """True se o lead já é cliente / está em tratativa humana.
+
+    Sinal LARGO = cliente consolidado OU tratativa humana em aberto (`ja_chamado`) OU
+    contato humano nos últimos 90 dias. Usado pelo guardrail de descarte em
+    `agent/tools.py` (caso Kadi Guth), que precisa da rede mais ampla: descartar um
+    lead como "perdido" é pior do que deixar de descartar.
+
+    O worker de broadcast NÃO usa este sinal — ele compõe `lead_is_customer` (trava
+    absoluta) com uma janela temporal curta, porque lá o custo é o inverso: reter um
+    lead frio de mais é perder receita. Fail-open=False.
+    """
+    if not lead_id:
+        return False
+    try:
+        if lead_is_customer(lead_id):
+            return True
+        sb = get_supabase()
+        # Deal em tratativa humana em aberto (ja_chamado) — não é venda, mas para o
+        # descarte conta como relacionamento vivo.
         deal = (
             sb.table("deals").select("id")
             .eq("lead_id", lead_id)
-            .in_("stage", list(_ACTIVE_DEAL_STAGES + _WON_DEAL_STAGES))
+            .in_("stage", list(_ACTIVE_DEAL_STAGES))
             .limit(1).execute()
         )
         if isinstance(deal.data, list) and deal.data:
             return True
-        # (3) Heurística legada: deal fechado (closed_at setado) que NÃO é de perda.
+        # Heurística legada de closed-won por `closed_at` sobre a coluna `stage`. Ela é
+        # IMPRECISA (a coluna está congelada — ver `lead_is_customer`) e por isso NÃO
+        # entra na trava do disparo frio. Aqui ela fica de propósito: no descarte, errar
+        # para o lado de "tem relacionamento" só impede um lead de ser marcado perdido,
+        # o que é barato; o erro caro é o inverso (caso Kadi Guth).
         closed_won = (
             sb.table("deals").select("id")
             .eq("lead_id", lead_id)
@@ -190,7 +301,7 @@ def lead_has_active_relationship(lead_id: str) -> bool:
         )
         if isinstance(closed_won.data, list) and closed_won.data:
             return True
-        # (4) Contato humano recente (mensagens de seller <90d) — caso Nayara 08/07:
+        # Contato humano recente (mensagens de seller <90d) — caso Nayara 08/07:
         # compra em maio nunca virou `sales` nem deal fechado, mas as MENSAGENS do
         # vendedor estavam lá; ela entrou na lista fria e levou template 3x em 13 dias.
         return lead_recently_engaged(lead_id)
@@ -204,18 +315,25 @@ def lead_has_active_relationship(lead_id: str) -> bool:
 _RECENT_ENGAGEMENT_DAYS = 90
 
 
-def lead_recently_engaged(lead_id: str, days: int = _RECENT_ENGAGEMENT_DAYS) -> bool:
-    """True se um vendedor humano trocou mensagem com o lead nos últimos `days` dias.
+def lead_recently_engaged(
+    lead_id: str, days: int = _RECENT_ENGAGEMENT_DAYS, hours: int | None = None,
+) -> bool:
+    """True se um vendedor humano trocou mensagem com o lead na janela informada.
 
     Sinal complementar ao `lead_has_active_relationship`: cobre o cliente real cuja
     compra nunca virou `sales`/deal fechado no CRM (caso Nayara, 08/07/2026).
+
+    `hours` tem precedência sobre `days` quando informado — o disparo frio usa uma
+    janela curta (horas) para distinguir "em conversa AGORA" de "trabalhado no mês
+    passado", enquanto o descarte segue na janela larga de 90 dias.
     Fail-open=False: erro de checagem nunca bloqueia o fluxo.
     """
     if not lead_id:
         return False
     try:
         sb = get_supabase()
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        delta = timedelta(hours=hours) if hours is not None else timedelta(days=days)
+        cutoff = (datetime.now(timezone.utc) - delta).isoformat()
         res = (
             sb.table("messages").select("id")
             .eq("lead_id", lead_id)
@@ -483,8 +601,12 @@ def get_or_create_lead(
 
 
 def update_lead(lead_id: str, **fields) -> dict[str, Any]:
-    sb = get_supabase()
-    result = sb.table("leads").update(fields).eq("id", lead_id).execute()
+    # Retry de transporte (GOAWAY sob rajada de disparo perdia o write silenciosamente).
+    # A lambda refaz o request inteiro a cada tentativa; erro de aplicação propaga sem retry.
+    result = run_with_retry(
+        lambda: get_supabase().table("leads").update(fields).eq("id", lead_id).execute(),
+        label="update_lead",
+    )
     return result.data[0]
 
 
@@ -1443,7 +1565,9 @@ def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
     if phone:
         try:
             from app.follow_up.service import cancel_followups_by_phone
-            cancel_followups_by_phone(phone, reason=reason)
+            # Parada terminal (opt-out): também cancela `ai_scheduled_return` — um lead
+            # que pediu para sair não pode receber um retorno proativo depois.
+            cancel_followups_by_phone(phone, reason=reason, preserve_scheduled_return=False)
         except Exception as exc:
             logger.error(
                 "apply_optout_side_effects: falha ao cancelar follow-ups para lead %s (phone %s): %s",
@@ -1506,17 +1630,34 @@ def get_relationship_summary(lead_id: str) -> str:
         return "Não foi possível consultar o relacionamento agora."
 
 
-def get_history(lead_id: str, limit: int = 30, since: str | None = None) -> list[dict[str, Any]]:
+def get_history(
+    lead_id: str, limit: int = 30, since: str | None = None, latest: bool = False
+) -> list[dict[str, Any]]:
     """Histórico cross-canal do lead (todas as conversas). `since` (ISO) filtra apenas
     mensagens com created_at > since — usado pela Camada de Memória para buscar só o DELTA
-    desde o último resumo rolante (ver app/agent/memory_manager.py)."""
+    desde o último resumo rolante (ver app/agent/memory_manager.py).
+
+    `latest=True` devolve a janela das `limit` mensagens MAIS RECENTES (ainda em ordem
+    cronológica) — com asc+limit o corte pegaria as mais ANTIGAS, o que inutilizava o
+    cap do backfill de dossiê (consolidava o começo da história, não o fim)."""
     sb = get_supabase()
     query = (
         sb.table("messages")
-        .select("role, content, stage, created_at")
+        # message_type entra no select p/ render_history_content conseguir mapear content
+        # vazio de mídia (áudio/imagem do vendedor) num placeholder legível E envelopar a
+        # LEGENDA com tipo+autoria — sem isso o dossiê lia a legenda das NOSSAS fotos como
+        # fala do lead (falha real 13/07, lead 5564999289099).
+        .select("role, content, stage, created_at, message_type")
         .eq("lead_id", lead_id)
     )
     if since:
         query = query.gt("created_at", since)
-    result = query.order("created_at", desc=False).limit(limit).execute()
-    return result.data
+    if latest:
+        result = query.order("created_at", desc=True).limit(limit).execute()
+        rows = list(reversed(result.data))
+    else:
+        result = query.order("created_at", desc=False).limit(limit).execute()
+        rows = result.data
+    for row in rows:
+        row["content"] = render_history_content(row)
+    return rows

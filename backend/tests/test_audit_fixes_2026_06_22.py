@@ -9,7 +9,7 @@ Cobre:
 - Falhas 7/8: regra de aquecer-antes-de-qualificar no prompt outbound.
 """
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 
 # --- Falha 1: fallback sem falsa promessa --------------------------------
@@ -62,19 +62,23 @@ def test_media_fallback_example_segue_humanizacao():
 
 # --- Falha 3: contexto outbound de 1º turno com a abertura no histórico ---
 
-def _mock_openai_response(text: str = "resposta da ia"):
-    msg = MagicMock()
-    msg.tool_calls = None
-    msg.content = text
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    resp.usage = None
-    return resp
+from tests.gemini_fakes import fake_text
 
 
-def _capture_messages(create_mock):
-    call_args = create_mock.call_args_list[0]
-    return call_args.kwargs.get("messages") or call_args.args[0]
+def _capture_contents(m_gen):
+    """kwargs da PRIMEIRA chamada nativa: (contents, blob de todo o texto enviado).
+
+    Migração 09/07 (Gemini 100% nativo): o turno viaja como kwargs["contents"]
+    (list[types.Content]) + kwargs["system_instruction"] — não mais "messages".
+    """
+    kwargs = m_gen.await_args_list[0].kwargs
+    contents = kwargs["contents"]
+    texts = []
+    for c in contents:
+        for p in (c.parts or []):
+            if getattr(p, "text", None):
+                texts.append(p.text)
+    return contents, " ".join(texts)
 
 
 @pytest.mark.asyncio
@@ -97,24 +101,25 @@ async def test_outbound_injeta_contexto_com_abertura_no_historico():
         "leads": {"id": "lead-real", "name": "Maria", "phone": "5511900000099"},
     }
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
     with patch("app.agent.orchestrator.get_lead", return_value={
                 "id": "lead-real", "name": "Maria", "phone": "5511900000099", "ai_enabled": True,
             }), \
          patch("app.agent.orchestrator.get_history", return_value=[opener]), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = create_mock
+         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gemini-2.5-flash"}), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text("resposta da ia"))) as m_gen:
         await run_agent(conversation, "sim", lead_context=None, agent_profile_id="profile-out")
 
-    messages = _capture_messages(create_mock)
+    contents, blob = _capture_contents(m_gen)
     # O contexto de 1º turno outbound tem que ser injetado. O texto foi reescrito para o arco
     # AIDA caloroso (commit 1674bc5) — marcador estavel = "PRIMEIRO turno" — e a abertura-template
     # e derivada do proprio broadcast no historico ("Falo com Maria neste número?").
-    blob = " ".join(str(m.get("content", "")) for m in messages)
-    assert "PRIMEIRO turno" in blob, messages
+    assert "PRIMEIRO turno" in blob, contents
     assert "Falo com Maria neste número?" in blob
-    assert messages[-1] == {"role": "user", "content": "sim"}
+    # A última entrada do turno continua sendo a mensagem atual do lead.
+    assert contents[-1].role == "user"
+    assert contents[-1].parts[0].text == "sim"
 
 
 @pytest.mark.asyncio
@@ -133,16 +138,18 @@ async def test_outbound_segundo_turno_com_abertura_nao_injeta():
         "leads": {"id": "lead-real2", "name": "Maria", "phone": "5511900000098"},
     }
 
-    create_mock = AsyncMock(return_value=_mock_openai_response())
     with patch("app.agent.orchestrator.get_lead", return_value={
                 "id": "lead-real2", "name": "Maria", "phone": "5511900000098", "ai_enabled": True,
             }), \
          patch("app.agent.orchestrator.get_history", return_value=history), \
-         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gpt-4.1-mini"}), \
-         patch("app.agent.orchestrator._get_client") as mock_client:
-        mock_client.return_value.chat.completions.create = create_mock
+         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gemini-2.5-flash"}), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text("resposta da ia"))) as m_gen:
         await run_agent(conversation, "quero saber mais", lead_context=None, agent_profile_id="profile-out")
 
-    messages = _capture_messages(create_mock)
-    # 2º turno: NAO injeta o contexto de 1º turno outbound (marcador "PRIMEIRO turno" ausente).
-    assert not any("PRIMEIRO turno" in str(m) for m in messages)
+    _contents, blob = _capture_contents(m_gen)
+    # 2º turno: NAO injeta o contexto de 1º turno outbound (marcador "PRIMEIRO turno" ausente)
+    # — nem nos contents nem no system_instruction.
+    assert "PRIMEIRO turno" not in blob
+    assert "PRIMEIRO turno" not in (m_gen.await_args_list[0].kwargs.get("system_instruction") or "")

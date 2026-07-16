@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 
 from app.config import get_settings
-from app.db.supabase import get_supabase
+from app.db.supabase import get_supabase, db_call
 from app.whatsapp.registry import get_provider
 from app.channels.service import get_channel_by_id
 from app.broadcast.service import (
@@ -24,7 +24,8 @@ from app.conversations.service import get_or_create_conversation, update_convers
 from app.templates.intent import dispatch_metadata, classify_template_intent, COLD_REACTIVATION
 from app.leads.service import (
     update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
-    lead_has_active_relationship, apply_optout_side_effects, append_lead_observation,
+    lead_is_customer, lead_recently_engaged, apply_optout_side_effects,
+    append_lead_observation,
 )
 from app.follow_up.scheduler import process_due_followups, check_meta_channel_health
 
@@ -32,14 +33,42 @@ _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 _BILLING_ERROR_CODE = 131042
 
-# Cadência do loop principal. Era 5s — com ~8-12 queries REST por tick, 24/7,
-# o polling ocioso respondia por boa parte do estouro de Egress do Supabase
-# (cota Free de 5GB/mês). Nenhum job do loop exige latência de segundos:
-# broadcasts agendados, cadência, follow-ups e memórias têm granularidade de
-# minutos/horas; o envio em si roda DENTRO de process_single_broadcast com
-# sleep próprio por lead. Ao adicionar jobs novos ao loop (ex.: Etapa 3-4 do
-# watchdog/Frente B), dimensionar para esta latência base.
-WORKER_TICK_SECONDS = 30
+# Classe de erro de TEMPLATE (wartime T3, defesa em profundidade do pre-flight):
+# template inexistente/locale errado (132001, e o 404 cru que a Meta devolve p/
+# tradução ausente), params errados (132000), formato inválido (132005/132007/132012).
+# Um broadcast com template quebrado falha IGUAL para todos os leads — sem circuit
+# breaker, queimaria a lista inteira lead a lead.
+_TEMPLATE_ERROR_CODES = frozenset({132000, 132001, 132005, 132007, 132012})
+# Nº de erros de template CONSECUTIVOS que pausa o broadcast. 3 tolera flukes
+# isolados sem deixar a lista queimar.
+_TEMPLATE_ERROR_PAUSE_THRESHOLD = 3
+# Contador in-memory por broadcast_id, vivo só neste processo do worker: restart
+# zera (aceitável — o broadcast pausado não volta sozinho e o dano por ciclo de
+# vida do processo fica limitado a 3 leads).
+_template_error_streaks: dict[str, int] = {}
+
+
+def _is_template_error(status_code: int | None, meta_err: dict) -> bool:
+    """True se o erro Meta é da classe 'template quebrado' (falha igual p/ todo lead)."""
+    code = meta_err.get("code")
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        code = None
+    if code in _TEMPLATE_ERROR_CODES:
+        return True
+    # 404 de template: locale inexistente devolve HTTP 404 sem código estável
+    # (incidente automacao_valeria_to_joao pt_BR→404). Casa por status + menção
+    # a template na mensagem para não engolir 404 de endpoint/recurso genérico.
+    if status_code == 404 and "template" in str(meta_err.get("message", "")).lower():
+        return True
+    return False
+
+# A cadência/orquestração dos ticks vive em app/worker/main.py (uma task
+# asyncio isolada por domínio, acordada por eventos com fallback) — este módulo
+# expõe apenas as funções de domínio. Histórico de dimensionamento de egress:
+# o tick era 5s e estourava a cota Free do Supabase; hoje cada domínio tem
+# intervalo próprio definido em TASK_SPECS.
 
 # Lotes de lead_ids por query no reconcile (limite prático de URL do PostgREST
 # com UUIDs em `in.(...)`).
@@ -616,15 +645,29 @@ def _toggle_br_ninth_digit(number: str | None) -> str | None:
     return None
 
 
+_BL_RETRY_SELECT = (
+    "id, broadcast_id, lead_id, wamid, "
+    "leads!inner(id, phone, wa_id), "
+    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables)"
+)
+
+# Título que a Meta envia no webhook de status para o erro 131026 (registration do
+# destino difere do formato enviado) — o único tipo de falha explícita retentável.
+_META_UNDELIVERABLE_TITLE = "Message undeliverable"
+
+
 async def retry_undelivered_cold_sends() -> None:
     """Dupla tentativa ESTRUTURADA: uma única retentativa alternando o 9º dígito.
 
     Quando reconcile_delivery_timeouts vira uma mensagem de disparo de 'accepted' para
     'undelivered' (a Meta aceitou mas nunca confirmou entrega), este job reenvia UMA vez
     para a forma alternada do número — cobrindo o caso em que a registration real do
-    destino difere do formato que tentamos. Trava dupla contra duplicação: só age quando
-    `delivered_at IS NULL` e claima atomicamente `delivery_retried` (false→true), de modo
-    que jamais há mais de uma retentativa nem reenvio a quem já recebeu.
+    destino difere do formato que tentamos. O mesmo vale quando a Meta reporta a falha
+    EXPLICITAMENTE pelo webhook de status (131026 "Message undeliverable") — é o mesmo
+    cenário de registration, só que confessado em vez de silencioso. Trava dupla contra
+    duplicação: só age quando `delivered_at IS NULL` e claima atomicamente
+    `delivery_retried` (false→true), de modo que jamais há mais de uma retentativa nem
+    reenvio a quem já recebeu.
     """
     sb = get_supabase()
     floor = (datetime.now(timezone.utc) - timedelta(hours=_DELIVERY_LIMBO_LOOKBACK_HOURS)).isoformat()
@@ -643,21 +686,15 @@ async def retry_undelivered_cold_sends() -> None:
         )
     except Exception as e:
         logger.warning("[DELIVERY][RETRY] falha ao buscar undelivered: %s", e)
-        return
+        undelivered = []
     wamids = sorted({m["wamid"] for m in undelivered if m.get("wamid")})
-    if not wamids:
-        return
 
     for i in range(0, len(wamids), _RECONCILE_ID_CHUNK):
         chunk = wamids[i : i + _RECONCILE_ID_CHUNK]
         try:
             bls = (
                 sb.table("broadcast_leads")
-                .select(
-                    "id, broadcast_id, lead_id, wamid, "
-                    "leads!inner(id, phone, wa_id), "
-                    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables)"
-                )
+                .select(_BL_RETRY_SELECT)
                 .in_("wamid", chunk)
                 .eq("delivery_retried", False)
                 .is_("delivered_at", "null")
@@ -671,6 +708,31 @@ async def retry_undelivered_cold_sends() -> None:
 
         for bl in bls:
             await _retry_single_undelivered(sb, bl)
+
+    # Falha explícita 131026: o webhook de status grava messages.delivery_status='failed'
+    # (nunca 'undelivered'), então esses leads não aparecem na varredura acima. O claim
+    # atômico em _retry_single_undelivered mantém a garantia de retentativa única mesmo
+    # se um wamid cruzar os dois caminhos.
+    try:
+        failed_bls = (
+            sb.table("broadcast_leads")
+            .select(_BL_RETRY_SELECT)
+            .eq("status", "failed")
+            .eq("error_message", _META_UNDELIVERABLE_TITLE)
+            .eq("delivery_retried", False)
+            .is_("delivered_at", "null")
+            .gte("sent_at", floor)
+            .limit(100)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        logger.warning("[DELIVERY][RETRY] falha ao buscar failed-undeliverable (131026): %s", e)
+        failed_bls = []
+
+    for bl in failed_bls:
+        await _retry_single_undelivered(sb, bl)
 
 
 async def _retry_single_undelivered(sb, bl: dict) -> None:
@@ -734,39 +796,6 @@ async def _retry_single_undelivered(sb, bl: dict) -> None:
             logger.warning("[DELIVERY][RETRY] falha ao registrar msg da retentativa (bl %s): %s", bl["id"], msg_err)
     except Exception as e:
         logger.warning("[DELIVERY][RETRY] reenvio falhou p/ bl %s (%s): %s", bl["id"], alt_target, e)
-
-
-async def run_worker():
-    """Main worker loop: broadcasts, automation engine, follow-ups."""
-    logger.info("Worker started")
-
-    while True:
-        try:
-            from app.automation.engine import process_due_enrollments
-            from app.automation.triggers import check_polling_triggers
-            await check_meta_channel_health()
-            await process_scheduled_broadcasts()
-            await process_broadcasts()
-            await check_polling_triggers()
-            await process_due_enrollments()
-            await process_due_followups()
-            # Onda 2: drena turnos estacionados durante indisponibilidade do LLM
-            # (responde quando o LLM volta; handoff se a janela estourar).
-            from app.buffer.parking import drain_parked_llm_turns
-            await drain_parked_llm_turns()
-            # Onda 2: higiene da ponta morta de número errado (72h mudo → opt-out).
-            process_wrong_number_deadends()
-            # Gatilho A da Camada de Memória: consolida o Dossiê de leads cuja sessão
-            # acabou de encerrar (debounced por inatividade + lock no banco).
-            from app.agent.memory_manager import process_stale_lead_memories
-            await process_stale_lead_memories()
-            reconcile_broadcast_replies()
-            reconcile_delivery_timeouts()
-            await retry_undelivered_cold_sends()
-        except Exception as e:
-            logger.error(f"Worker error: {e}", exc_info=True)
-
-        await asyncio.sleep(WORKER_TICK_SECONDS)
 
 
 _WRONG_NUMBER_DEADLINE_HOURS = 72
@@ -843,15 +872,14 @@ def process_wrong_number_deadends(now: datetime | None = None) -> int:
 
 async def process_broadcasts():
     """Find running broadcasts and send pending templates."""
-    sb = get_supabase()
-    broadcasts = (
-        sb.table("broadcasts")
+    broadcasts = (await db_call(
+        lambda: get_supabase().table("broadcasts")
         .select("*")
         .eq("status", "running")
         .eq("env_tag", _ENV_TAG)
-        .execute()
-        .data
-    )
+        .execute(),
+        label="broadcasts.scan",
+    )).data
 
     logger.info(f"[DEBUG-BROADCAST] tick — env_tag={_ENV_TAG} running_broadcasts={len(broadcasts)}")
     for broadcast in broadcasts:
@@ -861,34 +889,41 @@ async def process_broadcasts():
 
 async def process_scheduled_broadcasts():
     """Auto-inicia broadcasts cujo scheduled_at já passou."""
-    sb = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
-    broadcasts = (
-        sb.table("broadcasts")
+    broadcasts = (await db_call(
+        lambda: get_supabase().table("broadcasts")
         .select("id, name")
         .eq("status", "scheduled")
         .eq("env_tag", _ENV_TAG)
         .lte("scheduled_at", now)
-        .execute()
-        .data
-    )
+        .execute(),
+        label="broadcasts.scheduled_scan",
+    )).data
     for broadcast in broadcasts:
         broadcast_id = broadcast["id"]
-        pending_count = (
-            sb.table("broadcast_leads")
+        pending_count = (await db_call(
+            lambda: get_supabase().table("broadcast_leads")
             .select("id", count="exact")
             .eq("broadcast_id", broadcast_id)
             .eq("status", "pending")
-            .execute()
-            .count
-        ) or 0
+            .execute(),
+            label="broadcasts.pending_count",
+        )).count or 0
         if not pending_count:
             logger.error(
                 f"[SCHEDULER] broadcast {broadcast_id} sem leads pendentes — marcando como failed"
             )
-            sb.table("broadcasts").update({"status": "failed"}).eq("id", broadcast_id).execute()
+            await db_call(
+                lambda: get_supabase().table("broadcasts")
+                .update({"status": "failed"}).eq("id", broadcast_id).execute(),
+                label="broadcasts.mark_failed",
+            )
             continue
-        sb.table("broadcasts").update({"status": "running"}).eq("id", broadcast_id).execute()
+        await db_call(
+            lambda: get_supabase().table("broadcasts")
+            .update({"status": "running"}).eq("id", broadcast_id).execute(),
+            label="broadcasts.autostart",
+        )
         logger.info(
             f"[SCHEDULER] broadcast {broadcast_id} ({broadcast.get('name')}) "
             f"iniciado automaticamente — {pending_count} leads"
@@ -944,9 +979,25 @@ def _has_open_billing_alert(sb) -> bool:
 _TEMPLATE_DEDUP_DAYS = int(os.environ.get("BROADCAST_TEMPLATE_DEDUP_DAYS", "14"))
 
 
+# Janela (horas) do sinal "contato humano recente" no disparo FRIO (diretriz 13/07).
+# Separada da janela de 90 dias do descarte (leads.service._RECENT_ENGAGEMENT_DAYS) de
+# propósito: aqui a pergunta é "o vendedor está conversando com ele AGORA?", não "esse
+# lead já foi trabalhado alguma vez?". O lote de 13/07 mostrou o custo de fundir as duas
+# perguntas — 47 de 49 leads retidos por um contato humano de 18 dias atrás, sem nenhuma
+# negociação viva. Configurável via env para não exigir deploy em ajuste de política.
+_HUMAN_CONTACT_WINDOW_HOURS = int(os.environ.get("BROADCAST_HUMAN_CONTACT_WINDOW_HOURS", "72"))
+
+
 def _hot_lead_guardrail(lead: dict, broadcast_intent: str) -> str | None:
-    """Camada 2 da higiene de lista fria (auditoria 08/07, caso Nayara): lead com
-    relacionamento ativo/contato humano recente NÃO recebe disparo FRIO.
+    """Camada 2 da higiene de lista fria — TRAVA DUPLA (diretriz 13/07).
+
+    TRAVA A (absoluta): cliente consolidado (venda em `sales`, deal `fechado_ganho` ou
+    closed-won) NUNCA recebe disparo frio, independente de quando falou com alguém.
+    É a trava dos casos Nayara e Kadi Guth e ela não tem janela de tempo.
+
+    TRAVA B (temporal): lead SEM venda cujo vendedor humano falou com ele nas últimas
+    `_HUMAN_CONTACT_WINDOW_HOURS` — atropelar uma conversa viva queima o lead. Fora da
+    janela, ele é reabordável pela Valéria.
 
     Só se aplica a broadcasts de intent COLD_REACTIVATION — campanhas de reativação
     de clientes (reativacao_*) miram leads quentes DE PROPÓSITO e passam direto.
@@ -954,13 +1005,19 @@ def _hot_lead_guardrail(lead: dict, broadcast_intent: str) -> str | None:
     """
     if broadcast_intent != COLD_REACTIVATION:
         return None
+    lead_id = lead.get("id")
     try:
-        if lead_has_active_relationship(lead.get("id")):
-            return "lead quente (relacionamento ativo/contato humano <90d) — excluído do disparo frio"
+        if lead_is_customer(lead_id):
+            return "cliente consolidado (venda registrada/negócio ganho) — excluído do disparo frio"
+        if lead_recently_engaged(lead_id, hours=_HUMAN_CONTACT_WINDOW_HOURS):
+            return (
+                f"conversa humana viva (contato do vendedor <{_HUMAN_CONTACT_WINDOW_HOURS}h) "
+                "— excluído do disparo frio"
+            )
     except Exception as exc:
         logger.warning(
             "[BROADCAST][HOT] checagem de relacionamento falhou p/ %s: %s (fail-open)",
-            lead.get("id"), exc,
+            lead_id, exc,
         )
     return None
 
@@ -972,6 +1029,11 @@ def _template_dedup_guardrail(
 
     Re-blast idêntico em poucos dias queima a lista (caso Daniel, 08/07). Janela
     configurável via BROADCAST_TEMPLATE_DEDUP_DAYS (default 14). Fail-open.
+
+    O filtro cobre o ciclo de vida INTEIRO do envio bem-sucedido — o webhook de
+    delivery-status promove broadcast_leads de 'sent' para 'delivered'/'read'
+    (service._handle mark_broadcast_lead_delivered), então filtrar só 'sent'
+    deixava justamente os leads ENTREGUES escaparem do dedup (go/no-go 11/07).
     """
     if not lead_id or not template_name:
         return None
@@ -983,7 +1045,7 @@ def _template_dedup_guardrail(
             sb.table("broadcast_leads")
             .select("id, broadcasts!inner(template_name)")
             .eq("lead_id", lead_id)
-            .eq("status", "sent")
+            .in_("status", ["sent", "delivered", "read"])
             .eq("broadcasts.template_name", template_name)
             .gte("sent_at", cutoff)
             .limit(1)
@@ -1216,6 +1278,10 @@ async def process_single_broadcast(broadcast: dict):
             # (ver _handle_delivery_status e o captura de wa_id do inbound em meta_router).
             mark_broadcast_lead_sent(bl["id"])
             increment_broadcast_sent(broadcast_id)
+            # Send OK → zera a sequência de erros de template deste broadcast: o
+            # circuit breaker só conta falhas CONSECUTIVAS (template quebrado falha
+            # p/ todo lead; sucesso no meio prova que o template está são).
+            _template_error_streaks.pop(broadcast_id, None)
 
             # Registra observação analítica de disparo no card de CRM (fail-soft).
             record_dispatch_note(lead["id"], broadcast["template_name"])
@@ -1383,6 +1449,52 @@ async def process_single_broadcast(broadcast: dict):
                 except Exception:
                     pass
                 return
+            # Erro da classe TEMPLATE (wartime T3, send-side): o lead já foi marcado
+            # failed acima SEM requeue — retentar um template quebrado é loop infinito.
+            # Circuit breaker: N erros de template consecutivos = o template está
+            # quebrado p/ TODOS os leads → pausa o broadcast e alerta critical (chega
+            # no WhatsApp/Sentry via T2) em vez de queimar a lista inteira.
+            if _is_template_error(http_err.response.status_code, meta_err):
+                streak = _template_error_streaks.get(broadcast_id, 0) + 1
+                _template_error_streaks[broadcast_id] = streak
+                logger.error(
+                    "[BROADCAST][TEMPLATE] erro de template no broadcast %s (%d consecutivo(s)): %s",
+                    broadcast_id, streak, error_msg,
+                )
+                if streak >= _TEMPLATE_ERROR_PAUSE_THRESHOLD:
+                    logger.critical(
+                        "[BROADCAST][TEMPLATE] %d erros de template consecutivos — "
+                        "pausando broadcast %s (template '%s' quebrado)",
+                        streak, broadcast_id, broadcast.get("template_name"),
+                    )
+                    sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
+                    _template_error_streaks.pop(broadcast_id, None)
+                    try:
+                        from app.alerts.service import create_system_alert
+                        create_system_alert(
+                            "broadcast_template_error",
+                            f"Disparo pausado — erro de template '{broadcast.get('template_name')}'",
+                            (
+                                f"O broadcast '{broadcast.get('name') or broadcast_id}' foi pausado "
+                                f"automaticamente após {streak} erros de template consecutivos. "
+                                f"Último erro da Meta: {error_msg}. Template: "
+                                f"'{broadcast.get('template_name')}' "
+                                f"({broadcast.get('template_language_code', 'pt_BR')}). Corrija o "
+                                f"template/variáveis e retome o disparo manualmente."
+                            ),
+                            severity="critical",
+                            metadata={
+                                "broadcast_id": str(broadcast_id),
+                                "template_name": broadcast.get("template_name"),
+                                "meta_error_code": meta_err.get("code"),
+                            },
+                        )
+                    except Exception as alert_err:
+                        logger.warning(
+                            "[BROADCAST][TEMPLATE] alerta não criado p/ %s: %s",
+                            broadcast_id, alert_err,
+                        )
+                    return
         except httpx.TransportError as transport_err:
             # Queda TRANSITÓRIA de conexão (GOAWAY/RemoteProtocolError/ConnectError) que
             # esgotou os retries HTTP do _request_with_retry. NÃO é uma rejeição da Meta —

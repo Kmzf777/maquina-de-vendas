@@ -19,6 +19,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
+from app.agent.gemini_client import generate, user_content
 from app.config import settings
 from app.db.supabase import get_supabase
 from app.leads.service import get_history, get_lead, update_lead
@@ -93,25 +94,17 @@ def _render_delta(delta: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_memory_messages(prior_summary: str, delta: list[dict]) -> list[dict]:
-    """Monta system+user para o LLM. O user carrega o prior_summary e SÓ o delta (D4)."""
+def build_memory_messages(prior_summary: str, delta: list[dict]) -> tuple[str, str]:
+    """Monta (system_instruction, user_text) para o LLM nativo. O user carrega o
+    prior_summary e SÓ o delta (D4). Conteúdo dos prompts inalterado na migração
+    p/ o núcleo nativo (09/07) — só a FORMA mudou (par nativo em vez de messages)."""
     user = (
         "DOSSIÊ ANTERIOR:\n"
         f"{prior_summary or '(ainda não há dossiê — esta é a primeira consolidação)'}\n\n"
         "MENSAGENS NOVAS (desde o último dossiê):\n"
         f"{_render_delta(delta)}"
     )
-    return [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": user},
-    ]
-
-
-def _gemini_thinking_off(model: str) -> dict:
-    """Desliga o thinking do gemini-2.5 (exceto pro), que senão queima o budget e devolve vazio."""
-    if model.startswith("gemini-2.5-") and not model.startswith("gemini-2.5-pro"):
-        return {"reasoning_effort": "none"}
-    return {}
+    return _SYSTEM_PROMPT, user
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
@@ -170,12 +163,15 @@ def _fire_memory_parse_alert() -> None:
         logger.warning("memory_manager: falha ao gravar alerta memory_parse_fail: %s", exc)
 
 
-def _track_memory_usage(response, lead_id: str | None, stage: str, model: str) -> None:
+def _track_memory_usage(result, lead_id: str | None, stage: str, model: str) -> None:
     """Contabiliza o custo do refresh de dossiê em token_usage. Fail-soft: nunca levanta —
-    era off-book (rodava a cada sessão encerrada de cada lead sem gravar nada)."""
+    era off-book (rodava a cada sessão encerrada de cada lead sem gravar nada).
+
+    Lê o usage_metadata NATIVO do GenerateResult; completion_tokens = saída FATURADA
+    (candidates + thoughts, via billed_output_tokens) — colunas do banco inalteradas."""
     try:
-        usage = getattr(response, "usage", None)
-        if not usage or not lead_id:
+        um = getattr(result, "usage_metadata", None)
+        if not um or not lead_id:
             return
         from app.agent.token_tracker import track_token_usage
         track_token_usage(
@@ -183,36 +179,43 @@ def _track_memory_usage(response, lead_id: str | None, stage: str, model: str) -
             stage=stage or "",
             model=model,
             call_type="rolling_summary",
-            prompt_tokens=usage.prompt_tokens or 0,
-            completion_tokens=usage.completion_tokens or 0,
-            cached_tokens=getattr(usage, "cached_tokens", 0) or 0,
-            reasoning_tokens=getattr(usage, "reasoning_tokens", 0) or 0,
+            prompt_tokens=um.prompt_token_count or 0,
+            completion_tokens=um.billed_output_tokens or 0,
+            cached_tokens=um.cached_content_token_count or 0,
+            reasoning_tokens=um.thoughts_token_count or 0,
         )
     except Exception as exc:  # pragma: no cover - defensivo
         logger.warning("memory_manager: falha ao registrar token_usage (ignorado): %s", exc)
 
 
 async def generate_rolling_summary(
-    prior_summary: str, delta: list[dict], client, model: str,
+    prior_summary: str, delta: list[dict], model: str,
     lead_id: str | None = None, stage: str = "",
 ) -> str:
     """Gera o dossiê atualizado (structured JSON → markdown). Fail-soft: erro/JSON inválido/
-    delta vazio → devolve o `prior_summary` intacto (nunca perde memória nem degrada formato)."""
+    delta vazio → devolve o `prior_summary` intacto (nunca perde memória nem degrada formato).
+
+    json_mode=True é a correção REAL do incidente de 08/07: a fachada OpenAI-shape engolia
+    `response_format` em silêncio (1.366 gerações sem JSON garantido). O núcleo nativo manda
+    response_mime_type="application/json" de verdade; o parse tolerante abaixo fica como
+    defesa em profundidade."""
     if not delta:
         return prior_summary
     try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=build_memory_messages(prior_summary, delta),
-            response_format={"type": "json_object"},
-            max_tokens=MAX_OUTPUT_TOKENS,
+        system_instruction, user_msg = build_memory_messages(prior_summary, delta)
+        result = await generate(
+            model,
+            contents=[user_content(user_msg)],
+            system_instruction=system_instruction,
+            json_mode=True,
+            thinking_off=True,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
             temperature=0.2,
-            **_gemini_thinking_off(model),
         )
-        _track_memory_usage(response, lead_id, stage, model)
-        if not response.choices:
+        _track_memory_usage(result, lead_id, stage, model)
+        if not result.text:
             return prior_summary
-        content = response.choices[0].message.content or ""
+        content = result.text
         try:
             fields = _extract_json_object(content)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -266,7 +269,7 @@ def _release_lock(sb, lead_id: str) -> None:
         logger.error("memory_manager: falha ao liberar lock do lead %s: %s", lead_id, exc)
 
 
-async def refresh_lead_memory(lead_id: str, client=None, model: str | None = None) -> bool:
+async def refresh_lead_memory(lead_id: str, model: str | None = None) -> bool:
     """Regenera o dossiê do lead (cross-canal), com lock de concorrência. Fail-soft: nunca
     levanta. Retorna True só quando gravou um dossiê novo."""
     model = model or settings.memory_model
@@ -286,16 +289,19 @@ async def refresh_lead_memory(lead_id: str, client=None, model: str | None = Non
         # incremental como sempre. Este caminho também é o motor do backfill
         # (scripts/backfill_dossies.py).
         since = lead.get("rolling_summary_updated_at") if prior else None
-        delta = get_history(lead_id, since=since)
-        if not prior and len(delta) > MEMORY_BACKFILL_MAX_MSGS:
-            delta = delta[-MEMORY_BACKFILL_MAX_MSGS:]
+        if prior:
+            delta = get_history(lead_id, since=since)
+        else:
+            # Histórico completo REAL: janela das MEMORY_BACKFILL_MAX_MSGS mensagens
+            # mais recentes (latest=True). O default limit=30 asc do get_history
+            # devolvia as 30 mais ANTIGAS e o cap de 200 nunca agia.
+            delta = get_history(
+                lead_id, since=None, limit=MEMORY_BACKFILL_MAX_MSGS, latest=True
+            )
         if not delta:
             return False
-        if client is None:
-            from app.agent.orchestrator import get_ai_client
-            client = get_ai_client(model)
         new_summary = await generate_rolling_summary(
-            prior, delta, client, model, lead_id=lead_id, stage=lead.get("stage") or "",
+            prior, delta, model, lead_id=lead_id, stage=lead.get("stage") or "",
         )
         # Marca d'água: avança rolling_summary_updated_at até a ÚLTIMA mensagem já consumida
         # neste delta — MESMO quando o dossiê sai idêntico ao anterior. Sem isso, um dossiê
@@ -334,7 +340,7 @@ async def process_stale_lead_memories(now: datetime | None = None) -> int:
         lock_cutoff = (now - LOCK_TTL).isoformat()
         rows = (
             sb.table("leads")
-            .select("id, last_customer_message_at, rolling_summary_updated_at")
+            .select("id, last_customer_message_at, rolling_summary_updated_at, rolling_summary")
             .gte("last_customer_message_at", recency_cutoff)
             .lt("last_customer_message_at", inactivity_cutoff)
             .or_(f"rolling_summary_processing_at.is.null,rolling_summary_processing_at.lt.{lock_cutoff}")
@@ -353,7 +359,12 @@ async def process_stale_lead_memories(now: datetime | None = None) -> int:
             continue
         # Se o dossiê já cobre a última msg do cliente, não há delta novo: pular ANTES de pegar
         # o lock evita o churn de claim/release + SELECT vazio a cada tick (visto no loop 08/07).
-        if _summary_is_current(row.get("rolling_summary_updated_at"), row.get("last_customer_message_at")):
+        # SÓ vale com dossiê gravado: rolling_summary NULL com watermark avançado é vítima do
+        # burn (gerações que falharam no parse avançaram a marca) — precisa reprocessar, senão
+        # o lead nunca ganha dossiê pela via de produção.
+        if row.get("rolling_summary") and _summary_is_current(
+            row.get("rolling_summary_updated_at"), row.get("last_customer_message_at")
+        ):
             continue
         if await refresh_lead_memory(lead_id):
             count += 1

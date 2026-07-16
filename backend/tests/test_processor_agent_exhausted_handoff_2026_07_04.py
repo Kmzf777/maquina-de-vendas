@@ -31,7 +31,11 @@ async def test_agent_exhausted_encaminha_ao_humano():
 
     # O handoff ao humano é disparado com o MESMO contrato do LLMUnavailableError
     # (inbound_text propaga o texto do turno p/ a checagem de autoresponder, 08/07).
-    m_down.assert_awaited_once_with(lead, "5566999975586", conversation, inbound_text=None)
+    # Wartime 10/07: exceção genérica não é exaustão de budget/quota → reason="transient"
+    # (janela de parking curta, comportamento pré-wartime).
+    m_down.assert_awaited_once_with(
+        lead, "5566999975586", conversation, inbound_text=None, reason="transient",
+    )
     # E o turno é encerrado limpando os flags do lead e atualizando last_msg.
     m_pi.assert_called_once_with("conv-1")
     m_pq.assert_called_once_with("conv-1")
