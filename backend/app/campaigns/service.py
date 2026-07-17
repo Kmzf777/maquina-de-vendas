@@ -80,16 +80,37 @@ def list_enrollments(campaign_id: str, status: str | None = None) -> list[dict[s
     return q.order("enrolled_at", desc=True).execute().data
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return "23505" in s or "duplicate key" in s or "uq_campaign_enrollments_active" in s
+
+
 def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next_execute_at: datetime, deal_id: str | None = None) -> dict[str, Any]:
     sb = get_supabase()
-    row = sb.table("campaign_enrollments").insert({
-        "campaign_id": campaign_id,
-        "lead_id": lead_id,
-        "deal_id": deal_id,
-        "current_node_id": current_node_id,
-        "next_execute_at": next_execute_at.isoformat(),
-        "env_tag": _ENV_TAG,
-    }).execute().data[0]
+    try:
+        row = sb.table("campaign_enrollments").insert({
+            "campaign_id": campaign_id,
+            "lead_id": lead_id,
+            "deal_id": deal_id,
+            "current_node_id": current_node_id,
+            "next_execute_at": next_execute_at.isoformat(),
+            "env_tag": _ENV_TAG,
+        }).execute().data[0]
+    except Exception as exc:
+        if not _is_unique_violation(exc):
+            raise
+        # Already enrolled (unique index) — return the live enrollment, no-op (no wake-up).
+        rows = (
+            sb.table("campaign_enrollments")
+            .select("*")
+            .eq("campaign_id", campaign_id)
+            .eq("lead_id", lead_id)
+            .in_("status", ["active", "paused"])
+            .limit(1)
+            .execute()
+            .data
+        )
+        return rows[0] if rows else {}
     emit_event("automation")  # wake-up do worker (fail-open; fallback tick cobre)
     return row
 
@@ -102,10 +123,45 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict[str, Any]]:
         .eq("status", "active")
         .eq("env_tag", _ENV_TAG)
         .lte("next_execute_at", now.isoformat())
+        .order("next_execute_at", desc=False)
         .limit(limit)
         .execute()
         .data
     )
+
+
+CLAIM_STALE_SECONDS = 300  # 5 min — mirrors follow_up crash-recovery cutoff.
+
+
+def claim_enrollment(enrollment_id: str, now: datetime) -> bool:
+    """Atomic pending→claimed guard. True only if THIS worker won the row.
+
+    Guarded UPDATE: only claims an active enrollment whose claim is free or stale.
+    Mirrors follow_up._claim_followup_job. Fail-open→False (skip, retry next tick)."""
+    from datetime import timedelta
+    try:
+        sb = get_supabase()
+        stale = (now - timedelta(seconds=CLAIM_STALE_SECONDS)).isoformat()
+        res = (
+            sb.table("campaign_enrollments")
+            .update({"claimed_at": now.isoformat()})
+            .eq("id", enrollment_id)
+            .eq("status", "active")
+            .or_(f"claimed_at.is.null,claimed_at.lt.{stale}")
+            .execute()
+        )
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+def release_enrollment_claim(enrollment_id: str) -> None:
+    """Clear the claim lock so the next tick can re-claim (used on advance/complete/fail)."""
+    try:
+        sb = get_supabase()
+        sb.table("campaign_enrollments").update({"claimed_at": None}).eq("id", enrollment_id).execute()
+    except Exception:
+        pass
 
 
 def update_enrollment(enrollment_id: str, **kwargs) -> dict[str, Any]:
@@ -186,3 +242,39 @@ def is_already_enrolled(campaign_id: str, lead_id: str) -> bool:
         .execute()
     )
     return len(result.data) > 0
+
+
+def mark_enrollment_sent(enrollment_id: str, node_id: str, wamid: str | None) -> None:
+    """Persist idempotency marker BEFORE advancing to the next node.
+
+    If the worker crashes after send but before advance, recovery skips the
+    re-send because last_sent_node_id == current_node_id. Mirrors
+    follow_up._save_followup_wamid. Fail-open: DB errors are swallowed."""
+    try:
+        sb = get_supabase()
+        sb.table("campaign_enrollments").update({
+            "last_sent_node_id": node_id, "last_sent_wamid": wamid,
+        }).eq("id", enrollment_id).execute()
+    except Exception:
+        pass
+
+
+def recover_stale_enrollments(now: datetime, stale_seconds: int = CLAIM_STALE_SECONDS) -> int:
+    """Clear stale claims (worker died mid-tick) so rows re-enter. Idempotency guard
+    (last_sent_node_id) prevents any resend. Mirrors follow_up._recover_stale_followup_jobs.
+    Fail-open: returns 0 on any DB error."""
+    from datetime import timedelta
+    try:
+        sb = get_supabase()
+        cutoff = (now - timedelta(seconds=stale_seconds)).isoformat()
+        res = (
+            sb.table("campaign_enrollments")
+            .update({"claimed_at": None})
+            .eq("status", "active")
+            .eq("env_tag", _ENV_TAG)
+            .lt("claimed_at", cutoff)
+            .execute()
+        )
+        return len(res.data or [])
+    except Exception:
+        return 0

@@ -31,6 +31,7 @@ import { getDefaultConfig, toRFNode, toRFEdges } from "./helpers";
 import { isSystemCampaign } from "@/lib/system-campaign";
 import { NODE_TYPES, EDGE_TYPES, PaletteItemComp, setFlowHandlers, takeDragPayload } from "./graph-elements";
 import { Inspector } from "./inspector";
+import { CadenceExecutionLog } from "@/components/campaigns/cadence-execution-log";
 
 // ─── Inner builder (needs useReactFlow, so must be inside ReactFlowProvider) ───
 function FlowBuilderInner({ campaignId }: { campaignId: string }) {
@@ -732,6 +733,8 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
           </div>
         </div>
       )}
+
+      <CadenceExecutionLog campaignId={campaignId} />
     </div>
   );
 }

@@ -17,54 +17,16 @@ from app.campaigns.service import (
     cancel_enrollment,
     pause_enrollment,
 )
-from app.automation.retry import calculate_next_retry
 
 logger = logging.getLogger(__name__)
 
-# Status HTTP da Meta que não adianta retentar (template/locale/param errados):
-# o disparo nunca vai ser aceito — cancelar a enrollment em vez de re-armar.
-_PERMANENT_STATUS = {400, 403, 404}
+# Back-compat re-exports: decide_failure_update + _is_permanent_error were moved
+# to app.automation.retry in Task 4. Re-exported here so existing callers/tests
+# that import from campaigns.worker continue to work without modification.
+from app.automation.retry import decide_failure_update, _is_permanent_error  # noqa: F401
 
 
-def _is_permanent_error(exc: Exception) -> bool:
-    """True para rejeições da Meta que não mudam com retry (4xx de template/param).
-
-    Cobre dois formatos: httpx.HTTPStatusError (raise_for_status em 4xx) e o
-    RuntimeError que send_template/send_text levantam quando a Meta devolve HTTP 200
-    com erro embutido ('... rejected (missing messages ...)').
-    """
-    status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status in _PERMANENT_STATUS:
-        return True
-    if isinstance(exc, RuntimeError) and "rejected" in str(exc):
-        return True
-    return False
-
-
-def decide_failure_update(exc: Exception, retry_count: int, now: datetime) -> dict:
-    """Pure: kwargs para update_enrollment que SEMPRE tiram a enrollment do estado
-    imediatamente-due — raiz do loop que inflou meta_webhook_logs.
-
-    - Erro permanente (4xx / rejeição embutida): status='cancelled'.
-    - Erro transitório: backoff via calculate_next_retry (1h/4h/24h, teto 3);
-      ao estourar o teto, cancela.
-    """
-    err = str(exc)[:500]
-    if _is_permanent_error(exc):
-        return {"status": "cancelled", "last_error": err}
-    next_at, new_count, final = calculate_next_retry(retry_count, now)
-    if final:
-        return {"status": "cancelled", "last_error": err}
-    iso = next_at.isoformat()
-    return {
-        "retry_count": new_count,
-        "next_retry_at": iso,
-        "next_execute_at": iso,
-        "last_error": err,
-    }
-
-
-async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
+async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: datetime) -> str | None:
     from app.whatsapp.registry import get_provider
     from app.channels.service import get_channel_for_lead
     from app.broadcast.worker import (
@@ -86,7 +48,7 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         channel = get_channel_for_lead(enrollment["lead_id"])
     if not channel:
         logger.warning("[CAMPAIGNS] No channel for lead %s, skipping send", lead["phone"])
-        return
+        return None
 
     provider = get_provider(channel)
     components = _build_template_components(template_variables, lead)
@@ -125,6 +87,7 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
         logger.warning("[CAMPAIGNS] Could not update ai_enabled for %s: %s", lead["phone"], e)
 
     logger.info("[CAMPAIGNS] Sent template '%s' to %s", template_name, lead["phone"])
+    return wamid
 
 
 def handle_campaign_reply(lead_id: str) -> None:

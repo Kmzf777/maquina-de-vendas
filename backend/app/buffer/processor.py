@@ -807,6 +807,23 @@ _BRIDGE_TEXT = (
     "se preferir, chama ele direto no contato que te mandei aqui em cima que ele te responde por lá"
 )
 
+# Escudo seguro da ponte (auditoria 15/07, casos Itamar/Aislan). ANTES: pergunta de
+# negócio pós-handoff → silêncio TOTAL (o lead ficava sem NENHUM retorno, dependente do
+# SLA humano). AGORA: aviso curto, NÃO-COMERCIAL, de recebimento — não responde a
+# pergunta (o humano ainda lê e responde), só fecha o vácuo. Estático, sem LLM.
+_BRIDGE_ACK_TEXT = (
+    "recebi sua mensagem!\n\n"
+    "seu atendimento já tá com o João e ele te responde por aqui mesmo, tá?"
+)
+# Reclamação pós-handoff (caso Aislan: cliente queimado devolvido ao mesmo gargalo em
+# silêncio) → aviso de escalonamento ao lead + alerta CRÍTICO à gerência.
+_BRIDGE_ESCALATION_TEXT = (
+    "puxa, sinto muito por isso\n\n"
+    "já sinalizei aqui internamente pra olharem o seu caso com prioridade — o João te responde por aqui"
+)
+_BRIDGE_ACK_COOLDOWN_SECONDS = 3600            # 1 aviso de recebimento a cada 1h por conversa
+_BRIDGE_ESCALATION_COOLDOWN_SECONDS = 12 * 3600  # 1 escalonamento a cada 12h (não spammar a gerência)
+
 # Filtro de intenção da ponte (auditoria 11/07): "obrigado" pós-handoff recebia o
 # texto de transbordo — ruído em cima de um encerramento social. Vocabulário
 # ESTREITO e sem acentos (o texto é normalizado antes): a frase inteira precisa
@@ -895,6 +912,41 @@ def _looks_like_business_question(text: str | None) -> bool:
     return any(t in _BUSINESS_QUESTION_TOKENS for t in tokens)
 
 
+# Reclamação sobre o atendimento HUMANO pós-handoff (auditoria 15/07, caso Aislan:
+# "faz quase 1 ano tentando negociar e não me enviaram nada… visualizam e não respondem…
+# esse aí é um deles que me deixou várias vezes sem me responder"). Casamento por
+# SUBSTRING no texto normalizado (as reclamações são frases, não tokens isolados).
+# Deliberadamente focado em sinais de FALHA DE SERVIÇO — não confundir com pergunta
+# comercial normal (essa cai no aviso de recebimento, não no escalonamento).
+_BRIDGE_COMPLAINT_PATTERNS = (
+    "nao respond", "nao me respond", "sem me respond", "sem responder", "sem resposta",
+    "nao tive retorno", "sem retorno", "nao me deram retorno", "ninguem respond", "ninguem me",
+    "visualiza", "nao atende", "nao me atende", "nao me atenderam",
+    "nao me enviaram", "nao enviaram", "nao me mandaram", "nao entregaram", "nao entregou",
+    "nao chegou", "nao recebi", "nunca recebi", "nao consigo falar", "nao consigo comprar",
+    "prometeram", "nao cumpriram", "descaso", "me deixou sem", "me deixaram sem",
+    "me deixou varias vezes", "varias vezes sem", "ja tentei varias", "ja tentei de tudo",
+    "faz meses", "faz semanas", "meses tentando", "semanas tentando",
+    "pessimo atendimento", "atendimento pessimo", "atendimento ruim", "mal atendido", "mau atendido",
+    "um absurdo", "que descaso", "enrolando", "enrolacao", "ignoraram", "ignorando", "ta me ignorando",
+    "paguei e nao", "ja paguei e",
+)
+
+
+def _looks_like_complaint(text: str | None) -> bool:
+    """True para reclamação pós-handoff sobre o ATENDIMENTO HUMANO / pedido não entregue.
+
+    Função pura (mesma normalização das demais). Casa por substring no texto sem acento.
+    Fail-safe: escopo estreito em sinais de FALHA DE SERVIÇO — um falso-negativo só cai no
+    aviso de recebimento normal; um falso-positivo apenas aciona um alerta a mais à gerência.
+    """
+    if not text or not text.strip():
+        return False
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return any(pat in normalized for pat in _BRIDGE_COMPLAINT_PATTERNS)
+
+
 _REACTION_ONLY_RE = re.compile(r"^\[reagiu com [^\]]*\]$")
 
 
@@ -950,6 +1002,36 @@ async def _react_to_social_closing(
         return False
 
 
+async def _deliver_bridge_notice(
+    lead: dict, phone: str, conversation: dict, provider, text: str, marker: str,
+) -> bool:
+    """Envia um aviso ESTÁTICO da ponte (recebimento/escalonamento) + marcador de QA.
+
+    O cooldown é do CALLER (cada aviso tem a sua janela). Aqui só sai o texto e o
+    marcador. Fail-soft total: o marcador é telemetria e nunca pode quebrar o fluxo.
+    Retorna True se o texto de fato saiu.
+    """
+    conv_id = conversation.get("id")
+    lead_id = lead.get("id")
+    sent = False
+    try:
+        send_result = await provider.send_text(resolve_send_target(lead, phone), text)
+        save_message(
+            conv_id, lead_id, "assistant", text, conversation.get("stage"),
+            sent_by="bridge", wamid=extract_wamid(send_result),
+        )
+        sent = True
+    except Exception as exc:
+        logger.warning("[BRIDGE] falha ao enviar aviso conv=%s: %s", conv_id, exc)
+    try:
+        save_message(conv_id, lead_id, "system", marker, conversation.get("stage"), sent_by="bridge")
+    except Exception as exc:
+        logger.warning(
+            "[BRIDGE] falha ao salvar marcador de aviso (fail-soft) conv=%s: %s", conv_id, exc,
+        )
+    return sent
+
+
 async def _maybe_send_handoff_bridge(
     lead: dict, phone: str, conversation: dict, channel: dict, provider,
     inbound_text: str | None = None, inbound_wamid: str | None = None,
@@ -997,29 +1079,75 @@ async def _maybe_send_handoff_bridge(
             await _react_to_social_closing(lead, phone, conversation, provider, inbound_wamid)
             return False
 
-        # Escada de decisão da ponte (11/07): reação → silêncio; encerramento social
-        # → ❤️; PERGUNTA DE NEGÓCIO → silêncio total (o humano precisa ler e responder
-        # — carimbar por cima enterra a pergunta, casos Mateus/Leonardo); resto (vácuo
-        # puro tipo Maycon/Juliana SEM "?") → carimbo + cartão. Não consome o cooldown:
-        # um vácuo puro logo depois ainda recebe a ponte normalmente.
-        if _looks_like_business_question(inbound_text):
-            logger.warning(
-                "[BRIDGE] pergunta de negócio pós-handoff — silêncio (aguardando humano) conv=%s",
-                conversation.get("id"),
-            )
+        # Escada de decisão da ponte (auditoria 15/07 — ESCUDO SEGURO): reação → silêncio;
+        # encerramento social → ❤️; RECLAMAÇÃO do atendimento humano → escala p/ gerência +
+        # aviso ao lead (caso Aislan); PERGUNTA DE NEGÓCIO → aviso de RECEBIMENTO (não mais
+        # silêncio total — caso Itamar: o humano ainda lê e responde, mas o lead não fica no
+        # vácuo); resto (vácuo puro Maycon/Juliana) → carimbo + cartão.
+        conv_id = conversation.get("id")
+        redis = _get_buffer_redis()
+
+        if _looks_like_complaint(inbound_text):
+            # Escalonamento fail-OPEN de propósito: perder a reclamação de um cliente
+            # queimado é pior que um alerta duplicado raro à gerência (assimetria vs. o
+            # ack abaixo, que é fail-closed). Redis fora → ainda alerta uma vez.
             try:
-                # Marcador system p/ QA/watchdog — telemetria, nunca pode quebrar o fluxo.
-                save_message(
-                    conversation.get("id"), lead.get("id"), "system",
-                    "[ponte] pergunta de negócio detectada — silêncio, aguardando resposta humana",
-                    conversation.get("stage"), sent_by="bridge",
+                esc_fresh = await redis.set(
+                    f"bridge_escalation:{conv_id}", "1", nx=True,
+                    ex=_BRIDGE_ESCALATION_COOLDOWN_SECONDS,
                 )
             except Exception as exc:
                 logger.warning(
-                    "[BRIDGE] falha ao salvar marcador de pergunta de negócio (fail-soft) conv=%s: %s",
-                    conversation.get("id"), exc,
+                    "[BRIDGE] Redis indisponível p/ escalonamento — fail-open (alerta 1x) conv=%s: %s",
+                    conv_id, exc,
                 )
-            return False
+                esc_fresh = True
+            if not esc_fresh:
+                logger.debug("[BRIDGE] escalonamento em cooldown — silêncio conv=%s", conv_id)
+                return False
+            logger.warning("[BRIDGE] RECLAMAÇÃO pós-handoff — escalonando p/ gerência conv=%s", conv_id)
+            try:
+                create_system_alert(
+                    type="lead_post_handoff_complaint",
+                    title="Reclamacao de lead pos-handoff — escalonar",
+                    message=(
+                        f"{lead.get('name') or 'sem nome'} ({phone}) reclamou APOS o handoff.\n"
+                        f"Mensagem: {(inbound_text or '')[:400]}\n"
+                        f"Revisar com prioridade — cliente insatisfeito com o time humano."
+                    ),
+                    severity="critical",
+                    metadata={"lead_id": lead.get("id"), "phone": phone, "conversation_id": conv_id},
+                )
+            except Exception as exc:
+                logger.warning("[BRIDGE] falha ao escalar reclamação (fail-soft) conv=%s: %s", conv_id, exc)
+            return await _deliver_bridge_notice(
+                lead, phone, conversation, provider, _BRIDGE_ESCALATION_TEXT,
+                "[ponte] RECLAMAÇÃO pós-handoff — escalonado para gerência + aviso ao lead",
+            )
+
+        if _looks_like_business_question(inbound_text):
+            # Aviso de recebimento (não silêncio). Fail-CLOSED no Redis: sem cooldown
+            # confiável, melhor calar que arriscar repetir o aviso a cada mensagem.
+            try:
+                ack_fresh = await redis.set(
+                    f"bridge_ack:{conv_id}", "1", nx=True, ex=_BRIDGE_ACK_COOLDOWN_SECONDS,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[BRIDGE] Redis indisponível p/ aviso de recebimento — fail-closed conv=%s: %s",
+                    conv_id, exc,
+                )
+                return False
+            if not ack_fresh:
+                logger.debug("[BRIDGE] aviso de recebimento em cooldown — silêncio conv=%s", conv_id)
+                return False
+            logger.info(
+                "[BRIDGE] pergunta de negócio pós-handoff — aviso de recebimento conv=%s", conv_id,
+            )
+            return await _deliver_bridge_notice(
+                lead, phone, conversation, provider, _BRIDGE_ACK_TEXT,
+                "[ponte] pergunta de negócio pós-handoff — aviso de recebimento enviado (João responde)",
+            )
 
         conversation_id = conversation.get("id")
         lead_id = lead.get("id")

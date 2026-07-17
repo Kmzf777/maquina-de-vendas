@@ -206,13 +206,10 @@ async def test_automation_send_text_blocked_by_expired_channel_window():
     mock_provider.send_text = AsyncMock()
 
     with patch("app.automation.engine.get_supabase", return_value=mock_sb), \
-         patch("app.automation.engine._update") as mock_update, \
          patch("app.whatsapp.registry.get_provider", return_value=mock_provider):
-        from app.automation.engine import _execute_send_text
-        await _execute_send_text(enrollment, node, lead, now, campaign)
+        from app.automation.engine import _execute_send_text, WindowClosed
+        import pytest as _pytest
+        with _pytest.raises(WindowClosed):
+            await _execute_send_text(enrollment, node, lead, now, campaign)
 
     mock_provider.send_text.assert_not_called()
-    assert any(
-        kw.get("last_error") == "24h_window_expired"
-        for _, kw in mock_update.call_args_list
-    ), "expected enrollment to be marked 24h_window_expired"

@@ -8,6 +8,28 @@ from app.automation.variables import substitute_variables
 from app.automation.retry import calculate_next_retry
 
 logger = logging.getLogger(__name__)
+
+
+class WindowClosed(Exception):
+    """24h Meta window closed for a free-text node — cannot send now."""
+
+
+def _log_exec(enrollment: dict, node: dict | None, status: str, log: str | None = None) -> None:
+    """Fail-soft execution-log writer (Task 8). Pulls ids from enrollment/node and
+    delegates to campaigns.execution_log.log_execution. Never raises."""
+    from app.campaigns.execution_log import log_execution
+    log_execution(
+        enrollment_id=enrollment.get("id"),
+        campaign_id=(enrollment.get("campaigns") or {}).get("id") or enrollment.get("campaign_id"),
+        lead_id=enrollment.get("lead_id"),
+        node_id=(node or {}).get("id"),
+        node_type=(node or {}).get("type"),
+        status=status,
+        log=log,
+    )
+
+MAX_STEPS = 200  # F6: anti-loop guard — enrollment cancelled/failed if step_count hits this.
+
 BRT_OFFSET = timedelta(hours=-3)
 
 
@@ -41,17 +63,24 @@ def record_daily_send(lead_id: str) -> None:
     }).execute()
 
 
-def _is_within_window(now_utc: datetime, start_hour: int = 7, end_hour: int = 18) -> bool:
+def _is_within_window(now_utc: datetime, start_hour: int = 7, end_hour: int = 18,
+                      skip_weekends: bool = False) -> bool:
     brt = now_utc + BRT_OFFSET
+    if skip_weekends and brt.weekday() >= 5:
+        return False
     return start_hour <= brt.hour < end_hour
 
 
-def _next_window_start(now_utc: datetime, start_hour: int = 7) -> datetime:
+def _next_window_start(now_utc: datetime, start_hour: int = 7,
+                       skip_weekends: bool = False) -> datetime:
     brt = now_utc + BRT_OFFSET
     if brt.hour < start_hour:
         target = brt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
     else:
         target = (brt + timedelta(days=1)).replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    if skip_weekends:
+        while target.weekday() >= 5:
+            target = (target + timedelta(days=1)).replace(hour=start_hour, minute=0, second=0, microsecond=0)
     return target - BRT_OFFSET
 
 
@@ -149,6 +178,7 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
         .eq("status", "active")
         .eq("env_tag", env_tag)
         .lte("next_execute_at", now.isoformat())
+        .order("next_execute_at", desc=False)  # F4: fairness — oldest-due first, no starvation
         .limit(limit)
         .execute()
         .data
@@ -165,26 +195,19 @@ def _complete(enrollment_id: str) -> None:
     sb.table("campaign_enrollments").update({
         "status": "completed",
         "completed_at": datetime.now(timezone.utc).isoformat(),
+        "claimed_at": None,
     }).eq("id", enrollment_id).execute()
 
 
-def _fail_enrollment(enrollment_id: str, retry_count: int, error: str, now: datetime) -> None:
-    next_retry, new_count, final = calculate_next_retry(retry_count, now)
-    if final:
-        _update(enrollment_id, status="failed", last_error=error[:500])
-    else:
-        _update(enrollment_id,
-                retry_count=new_count,
-                last_error=error[:500],
-                next_execute_at=next_retry.isoformat(),
-                next_retry_at=next_retry.isoformat())
-
-
 async def process_due_enrollments(now: datetime | None = None) -> None:
+    from app.campaigns.service import claim_enrollment, recover_stale_enrollments
     now = now or datetime.now(timezone.utc)
+    recover_stale_enrollments(now)
     enrollments = await asyncio.to_thread(get_due_enrollments, now)
     enrollments.sort(key=lambda e: (e.get("campaigns") or {}).get("priority", 5), reverse=True)
     for enrollment in enrollments:
+        if not claim_enrollment(enrollment["id"], now):
+            continue
         await _process_one(enrollment, now)
         await asyncio.sleep(random.randint(1, 3))
 
@@ -210,6 +233,16 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             enrollment["id"],
             status="paused",
             last_error="conversation_finalized",
+            claimed_at=None,
+        )
+        return
+
+    # F6: per-enrollment step guard — detects infinite loops in cadence graphs.
+    if (enrollment.get("step_count") or 0) >= MAX_STEPS:
+        _update(enrollment["id"], status="failed", last_error="max_steps_exceeded", claimed_at=None)
+        logger.error(
+            "[AUTOMATION] enrollment=%s excedeu MAX_STEPS (%d) — loop suspeito",
+            enrollment["id"], MAX_STEPS,
         )
         return
 
@@ -218,35 +251,57 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
 
     try:
         if node_type in ("send", "send_text"):
+            from app.campaigns.service import mark_enrollment_sent
             start_h = campaign.get("send_start_hour", 7)
             end_h   = campaign.get("send_end_hour", 18)
-            if not _is_within_window(now, start_h, end_h):
-                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat())
+            skip_wk = campaign.get("skip_weekends", False)
+            if not _is_within_window(now, start_h, end_h, skip_weekends=skip_wk):
+                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h, skip_weekends=skip_wk).isoformat(), claimed_at=None)
                 return
             if not check_frequency_cap(lead["id"], campaign.get("frequency_cap", 1)):
-                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h).isoformat())
+                _update(enrollment["id"], next_execute_at=_next_window_start(now, start_h, skip_weekends=skip_wk).isoformat(), claimed_at=None)
                 return
+            already_sent = enrollment.get("last_sent_node_id") == node["id"]
             if node_type == "send":
-                await _execute_send(enrollment, node, lead, now, campaign)
+                if not already_sent:
+                    wamid = await _execute_send(enrollment, node, lead, now, campaign)
+                    mark_enrollment_sent(enrollment["id"], node["id"], wamid)
             else:
-                await _execute_send_text(enrollment, node, lead, now, campaign)
-            record_daily_send(lead["id"])
+                if not already_sent:
+                    await _execute_send_text(enrollment, node, lead, now, campaign)
+                    mark_enrollment_sent(enrollment["id"], node["id"], None)
+            if not already_sent:
+                record_daily_send(lead["id"])
+            if already_sent:
+                _send_summary = "envio ignorado (idempotência)"
+            elif node_type == "send":
+                _send_summary = "template enviado"
+            else:
+                _send_summary = "mensagem enviada"
+            _log_exec(enrollment, node, "done", _send_summary)
 
         elif node_type == "wait":
             target = _wait_target(cfg, now)
-            _update(enrollment["id"], next_execute_at=target.isoformat())
+            _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
+            _log_exec(enrollment, node, "done",
+                      f"aguardando (d={cfg.get('days', 1)}, h={cfg.get('hours', 0)})")
             return
 
         elif node_type == "condition":
             _execute_condition(enrollment, node, lead, now)
+            _log_exec(enrollment, node, "done",
+                      f"condição {(cfg.get('condition_type') or 'desconhecida')} avaliada")
             return
 
         elif node_type == "action":
             _execute_action(enrollment, node, lead)
+            _log_exec(enrollment, node, "done",
+                      f"ação {(cfg.get('action_type') or 'desconhecida')} executada")
 
         elif node_type == "end":
             _execute_end(enrollment, node, lead)
             _complete(enrollment["id"])
+            _log_exec(enrollment, node, "done", "fluxo encerrado")
             return
 
         next_id = node.get("next_node_id")
@@ -255,17 +310,33 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
                     current_node_id=next_id,
                     next_execute_at=now.isoformat(),
                     retry_count=0,
-                    last_error=None)
+                    last_error=None,
+                    claimed_at=None,
+                    last_sent_node_id=None,
+                    step_count=(enrollment.get("step_count") or 0) + 1)
         else:
             _complete(enrollment["id"])
 
+    except WindowClosed:
+        from app.automation.retry import calculate_next_retry
+        nxt, new_count, final = calculate_next_retry(enrollment.get("retry_count", 0), now)
+        if final:
+            _update(enrollment["id"], status="cancelled", last_error="24h_window_expired", claimed_at=None)
+        else:
+            _update(enrollment["id"], retry_count=new_count, next_execute_at=nxt.isoformat(),
+                    last_error="24h_window_expired", claimed_at=None)
+        _log_exec(enrollment, node, "skipped", "janela 24h fechada — reagendado")
+        return
     except Exception as e:
         logger.error("[AUTOMATION] enrollment=%s node=%s error=%s",
                      enrollment["id"], node.get("id"), e, exc_info=True)
-        _fail_enrollment(enrollment["id"], enrollment.get("retry_count", 0), str(e), now)
+        from app.automation.retry import decide_failure_update
+        _update(enrollment["id"], **decide_failure_update(e, enrollment.get("retry_count", 0), now), claimed_at=None)
+        _log_exec(enrollment, node, "failed", str(e)[:300])
 
 
-async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
+async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> str | None:
+    """Execute a template send node and return the wamid (for idempotency marker)."""
     from app.campaigns.worker import _execute_send_node
     campaign = campaign or {}
     node_with_channel = dict(node)
@@ -273,7 +344,7 @@ async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime,
     if not cfg.get("channel_id") and campaign.get("channel_id"):
         cfg["channel_id"] = campaign["channel_id"]
     node_with_channel["config"] = cfg
-    await _execute_send_node(enrollment, node_with_channel, lead, now)
+    return await _execute_send_node(enrollment, node_with_channel, lead, now)
 
 
 async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
@@ -292,8 +363,7 @@ async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: date
         if isinstance(last_msg, str):
             last_msg = parse(last_msg)
         if (now - last_msg).total_seconds() > 86400:
-            _update(enrollment["id"], last_error="24h_window_expired")
-            return
+            raise WindowClosed()
 
     message = substitute_variables(cfg.get("message_text", ""), lead, enrollment)
     channel = _resolve_channel(cfg, campaign)
@@ -365,7 +435,8 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
 
     next_node_id = node["yes_node_id"] if result else node["no_node_id"]
     if next_node_id:
-        _update(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat())
+        _update(enrollment["id"], current_node_id=next_node_id, next_execute_at=now.isoformat(),
+                claimed_at=None, step_count=(enrollment.get("step_count") or 0) + 1)
     else:
         _complete(enrollment["id"])
     logger.info("[AUTOMATION] condition '%s' → %s for %s", cond, "YES" if result else "NO", lead["phone"])
@@ -433,20 +504,17 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             .data
         )
         if rows:
-            sb.table("deals").update({"stage_id": stage_id}).eq("id", rows[0]["id"]).execute()
-            # Venda confirmada → dispara conversão outbound (Meta CAPI / Google). Fail-soft:
-            # uma falha de disparo nunca pode interromper a automação. Disparo é no-op se
-            # não houver credenciais nem click id (ctwa_clid/fbclid/gclid) no lead.
-            if action_type == "mark_deal_won":
+            deal_id = rows[0]["id"]
+            sb.table("deals").update({"stage_id": stage_id}).eq("id", deal_id).execute()
+            # F9: dispara a conversão associada à etapa de destino (move_deal_stage /
+            # mark_deal_won). Usa helper compartilhado com triggers._maybe_fire_stage_conversion.
+            # Fail-soft — qualquer erro loga warning e NÃO interrompe o tick.
+            if action_type in ("mark_deal_won", "move_deal_stage"):
                 try:
-                    from app.campaigns.conversions import fire_stage_conversion_background
-                    from app.leads.service import get_lead
-                    lead_row = get_lead(enrollment["lead_id"]) or {}
-                    fire_stage_conversion_background(
-                        lead_row, rows[0]["id"], "purchase", value=cfg.get("value")
-                    )
+                    from app.campaigns.conversions import fire_conversion_for_deal_stage
+                    fire_conversion_for_deal_stage(enrollment["lead_id"], deal_id)
                 except Exception as exc:
-                    logger.warning("[AUTOMATION] mark_deal_won: falha ao disparar conversão: %s", exc)
+                    logger.warning("[AUTOMATION] %s: falha ao disparar conversão: %s", action_type, exc)
 
     elif action_type == "add_note":
         template = cfg.get("note_template") or ""
