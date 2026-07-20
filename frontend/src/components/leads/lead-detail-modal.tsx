@@ -633,14 +633,19 @@ export function LeadDetailModal({
       </div>
 
       {showCreateSale && (
-        <SaleCreateModal
-          leadId={lead.id}
-          onClose={() => setShowCreateSale(false)}
-          onSaved={() => {
-            setShowCreateSale(false);
-            fetchLeadDeals();
-          }}
-        />
+        // SaleCreateModal portals to document.body, but React events bubble through
+        // the React tree — without this boundary, clicks inside it would reach the
+        // root overlay's onClick={onClose} and close the lead modal.
+        <div onClick={(e) => e.stopPropagation()}>
+          <SaleCreateModal
+            leadId={lead.id}
+            onClose={() => setShowCreateSale(false)}
+            onSaved={() => {
+              setShowCreateSale(false);
+              fetchLeadDeals();
+            }}
+          />
+        </div>
       )}
     </div>
   );
