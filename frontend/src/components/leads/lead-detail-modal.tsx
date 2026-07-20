@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { LeadBroadcastHistory } from "./lead-broadcast-history";
+import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { AGENT_STAGES, LEAD_CHANNELS, DEAL_STAGES } from "@/lib/constants";
@@ -54,6 +55,7 @@ export function LeadDetailModal({
   const [currentTagIds, setCurrentTagIds] = useState<string[]>(leadTagIds);
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string; category: string | null }>>([]);
+  const [showCreateSale, setShowCreateSale] = useState(false);
 
   const temp = getTemperature(lead.last_msg_at);
   const tempConfig = TEMPERATURE_CONFIG[temp];
@@ -92,7 +94,7 @@ export function LeadDetailModal({
     }
   }, [activeTab, lead.id]);
 
-  useEffect(() => {
+  const fetchLeadDeals = useCallback(() => {
     import("@/lib/supabase/client").then(({ createClient }) => {
       const supabase = createClient();
       supabase
@@ -105,6 +107,10 @@ export function LeadDetailModal({
         });
     });
   }, [lead.id]);
+
+  useEffect(() => {
+    fetchLeadDeals();
+  }, [fetchLeadDeals]);
 
   function updateField(field: string, value: string | number) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -368,9 +374,18 @@ export function LeadDetailModal({
               </div>
 
               <div className="mt-5 pt-4 border-t border-[#dedbd6]">
-                <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">
-                  Oportunidades ({leadDeals.length})
-                </p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
+                    Oportunidades ({leadDeals.length})
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateSale(true)}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[#1f9d57] px-3 py-1.5 text-[13px] font-medium text-white hover:bg-[#1b8a4c]"
+                  >
+                    Registrar Venda
+                  </button>
+                </div>
                 {leadDeals.length === 0 && (
                   <p className="text-[13px] text-[#7b7b78]">Nenhuma oportunidade vinculada.</p>
                 )}
@@ -616,6 +631,17 @@ export function LeadDetailModal({
           )}
         </div>
       </div>
+
+      {showCreateSale && (
+        <SaleCreateModal
+          leadId={lead.id}
+          onClose={() => setShowCreateSale(false)}
+          onSaved={() => {
+            setShowCreateSale(false);
+            fetchLeadDeals();
+          }}
+        />
+      )}
     </div>
   );
 }
