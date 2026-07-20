@@ -17,6 +17,9 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { leadMatchesSearch } from "@/lib/search";
+import { ChevronDownIcon, CheckIcon } from "lucide-react";
 
 interface LeadDeal {
   id: string;
@@ -82,6 +85,9 @@ export function SaleCreateModal({
   const [newDealTitle, setNewDealTitle] = useState("");
   const [newDealPipeline, setNewDealPipeline] = useState("");
   const [notes, setNotes] = useState(editingSale?.notes ?? "");
+
+  const [leadPickerOpen, setLeadPickerOpen] = useState(false);
+  const [leadQuery, setLeadQuery] = useState("");
 
   const [users, setUsers] = useState<TeamUser[]>([]);
   const [leads, setLeads] = useState<LeadOption[]>([]);
@@ -255,31 +261,65 @@ export function SaleCreateModal({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
 
-          {/* Lead selector — only in pickLead mode and not editing */}
+          {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
           {pickLead && !isEditing && (
             <div>
               <label className={fieldLabel}>Lead *</label>
-              <Select
-                value={resolvedLeadId || undefined}
-                onValueChange={(v) => {
-                  setSelectedLeadId(v);
-                  setDealId("");
-                  setCreatingDeal(false);
-                  setNewDealTitle("");
-                  setNewDealPipeline("");
-                }}
-              >
-                <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
-                  <SelectValue placeholder="Selecione o lead" />
-                </SelectTrigger>
-                <SelectContent position="popper">
-                  {leads.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>
-                      {l.name ?? l.phone}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={leadPickerOpen} onOpenChange={setLeadPickerOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex w-full h-[37px] items-center justify-between bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                  >
+                    <span className={resolvedLeadId ? "" : "text-[#8a8a8a]"}>
+                      {resolvedLeadId
+                        ? (leads.find((l) => l.id === resolvedLeadId)?.name ??
+                           leads.find((l) => l.id === resolvedLeadId)?.phone ??
+                           "Lead selecionado")
+                        : "Selecione o lead"}
+                    </span>
+                    <ChevronDownIcon className="size-4 text-[#8a8a8a]" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="p-0">
+                  <div className="p-2 border-b border-[#eee]">
+                    <Input
+                      autoFocus
+                      value={leadQuery}
+                      onChange={(e) => setLeadQuery(e.target.value)}
+                      placeholder="Buscar lead por nome ou telefone..."
+                      className="h-8 text-[14px]"
+                    />
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-1">
+                    {leads.filter((l) => leadMatchesSearch(leadQuery, l)).length === 0 && (
+                      <div className="px-2 py-3 text-[13px] text-[#8a8a8a]">Nenhum lead encontrado.</div>
+                    )}
+                    {leads
+                      .filter((l) => leadMatchesSearch(leadQuery, l))
+                      .slice(0, 100)
+                      .map((l) => (
+                        <button
+                          key={l.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedLeadId(l.id);
+                            setDealId("");
+                            setCreatingDeal(false);
+                            setNewDealTitle("");
+                            setNewDealPipeline("");
+                            setLeadPickerOpen(false);
+                            setLeadQuery("");
+                          }}
+                          className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-[#f4f2ee]"
+                        >
+                          <span className="truncate">{l.name ?? l.phone}</span>
+                          {resolvedLeadId === l.id && <CheckIcon className="size-4 shrink-0" />}
+                        </button>
+                      ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           )}
 
