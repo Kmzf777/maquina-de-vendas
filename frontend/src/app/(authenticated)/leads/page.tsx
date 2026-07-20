@@ -10,6 +10,7 @@ import { LeadCreateModal } from "@/components/leads/lead-create-modal";
 import { LeadImportModal } from "@/components/leads/lead-import-modal";
 import type { Lead, Tag } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import { leadMatchesSearch } from "@/lib/search";
 
 const LEADS_PER_PAGE = 30;
 
@@ -50,15 +51,7 @@ export default function LeadsPage() {
   // Apply filters
   const filtered = useMemo(() => {
     return leads.filter((lead) => {
-      if (filters.search) {
-        const q = filters.search.toLowerCase();
-        const match =
-          (lead.name || "").toLowerCase().includes(q) ||
-          lead.phone.includes(q) ||
-          (lead.company || "").toLowerCase().includes(q) ||
-          (lead.razao_social || "").toLowerCase().includes(q);
-        if (!match) return false;
-      }
+      if (filters.search && !leadMatchesSearch(filters.search, lead)) return false;
       if (filters.temperature && getTemperature(lead.last_msg_at) !== filters.temperature) return false;
       if (filters.stage && lead.stage !== filters.stage) return false;
       if (filters.channel && lead.channel !== filters.channel) return false;

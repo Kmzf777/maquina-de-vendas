@@ -10,14 +10,25 @@ export function useRealtimeLeads(filter?: { human_control?: boolean }) {
   const supabase = createClient();
 
   const fetchLeads = useCallback(async () => {
-    let query = supabase.from("leads").select("*").order("last_msg_at", { ascending: false, nullsFirst: false });
+    const pageSize = 1000;
+    const all: Lead[] = [];
+    for (let from = 0; ; from += pageSize) {
+      let query = supabase
+        .from("leads")
+        .select("*")
+        .order("last_msg_at", { ascending: false, nullsFirst: false })
+        .range(from, from + pageSize - 1);
 
-    if (filter?.human_control !== undefined) {
-      query = query.eq("human_control", filter.human_control);
+      if (filter?.human_control !== undefined) {
+        query = query.eq("human_control", filter.human_control);
+      }
+
+      const { data, error } = await query;
+      if (error || !data) break;
+      all.push(...data);
+      if (data.length < pageSize) break;
     }
-
-    const { data } = await query;
-    if (data) setLeads(data);
+    setLeads(all);
     setLoading(false);
   }, [filter?.human_control]);
 
