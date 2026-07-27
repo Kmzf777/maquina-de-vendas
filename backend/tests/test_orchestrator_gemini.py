@@ -114,5 +114,9 @@ async def test_run_agent_coage_modelo_nao_gemini_para_gemini_flash():
         from app.agent.orchestrator import run_agent
         result = await run_agent(conversation, "oi", agent_profile_id="profile-1")
 
-    assert m_gen.call_args_list[-1].kwargs["model"] == "gemini-2.5-flash"
+    # Compara contra DEFAULT_MODEL (não contra a string fixa): o default é configurável
+    # por AGENT_DEFAULT_MODEL desde a mitigação de 27/07. O que este teste protege é a
+    # COERÇÃO de modelo não-Gemini para o default, não qual é o default do momento.
+    from app.agent.orchestrator import DEFAULT_MODEL
+    assert m_gen.call_args_list[-1].kwargs["model"] == DEFAULT_MODEL
     assert result == "Olá!"

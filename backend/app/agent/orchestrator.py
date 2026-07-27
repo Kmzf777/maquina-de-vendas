@@ -60,7 +60,34 @@ TZ_BR = timezone(timedelta(hours=-3))
 # docs/deprecations; sucessores oficiais: 3.5-flash e 3.1-flash-lite, JA validados na
 # chave com function calling — migrar com calma ANTES de outubro). Revertido ao 2.5
 # pos-recuperacao por custo (3.5 e 5x input / 3.6x output).
-DEFAULT_MODEL = "gemini-2.5-flash"
+# Modelo do agente quando a conversa não tem agent_profile (80% delas: 279 de 347
+# conversas ativas em 27/07). Configurável por env para permitir troca SEM deploy.
+#
+# MITIGAÇÃO 27/07: default movido de "gemini-2.5-flash" para "-lite". Medição em
+# produção nas 8h seguintes ao estouro do teto mensal: o flash-lite respondeu 32 de 32
+# chamadas, enquanto o flash respondeu 1 de ~20 — mesma chave, mesmo projeto, mesmo
+# minuto. O flash ficou com a cota restrita para requisições grandes (o turno da
+# Valéria carrega ~36K tokens) e o lite tem cota própria, que segue saudável. Com o
+# flash, a Valéria estava MUDA; é melhor um modelo mais fraco respondendo que um
+# modelo melhor em silêncio.
+#
+# REVERTER (sem deploy): AGENT_DEFAULT_MODEL=gemini-2.5-flash no .env de produção,
+# assim que o tier do projeto subir no AI Studio e o flash voltar a atender.
+_DEFAULT_MODEL_FALLBACK = "gemini-2.5-flash-lite"
+
+
+def resolve_default_model() -> str:
+    """Lê AGENT_DEFAULT_MODEL do ambiente, com fallback seguro.
+
+    Função (e não expressão inline) para que os testes exercitem a resolução via
+    monkeypatch SEM `importlib.reload` — recarregar este módulo recria as classes de
+    exceção (LLMUnavailableError e filhas) e quebra todo `pytest.raises`/`isinstance`
+    de quem já as importou.
+    """
+    return os.environ.get("AGENT_DEFAULT_MODEL", _DEFAULT_MODEL_FALLBACK).strip() or _DEFAULT_MODEL_FALLBACK
+
+
+DEFAULT_MODEL = resolve_default_model()
 MAX_TOOL_ITERATIONS = 5
 # gemini-2.5-flash conta tokens de "thinking" no MESMO budget que a saída via API
 # OpenAI-compat. Com teto baixo (1024) o modelo gasta o orçamento pensando e devolve
