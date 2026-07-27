@@ -618,6 +618,10 @@ async def _handle_llm_down(
         _parking_on = parking_enabled()
     except Exception:
         _parking_on = False
+    # Inicializado FORA do try: o contador também alimenta o deadline do parking
+    # (auditoria 27/07). Se o Redis cair aqui, `_count` seguia indefinido e o park
+    # abaixo levantaria NameError — 0 é o default seguro (janela de 30min, contrato antigo).
+    _count = 0
     try:
         _count = await _record_llm_failure()
         _threshold = 2 if _broadcast_recently_active() else _LLM_DOWN_ALERT_THRESHOLD
@@ -637,7 +641,10 @@ async def _handle_llm_down(
         logger.debug("[LLM DOWN] checagem de autoresponder falhou: %s", exc)
     if _parking_on:
         try:
-            if await park_turn(conversation, lead, phone, inbound_text, reason=reason):
+            if await park_turn(
+                conversation, lead, phone, inbound_text,
+                reason=reason, failure_count=_count,
+            ):
                 return  # estacionado — o drain do worker responde ou faz o handoff no prazo
         except Exception as exc:
             logger.error("[LLM DOWN] falha ao estacionar turno p/ %s: %s", phone, exc)

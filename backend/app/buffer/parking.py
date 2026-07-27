@@ -110,6 +110,31 @@ def _exhausted_max_hours() -> int:
     return _env_int("LLM_PARK_EXHAUSTED_MAX_HOURS", 26)
 
 
+def _outage_failures() -> int:
+    """Nº de falhas consecutivas do LLM a partir do qual o apagão deixa de ser tratado
+    como blip e passa a usar a janela curta (_outage_minutes).
+
+    Auditoria 27/07: o apagão de `gemini-2.5-flash` começou em 22/07 17:48 e seguia ativo
+    5 dias depois com 158 falhas consecutivas e ZERO sucessos. Como o `reason` vem do TIPO
+    da exceção (_llm_down_reason) e não da DURAÇÃO, todo lead continuava sendo estacionado
+    por 30min antes de um handoff que já era certo desde o 1º tick — 31min de silêncio
+    absoluto medidos em 29 handoffs seguidos. O contador `llm:consecutive_failures` já
+    sabia disso; só não era usado na decisão.
+
+    Default 10: o alerta llm_down já dispara em 3 (_LLM_DOWN_ALERT_THRESHOLD), então 10 é
+    folgado o bastante para não confundir rajada curta com apagão, e apertado o bastante
+    para o 2º/3º lead de um apagão real já pegar a janela curta.
+    """
+    return _env_int("LLM_PARK_OUTAGE_FAILURES", 10)
+
+
+def _outage_minutes() -> int:
+    """Janela de parking durante apagão SUSTENTADO. Curta de propósito: ainda dá uma
+    chance de recuperação ao próximo tick do drain, mas leva o lead ao João em ~3min em
+    vez de 31. Rollback sem deploy: LLM_PARK_OUTAGE_FAILURES=999999."""
+    return _env_int("LLM_PARK_OUTAGE_MINUTES", 3)
+
+
 def _retry_minutes() -> int:
     """Throttle do retry do drain p/ reason=quota — o tick do worker é de 30s; sem
     throttle, cada entrada quota queimaria o RPM restante a cada tick."""
@@ -140,20 +165,34 @@ def _next_midnight(now: datetime, tz) -> datetime:
     return nxt.astimezone(timezone.utc)
 
 
-def _compute_deadline(reason: str, parked_at: datetime) -> datetime:
-    """Deadline do parking por categoria (wartime 10/07).
+def _compute_deadline(reason: str, parked_at: datetime, failure_count: int = 0) -> datetime:
+    """Deadline do parking por categoria (wartime 10/07) e por DURAÇÃO do apagão (27/07).
 
-    transient → parked_at + LLM_PARK_MAX_MINUTES (30, contrato da Onda 2);
+    transient → parked_at + LLM_PARK_MAX_MINUTES (30, contrato da Onda 2) enquanto o
+                apagão for curto; parked_at + LLM_PARK_OUTAGE_MINUTES (3) a partir de
+                LLM_PARK_OUTAGE_FAILURES falhas consecutivas (auditoria 27/07 — ver
+                _outage_failures);
     budget    → próxima 00:00 UTC (reset do budget_guard) + folga;
     quota     → próxima 00:00 America/Los_Angeles (reset das quotas Gemini) + folga.
     Exaustos têm teto duro parked_at + LLM_PARK_EXHAUSTED_MAX_HOURS.
+
+    `failure_count` é PARÂMETRO, não releitura do Redis: `_handle_llm_down` já chamou
+    `_record_llm_failure()` e tem o número em mãos — reler seria uma 2ª ida ao Redis e
+    tornaria esta função impura (hoje ela é testável sem rede). Default 0 preserva o
+    contrato para qualquer chamador que não passe a contagem.
+
+    budget/quota IGNORAM a contagem de propósito: já têm deadline próprio (virada do dia)
+    e já mandam _HOLD_MSG ao lead. O modo cofre-vazio é outra categoria, não um apagão
+    transitório mais longo.
     """
     if reason == "budget":
         deadline = _next_midnight(parked_at, timezone.utc) + timedelta(minutes=_exhausted_grace_minutes())
     elif reason == "quota":
         deadline = _next_midnight(parked_at, _la_timezone()) + timedelta(minutes=_exhausted_grace_minutes())
     else:
-        return parked_at + timedelta(minutes=_park_max_minutes())
+        sustained = failure_count >= _outage_failures()
+        minutes = _outage_minutes() if sustained else _park_max_minutes()
+        return parked_at + timedelta(minutes=minutes)
     return min(deadline, parked_at + timedelta(hours=_exhausted_max_hours()))
 
 
@@ -211,13 +250,17 @@ async def _maybe_send_hold_message(conversation: dict, lead: dict, phone: str) -
 
 async def park_turn(
     conversation: dict, lead: dict, phone: str, inbound_text: str | None,
-    reason: str = "transient",
+    reason: str = "transient", failure_count: int = 0,
 ) -> bool:
     """Estaciona o turno desta conversa. 1 entrada por conversa (a mais recente vence).
 
     `reason` ∈ {"transient", "budget", "quota"} determina o `deadline` gravado na
     entrada (ver _compute_deadline). Reason exausto (budget/quota) também dispara a
     mensagem estática de espera — fail-soft: falha no envio NÃO impede o park.
+
+    `failure_count` é a contagem de falhas consecutivas do LLM no momento do park
+    (auditoria 27/07): encurta a janela transient quando o apagão já é sustentado e
+    fica gravado na entrada para diagnóstico no drain. Default 0 = contrato antigo.
 
     Retorna True quando estacionou; False em falha de Redis (o chamador decide o
     fallback — em _handle_llm_down, False degrada para o handoff imediato de hoje).
@@ -231,13 +274,14 @@ async def park_turn(
         "text": inbound_text or "",
         "parked_at": parked_at.isoformat(),
         "reason": reason,
-        "deadline": _compute_deadline(reason, parked_at).isoformat(),
+        "failure_count": failure_count,
+        "deadline": _compute_deadline(reason, parked_at, failure_count).isoformat(),
     }
     try:
         await _get_parking_redis().hset(PARKED_KEY, conversation["id"], json.dumps(entry))
         logger.warning(
-            "[LLM PARK] turno estacionado p/ conv %s (phone=%s, reason=%s, deadline=%s) — drain no worker",
-            conversation.get("id"), phone, reason, entry["deadline"],
+            "[LLM PARK] turno estacionado p/ conv %s (phone=%s, reason=%s, falhas=%d, deadline=%s) — drain no worker",
+            conversation.get("id"), phone, reason, failure_count, entry["deadline"],
         )
     except Exception as exc:
         logger.error("[LLM PARK] falha ao estacionar conv %s: %s", conversation.get("id"), exc)

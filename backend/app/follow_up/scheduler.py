@@ -595,13 +595,21 @@ async def process_due_followups(now: datetime | None = None) -> None:
                     "fluxo normal: %s", stop_lead_id, exc, exc_info=True,
                 )
                 stop_reason = None
-            if stop_reason:
+            # A decisão é (motivo, tipo de job) — não só o motivo: `ai_disabled` não pode
+            # matar o `handoff_rescue`, que existe justamente porque a IA foi desligada.
+            # Ver _STOP_REASON_EXEMPT_JOB_TYPES (auditoria 27/07, caso Wilson Demuth).
+            if _stop_reason_applies(stop_reason, job.get("job_type")):
                 _cancel_job(job["id"], stop_reason)
                 logger.info(
                     "[FOLLOWUP] lead %s marcado para parar (%s) — job %s (%s) suprimido no envio",
                     stop_lead_id, stop_reason, job["id"], job.get("job_type"),
                 )
                 continue
+            if stop_reason:
+                logger.info(
+                    "[FOLLOWUP] lead %s marcado para parar (%s) mas job %s (%s) é isento — seguindo",
+                    stop_lead_id, stop_reason, job["id"], job.get("job_type"),
+                )
 
         # Rota jobs de resgate de handoff para handler dedicado (antes de qualquer guard padrão)
         if job.get("job_type") == "handoff_rescue":
@@ -852,6 +860,41 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
     return None
 
 
+# Exceções do backstop de parada, por MOTIVO (não por tipo de job) — auditoria 27/07.
+#
+# `ai_disabled` x `handoff_rescue` é CIRCULAR: `encaminhar_humano` desliga a IA ao fazer o
+# handoff, e é esse mesmo handoff que agenda o resgate. O job nascia condenado — 144 jobs
+# criados entre 22 e 27/07, 144 cancelados com `ai_disabled`, ZERO enviados. O roteador
+# dedicado (`_process_handoff_rescue`, comentado como "antes de qualquer guard padrão")
+# nunca era alcançado, porque o backstop roda antes dele.
+#
+# Custo real: lead Wilson Demuth (5547992221012) recebeu handoff + cartão em 26/07 16:04,
+# mandou um áudio às 17:32 e nunca apareceu no canal do João — >21h no vácuo. O
+# `handoff_rescue` era exatamente o anteparo desse caso.
+#
+# A isenção é SÓ de `ai_disabled`. `opt_out`, `blacklisted` e `wrong_number` continuam
+# cancelando o resgate: não se manda template para quem pediu para sair nem para número
+# errado. O caso que motivou o backstop (5511910402026, 15/07 — cliente pediu ao humano
+# para a IA parar e os toques seguiram) é de cadência ao LEAD e segue integralmente coberto;
+# `handoff_rescue` não é cadência, é uma notificação por template ao VENDEDOR.
+_STOP_REASON_EXEMPT_JOB_TYPES: dict[str, frozenset[str]] = {
+    "ai_disabled": frozenset({"handoff_rescue"}),
+}
+
+
+def _stop_reason_applies(reason: str | None, job_type: str | None) -> bool:
+    """True quando `reason` deve cancelar um job deste `job_type`.
+
+    Função PURA, separada de `_lead_stop_reason` de propósito: aquela responde "este LEAD
+    está marcado para parar?" (e continua inalterada — a resposta segue sendo sim); esta
+    responde "esse motivo se aplica a ESTE job?". Sem a separação, a única forma de isentar
+    o resgate seria mentir sobre o estado do lead.
+    """
+    if not reason:
+        return False
+    return job_type not in _STOP_REASON_EXEMPT_JOB_TYPES.get(reason, frozenset())
+
+
 def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
     """Relê o lead para os backstops de parada e a decisão `should_proactive_handoff`.
 
@@ -911,8 +954,45 @@ async def _fire_proactive_handoff(job: dict, lead: dict, phone: str) -> None:
     _cancel_job(job["id"], "proactive_handoff_pos_catalogo")
 
 
+def _rescue_contact_cutoff(job: dict, now: datetime) -> str:
+    """Desde quando procurar por contato do lead com o João, ao decidir se o resgate ainda
+    faz sentido.
+
+    Antes era fixo em `now - 15min`, o que só equivale a "desde o handoff" no caso feliz,
+    em que o job dispara 15 min depois dele. Quebrava em dois casos reais (auditoria 27/07):
+
+      * `_clamp_to_rescue_window`: handoff às 21h de sexta agenda o resgate para segunda
+        09h. A janela de 15 min cobria segunda 08:45-09:00 — um lead que escreveu ao João
+        no sábado recebia "o João vai te atender" mesmo já estando com ele.
+      * Reagendamento em lote (recovery da regressão de 15/07): 178 jobs criados para
+        28/07 09:00 sobre handoffs de até 13 dias antes. A janela de 15 min ignoraria dias
+        inteiros de conversa.
+
+    Ordem: `metadata.original_handoff_at` (gravado pelo script de recovery) → `created_at`
+    do job (no fluxo normal, o próprio instante do handoff) → `now - 15min` como último
+    recurso, preservando o comportamento antigo para job legado/malformado.
+
+    Referência no futuro é descartada: tornaria a janela vazia e o guard inútil.
+    """
+    for candidato in ((job.get("metadata") or {}).get("original_handoff_at"), job.get("created_at")):
+        if not candidato:
+            continue
+        try:
+            ref = datetime.fromisoformat(str(candidato).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if ref.tzinfo is None:
+            ref = ref.replace(tzinfo=timezone.utc)
+        if ref <= now:
+            return str(candidato)
+    return (now - timedelta(minutes=15)).isoformat()
+
+
 async def _process_handoff_rescue(job: dict, now: datetime) -> None:
-    """Verifica se lead contatou João nos últimos 15 min. Se não, dispara template de resgate."""
+    """Dispara o template de resgate se o lead NÃO procurou o João desde o handoff.
+
+    A janela de checagem vem de `_rescue_contact_cutoff` — "desde o handoff", não um
+    intervalo fixo de 15 min (ver o docstring de lá para os casos que isso quebrava)."""
     metadata = job.get("metadata") or {}
     lead_phone = metadata.get("lead_phone")
     joao_phone_number_id = metadata.get("joao_phone_number_id", "1049315514934778")
@@ -937,7 +1017,7 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
         return
 
     sb = get_supabase()
-    cutoff = (now - timedelta(minutes=15)).isoformat()
+    cutoff = _rescue_contact_cutoff(job, now)
 
     try:
         conv_result = (

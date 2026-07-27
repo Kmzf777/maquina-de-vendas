@@ -57,6 +57,64 @@ Regras obrigatórias:
 - Preserve o formato exato (asteriscos, negrito, marcadores de lista com *)."""
 
 
+# Tetos do briefing determinístico. O dossiê vai por WhatsApp e precisa ser lido no
+# celular do vendedor — histórico inteiro colado vira parede de texto ignorada.
+_FALLBACK_MAX_MSGS = 6
+_FALLBACK_MAX_CHARS = 280
+
+
+def _fallback_briefing(
+    history: list[dict[str, Any]],
+    lead: dict[str, Any],
+    motivo: str = "",
+    handoff_at: str = "",
+) -> str:
+    """Dossiê DETERMINÍSTICO para quando o resumo por LLM não sai.
+
+    Auditoria 27/07: durante o apagão de `gemini-2.5-flash` (22/07 17:48 em diante),
+    63 de 64 dossiês chegaram ao João como "*Erro ao gerar resumo automático.*" + segmento
+    e nome. Era um desperdício: o sistema tinha em mãos o histórico completo, o motivo do
+    handoff e o timestamp, e jogava tudo fora porque o LLM estava fora.
+
+    Este briefing usa exatamente esses dados. É função PURA (sem rede, sem I/O) para poder
+    ser testada e para nunca ter como falhar no ramo em que TUDO já falhou.
+
+    Só mensagens do LEAD entram no trecho verbatim: o que o vendedor precisa é o que o
+    cliente pediu. Reproduzir falas da Valéria num dossiê que existe porque a Valéria
+    falhou é ruído.
+    """
+    nome = lead.get("name") or "Não informado"
+    empresa = lead.get("company") or "Não informado"
+    segmento = lead.get("stage") or "Não informado"
+
+    inbounds = [
+        (m.get("content") or "").strip()
+        for m in (history or [])
+        if m.get("role") == "user" and (m.get("content") or "").strip()
+    ]
+    recortes = []
+    for texto in inbounds[-_FALLBACK_MAX_MSGS:]:
+        if len(texto) > _FALLBACK_MAX_CHARS:
+            texto = texto[:_FALLBACK_MAX_CHARS] + "..."
+        recortes.append(f"- {texto}")
+
+    bloco_msgs = (
+        "\n".join(recortes) if recortes else "- (nenhuma mensagem de texto do lead no histórico)"
+    )
+
+    return (
+        f"## NOVO LEAD QUALIFICADO PELA VALÉRIA\n"
+        f"**Data/Hora:** {handoff_at or 'Não informado'}\n\n"
+        f"* **Nome do Lead:** {nome}\n"
+        f"* **Empresa:** {empresa}\n"
+        f"* **Interesse Principal:** {segmento}\n"
+        f"* **Motivo do encaminhamento:** {motivo or 'Não informado'}\n\n"
+        f"**Triagem automática indisponível** — a IA não conseguiu resumir esta conversa. "
+        f"Abaixo, o que o lead escreveu (últimas {len(recortes) or 0} mensagens), na íntegra:\n\n"
+        f"{bloco_msgs}"
+    )
+
+
 async def generate_qualification_summary(
     history: list[dict[str, Any]],
     lead: dict[str, Any],
@@ -121,12 +179,12 @@ async def generate_qualification_summary(
         # mascarando o gasto real e cegando o budget_guard. call_type próprio p/ auditoria.
         _track_summary_usage(result, lead, model, "qualification_summary")
         if not result.text:
-            return "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n*Resumo indisponível (resposta vazia do modelo).*"
+            # Antes: "*Resumo indisponível (resposta vazia do modelo).*" — o vendedor
+            # recebia um aviso de erro em vez do que o lead escreveu.
+            return _fallback_briefing(history, lead, motivo, handoff_at)
         return result.text
     except Exception as exc:
         logger.error("generate_qualification_summary: falha na chamada LLM: %s", exc, exc_info=True)
-        return (
-            f"## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n"
-            f"*Erro ao gerar resumo automático.*\n\n"
-            f"Segmento: {lead_stage} | Nome: {lead_name}"
-        )
+        # Antes: "*Erro ao gerar resumo automático.*" + segmento/nome — foi o que 63 de 64
+        # dossiês da janela do apagão entregaram ao João (auditoria 27/07).
+        return _fallback_briefing(history, lead, motivo, handoff_at)
