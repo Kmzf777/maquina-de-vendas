@@ -47,6 +47,19 @@ REDES DE SEGURANÇA
     (IS_DEV_ENV=true) geraria jobs `dev` que produção jamais coletaria — por isso o default
     aqui é "production" e o valor efetivo é impresso antes de gravar.
 
+EXECUÇÃO EM PRODUÇÃO (27/07/2026)
+---------------------------------
+Rodado em duas passadas, ambas com fire_at = 2026-07-28 09:00 BRT:
+  * janela do apagão (--since 2026-07-22T20:48:00Z) ....  78 jobs
+  * coorte da regressão (--since 2026-07-15T14:51:00Z) . 100 jobs
+Total: 178 jobs, 178 leads distintos, 1 job por lead (sem duplicata — a 2ª passada
+pulou os 78 da 1ª via `ja_tem_rescue_pending`).
+
+NÃO reagendados de propósito — 5 leads com handoff ANTERIOR à regressão e sem resgate:
+2 são leads de teste (5521900000090/92), 1 número UK cancelado em auditoria manual
+(63 dias) e 2 falharam com `meta_permanent_error_404` do bug de locale pt_BR (41-42
+dias). Nenhum é vítima desta regressão e o template seria anacrônico.
+
 USO (no container/venv do backend, com env de PRODUÇÃO)
 ------------------------------------------------------
     # 1) conferir o que seria criado (não grava nada)
