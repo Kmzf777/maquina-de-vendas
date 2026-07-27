@@ -595,13 +595,21 @@ async def process_due_followups(now: datetime | None = None) -> None:
                     "fluxo normal: %s", stop_lead_id, exc, exc_info=True,
                 )
                 stop_reason = None
-            if stop_reason:
+            # A decisão é (motivo, tipo de job) — não só o motivo: `ai_disabled` não pode
+            # matar o `handoff_rescue`, que existe justamente porque a IA foi desligada.
+            # Ver _STOP_REASON_EXEMPT_JOB_TYPES (auditoria 27/07, caso Wilson Demuth).
+            if _stop_reason_applies(stop_reason, job.get("job_type")):
                 _cancel_job(job["id"], stop_reason)
                 logger.info(
                     "[FOLLOWUP] lead %s marcado para parar (%s) — job %s (%s) suprimido no envio",
                     stop_lead_id, stop_reason, job["id"], job.get("job_type"),
                 )
                 continue
+            if stop_reason:
+                logger.info(
+                    "[FOLLOWUP] lead %s marcado para parar (%s) mas job %s (%s) é isento — seguindo",
+                    stop_lead_id, stop_reason, job["id"], job.get("job_type"),
+                )
 
         # Rota jobs de resgate de handoff para handler dedicado (antes de qualquer guard padrão)
         if job.get("job_type") == "handoff_rescue":
@@ -850,6 +858,41 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
     if lead.get("ai_enabled") is False:
         return "ai_disabled"
     return None
+
+
+# Exceções do backstop de parada, por MOTIVO (não por tipo de job) — auditoria 27/07.
+#
+# `ai_disabled` x `handoff_rescue` é CIRCULAR: `encaminhar_humano` desliga a IA ao fazer o
+# handoff, e é esse mesmo handoff que agenda o resgate. O job nascia condenado — 144 jobs
+# criados entre 22 e 27/07, 144 cancelados com `ai_disabled`, ZERO enviados. O roteador
+# dedicado (`_process_handoff_rescue`, comentado como "antes de qualquer guard padrão")
+# nunca era alcançado, porque o backstop roda antes dele.
+#
+# Custo real: lead Wilson Demuth (5547992221012) recebeu handoff + cartão em 26/07 16:04,
+# mandou um áudio às 17:32 e nunca apareceu no canal do João — >21h no vácuo. O
+# `handoff_rescue` era exatamente o anteparo desse caso.
+#
+# A isenção é SÓ de `ai_disabled`. `opt_out`, `blacklisted` e `wrong_number` continuam
+# cancelando o resgate: não se manda template para quem pediu para sair nem para número
+# errado. O caso que motivou o backstop (5511910402026, 15/07 — cliente pediu ao humano
+# para a IA parar e os toques seguiram) é de cadência ao LEAD e segue integralmente coberto;
+# `handoff_rescue` não é cadência, é uma notificação por template ao VENDEDOR.
+_STOP_REASON_EXEMPT_JOB_TYPES: dict[str, frozenset[str]] = {
+    "ai_disabled": frozenset({"handoff_rescue"}),
+}
+
+
+def _stop_reason_applies(reason: str | None, job_type: str | None) -> bool:
+    """True quando `reason` deve cancelar um job deste `job_type`.
+
+    Função PURA, separada de `_lead_stop_reason` de propósito: aquela responde "este LEAD
+    está marcado para parar?" (e continua inalterada — a resposta segue sendo sim); esta
+    responde "esse motivo se aplica a ESTE job?". Sem a separação, a única forma de isentar
+    o resgate seria mentir sobre o estado do lead.
+    """
+    if not reason:
+        return False
+    return job_type not in _STOP_REASON_EXEMPT_JOB_TYPES.get(reason, frozenset())
 
 
 def _fetch_lead_for_backstop(lead_id: str) -> dict | None:

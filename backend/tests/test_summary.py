@@ -94,6 +94,15 @@ async def test_no_facade_kwargs_leak_into_native_call():
 
 @pytest.mark.asyncio
 async def test_llm_failure_returns_graceful_fallback():
+    """Falha do LLM ainda devolve dossiê válido — mas com CONTEÚDO, não com um aviso de erro.
+
+    Atualizado em 27/07/2026: a asserção anterior era `"Erro" in result`, codificando o texto
+    "*Erro ao gerar resumo automático.*". Durante o apagão de `gemini-2.5-flash` (22/07 17:48
+    em diante) isso foi o que 63 de 64 dossiês entregaram ao João — o vendedor recebia o lead
+    sem saber sequer o que ele tinha pedido, embora o histórico estivesse todo em mãos. O
+    fallback agora monta um briefing determinístico (ver `_fallback_briefing`), então o teste
+    passa a exigir o oposto: nada de "Erro", e o que o lead escreveu presente.
+    """
     lead = {"name": "Ana", "stage": "private_label"}
 
     with patch("app.agent.summary.generate", new=AsyncMock(side_effect=Exception("timeout"))):
@@ -104,4 +113,6 @@ async def test_llm_failure_returns_graceful_fallback():
         )
 
     assert "## NOVO LEAD QUALIFICADO PELA VALÉRIA" in result
-    assert "Erro" in result
+    assert "Erro" not in result
+    assert "Ana" in result
+    assert "Interesse em private label" in result
