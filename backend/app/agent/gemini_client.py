@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 import google.genai as genai
 from google.genai import types
 
+from app.agent import prompt_cache
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,18 @@ def _is_sunset_404(exc: Exception) -> bool:
     return "404" in s and _SUNSET_404_MARKER in s
 
 
+def _is_cache_error(exc: Exception) -> bool:
+    """True quando o erro aponta para o `cached_content` (expirado/inexistente/inválido).
+
+    Só dispara com a palavra 'cache' presente: sem ela, um 404/400 qualquer não deve
+    provocar a retentativa sem cache (o erro real precisa subir).
+    """
+    s = str(exc).lower()
+    if "cache" not in s:
+        return False
+    return any(m in s for m in ("not found", "404", "invalid", "expired", "permission"))
+
+
 def is_transient_error(exc: Exception) -> bool:
     """Erro que vale retry (quota/5xx/transporte). 400/404 NÃO são transitórios."""
     s = str(exc).lower()
@@ -252,25 +265,70 @@ async def generate(
     stop_sequences: list[str] | None = None,
     thinking_off: bool = False,
     json_mode: bool = False,
+    cacheable_prefix: str | None = None,
 ) -> GenerateResult:
     """Única porta de geração. Assinatura FECHADA — parâmetro desconhecido é
-    TypeError do Python (nunca mais kwargs engolidos em silêncio)."""
-    cfg = types.GenerateContentConfig(
-        system_instruction=system_instruction,
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-        stop_sequences=stop_sequences or None,
-        tools=tools,
-        thinking_config=(types.ThinkingConfig(thinking_budget=0) if thinking_off else None),
-        response_mime_type=("application/json" if json_mode else None),
-        # ReAct manual: os function_call voltam CRUS para o loop do orchestrator.
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-    )
+    TypeError do Python (nunca mais kwargs engolidos em silêncio).
+
+    `cacheable_prefix` (opcional): a fatia ESTÁTICA do system_instruction, elegível a
+    context caching explícito. Quando informado E o cache está ligado
+    (GEMINI_EXPLICIT_CACHE=on), a chamada usa `cached_content` em vez de reenviar esse
+    prefixo — desconto contratual de 90% no input que bate o cache. O caller continua
+    passando o `system_instruction` COMPLETO: se o cache não estiver disponível (flag
+    off, prefixo curto, falha), a chamada segue exatamente como antes. Ver
+    app/agent/prompt_cache.py para a economia do TTL e o que o cache NÃO resolve (TPM).
+    """
+    cached_name: str | None = None
+    if cacheable_prefix:
+        cached_name = await prompt_cache.get_or_create(model, cacheable_prefix)
+
+    def _build_cfg(cache_name: str | None) -> types.GenerateContentConfig:
+        # Com cached_content o prefixo JÁ É o system_instruction do cache; reenviar o
+        # system_instruction aqui duplicaria o conteúdo e anularia o desconto. Sem
+        # cache, o caminho é idêntico ao histórico.
+        if cache_name:
+            volatile = (system_instruction or "")[len(cacheable_prefix or ""):].lstrip("\n")
+            return types.GenerateContentConfig(
+                cached_content=cache_name,
+                system_instruction=volatile or None,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                stop_sequences=stop_sequences or None,
+                tools=tools,
+                thinking_config=(types.ThinkingConfig(thinking_budget=0) if thinking_off else None),
+                response_mime_type=("application/json" if json_mode else None),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            )
+        return types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            stop_sequences=stop_sequences or None,
+            tools=tools,
+            thinking_config=(types.ThinkingConfig(thinking_budget=0) if thinking_off else None),
+            response_mime_type=("application/json" if json_mode else None),
+            # ReAct manual: os function_call voltam CRUS para o loop do orchestrator.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+
+    cfg = _build_cfg(cached_name)
     try:
         resp = await get_genai_client().aio.models.generate_content(
             model=model, contents=contents, config=cfg,
         )
     except Exception as exc:
+        # Cache explícito vencido/inválido no servidor: o índice local pode apontar para
+        # um cache que o Google já recolheu (corrida entre o TTL de lá e o nosso). Não é
+        # erro do turno — invalida e refaz a chamada SEM cache, uma única vez.
+        if cached_name and _is_cache_error(exc):
+            logger.warning(
+                "[GEMINI] cache explícito recusado (%s) — refazendo sem cache p/ %s", exc, model,
+            )
+            prompt_cache.invalidate(model, cacheable_prefix or "")
+            resp = await get_genai_client().aio.models.generate_content(
+                model=model, contents=contents, config=_build_cfg(None),
+            )
+            return parse_result(resp)
         # Falso-sunset no v1beta (09/07): o v1 seguia servindo o modelo. Modo-degradado
         # TEXTO PURO: o v1 rejeita systemInstruction/tools/thinkingConfig/responseMimeType
         # (prova de 09/07), então o fallback só vale sem tools/json — o system é

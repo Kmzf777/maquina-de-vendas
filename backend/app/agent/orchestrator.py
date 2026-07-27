@@ -767,6 +767,31 @@ def build_system_prompt(
     lead_context: dict | None = None,
     catalog_text: str | None = None,
 ) -> str:
+    """System prompt completo (estático + volátil), como sempre foi.
+
+    Wrapper fino sobre build_system_prompt_parts — a junção "\\n\\n".join é EXATAMENTE a
+    que existia antes da separação, então nenhum caller percebe diferença.
+    """
+    static_part, volatile_part = build_system_prompt_parts(
+        lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text,
+    )
+    return "\n\n".join([static_part, volatile_part])
+
+
+def build_system_prompt_parts(
+    lead: dict,
+    stage: str,
+    prompt_key: str = "valeria_inbound",
+    lead_context: dict | None = None,
+    catalog_text: str | None = None,
+) -> tuple[str, str]:
+    """Devolve (ESTATICO, VOLATIL) — o corte exato do prefixo elegível a context caching.
+
+    O ESTATICO é byte-idêntico entre turnos do mesmo (prompt_key, stage, catálogo), o que
+    o torna cacheável de verdade; o VOLATIL carrega data, nome, CRM e dossiê. O corte
+    respeita a ordem cache-first já estabelecida em 12/07 (FinOps P1) — ver o comentário
+    de ordem abaixo, que continua valendo palavra por palavra.
+    """
     now = datetime.now(TZ_BR)
     stage_prompts = get_stage_prompts(prompt_key)
     stage_prompt = stage_prompts.get(stage, stage_prompts["secretaria"])
@@ -779,19 +804,19 @@ def build_system_prompt(
     # <context> ficava no meio da cadeia).
     # FINAL_INSTRUCTION fica por ultimo para que <final_instruction> seja literalmente a
     # ultima tag da string, preservando a hierarquia XML esperada pelo Gemini.
-    parts = [BASE_STATIC, stage_prompt]
+    static_parts = [BASE_STATIC, stage_prompt]
     if catalog_text:
-        parts.append(_build_catalog_block(catalog_text))
-    parts.append(
+        static_parts.append(_build_catalog_block(catalog_text))
+    volatile_parts = [
         build_context_block(
             lead_name=lead.get("name"),
             lead_company=lead.get("company"),
             now=now,
             lead_context=lead_context,
-        )
-    )
-    parts.append(FINAL_INSTRUCTION)
-    return "\n\n".join(parts)
+        ),
+        FINAL_INSTRUCTION,
+    ]
+    return "\n\n".join(static_parts), "\n\n".join(volatile_parts)
 
 
 async def run_agent(
@@ -849,9 +874,13 @@ async def run_agent(
 
     tools = build_tools(get_tools_for_stage(stage))
     catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)
-    system_prompt = build_system_prompt(
+    # _static_prefix é a fatia cacheável (BASE_STATIC + roteiro + catálogo); system_prompt
+    # segue sendo a string completa que sempre foi enviada. Com o cache desligado
+    # (default), _static_prefix é apenas ignorado lá embaixo.
+    _static_prefix, _volatile_suffix = build_system_prompt_parts(
         lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text
     )
+    system_prompt = "\n\n".join([_static_prefix, _volatile_suffix])
 
     def _track(call_type: str, result: GenerateResult) -> None:
         """Contabiliza usage nativo no token_usage (colunas do banco inalteradas:
@@ -978,6 +1007,7 @@ async def run_agent(
         model=model,
         contents=contents,
         system_instruction=system_prompt,
+        cacheable_prefix=_static_prefix,
         tools=tools,
         temperature=0.4,
         max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -1022,6 +1052,7 @@ async def run_agent(
                         model=model,
                         contents=contents,
                         system_instruction=system_prompt,
+                        cacheable_prefix=_static_prefix,
                         tools=None,
                         temperature=0.4,
                         max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -1192,9 +1223,10 @@ async def run_agent(
                 transitioned_to_stage = new_stage
                 tools = build_tools(get_tools_for_stage(stage))
                 catalog_text = get_products_by_funnel(stage, prompt_key=prompt_key)
-                system_prompt = build_system_prompt(
+                _static_prefix, _volatile_suffix = build_system_prompt_parts(
                     lead, stage, prompt_key=prompt_key, lead_context=lead_context, catalog_text=catalog_text
                 )
+                system_prompt = "\n\n".join([_static_prefix, _volatile_suffix])
                 if lead_id:
                     current_meta = lead.get("metadata") or {}
                     updated_meta = {**current_meta, "previous_stage": old_stage}
@@ -1223,6 +1255,7 @@ async def run_agent(
             model=model,
             contents=contents,
             system_instruction=system_prompt,
+            cacheable_prefix=_static_prefix,
             tools=tools,
             temperature=0.4,
             max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -1274,6 +1307,7 @@ async def run_agent(
                 model=model,
                 contents=contents,
                 system_instruction=system_prompt,
+                cacheable_prefix=_static_prefix,
                 tools=retry_tools,
                 temperature=0.4,
                 max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -1399,6 +1433,7 @@ async def run_agent(
                     model=model,
                     contents=contents,
                     system_instruction=system_prompt,
+                    cacheable_prefix=_static_prefix,
                     tools=retry_tools,
                     temperature=0.4,
                     max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -1447,6 +1482,7 @@ async def run_agent(
                 model=model,
                 contents=contents + [user_content(_RETRY2_NUDGE)],
                 system_instruction=system_prompt,
+                cacheable_prefix=_static_prefix,
                 tools=None,
                 temperature=_RETRY2_TEMPERATURE,
                 max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -1537,6 +1573,7 @@ async def run_agent(
                         user_content(_nudge),
                     ],
                     system_instruction=system_prompt,
+                    cacheable_prefix=_static_prefix,
                     tools=None,
                     temperature=0.5,
                     max_output_tokens=MAX_OUTPUT_TOKENS,

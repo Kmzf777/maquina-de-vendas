@@ -30,11 +30,20 @@ logger = logging.getLogger(__name__)
 _CACHE_TTL_SECS = 30
 _cache: dict = {"day": None, "spend": 0.0, "at": 0.0}
 
+# Eixo mensal (wartime 27/07): TTL longo — a soma do mês se move devagar e a query
+# varre o mês inteiro, então ela não pode rodar a cada turno.
+_MONTH_CACHE_TTL_SECS = 300
+_month_cache: dict = {"month": None, "spend": 0.0, "at": 0.0}
+
 # Dedup in-process dos alertas de budget (wartime T2, 10/07): 1 alerta/dia (UTC).
 # A flag é checada ANTES de qualquer query — is_exceeded() roda no caminho quente de
 # TODA chamada ao LLM e não pode ganhar custo de banco por causa do alarme.
 # `autoresolve_day` marca o dia em que o auto-resolve da virada já rodou (1x/dia).
-_alert_state: dict = {"exceeded_day": None, "warning_day": None, "autoresolve_day": None}
+_alert_state: dict = {
+    "exceeded_day": None, "warning_day": None, "autoresolve_day": None,
+    # Eixo mensal: dedup por MÊS (não por dia) — o incidente dura o mês inteiro.
+    "monthly_month": None,
+}
 
 
 def daily_cost_limit_usd() -> float:
@@ -66,6 +75,87 @@ def today_spend_usd(force: bool = False) -> float:
         return 0.0
     _cache.update(day=day, spend=spend, at=now)
     return spend
+
+
+def monthly_alert_limit_usd() -> float:
+    """Limiar de aviso do gasto MENSAL em USD. `0` explícito desliga.
+
+    Eixo distinto do teto diário (wartime 27/07): no incidente de 19-27/07 a Valéria
+    ficou 5 dias muda porque o teto MENSAL do provedor (Google AI Studio) estourou —
+    e o guard diário nunca viu nada, porque o gasto de cada dia (~US$1-3) estava
+    confortavelmente abaixo dos US$8 diários. Um teto mensal do provedor é atingido
+    pela SOMA, não pelo pico: sem este eixo, o estouro é invisível até a IA emudecer.
+
+    Default US$40 — ~2x o consumo real medido em 07/2026 (US$21,58/mês). Nasce ARMADO
+    de propósito: o kill-switch diário nasceu desarmado e custou ~R$149 num runaway
+    (FinOps P0, 12/07). Ajuste para ~80% do teto configurado no provedor.
+    """
+    try:
+        return float(os.environ.get("LLM_MONTHLY_ALERT_USD", "40") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _this_month_utc() -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return now.strftime("%Y-%m"), start.isoformat()
+
+
+def month_spend_usd(force: bool = False) -> float:
+    """Gasto do mês corrente (UTC) somado de token_usage.total_cost. Fail-open → 0.0.
+
+    Cache mais longo que o diário: o número se move devagar e a query varre o mês
+    inteiro — não pode entrar no caminho quente a cada turno.
+    """
+    month, start = _this_month_utc()
+    now = time.time()
+    if not force and _month_cache["month"] == month and (now - _month_cache["at"]) < _MONTH_CACHE_TTL_SECS:
+        return _month_cache["spend"]
+    try:
+        sb = get_supabase()
+        res = sb.table("token_usage").select("total_cost").gte("created_at", start).execute()
+        spend = sum(float(r.get("total_cost") or 0) for r in (res.data or []))
+    except Exception as exc:  # fail-open: medidor nunca bloqueia atendimento
+        logger.warning("[BUDGET] falha ao ler gasto do mês — fail-open: %s", exc)
+        return 0.0
+    _month_cache.update(month=month, spend=spend, at=now)
+    return spend
+
+
+def fire_monthly_warning(spend: float, limit: float) -> None:
+    """Aviso preventivo de gasto mensal. Dedup: 1x/mês in-process + 24h no banco."""
+    month, _ = _this_month_utc()
+    if _alert_state["monthly_month"] == month:
+        return
+    _alert_state["monthly_month"] = month
+    pct = (spend / limit * 100) if limit > 0 else 0.0
+    _fire_alert_deduped(
+        "llm_monthly_budget_warning",
+        "warning",
+        "Gasto mensal de LLM cruzou o limiar de aviso",
+        (
+            f"Gasto do mês US${spend:.2f} atingiu {pct:.0f}% do limiar US${limit:.2f}. "
+            "ATENÇÃO: o teto de gasto do provedor (Google AI Studio) é MENSAL e, ao "
+            "estourar, a IA para de responder até a virada do mês — foi o que deixou a "
+            "Valéria muda de 19 a 27/07/2026. Confira o teto em https://ai.studio/spend "
+            "e ajuste LLM_MONTHLY_ALERT_USD para ~80% dele."
+        ),
+    )
+
+
+def check_monthly_budget() -> None:
+    """Avalia o eixo mensal e alerta se cruzou o limiar. Fail-soft, nunca levanta."""
+    limit = monthly_alert_limit_usd()
+    if limit <= 0:
+        return
+    spend = month_spend_usd()
+    if spend >= limit:
+        logger.warning(
+            "[BUDGET] gasto MENSAL US$%.2f >= limiar US$%.2f — risco de estourar o teto "
+            "do provedor (a IA emudece até a virada do mês).", spend, limit,
+        )
+        fire_monthly_warning(spend, limit)
 
 
 def _fire_alert_deduped(alert_type: str, severity: str, title: str, message: str) -> None:
@@ -189,6 +279,8 @@ def is_exceeded() -> bool:
         _auto_resolve_on_new_day(day)
         if spend >= 0.8 * limit:
             fire_budget_warning(spend, limit)
+        # Eixo mensal: o teto do PROVEDOR é mensal e não aparece no gasto diário.
+        check_monthly_budget()
     except Exception as exc:
         logger.warning("[BUDGET] rotina de alerta/auto-resolve falhou (seguindo): %s", exc)
     return False
