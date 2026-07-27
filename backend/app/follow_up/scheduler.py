@@ -954,8 +954,45 @@ async def _fire_proactive_handoff(job: dict, lead: dict, phone: str) -> None:
     _cancel_job(job["id"], "proactive_handoff_pos_catalogo")
 
 
+def _rescue_contact_cutoff(job: dict, now: datetime) -> str:
+    """Desde quando procurar por contato do lead com o João, ao decidir se o resgate ainda
+    faz sentido.
+
+    Antes era fixo em `now - 15min`, o que só equivale a "desde o handoff" no caso feliz,
+    em que o job dispara 15 min depois dele. Quebrava em dois casos reais (auditoria 27/07):
+
+      * `_clamp_to_rescue_window`: handoff às 21h de sexta agenda o resgate para segunda
+        09h. A janela de 15 min cobria segunda 08:45-09:00 — um lead que escreveu ao João
+        no sábado recebia "o João vai te atender" mesmo já estando com ele.
+      * Reagendamento em lote (recovery da regressão de 15/07): 178 jobs criados para
+        28/07 09:00 sobre handoffs de até 13 dias antes. A janela de 15 min ignoraria dias
+        inteiros de conversa.
+
+    Ordem: `metadata.original_handoff_at` (gravado pelo script de recovery) → `created_at`
+    do job (no fluxo normal, o próprio instante do handoff) → `now - 15min` como último
+    recurso, preservando o comportamento antigo para job legado/malformado.
+
+    Referência no futuro é descartada: tornaria a janela vazia e o guard inútil.
+    """
+    for candidato in ((job.get("metadata") or {}).get("original_handoff_at"), job.get("created_at")):
+        if not candidato:
+            continue
+        try:
+            ref = datetime.fromisoformat(str(candidato).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if ref.tzinfo is None:
+            ref = ref.replace(tzinfo=timezone.utc)
+        if ref <= now:
+            return str(candidato)
+    return (now - timedelta(minutes=15)).isoformat()
+
+
 async def _process_handoff_rescue(job: dict, now: datetime) -> None:
-    """Verifica se lead contatou João nos últimos 15 min. Se não, dispara template de resgate."""
+    """Dispara o template de resgate se o lead NÃO procurou o João desde o handoff.
+
+    A janela de checagem vem de `_rescue_contact_cutoff` — "desde o handoff", não um
+    intervalo fixo de 15 min (ver o docstring de lá para os casos que isso quebrava)."""
     metadata = job.get("metadata") or {}
     lead_phone = metadata.get("lead_phone")
     joao_phone_number_id = metadata.get("joao_phone_number_id", "1049315514934778")
@@ -980,7 +1017,7 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
         return
 
     sb = get_supabase()
-    cutoff = (now - timedelta(minutes=15)).isoformat()
+    cutoff = _rescue_contact_cutoff(job, now)
 
     try:
         conv_result = (
