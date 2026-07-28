@@ -63,17 +63,25 @@ TZ_BR = timezone(timedelta(hours=-3))
 # Modelo do agente quando a conversa não tem agent_profile (80% delas: 279 de 347
 # conversas ativas em 27/07). Configurável por env para permitir troca SEM deploy.
 #
-# MITIGAÇÃO 27/07: default movido de "gemini-2.5-flash" para "-lite". Medição em
-# produção nas 8h seguintes ao estouro do teto mensal: o flash-lite respondeu 32 de 32
-# chamadas, enquanto o flash respondeu 1 de ~20 — mesma chave, mesmo projeto, mesmo
-# minuto. O flash ficou com a cota restrita para requisições grandes (o turno da
-# Valéria carrega ~36K tokens) e o lite tem cota própria, que segue saudável. Com o
-# flash, a Valéria estava MUDA; é melhor um modelo mais fraco respondendo que um
-# modelo melhor em silêncio.
+# NÃO TROQUE PARA "-lite" SEM LER ISTO (incidente 27/07, 21:23-01:04 UTC).
 #
-# REVERTER (sem deploy): AGENT_DEFAULT_MODEL=gemini-2.5-flash no .env de produção,
-# assim que o tier do projeto subir no AI Studio e o flash voltar a atender.
-_DEFAULT_MODEL_FALLBACK = "gemini-2.5-flash-lite"
+# O flash-lite foi posto como default por 3h40 como mitigação (o flash estava com a
+# cota restrita para os ~36K tokens do turno e a Valéria estava muda). Ele respondeu,
+# mas VAZOU O RACIOCÍNIO INTERNO PARA LEADS REAIS — a falha que a constraint de
+# PRIORIDADE MÁXIMA do BASE_STATIC existe para impedir:
+#   - lead 5575998440287 recebeu a bolha literal "tool_code";
+#   - lead 5571999894808 recebeu 3 bolhas do chain-of-thought em INGLÊS, com markdown,
+#     citando `triage_flow`, `mudar_stage("atacado")` e a numeração das ETAPAS do prompt.
+# 4 vazamentos em 13 bolhas (31%). O lite não sustenta a supressão de CoT sob um system
+# prompt de 35 regras + function calling.
+#
+# LIÇÃO: com este prompt, a Valéria MUDA é menos danosa que a Valéria vazando raciocínio
+# interno para o cliente. Silêncio não queima a marca; CoT em inglês no WhatsApp queima.
+#
+# Trocar de modelo aqui exige validação de aderência ANTES (rehearsal/dev), nunca direto
+# em produção. AGENT_DEFAULT_MODEL permite a troca sem deploy — o que também significa
+# que ela pode ser feita sem revisão. Use com cuidado.
+_DEFAULT_MODEL_FALLBACK = "gemini-2.5-flash"
 
 
 def resolve_default_model() -> str:

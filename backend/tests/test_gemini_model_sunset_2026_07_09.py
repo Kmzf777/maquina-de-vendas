@@ -17,12 +17,13 @@ from app.config import settings
 
 
 def test_default_models_atuais_2_5_ate_migracao_planejada():
-    # MITIGAÇÃO 27/07: DEFAULT_MODEL saiu do flash para o -lite. Medido em produção
-    # após o estouro do teto mensal: lite 32/32 chamadas OK, flash 1/~20 — o flash
-    # ficou com cota restrita para os ~36K tokens do turno da Valéria. Reverter com
-    # AGENT_DEFAULT_MODEL=gemini-2.5-flash quando o tier do projeto subir.
-    assert DEFAULT_MODEL == "gemini-2.5-flash-lite"
+    # 27/07: o -lite foi default por 3h40 e VAZOU chain-of-thought para leads reais
+    # (4 vazamentos em 13 bolhas: "tool_code" cru e o raciocínio em inglês citando
+    # triage_flow/mudar_stage). Revertido. O agente conversacional NÃO roda em -lite:
+    # ele não sustenta a supressão de CoT com 35 regras + function calling.
+    assert DEFAULT_MODEL == "gemini-2.5-flash"
     assert SCH._FOLLOWUP_MODEL == "gemini-2.5-flash"
+    # -lite segue válido para tarefas MECÂNICAS (sem persona, sem tools).
     assert settings.memory_model == "gemini-2.5-flash-lite"
     assert settings.transcription_model == "gemini-2.5-flash-lite"
     # A família continua sendo a 2.5 até a migração planejada (sunset real 16/10/2026).
@@ -39,14 +40,14 @@ def test_default_model_e_configuravel_por_env(monkeypatch):
     """
     from app.agent.orchestrator import resolve_default_model
 
-    monkeypatch.setenv("AGENT_DEFAULT_MODEL", "gemini-2.5-flash")
-    assert resolve_default_model() == "gemini-2.5-flash"
+    monkeypatch.setenv("AGENT_DEFAULT_MODEL", "gemini-3.5-flash")
+    assert resolve_default_model() == "gemini-3.5-flash"
 
     monkeypatch.setenv("AGENT_DEFAULT_MODEL", "   ")  # vazio/branco cai no fallback
-    assert resolve_default_model() == "gemini-2.5-flash-lite"
+    assert resolve_default_model() == "gemini-2.5-flash"
 
     monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
-    assert resolve_default_model() == "gemini-2.5-flash-lite"
+    assert resolve_default_model() == "gemini-2.5-flash"
 
 
 def test_thinking_off_cobre_familia_3x():
