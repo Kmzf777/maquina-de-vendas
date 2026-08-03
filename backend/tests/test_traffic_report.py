@@ -88,3 +88,78 @@ def test_build_total_aggregates_all_rows():
     sales_by_lead = {"a": {"count": 1, "value": 50.0}, "b": {"count": 2, "value": 30.0}}
     out = build_campaign_report(leads, {"a"}, {"a"}, sales_by_lead, mode="lead", period="30d")
     assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1, "vendas": 3, "receita": 80.0}
+
+
+# --- Task 3: traffic_report e campaign_leads (I/O fail-soft) ---
+
+import app.campaigns.traffic_report as tr
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def select(self, *a, **k): return self
+    def gte(self, *a, **k): return self
+    def not_(self, *a, **k): return self
+    def is_(self, *a, **k): return self
+    def in_(self, *a, **k): return self
+    def eq(self, *a, **k): return self
+    def execute(self):
+        class R: pass
+        r = R(); r.data = self._rows; return r
+
+
+class _FakeSupabase:
+    def __init__(self, tables):
+        self._tables = tables
+    def table(self, name):
+        return _FakeQuery(self._tables.get(name, []))
+
+
+def test_traffic_report_lead_mode_end_to_end(monkeypatch):
+    tables = {
+        "leads": [
+            {"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
+             "utm_campaign": "black", "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
+        ],
+        "conversations": [{"lead_id": "a", "last_customer_message_at": "2026-08-02T00:00:00Z"}],
+        "deals": [{"lead_id": "a", "stage_id": "s2", "pipeline_id": "p1"}],
+        "pipeline_stages": [
+            {"id": "s1", "pipeline_id": "p1", "key": "entrada", "order_index": 0},
+            {"id": "s2", "pipeline_id": "p1", "key": "qualificado", "order_index": 1},
+        ],
+        "sales": [{"lead_id": "a", "value": 200.0, "sold_at": "2026-08-03T00:00:00Z"}],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    out = tr.traffic_report(period="30d", mode="lead")
+    row = out["rows"][0]
+    assert (row["channel"], row["campaign"]) == ("Google Ads", "black")
+    assert row["conversas"] == 1 and row["closer"] == 1 and row["vendas"] == 1
+    assert row["receita"] == 200.0
+
+
+def test_traffic_report_failsoft_on_error(monkeypatch):
+    class _Boom:
+        def table(self, *a, **k): raise RuntimeError("db down")
+    monkeypatch.setattr(tr, "get_supabase", lambda: _Boom())
+    out = tr.traffic_report(period="30d", mode="lead")
+    assert out["rows"] == [] and out["total"]["leads"] == 0
+
+
+def test_campaign_leads_filters_by_channel_and_campaign(monkeypatch):
+    tables = {
+        "leads": [
+            {"id": "a", "name": "Ana", "phone": "5511", "gclid": "1", "fbclid": "",
+             "ctwa_clid": "", "utm_source": "", "utm_medium": "cpc", "utm_campaign": "black",
+             "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
+            {"id": "b", "name": "Bob", "phone": "5512", "gclid": "", "fbclid": "2",
+             "ctwa_clid": "", "utm_source": "", "utm_medium": "cpc", "utm_campaign": "black",
+             "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
+        ],
+        "conversations": [], "deals": [], "pipeline_stages": [], "sales": [],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    leads = tr.campaign_leads(channel="Google Ads", campaign="black", period="30d", mode="lead")
+    assert [l["lead_id"] for l in leads] == ["a"]
+    assert leads[0]["comprou"] is False
