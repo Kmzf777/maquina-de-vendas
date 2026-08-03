@@ -5,10 +5,10 @@ import { useCurrentRole } from "@/hooks/use-current-role";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CampaignReportTable, type CampaignRow, type ReportTotal } from "@/components/trafego/campaign-report-table";
+import { CampaignReportTable, type CampaignRow, type ReportTotal, type ChannelSubtotals } from "@/components/trafego/campaign-report-table";
 import { CampaignLeadsDrawer } from "@/components/trafego/campaign-leads-drawer";
 
-type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal };
+type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals };
 
 export default function TrafegoPage() {
   const { role, loading: roleLoading } = useCurrentRole();
@@ -73,6 +73,7 @@ export default function TrafegoPage() {
             <CampaignReportTable
               rows={report?.rows ?? []}
               total={report?.total}
+              subtotals={report?.channel_subtotals ?? {}}
               onRowClick={(r) => setSelected({ channel: r.channel, campaign: r.campaign })}
             />
           </div>

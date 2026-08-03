@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export type CampaignRow = {
@@ -8,6 +9,9 @@ export type CampaignRow = {
 };
 
 export type ReportTotal = { leads: number; conversas: number; closer: number; vendas: number; receita: number };
+
+export type ChannelSubtotal = { leads: number; conversas: number; closer: number; vendas: number; receita: number };
+export type ChannelSubtotals = Record<string, ChannelSubtotal>;
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 const fmtPct = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -30,9 +34,10 @@ function ChannelBadge({ channel }: { channel: string }) {
   );
 }
 
-export function CampaignReportTable({ rows, total, onRowClick }: {
+export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }: {
   rows: CampaignRow[];
   total?: ReportTotal;
+  subtotals?: ChannelSubtotals;
   onRowClick: (r: CampaignRow) => void;
 }) {
   if (rows.length === 0) {
@@ -56,23 +61,44 @@ export function CampaignReportTable({ rows, total, onRowClick }: {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((r, i) => (
-          <TableRow
-            key={`${r.channel}-${r.campaign}-${i}`}
-            className="cursor-pointer border-[#dedbd6] hover:bg-[#faf9f6]"
-            onClick={() => onRowClick(r)}
-          >
-            <TableCell><ChannelBadge channel={r.channel} /></TableCell>
-            <TableCell className="text-[14px] text-[#111111] font-medium max-w-[240px] truncate">{r.campaign}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.leads)}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.conversas)}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.closer)}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.vendas)}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtBRL(r.receita)}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtBRL(r.ticket_medio)}</TableCell>
-            <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtPct(r.conversao)}</TableCell>
-          </TableRow>
-        ))}
+        {rows.map((r, i) => {
+          const isGroupEnd = i === rows.length - 1 || rows[i + 1].channel !== r.channel;
+          const sub = subtotals[r.channel];
+          const subTicket = sub && sub.vendas > 0 ? sub.receita / sub.vendas : 0;
+          const subConversao = sub && sub.leads > 0 ? sub.vendas / sub.leads : 0;
+          return (
+            <Fragment key={`${r.channel}-${r.campaign}-${i}`}>
+              <TableRow
+                className="cursor-pointer border-[#dedbd6] hover:bg-[#faf9f6]"
+                onClick={() => onRowClick(r)}
+              >
+                <TableCell><ChannelBadge channel={r.channel} /></TableCell>
+                <TableCell className="text-[14px] text-[#111111] font-medium max-w-[240px] truncate">{r.campaign}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.leads)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.conversas)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.closer)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.vendas)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtBRL(r.receita)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtBRL(r.ticket_medio)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtPct(r.conversao)}</TableCell>
+              </TableRow>
+              {isGroupEnd && sub && (
+                <TableRow className="bg-[#faf9f6] border-[#dedbd6] hover:bg-[#faf9f6]">
+                  <TableCell colSpan={2} className="text-[12px] font-medium text-[#7b7b78]">
+                    Subtotal · {r.channel}
+                  </TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.leads)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.conversas)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.closer)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.vendas)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(sub.receita)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(subTicket)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtPct(subConversao)}</TableCell>
+                </TableRow>
+              )}
+            </Fragment>
+          );
+        })}
       </TableBody>
       {total && (
         <TableFooter className="bg-[#faf9f6] border-t border-[#dedbd6]">
