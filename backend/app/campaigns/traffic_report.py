@@ -178,7 +178,7 @@ def _sales_by_lead(sb, lead_ids: list[str], cutoff: str | None, mode: str) -> di
 
 
 def _empty_report(mode: str, period: str) -> dict[str, Any]:
-    return {"mode": mode, "period": period, "rows": [],
+    return {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
             "total": {"leads": 0, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}}
 
 

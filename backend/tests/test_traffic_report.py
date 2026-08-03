@@ -225,6 +225,7 @@ def test_traffic_report_failsoft_on_error(monkeypatch):
     monkeypatch.setattr(tr, "get_supabase", lambda: _Boom())
     out = tr.traffic_report(period="30d", mode="lead")
     assert out["rows"] == [] and out["total"]["leads"] == 0
+    assert out["channel_subtotals"] == {}
 
 
 def test_campaign_leads_filters_by_channel_and_campaign(monkeypatch):
