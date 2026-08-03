@@ -87,7 +87,8 @@ def test_build_total_aggregates_all_rows():
              _lead("b", fbclid="2", utm_campaign="y")]
     sales_by_lead = {"a": {"count": 1, "value": 50.0}, "b": {"count": 2, "value": 30.0}}
     out = build_campaign_report(leads, {"a"}, {"a"}, sales_by_lead, mode="lead", period="30d")
-    assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1, "vendas": 3, "receita": 80.0}
+    # vendas conta leads distintos com >=1 venda (a e b => 2), receita soma tudo (80.0)
+    assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1, "vendas": 2, "receita": 80.0}
 
 
 # --- Task 3: traffic_report e campaign_leads (I/O fail-soft) ---
@@ -137,6 +138,71 @@ def test_traffic_report_lead_mode_end_to_end(monkeypatch):
     assert (row["channel"], row["campaign"]) == ("Google Ads", "black")
     assert row["conversas"] == 1 and row["closer"] == 1 and row["vendas"] == 1
     assert row["receita"] == 200.0
+
+
+def test_traffic_report_sale_mode_end_to_end(monkeypatch):
+    # No modo "sale", os leads são hidratados a partir dos lead_ids presentes em sales.
+    tables = {
+        "leads": [
+            {"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
+             "utm_campaign": "black", "traffic_type": "paid", "created_at": "2026-01-01T00:00:00Z"},
+        ],
+        "conversations": [],
+        "deals": [],
+        "pipeline_stages": [],
+        "sales": [{"lead_id": "a", "value": 350.0, "sold_at": "2026-08-03T00:00:00Z"}],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    out = tr.traffic_report(period="30d", mode="sale")
+    row = out["rows"][0]
+    assert (row["channel"], row["campaign"]) == ("Google Ads", "black")
+    assert row["vendas"] == 1
+    assert row["receita"] == 350.0
+
+
+def test_closer_stage_before_qualificado_not_counted(monkeypatch):
+    # Deal parado no estágio ANTES de qualificado (order_index 0) não conta como closer.
+    tables = {
+        "leads": [
+            {"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
+             "utm_campaign": "black", "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
+        ],
+        "conversations": [],
+        "deals": [{"lead_id": "a", "stage_id": "s1", "pipeline_id": "p1"}],
+        "pipeline_stages": [
+            {"id": "s1", "pipeline_id": "p1", "key": "entrada", "order_index": 0},
+            {"id": "s2", "pipeline_id": "p1", "key": "qualificado", "order_index": 1},
+        ],
+        "sales": [],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    out = tr.traffic_report(period="30d", mode="lead")
+    assert out["rows"][0]["closer"] == 0
+
+
+def test_closer_cross_pipeline_isolation(monkeypatch):
+    # Cada pipeline tem seu próprio threshold de "qualificado".
+    # Lead "a": deal no pipeline p1 com order_index 1 (abaixo do qualificado p1=2) -> NÃO closer,
+    # mesmo que 1 atenderia o threshold do p2 (=1).
+    tables = {
+        "leads": [
+            {"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
+             "utm_campaign": "black", "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
+        ],
+        "conversations": [],
+        "deals": [{"lead_id": "a", "stage_id": "p1s1", "pipeline_id": "p1"}],
+        "pipeline_stages": [
+            {"id": "p1s0", "pipeline_id": "p1", "key": "entrada", "order_index": 0},
+            {"id": "p1s1", "pipeline_id": "p1", "key": "contato", "order_index": 1},
+            {"id": "p1s2", "pipeline_id": "p1", "key": "qualificado", "order_index": 2},
+            {"id": "p2s0", "pipeline_id": "p2", "key": "entrada", "order_index": 0},
+            {"id": "p2s1", "pipeline_id": "p2", "key": "qualificado", "order_index": 1},
+        ],
+        "sales": [],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    out = tr.traffic_report(period="30d", mode="lead")
+    assert out["rows"][0]["closer"] == 0
 
 
 def test_traffic_report_failsoft_on_error(monkeypatch):

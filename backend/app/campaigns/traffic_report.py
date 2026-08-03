@@ -6,13 +6,11 @@ As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
-_TZ = ZoneInfo("America/Sao_Paulo")
 _NO_CAMPAIGN = "(sem campanha)"
 _CLOSER_STAGE_KEY = "qualificado"
 
@@ -63,7 +61,8 @@ def build_campaign_report(
             row["closer"] += 1
         sale = sales_by_lead.get(lead_id)
         if sale:
-            row["vendas"] += int(sale.get("count", 0))
+            # vendas = nº de leads distintos com >=1 venda (1 por lead comprador).
+            row["vendas"] += 1
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
 
     rows: list[dict[str, Any]] = []
@@ -189,9 +188,9 @@ def traffic_report(period: str = "30d", mode: str = "lead") -> dict[str, Any]:
         return _empty_report(mode, period)
 
 
-def _stage_label_map(sb) -> dict[str, str]:
-    stages = sb.table("pipeline_stages").select("id, key").execute().data or []
-    return {s["id"]: s.get("key") for s in stages}
+def _stage_info_map(sb) -> dict[str, dict[str, Any]]:
+    stages = sb.table("pipeline_stages").select("id, key, order_index").execute().data or []
+    return {s["id"]: {"key": s.get("key"), "order_index": s.get("order_index")} for s in stages}
 
 
 def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str = "lead") -> list[dict[str, Any]]:
@@ -209,15 +208,26 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
         lead_ids = [l["id"] for l in selected if l.get("id")]
         conversed = _conversed_ids(sb, lead_ids)
         sales = _sales_by_lead(sb, lead_ids, cutoff, mode)
-        stage_labels = _stage_label_map(sb)
+        stage_info = _stage_info_map(sb)
         deals = []
         for chunk in _chunks(lead_ids):
             deals.extend(sb.table("deals").select("lead_id, stage_id, created_at")
                          .in_("lead_id", chunk).execute().data or [])
-        latest_stage: dict[str, str] = {}
-        for d in sorted(deals, key=lambda x: x.get("created_at") or ""):
-            if d.get("lead_id"):
-                latest_stage[d["lead_id"]] = stage_labels.get(d.get("stage_id"))
+        # Estágio mais avançado (maior order_index) por lead — consistente com a lógica do closer.
+        best_idx: dict[str, int] = {}
+        furthest_stage: dict[str, str] = {}
+        for d in deals:
+            lid = d.get("lead_id")
+            if not lid:
+                continue
+            info = stage_info.get(d.get("stage_id"))
+            if not info:
+                continue
+            oi = info.get("order_index")
+            oi_val = oi if isinstance(oi, int) else -1  # None/ausente => menor prioridade
+            if lid not in best_idx or oi_val > best_idx[lid]:
+                best_idx[lid] = oi_val
+                furthest_stage[lid] = info.get("key")
         out: list[dict[str, Any]] = []
         for l in selected:
             lid = l["id"]
@@ -227,7 +237,7 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
                 "created_at": l.get("created_at"), "utm_source": l.get("utm_source"),
                 "utm_medium": l.get("utm_medium"), "utm_campaign": l.get("utm_campaign"),
                 "traffic_type": l.get("traffic_type"), "conversou": lid in conversed,
-                "stage": latest_stage.get(lid),
+                "stage": furthest_stage.get(lid),
                 "comprou": bool(sale), "valor": float(sale["value"]) if sale else 0.0,
             })
         out.sort(key=lambda r: (not r["comprou"], r.get("created_at") or ""), reverse=False)
