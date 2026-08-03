@@ -163,3 +163,12 @@ def test_campaign_leads_filters_by_channel_and_campaign(monkeypatch):
     leads = tr.campaign_leads(channel="Google Ads", campaign="black", period="30d", mode="lead")
     assert [l["lead_id"] for l in leads] == ["a"]
     assert leads[0]["comprou"] is False
+
+
+# --- Task 4: router ---
+
+def test_router_exposes_expected_paths():
+    from app.campaigns.traffic_router import router
+    paths = {r.path for r in router.routes}
+    assert "/api/traffic/report" in paths
+    assert "/api/traffic/leads" in paths

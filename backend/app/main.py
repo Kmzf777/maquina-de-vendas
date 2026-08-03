@@ -123,6 +123,7 @@ from app.follow_up.router import router as follow_up_router
 from app.follow_up.api import router as cadence_api_router
 from app.campaigns.router import router as campaigns_router
 from app.campaigns.conversions_router import router as conversions_router
+from app.campaigns.traffic_router import router as traffic_router
 from app.automation.router import router as automation_router
 from app.lp_webhook.router import router as lp_webhook_router
 from app.fx.router import router as fx_router
@@ -141,6 +142,7 @@ app.include_router(follow_up_router)
 app.include_router(cadence_api_router)
 app.include_router(campaigns_router)
 app.include_router(conversions_router)
+app.include_router(traffic_router)
 app.include_router(automation_router)
 app.include_router(lp_webhook_router)
 app.include_router(fx_router)
