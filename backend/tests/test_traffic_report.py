@@ -91,6 +91,20 @@ def test_build_total_aggregates_all_rows():
     assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1, "vendas": 2, "receita": 80.0}
 
 
+def test_build_channel_subtotals():
+    leads = [
+        _lead("a", gclid="1", utm_campaign="black"),
+        _lead("b", gclid="2", utm_campaign="promo"),
+        _lead("c", fbclid="3", utm_campaign="x"),
+    ]
+    sales_by_lead = {"a": {"count": 1, "value": 100.0}}
+    out = build_campaign_report(leads, set(), set(), sales_by_lead, mode="lead", period="30d")
+    assert out["channel_subtotals"]["Google Ads"] == {
+        "leads": 2, "conversas": 0, "closer": 0, "vendas": 1, "receita": 100.0}
+    assert out["channel_subtotals"]["Meta Ads"] == {
+        "leads": 1, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}
+
+
 # --- Task 3: traffic_report e campaign_leads (I/O fail-soft) ---
 
 import app.campaigns.traffic_report as tr

@@ -75,9 +75,21 @@ def build_campaign_report(
             total[k] += row[k]
         rows.append(row)
 
+    channel_subtotals: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        sub = channel_subtotals.get(row["channel"])
+        if sub is None:
+            sub = {"leads": 0, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}
+            channel_subtotals[row["channel"]] = sub
+        for k in sub:
+            sub[k] += row[k]
+    for sub in channel_subtotals.values():
+        sub["receita"] = round(sub["receita"], 2)
+
     rows.sort(key=lambda r: (r["channel"], -r["receita"], -r["leads"]))
     total["receita"] = round(total["receita"], 2)
-    return {"mode": mode, "period": period, "rows": rows, "total": total}
+    return {"mode": mode, "period": period, "rows": rows, "total": total,
+            "channel_subtotals": channel_subtotals}
 
 
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
