@@ -1,3 +1,7 @@
+"""Endpoints do Relatório Campanhas (/trafego): agregação por canal+campanha e drill-down.
+
+Read-only; a proteção admin fica na proxy route do Next (ver frontend/api/traffic/*).
+"""
 from fastapi import APIRouter
 
 from app.campaigns.traffic_report import traffic_report, campaign_leads
