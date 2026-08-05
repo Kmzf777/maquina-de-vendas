@@ -5,12 +5,12 @@ import { TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } f
 
 export type CampaignRow = {
   channel: string; campaign: string; leads: number; conversas: number;
-  closer: number; vendas: number; receita: number; ticket_medio: number; conversao: number;
+  closer: number; clientes: number; pedidos: number; receita: number; ticket_medio: number; conversao: number;
 };
 
-export type ReportTotal = { leads: number; conversas: number; closer: number; vendas: number; receita: number };
+export type ReportTotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number };
 
-export type ChannelSubtotal = { leads: number; conversas: number; closer: number; vendas: number; receita: number };
+export type ChannelSubtotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number };
 export type ChannelSubtotals = Record<string, ChannelSubtotal>;
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
@@ -47,8 +47,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
   if (rows.length === 0) {
     return <p className="text-[14px] text-[#7b7b78] py-8 text-center">Nenhuma campanha no período.</p>;
   }
-  const totalConversao = total && total.leads > 0 ? total.vendas / total.leads : 0;
-  const totalTicket = total && total.vendas > 0 ? total.receita / total.vendas : 0;
+  const totalConversao = total && total.leads > 0 ? total.clientes / total.leads : 0;
+  const totalTicket = total && total.pedidos > 0 ? total.receita / total.pedidos : 0;
   return (
     // Painel com scroll PRÓPRIO: este div é o container de scroll (não a página), então o
     // thead sticky top-0 cola rente ao topo do painel e as linhas passam por baixo — sem
@@ -63,7 +63,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
           <TableHead className={`${TH} text-right`}>Leads</TableHead>
           <TableHead className={`${TH} text-right`}>Conversas</TableHead>
           <TableHead className={`${TH} text-right`}>Closer</TableHead>
-          <TableHead className={`${TH} text-right`}>Vendas</TableHead>
+          <TableHead className={`${TH} text-right`}>Clientes</TableHead>
+          <TableHead className={`${TH} text-right`}>Pedidos</TableHead>
           <TableHead className={`${TH} text-right`}>Receita</TableHead>
           <TableHead className={`${TH} text-right`}>Ticket</TableHead>
           <TableHead className={`${TH} text-right`}>Conversão</TableHead>
@@ -73,8 +74,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
         {rows.map((r, i) => {
           const isGroupEnd = i === rows.length - 1 || rows[i + 1].channel !== r.channel;
           const sub = subtotals[r.channel];
-          const subTicket = sub && sub.vendas > 0 ? sub.receita / sub.vendas : 0;
-          const subConversao = sub && sub.leads > 0 ? sub.vendas / sub.leads : 0;
+          const subTicket = sub && sub.pedidos > 0 ? sub.receita / sub.pedidos : 0;
+          const subConversao = sub && sub.leads > 0 ? sub.clientes / sub.leads : 0;
           return (
             <Fragment key={`${r.channel}-${r.campaign}-${i}`}>
               <TableRow
@@ -86,7 +87,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.leads)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.conversas)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.closer)}</TableCell>
-                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.vendas)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.clientes)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.pedidos)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtBRL(r.receita)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtBRL(r.ticket_medio)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtPct(r.conversao)}</TableCell>
@@ -99,7 +101,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.leads)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.conversas)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.closer)}</TableCell>
-                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.vendas)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.clientes)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.pedidos)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(sub.receita)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(subTicket)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtPct(subConversao)}</TableCell>
@@ -116,7 +119,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.leads)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.conversas)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.closer)}</TableCell>
-            <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.vendas)}</TableCell>
+            <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.clientes)}</TableCell>
+            <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.pedidos)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtBRL(total.receita)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtBRL(totalTicket)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtPct(totalConversao)}</TableCell>
