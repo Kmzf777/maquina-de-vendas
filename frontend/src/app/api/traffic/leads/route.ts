@@ -13,8 +13,13 @@ export async function GET(req: Request) {
   const campaign = searchParams.get("campaign") || "";
   const period = searchParams.get("period") || "30d";
   const mode = searchParams.get("mode") || "lead";
+  const dateFrom = searchParams.get("date_from") || "";
+  const dateTo = searchParams.get("date_to") || "";
+  const params: Record<string, string> = { channel, campaign, period, mode };
+  if (dateFrom) params.date_from = dateFrom;
+  if (dateTo) params.date_to = dateTo;
+  const qs = new URLSearchParams(params).toString();
   const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
-  const qs = new URLSearchParams({ channel, campaign, period, mode }).toString();
   try {
     const resp = await fetch(`${backendUrl}/api/traffic/leads?${qs}`, { cache: "no-store" });
     if (!resp.ok) return Response.json({ error: "leads_unavailable" }, { status: resp.status });
