@@ -50,9 +50,11 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
   const totalConversao = total && total.leads > 0 ? total.vendas / total.leads : 0;
   const totalTicket = total && total.vendas > 0 ? total.receita / total.vendas : 0;
   return (
-    // <table> nativo (mesmas classes do wrapper shadcn) em vez de <Table>: o container
-    // do shadcn usa overflow-x-auto, que criaria um scroll-context próprio e impediria o
-    // thead de colar no scroll da página. Assim o sticky top-0 cola no scroll de /trafego.
+    // Painel com scroll PRÓPRIO: este div é o container de scroll (não a página), então o
+    // thead sticky top-0 cola rente ao topo do painel e as linhas passam por baixo — sem
+    // header "voador". <table> nativo em vez do wrapper shadcn (que usa overflow-x-auto e
+    // criaria um scroll-context extra, quebrando o sticky).
+    <div className="flex-1 min-h-0 overflow-auto">
     <table className="w-full caption-bottom text-sm">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
@@ -122,5 +124,6 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
         </TableFooter>
       )}
     </table>
+    </div>
   );
 }

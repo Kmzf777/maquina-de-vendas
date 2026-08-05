@@ -64,13 +64,13 @@ export default function TrafegoPage() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto px-4 md:px-8 py-4 md:py-8 bg-[#faf9f6]">
+      <div className="flex-1 min-h-0 flex flex-col px-4 md:px-8 py-4 md:py-8 bg-[#faf9f6]">
         {loading ? (
           <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 md:p-5 space-y-2">
             {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
           </div>
         ) : (
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-2 md:p-4">
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] flex-1 min-h-0 flex flex-col overflow-hidden">
             <CampaignReportTable
               rows={report?.rows ?? []}
               total={report?.total}
