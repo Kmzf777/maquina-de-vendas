@@ -70,7 +70,7 @@ export default function TrafegoPage() {
             {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
           </div>
         ) : (
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-2 md:p-4 overflow-hidden">
+          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-2 md:p-4">
             <CampaignReportTable
               rows={report?.rows ?? []}
               total={report?.total}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export type CampaignRow = {
   channel: string; campaign: string; leads: number; conversas: number;
@@ -16,6 +16,10 @@ export type ChannelSubtotals = Record<string, ChannelSubtotal>;
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 const fmtPct = (v: number) => `${(v * 100).toFixed(1)}%`;
 const fmtInt = (v: number) => v.toLocaleString("pt-BR");
+
+// Cabeçalho fixo no scroll: cada <th> é sticky top-0 com fundo sólido (cobre as linhas
+// que passam por baixo) e z-index acima do corpo. Base compartilhada p/ manter DRY.
+const TH = "sticky top-0 z-20 bg-white border-b border-[#dedbd6] text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]";
 
 /** Cores de canal alinhadas à paleta do projeto (laranja p/ pago, verde p/ orgânico, neutro p/ direto). */
 const CHANNEL_STYLES: Record<string, string> = {
@@ -46,18 +50,21 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
   const totalConversao = total && total.leads > 0 ? total.vendas / total.leads : 0;
   const totalTicket = total && total.vendas > 0 ? total.receita / total.vendas : 0;
   return (
-    <Table>
+    // <table> nativo (mesmas classes do wrapper shadcn) em vez de <Table>: o container
+    // do shadcn usa overflow-x-auto, que criaria um scroll-context próprio e impediria o
+    // thead de colar no scroll da página. Assim o sticky top-0 cola no scroll de /trafego.
+    <table className="w-full caption-bottom text-sm">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Canal</TableHead>
-          <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Campanha</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Leads</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Conversas</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Closer</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Receita</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Ticket</TableHead>
-          <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Conversão</TableHead>
+          <TableHead className={TH}>Canal</TableHead>
+          <TableHead className={TH}>Campanha</TableHead>
+          <TableHead className={`${TH} text-right`}>Leads</TableHead>
+          <TableHead className={`${TH} text-right`}>Conversas</TableHead>
+          <TableHead className={`${TH} text-right`}>Closer</TableHead>
+          <TableHead className={`${TH} text-right`}>Vendas</TableHead>
+          <TableHead className={`${TH} text-right`}>Receita</TableHead>
+          <TableHead className={`${TH} text-right`}>Ticket</TableHead>
+          <TableHead className={`${TH} text-right`}>Conversão</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -114,6 +121,6 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
           </TableRow>
         </TableFooter>
       )}
-    </Table>
+    </table>
   );
 }
