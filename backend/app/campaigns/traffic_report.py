@@ -38,11 +38,13 @@ def build_campaign_report(
     sales_by_lead: dict[str, dict[str, Any]],
     mode: str,
     period: str,
+    spend_by_campaign: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Agrega os leads em linhas (canal, campanha). Puro — recebe coleções já buscadas.
 
     - conversed_ids / closer_ids: sets de lead_id que conversaram / chegaram ao closer.
     - sales_by_lead: lead_id -> {"count": int, "value": float} (já filtrado por modo).
+    - spend_by_campaign: campaign_name normalizado (trim+lower) -> cost total (Google Ads).
     """
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for lead in leads:
@@ -53,7 +55,7 @@ def build_campaign_report(
         row = groups.get(key)
         if row is None:
             row = {"channel": channel, "campaign": campaign, "leads": 0, "conversas": 0,
-                   "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
+                   "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0, "investimento": 0.0}
             groups[key] = row
         row["leads"] += 1
         if lead_id in conversed_ids:
@@ -66,12 +68,24 @@ def build_campaign_report(
             row["pedidos"] += int(sale.get("count", 0) or 0)  # nº de vendas (recompra: pode ser >1)
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
 
+    # Atribui investimento às linhas Google Ads via join normalizado (trim+lower).
+    spend_by_campaign = spend_by_campaign or {}
+    for row in groups.values():
+        if row["channel"] == "Google Ads":
+            row["investimento"] = float(spend_by_campaign.get(row["campaign"].strip().lower(), 0.0))
+
     rows: list[dict[str, Any]] = []
-    total = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
+    total = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
+             "receita": 0.0, "investimento": 0.0}
+    google_receita = 0.0
     for row in groups.values():
         pedidos = row["pedidos"]
         row["ticket_medio"] = round(row["receita"] / pedidos, 2) if pedidos else 0.0
         row["conversao"] = round(row["clientes"] / row["leads"], 4) if row["leads"] else 0.0
+        inv = row["investimento"]
+        row["roas"] = round(row["receita"] / inv, 2) if inv else None
+        if row["channel"] == "Google Ads":
+            google_receita += row["receita"]
         for k in total:
             total[k] += row[k]
         rows.append(row)
@@ -80,15 +94,20 @@ def build_campaign_report(
     for row in rows:
         sub = channel_subtotals.get(row["channel"])
         if sub is None:
-            sub = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
+            sub = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
+                   "receita": 0.0, "investimento": 0.0}
             channel_subtotals[row["channel"]] = sub
         for k in sub:
             sub[k] += row[k]
     for sub in channel_subtotals.values():
         sub["receita"] = round(sub["receita"], 2)
+        sub["investimento"] = round(sub["investimento"], 2)
+        sub["roas"] = round(sub["receita"] / sub["investimento"], 2) if sub["investimento"] else None
 
     rows.sort(key=lambda r: (r["channel"], -r["receita"], -r["leads"]))
     total["receita"] = round(total["receita"], 2)
+    total["investimento"] = round(total["investimento"], 2)
+    total["roas"] = round(google_receita / total["investimento"], 2) if total["investimento"] else None
     return {"mode": mode, "period": period, "rows": rows, "total": total,
             "channel_subtotals": channel_subtotals}
 
@@ -203,7 +222,31 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
 
 def _empty_report(mode: str, period: str) -> dict[str, Any]:
     return {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
-            "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}}
+            "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
+                      "receita": 0.0, "investimento": 0.0, "roas": None}}
+
+
+def _spend_by_campaign(sb, lo: str | None, hi: str | None, platform: str = "google") -> dict[str, float]:
+    """Soma cost de ad_spend por campaign_name normalizado (trim+lower), na janela. Fail-soft → {}."""
+    try:
+        q = sb.table("ad_spend").select("campaign_name, cost, date").eq("platform", platform)
+        if lo:
+            q = q.gte("date", lo[:10])
+        if hi:
+            q = q.lte("date", hi[:10])
+        out: dict[str, float] = {}
+        for r in (q.execute().data or []):
+            name = (r.get("campaign_name") or "").strip().lower()
+            if not name:
+                continue
+            try:
+                out[name] = out.get(name, 0.0) + float(r.get("cost") or 0.0)
+            except (TypeError, ValueError):
+                pass
+        return out
+    except Exception as exc:
+        logger.error("_spend_by_campaign falhou: %s", exc)
+        return {}
 
 
 def traffic_report(period: str = "30d", mode: str = "lead",
@@ -219,7 +262,9 @@ def traffic_report(period: str = "30d", mode: str = "lead",
         conversed = _conversed_ids(sb, lead_ids)
         closers = _closer_ids(sb, lead_ids)
         sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
-        return build_campaign_report(leads, conversed, closers, sales, mode, period)
+        spend = _spend_by_campaign(sb, lo, hi)
+        return build_campaign_report(leads, conversed, closers, sales, mode, period,
+                                     spend_by_campaign=spend)
     except Exception as exc:
         logger.error("traffic_report(%s,%s) falhou: %s", period, mode, exc, exc_info=True)
         return _empty_report(mode, period)

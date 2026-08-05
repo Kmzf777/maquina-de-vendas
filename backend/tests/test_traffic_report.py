@@ -130,11 +130,14 @@ def test_build_total_and_subtotals_have_clientes_and_pedidos():
     sales_by_lead = {"a": {"count": 1, "value": 50.0}, "b": {"count": 2, "value": 30.0}}
     out = build_campaign_report(leads, {"a"}, {"a"}, sales_by_lead, mode="lead", period="30d")
     assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1,
-                            "clientes": 2, "pedidos": 3, "receita": 80.0}
+                            "clientes": 2, "pedidos": 3, "receita": 80.0,
+                            "investimento": 0.0, "roas": None}
     assert out["channel_subtotals"]["Google Ads"] == {
-        "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 1, "receita": 50.0}
+        "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 1, "receita": 50.0,
+        "investimento": 0.0, "roas": None}
     assert out["channel_subtotals"]["Meta Ads"] == {
-        "leads": 1, "conversas": 0, "closer": 0, "clientes": 1, "pedidos": 2, "receita": 30.0}
+        "leads": 1, "conversas": 0, "closer": 0, "clientes": 1, "pedidos": 2, "receita": 30.0,
+        "investimento": 0.0, "roas": None}
 
 
 # --- Task 3: traffic_report e campaign_leads (I/O fail-soft) ---
@@ -338,3 +341,32 @@ def test_router_report_forwards_dates(monkeypatch):
     asyncio.run(tr_router.traffic_report_endpoint(period="30d", mode="lead",
                                                   date_from="2026-08-01", date_to="2026-08-31"))
     assert captured["date_from"] == "2026-08-01" and captured["date_to"] == "2026-08-31"
+
+
+# --- Task 5 (plan): ROAS tests for build_campaign_report ---
+
+from app.campaigns.traffic_report import build_campaign_report as _bcr
+
+
+def test_build_roas_only_for_google_rows():
+    leads = [_lead("a", gclid="1", utm_campaign="Atacado"),
+             _lead("b", fbclid="2", utm_campaign="MetaCamp")]
+    sales = {"a": {"count": 1, "value": 300.0}, "b": {"count": 1, "value": 100.0}}
+    spend = {"atacado": 100.0}  # normalizado (trim+lower)
+    out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_campaign=spend)
+    rows = {(r["channel"], r["campaign"]): r for r in out["rows"]}
+    g = rows[("Google Ads", "Atacado")]
+    assert g["investimento"] == 100.0 and g["roas"] == 3.0
+    m = rows[("Meta Ads", "MetaCamp")]
+    assert m["investimento"] == 0.0 and m["roas"] is None
+    # Total ROAS considera só receita das linhas Google / investimento total
+    assert out["total"]["investimento"] == 100.0
+    assert out["total"]["roas"] == 3.0
+
+
+def test_build_roas_none_when_no_spend():
+    leads = [_lead("a", gclid="1", utm_campaign="SemSpend")]
+    sales = {"a": {"count": 1, "value": 50.0}}
+    out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_campaign={})
+    row = out["rows"][0]
+    assert row["investimento"] == 0.0 and row["roas"] is None
