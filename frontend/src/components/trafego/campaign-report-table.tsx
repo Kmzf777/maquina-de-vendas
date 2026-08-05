@@ -21,16 +21,16 @@ const fmtInt = (v: number) => v.toLocaleString("pt-BR");
 // que passam por baixo) e z-index acima do corpo. Base compartilhada p/ manter DRY.
 const TH = "sticky top-0 z-20 bg-white border-b border-[#dedbd6] text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]";
 
-/** Cores de canal alinhadas à paleta do projeto (laranja p/ pago, verde p/ orgânico, neutro p/ direto). */
+/** Cores de canal alinhadas à paleta do projeto (laranja p/ pago, verde p/ orgânico, neutro p/ sem rastreio). */
 const CHANNEL_STYLES: Record<string, string> = {
   "Google Ads": "bg-[#ff5600]/10 text-[#ff5600] border-[#ff5600]/20",
   "Meta Ads": "bg-[#fe4c02]/10 text-[#fe4c02] border-[#fe4c02]/20",
   "Orgânico": "bg-[#0bdf50]/10 text-[#0f9d43] border-[#0bdf50]/20",
-  "Direto": "bg-[#f0ede8] text-[#7b7b78] border-[#dedbd6]",
+  "Sem rastreio": "bg-[#f0ede8] text-[#7b7b78] border-[#dedbd6]",
 };
 
 function ChannelBadge({ channel }: { channel: string }) {
-  const style = CHANNEL_STYLES[channel] ?? CHANNEL_STYLES["Direto"];
+  const style = CHANNEL_STYLES[channel] ?? CHANNEL_STYLES["Sem rastreio"];
   return (
     <span className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-[4px] border whitespace-nowrap ${style}`}>
       {channel}

@@ -26,11 +26,11 @@ def test_derive_channel_organic_by_utm_source():
 
 
 def test_derive_channel_direto_when_no_signal():
-    assert derive_channel({}) == "Direto"
+    assert derive_channel({}) == "Sem rastreio"
 
 
 def test_derive_channel_ignores_empty_strings():
-    assert derive_channel({"gclid": "", "fbclid": "  ", "utm_source": ""}) == "Direto"
+    assert derive_channel({"gclid": "", "fbclid": "  ", "utm_source": ""}) == "Sem rastreio"
 
 
 # --- Task 2: build_campaign_report ---

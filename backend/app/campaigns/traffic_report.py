@@ -20,14 +20,14 @@ def _s(v: Any) -> str:
 
 
 def derive_channel(lead: dict[str, Any]) -> str:
-    """Canal do lead por prioridade de click-id. Retorna Google Ads/Meta Ads/Orgânico/Direto."""
+    """Canal do lead por prioridade de click-id. Retorna Google Ads/Meta Ads/Orgânico/Sem rastreio."""
     if _s(lead.get("gclid")):
         return "Google Ads"
     if _s(lead.get("fbclid")) or _s(lead.get("ctwa_clid")):
         return "Meta Ads"
     if _s(lead.get("traffic_type")).lower() == "organic" or _s(lead.get("utm_source")):
         return "Orgânico"
-    return "Direto"
+    return "Sem rastreio"
 
 
 def build_campaign_report(
