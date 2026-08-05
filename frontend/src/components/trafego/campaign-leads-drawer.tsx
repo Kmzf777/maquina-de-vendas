@@ -9,10 +9,14 @@ export type CampaignLead = {
   lead_id: string; name: string | null; phone: string | null; created_at: string | null;
   utm_source: string | null; utm_medium: string | null; utm_campaign: string | null;
   traffic_type: string | null; conversou: boolean; stage: string | null;
-  comprou: boolean; valor: number;
+  comprou: boolean; valor: number; sold_at: string | null;
 };
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+const fmtDate = (v: string | null): string => {
+  if (!v) return "—";
+  try { return new Date(v).toLocaleDateString("pt-BR"); } catch { return "—"; }
+};
 
 function OriginBadge({ trafficType }: { trafficType: string | null }) {
   const isPaid = trafficType === "paid";
@@ -75,18 +79,20 @@ export function CampaignLeadsDrawer({ channel, campaign, period, mode, onClose }
                   <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Lead</TableHead>
                   <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Origem</TableHead>
                   <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Etapa</TableHead>
-                  <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Conversou</TableHead>
-                  <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Comprou</TableHead>
+                  <TableHead className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Entrada</TableHead>
+                  <TableHead className="text-right text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]">Venda</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {leads.map((l) => (
                   <TableRow key={l.lead_id} className="border-[#dedbd6] hover:bg-[#faf9f6]">
-                    <TableCell className="text-[14px] text-[#111111] font-medium max-w-[180px] truncate">{l.name || l.phone || l.lead_id}</TableCell>
+                    <TableCell className="text-[14px] text-[#111111] font-medium max-w-[160px] truncate">{l.name || l.phone || l.lead_id}</TableCell>
                     <TableCell><OriginBadge trafficType={l.traffic_type} /></TableCell>
                     <TableCell className="text-[14px] text-[#7b7b78]">{l.stage || "—"}</TableCell>
-                    <TableCell className={`text-[14px] ${l.conversou ? "text-[#0f9d43]" : "text-[#7b7b78]"}`}>{l.conversou ? "Sim" : "Não"}</TableCell>
-                    <TableCell className={`text-right text-[14px] tabular-nums ${l.comprou ? "text-[#111111] font-medium" : "text-[#7b7b78]"}`}>{l.comprou ? fmtBRL(l.valor) : "—"}</TableCell>
+                    <TableCell className="text-[13px] tabular-nums text-[#7b7b78]">{fmtDate(l.created_at)}</TableCell>
+                    <TableCell className={`text-right text-[13px] tabular-nums ${l.comprou ? "text-[#111111] font-medium" : "text-[#7b7b78]"}`}>
+                      {l.comprou ? <><span className="text-[#7b7b78] font-normal">{fmtDate(l.sold_at)} </span>{fmtBRL(l.valor)}</> : "—"}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

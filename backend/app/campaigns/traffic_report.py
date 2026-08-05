@@ -168,12 +168,18 @@ def _sales_by_lead(sb, lead_ids: list[str], cutoff: str | None, mode: str) -> di
             lid = r.get("lead_id")
             if not lid:
                 continue
-            agg = out.setdefault(lid, {"count": 0, "value": 0.0})
+            agg = out.setdefault(lid, {"count": 0, "value": 0.0, "last_sold_at": None})
             agg["count"] += 1
             try:
                 agg["value"] += float(r.get("value") or 0.0)
             except (TypeError, ValueError):
                 pass
+            # Track latest sale date via ISO string comparison (safe for ISO 8601 timestamps).
+            sold_at = r.get("sold_at")
+            if isinstance(sold_at, str) and sold_at:
+                prev = agg["last_sold_at"]
+                if prev is None or sold_at > prev:
+                    agg["last_sold_at"] = sold_at
     return out
 
 
@@ -251,6 +257,7 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
                 "traffic_type": l.get("traffic_type"), "conversou": lid in conversed,
                 "stage": furthest_stage.get(lid),
                 "comprou": bool(sale), "valor": float(sale["value"]) if sale else 0.0,
+                "sold_at": sale.get("last_sold_at") if sale else None,
             })
         out.sort(key=lambda r: (not r["comprou"], r.get("created_at") or ""), reverse=False)
         return out

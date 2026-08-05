@@ -246,6 +246,45 @@ def test_campaign_leads_filters_by_channel_and_campaign(monkeypatch):
     assert leads[0]["comprou"] is False
 
 
+def test_campaign_leads_includes_sold_at_and_created_at(monkeypatch):
+    """campaign_leads deve expor sold_at (data da venda) e created_at (entrada no CRM) por lead."""
+    tables = {
+        "leads": [
+            {"id": "a", "name": "Ana", "phone": "5511", "gclid": "1", "fbclid": "",
+             "ctwa_clid": "", "utm_source": "", "utm_medium": "cpc", "utm_campaign": "black",
+             "traffic_type": "paid", "created_at": "2026-07-10T00:00:00Z"},
+        ],
+        "conversations": [], "deals": [], "pipeline_stages": [],
+        "sales": [
+            {"lead_id": "a", "value": 300.0, "sold_at": "2026-07-15T00:00:00Z"},
+            {"lead_id": "a", "value": 150.0, "sold_at": "2026-07-20T00:00:00Z"},  # latest
+        ],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    leads = tr.campaign_leads(channel="Google Ads", campaign="black", period="30d", mode="lead")
+    assert len(leads) == 1
+    lead = leads[0]
+    assert lead["created_at"] == "2026-07-10T00:00:00Z"
+    assert lead["comprou"] is True
+    # sold_at deve ser a data mais recente entre as vendas do lead.
+    assert lead["sold_at"] == "2026-07-20T00:00:00Z"
+
+
+def test_campaign_leads_sold_at_none_when_no_sale(monkeypatch):
+    """sold_at deve ser None para leads sem venda."""
+    tables = {
+        "leads": [
+            {"id": "a", "name": "Ana", "phone": "5511", "gclid": "1", "fbclid": "",
+             "ctwa_clid": "", "utm_source": "", "utm_medium": "cpc", "utm_campaign": "black",
+             "traffic_type": "paid", "created_at": "2026-07-10T00:00:00Z"},
+        ],
+        "conversations": [], "deals": [], "pipeline_stages": [], "sales": [],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    leads = tr.campaign_leads(channel="Google Ads", campaign="black", period="30d", mode="lead")
+    assert leads[0]["sold_at"] is None
+
+
 # --- Task 4: router ---
 
 def test_router_exposes_expected_paths():
