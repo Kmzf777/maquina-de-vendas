@@ -4,6 +4,7 @@ Funções puras (derive_channel, build_campaign_report) isoladas do I/O p/ teste
 As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 """
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -95,13 +96,24 @@ def build_campaign_report(
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 _LEAD_COLS = ("id, name, phone, created_at, gclid, fbclid, ctwa_clid, "
               "utm_source, utm_medium, utm_campaign, traffic_type")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def _period_cutoff(period: str) -> str | None:
+def _resolve_window(period: str, date_from: str | None, date_to: str | None) -> tuple[str | None, str | None]:
+    """Resolve a janela (lo, hi) em ISO. `date_from`/`date_to` (YYYY-MM-DD) têm precedência
+    sobre `period`. Datas malformadas são ignoradas. Sem sinal → (None, None) = tudo."""
+    df = (date_from or "").strip()
+    dt = (date_to or "").strip()
+    lo_explicit = df if _DATE_RE.match(df) else ""
+    hi_explicit = dt if _DATE_RE.match(dt) else ""
+    if lo_explicit or hi_explicit:
+        lo = f"{lo_explicit}T00:00:00+00:00" if lo_explicit else None
+        hi = f"{hi_explicit}T23:59:59.999999+00:00" if hi_explicit else None
+        return lo, hi
     days = _PERIOD_DAYS.get(period)
     if not days:
-        return None
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        return None, None
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(), None
 
 
 def _chunks(items: list, size: int = 200):
@@ -109,11 +121,13 @@ def _chunks(items: list, size: int = 200):
         yield items[i:i + size]
 
 
-def _fetch_leads(sb, mode: str, cutoff: str | None) -> list[dict[str, Any]]:
+def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str, Any]]:
     if mode == "sale":
         q = sb.table("sales").select("lead_id")
-        if cutoff:
-            q = q.gte("sold_at", cutoff)
+        if lo:
+            q = q.gte("sold_at", lo)
+        if hi:
+            q = q.lte("sold_at", hi)
         sale_ids = sorted({r["lead_id"] for r in (q.execute().data or []) if r.get("lead_id")})
         leads: list[dict[str, Any]] = []
         for chunk in _chunks(sale_ids):
@@ -121,8 +135,10 @@ def _fetch_leads(sb, mode: str, cutoff: str | None) -> list[dict[str, Any]]:
             leads.extend(data)
         return leads
     q = sb.table("leads").select(_LEAD_COLS)
-    if cutoff:
-        q = q.gte("created_at", cutoff)
+    if lo:
+        q = q.gte("created_at", lo)
+    if hi:
+        q = q.lte("created_at", hi)
     return q.execute().data or []
 
 
@@ -158,12 +174,14 @@ def _closer_ids(sb, lead_ids: list[str]) -> set[str]:
     return out
 
 
-def _sales_by_lead(sb, lead_ids: list[str], cutoff: str | None, mode: str) -> dict[str, dict[str, Any]]:
+def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode: str) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(lead_ids):
         q = sb.table("sales").select("lead_id, value, sold_at").in_("lead_id", chunk)
-        if mode == "sale" and cutoff:
-            q = q.gte("sold_at", cutoff)
+        if mode == "sale" and lo:
+            q = q.gte("sold_at", lo)
+        if mode == "sale" and hi:
+            q = q.lte("sold_at", hi)
         for r in (q.execute().data or []):
             lid = r.get("lead_id")
             if not lid:
@@ -188,18 +206,19 @@ def _empty_report(mode: str, period: str) -> dict[str, Any]:
             "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}}
 
 
-def traffic_report(period: str = "30d", mode: str = "lead") -> dict[str, Any]:
+def traffic_report(period: str = "30d", mode: str = "lead",
+                   date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
     """Relatório agregado por canal+campanha. Fail-soft: qualquer erro → relatório vazio."""
     try:
         sb = get_supabase()
-        cutoff = _period_cutoff(period)
-        leads = _fetch_leads(sb, mode, cutoff)
+        lo, hi = _resolve_window(period, date_from, date_to)
+        leads = _fetch_leads(sb, mode, lo, hi)
         lead_ids = [l["id"] for l in leads if l.get("id")]
         if not lead_ids:
             return _empty_report(mode, period)
         conversed = _conversed_ids(sb, lead_ids)
         closers = _closer_ids(sb, lead_ids)
-        sales = _sales_by_lead(sb, lead_ids, cutoff, mode)
+        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
         return build_campaign_report(leads, conversed, closers, sales, mode, period)
     except Exception as exc:
         logger.error("traffic_report(%s,%s) falhou: %s", period, mode, exc, exc_info=True)
@@ -211,12 +230,13 @@ def _stage_info_map(sb) -> dict[str, dict[str, Any]]:
     return {s["id"]: {"key": s.get("key"), "order_index": s.get("order_index")} for s in stages}
 
 
-def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str = "lead") -> list[dict[str, Any]]:
+def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str = "lead",
+                   date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
     """Leads de uma campanha (canal+utm_campaign) p/ o drill-down. Fail-soft: [] em erro."""
     try:
         sb = get_supabase()
-        cutoff = _period_cutoff(period)
-        leads = _fetch_leads(sb, mode, cutoff)
+        lo, hi = _resolve_window(period, date_from, date_to)
+        leads = _fetch_leads(sb, mode, lo, hi)
         selected = [
             l for l in leads
             if derive_channel(l) == channel and (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign
@@ -225,7 +245,7 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
             return []
         lead_ids = [l["id"] for l in selected if l.get("id")]
         conversed = _conversed_ids(sb, lead_ids)
-        sales = _sales_by_lead(sb, lead_ids, cutoff, mode)
+        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
         stage_info = _stage_info_map(sb)
         deals = []
         for chunk in _chunks(lead_ids):

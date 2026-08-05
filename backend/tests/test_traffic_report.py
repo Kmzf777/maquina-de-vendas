@@ -1,4 +1,32 @@
-from app.campaigns.traffic_report import derive_channel, build_campaign_report
+import re
+from app.campaigns.traffic_report import derive_channel, build_campaign_report, _resolve_window
+
+
+def test_resolve_window_preset_30d_has_lower_no_upper():
+    lo, hi = _resolve_window("30d", None, None)
+    assert lo is not None and hi is None
+    assert re.match(r"\d{4}-\d{2}-\d{2}T", lo)
+
+
+def test_resolve_window_all_is_open():
+    assert _resolve_window("all", None, None) == (None, None)
+
+
+def test_resolve_window_explicit_range_takes_precedence():
+    lo, hi = _resolve_window("30d", "2026-08-01", "2026-08-31")
+    assert lo == "2026-08-01T00:00:00+00:00"
+    assert hi == "2026-08-31T23:59:59.999999+00:00"
+
+
+def test_resolve_window_ignores_malformed_dates():
+    # datas inválidas → cai no preset
+    lo, hi = _resolve_window("7d", "nao-e-data", "")
+    assert lo is not None and hi is None
+
+
+def test_resolve_window_only_from():
+    lo, hi = _resolve_window("all", "2026-08-10", None)
+    assert lo == "2026-08-10T00:00:00+00:00" and hi is None
 
 
 def test_derive_channel_google_by_gclid():
@@ -120,6 +148,7 @@ class _FakeQuery:
 
     def select(self, *a, **k): return self
     def gte(self, *a, **k): return self
+    def lte(self, *a, **k): return self
     def not_(self, *a, **k): return self
     def is_(self, *a, **k): return self
     def in_(self, *a, **k): return self
