@@ -325,3 +325,16 @@ def test_router_exposes_expected_paths():
     paths = {r.path for r in router.routes}
     assert "/api/traffic/report" in paths
     assert "/api/traffic/leads" in paths
+
+
+def test_router_report_forwards_dates(monkeypatch):
+    import app.campaigns.traffic_router as tr_router
+    captured = {}
+    def fake_report(period, mode, date_from=None, date_to=None):
+        captured.update(period=period, mode=mode, date_from=date_from, date_to=date_to)
+        return {"ok": True}
+    monkeypatch.setattr(tr_router, "traffic_report", fake_report)
+    import asyncio
+    asyncio.run(tr_router.traffic_report_endpoint(period="30d", mode="lead",
+                                                  date_from="2026-08-01", date_to="2026-08-31"))
+    assert captured["date_from"] == "2026-08-01" and captured["date_to"] == "2026-08-31"
