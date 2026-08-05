@@ -60,7 +60,7 @@ def test_build_null_campaign_becomes_placeholder():
     assert out["rows"][0]["campaign"] == "(sem campanha)"
 
 
-def test_build_metrics_conversas_closer_vendas_receita():
+def test_build_metrics_clientes_pedidos_receita():
     leads = [_lead("a", gclid="1", utm_campaign="black"),
              _lead("b", gclid="2", utm_campaign="black")]
     sales_by_lead = {"a": {"count": 1, "value": 100.0}}
@@ -68,10 +68,24 @@ def test_build_metrics_conversas_closer_vendas_receita():
     row = out["rows"][0]
     assert row["conversas"] == 1
     assert row["closer"] == 2
-    assert row["vendas"] == 1
+    assert row["clientes"] == 1
+    assert row["pedidos"] == 1
     assert row["receita"] == 100.0
     assert row["ticket_medio"] == 100.0
     assert row["conversao"] == 0.5
+
+
+def test_build_repeat_purchase_counts_pedidos_not_clientes():
+    # 1 lead que comprou 2x: clientes=1, pedidos=2, ticket=receita/2, conversao=clientes/leads
+    leads = [_lead("a", gclid="1", utm_campaign="x")]
+    sales_by_lead = {"a": {"count": 2, "value": 300.0}}
+    out = build_campaign_report(leads, set(), set(), sales_by_lead, mode="lead", period="30d")
+    row = out["rows"][0]
+    assert row["clientes"] == 1
+    assert row["pedidos"] == 2
+    assert row["receita"] == 300.0
+    assert row["ticket_medio"] == 150.0
+    assert row["conversao"] == 1.0
 
 
 def test_build_ticket_and_conversao_zero_safe():
@@ -82,27 +96,17 @@ def test_build_ticket_and_conversao_zero_safe():
     assert row["conversao"] == 0.0
 
 
-def test_build_total_aggregates_all_rows():
+def test_build_total_and_subtotals_have_clientes_and_pedidos():
     leads = [_lead("a", gclid="1", utm_campaign="x"),
              _lead("b", fbclid="2", utm_campaign="y")]
     sales_by_lead = {"a": {"count": 1, "value": 50.0}, "b": {"count": 2, "value": 30.0}}
     out = build_campaign_report(leads, {"a"}, {"a"}, sales_by_lead, mode="lead", period="30d")
-    # vendas conta leads distintos com >=1 venda (a e b => 2), receita soma tudo (80.0)
-    assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1, "vendas": 2, "receita": 80.0}
-
-
-def test_build_channel_subtotals():
-    leads = [
-        _lead("a", gclid="1", utm_campaign="black"),
-        _lead("b", gclid="2", utm_campaign="promo"),
-        _lead("c", fbclid="3", utm_campaign="x"),
-    ]
-    sales_by_lead = {"a": {"count": 1, "value": 100.0}}
-    out = build_campaign_report(leads, set(), set(), sales_by_lead, mode="lead", period="30d")
+    assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1,
+                            "clientes": 2, "pedidos": 3, "receita": 80.0}
     assert out["channel_subtotals"]["Google Ads"] == {
-        "leads": 2, "conversas": 0, "closer": 0, "vendas": 1, "receita": 100.0}
+        "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 1, "receita": 50.0}
     assert out["channel_subtotals"]["Meta Ads"] == {
-        "leads": 1, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}
+        "leads": 1, "conversas": 0, "closer": 0, "clientes": 1, "pedidos": 2, "receita": 30.0}
 
 
 # --- Task 3: traffic_report e campaign_leads (I/O fail-soft) ---
@@ -150,7 +154,7 @@ def test_traffic_report_lead_mode_end_to_end(monkeypatch):
     out = tr.traffic_report(period="30d", mode="lead")
     row = out["rows"][0]
     assert (row["channel"], row["campaign"]) == ("Google Ads", "black")
-    assert row["conversas"] == 1 and row["closer"] == 1 and row["vendas"] == 1
+    assert row["conversas"] == 1 and row["closer"] == 1 and row["clientes"] == 1
     assert row["receita"] == 200.0
 
 
@@ -170,7 +174,7 @@ def test_traffic_report_sale_mode_end_to_end(monkeypatch):
     out = tr.traffic_report(period="30d", mode="sale")
     row = out["rows"][0]
     assert (row["channel"], row["campaign"]) == ("Google Ads", "black")
-    assert row["vendas"] == 1
+    assert row["clientes"] == 1
     assert row["receita"] == 350.0
 
 

@@ -52,7 +52,7 @@ def build_campaign_report(
         row = groups.get(key)
         if row is None:
             row = {"channel": channel, "campaign": campaign, "leads": 0, "conversas": 0,
-                   "closer": 0, "vendas": 0, "receita": 0.0}
+                   "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
             groups[key] = row
         row["leads"] += 1
         if lead_id in conversed_ids:
@@ -61,16 +61,16 @@ def build_campaign_report(
             row["closer"] += 1
         sale = sales_by_lead.get(lead_id)
         if sale:
-            # vendas = nº de leads distintos com >=1 venda (1 por lead comprador).
-            row["vendas"] += 1
+            row["clientes"] += 1  # leads distintos que compraram (base da conversão)
+            row["pedidos"] += int(sale.get("count", 0) or 0)  # nº de vendas (recompra: pode ser >1)
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
 
     rows: list[dict[str, Any]] = []
-    total = {"leads": 0, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}
+    total = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
     for row in groups.values():
-        vendas = row["vendas"]
-        row["ticket_medio"] = round(row["receita"] / vendas, 2) if vendas else 0.0
-        row["conversao"] = round(row["vendas"] / row["leads"], 4) if row["leads"] else 0.0
+        pedidos = row["pedidos"]
+        row["ticket_medio"] = round(row["receita"] / pedidos, 2) if pedidos else 0.0
+        row["conversao"] = round(row["clientes"] / row["leads"], 4) if row["leads"] else 0.0
         for k in total:
             total[k] += row[k]
         rows.append(row)
@@ -79,7 +79,7 @@ def build_campaign_report(
     for row in rows:
         sub = channel_subtotals.get(row["channel"])
         if sub is None:
-            sub = {"leads": 0, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}
+            sub = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
             channel_subtotals[row["channel"]] = sub
         for k in sub:
             sub[k] += row[k]
@@ -185,7 +185,7 @@ def _sales_by_lead(sb, lead_ids: list[str], cutoff: str | None, mode: str) -> di
 
 def _empty_report(mode: str, period: str) -> dict[str, Any]:
     return {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
-            "total": {"leads": 0, "conversas": 0, "closer": 0, "vendas": 0, "receita": 0.0}}
+            "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}}
 
 
 def traffic_report(period: str = "30d", mode: str = "lead") -> dict[str, Any]:
