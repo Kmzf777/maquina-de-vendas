@@ -1,6 +1,6 @@
 "use client";
 
-// Página admin "Relatório Campanhas" (/trafego): rastreio de campanhas e leads × vendas.
+// Página admin "Relatório Campanhas" (/trafego): rastreio de campanhas e leads x vendas registradas.
 import { useEffect, useState } from "react";
 import { useCurrentRole } from "@/hooks/use-current-role";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
