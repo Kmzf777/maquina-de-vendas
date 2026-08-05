@@ -10,6 +10,7 @@ from app.campaigns.service import (
 )
 from app.automation import engine as _engine
 from app.campaigns.conversions import fire_conversion_for_deal_stage
+from app.leads.reposicao import ensure_reposicao_deal, deal_is_won
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
 
         if event_type == "deal_stage_enter":
             _maybe_fire_stage_conversion(lead_id, data)
+            # Ciclo de reposição: se o deal entrou em 'fechado_ganho', garante nova oportunidade.
+            if deal_is_won(data.get("deal_id")):
+                ensure_reposicao_deal(lead_id)
+
+        if event_type == "sale_created":
+            # Registrar venda move o deal p/ fechado_ganho sem emitir deal_stage_enter → hook aqui.
+            ensure_reposicao_deal(lead_id)
 
         if event_type == "message_received":
             message_body = (data.get("body") or "").lower()
