@@ -34,8 +34,9 @@ function OriginBadge({ trafficType }: { trafficType: string | null }) {
   );
 }
 
-export function CampaignLeadsDrawer({ channel, campaign, period, mode, onClose }: {
-  channel: string | null; campaign: string | null; period: string; mode: string; onClose: () => void;
+export function CampaignLeadsDrawer({ channel, campaign, period, mode, dateFrom, dateTo, onClose }: {
+  channel: string | null; campaign: string | null; period: string; mode: string;
+  dateFrom?: string; dateTo?: string; onClose: () => void;
 }) {
   const [leads, setLeads] = useState<CampaignLead[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,13 +46,16 @@ export function CampaignLeadsDrawer({ channel, campaign, period, mode, onClose }
     if (!open) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    const qs = new URLSearchParams({ channel: channel!, campaign: campaign!, period, mode }).toString();
+    const params: Record<string, string> = { channel: channel!, campaign: campaign!, period, mode };
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    const qs = new URLSearchParams(params).toString();
     fetch(`/api/traffic/leads?${qs}`)
       .then(r => r.json())
       .then(d => setLeads(Array.isArray(d.leads) ? d.leads : []))
       .catch(() => setLeads([]))
       .finally(() => setLoading(false));
-  }, [open, channel, campaign, period, mode]);
+  }, [open, channel, campaign, period, mode, dateFrom, dateTo]);
 
   const compradores = leads.filter((l) => l.comprou).length;
 
