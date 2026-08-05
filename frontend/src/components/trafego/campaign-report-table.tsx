@@ -5,17 +5,19 @@ import { TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } f
 
 export type CampaignRow = {
   channel: string; campaign: string; leads: number; conversas: number;
-  closer: number; clientes: number; pedidos: number; receita: number; ticket_medio: number; conversao: number;
+  closer: number; clientes: number; pedidos: number; receita: number;
+  investimento: number; roas: number | null; ticket_medio: number; conversao: number;
 };
 
-export type ReportTotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number };
+export type ReportTotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number; investimento: number; roas: number | null };
 
-export type ChannelSubtotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number };
+export type ChannelSubtotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number; investimento: number; roas: number | null };
 export type ChannelSubtotals = Record<string, ChannelSubtotal>;
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 const fmtPct = (v: number) => `${(v * 100).toFixed(1)}%`;
 const fmtInt = (v: number) => v.toLocaleString("pt-BR");
+const fmtRoas = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}x`);
 
 // Cabeçalho fixo no scroll: cada <th> é sticky top-0 com fundo sólido (cobre as linhas
 // que passam por baixo) e z-index acima do corpo. Base compartilhada p/ manter DRY.
@@ -66,6 +68,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
           <TableHead className={`${TH} text-right`}>Clientes</TableHead>
           <TableHead className={`${TH} text-right`}>Pedidos</TableHead>
           <TableHead className={`${TH} text-right`}>Receita</TableHead>
+          <TableHead className={`${TH} text-right`}>Investimento</TableHead>
+          <TableHead className={`${TH} text-right`}>ROAS</TableHead>
           <TableHead className={`${TH} text-right`}>Ticket</TableHead>
           <TableHead className={`${TH} text-right`}>Conversão</TableHead>
         </TableRow>
@@ -90,6 +94,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.clientes)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.pedidos)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtBRL(r.receita)}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{r.channel === "Google Ads" ? fmtBRL(r.investimento) : "—"}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtRoas(r.roas)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtBRL(r.ticket_medio)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtPct(r.conversao)}</TableCell>
               </TableRow>
@@ -104,6 +110,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.clientes)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.pedidos)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(sub.receita)}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{r.channel === "Google Ads" ? fmtBRL(sub.investimento) : "—"}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtRoas(sub.roas)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(subTicket)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtPct(subConversao)}</TableCell>
                 </TableRow>
@@ -122,6 +130,8 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.clientes)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtInt(total.pedidos)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtBRL(total.receita)}</TableCell>
+            <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{total.investimento > 0 ? fmtBRL(total.investimento) : "—"}</TableCell>
+            <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtRoas(total.roas)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtBRL(totalTicket)}</TableCell>
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtPct(totalConversao)}</TableCell>
           </TableRow>
