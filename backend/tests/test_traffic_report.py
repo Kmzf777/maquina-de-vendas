@@ -370,3 +370,56 @@ def test_build_roas_none_when_no_spend():
     out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_campaign={})
     row = out["rows"][0]
     assert row["investimento"] == 0.0 and row["roas"] is None
+
+
+# --- Task 1 (plan 2026-08-06): campaign_detail + timeseries ---
+
+from datetime import date
+from app.campaigns.traffic_report import build_campaign_timeseries, _empty_summary
+
+
+def test_empty_summary_has_all_keys():
+    s = _empty_summary("Google Ads", "atacado")
+    for k in ("channel","campaign","leads","conversas","closer","clientes","pedidos",
+              "receita","ticket_medio","conversao","investimento","roas"):
+        assert k in s
+    assert s["channel"] == "Google Ads" and s["campaign"] == "atacado"
+    assert s["leads"] == 0 and s["roas"] is None
+
+
+def test_build_campaign_timeseries_buckets_by_day():
+    days = [date(2026, 8, 1), date(2026, 8, 2)]
+    leads = [{"created_at": "2026-08-01T10:00:00+00:00"},
+             {"created_at": "2026-08-01T12:00:00+00:00"},
+             {"created_at": "2026-08-02T09:00:00+00:00"}]
+    sales = [{"value": 100.0, "sold_at": "2026-08-02T15:00:00+00:00"}]
+    ts = build_campaign_timeseries(days, leads, sales)
+    by = {p["date"]: p for p in ts}
+    assert by["2026-08-01"]["leads"] == 2 and by["2026-08-01"]["vendas"] == 0
+    assert by["2026-08-02"]["leads"] == 1 and by["2026-08-02"]["vendas"] == 1
+    assert by["2026-08-02"]["receita"] == 100.0
+
+
+def test_campaign_detail_end_to_end(monkeypatch):
+    import app.campaigns.traffic_report as tr
+    tables = {
+        "leads": [{"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
+                   "utm_campaign": "atacado", "traffic_type": "paid", "name": "Ana", "phone": "5511",
+                   "created_at": "2026-08-01T10:00:00+00:00"}],
+        "conversations": [], "deals": [], "pipeline_stages": [], "ad_spend": [],
+        "sales": [{"lead_id": "a", "value": 200.0, "sold_at": "2026-08-02T10:00:00+00:00"}],
+    }
+    # Fake supabase reutilizando o _FakeSupabase já existente nos testes deste arquivo.
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    out = tr.campaign_detail("Google Ads", "atacado", period="30d", mode="lead")
+    assert out["summary"]["channel"] == "Google Ads"
+    assert out["summary"]["leads"] == 1
+    assert isinstance(out["leads"], list) and out["leads"][0]["lead_id"] == "a"
+    assert isinstance(out["timeseries"], list)
+
+
+# --- Task 2 (plan 2026-08-06): endpoint /api/traffic/campaign ---
+
+def test_router_exposes_campaign_path():
+    from app.campaigns.traffic_router import router
+    assert "/api/traffic/campaign" in {r.path for r in router.routes}

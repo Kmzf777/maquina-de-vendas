@@ -5,10 +5,13 @@ As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 """
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.db.supabase import get_supabase
+
+_TZ = ZoneInfo("America/Sao_Paulo")
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +250,91 @@ def _spend_by_campaign(sb, lo: str | None, hi: str | None, platform: str = "goog
     except Exception as exc:
         logger.error("_spend_by_campaign falhou: %s", exc)
         return {}
+
+
+def _empty_summary(channel: str, campaign: str) -> dict[str, Any]:
+    return {"channel": channel, "campaign": campaign, "leads": 0, "conversas": 0, "closer": 0,
+            "clientes": 0, "pedidos": 0, "receita": 0.0, "ticket_medio": 0.0, "conversao": 0.0,
+            "investimento": 0.0, "roas": None}
+
+
+def _local_day(iso: Any) -> "date | None":
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_TZ).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _daterange_days(lo: str | None, hi: str | None, max_days: int = 92) -> list[date]:
+    end = _local_day(hi) or datetime.now(_TZ).date()
+    start = _local_day(lo) or (end - timedelta(days=29))
+    if (end - start).days + 1 > max_days:
+        start = end - timedelta(days=max_days - 1)
+    days: list[date] = []
+    d = start
+    while d <= end:
+        days.append(d)
+        d += timedelta(days=1)
+    return days
+
+
+def build_campaign_timeseries(days: list[date], leads: list[dict[str, Any]],
+                              sales_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Série diária: leads por created_at, vendas/receita por sold_at. Dias sem evento = 0. Puro."""
+    idx = {d.isoformat(): {"date": d.isoformat(), "leads": 0, "vendas": 0, "receita": 0.0} for d in days}
+    for l in leads:
+        d = _local_day(l.get("created_at"))
+        if d is not None and d.isoformat() in idx:
+            idx[d.isoformat()]["leads"] += 1
+    for s in sales_rows:
+        d = _local_day(s.get("sold_at"))
+        if d is not None and d.isoformat() in idx:
+            idx[d.isoformat()]["vendas"] += 1
+            try:
+                idx[d.isoformat()]["receita"] += float(s.get("value") or 0.0)
+            except (TypeError, ValueError):
+                pass
+    return list(idx.values())
+
+
+def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str = "lead",
+                    date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+    """Detalhe de uma campanha: {summary, leads, timeseries}. Fail-soft."""
+    try:
+        sb = get_supabase()
+        lo, hi = _resolve_window(period, date_from, date_to)
+        all_leads = _fetch_leads(sb, mode, lo, hi)
+        selected = [
+            l for l in all_leads
+            if derive_channel(l) == channel and (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign
+        ]
+        if not selected:
+            return {"summary": _empty_summary(channel, campaign), "leads": [], "timeseries": []}
+        lead_ids = [l["id"] for l in selected if l.get("id")]
+        conversed = _conversed_ids(sb, lead_ids)
+        closers = _closer_ids(sb, lead_ids)
+        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
+        spend = _spend_by_campaign(sb, lo, hi)
+        report = build_campaign_report(selected, conversed, closers, sales, mode, period,
+                                       spend_by_campaign=spend)
+        summary = report["rows"][0] if report.get("rows") else _empty_summary(channel, campaign)
+        leads = campaign_leads(channel, campaign, period, mode, date_from, date_to)
+        sales_rows: list[dict[str, Any]] = []
+        for chunk in _chunks(lead_ids):
+            q = sb.table("sales").select("value, sold_at").in_("lead_id", chunk)
+            if mode == "sale" and lo:
+                q = q.gte("sold_at", lo)
+            if mode == "sale" and hi:
+                q = q.lte("sold_at", hi)
+            sales_rows.extend(q.execute().data or [])
+        timeseries = build_campaign_timeseries(_daterange_days(lo, hi), selected, sales_rows)
+        return {"summary": summary, "leads": leads, "timeseries": timeseries}
+    except Exception as exc:
+        logger.error("campaign_detail(%s,%s) falhou: %s", channel, campaign, exc, exc_info=True)
+        return {"summary": _empty_summary(channel, campaign), "leads": [], "timeseries": []}
 
 
 def traffic_report(period: str = "30d", mode: str = "lead",
