@@ -21,6 +21,9 @@ export default function TrafegoPage() {
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [toast, setToast] = useState<string | null>(null);
 
   // handler do seletor de mês (YYYY-MM) → converte p/ from/to do 1º ao último dia
   const onMonth = (ym: string) => {
@@ -29,6 +32,25 @@ export default function TrafegoPage() {
     const last = new Date(y, m, 0).getDate();
     setDateFrom(`${ym}-01`);
     setDateTo(`${ym}-${String(last).padStart(2, "0")}`);
+  };
+
+  const handleRefresh = async () => {
+    setSyncing(true);
+    try {
+      const r = await fetch("/api/traffic/sync", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (typeof d.synced === "number") {
+        setToast(d.synced > 0 ? `${d.synced} linha(s) de investimento sincronizadas` : "Sem dados novos do Google Ads");
+      } else {
+        setToast("Não foi possível sincronizar agora");
+      }
+    } catch {
+      setToast("Não foi possível sincronizar agora");
+    } finally {
+      setSyncing(false);
+      setRefreshTick((t) => t + 1);
+      setTimeout(() => setToast(null), 6000);
+    }
   };
 
   useEffect(() => {
@@ -43,7 +65,7 @@ export default function TrafegoPage() {
       .then((d: Report) => setReport(d))
       .catch(() => setReport(null))
       .finally(() => setLoading(false));
-  }, [period, mode, dateFrom, dateTo, role, roleLoading]);
+  }, [period, mode, dateFrom, dateTo, role, roleLoading, refreshTick]);
 
   if (!roleLoading && role !== "admin") {
     return <div className="p-8 text-[14px] text-[#7b7b78]">Acesso restrito a administradores.</div>;
@@ -101,6 +123,14 @@ export default function TrafegoPage() {
                 className="border border-[#dedbd6] rounded-[6px] px-2 py-1.5 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none" />
             </div>
           )}
+          <button
+            onClick={handleRefresh}
+            disabled={syncing}
+            className="inline-flex items-center gap-1.5 bg-transparent text-[#111111] border border-[#111111] px-3 py-1.5 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-105 active:scale-[0.9] disabled:opacity-50"
+          >
+            <svg className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.99v4.99" /></svg>
+            {syncing ? "Atualizando…" : "Atualizar"}
+          </button>
         </div>
       </div>
 
@@ -126,6 +156,9 @@ export default function TrafegoPage() {
           </div>
         )}
       </div>
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#111111] text-white text-[13px] px-4 py-3 rounded-[6px] shadow-lg">{toast}</div>
+      )}
     </div>
   );
 }
