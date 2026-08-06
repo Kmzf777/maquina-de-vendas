@@ -2,12 +2,12 @@
 
 // Página admin "Relatório Campanhas" (/trafego): rastreio de campanhas e leads x vendas registradas.
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useCurrentRole } from "@/hooks/use-current-role";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CampaignReportTable, type CampaignRow, type ReportTotal, type ChannelSubtotals } from "@/components/trafego/campaign-report-table";
-import { CampaignLeadsDrawer } from "@/components/trafego/campaign-leads-drawer";
 
 type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals };
 
@@ -18,9 +18,9 @@ export default function TrafegoPage() {
   const [dateTo, setDateTo] = useState("");
   const [dateMode, setDateMode] = useState<"preset" | "mes" | "custom">("preset");
   const [mode, setMode] = useState<"lead" | "sale">("lead");
+  const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<{ channel: string; campaign: string } | null>(null);
 
   // handler do seletor de mês (YYYY-MM) → converte p/ from/to do 1º ao último dia
   const onMonth = (ym: string) => {
@@ -116,21 +116,16 @@ export default function TrafegoPage() {
               rows={report?.rows ?? []}
               total={report?.total}
               subtotals={report?.channel_subtotals ?? {}}
-              onRowClick={(r) => setSelected({ channel: r.channel, campaign: r.campaign })}
+              onRowClick={(r) => {
+                const params: Record<string, string> = { channel: r.channel, campaign: r.campaign, period, mode };
+                if (dateFrom) params.date_from = dateFrom;
+                if (dateTo) params.date_to = dateTo;
+                router.push(`/trafego/campanha?${new URLSearchParams(params).toString()}`);
+              }}
             />
           </div>
         )}
       </div>
-
-      <CampaignLeadsDrawer
-        channel={selected?.channel ?? null}
-        campaign={selected?.campaign ?? null}
-        period={period}
-        mode={mode}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        onClose={() => setSelected(null)}
-      />
     </div>
   );
 }
