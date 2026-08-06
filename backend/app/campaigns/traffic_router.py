@@ -5,6 +5,7 @@ Read-only e fail-soft; a proteção admin fica na proxy route do Next (frontend/
 from fastapi import APIRouter
 
 from app.campaigns.traffic_report import traffic_report, campaign_leads, campaign_detail
+from app.campaigns.ad_spend_sync import sync_google_ads_spend
 
 router = APIRouter(prefix="/api/traffic", tags=["traffic"])
 
@@ -34,3 +35,10 @@ async def traffic_campaign_endpoint(channel: str, campaign: str, period: str = "
     mode = mode if mode in ("lead", "sale") else "lead"
     return campaign_detail(channel=channel, campaign=campaign, period=period, mode=mode,
                            date_from=date_from, date_to=date_to)
+
+
+@router.post("/sync-google-ads")
+async def sync_google_ads_endpoint():
+    """Dispara o sync do investimento do Google Ads sob demanda (admin-only na UI)."""
+    synced = await sync_google_ads_spend(days=30)
+    return {"synced": synced}

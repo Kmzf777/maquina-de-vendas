@@ -59,6 +59,11 @@ async def _reconcile_tick() -> None:
     await asyncio.to_thread(process_wrong_number_deadends)
 
 
+async def _ad_spend_sync_tick() -> None:
+    from app.campaigns.ad_spend_sync import sync_google_ads_spend
+    await sync_google_ads_spend(days=30)
+
+
 # (nome, tipo, fn, intervalo/fallback em segundos)
 TASK_SPECS = [
     ("broadcasts", "event", _broadcasts_tick, 60),
@@ -68,6 +73,7 @@ TASK_SPECS = [
     ("memory", "periodic", _memory_tick, 60),
     ("channel-health", "periodic", _channel_health_tick, 300),
     ("reconcile", "periodic", _reconcile_tick, 300),
+    ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 86400),
 ]
 
 
