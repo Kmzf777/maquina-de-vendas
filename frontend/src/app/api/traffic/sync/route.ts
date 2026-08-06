@@ -1,3 +1,4 @@
+// Proxy admin-gated: dispara o sync do investimento do Google Ads sob demanda (botão Atualizar).
 import { getCurrentUser } from "@/lib/supabase/pipeline-access";
 
 export async function POST() {

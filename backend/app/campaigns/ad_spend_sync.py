@@ -1,7 +1,8 @@
 """Sync diário do investimento do Google Ads para a tabela ad_spend (upsert idempotente).
 
-Env-gated (no-op sem credenciais) e fail-soft. Rodado por cron diário via
-scripts/sync_google_ads_spend.py."""
+Env-gated (no-op sem credenciais) e fail-soft. Rodado pelo tick diário do worker
+(app/worker/main.py::_ad_spend_sync_tick) e sob demanda pelo botão Atualizar do /trafego;
+o script scripts/sync_google_ads_spend.py continua disponível para rodar manualmente."""
 import logging
 from datetime import datetime, timedelta, timezone
 
