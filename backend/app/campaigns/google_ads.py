@@ -19,7 +19,7 @@ _REQUIRED_ENV = (
     "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
     "GOOGLE_ADS_CUSTOMER_ID",
 )
-_API_VERSION = "v17"
+_API_VERSION = "v21"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 

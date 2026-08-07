@@ -5,6 +5,7 @@ As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 """
 import logging
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,6 +13,37 @@ from zoneinfo import ZoneInfo
 from app.db.supabase import get_supabase
 
 _TZ = ZoneInfo("America/Sao_Paulo")
+
+# Tokens ignorados ao comparar utm_campaign com campaign_name do Google Ads.
+# Extensões de anúncio (sitelink) são sufixos de variante, não identificam campanha.
+_UTM_STOP_WORDS = frozenset({"sitelink"})
+
+
+def _normalize_tokens(s: str) -> frozenset[str]:
+    """Tokens significativos de uma string: sem acentos, sem números, sem separadores."""
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = s.lower()
+    s = re.sub(r"[|.\-\s_/]+", " ", s)
+    return frozenset(
+        t for t in s.split()
+        if t and not re.match(r"^\d+$", t) and t not in _UTM_STOP_WORDS
+    )
+
+
+def _fuzzy_spend_lookup(utm_slug: str, spend_by_name: dict[str, float]) -> float:
+    """Mapeia utm_campaign para custo de campanha por interseção de tokens.
+
+    Todos os tokens do slug devem estar presentes no nome da campanha.
+    Se mais de uma campanha qualifica (ambiguidade), retorna 0 para não misatribuir."""
+    utm_tokens = _normalize_tokens(utm_slug)
+    if not utm_tokens:
+        return 0.0
+    matches = [
+        cost for name, cost in spend_by_name.items()
+        if utm_tokens.issubset(_normalize_tokens(name))
+    ]
+    return matches[0] if len(matches) == 1 else 0.0
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +130,16 @@ def build_campaign_report(
             row["pedidos"] += int(sale.get("count", 0) or 0)  # nº de vendas (recompra: pode ser >1)
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
 
-    # Atribui investimento às linhas Google Ads via join normalizado (trim+lower).
+    # Atribui investimento às linhas Google Ads. Tenta exact match (trim+lower) primeiro;
+    # se falhar, usa fuzzy por tokens para cobrir slugs utm vs nomes completos do Google Ads.
     spend_by_campaign = spend_by_campaign or {}
     for row in groups.values():
         if row["channel"] == "Google Ads":
-            row["investimento"] = float(spend_by_campaign.get(row["campaign"].strip().lower(), 0.0))
+            utm_key = row["campaign"].strip().lower()
+            cost = spend_by_campaign.get(utm_key)
+            if cost is None:
+                cost = _fuzzy_spend_lookup(utm_key, spend_by_campaign)
+            row["investimento"] = float(cost or 0.0)
 
     rows: list[dict[str, Any]] = []
     total = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
