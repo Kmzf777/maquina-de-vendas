@@ -23,13 +23,40 @@ def _s(v: Any) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
+# Origens (utm_source) de anúncio pago, por plataforma. A gestora de tráfego tagueia a Meta
+# como 'metaads' e o Google como 'google'. Usadas quando NÃO há click-id — ex.: anúncio Meta
+# que leva ao WhatsApp (sem fbclid) ou Google PMAX sem gclid. NÃO incluir 'instagram'/
+# 'facebook' crus: esses são o tráfego ORGÂNICO (ex.: link da bio, utm_medium=bio).
+_META_AD_SOURCES: frozenset[str] = frozenset(
+    {"metaads", "meta_ads", "meta-ads", "meta", "facebook_ads", "facebookads", "fb_ads"}
+)
+_GOOGLE_AD_SOURCES: frozenset[str] = frozenset({"google", "googleads", "google_ads", "adwords"})
+# Meios (utm_medium) pagos — desambiguam utm_source=google pago (cpc/pmax) do SEO orgânico.
+_PAID_CHANNEL_MEDIUMS: frozenset[str] = frozenset(
+    {"cpc", "ppc", "pmax", "performance_max", "paid", "paid_search", "paidsearch",
+     "display", "cpm", "paid_social", "paidsocial"}
+)
+
+
 def derive_channel(lead: dict[str, Any]) -> str:
-    """Canal do lead por prioridade de click-id. Retorna Google Ads/Meta Ads/Orgânico/Sem rastreio."""
+    """Canal do lead. Prioridade: click-id > utm_source de anúncio > orgânico > sem rastreio.
+
+    Meta e Google são detectados TAMBÉM por utm_source (a gestora tagueia 'metaads'/'google'),
+    porque nem todo lead pago traz click-id (Meta→WhatsApp sem fbclid, PMAX sem gclid). Google
+    exige um meio pago (cpc/pmax/…) para não confundir com SEO orgânico; 'metaads' é inequívoco.
+    Retorna Google Ads/Meta Ads/Orgânico/Sem rastreio.
+    """
     if _s(lead.get("gclid")):
         return "Google Ads"
     if _s(lead.get("fbclid")) or _s(lead.get("ctwa_clid")):
         return "Meta Ads"
-    if _s(lead.get("traffic_type")).lower() == "organic" or _s(lead.get("utm_source")):
+    source = _s(lead.get("utm_source")).lower()
+    medium = _s(lead.get("utm_medium")).lower()
+    if source in _META_AD_SOURCES:
+        return "Meta Ads"
+    if source in _GOOGLE_AD_SOURCES and medium in _PAID_CHANNEL_MEDIUMS:
+        return "Google Ads"
+    if _s(lead.get("traffic_type")).lower() == "organic" or source:
         return "Orgânico"
     return "Sem rastreio"
 

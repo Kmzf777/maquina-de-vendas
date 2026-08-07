@@ -424,8 +424,16 @@ TRACKING_COLUMNS: tuple[str, ...] = (
 
 # utm_medium que caracteriza tráfego PAGO. Fora desta lista (mas com sinal de UTM) => orgânico.
 _PAID_MEDIUMS: frozenset[str] = frozenset({
-    "cpc", "ppc", "paid", "paid_social", "paidsocial", "paid_search", "display", "cpm",
+    "cpc", "ppc", "pmax", "performance_max", "paid", "paid_social", "paidsocial",
+    "paid_search", "display", "cpm",
 })
+
+# utm_source INEQUÍVOCOS de anúncio pago (a gestora tagueia a Meta como 'metaads'). NÃO
+# incluir 'instagram'/'facebook' crus (usados no orgânico, ex.: link da bio) nem 'google'
+# cru (pode ser SEO): para o Google o meio pago (cpc/pmax) já resolve.
+_PAID_SOURCES: frozenset[str] = frozenset(
+    {"metaads", "meta_ads", "meta-ads", "facebook_ads", "facebookads", "fb_ads"}
+)
 
 
 def derive_traffic_type(tracking: dict[str, Any] | None) -> str | None:
@@ -443,6 +451,8 @@ def derive_traffic_type(tracking: dict[str, Any] | None) -> str | None:
         return val.strip().lower() if isinstance(val, str) else ("" if val is None else str(val).lower())
 
     if _v("gclid") or _v("fbclid") or _v("ctwa_clid"):
+        return "paid"
+    if _v("utm_source") in _PAID_SOURCES:
         return "paid"
     medium = _v("utm_medium")
     if medium in _PAID_MEDIUMS:

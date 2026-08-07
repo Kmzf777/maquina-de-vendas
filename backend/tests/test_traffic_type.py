@@ -34,3 +34,18 @@ def test_none_when_no_signal():
 def test_paid_takes_precedence_over_organic_medium():
     # gclid present but medium looks organic → still paid (click id wins)
     assert derive_traffic_type({"gclid": "g", "utm_medium": "organic"}) == "paid"
+
+
+def test_paid_by_metaads_source():
+    # Meta ads via WhatsApp: source=metaads (o medium 'whatsapp' sozinho não é pago).
+    assert derive_traffic_type({"utm_source": "metaads", "utm_medium": "whatsapp"}) == "paid"
+    assert derive_traffic_type({"utm_source": "MetaAds"}) == "paid"  # case-insensitive
+
+
+def test_paid_by_pmax_medium():
+    assert derive_traffic_type({"utm_source": "google", "utm_medium": "pmax"}) == "paid"
+
+
+def test_organic_google_seo_stays_organic():
+    # utm_source=google com meio orgânico não pode virar 'paid'.
+    assert derive_traffic_type({"utm_source": "google", "utm_medium": "organic"}) == "organic"

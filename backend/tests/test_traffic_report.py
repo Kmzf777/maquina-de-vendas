@@ -61,6 +61,28 @@ def test_derive_channel_ignores_empty_strings():
     assert derive_channel({"gclid": "", "fbclid": "  ", "utm_source": ""}) == "Sem rastreio"
 
 
+def test_derive_channel_meta_by_utm_source_metaads():
+    # Campanhas Meta da gestora: utm_source=metaads, utm_medium=whatsapp, SEM click-id.
+    assert derive_channel({"utm_source": "metaads", "utm_medium": "whatsapp",
+                           "utm_campaign": "atacado_wa_01"}) == "Meta Ads"
+    assert derive_channel({"utm_source": "MetaAds"}) == "Meta Ads"  # case-insensitive
+
+
+def test_derive_channel_google_by_source_and_paid_medium():
+    assert derive_channel({"utm_source": "google", "utm_medium": "cpc"}) == "Google Ads"
+    assert derive_channel({"utm_source": "google", "utm_medium": "pmax"}) == "Google Ads"
+
+
+def test_derive_channel_google_source_organic_medium_stays_organic():
+    # SEO/orgânico do Google NÃO vira Google Ads (meio não-pago).
+    assert derive_channel({"utm_source": "google", "utm_medium": "organic"}) == "Orgânico"
+
+
+def test_derive_channel_instagram_bio_stays_organic():
+    # Tráfego orgânico (link da bio) NÃO pode virar Meta Ads.
+    assert derive_channel({"utm_source": "instagram", "utm_medium": "bio"}) == "Orgânico"
+
+
 # --- Task 2: build_campaign_report ---
 
 def _lead(id, **kw):
