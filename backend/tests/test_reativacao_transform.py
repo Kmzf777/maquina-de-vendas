@@ -84,3 +84,106 @@ class TestClassificarPerfil:
     def test_capsula_ganha_de_granel_quando_ambos_aparecem(self):
         # ordem de precedencia importa: capsula e o sinal mais forte de perfil
         assert transform.classificar_perfil("Cápsula Canastra granel") == "cápsula"
+
+
+def _dados_base():
+    return {
+        "saudacao": "Café do Antônio",
+        "nome": "CAFE DO ANTONIO",
+        "dias_sem_comprar": "2573",
+        "ultima_compra": "2019-07-23",
+        "pedidos_faturados": "1",
+        "total_gasto": "13918.48",
+        "ticket_medio": "13918.48",
+        "produto_para_citar": "Café Cru Beneficiado",
+        "qtd_top1": "1200",
+        "cpf_cnpj": "27114890000119",
+        "cidade": "Gravataí",
+        "uf": "RS",
+        "cnae": "",
+        "porte": "",
+        "qtd_nfe": "1",
+        "orcamentos": "0",
+        "valor_vencido": "0.00",
+        "titulos_vencidos": "0",
+        "dias_atraso_max": "",
+        "vendedor": "Arthur Silva Boaventura",
+        "icp_score": "55",
+        "icp_faixa": "C - medio",
+        "id_bling": "5845664414",
+        "motivo_exclusao": "",
+    }
+
+
+class TestMontarBriefing:
+    def test_comeca_com_prefixo_do_lote(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert texto.startswith(transform.PREFIXO_BRIEFING)
+
+    def test_inclui_historico_de_compra(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "CLIENTE INATIVO há 2.573 dias" in texto
+        assert "última compra: 23/07/2019" in texto
+        assert "1 pedido" in texto
+        assert "R$ 13.918,48" in texto
+
+    def test_inclui_produto_com_quantidade(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "Comprava: Café Cru Beneficiado (1.200 un)" in texto
+
+    def test_inclui_linha_de_perfil_quando_atipico(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "PERFIL: café verde/industrial" in texto
+
+    def test_omite_linha_de_perfil_no_cafe_convencional(self):
+        dados = _dados_base()
+        dados["produto_para_citar"] = "Café Canastra Canela Moído 250g"
+        texto = transform.montar_briefing(dados)
+        assert "PERFIL:" not in texto
+
+    def test_inclui_vendedor_anterior(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "Vendedor anterior: Arthur Silva Boaventura" in texto
+
+    def test_lead_sem_compra_troca_bloco_de_historico(self):
+        dados = _dados_base()
+        dados.update({"total_gasto": "0.00", "pedidos_faturados": "0",
+                      "ultima_compra": "", "dias_sem_comprar": "",
+                      "produto_para_citar": ""})
+        texto = transform.montar_briefing(dados)
+        assert "LEAD SEM COMPRA — cadastrado no Bling, nunca faturou" in texto
+        assert "CLIENTE INATIVO" not in texto
+        assert "Comprava:" not in texto
+
+    def test_debito_vencido_vira_alerta_de_cobranca(self):
+        dados = _dados_base()
+        dados.update({"valor_vencido": "1234.56", "titulos_vencidos": "3",
+                      "dias_atraso_max": "180"})
+        texto = transform.montar_briefing(dados)
+        assert "DÉBITO VENCIDO: R$ 1.234,56 (3 títulos, máx 180 dias de atraso)" in texto
+        assert "Sem débito em aberto" not in texto
+
+    def test_sem_debito_declara_explicitamente(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "Sem débito em aberto" in texto
+
+    def test_exclusao_aparece_na_primeira_linha(self):
+        dados = _dados_base()
+        dados["motivo_exclusao"] = "operação de café encerrada (cliente avisou)"
+        texto = transform.montar_briefing(dados)
+        primeira = texto.splitlines()[0]
+        assert primeira == "⚠ FORA DA CAMPANHA: operação de café encerrada (cliente avisou)"
+        assert transform.PREFIXO_BRIEFING in texto
+
+    def test_cnpj_sai_formatado(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "CNPJ 27.114.890/0001-19" in texto
+
+    def test_cidade_uf(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "Gravataí/RS" in texto
+
+    def test_inclui_id_bling_e_icp(self):
+        texto = transform.montar_briefing(_dados_base())
+        assert "id_bling 5845664414" in texto
+        assert "ICP 55" in texto

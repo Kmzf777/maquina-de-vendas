@@ -84,3 +84,127 @@ def _sem_acento(texto):
     """Minusculas sem diacriticos, para casar 'Cápsula' e 'Capsula' igualmente."""
     normalizado = unicodedata.normalize("NFKD", texto or "")
     return normalizado.encode("ascii", "ignore").decode().lower()
+
+
+PREFIXO_BRIEFING = "REATIVAÇÃO 10/08/2026 — lote reativacao_bling_2026-08-10"
+
+
+def _num(valor):
+    try:
+        return float(str(valor or "0").replace(",", "."))
+    except ValueError:
+        return 0.0
+
+
+def _int(valor):
+    try:
+        return int(_num(valor))
+    except ValueError:
+        return 0
+
+
+def formatar_reais(valor):
+    """1234.56 -> '1.234,56' (padrao brasileiro).
+
+    O '@' e um pivo: troca-se ',' por '@', depois '.' por ',', depois '@' por
+    '.', invertendo os separadores sem colisao.
+    """
+    return "{:,.2f}".format(_num(valor)).replace(",", "@").replace(".", ",").replace("@", ".")
+
+
+def formatar_inteiro(valor):
+    """1200 -> '1.200'."""
+    return "{:,}".format(_int(valor)).replace(",", ".")
+
+
+def formatar_data(iso):
+    """'2019-07-23' -> '23/07/2019'. Devolve '' para vazio/invalido."""
+    partes = (iso or "").strip()[:10].split("-")
+    if len(partes) != 3 or not all(partes):
+        return ""
+    return "%s/%s/%s" % (partes[2], partes[1], partes[0])
+
+
+def formatar_documento(doc):
+    """CNPJ/CPF so com digitos -> mascarado. Devolve o original se nao casar."""
+    d = re.sub(r"\D", "", doc or "")
+    if len(d) == 14:
+        return "%s.%s.%s/%s-%s" % (d[:2], d[2:5], d[5:8], d[8:12], d[12:])
+    if len(d) == 11:
+        return "%s.%s.%s-%s" % (d[:3], d[3:6], d[6:9], d[9:])
+    return doc or ""
+
+
+def montar_briefing(dados):
+    """Monta o texto da nota que o vendedor le no card do lead.
+
+    Regras em docs/superpowers/specs/2026-08-08-reativacao-crm-preparacao-design.md
+    (secao 'Regras de conteudo do briefing').
+    """
+    linhas = []
+
+    motivo = (dados.get("motivo_exclusao") or "").strip()
+    if motivo:
+        linhas.append("⚠ FORA DA CAMPANHA: %s" % motivo)
+        linhas.append("")
+
+    linhas.append(PREFIXO_BRIEFING)
+    linhas.append("")
+
+    if _num(dados.get("total_gasto")) > 0:
+        dias = formatar_inteiro(dados.get("dias_sem_comprar"))
+        data = formatar_data(dados.get("ultima_compra"))
+        linhas.append("CLIENTE INATIVO há %s dias (última compra: %s)" % (dias, data))
+        pedidos = _int(dados.get("pedidos_faturados"))
+        linhas.append("Histórico: %d %s · R$ %s · ticket médio R$ %s" % (
+            pedidos,
+            "pedido" if pedidos == 1 else "pedidos",
+            formatar_reais(dados.get("total_gasto")),
+            formatar_reais(dados.get("ticket_medio")),
+        ))
+        produto = (dados.get("produto_para_citar") or "").strip()
+        if produto:
+            qtd = _int(dados.get("qtd_top1"))
+            sufixo = " (%s un)" % formatar_inteiro(qtd) if qtd else ""
+            linhas.append("Comprava: %s%s" % (produto, sufixo))
+        perfil = classificar_perfil(produto)
+        if perfil:
+            linhas.append("PERFIL: %s — abordagem diferente do café torrado de varejo" % perfil)
+    else:
+        linhas.append("LEAD SEM COMPRA — cadastrado no Bling, nunca faturou")
+
+    linhas.append("")
+
+    cadastro = "Cadastro: CNPJ %s" % formatar_documento(dados.get("cpf_cnpj"))
+    local = "/".join(p for p in [(dados.get("cidade") or "").strip(),
+                                 (dados.get("uf") or "").strip()] if p)
+    if local:
+        cadastro += " · %s" % local
+    linhas.append(cadastro)
+
+    cnae = (dados.get("cnae") or "").strip()
+    porte = (dados.get("porte") or "").strip()
+    if cnae or porte:
+        linhas.append("Atividade: %s" % " · ".join(p for p in [cnae, porte] if p))
+
+    if _num(dados.get("valor_vencido")) > 0:
+        linhas.append("DÉBITO VENCIDO: R$ %s (%d títulos, máx %s dias de atraso) — tratar como cobrança" % (
+            formatar_reais(dados.get("valor_vencido")),
+            _int(dados.get("titulos_vencidos")),
+            (dados.get("dias_atraso_max") or "?"),
+        ))
+    else:
+        linhas.append("NF-e emitidas: %d · Orçamentos: %d · Sem débito em aberto" % (
+            _int(dados.get("qtd_nfe")), _int(dados.get("orcamentos"))))
+
+    vendedor = (dados.get("vendedor") or "").strip()
+    if vendedor:
+        linhas.append("Vendedor anterior: %s" % vendedor)
+
+    linhas.append("ICP %s (%s) · id_bling %s" % (
+        dados.get("icp_score") or "?",
+        dados.get("icp_faixa") or "?",
+        dados.get("id_bling") or "?",
+    ))
+
+    return "\n".join(linhas)
