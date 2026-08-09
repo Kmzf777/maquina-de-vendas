@@ -429,9 +429,12 @@ def _int(valor):
 
 
 def formatar_reais(valor):
-    """1234.56 -> '1.234,56' (padrao brasileiro)."""
-    return ("%,.2f" % _num(valor)).replace(",", "@").replace(".", ",").replace("@", ".") \
-        if False else "{:,.2f}".format(_num(valor)).replace(",", "@").replace(".", ",").replace("@", ".")
+    """1234.56 -> '1.234,56' (padrao brasileiro).
+
+    O '@' e um pivo: troca-se ',' por '@', depois '.' por ',', depois '@' por
+    '.', invertendo os separadores sem colisao.
+    """
+    return "{:,.2f}".format(_num(valor)).replace(",", "@").replace(".", ",").replace("@", ".")
 
 
 def formatar_inteiro(valor):
@@ -537,20 +540,7 @@ def montar_briefing(dados):
 Run: `cd backend && python -m pytest tests/test_reativacao_transform.py -v`
 Expected: PASS — 33 testes
 
-- [ ] **Step 5: Simplificar `formatar_reais`**
-
-O corpo escrito no Step 3 tem um `if False else` residual. Substituir por:
-
-```python
-def formatar_reais(valor):
-    """1234.56 -> '1.234,56' (padrao brasileiro)."""
-    return "{:,.2f}".format(_num(valor)).replace(",", "@").replace(".", ",").replace("@", ".")
-```
-
-Run: `cd backend && python -m pytest tests/test_reativacao_transform.py -v`
-Expected: PASS — 33 testes (comportamento idêntico)
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/reativacao/transform.py backend/tests/test_reativacao_transform.py
