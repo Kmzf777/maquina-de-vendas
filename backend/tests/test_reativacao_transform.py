@@ -27,6 +27,15 @@ class TestNormalizarTelefone:
     def test_curto_demais_devolve_vazio(self):
         assert transform.normalizar_telefone("12345") == ""
 
+    def test_internacional_portugal_preservado(self):
+        assert transform.normalizar_telefone("351960124975") == "351960124975"
+
+    def test_internacional_emirados_preservado(self):
+        assert transform.normalizar_telefone("971586080859") == "971586080859"
+
+    def test_br_13_digitos_inalterado(self):
+        assert transform.normalizar_telefone("5534991461669") == "5534991461669"
+
 
 class TestEscolherSaudacao:
     def test_nome_do_crm_tem_prioridade(self):

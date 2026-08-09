@@ -24,11 +24,13 @@ def normalizar_telefone(valor):
     digitos = re.sub(r"\D", "", valor or "")
     if not digitos:
         return ""
-    if digitos.startswith("55") and len(digitos) in (12, 13):
-        return digitos
     if len(digitos) in (10, 11):
         return "55" + digitos
     if len(digitos) in (12, 13):
+        # Ja esta em formato internacional (E.164 sem '+') — nao adicionar 55.
+        # Cobre tanto BR ja prefixado (55XX9XXXXXXXX) quanto numeros de
+        # outros paises que o CRM tambem guarda, ex.: Portugal (351...) e
+        # Emirados Arabes (971...). Prefixar 55 aqui corromperia o numero.
         return digitos
     return ""
 
