@@ -413,9 +413,21 @@ class TestCarregarNomesCrm:
         assert str(caminho) in mensagem
         assert "5562996968292 Letícia sem separador" in mensagem
 
+    def test_explode_quando_so_tem_cabecalho(self, tmp_path):
+        # Fix round 2, Minor: um TSV cujo unico TAB e o do cabecalho
+        # ("telefone<TAB>nome") passava pelo guardrail "not nomes" com uma
+        # unica entrada falsa {"telefone": "nome"}, mascarando um arquivo
+        # sem dado nenhum. "telefone" nao e so digitos, entao isso deve
+        # explodir igual a um arquivo sem TAB nenhum.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text("telefone\tnome\n", encoding="utf-8")
+        with pytest.raises(ValueError) as excinfo:
+            generate_sql.carregar_nomes_crm(str(caminho))
+        assert str(caminho) in str(excinfo.value)
+
 
 class TestExcluirOptoutsJaMarcados:
-    def test_remove_quem_ja_esta_marcado_e_conta_os_pulados(self):
+    def test_remove_quem_ja_esta_marcado_e_conta_os_excluidos(self):
         # Fix round 1, Finding 2 (CRITICAL): gerar_update_optout so atualiza
         # quem tem "opt_out IS NOT TRUE"; se o arquivo de entrada incluir
         # quem ja foi marcado, len(optouts) nao bate com o que o UPDATE
@@ -423,15 +435,47 @@ class TestExcluirOptoutsJaMarcados:
         # (leads e notas inclusos), nao so os opt-outs.
         optouts = [("55%011d" % i, "2026-07-31", "x") for i in range(61)]
         ja_marcados = {fone for fone, _, _ in optouts[:10]}
-        filtrados, pulados = generate_sql.excluir_optouts_ja_marcados(optouts, ja_marcados)
+        filtrados, excluidos = generate_sql.excluir_optouts_ja_marcados(optouts, ja_marcados)
         assert len(filtrados) == 51
-        assert pulados == 10
+        assert len(excluidos) == 10
 
     def test_sem_ja_marcados_nao_remove_nada(self):
         optouts = [("5515996830664", "2026-07-31", "x")]
-        filtrados, pulados = generate_sql.excluir_optouts_ja_marcados(optouts, set())
+        filtrados, excluidos = generate_sql.excluir_optouts_ja_marcados(optouts, set())
         assert filtrados == optouts
-        assert pulados == 0
+        assert excluidos == []
+
+    def test_normaliza_antes_de_comparar_formatos_diferentes(self):
+        # Fix round 2, Finding 3 (CRITICAL): o CRM guarda telefones em 13,
+        # 11 e 10 digitos (ver docstring de transform.normalizar_telefone).
+        # Se --optouts trouxer "5515996830664" (13 digitos) e
+        # --optouts-ja-marcados trouxer "15996830664" (11 digitos) para a
+        # MESMA pessoa, comparar strings brutas nao reconheceria a mesma
+        # pessoa — ela ficaria na contagem esperada, o UPDATE pularia a
+        # linha dela (opt_out IS NOT TRUE), e o RAISE EXCEPTION do rodape
+        # abortaria a transacao inteira de novo.
+        optouts = [("5515996830664", "2026-07-31", "x")]
+        ja_marcados = {"15996830664"}
+        filtrados, excluidos = generate_sql.excluir_optouts_ja_marcados(optouts, ja_marcados)
+        assert filtrados == []
+        assert excluidos == ["5515996830664"]
+
+
+class TestDiagnosticarOptoutsPulados:
+    def test_separa_confirmados_e_nao_encontrados_no_crm(self):
+        # Fix round 2, Finding 4 (Important): a contagem de "pulados" nao
+        # pode se basear so no say-so de --optouts-ja-marcados. Cruzar cada
+        # telefone excluido contra nomes_crm (todo lead que existe no CRM)
+        # separa quem de fato esta no CRM de quem nao esta — um pulado
+        # ausente do CRM aponta um dos dois arquivos de entrada errado, e
+        # dropar um opt-out real sem aviso significa a pessoa continuar
+        # recebendo mensagem.
+        excluidos = ["5511111111111", "5522222222222"]
+        nomes_crm = {"5511111111111": "Fulano"}
+        confirmados, nao_encontrados = generate_sql.diagnosticar_optouts_pulados(
+            excluidos, nomes_crm)
+        assert confirmados == ["5511111111111"]
+        assert nao_encontrados == ["5522222222222"]
 
 
 class TestMainAbortaEmContagemDivergente:

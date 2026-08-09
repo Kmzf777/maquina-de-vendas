@@ -375,7 +375,13 @@ def carregar_nomes_crm(caminho):
                 continue
             if fone.strip():
                 nomes[fone.strip()] = nome.strip()
-    if not nomes:
+    # Fix round 2, Minor: um TSV cujo unico "\t" (real ou literal) esta na
+    # linha de cabecalho ("telefone<TAB>nome") passa pela checagem "not
+    # nomes" com uma unica entrada falsa {"telefone": "nome"} — mascarando
+    # um arquivo sem dado nenhum. Um telefone de verdade e so digitos;
+    # se a unica entrada nao for, trata como se nao tivesse achado nada.
+    quebrado = not nomes or (len(nomes) == 1 and not next(iter(nomes)).isdigit())
+    if quebrado:
         raise ValueError(
             "nomes_crm: nenhuma linha com TAB encontrada em %s; primeira linha: %r"
             % (caminho, primeira_linha_bruta)
@@ -395,11 +401,45 @@ def excluir_optouts_ja_marcados(optouts, ja_marcados):
     aqui, antes de montar_arquivo, garante que len(optouts) reflita
     exatamente o que o UPDATE vai atualizar.
 
-    Devolve (lista_filtrada, quantidade_pulada).
+    Fix round 2, Finding 3 (CRITICAL): os dois lados sao normalizados via
+    transform.normalizar_telefone antes de comparar. O CRM guarda telefones
+    em 13, 11 e 10 digitos (ver docstring de normalizar_telefone); comparar
+    strings brutas deixaria passar quem esta marcado num formato diferente
+    do usado no arquivo de opt-outs — resssucitando o mesmo RAISE EXCEPTION
+    / rollback total do Finding 2, so que via uma diferenca de formatacao.
+
+    Devolve (lista_filtrada, telefones_excluidos_normalizados) — a segunda
+    lista existe para quem chama poder auditar CADA telefone excluido
+    (Fix round 2, Finding 4), em vez de confiar so na contagem.
     """
-    filtrados = [item for item in optouts if item[0] not in ja_marcados]
-    pulados = len(optouts) - len(filtrados)
-    return filtrados, pulados
+    marcados_normalizados = {transform.normalizar_telefone(f) for f in ja_marcados}
+    filtrados, excluidos = [], []
+    for item in optouts:
+        fone_normalizado = transform.normalizar_telefone(item[0])
+        if fone_normalizado in marcados_normalizados:
+            excluidos.append(fone_normalizado)
+        else:
+            filtrados.append(item)
+    return filtrados, excluidos
+
+
+def diagnosticar_optouts_pulados(excluidos, nomes_crm):
+    """Separa os telefones pulados em 'confirmados no CRM' e 'nao encontrados'.
+
+    Fix round 2, Finding 4 (Important): a contagem de "pulados" nao pode se
+    basear so no que --optouts-ja-marcados diz — um telefone errado/obsoleto
+    naquele arquivo excluiria por engano uma pessoa que pediu opt-out de
+    verdade, sem aviso nenhum (ela continuaria recebendo mensagens). Cruzar
+    cada telefone excluido contra nomes_crm (todo lead que existe no CRM)
+    aponta esse cenario: um telefone pulado que NAO esta no CRM significa
+    que um dos dois arquivos de entrada esta errado.
+
+    Devolve (confirmados_no_crm, nao_encontrados_no_crm), ambas listas de
+    telefone normalizado.
+    """
+    confirmados = [fone for fone in excluidos if fone in nomes_crm]
+    nao_encontrados = [fone for fone in excluidos if fone not in nomes_crm]
+    return confirmados, nao_encontrados
 
 
 def enriquecer(linhas, master, nomes_crm, donos):
@@ -470,7 +510,9 @@ def main(argv=None):
     if args.optouts_ja_marcados and os.path.exists(args.optouts_ja_marcados):
         with open(args.optouts_ja_marcados, encoding="utf-8") as fh:
             optouts_ja_marcados = {l.strip() for l in fh if l.strip()}
-    optouts, optouts_pulados = excluir_optouts_ja_marcados(optouts_brutos, optouts_ja_marcados)
+    optouts, optouts_excluidos = excluir_optouts_ja_marcados(optouts_brutos, optouts_ja_marcados)
+    optouts_confirmados, optouts_nao_encontrados = diagnosticar_optouts_pulados(
+        optouts_excluidos, nomes_crm)
 
     linhas = carregar_disparo(args.disparo)
     master = carregar_master(args.master)
@@ -503,8 +545,19 @@ def main(argv=None):
     print("leads novos:      %d" % len(novos))
     print("leads existentes: %d" % len(existentes))
     print("notas:            %d" % (len(novos) + len(existentes)))
-    print("opt-outs:         %d (pulados por ja estarem marcados: %d)" % (
-        len(optouts), optouts_pulados))
+    print("opt-outs:         %d" % len(optouts))
+    # Fix round 2, Finding 4: nao basta reportar "N pulados" no say-so do
+    # arquivo --optouts-ja-marcados. Separar confirmados/nao-encontrados no
+    # CRM e mostrar os telefones ofensivos deixa visivel quando um dos dois
+    # arquivos de entrada esta errado, em vez de dropar um opt-out real
+    # (pessoa continuaria recebendo mensagem) sem aviso nenhum.
+    print("  pulados (confirmados no CRM):     %d" % len(optouts_confirmados))
+    print("  pulados (NAO encontrados no CRM): %d" % len(optouts_nao_encontrados))
+    if optouts_nao_encontrados:
+        print("  ATENCAO — telefones pulados que NAO estao no CRM "
+              "(revisar --optouts e --optouts-ja-marcados):")
+        for fone in optouts_nao_encontrados:
+            print("    - %s" % fone)
     print("exclusoes:        %d" % sum(
         1 for d, _, _ in list(novos) + list(existentes) if d["motivo_exclusao"]))
     print("gerado: %s" % caminho_sql)
