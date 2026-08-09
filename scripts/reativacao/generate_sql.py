@@ -5,7 +5,10 @@ O artefato revisavel e o proprio arquivo .sql: ele e inspecionado antes de rodar
 via psql, dentro de uma transacao, depois do pg_dump. Ver
 docs/superpowers/plans/2026-08-08-reativacao-crm-preparacao.md
 """
+import argparse
+import csv
 import json
+import os
 
 import transform
 
@@ -20,6 +23,21 @@ TABELAS_PROIBIDAS = ("broadcasts", "broadcast_leads")
 
 # Guardrail: colunas que nunca podem ser sobrescritas nos leads pre-existentes.
 COLUNAS_INTOCAVEIS = ("stage", "status", "human_control", "ai_enabled")
+
+# Decisao D7 do spec: recebem lead + nota, mas ficam fora da campanha.
+MOTIVOS_EXCLUSAO = {
+    "5511996057340": "operação de café encerrada — o cliente avisou",
+    "5511989374541": "o número é o atendimento automático da loja",
+    "5516997442292": "LEAD QUENTE — pediu portfólio e cápsulas/drip; responder o pedido dele, não disparar template",
+    "5554996324731": "declinou com gatilho — retomar quando o estoque dela baixar",
+}
+
+# Decisao D9: telefone a normalizar antes dos inserts.
+NORMALIZACOES = (("11981154002", "5511981154002"),)
+
+# Campos que vem da planilha master, nao do CSV de disparo.
+CAMPOS_DA_MASTER = ("qtd_nfe", "orcamentos", "valor_vencido", "titulos_vencidos",
+                    "dias_atraso_max", "qtd_top1")
 
 
 def sql_literal(valor):
@@ -312,3 +330,94 @@ SELECT count(*) AS restantes FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
 
 COMMIT;
 """ % {"lote": LOTE}
+
+
+def carregar_disparo(caminho):
+    with open(caminho, encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def carregar_master(caminho):
+    """id_bling -> dict, para puxar os campos que o CSV de disparo nao tem."""
+    with open(caminho, encoding="utf-8-sig", newline="") as fh:
+        return {linha["id_bling"]: linha for linha in csv.DictReader(fh)}
+
+
+def enriquecer(linhas, master, nomes_crm, donos):
+    """Separa (novos, existentes) e completa cada dict.
+
+    nomes_crm: telefone E.164 -> leads.name (vazio quando o CRM nao tem nome)
+    donos:     telefones que ja tem assigned_to preenchido
+    """
+    novos, existentes = [], []
+    for linha in linhas:
+        dados = dict(linha)
+        phone = transform.normalizar_telefone(dados.get("whatsapp"))
+        da_master = master.get((dados.get("id_bling") or "").strip(), {})
+        for campo in CAMPOS_DA_MASTER:
+            dados.setdefault(campo, "")
+            if not dados.get(campo) and da_master.get(campo):
+                dados[campo] = da_master[campo]
+        dados["motivo_exclusao"] = MOTIVOS_EXCLUSAO.get(phone, "")
+        nome_crm = nomes_crm.get(phone) or None
+        entrada = (dados, nome_crm, phone in donos)
+        (existentes if phone in nomes_crm else novos).append(entrada)
+    return novos, existentes
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Gera o SQL da preparacao de reativacao.")
+    parser.add_argument("--disparo", required=True, help="CSV da lista de disparo")
+    parser.add_argument("--master", required=True, help="CSV master de leads")
+    parser.add_argument("--nomes-crm", required=True,
+                        help="TSV 'telefone<TAB>nome' dos leads que ja existem no CRM")
+    parser.add_argument("--donos", default="",
+                        help="arquivo com um telefone por linha que ja tem assigned_to")
+    parser.add_argument("--optouts", required=True, help="JSON telefone -> {data, texto}")
+    parser.add_argument("--saida", required=True, help="diretorio de saida")
+    args = parser.parse_args(argv)
+
+    nomes_crm = {}
+    with open(args.nomes_crm, encoding="utf-8") as fh:
+        for bruta in fh:
+            if "\t" not in bruta:
+                continue
+            fone, nome = bruta.rstrip("\n").split("\t", 1)
+            if fone.strip():
+                nomes_crm[fone.strip()] = nome.strip()
+
+    donos = set()
+    if args.donos and os.path.exists(args.donos):
+        with open(args.donos, encoding="utf-8") as fh:
+            donos = {l.strip() for l in fh if l.strip()}
+
+    with open(args.optouts, encoding="utf-8") as fh:
+        optout_raw = json.load(fh)
+    optouts = [(fone, dado.get("data", ""), dado.get("texto", ""))
+               for fone, dado in optout_raw.items()]
+
+    linhas = carregar_disparo(args.disparo)
+    master = carregar_master(args.master)
+    novos, existentes = enriquecer(linhas, master, nomes_crm, donos)
+
+    os.makedirs(args.saida, exist_ok=True)
+    caminho_sql = os.path.join(args.saida, "preparar.sql")
+    caminho_rb = os.path.join(args.saida, "rollback.sql")
+    with open(caminho_sql, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(montar_arquivo(novos, existentes, optouts, NORMALIZACOES))
+    with open(caminho_rb, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(montar_rollback())
+
+    print("leads novos:      %d" % len(novos))
+    print("leads existentes: %d" % len(existentes))
+    print("notas:            %d" % (len(novos) + len(existentes)))
+    print("opt-outs:         %d" % len(optouts))
+    print("exclusoes:        %d" % sum(
+        1 for d, _, _ in list(novos) + list(existentes) if d["motivo_exclusao"]))
+    print("gerado: %s" % caminho_sql)
+    print("gerado: %s" % caminho_rb)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

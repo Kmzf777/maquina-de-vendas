@@ -319,3 +319,60 @@ class TestMontarRollback:
         sql = generate_sql.montar_rollback()
         trecho_optout = sql[sql.index("SET opt_out = false"):sql.index("DELETE FROM leads")]
         assert ("metadata->>'lote' = '%s'" % generate_sql.LOTE) in trecho_optout
+
+
+class TestMotivosExclusao:
+    def test_os_quatro_casos_do_spec(self):
+        assert len(generate_sql.MOTIVOS_EXCLUSAO) == 4
+        assert "5511996057340" in generate_sql.MOTIVOS_EXCLUSAO   # Incec
+        assert "5511989374541" in generate_sql.MOTIVOS_EXCLUSAO   # Emporio Sabor do Norte
+        assert "5516997442292" in generate_sql.MOTIVOS_EXCLUSAO   # Gran Cremma
+        assert "5554996324731" in generate_sql.MOTIVOS_EXCLUSAO   # Divina Terra BC
+
+    def test_motivo_do_incec_menciona_encerramento(self):
+        assert "encerrada" in generate_sql.MOTIVOS_EXCLUSAO["5511996057340"].lower()
+
+
+class TestEnriquecer:
+    def test_separa_novos_de_existentes(self):
+        linhas = [_dados()]
+        novos, existentes = generate_sql.enriquecer(
+            linhas, master={}, nomes_crm={}, donos=set())
+        assert len(novos) == 1 and len(existentes) == 0
+
+        novos, existentes = generate_sql.enriquecer(
+            linhas, master={}, nomes_crm={"5551993452254": "Antonio"}, donos=set())
+        assert len(novos) == 0 and len(existentes) == 1
+
+    def test_marca_tem_dono(self):
+        linhas = [_dados()]
+        _, existentes = generate_sql.enriquecer(
+            linhas, master={}, nomes_crm={"5551993452254": "Antonio"},
+            donos={"5551993452254"})
+        assert existentes[0][2] is True
+
+    def test_aplica_motivo_de_exclusao(self):
+        dados = _dados()
+        dados["whatsapp"] = "5511996057340"
+        novos, _ = generate_sql.enriquecer([dados], master={}, nomes_crm={}, donos=set())
+        assert "encerrada" in novos[0][0]["motivo_exclusao"].lower()
+
+    def test_puxa_campos_da_master(self):
+        # DEFEITO NO BRIEF: _dados() ja vem com "qtd_nfe": "1" e "orcamentos":
+        # "0" (ambos truthy como string). A precedencia documentada no task-7
+        # ("CAMPOS_DA_MASTER so vem da master quando o disparo NAO ja traz
+        # valor") faz enriquecer manter o "1"/"0" do disparo e ignorar o "7"/
+        # "2" da master — exatamente o comportamento certo (D-detail #2 do
+        # brief). O teste original assumia que a master sempre venceria, o
+        # que quebraria essa precedencia se "corrigido" no codigo. Zerando os
+        # dois campos no disparo aqui exercita a propriedade real: a master
+        # so preenche o que o disparo deixou vazio.
+        dados = _dados()
+        dados["qtd_nfe"] = ""
+        dados["orcamentos"] = ""
+        master = {"5845664414": {"qtd_nfe": "7", "orcamentos": "2",
+                                 "valor_vencido": "0.00", "titulos_vencidos": "0",
+                                 "dias_atraso_max": "", "qtd_top1": "1200"}}
+        novos, _ = generate_sql.enriquecer([dados], master=master, nomes_crm={}, donos=set())
+        assert novos[0][0]["qtd_nfe"] == "7"
+        assert novos[0][0]["orcamentos"] == "2"
