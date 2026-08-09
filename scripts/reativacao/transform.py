@@ -52,3 +52,35 @@ def escolher_saudacao(nome_crm, nome_bling):
     if base.isupper():
         base = base.title()
     return base or (nome_bling or "").strip()
+
+
+# Ordem importa: o primeiro padrao que casar define o perfil. Capsula vem antes
+# de granel porque e o sinal mais especifico (mercado e recompra diferentes:
+# 29,2% contra 50,7% do grao 1kg).
+PERFIS_PRODUTO = (
+    ("cápsula", (r"c[aá]psul",)),
+    ("café verde/industrial", (r"\bcru\b", r"beneficiad")),
+    ("drip", (r"\bdrip\b",)),
+    ("granel/volume", (r"granel", r"\b2\s*kg\b")),
+    ("kit/presente", (r"\bkit\b", r"caneca", r"camiseta")),
+)
+
+
+def classificar_perfil(produto):
+    """Rotula perfis de produto que exigem abordagem diferente do café torrado.
+
+    Retorna '' para o café convencional (186 dos 232 casos), onde a linha PERFIL
+    do briefing e omitida.
+    """
+    texto = _sem_acento(produto)
+    for rotulo, padroes in PERFIS_PRODUTO:
+        for padrao in padroes:
+            if re.search(_sem_acento(padrao), texto):
+                return rotulo
+    return ""
+
+
+def _sem_acento(texto):
+    """Minusculas sem diacriticos, para casar 'Cápsula' e 'Capsula' igualmente."""
+    normalizado = unicodedata.normalize("NFKD", texto or "")
+    return normalizado.encode("ascii", "ignore").decode().lower()
