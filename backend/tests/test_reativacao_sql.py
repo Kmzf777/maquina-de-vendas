@@ -1,6 +1,11 @@
 # backend/tests/test_reativacao_sql.py
+import csv
+import json
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "reativacao"))
 
@@ -376,3 +381,138 @@ class TestEnriquecer:
         novos, _ = generate_sql.enriquecer([dados], master=master, nomes_crm={}, donos=set())
         assert novos[0][0]["qtd_nfe"] == "7"
         assert novos[0][0]["orcamentos"] == "2"
+
+
+class TestCarregarNomesCrm:
+    # Fix round 1, Finding 1 (CRITICAL): a extracao de origem (psql \copy)
+    # pode gravar a sequencia literal "\t" (dois caracteres, backslash + t)
+    # em vez de um TAB real. O parser tem que aceitar os dois formatos, e
+    # explodir — em vez de devolver silenciosamente {} — quando nenhuma
+    # linha for parseavel.
+
+    def test_parseia_tab_real(self, tmp_path):
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text("5562996968292\tLetícia\n", encoding="utf-8")
+        nomes = generate_sql.carregar_nomes_crm(str(caminho))
+        assert nomes["5562996968292"] == "Letícia"
+
+    def test_parseia_backslash_t_literal(self, tmp_path):
+        # Reproduz o defeito real: \copy com E'\t' errado grava o texto
+        # literal "\t" (backslash seguido de "t"), nao um TAB de fato.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text("5562996968292\\tLetícia\n", encoding="utf-8")
+        nomes = generate_sql.carregar_nomes_crm(str(caminho))
+        assert nomes["5562996968292"] == "Letícia"
+
+    def test_explode_quando_nao_ha_tab_nenhum(self, tmp_path):
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text("5562996968292 Letícia sem separador\n", encoding="utf-8")
+        with pytest.raises(ValueError) as excinfo:
+            generate_sql.carregar_nomes_crm(str(caminho))
+        mensagem = str(excinfo.value)
+        assert str(caminho) in mensagem
+        assert "5562996968292 Letícia sem separador" in mensagem
+
+
+class TestExcluirOptoutsJaMarcados:
+    def test_remove_quem_ja_esta_marcado_e_conta_os_pulados(self):
+        # Fix round 1, Finding 2 (CRITICAL): gerar_update_optout so atualiza
+        # quem tem "opt_out IS NOT TRUE"; se o arquivo de entrada incluir
+        # quem ja foi marcado, len(optouts) nao bate com o que o UPDATE
+        # realmente atualiza e o RAISE EXCEPTION do rodape aborta TUDO
+        # (leads e notas inclusos), nao so os opt-outs.
+        optouts = [("55%011d" % i, "2026-07-31", "x") for i in range(61)]
+        ja_marcados = {fone for fone, _, _ in optouts[:10]}
+        filtrados, pulados = generate_sql.excluir_optouts_ja_marcados(optouts, ja_marcados)
+        assert len(filtrados) == 51
+        assert pulados == 10
+
+    def test_sem_ja_marcados_nao_remove_nada(self):
+        optouts = [("5515996830664", "2026-07-31", "x")]
+        filtrados, pulados = generate_sql.excluir_optouts_ja_marcados(optouts, set())
+        assert filtrados == optouts
+        assert pulados == 0
+
+
+class TestMainAbortaEmContagemDivergente:
+    def _preparar_arquivos(self, tmp_path):
+        disparo = tmp_path / "disparo.csv"
+        dados = _dados()
+        with open(disparo, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(dados.keys()))
+            writer.writeheader()
+            writer.writerow(dados)
+
+        master = tmp_path / "master.csv"
+        with open(master, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=["id_bling"] + list(generate_sql.CAMPOS_DA_MASTER))
+            writer.writeheader()
+
+        # Telefone que NAO e o do lead de _dados(): mantem o CRM "nao vazio"
+        # (passa o guardrail do Finding 1) sem tornar o lead existente.
+        nomes_crm = tmp_path / "nomes_crm.tsv"
+        nomes_crm.write_text("5500000000000\tOutro Cliente\n", encoding="utf-8")
+
+        optouts = tmp_path / "optouts.json"
+        optouts.write_text("{}", encoding="utf-8")
+
+        return disparo, master, nomes_crm, optouts
+
+    def test_esperado_novos_divergente_aborta_sem_escrever_sql(self, tmp_path):
+        disparo, master, nomes_crm, optouts = self._preparar_arquivos(tmp_path)
+        saida = tmp_path / "saida"
+        codigo = generate_sql.main([
+            "--disparo", str(disparo),
+            "--master", str(master),
+            "--nomes-crm", str(nomes_crm),
+            "--optouts", str(optouts),
+            "--saida", str(saida),
+            "--esperado-novos", "99",
+        ])
+        assert codigo != 0
+        assert not os.path.exists(os.path.join(str(saida), "preparar.sql"))
+        assert not os.path.exists(os.path.join(str(saida), "rollback.sql"))
+
+    def test_esperado_existentes_divergente_aborta_sem_escrever_sql(self, tmp_path):
+        disparo, master, nomes_crm, optouts = self._preparar_arquivos(tmp_path)
+        saida = tmp_path / "saida"
+        codigo = generate_sql.main([
+            "--disparo", str(disparo),
+            "--master", str(master),
+            "--nomes-crm", str(nomes_crm),
+            "--optouts", str(optouts),
+            "--saida", str(saida),
+            "--esperado-existentes", "99",
+        ])
+        assert codigo != 0
+        assert not os.path.exists(os.path.join(str(saida), "preparar.sql"))
+
+    def test_esperado_batendo_escreve_sql_normalmente(self, tmp_path):
+        disparo, master, nomes_crm, optouts = self._preparar_arquivos(tmp_path)
+        saida = tmp_path / "saida"
+        codigo = generate_sql.main([
+            "--disparo", str(disparo),
+            "--master", str(master),
+            "--nomes-crm", str(nomes_crm),
+            "--optouts", str(optouts),
+            "--saida", str(saida),
+            "--esperado-novos", "1",
+            "--esperado-existentes", "0",
+        ])
+        assert codigo == 0
+        assert os.path.exists(os.path.join(str(saida), "preparar.sql"))
+
+    def test_nomes_crm_invalido_aborta_e_nao_escreve_sql(self, tmp_path):
+        disparo, master, _nomes_crm_valido, optouts = self._preparar_arquivos(tmp_path)
+        nomes_crm_invalido = tmp_path / "nomes_crm_quebrado.tsv"
+        nomes_crm_invalido.write_text("5500000000000 sem separador\n", encoding="utf-8")
+        saida = tmp_path / "saida"
+        codigo = generate_sql.main([
+            "--disparo", str(disparo),
+            "--master", str(master),
+            "--nomes-crm", str(nomes_crm_invalido),
+            "--optouts", str(optouts),
+            "--saida", str(saida),
+        ])
+        assert codigo != 0
+        assert not os.path.exists(os.path.join(str(saida), "preparar.sql"))

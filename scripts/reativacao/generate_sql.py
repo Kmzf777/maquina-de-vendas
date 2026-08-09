@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import os
+import sys
 
 import transform
 
@@ -343,6 +344,64 @@ def carregar_master(caminho):
         return {linha["id_bling"]: linha for linha in csv.DictReader(fh)}
 
 
+def carregar_nomes_crm(caminho):
+    """Le o TSV 'telefone<TAB>nome' dos leads que ja existem no CRM.
+
+    Fix round 1, Finding 1 (CRITICAL): a extracao de origem (psql \\copy)
+    pode gravar a sequencia LITERAL de dois caracteres "\\t" em vez de um TAB
+    real (bug tipico de usar E'\\t' errado no \\copy). O parser tolera os
+    dois formatos: tenta um TAB real primeiro; se a linha nao tiver TAB real
+    mas tiver a sequencia literal "\\t", usa ela.
+
+    Um CRM vazio nao e um estado plausivel (a base tem milhares de leads) —
+    se nenhuma linha for parseavel, explode com o caminho do arquivo e a
+    primeira linha bruta, em vez de devolver silenciosamente um dict vazio
+    que faria o script tratar TODOS os leads existentes como novos.
+    """
+    nomes = {}
+    primeira_linha_bruta = ""
+    vista_primeira_linha = False
+    with open(caminho, encoding="utf-8") as fh:
+        for bruta in fh:
+            linha = bruta.rstrip("\n")
+            if not vista_primeira_linha:
+                primeira_linha_bruta = linha
+                vista_primeira_linha = True
+            if "\t" in linha:
+                fone, nome = linha.split("\t", 1)
+            elif "\\t" in linha:
+                fone, nome = linha.split("\\t", 1)
+            else:
+                continue
+            if fone.strip():
+                nomes[fone.strip()] = nome.strip()
+    if not nomes:
+        raise ValueError(
+            "nomes_crm: nenhuma linha com TAB encontrada em %s; primeira linha: %r"
+            % (caminho, primeira_linha_bruta)
+        )
+    return nomes
+
+
+def excluir_optouts_ja_marcados(optouts, ja_marcados):
+    """Remove da lista os telefones que ja estao marcados opt_out=true no banco.
+
+    Fix round 1, Finding 2 (CRITICAL): gerar_update_optout so atualiza quem
+    tem "opt_out IS NOT TRUE", mas o rodape de verificacao espera
+    len(optouts) linhas atualizadas. Se o arquivo de opt-outs incluir quem
+    ja foi marcado por outro motivo, o UPDATE atualiza menos linhas do que
+    o esperado e o RAISE EXCEPTION do rodape aborta a transacao inteira —
+    inclusive os leads e notas que nada tinham a ver com opt-out. Filtrar
+    aqui, antes de montar_arquivo, garante que len(optouts) reflita
+    exatamente o que o UPDATE vai atualizar.
+
+    Devolve (lista_filtrada, quantidade_pulada).
+    """
+    filtrados = [item for item in optouts if item[0] not in ja_marcados]
+    pulados = len(optouts) - len(filtrados)
+    return filtrados, pulados
+
+
 def enriquecer(linhas, master, nomes_crm, donos):
     """Separa (novos, existentes) e completa cada dict.
 
@@ -373,18 +432,29 @@ def main(argv=None):
                         help="TSV 'telefone<TAB>nome' dos leads que ja existem no CRM")
     parser.add_argument("--donos", default="",
                         help="arquivo com um telefone por linha que ja tem assigned_to")
-    parser.add_argument("--optouts", required=True, help="JSON telefone -> {data, texto}")
+    parser.add_argument("--optouts", required=True,
+                        help="JSON telefone -> {data, texto} contendo APENAS opt-outs que "
+                             "ainda NAO estao marcados (opt_out=false) no banco — a contagem "
+                             "deste arquivo e usada como assercao exata no SQL gerado. "
+                             "Quem ja esta marcado deve ir em --optouts-ja-marcados.")
+    parser.add_argument("--optouts-ja-marcados", default="",
+                        help="arquivo com um telefone por linha ja marcado opt_out=true no "
+                             "banco; qualquer telefone aqui presente e removido da lista de "
+                             "--optouts para a contagem de verificacao do SQL nao divergir")
+    parser.add_argument("--esperado-novos", type=int, default=None,
+                        help="se informado, aborta (sem escrever SQL) se a contagem de leads "
+                             "novos nao bater exatamente com este numero")
+    parser.add_argument("--esperado-existentes", type=int, default=None,
+                        help="se informado, aborta (sem escrever SQL) se a contagem de leads "
+                             "existentes nao bater exatamente com este numero")
     parser.add_argument("--saida", required=True, help="diretorio de saida")
     args = parser.parse_args(argv)
 
-    nomes_crm = {}
-    with open(args.nomes_crm, encoding="utf-8") as fh:
-        for bruta in fh:
-            if "\t" not in bruta:
-                continue
-            fone, nome = bruta.rstrip("\n").split("\t", 1)
-            if fone.strip():
-                nomes_crm[fone.strip()] = nome.strip()
+    try:
+        nomes_crm = carregar_nomes_crm(args.nomes_crm)
+    except ValueError as erro:
+        print("ERRO: %s" % erro, file=sys.stderr)
+        return 1
 
     donos = set()
     if args.donos and os.path.exists(args.donos):
@@ -393,12 +463,34 @@ def main(argv=None):
 
     with open(args.optouts, encoding="utf-8") as fh:
         optout_raw = json.load(fh)
-    optouts = [(fone, dado.get("data", ""), dado.get("texto", ""))
-               for fone, dado in optout_raw.items()]
+    optouts_brutos = [(fone, dado.get("data", ""), dado.get("texto", ""))
+                      for fone, dado in optout_raw.items()]
+
+    optouts_ja_marcados = set()
+    if args.optouts_ja_marcados and os.path.exists(args.optouts_ja_marcados):
+        with open(args.optouts_ja_marcados, encoding="utf-8") as fh:
+            optouts_ja_marcados = {l.strip() for l in fh if l.strip()}
+    optouts, optouts_pulados = excluir_optouts_ja_marcados(optouts_brutos, optouts_ja_marcados)
 
     linhas = carregar_disparo(args.disparo)
     master = carregar_master(args.master)
     novos, existentes = enriquecer(linhas, master, nomes_crm, donos)
+
+    # Fix round 1, Finding 1: um humano comparando os numeros impressos so
+    # pegaria uma divergencia se soubesse os numeros esperados de cor. Com
+    # --esperado-novos/--esperado-existentes, a ferramenta se recusa a
+    # escrever qualquer SQL quando a contagem nao bate.
+    erros_contagem = []
+    if args.esperado_novos is not None and len(novos) != args.esperado_novos:
+        erros_contagem.append(
+            "novos: esperado %d, obtido %d" % (args.esperado_novos, len(novos)))
+    if args.esperado_existentes is not None and len(existentes) != args.esperado_existentes:
+        erros_contagem.append(
+            "existentes: esperado %d, obtido %d" % (args.esperado_existentes, len(existentes)))
+    if erros_contagem:
+        print("ERRO: contagem nao bate com o esperado -> %s" % "; ".join(erros_contagem),
+              file=sys.stderr)
+        return 1
 
     os.makedirs(args.saida, exist_ok=True)
     caminho_sql = os.path.join(args.saida, "preparar.sql")
@@ -411,7 +503,8 @@ def main(argv=None):
     print("leads novos:      %d" % len(novos))
     print("leads existentes: %d" % len(existentes))
     print("notas:            %d" % (len(novos) + len(existentes)))
-    print("opt-outs:         %d" % len(optouts))
+    print("opt-outs:         %d (pulados por ja estarem marcados: %d)" % (
+        len(optouts), optouts_pulados))
     print("exclusoes:        %d" % sum(
         1 for d, _, _ in list(novos) + list(existentes) if d["motivo_exclusao"]))
     print("gerado: %s" % caminho_sql)
