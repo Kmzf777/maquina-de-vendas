@@ -176,7 +176,8 @@ def montar_briefing(dados):
     if _num(dados.get("total_gasto")) > 0:
         dias = formatar_inteiro(dados.get("dias_sem_comprar"))
         data = formatar_data(dados.get("ultima_compra"))
-        linhas.append("CLIENTE INATIVO há %s dias (última compra: %s)" % (dias, data))
+        sufixo_data = " (última compra: %s)" % data if data else ""
+        linhas.append("CLIENTE INATIVO há %s dias%s" % (dias, sufixo_data))
         pedidos = _int(dados.get("pedidos_faturados"))
         linhas.append("Histórico: %d %s · R$ %s · ticket médio R$ %s" % (
             pedidos,

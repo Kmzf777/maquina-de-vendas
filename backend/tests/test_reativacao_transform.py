@@ -155,6 +155,23 @@ class TestMontarBriefing:
         assert "CLIENTE INATIVO" not in texto
         assert "Comprava:" not in texto
 
+    def test_data_de_ultima_compra_indisponivel_omite_parenteses_vazio(self):
+        # total_gasto > 0 mantem o ramo CLIENTE INATIVO, mas ultima_compra vem
+        # com o sentinela do Bling ('0000-00-00') — formatar_data devolve '',
+        # e a linha nao deve sobrar com um parenteses vazio "(última compra: )".
+        dados = _dados_base()
+        dados["ultima_compra"] = "0000-00-00"
+        texto = transform.montar_briefing(dados)
+        assert "(última compra: )" not in texto
+        linha_inativo = next(l for l in texto.splitlines() if l.startswith("CLIENTE INATIVO"))
+        assert linha_inativo == "CLIENTE INATIVO há 2.573 dias"
+
+    def test_data_de_ultima_compra_disponivel_mantem_parenteses(self):
+        # caso normal: com data valida, o parenteses com a data continua.
+        texto = transform.montar_briefing(_dados_base())
+        linha_inativo = next(l for l in texto.splitlines() if l.startswith("CLIENTE INATIVO"))
+        assert linha_inativo == "CLIENTE INATIVO há 2.573 dias (última compra: 23/07/2019)"
+
     def test_debito_vencido_vira_alerta_de_cobranca(self):
         dados = _dados_base()
         dados.update({"valor_vencido": "1234.56", "titulos_vencidos": "3",
