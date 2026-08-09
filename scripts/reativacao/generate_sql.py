@@ -140,3 +140,103 @@ def gerar_normalizacao_telefone(antigo, novo):
         "  AND NOT EXISTS (SELECT 1 FROM leads outro WHERE outro.phone = %s);" % (
             sql_literal(novo), sql_literal(antigo), sql_literal(novo))
     )
+
+
+# NOTA (defeito do brief task-6): o cabecalho de referencia do brief citava
+# literalmente "broadcasts/broadcast_leads" no comentario, o que quebra a
+# propria garantia que o guardrail TABELAS_PROIBIDAS deveria proteger (o teste
+# test_nunca_menciona_tabelas_de_disparo varre o SQL inteiro, comentarios
+# inclusive). Reformulado para nao nomear as tabelas proibidas, preservando a
+# mensagem "este arquivo nao cria disparo".
+CABECALHO = """-- Preparacao da campanha de reativacao — lote %s
+-- Gerado por scripts/reativacao/generate_sql.py. NAO editar a mao.
+-- Spec:  docs/superpowers/specs/2026-08-08-reativacao-crm-preparacao-design.md
+-- Plano: docs/superpowers/plans/2026-08-08-reativacao-crm-preparacao.md
+--
+-- PRE-REQUISITO: pg_dump feito. Rodar com:
+--   psql -U postgres -v ON_ERROR_STOP=1 -f preparar.sql
+--
+-- Este arquivo NAO cria disparo. Nenhuma escrita nas tabelas de campanha/fila
+-- de envio (fora do escopo desta preparacao de dados).
+\\set ON_ERROR_STOP on
+BEGIN;
+""" % LOTE
+
+RODAPE = """
+-- ── Verificacao (dentro da transacao, antes do COMMIT) ─────────────────────
+\\echo '--- leads do lote (esperado: 276) ---'
+SELECT count(*) AS leads_do_lote FROM leads WHERE metadata->>'lote' = '%(lote)s';
+
+\\echo '--- notas do lote (esperado: 276) ---'
+SELECT count(*) AS notas_do_lote FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
+
+\\echo '--- opt-outs marcados (esperado: 51) ---'
+SELECT count(*) AS optouts_do_lote FROM leads
+WHERE opt_out AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
+
+COMMIT;
+""" % {"lote": LOTE}
+
+
+def montar_arquivo(novos, existentes, optouts, normalizacoes):
+    """SQL completo, em transacao unica.
+
+    Ordem importa: normalizacoes de telefone vem antes dos INSERTs, senao o
+    registro com telefone curto viraria duplicata logica do novo.
+    """
+    partes = [CABECALHO]
+
+    partes.append("\n-- ── 1. Normalizacao de telefone (decisao D9) ──────────────────────────────")
+    for antigo, novo in normalizacoes:
+        partes.append(gerar_normalizacao_telefone(antigo, novo))
+
+    partes.append("\n-- ── 2. Leads novos ────────────────────────────────────────────────────────")
+    for dados, nome_crm, _ in novos:
+        partes.append(gerar_insert_lead(dados, nome_crm))
+
+    partes.append("\n-- ── 3. Leads existentes: preencher apenas vazios (decisao D5) ─────────────")
+    for dados, _nome_crm, tem_dono in existentes:
+        partes.append(gerar_update_conservador(dados, tem_dono))
+
+    partes.append("\n-- ── 4. Notas de briefing ──────────────────────────────────────────────────")
+    for dados, nome_crm, _ in list(novos) + list(existentes):
+        partes.append(gerar_insert_nota(dados, nome_crm))
+
+    partes.append("\n-- ── 5. Opt-outs pendentes ─────────────────────────────────────────────────")
+    for telefone, quando, disse in optouts:
+        partes.append(gerar_update_optout(telefone, quando, disse))
+
+    partes.append(RODAPE)
+    return "\n\n".join(partes)
+
+
+def montar_rollback():
+    """Desfaz exatamente este lote.
+
+    So remove lead que este lote criou: tem metadata.lote e nenhuma mensagem
+    (um lead pre-existente que recebeu merge no metadata tem historico de
+    conversa, e nao pode ser apagado).
+    """
+    return """-- Rollback do lote %(lote)s
+-- Remove SO o que este lote criou. Leads pre-existentes que receberam merge de
+-- metadata ou nota permanecem — apenas a nota e o metadata do lote saem.
+\\set ON_ERROR_STOP on
+BEGIN;
+
+DELETE FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
+
+UPDATE leads SET opt_out = false
+WHERE opt_out AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
+
+DELETE FROM leads l
+WHERE l.metadata->>'lote' = '%(lote)s'
+  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id);
+
+UPDATE leads SET metadata = metadata - 'lote' - 'origem' - 'id_bling' - 'icp_score'
+WHERE metadata->>'lote' = '%(lote)s';
+
+\\echo '--- deve retornar 0 ---'
+SELECT count(*) AS restantes FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
+
+COMMIT;
+""" % {"lote": LOTE}

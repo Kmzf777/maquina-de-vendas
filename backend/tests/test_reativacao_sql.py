@@ -194,3 +194,67 @@ class TestNormalizacaoTelefone:
     def test_protegido_contra_colisao(self):
         sql = generate_sql.gerar_normalizacao_telefone("11981154002", "5511981154002")
         assert "NOT EXISTS" in sql
+
+
+def _entradas():
+    novos = [(_dados(), None, False)]
+    existentes = [(_dados(), "Carina", True)]
+    optouts = [("5515996830664", "2026-07-31", "Nao tenho interesse")]
+    normalizacoes = [("11981154002", "5511981154002")]
+    return novos, existentes, optouts, normalizacoes
+
+
+class TestMontarArquivo:
+    def test_abre_e_fecha_transacao(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        assert sql.count("BEGIN;") == 1
+        assert sql.count("COMMIT;") == 1
+        assert sql.index("BEGIN;") < sql.index("COMMIT;")
+
+    def test_para_no_primeiro_erro(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        assert "ON_ERROR_STOP" in sql
+
+    def test_nunca_menciona_tabelas_de_disparo(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        for tabela in generate_sql.TABELAS_PROIBIDAS:
+            assert tabela not in sql
+
+    def test_nunca_altera_colunas_intocaveis(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        for coluna in generate_sql.COLUNAS_INTOCAVEIS:
+            assert ("SET %s" % coluna) not in sql
+            assert ("%s = " % coluna) not in sql.replace("'pending'", "").replace("'imported'", "")
+
+    def test_inclui_contagens_de_verificacao(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        assert "SELECT count(*)" in sql
+
+    def test_ordem_normalizacao_antes_dos_inserts(self):
+        # normalizar o phone do Atma antes, senao o INSERT cria duplicata logica
+        sql = generate_sql.montar_arquivo(*_entradas())
+        assert sql.index("SET phone =") < sql.index("INSERT INTO leads")
+
+
+class TestMontarRollback:
+    def test_remove_notas_do_lote(self):
+        sql = generate_sql.montar_rollback()
+        assert "DELETE FROM lead_notes" in sql
+        assert generate_sql.LOTE in sql
+
+    def test_remove_leads_do_lote(self):
+        sql = generate_sql.montar_rollback()
+        assert "DELETE FROM leads" in sql
+
+    def test_desmarca_optouts_aplicados_por_este_lote(self):
+        sql = generate_sql.montar_rollback()
+        assert "opt_out = false" in sql
+
+    def test_em_transacao(self):
+        sql = generate_sql.montar_rollback()
+        assert "BEGIN;" in sql and "COMMIT;" in sql
+
+    def test_nao_apaga_lead_pre_existente(self):
+        # so remove quem foi criado por este lote (metadata.lote + sem mensagens)
+        sql = generate_sql.montar_rollback()
+        assert "NOT EXISTS" in sql
