@@ -43,10 +43,20 @@ def _metadata_json(dados):
 
 
 def gerar_insert_lead(dados, nome_crm):
-    """INSERT idempotente de um lead novo."""
+    """INSERT idempotente de um lead novo.
+
+    Grava "criado_por_lote" no metadata — marcador explicito, distinto de
+    "lote" (que tambem e escrito por gerar_update_conservador em leads
+    pre-existentes). O rollback usa esse marcador para saber com certeza
+    quem este lote CRIOU, em vez de inferir isso por "nao tem mensagens"
+    (proxy falsa: leads pre-existentes tambem podem nao ter mensagens).
+    gerar_update_conservador NUNCA deve escrever essa chave.
+    """
     phone = transform.normalizar_telefone(dados.get("whatsapp"))
     nome = transform.escolher_saudacao(nome_crm, dados.get("nome"))
-    metadata = json.dumps(_metadata_json(dados), ensure_ascii=False)
+    metadata_dict = _metadata_json(dados)
+    metadata_dict["criado_por_lote"] = LOTE
+    metadata = json.dumps(metadata_dict, ensure_ascii=False)
     return (
         "INSERT INTO leads (phone, name, company, stage, status, channel, "
         "assigned_to, cnpj, razao_social, nome_fantasia, email, endereco, metadata)\n"
@@ -116,10 +126,21 @@ def gerar_insert_nota(dados, nome_crm):
 
 
 def gerar_update_optout(telefone, quando, disse):
-    """Marca opt_out e registra a evidencia no metadata."""
+    """Marca opt_out e registra a evidencia no metadata.
+
+    O metadata leva "lote" junto com a evidencia (Finding 2 do fix round 1):
+    sem isso, o rollback de opt-outs nao tem como saber que opt-out foi
+    aplicado POR ESTE lote, e desfaria opt-outs de qualquer lote — reabrindo
+    contato com quem pediu para nao ser contactado em outra campanha.
+    """
     phone = transform.normalizar_telefone(telefone)
     evidencia = json.dumps(
-        {"optout_quando": quando, "optout_disse": (disse or "")[:200], "optout_fonte": "mensagem_do_cliente"},
+        {
+            "optout_quando": quando,
+            "optout_disse": (disse or "")[:200],
+            "optout_fonte": "mensagem_do_cliente",
+            "lote": LOTE,
+        },
         ensure_ascii=False,
     )
     return (
@@ -162,20 +183,58 @@ CABECALHO = """-- Preparacao da campanha de reativacao — lote %s
 BEGIN;
 """ % LOTE
 
-RODAPE = """
--- ── Verificacao (dentro da transacao, antes do COMMIT) ─────────────────────
-\\echo '--- leads do lote (esperado: 276) ---'
-SELECT count(*) AS leads_do_lote FROM leads WHERE metadata->>'lote' = '%(lote)s';
+def _bloco_verificacao(rotulo, expressao_where, esperado):
+    """Um DO $$ ... $$ que aborta a transacao (RAISE EXCEPTION) se a
+    contagem nao bater com o esperado.
 
-\\echo '--- notas do lote (esperado: 276) ---'
-SELECT count(*) AS notas_do_lote FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
+    Fix round 1, Finding 3 (Important): um SELECT count(*) que so faz
+    \\echo nao impede o COMMIT quando a contagem esta errada — psql -f roda
+    o arquivo inteiro de uma vez, e o COMMIT roda na mesma passada em que a
+    contagem errada foi so exibida. Precisa de algo que force o rollback da
+    transacao sozinho, num banco sem backup.
+    """
+    return (
+        "\\echo '--- %s (esperado: %d) ---'\n"
+        "DO $$\n"
+        "DECLARE n integer;\n"
+        "BEGIN\n"
+        "  SELECT count(*) INTO n FROM %s;\n"
+        "  IF n <> %d THEN\n"
+        "    RAISE EXCEPTION 'esperado %d %s, encontrado %%', n;\n"
+        "  END IF;\n"
+        "END $$;"
+    ) % (rotulo, esperado, expressao_where, esperado, esperado, rotulo)
 
-\\echo '--- opt-outs marcados (esperado: 51) ---'
-SELECT count(*) AS optouts_do_lote FROM leads
-WHERE opt_out AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
 
-COMMIT;
-""" % {"lote": LOTE}
+def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado):
+    """Rodape com as 3 verificacoes de contagem + COMMIT.
+
+    Os numeros esperados sao parametros derivados de len(novos) +
+    len(existentes) e len(optouts) em montar_arquivo — nunca literais fixos
+    do lote atual — para que o check nunca possa divergir da realidade do
+    que de fato foi passado para montar_arquivo.
+    """
+    blocos = [
+        "-- ── Verificacao (dentro da transacao; aborta se a contagem nao bater) ─────",
+        _bloco_verificacao(
+            "leads do lote",
+            "leads WHERE metadata->>'lote' = %s" % sql_literal(LOTE),
+            qtd_leads_esperado,
+        ),
+        _bloco_verificacao(
+            "notas do lote",
+            "lead_notes WHERE content LIKE %s" % sql_literal("%" + LOTE + "%"),
+            qtd_notas_esperado,
+        ),
+        _bloco_verificacao(
+            "opt-outs marcados",
+            "leads WHERE opt_out AND metadata->>'lote' = %s AND metadata->>'optout_fonte' = 'mensagem_do_cliente'"
+            % sql_literal(LOTE),
+            qtd_optouts_esperado,
+        ),
+        "COMMIT;",
+    ]
+    return "\n\n".join(blocos) + "\n"
 
 
 def montar_arquivo(novos, existentes, optouts, normalizacoes):
@@ -206,16 +265,28 @@ def montar_arquivo(novos, existentes, optouts, normalizacoes):
     for telefone, quando, disse in optouts:
         partes.append(gerar_update_optout(telefone, quando, disse))
 
-    partes.append(RODAPE)
+    qtd_leads_e_notas_esperado = len(novos) + len(existentes)
+    partes.append(_gerar_rodape(qtd_leads_e_notas_esperado, qtd_leads_e_notas_esperado, len(optouts)))
     return "\n\n".join(partes)
 
 
 def montar_rollback():
     """Desfaz exatamente este lote.
 
-    So remove lead que este lote criou: tem metadata.lote e nenhuma mensagem
-    (um lead pre-existente que recebeu merge no metadata tem historico de
-    conversa, e nao pode ser apagado).
+    Fix round 1, Finding 1 (CRITICAL): o sinal PRIMARIO de "este lote criou
+    este lead" e o marcador explicito metadata.criado_por_lote — escrito
+    apenas por gerar_insert_lead, nunca por gerar_update_conservador.
+    "NOT EXISTS (messages)" e mantido como uma SEGUNDA rede de seguranca
+    independente, nao mais como sinal primario: em produção, 3 dos 40 leads
+    pre-existentes (um deles ja secretaria/active) nao tinham mensagem
+    nenhuma e seriam apagados por engano se "sem mensagem" fosse o unico
+    criterio. Um lead pre-existente que recebeu merge no metadata (tem
+    metadata.lote mas NAO tem metadata.criado_por_lote) sobrevive sempre.
+
+    Fix round 1, Finding 2 (Important): o UPDATE que desfaz opt-out so pode
+    atingir opt-outs aplicados por ESTE lote (metadata->>'lote'), senao um
+    rollback futuro reabriria contato com quem pediu para nao ser
+    contactado em OUTRO lote.
     """
     return """-- Rollback do lote %(lote)s
 -- Remove SO o que este lote criou. Leads pre-existentes que receberam merge de
@@ -225,14 +296,15 @@ BEGIN;
 
 DELETE FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
 
-UPDATE leads SET opt_out = false
-WHERE opt_out AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
+UPDATE leads
+SET opt_out = false
+WHERE opt_out AND metadata->>'lote' = '%(lote)s' AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
 
 DELETE FROM leads l
-WHERE l.metadata->>'lote' = '%(lote)s'
+WHERE l.metadata->>'criado_por_lote' = '%(lote)s'
   AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id);
 
-UPDATE leads SET metadata = metadata - 'lote' - 'origem' - 'id_bling' - 'icp_score'
+UPDATE leads SET metadata = metadata - 'lote' - 'origem' - 'id_bling' - 'icp_score' - 'criado_por_lote'
 WHERE metadata->>'lote' = '%(lote)s';
 
 \\echo '--- deve retornar 0 ---'

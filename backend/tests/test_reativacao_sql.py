@@ -96,6 +96,15 @@ class TestGerarInsertLead:
         for tabela in generate_sql.TABELAS_PROIBIDAS:
             assert tabela not in sql
 
+    def test_marca_criado_por_lote(self):
+        # Fix round 1, Finding 1 (CRITICAL): marcador explicito de que ESTE
+        # lote criou o lead. "NOT EXISTS (messages)" sozinho e uma proxy
+        # falsa — leads pre-existentes sem mensagens tambem bateriam nela e
+        # seriam apagados no rollback. So gerar_insert_lead escreve esse
+        # marcador; gerar_update_conservador nunca deve escreve-lo.
+        sql = generate_sql.gerar_insert_lead(_dados(), None)
+        assert '"criado_por_lote": "%s"' % generate_sql.LOTE in sql
+
 
 class TestUpdateConservador:
     def test_atualiza_tabela_leads(self):
@@ -128,6 +137,14 @@ class TestUpdateConservador:
     def test_filtra_pelo_telefone_normalizado(self):
         sql = generate_sql.gerar_update_conservador(_dados(), tem_dono=False)
         assert "WHERE phone = '5551993452254'" in sql
+
+    def test_nao_marca_criado_por_lote(self):
+        # Fix round 1, Finding 1 (CRITICAL): e a outra metade do par que
+        # protege os leads pre-existentes no rollback — o UPDATE conservador
+        # jamais pode escrever "criado_por_lote", senao o DELETE do rollback
+        # (que agora chaveia nesse marcador) passaria a atingi-los tambem.
+        sql = generate_sql.gerar_update_conservador(_dados(), tem_dono=False)
+        assert "criado_por_lote" not in sql
 
 
 class TestInsertNota:
@@ -183,6 +200,14 @@ class TestOptOut:
         sql = generate_sql.gerar_update_optout("5515996830664", "2026-07-31", "x")
         assert "AND opt_out IS NOT TRUE" in sql
 
+    def test_registra_lote_no_metadata(self):
+        # Fix round 1, Finding 2 (Important): sem o lote no metadata do
+        # opt-out, o rollback nao tem como restringir o "desfazer opt-out" a
+        # este lote — um rollback futuro reabriria contato com quem pediu
+        # para nao ser contactado em OUTRO lote.
+        sql = generate_sql.gerar_update_optout("5515996830664", "2026-07-31", "x")
+        assert '"lote": "%s"' % generate_sql.LOTE in sql
+
 
 class TestNormalizacaoTelefone:
     def test_corrige_phone_do_registro_existente(self):
@@ -235,6 +260,26 @@ class TestMontarArquivo:
         sql = generate_sql.montar_arquivo(*_entradas())
         assert sql.index("SET phone =") < sql.index("INSERT INTO leads")
 
+    def test_verificacao_aborta_em_contagem_errada(self):
+        # Fix round 1, Finding 3 (Important): um SELECT count(*) que so faz
+        # \echo nao impede o COMMIT quando a contagem esta errada (psql -f
+        # roda tudo de uma vez). Cada uma das 3 checagens tem que ser capaz
+        # de abortar a transacao via RAISE EXCEPTION.
+        sql = generate_sql.montar_arquivo(*_entradas())
+        assert sql.count("RAISE EXCEPTION") == 3
+
+    def test_contagem_esperada_deriva_do_tamanho_das_entradas(self):
+        # Fix round 1, Finding 3: os numeros esperados nao podem ser
+        # literais fixos (276/276/51) — tem que vir de len(novos) +
+        # len(existentes) e len(optouts), senao o check pode divergir da
+        # realidade do lote que de fato foi passado para montar_arquivo.
+        novos, existentes, optouts, normalizacoes = _entradas()
+        sql = generate_sql.montar_arquivo(novos, existentes, optouts, normalizacoes)
+        esperado_leads_e_notas = len(novos) + len(existentes)
+        esperado_optouts = len(optouts)
+        assert sql.count("IF n <> %d THEN" % esperado_leads_e_notas) == 2
+        assert ("IF n <> %d THEN" % esperado_optouts) in sql
+
 
 class TestMontarRollback:
     def test_remove_notas_do_lote(self):
@@ -254,7 +299,23 @@ class TestMontarRollback:
         sql = generate_sql.montar_rollback()
         assert "BEGIN;" in sql and "COMMIT;" in sql
 
-    def test_nao_apaga_lead_pre_existente(self):
-        # so remove quem foi criado por este lote (metadata.lote + sem mensagens)
+    def test_delete_chaveado_no_marcador_criado_por_lote(self):
+        # Fix round 1, Finding 1 (CRITICAL): "NOT EXISTS (messages)" sozinho
+        # e uma proxy falsa para "este lote criou o lead" — confirmado em
+        # produção que 3 dos 40 leads pre-existentes (incl. "Bia",
+        # secretaria/active) nao tem mensagens e seriam apagados por engano.
+        # O DELETE agora tem que chavear no marcador explicito
+        # "criado_por_lote", com o NOT EXISTS(messages) como uma segunda
+        # rede de seguranca independente, nao como sinal primario.
         sql = generate_sql.montar_rollback()
-        assert "NOT EXISTS" in sql
+        trecho_delete = sql[sql.index("DELETE FROM leads"):]
+        assert ("metadata->>'criado_por_lote' = '%s'" % generate_sql.LOTE) in trecho_delete
+        assert "NOT EXISTS" in trecho_delete
+
+    def test_optout_rollback_escopado_por_lote(self):
+        # Fix round 1, Finding 2 (Important): sem o filtro por lote, um
+        # rollback futuro desfaria opt-outs de OUTRO lote — reabrindo
+        # contato com quem pediu para nao ser contactado.
+        sql = generate_sql.montar_rollback()
+        trecho_optout = sql[sql.index("SET opt_out = false"):sql.index("DELETE FROM leads")]
+        assert ("metadata->>'lote' = '%s'" % generate_sql.LOTE) in trecho_optout
