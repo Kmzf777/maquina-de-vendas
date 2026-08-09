@@ -187,3 +187,65 @@ class TestMontarBriefing:
         texto = transform.montar_briefing(_dados_base())
         assert "id_bling 5845664414" in texto
         assert "ICP 55" in texto
+
+    def test_total_gasto_em_formato_br_nao_e_confundido_com_lead_sem_compra(self):
+        # 13918,48 e o mesmo valor de _dados_base(), so que no formato BR (o
+        # CSV Excel-friendly usa virgula decimal). Achatar isso para 0.0
+        # classificaria erroneamente um cliente pagante como "nunca comprou".
+        dados = _dados_base()
+        dados["total_gasto"] = "13918,48"
+        texto = transform.montar_briefing(dados)
+        assert "CLIENTE INATIVO" in texto
+        assert "LEAD SEM COMPRA" not in texto
+        assert "R$ 13.918,48" in texto
+
+    def test_cpf_de_pessoa_fisica_sai_rotulado_como_cpf_nao_cnpj(self):
+        dados = _dados_base()
+        dados["cpf_cnpj"] = "12345678901"
+        texto = transform.montar_briefing(dados)
+        assert "CPF 123.456.789-01" in texto
+        assert "CNPJ" not in texto
+
+    def test_documento_vazio_nao_deixa_rotulo_nem_espaco_sobrando(self):
+        dados = _dados_base()
+        dados["cpf_cnpj"] = ""
+        texto = transform.montar_briefing(dados)
+        assert "CNPJ" not in texto
+        assert "CPF" not in texto
+        # sem rotulo, a linha de cadastro nao deve ter espaco sobrando entre
+        # 'Cadastro:' e o separador de cidade/uf (o documento inexiste).
+        linha_cadastro = next(l for l in texto.splitlines() if l.startswith("Cadastro"))
+        assert linha_cadastro == "Cadastro: · Gravataí/RS"
+
+
+class TestNum:
+    def test_formato_us_ponto_decimal(self):
+        assert transform._num("1234.56") == 1234.56
+
+    def test_formato_br_ponto_milhar_virgula_decimal(self):
+        assert transform._num("1.234,56") == 1234.56
+
+    def test_formato_br_so_virgula_decimal(self):
+        assert transform._num("1234,56") == 1234.56
+
+    def test_formato_br_milhar_grande(self):
+        assert transform._num("13.918,48") == 13918.48
+
+    def test_vazio_none_invalido_devolvem_zero(self):
+        assert transform._num("") == 0.0
+        assert transform._num(None) == 0.0
+        assert transform._num("abc") == 0.0
+
+
+class TestFormatarData:
+    def test_data_valida(self):
+        assert transform.formatar_data("2019-07-23") == "23/07/2019"
+
+    def test_vazia(self):
+        assert transform.formatar_data("") == ""
+
+    def test_sentinela_bling_zero_absoluto(self):
+        assert transform.formatar_data("0000-00-00") == ""
+
+    def test_sentinela_bling_ano_zero_com_dia_mes_validos(self):
+        assert transform.formatar_data("0000-01-01") == ""

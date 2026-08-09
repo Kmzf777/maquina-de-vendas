@@ -90,8 +90,23 @@ PREFIXO_BRIEFING = "REATIVAÇÃO 10/08/2026 — lote reativacao_bling_2026-08-10
 
 
 def _num(valor):
+    """Converte string numerica (formato BR ou US) para float. Invalido -> 0.0.
+
+    Regra para distinguir os formatos quando '.' e ',' aparecem juntos: o que
+    aparecer por ultimo na string e o separador decimal, o outro e separador de
+    milhar (ex.: '1.234,56' -> 1234.56; '1,234.56' -> 1234.56). Se so houver
+    ',', ela e tratada como separador decimal (ex.: '1234,56' -> 1234.56).
+    """
+    texto = str(valor or "0").strip()
+    if "." in texto and "," in texto:
+        if texto.rfind(",") > texto.rfind("."):
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", "")
+    elif "," in texto:
+        texto = texto.replace(",", ".")
     try:
-        return float(str(valor or "0").replace(",", "."))
+        return float(texto)
     except ValueError:
         return 0.0
 
@@ -118,9 +133,16 @@ def formatar_inteiro(valor):
 
 
 def formatar_data(iso):
-    """'2019-07-23' -> '23/07/2019'. Devolve '' para vazio/invalido."""
+    """'2019-07-23' -> '23/07/2019'. Devolve '' para vazio/invalido.
+
+    O Bling usa '0000-00-00' (e variantes com ano zero, ex.: '0000-01-01') como
+    sentinela de data nao definida — ano zero nunca e uma data valida, entao e
+    tratado como invalido tambem.
+    """
     partes = (iso or "").strip()[:10].split("-")
     if len(partes) != 3 or not all(partes):
+        return ""
+    if partes[0] == "0000":
         return ""
     return "%s/%s/%s" % (partes[2], partes[1], partes[0])
 
@@ -175,7 +197,21 @@ def montar_briefing(dados):
 
     linhas.append("")
 
-    cadastro = "Cadastro: CNPJ %s" % formatar_documento(dados.get("cpf_cnpj"))
+    doc_bruto = dados.get("cpf_cnpj")
+    qtd_digitos = len(re.sub(r"\D", "", doc_bruto or ""))
+    if qtd_digitos == 14:
+        rotulo_doc = "CNPJ"
+    elif qtd_digitos == 11:
+        rotulo_doc = "CPF"
+    else:
+        rotulo_doc = ""
+    doc_formatado = formatar_documento(doc_bruto)
+    partes_cadastro = ["Cadastro:"]
+    if rotulo_doc:
+        partes_cadastro.append(rotulo_doc)
+    if doc_formatado:
+        partes_cadastro.append(doc_formatado)
+    cadastro = " ".join(partes_cadastro)
     local = "/".join(p for p in [(dados.get("cidade") or "").strip(),
                                  (dados.get("uf") or "").strip()] if p)
     if local:
