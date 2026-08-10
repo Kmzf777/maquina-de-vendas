@@ -103,9 +103,19 @@ def gerar_insert_lead(dados, nome_crm):
     seleciona por "ai_enabled = true AND stage = <filtro>" sem checar
     leads.opt_out. Nenhuma campanha esta ativa hoje, mas uma futura pegaria
     esses leads.
+
+    Change 3: leads.name e o que o cliente le como {{1}} no template do
+    WhatsApp. A coluna "saudacao" do CSV de disparo e curada especificamente
+    para isso, e tem prioridade sobre escolher_saudacao(nome_crm, nome) —
+    que deriva da razao social/nome legal e produz resultado ruim em 141 das
+    276 linhas (ex.: "Café Gentil" virando "Everton Gentil Rodrigues De
+    Almeida"). Só cai no fallback quando o CSV vem com "saudacao" vazio.
+    company/razao_social continuam usando o nome legal (correto ali);
+    nome_fantasia ja usava "saudacao" antes e continua igual.
     """
     phone = transform.normalizar_telefone(dados.get("whatsapp"))
-    nome = transform.escolher_saudacao(nome_crm, dados.get("nome"))
+    saudacao_csv = (dados.get("saudacao") or "").strip()
+    nome = saudacao_csv or transform.escolher_saudacao(nome_crm, dados.get("nome"))
     metadata_dict = _metadata_json(dados)
     metadata_dict["criado_por_lote"] = LOTE
     metadata = json.dumps(metadata_dict, ensure_ascii=False)

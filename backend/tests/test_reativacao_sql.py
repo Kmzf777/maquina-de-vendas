@@ -89,12 +89,40 @@ class TestGerarInsertLead:
 
     def test_escapa_aspas_no_nome(self):
         dados = _dados()
+        # Change 3: o CSV de disparo tem uma coluna "saudacao" curada que
+        # agora tem prioridade sobre escolher_saudacao(nome_crm, nome) para
+        # leads.name. Zerar "saudacao" aqui forca o fallback e mantem o que
+        # este teste realmente verifica (apostrofo escapado sobrevivendo em
+        # escolher_saudacao), sem acoplar ao valor fixo de _dados().
+        dados["saudacao"] = ""
         dados["nome"] = "CAFE D'ANTONIO"
         sql = generate_sql.gerar_insert_lead(dados, None)
         # transform.escolher_saudacao titulariza nomes 100% em caixa alta
         # (ex.: "CAFE D'ANTONIO" -> "Cafe D'Antonio"); o que este teste
         # verifica e que o apostrofo sobrevive escapado (dobrado), nao a caixa.
         assert "D''Antonio" in sql
+
+    def test_usa_saudacao_do_csv_quando_presente(self):
+        # Change 3: leads.name e o que o cliente le como {{1}} no template.
+        # A coluna "saudacao" do CSV de disparo e curada para isso; o nome
+        # derivado da razao social (escolher_saudacao) produz resultados
+        # ruins em 141 das 276 linhas (ex.: "Café Gentil" -> "Everton
+        # Gentil Rodrigues De Almeida").
+        dados = _dados()
+        dados["saudacao"] = "Café Gentil"
+        dados["nome"] = "35.791.341 EVERTON GENTIL RODRIGUES DE ALMEIDA"
+        sql = generate_sql.gerar_insert_lead(dados, None)
+        assert "'Café Gentil'" in sql
+        assert "Everton" not in sql
+
+    def test_cai_no_escolher_saudacao_quando_csv_vem_vazio(self):
+        # Fallback: sem saudacao no CSV, o comportamento antigo continua
+        # valendo — prioriza nome_crm, depois o nome do Bling limpo.
+        dados = _dados()
+        dados["saudacao"] = ""
+        dados["nome"] = "ARMAZEM SAO PEDRO LTDA"
+        sql = generate_sql.gerar_insert_lead(dados, "Carina")
+        assert "'Carina'" in sql
 
     def test_nao_menciona_tabelas_proibidas(self):
         sql = generate_sql.gerar_insert_lead(_dados(), None)
