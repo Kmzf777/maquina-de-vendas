@@ -7,10 +7,20 @@ Prepara os leads no CRM com briefing de contexto e registra os opt-outs pendente
 - Plano: `docs/superpowers/plans/2026-08-08-reativacao-crm-preparacao.md`
 - Código: `scripts/reativacao/generate_sql.py` (não executa nada — só gera `preparar.sql` e `rollback.sql`), `scripts/reativacao/transform.py`
 
+**Nome do lead ({{1}} do template):** `gerar_insert_lead` usa a coluna
+`saudacao` do CSV de disparo (curada especificamente para isso) como
+`leads.name`, caindo em `escolher_saudacao(nome_crm, nome)` só quando o CSV
+vem com `saudacao` vazio. Antes, `leads.name` vinha só de
+`escolher_saudacao`, que deriva do nome legal/razão social — resultado ruim
+em 141 das 276 linhas (ex.: "Café Gentil" virando "Everton Gentil Rodrigues
+De Almeida"). `company`/`razao_social` continuam no nome legal;
+`nome_fantasia` já usava `saudacao` e não mudou.
+
 Números do lote atual (`reativacao_bling_2026-08-10`), verificados contra a produção:
-**235 leads novos, 41 existentes, 276 notas, 51 opt-outs (10 pulados de 61
-candidatos detectados), 4 exclusões.** `preparar.sql` sai com ~6.600 linhas /
-~400 KB; `rollback.sql` com ~25 linhas.
+**235 leads novos, 31 existentes, 266 notas, 51 opt-outs (10 pulados de 61
+candidatos detectados), 3 exclusões (D7), 10 duplicatas lógicas puladas
+(nem lead, nem nota), 263 leads marcados com a tag do lote.** `preparar.sql`
+sai com ~6.380 linhas; `rollback.sql` com ~28 linhas.
 
 **Nota sobre os números (fix round 3, C2):** a duplicata lógica da decisão D9
 (`Atma`, `11981154002` → `5511981154002`) só é reconhecida como "existente"
@@ -18,8 +28,31 @@ depois que `carregar_nomes_crm` passou a normalizar as chaves do TSV — antes
 disso ela contava como "novo" e o `INSERT` correspondente era engolido pelo
 `ON CONFLICT (phone) DO NOTHING` (porque a normalização de telefone do passo 1
 já tinha renomeado a linha do banco). Por isso os números mudaram de
-**236/40** para **235/41** em relação a uma versão anterior deste runbook —
-a lista final de disparo continua em 272 (276 − 4 exclusões).
+**236/40** para **235/41** em relação a uma versão anterior deste runbook.
+
+**Nota sobre os números (change wave, duplicatas + tag + saudação):** uma
+auditoria separada encontrou **188 duplicatas lógicas** na base inteira — a
+mesma pessoa cadastrada duas vezes, uma com o prefixo `55` e outra sem, com o
+histórico dividido entre os dois registros. **10 delas** estão na lista de
+disparo deste lote (`DUPLICATAS_EXCLUIDAS` em `generate_sql.py`) e ficam
+**inteiramente fora do lote** — nem lead, nem nota, nem tag — porque não há
+como escolher o registro certo sem mesclar os dados primeiro (serão tratadas
+depois, separadamente). Uma delas, `5554996324731`, também era uma das 4
+exclusões D7 originais — por isso as exclusões D7 caem de 4 para **3** neste
+runbook. Os números mudaram de **235/41/276/4** para **235/31/266/3** (mais
+"10 duplicatas puladas", uma contagem nova e separada). A lista final de
+disparo (leads que efetivamente recebem a **tag do lote**, ver passo 3.1)
+fica em **263** = 266 (235 novos + 31 existentes) − 3 exclusões D7 — as 10
+duplicatas já saíram antes de entrar nessa conta.
+
+Ao carregar o dump completo do CRM (`--nomes-crm`, que reflete a base
+inteira, não só o disparo), o guard de ambiguidade de `carregar_nomes_crm`
+pode encontrar colisões de outras duplicatas lógicas — das 188 totais, 178
+não têm nada a ver com este lote (ex.: um caso real, "Marco Aurelio Tegani",
+`13996221533`/`5513996221533`). Por isso a checagem é escopada a
+`telefones_necessarios` (telefones do disparo, menos `DUPLICATAS_EXCLUIDAS`)
+— só uma colisão dentro desse conjunto aborta a geração do SQL; colisões
+alheias ao lote atual não travam nada.
 
 ---
 
@@ -71,6 +104,21 @@ compatível com a base (milhares de linhas). Se vier vazio ou com uma única
 linha estranha, **pare** — o CLI vai abortar com `ValueError` ao ler isso, o
 que é o comportamento correto (nunca tratar "CRM vazio" como estado normal).
 
+**Ambiguidade de telefone (duplicatas lógicas):** este arquivo reflete a
+base **inteira**, não só o disparo atual — uma auditoria encontrou **188
+duplicatas lógicas** na base (mesma pessoa cadastrada com/sem prefixo `55`).
+`carregar_nomes_crm` detecta quando dois telefones crus diferentes
+normalizam para a mesma chave, mas só **aborta** quando a colisão está
+dentro de `telefones_necessarios` — o conjunto que `main()` monta como "os
+telefones do disparo atual, menos `DUPLICATAS_EXCLUIDAS`" (as 10 duplicatas
+deste lote nunca são "necessárias": `enriquecer()` as pula antes de
+consultar este dicionário). Colisões de duplicatas alheias a este lote (as
+outras ~178) não travam a geração do SQL — não têm nada a ver com a
+campanha atual. Se o erro `nomes_crm: '...' e '...' normalizam para o mesmo
+telefone ...` aparecer mesmo assim, o telefone em questão **é** referenciado
+pelo disparo e a duplicata precisa ser resolvida (ou adicionada a
+`DUPLICATAS_EXCLUIDAS`) antes de gerar o SQL.
+
 ### 1.2 Telefones que já têm dono (`assigned_to` preenchido)
 
 ```bash
@@ -79,7 +127,7 @@ ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker exec \$D ps
 
 **Atenção:** `--donos` é opcional na sintaxe do CLI, mas **nunca rode sem
 ele** neste lote. Se o arquivo vier vazio ou for omitido, `gerar_update_conservador`
-trata *todos* os 41 leads existentes como "sem dono" e atribui `assigned_to`
+trata *todos* os 31 leads existentes como "sem dono" e atribui `assigned_to`
 ao João mesmo nos que já têm responsável — sobrescrevendo uma atribuição real.
 
 ### 1.3 Telefones já marcados `opt_out = true`
@@ -131,7 +179,7 @@ python scripts/reativacao/generate_sql.py \
   --optouts /tmp/optouts.json \
   --optouts-ja-marcados /tmp/optouts_ja_marcados.txt \
   --esperado-novos 235 \
-  --esperado-existentes 41 \
+  --esperado-existentes 31 \
   --saida /tmp/reativacao
 ```
 
@@ -147,15 +195,22 @@ com os valores esperados do lote, nunca rode sem eles.
 
 ```
 leads novos:      235
-leads existentes: 41
-notas:            276
+leads existentes: 31
+notas:            266
 opt-outs:         51
   pulados (confirmados no CRM):     10
   pulados (NAO encontrados no CRM): 0
-exclusoes:        4
+exclusoes:        3
+duplicatas puladas (CRM): 10
 gerado: /tmp/reativacao/preparar.sql
 gerado: /tmp/reativacao/rollback.sql
 ```
+
+`duplicatas puladas (CRM)` é uma contagem separada das demais: são as 10
+`DUPLICATAS_EXCLUIDAS` (mesma pessoa cadastrada com/sem prefixo `55`, dados
+divididos entre os dois registros) — não entram em "novos" nem em
+"existentes", não recebem lead, nota nem tag. Serão tratadas depois de um
+merge manual dos dados, fora deste script.
 
 Se `pulados (NAO encontrados no CRM)` vier maior que zero, **pare e
 investigue antes de continuar** — o CLI já imprime os telefones ofensivos
@@ -166,6 +221,27 @@ desatualizado, erro de digitação, etc.) — nunca assuma que é inofensivo,
 porque o risco é justamente descartar por engano um opt-out real (a pessoa
 continuaria recebendo mensagem).
 
+### 3.1 Tag do lote (para a UI de criação de disparo do CRM)
+
+A UI de criação de disparo do CRM filtra por pipeline/estágio/categoria de
+negócio/tag/data — **nunca por metadata**. Como `metadata.lote` é o único
+marcador que este script escreve, a coorte preparada não era selecionável
+na UI antes desta mudança. `montar_arquivo` agora emite, entre as notas e
+os opt-outs:
+
+1. Um `INSERT INTO tags` com um UUID **hardcoded**
+   (`TAG_LOTE_ID = 9f1c7a52-4b3e-4d81-9a6f-2c8e5b0d7a41`, nome
+   `"Reativação 10/08"`), idempotente via `ON CONFLICT (id) DO NOTHING`.
+2. Um `INSERT INTO lead_tags` que associa `(lead_id, tag_id)` via
+   `SELECT ... WHERE phone IN (...)`, cobrindo **apenas** os contatos SEM
+   `motivo_exclusao` — os 3 exclusões D7 remanescentes ficam de fora da tag
+   de propósito: a seleção do vendedor na UI precisa ser exatamente a lista
+   de disparo, nunca incluir quem está marcado "fora da campanha".
+
+Um 4º bloco de verificação no rodapé (`DO $$ ... RAISE EXCEPTION`) confere
+que a contagem de `lead_tags` do lote bate com o número de contatos
+efetivamente tagueados (263 no lote atual).
+
 ---
 
 ## 4. Revisar o SQL gerado antes de executar
@@ -174,9 +250,11 @@ Guardrails de contagem (devem bater exatamente com os números do passo 3):
 
 ```bash
 grep -c "INSERT INTO leads"      /tmp/reativacao/preparar.sql   # 235
-grep -c "UPDATE leads SET"       /tmp/reativacao/preparar.sql   # 93  (41 existentes + 51 opt-outs + 1 normalizacao de telefone)
-grep -c "INSERT INTO lead_notes" /tmp/reativacao/preparar.sql   # 276
-grep -c "RAISE EXCEPTION"        /tmp/reativacao/preparar.sql   # 4   (3 do rodape + 1 da normalizacao de telefone D9)
+grep -c "UPDATE leads SET"       /tmp/reativacao/preparar.sql   # 83  (31 existentes + 51 opt-outs + 1 normalizacao de telefone)
+grep -c "INSERT INTO lead_notes" /tmp/reativacao/preparar.sql   # 266
+grep -c "INSERT INTO tags"       /tmp/reativacao/preparar.sql   # 1   (tag do lote, ver secao 3.1)
+grep -c "INSERT INTO lead_tags"  /tmp/reativacao/preparar.sql   # 1   (associacao em massa via SELECT/IN)
+grep -c "RAISE EXCEPTION"        /tmp/reativacao/preparar.sql   # 5   (4 do rodape + 1 da normalizacao de telefone D9)
 ```
 
 Guardrails de segurança (devem dar **zero**, sem exceção):
@@ -193,13 +271,16 @@ editado à mão; o próprio cabeçalho do arquivo diz isso).
 Conferir também o tamanho e o rollback:
 
 ```bash
-wc -l /tmp/reativacao/preparar.sql   # ~6.600 linhas
-wc -l /tmp/reativacao/rollback.sql   # ~25 linhas
+wc -l /tmp/reativacao/preparar.sql   # ~6.380 linhas
+wc -l /tmp/reativacao/rollback.sql   # ~28 linhas
 ```
 
-Por fim, ler à mão os 4 blocos marcados `⚠ FORA DA CAMPANHA` dentro do SQL
+Por fim, ler à mão os 3 blocos marcados `⚠ FORA DA CAMPANHA` dentro do SQL
 (procure por essa string) — são os leads com `MOTIVOS_EXCLUSAO`: recebem lead
-e nota, mas não fazem parte da campanha de disparo.
+e nota, mas não fazem parte da campanha de disparo (nem da tag do lote, ver
+seção 3.1). Confirme também que nenhum dos 10 telefones de
+`DUPLICATAS_EXCLUIDAS` aparece no arquivo — busca de qualquer um deles deve
+dar zero resultados.
 
 ---
 
@@ -220,17 +301,18 @@ nada fica pela metade.
 ## 6. Verificar
 
 **Não há verificação manual de números aqui.** Antes do `COMMIT;`, o próprio
-`preparar.sql` roda quatro blocos `DO $$ ... END $$` que contam/checam:
+`preparar.sql` roda cinco blocos `DO $$ ... END $$` que contam/checam:
 (1) leads do lote (chaveado em `metadata->>'origem'` **e** `metadata->>'lote'`
 juntos — nunca só `lote`, para nunca colidir com a contagem de opt-outs, que
 usa a chave separada `optout_lote`), (2) notas do lote, (3) opt-outs marcados
-por este lote, e um quarto bloco logo após a normalização de telefone (D9),
-que verifica que ela de fato afetou exatamente 1 linha. Todos executam
+por este lote, (4) tags do lote (`lead_tags WHERE tag_id = <TAG_LOTE_ID>`,
+seção 3.1) e um quinto bloco logo após a normalização de telefone (D9), que
+verifica que ela de fato afetou exatamente 1 linha. Todos executam
 `RAISE EXCEPTION` se a contagem/condição não bater com o esperado
-(235+41=276 leads/notas, 51 opt-outs). Um `RAISE EXCEPTION` dentro de uma
-transação Postgres força o rollback automático de tudo que veio antes,
-inclusive dos `INSERT`s que pareciam ter dado certo — o psql retorna erro e o
-`COMMIT;` no final do arquivo nunca roda.
+(235+31=266 leads/notas, 51 opt-outs, 263 tags). Um `RAISE EXCEPTION` dentro
+de uma transação Postgres força o rollback automático de tudo que veio
+antes, inclusive dos `INSERT`s que pareciam ter dado certo — o psql retorna
+erro e o `COMMIT;` no final do arquivo nunca roda.
 
 Ou seja: **se o comando do passo 5 terminar sem erro (código de saída 0 e sem
 `ERROR` na saída), a preparação foi aplicada corretamente e já está
@@ -245,8 +327,9 @@ SQL do zero a partir do passo 1. Nunca assuma "deu quase certo" — ou o
 termo dentro de uma única transação.
 
 Ainda assim, é razoável confirmar visualmente as linhas `\echo` impressas
-durante a execução (`--- leads do lote (esperado: 276) ---`, etc.) — elas
-aparecem mesmo quando tudo passa, só não são a proteção em si.
+durante a execução (`--- leads do lote (esperado: 266) ---`,
+`--- tags do lote (esperado: 263) ---`, etc.) — elas aparecem mesmo quando
+tudo passa, só não são a proteção em si.
 
 ---
 
@@ -260,15 +343,22 @@ ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker cp /tmp/rol
 **O que o rollback desfaz:**
 
 1. Remove todas as `lead_notes` cujo conteúdo contém o identificador do lote
-   (as 276 notas de briefing, novas e existentes).
-2. Desmarca `opt_out` **somente** nos leads que este lote marcou
+   (as 266 notas de briefing, novas e existentes).
+2. Remove a associação `lead_tags` da tag do lote e, em seguida, a própria
+   `tag` (`DELETE FROM lead_tags WHERE tag_id = <TAG_LOTE_ID>` e
+   `DELETE FROM tags WHERE id = <TAG_LOTE_ID>`) — **antes** dos `DELETE`s de
+   lead do passo 4. O FK `(lead_id, tag_id)` já teria cascade automático se
+   os leads fossem apagados primeiro, mas ser explícito aqui deixa claro,
+   para quem lê o documento, o que este rollback desfaz sem depender de
+   conhecer o schema de cabeça.
+3. Desmarca `opt_out` **somente** nos leads que este lote marcou
    (`metadata->>'optout_lote'` igual ao lote **e**
    `optout_fonte = 'mensagem_do_cliente'`) — opt-outs de qualquer outro
    lote/motivo não são tocados — e, na mesma instrução, limpa as chaves de
    evidência do opt-out (`optout_quando`, `optout_disse`, `optout_fonte`,
    `optout_lote`).
-3. Apaga os leads que este lote **criou** — e só esses.
-4. Remove as chaves de metadata do lote (`lote`, `origem`, `id_bling`,
+4. Apaga os leads que este lote **criou** — e só esses.
+5. Remove as chaves de metadata do lote (`lote`, `origem`, `id_bling`,
    `icp_score`, `criado_por_lote`) de qualquer lead que este lote criou ou
    atualizou (`metadata->>'origem' = 'reativacao_bling'` **e**
    `metadata->>'lote'` igual ao lote — as duas juntas, nunca só uma: os
@@ -276,17 +366,22 @@ ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker cp /tmp/rol
    apaga por engano um `metadata.origem` pré-existente de outra origem
    `terceirizacao`/`atacado`).
 
-**Por que o critério do passo 3 é `metadata->>'criado_por_lote'`, e não "lead
+**Por que o critério do passo 4 é `metadata->>'criado_por_lote'`, e não "lead
 sem mensagem":** essa chave só é escrita por `gerar_insert_lead` (leads
 novos) — `gerar_update_conservador` (leads existentes) nunca a grava. Uma
 versão anterior do rollback usava "o lead não tem nenhuma mensagem" como
 único critério para decidir o que apagar, partindo da suposição de que só
-leads novos ficariam sem mensagem. Na produção real isso é falso: **3 dos 41
+leads novos ficariam sem mensagem. Na produção real isso é falso: **3 dos 31
 leads pré-existentes não têm mensagem nenhuma**, e esse rollback antigo teria
-apagado esses 3 leads reais junto com **4 notas** que já existiam antes deste
+apagado esses 3 leads reais junto com notas que já existiam antes deste
 lote. Chavear em `criado_por_lote` elimina esse risco por construção — a
 checagem "sem mensagem" continua no SQL, mas agora como uma segunda rede de
 segurança combinada com `AND`, não como critério único.
+
+**Sobre as 10 `DUPLICATAS_EXCLUIDAS`:** o rollback não precisa de nenhum
+passo especial para elas — como `enriquecer()` as pula por completo (nem
+lead, nem nota, nem tag), elas nunca aparecem em nada que este lote grava, e
+portanto nunca aparecem em nada que este rollback precisa desfazer.
 
 **O que o rollback NÃO desfaz** — se qualquer um destes importar, restaure o
 dump do passo 0 em vez de confiar no rollback:
@@ -294,13 +389,13 @@ dump do passo 0 em vez de confiar no rollback:
 - **Campos preenchidos em leads existentes.** `gerar_update_conservador` só
   preenche colunas que estavam vazias (`COALESCE(NULLIF(col, ''), ...)`) —
   o rollback não limpa `cnpj`, `razao_social`, `nome_fantasia`, `email`,
-  `endereco` nem `assigned_to` de volta ao estado anterior nesses 41 leads.
+  `endereco` nem `assigned_to` de volta ao estado anterior nesses 31 leads.
   Só a chave de metadata do lote sai; o valor de coluna que foi preenchido
   fica.
 - **A normalização de telefone da decisão D9** (`11981154002` →
   `5511981154002`). O rollback não reverte esse UPDATE.
 - **Leads criados por este lote que já receberam mensagem** de alguém antes
-  do rollback rodar — a condição "sem mensagem" no passo 3 os protege de
+  do rollback rodar — a condição "sem mensagem" no passo 4 os protege de
   serem apagados (uma conversa real já em andamento não deve desaparecer),
   mas isso significa que ficam órfãos: sem a nota de briefing, sem as chaves
   de metadata do lote, porém ainda existindo como lead. Precisa de decisão
