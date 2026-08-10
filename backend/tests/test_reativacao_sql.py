@@ -273,6 +273,49 @@ class TestNormalizacaoTelefone:
         assert "n_novo <> 1" in sql and "n_antigo <> 0" in sql
 
 
+class TestTagLote:
+    def test_constantes_do_lote(self):
+        assert generate_sql.TAG_LOTE_ID == "9f1c7a52-4b3e-4d81-9a6f-2c8e5b0d7a41"
+        assert generate_sql.TAG_LOTE_NOME == "Reativação 10/08"
+
+    def test_insere_a_tag_idempotente(self):
+        novos = [(_dados(), None, False)]
+        sql, _qtd = generate_sql.gerar_tag_lote(novos, [])
+        assert "INSERT INTO tags" in sql
+        assert generate_sql.TAG_LOTE_ID in sql
+        assert generate_sql.TAG_LOTE_NOME in sql
+        assert "ON CONFLICT (id) DO NOTHING" in sql
+
+    def test_associa_leads_pelo_telefone_via_select(self):
+        novos = [(_dados(), None, False)]
+        sql, qtd = generate_sql.gerar_tag_lote(novos, [])
+        assert "INSERT INTO lead_tags" in sql
+        assert "SELECT l.id" in sql
+        assert "FROM leads l" in sql
+        assert "'5551993452254'" in sql
+        assert "ON CONFLICT (lead_id, tag_id) DO NOTHING" in sql
+        assert qtd == 1
+
+    def test_nao_menciona_tabelas_proibidas(self):
+        novos = [(_dados(), None, False)]
+        sql, _qtd = generate_sql.gerar_tag_lote(novos, [])
+        for tabela in generate_sql.TABELAS_PROIBIDAS:
+            assert tabela not in sql
+
+    def test_exclui_contatos_com_motivo_de_exclusao(self):
+        # D7: os 3 (agora) exclusos ficam fora da tag — a selecao do
+        # operador na UI do CRM precisa ser exatamente a lista de disparo.
+        excluido = _dados()
+        excluido["motivo_exclusao"] = "declinou com gatilho"
+        excluido["whatsapp"] = "5554996324731"
+        incluido = _dados()
+        sql, qtd = generate_sql.gerar_tag_lote([(incluido, None, False)],
+                                                [(excluido, None, False)])
+        assert qtd == 1
+        assert "5554996324731" not in sql
+        assert "'5551993452254'" in sql
+
+
 def _entradas():
     novos = [(_dados(), None, False)]
     existentes = [(_dados(), "Carina", True)]
@@ -323,8 +366,11 @@ class TestMontarArquivo:
         # normalizacao) agora tambem emite seu proprio DO $$ ... RAISE
         # EXCEPTION ... END $$ para travar contra colisao silenciosa de
         # telefone (D9).
+        #
+        # Change 2: contrato mudou de 4 para 5 — o rodape ganhou um 5o bloco
+        # que verifica a contagem de lead_tags do lote (gerar_tag_lote).
         sql = generate_sql.montar_arquivo(*_entradas())
-        assert sql.count("RAISE EXCEPTION") == 4
+        assert sql.count("RAISE EXCEPTION") == 5
 
     def test_leads_do_lote_escopado_por_origem_e_lote(self):
         # Fix round 3 (C1, CRITICAL): a contagem de "leads do lote" no
@@ -349,12 +395,37 @@ class TestMontarArquivo:
         # literais fixos (276/276/51) — tem que vir de len(novos) +
         # len(existentes) e len(optouts), senao o check pode divergir da
         # realidade do lote que de fato foi passado para montar_arquivo.
+        #
+        # Change 2: contrato mudou de 2 para 3 ocorrencias de
+        # "IF n <> 2 THEN" — nem _entradas() tem contato com
+        # motivo_exclusao, entao a contagem de tags do lote (gerar_tag_lote)
+        # tambem vale 2 e soma ao bloco de "leads do lote" e "notas do
+        # lote" que ja compartilhavam esse mesmo numero.
         novos, existentes, optouts, normalizacoes = _entradas()
         sql = generate_sql.montar_arquivo(novos, existentes, optouts, normalizacoes)
         esperado_leads_e_notas = len(novos) + len(existentes)
         esperado_optouts = len(optouts)
-        assert sql.count("IF n <> %d THEN" % esperado_leads_e_notas) == 2
+        assert sql.count("IF n <> %d THEN" % esperado_leads_e_notas) == 3
         assert ("IF n <> %d THEN" % esperado_optouts) in sql
+
+    def test_tag_do_lote_vem_apos_notas_e_antes_dos_optouts(self):
+        # Change 2: a UI de disparo do CRM filtra por tag, mas nao por
+        # metadata — a tag precisa existir e estar associada antes da
+        # secao de opt-outs (ordem documentada no plano: normalizacao,
+        # novos, existentes, notas, TAG, opt-outs).
+        sql = generate_sql.montar_arquivo(*_entradas())
+        idx_ultima_nota = sql.rindex("INSERT INTO lead_notes")
+        idx_tag = sql.index("INSERT INTO tags")
+        idx_lead_tags = sql.index("INSERT INTO lead_tags")
+        idx_optout = sql.index("opt_out = true")
+        assert idx_ultima_nota < idx_tag < idx_lead_tags < idx_optout
+
+    def test_quinto_bloco_de_verificacao_conta_lead_tags_do_lote(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        trecho = sql[sql.index("INSERT INTO lead_tags"):]
+        assert "lead_tags WHERE tag_id" in trecho
+        assert generate_sql.TAG_LOTE_ID in trecho
+        assert "RAISE EXCEPTION" in trecho
 
 
 class TestMontarRollback:
@@ -374,6 +445,18 @@ class TestMontarRollback:
     def test_em_transacao(self):
         sql = generate_sql.montar_rollback()
         assert "BEGIN;" in sql and "COMMIT;" in sql
+
+    def test_remove_tag_e_associacao_antes_dos_leads(self):
+        # Change 2: explicito no documento, mesmo que o FK ja cascade —
+        # remove a associacao lead_tags primeiro, depois a tag em si, ambos
+        # antes do DELETE FROM leads.
+        sql = generate_sql.montar_rollback()
+        assert ("DELETE FROM lead_tags WHERE tag_id = '%s'::uuid;"
+                % generate_sql.TAG_LOTE_ID) in sql
+        assert ("DELETE FROM tags WHERE id = '%s'::uuid;"
+                % generate_sql.TAG_LOTE_ID) in sql
+        assert sql.index("DELETE FROM lead_tags") < sql.index("DELETE FROM tags")
+        assert sql.index("DELETE FROM tags") < sql.index("DELETE FROM leads")
 
     def test_delete_chaveado_no_marcador_criado_por_lote(self):
         # Fix round 1, Finding 1 (CRITICAL): "NOT EXISTS (messages)" sozinho

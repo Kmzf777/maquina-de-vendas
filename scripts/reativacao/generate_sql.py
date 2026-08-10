@@ -57,6 +57,13 @@ DUPLICATAS_EXCLUIDAS = (
 CAMPOS_DA_MASTER = ("qtd_nfe", "orcamentos", "valor_vencido", "titulos_vencidos",
                     "dias_atraso_max", "qtd_top1")
 
+# Change 2: tag do lote, para a UI de criacao de disparo do CRM (que filtra
+# por pipeline/estagio/categoria/tag/data, mas NAO por metadata) conseguir
+# selecionar exatamente esta coorte. UUID hardcoded para o INSERT ficar
+# idempotente e o rollback poder apontar precisamente para esta tag.
+TAG_LOTE_ID = "9f1c7a52-4b3e-4d81-9a6f-2c8e5b0d7a41"
+TAG_LOTE_NOME = "Reativação 10/08"
+
 
 def sql_literal(valor):
     """Escapa para literal SQL; vazio/None viram NULL."""
@@ -218,6 +225,45 @@ def gerar_update_optout(telefone, quando, disse):
     )
 
 
+def gerar_tag_lote(novos, existentes):
+    """Cria a tag do lote e associa apenas quem sera de fato disparado.
+
+    Change 2: a UI de criacao de disparo do CRM filtra por
+    pipeline/estagio/categoria de negocio/tag/data — nunca por metadata.
+    Como metadata.lote e o unico marcador que este script escreve, a coorte
+    preparada nao era selecionavel na UI. A tag fixa isso.
+
+    So contatos SEM motivo_exclusao (ver MOTIVOS_EXCLUSAO/D7) recebem a
+    tag — a lista de disparo do vendedor tem que ser exatamente a selecao
+    da tag, entao os poucos leads que recebem lead+nota mas ficam fora da
+    campanha (D7) nunca podem aparecer na tag.
+
+    Devolve (sql, quantidade_marcada).
+    """
+    contatos = list(novos) + list(existentes)
+    telefones = [
+        transform.normalizar_telefone(dados.get("whatsapp"))
+        for dados, _nome_crm, _tem_dono in contatos
+        if not (dados.get("motivo_exclusao") or "").strip()
+    ]
+    insert_tag = (
+        "INSERT INTO tags (id, name, color)\n"
+        "VALUES (%s::uuid, %s, '#8b5cf6')\n"
+        "ON CONFLICT (id) DO NOTHING;" % (
+            sql_literal(TAG_LOTE_ID), sql_literal(TAG_LOTE_NOME))
+    )
+    lista_telefones = ", ".join(sql_literal(fone) for fone in telefones)
+    insert_lead_tags = (
+        "INSERT INTO lead_tags (lead_id, tag_id)\n"
+        "SELECT l.id, %s::uuid\n"
+        "FROM leads l\n"
+        "WHERE l.phone IN (%s)\n"
+        "ON CONFLICT (lead_id, tag_id) DO NOTHING;" % (
+            sql_literal(TAG_LOTE_ID), lista_telefones)
+    )
+    return insert_tag + "\n\n" + insert_lead_tags, len(telefones)
+
+
 def gerar_normalizacao_telefone(antigo, novo):
     """Corrige um phone para E.164, sem colidir com registro existente (D9).
 
@@ -301,13 +347,14 @@ def _bloco_verificacao(rotulo, expressao_where, esperado):
     ) % (rotulo, esperado, expressao_where, esperado, esperado, rotulo)
 
 
-def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado):
-    """Rodape com as 3 verificacoes de contagem + COMMIT.
+def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado, qtd_tags_esperado):
+    """Rodape com as 4 verificacoes de contagem + COMMIT.
 
     Os numeros esperados sao parametros derivados de len(novos) +
-    len(existentes) e len(optouts) em montar_arquivo — nunca literais fixos
-    do lote atual — para que o check nunca possa divergir da realidade do
-    que de fato foi passado para montar_arquivo.
+    len(existentes), len(optouts) e da quantidade marcada por gerar_tag_lote
+    em montar_arquivo — nunca literais fixos do lote atual — para que o
+    check nunca possa divergir da realidade do que de fato foi passado para
+    montar_arquivo.
 
     Fix round 3 (C1, CRITICAL): a contagem de "leads do lote" NAO pode mais
     chavear so em metadata->>'lote' — os 51 UPDATEs de opt-out sao 100%
@@ -320,6 +367,11 @@ def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado):
     dessas duas funcoes, ja que o opt-out passou a usar "optout_lote"), fica
     impossivel para as duas contagens colidirem de novo, mesmo se um lote
     futuro reusar a mesma constante ORIGEM.
+
+    Change 2: 4o bloco checa a contagem de lead_tags do lote — se a UI do
+    CRM contar com a tag para selecionar a lista de disparo, uma associacao
+    parcial (por colisao de ON CONFLICT DO NOTHING silencioso, por exemplo)
+    tem que abortar a transacao, nao passar batido.
     """
     blocos = [
         "-- ── Verificacao (dentro da transacao; aborta se a contagem nao bater) ─────",
@@ -340,6 +392,11 @@ def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado):
             % sql_literal(LOTE),
             qtd_optouts_esperado,
         ),
+        _bloco_verificacao(
+            "tags do lote",
+            "lead_tags WHERE tag_id = %s::uuid" % sql_literal(TAG_LOTE_ID),
+            qtd_tags_esperado,
+        ),
         "COMMIT;",
     ]
     return "\n\n".join(blocos) + "\n"
@@ -349,7 +406,11 @@ def montar_arquivo(novos, existentes, optouts, normalizacoes):
     """SQL completo, em transacao unica.
 
     Ordem importa: normalizacoes de telefone vem antes dos INSERTs, senao o
-    registro com telefone curto viraria duplicata logica do novo.
+    registro com telefone curto viraria duplicata logica do novo. A tag do
+    lote (Change 2) vem depois das notas e antes dos opt-outs — a UI de
+    disparo filtra por tag, entao a tag precisa cobrir exatamente quem sera
+    disparado, o que so fica definitivo depois que leads/existentes/notas
+    ja foram descritos.
     """
     partes = [CABECALHO]
 
@@ -369,12 +430,18 @@ def montar_arquivo(novos, existentes, optouts, normalizacoes):
     for dados, nome_crm, _ in list(novos) + list(existentes):
         partes.append(gerar_insert_nota(dados, nome_crm))
 
-    partes.append("\n-- ── 5. Opt-outs pendentes ─────────────────────────────────────────────────")
+    partes.append("\n-- ── 5. Tag do lote (selecionavel na UI de disparo do CRM) ──────────────────")
+    sql_tag, qtd_tags_esperado = gerar_tag_lote(novos, existentes)
+    partes.append(sql_tag)
+
+    partes.append("\n-- ── 6. Opt-outs pendentes ─────────────────────────────────────────────────")
     for telefone, quando, disse in optouts:
         partes.append(gerar_update_optout(telefone, quando, disse))
 
     qtd_leads_e_notas_esperado = len(novos) + len(existentes)
-    partes.append(_gerar_rodape(qtd_leads_e_notas_esperado, qtd_leads_e_notas_esperado, len(optouts)))
+    partes.append(_gerar_rodape(
+        qtd_leads_e_notas_esperado, qtd_leads_e_notas_esperado,
+        len(optouts), qtd_tags_esperado))
     return "\n\n".join(partes)
 
 
@@ -407,6 +474,11 @@ def montar_rollback():
     colidir com os opt-outs (que sao 100% disjuntos dos 276 leads/notas) nem
     apagar por engano um metadata.origem pre-existente ('terceirizacao'/
     'atacado', 344 usos em producao) de um lead que so recebeu opt-out.
+
+    Change 2: remove a associacao lead_tags e a tag em si, ANTES dos DELETEs
+    de lead — o FK (lead_id, tag_id) ja cascade em ON DELETE, mas ser
+    explicito aqui deixa claro, para quem le o documento, o que este
+    rollback desfaz sem depender de conhecer o schema de cabeça.
     """
     return """-- Rollback do lote %(lote)s
 -- Remove SO o que este lote criou. Leads pre-existentes que receberam merge de
@@ -416,6 +488,9 @@ BEGIN;
 SET client_encoding TO 'UTF8';
 
 DELETE FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
+
+DELETE FROM lead_tags WHERE tag_id = '%(tag_id)s'::uuid;
+DELETE FROM tags WHERE id = '%(tag_id)s'::uuid;
 
 UPDATE leads
 SET opt_out = false,
@@ -433,7 +508,7 @@ WHERE metadata->>'origem' = '%(origem)s' AND metadata->>'lote' = '%(lote)s';
 SELECT count(*) AS restantes FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
 
 COMMIT;
-""" % {"lote": LOTE, "origem": ORIGEM}
+""" % {"lote": LOTE, "origem": ORIGEM, "tag_id": TAG_LOTE_ID}
 
 
 def carregar_disparo(caminho):
