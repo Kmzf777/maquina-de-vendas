@@ -676,13 +676,49 @@ class TestCarregarNomesCrm:
         mensagem = str(excinfo.value)
         assert "11981154002" in mensagem and "5511981154002" in mensagem
 
-    def test_nao_explode_quando_colisao_e_uma_duplicata_ja_excluida(self, tmp_path):
-        # Change 1: as 10 DUPLICATAS_EXCLUIDAS sao exatamente essa colisao —
-        # a mesma pessoa com/sem prefixo 55, dados divididos entre as duas
-        # linhas do dump. enriquecer() ja pula essas linhas antes de
-        # consultar nomes_crm, entao a ambiguidade nunca chega a importar
-        # para elas; o guard so deve disparar para telefones que ainda
-        # seriam de fato usados por enriquecer().
+    def test_ambiguidade_fora_do_conjunto_necessario_nao_explode(self, tmp_path):
+        # Fix da ordenacao (verificacao pos-Change 1): a auditoria encontrou
+        # 188 duplicatas logicas na base inteira — so 10 delas fazem parte
+        # da lista de disparo deste lote (DUPLICATAS_EXCLUIDAS). O dump do
+        # CRM (--nomes-crm) reflete a base INTEIRA, entao carrega tambem as
+        # ~178 outras colisoes que nao tem nada a ver com esta campanha
+        # (ex.: real em producao, "Marco Aurelio Tegani" em
+        # 13996221533/5513996221533 — nenhuma linha do disparo atual
+        # referencia esse telefone). Travar a carga por causa de uma
+        # colisao irrelevante para o lote atual e um falso positivo: o
+        # guard so deve disparar para telefones que main() de fato precisa
+        # consultar (telefones_necessarios). Quando omitido (None, o
+        # comportamento dos outros testes desta classe), TODA colisao
+        # continua disparando — preserva compatibilidade.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text(
+            "13996221533\tMarco Aurelio Tegani\n5513996221533\tMarco Aurelio Tegani\n",
+            encoding="utf-8",
+        )
+        nomes = generate_sql.carregar_nomes_crm(str(caminho), telefones_necessarios=set())
+        assert "5513996221533" in nomes
+
+    def test_ambiguidade_dentro_do_conjunto_necessario_ainda_explode(self, tmp_path):
+        # A outra face do mesmo fix: se o telefone colidido ESTA no
+        # conjunto necessario (isto e, alguma linha do disparo de fato
+        # depende dele), a ambiguidade continua sendo um erro real — nao
+        # dar para simplesmente ignorar so porque agora existe um filtro.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text(
+            "11981154002\tFernando\n5511981154002\tAtma IT\n", encoding="utf-8")
+        with pytest.raises(ValueError) as excinfo:
+            generate_sql.carregar_nomes_crm(
+                str(caminho), telefones_necessarios={"5511981154002"})
+        mensagem = str(excinfo.value)
+        assert "11981154002" in mensagem and "5511981154002" in mensagem
+
+    def test_duplicata_excluida_do_lote_nao_precisa_estar_no_conjunto_necessario(self, tmp_path):
+        # Change 1 + fix de ordenacao combinados: main() monta
+        # telefones_necessarios como os telefones do disparo MENOS
+        # DUPLICATAS_EXCLUIDAS (enriquecer() pula essas linhas antes de
+        # consultar nomes_crm, entao elas nunca sao "necessarias" de fato).
+        # Simulando esse conjunto aqui: a colisao de uma das 10 duplicatas
+        # documentadas nao deve travar quando ela esta fora do conjunto.
         fone_excluido = generate_sql.DUPLICATAS_EXCLUIDAS[0]
         fone_sem_55 = fone_excluido[2:]
         caminho = tmp_path / "nomes.tsv"
@@ -690,9 +726,7 @@ class TestCarregarNomesCrm:
             "%s\tNome A\n%s\tNome B\n" % (fone_sem_55, fone_excluido),
             encoding="utf-8",
         )
-        nomes = generate_sql.carregar_nomes_crm(str(caminho))
-        # nao explode; o conteudo exato do valor para essa chave e
-        # irrelevante (enriquecer nunca consulta este telefone).
+        nomes = generate_sql.carregar_nomes_crm(str(caminho), telefones_necessarios=set())
         assert fone_excluido in nomes
 
 
@@ -873,3 +907,30 @@ class TestMainAbortaEmContagemDivergente:
         ])
         assert codigo != 0
         assert not os.path.exists(os.path.join(str(saida), "preparar.sql"))
+
+    def test_ambiguidade_alheia_ao_disparo_nao_trava_main(self, tmp_path):
+        # Reproduz o caso real encontrado ao gerar o SQL final: o dump
+        # --nomes-crm reflete a base inteira e contem duplicatas logicas
+        # (188 na auditoria) que nao tem NADA a ver com a lista de disparo
+        # atual (276 telefones). main() nao pode abortar por causa de uma
+        # ambiguidade em um telefone que nenhuma linha do disparo referencia.
+        disparo, master, _nomes_crm_valido, optouts = self._preparar_arquivos(tmp_path)
+        nomes_crm_com_duplicata_alheia = tmp_path / "nomes_crm.tsv"
+        nomes_crm_com_duplicata_alheia.write_text(
+            "5500000000000\tOutro Cliente\n"
+            "13996221533\tMarco Aurelio Tegani\n"
+            "5513996221533\tMarco Aurelio Tegani\n",
+            encoding="utf-8",
+        )
+        saida = tmp_path / "saida"
+        codigo = generate_sql.main([
+            "--disparo", str(disparo),
+            "--master", str(master),
+            "--nomes-crm", str(nomes_crm_com_duplicata_alheia),
+            "--optouts", str(optouts),
+            "--saida", str(saida),
+            "--esperado-novos", "1",
+            "--esperado-existentes", "0",
+        ])
+        assert codigo == 0
+        assert os.path.exists(os.path.join(str(saida), "preparar.sql"))

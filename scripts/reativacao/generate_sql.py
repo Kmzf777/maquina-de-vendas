@@ -532,7 +532,7 @@ def carregar_master(caminho):
         return {linha["id_bling"]: linha for linha in csv.DictReader(fh)}
 
 
-def carregar_nomes_crm(caminho):
+def carregar_nomes_crm(caminho, telefones_necessarios=None):
     """Le o TSV 'telefone<TAB>nome' dos leads que ja existem no CRM.
 
     Fix round 1, Finding 1 (CRITICAL): a extracao de origem (psql \\copy)
@@ -564,6 +564,21 @@ def carregar_nomes_crm(caminho):
     Se dois telefones crus diferentes normalizarem para a MESMA chave, o
     arquivo e ambiguo (provavelmente um duplicado logico de fato no banco)
     — explode em vez de escolher um dos dois silenciosamente.
+
+    Fix de ordenacao (achado ao gerar o SQL final contra a base real): o
+    dump --nomes-crm reflete a base INTEIRA, nao so o disparo atual. Uma
+    auditoria encontrou 188 duplicatas logicas na base, e so 10 delas
+    (DUPLICATAS_EXCLUIDAS) fazem parte da lista de disparo deste lote — as
+    outras ~178 nao tem nada a ver com esta campanha, mas ainda colidem no
+    dump inteiro e disparariam esta excecao antes mesmo de enriquecer()
+    decidir se aquele telefone importa. "telefones_necessarios", quando
+    informado, restringe a checagem: so uma colisao num telefone que esta
+    de fato NESSE conjunto (tipicamente os telefones do disparo MENOS
+    DUPLICATAS_EXCLUIDAS — enriquecer() nunca consulta nomes_crm para as
+    duplicatas excluidas, entao elas nunca precisam estar aqui) e tratada
+    como erro. Quando omitido (None), o comportamento e o antigo: TODA
+    colisao explode, sem excecao — e o que os testes que nao passam este
+    parametro continuam exercitando.
     """
     brutos = {}
     primeira_linha_bruta = ""
@@ -601,18 +616,9 @@ def carregar_nomes_crm(caminho):
     for fone_bruto, nome in brutos.items():
         normalizado = transform.normalizar_telefone(fone_bruto) or fone_bruto
         outro_bruto = origem_por_normalizado.get(normalizado)
-        # Change 1: as 10 DUPLICATAS_EXCLUIDAS SAO exatamente esta colisao —
-        # a mesma pessoa cadastrada com/sem prefixo 55. enriquecer() pula
-        # essas linhas antes de consultar nomes_crm (nem lead, nem nota), ou
-        # seja, o valor guardado aqui para essa chave nunca e lido por quem
-        # importa de fato. Consultar a lista de exclusao aqui, na hora de
-        # montar o mapa, e mais simples que adiar a checagem para "so
-        # explode se o telefone for realmente usado" — exigiria passar a
-        # lista de telefones do disparo para dentro deste parser, que hoje
-        # so conhece o dump do CRM. Qualquer OUTRA ambiguidade (fora da
-        # lista conhecida) continua explodindo, como antes.
-        if (outro_bruto is not None and outro_bruto != fone_bruto
-                and normalizado not in DUPLICATAS_EXCLUIDAS):
+        colide = outro_bruto is not None and outro_bruto != fone_bruto
+        precisa_checar = telefones_necessarios is None or normalizado in telefones_necessarios
+        if colide and precisa_checar:
             raise ValueError(
                 "nomes_crm: '%s' e '%s' normalizam para o mesmo telefone "
                 "'%s' em %s — arquivo ambiguo (provavel duplicata logica no "
@@ -747,8 +753,23 @@ def main(argv=None):
     parser.add_argument("--saida", required=True, help="diretorio de saida")
     args = parser.parse_args(argv)
 
+    # Fix de ordenacao (achado ao gerar o SQL final contra a base real): o
+    # disparo precisa ser carregado ANTES de nomes_crm para calcular
+    # telefones_necessarios — o dump --nomes-crm reflete a base inteira
+    # (milhares de leads, 188 duplicatas logicas conhecidas), mas so os
+    # telefones do disparo atual (menos DUPLICATAS_EXCLUIDAS, que
+    # enriquecer() pula sem nunca consultar nomes_crm) importam para o
+    # guard de ambiguidade. Sem isso, uma duplicata alheia a esta campanha
+    # (ex.: outra pessoa qualquer da base, com/sem prefixo 55) abortaria a
+    # geracao do SQL por um motivo que nao tem nada a ver com o lote atual.
+    linhas = carregar_disparo(args.disparo)
+    telefones_disparo = {
+        transform.normalizar_telefone(linha.get("whatsapp")) for linha in linhas
+    }
+    telefones_necessarios = telefones_disparo - set(DUPLICATAS_EXCLUIDAS)
+
     try:
-        nomes_crm = carregar_nomes_crm(args.nomes_crm)
+        nomes_crm = carregar_nomes_crm(args.nomes_crm, telefones_necessarios=telefones_necessarios)
     except ValueError as erro:
         print("ERRO: %s" % erro, file=sys.stderr)
         return 1
@@ -777,7 +798,6 @@ def main(argv=None):
     optouts_confirmados, optouts_nao_encontrados = diagnosticar_optouts_pulados(
         optouts_excluidos, nomes_crm)
 
-    linhas = carregar_disparo(args.disparo)
     master = carregar_master(args.master)
     duplicatas_puladas = contar_duplicatas_puladas(linhas)
     novos, existentes = enriquecer(linhas, master, nomes_crm, donos)
