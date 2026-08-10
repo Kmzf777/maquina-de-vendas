@@ -374,14 +374,14 @@ def test_build_roas_only_for_google_rows():
     leads = [_lead("a", gclid="1", utm_campaign="Atacado"),
              _lead("b", fbclid="2", utm_campaign="MetaCamp")]
     sales = {"a": {"count": 1, "value": 300.0}, "b": {"count": 1, "value": 100.0}}
-    spend = {"atacado": 100.0}  # normalizado (trim+lower)
-    out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_campaign=spend)
+    spend_by_channel = {"Google Ads": {"atacado": 100.0}}  # normalizado (trim+lower)
+    out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_channel=spend_by_channel)
     rows = {(r["channel"], r["campaign"]): r for r in out["rows"]}
     g = rows[("Google Ads", "Atacado")]
     assert g["investimento"] == 100.0 and g["roas"] == 3.0
     m = rows[("Meta Ads", "MetaCamp")]
     assert m["investimento"] == 0.0 and m["roas"] is None
-    # Total ROAS considera só receita das linhas Google / investimento total
+    # Total ROAS considera só receita das linhas com canal em spend_by_channel / investimento total
     assert out["total"]["investimento"] == 100.0
     assert out["total"]["roas"] == 3.0
 
@@ -389,9 +389,26 @@ def test_build_roas_only_for_google_rows():
 def test_build_roas_none_when_no_spend():
     leads = [_lead("a", gclid="1", utm_campaign="SemSpend")]
     sales = {"a": {"count": 1, "value": 50.0}}
-    out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_campaign={})
+    out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_channel={})
     row = out["rows"][0]
     assert row["investimento"] == 0.0 and row["roas"] is None
+
+
+def test_build_roas_google_and_meta_rows():
+    leads = [_lead("a", gclid="1", utm_campaign="atacado"),
+             _lead("b", fbclid="2", utm_campaign="pl_wa_01")]
+    sales = {"a": {"count": 1, "value": 300.0}, "b": {"count": 1, "value": 200.0}}
+    spend_by_channel = {"Google Ads": {"atacado": 100.0}, "Meta Ads": {"pl_wa_01": 50.0}}
+    out = build_campaign_report(leads, set(), set(), sales, mode="lead", period="30d",
+                                spend_by_channel=spend_by_channel)
+    rows = {(r["channel"], r["campaign"]): r for r in out["rows"]}
+    g = rows[("Google Ads", "atacado")]
+    assert g["investimento"] == 100.0 and g["roas"] == 3.0
+    mrow = rows[("Meta Ads", "pl_wa_01")]
+    assert mrow["investimento"] == 50.0 and mrow["roas"] == 4.0
+    # total ROAS = (receita Google 300 + receita Meta 200) / investimento 150 = 500/150
+    assert out["total"]["investimento"] == 150.0
+    assert out["total"]["roas"] == round(500.0 / 150.0, 2)
 
 
 # --- Task 1 (plan 2026-08-06): campaign_detail + timeseries ---
