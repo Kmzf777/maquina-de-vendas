@@ -36,6 +36,23 @@ MOTIVOS_EXCLUSAO = {
 # Decisao D9: telefone a normalizar antes dos inserts.
 NORMALIZACOES = (("11981154002", "5511981154002"),)
 
+# Duplicatas logicas no CRM: a mesma pessoa cadastrada duas vezes (uma com o
+# prefixo 55, outra sem), com o historico dividido entre os dois registros.
+# Nao ha como escolher o registro certo sem mesclar os dados primeiro, entao
+# ficam de fora deste lote — nem lead, nem nota. Serao tratados apos o merge.
+DUPLICATAS_EXCLUIDAS = (
+    "5511995589320",  # Divina Terra - Bauru
+    "5512996525336",  # Armazem Di Vino
+    "5527999646131",  # Divina Terra - Vitoria
+    "5534992423031",  # Four House — um dos registros tem opt_out=TRUE
+    "5544991542351",  # Emporio Vidori
+    "5547991301453",  # Mercado Bia
+    "5551996905247",  # Divina Terra Osorio
+    "5554996324731",  # Divina Terra - BALNEARIO CAMBORIU
+    "5562996968292",  # Antenor Jose de Pinheiro Santos
+    "5567999777377",  # Welinton Da Silva Ferreira
+)
+
 # Campos que vem da planilha master, nao do CSV de disparo.
 CAMPOS_DA_MASTER = ("qtd_nfe", "orcamentos", "valor_vencido", "titulos_vencidos",
                     "dias_atraso_max", "qtd_top1")
@@ -499,7 +516,18 @@ def carregar_nomes_crm(caminho):
     for fone_bruto, nome in brutos.items():
         normalizado = transform.normalizar_telefone(fone_bruto) or fone_bruto
         outro_bruto = origem_por_normalizado.get(normalizado)
-        if outro_bruto is not None and outro_bruto != fone_bruto:
+        # Change 1: as 10 DUPLICATAS_EXCLUIDAS SAO exatamente esta colisao —
+        # a mesma pessoa cadastrada com/sem prefixo 55. enriquecer() pula
+        # essas linhas antes de consultar nomes_crm (nem lead, nem nota), ou
+        # seja, o valor guardado aqui para essa chave nunca e lido por quem
+        # importa de fato. Consultar a lista de exclusao aqui, na hora de
+        # montar o mapa, e mais simples que adiar a checagem para "so
+        # explode se o telefone for realmente usado" — exigiria passar a
+        # lista de telefones do disparo para dentro deste parser, que hoje
+        # so conhece o dump do CRM. Qualquer OUTRA ambiguidade (fora da
+        # lista conhecida) continua explodindo, como antes.
+        if (outro_bruto is not None and outro_bruto != fone_bruto
+                and normalizado not in DUPLICATAS_EXCLUIDAS):
             raise ValueError(
                 "nomes_crm: '%s' e '%s' normalizam para o mesmo telefone "
                 "'%s' em %s — arquivo ambiguo (provavel duplicata logica no "
@@ -564,16 +592,38 @@ def diagnosticar_optouts_pulados(excluidos, nomes_crm):
     return confirmados, nao_encontrados
 
 
+def contar_duplicatas_puladas(linhas):
+    """Conta quantas linhas do disparo caem em DUPLICATAS_EXCLUIDAS.
+
+    Usado por main() para reportar a contagem separadamente das demais —
+    enriquecer() ja filtra essas linhas antes de qualquer outro processamento
+    (nem lead, nem nota), mas quem chama precisa saber quantas foram.
+    """
+    return sum(
+        1 for linha in linhas
+        if transform.normalizar_telefone(linha.get("whatsapp")) in DUPLICATAS_EXCLUIDAS
+    )
+
+
 def enriquecer(linhas, master, nomes_crm, donos):
     """Separa (novos, existentes) e completa cada dict.
 
     nomes_crm: telefone E.164 -> leads.name (vazio quando o CRM nao tem nome)
     donos:     telefones que ja tem assigned_to preenchido
+
+    Change 1: linhas cujo telefone normalizado esta em DUPLICATAS_EXCLUIDAS
+    sao puladas antes de qualquer outro processamento — nao entram em novos
+    nem em existentes, nao recebem lead nem nota. Sao os 10 casos de
+    duplicata logica no CRM (mesma pessoa cadastrada com/sem prefixo 55, com
+    o historico dividido entre os dois registros) — sem merge previo dos
+    dados, nao ha como escolher o registro certo.
     """
     novos, existentes = [], []
     for linha in linhas:
         dados = dict(linha)
         phone = transform.normalizar_telefone(dados.get("whatsapp"))
+        if phone in DUPLICATAS_EXCLUIDAS:
+            continue
         da_master = master.get((dados.get("id_bling") or "").strip(), {})
         for campo in CAMPOS_DA_MASTER:
             dados.setdefault(campo, "")
@@ -644,6 +694,7 @@ def main(argv=None):
 
     linhas = carregar_disparo(args.disparo)
     master = carregar_master(args.master)
+    duplicatas_puladas = contar_duplicatas_puladas(linhas)
     novos, existentes = enriquecer(linhas, master, nomes_crm, donos)
 
     # Fix round 1, Finding 1: um humano comparando os numeros impressos so
@@ -688,6 +739,10 @@ def main(argv=None):
             print("    - %s" % fone)
     print("exclusoes:        %d" % sum(
         1 for d, _, _ in list(novos) + list(existentes) if d["motivo_exclusao"]))
+    # Change 1: contagem separada das demais — estas linhas nem entram em
+    # novos/existentes, nao recebem lead nem nota (ver contar_duplicatas_puladas
+    # e enriquecer).
+    print("duplicatas puladas (CRM): %d" % duplicatas_puladas)
     print("gerado: %s" % caminho_sql)
     print("gerado: %s" % caminho_rb)
     return 0

@@ -430,7 +430,32 @@ class TestMotivosExclusao:
         assert "encerrada" in generate_sql.MOTIVOS_EXCLUSAO["5511996057340"].lower()
 
 
+class TestDuplicatasExcluidas:
+    def test_lista_tem_dez_telefones(self):
+        assert len(generate_sql.DUPLICATAS_EXCLUIDAS) == 10
+
+    def test_contem_os_telefones_documentados(self):
+        esperados = (
+            "5511995589320", "5512996525336", "5527999646131", "5534992423031",
+            "5544991542351", "5547991301453", "5551996905247", "5554996324731",
+            "5562996968292", "5567999777377",
+        )
+        for fone in esperados:
+            assert fone in generate_sql.DUPLICATAS_EXCLUIDAS
+
+
 class TestEnriquecer:
+    def test_pula_duplicatas_logicas_do_crm(self):
+        # Change 1: as 10 duplicatas logicas do CRM (mesma pessoa cadastrada
+        # duas vezes, com/sem prefixo 55) ficam de fora do lote inteiro — nem
+        # lead, nem nota — porque nao ha como escolher o registro certo sem
+        # mesclar os dados primeiro.
+        dados = _dados()
+        dados["whatsapp"] = generate_sql.DUPLICATAS_EXCLUIDAS[0]
+        novos, existentes = generate_sql.enriquecer(
+            [dados], master={}, nomes_crm={}, donos=set())
+        assert len(novos) == 0 and len(existentes) == 0
+
     def test_separa_novos_de_existentes(self):
         linhas = [_dados()]
         novos, existentes = generate_sql.enriquecer(
@@ -539,6 +564,25 @@ class TestCarregarNomesCrm:
             generate_sql.carregar_nomes_crm(str(caminho))
         mensagem = str(excinfo.value)
         assert "11981154002" in mensagem and "5511981154002" in mensagem
+
+    def test_nao_explode_quando_colisao_e_uma_duplicata_ja_excluida(self, tmp_path):
+        # Change 1: as 10 DUPLICATAS_EXCLUIDAS sao exatamente essa colisao —
+        # a mesma pessoa com/sem prefixo 55, dados divididos entre as duas
+        # linhas do dump. enriquecer() ja pula essas linhas antes de
+        # consultar nomes_crm, entao a ambiguidade nunca chega a importar
+        # para elas; o guard so deve disparar para telefones que ainda
+        # seriam de fato usados por enriquecer().
+        fone_excluido = generate_sql.DUPLICATAS_EXCLUIDAS[0]
+        fone_sem_55 = fone_excluido[2:]
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text(
+            "%s\tNome A\n%s\tNome B\n" % (fone_sem_55, fone_excluido),
+            encoding="utf-8",
+        )
+        nomes = generate_sql.carregar_nomes_crm(str(caminho))
+        # nao explode; o conteudo exato do valor para essa chave e
+        # irrelevante (enriquecer nunca consulta este telefone).
+        assert fone_excluido in nomes
 
 
 class TestNomesCrmNormalizadoEnriquecer:
@@ -681,6 +725,28 @@ class TestMainAbortaEmContagemDivergente:
         ])
         assert codigo == 0
         assert os.path.exists(os.path.join(str(saida), "preparar.sql"))
+
+    def test_reporta_duplicatas_puladas_separadamente(self, tmp_path, capsys):
+        # Change 1: o lead de _dados() e substituido por um telefone que
+        # esta em DUPLICATAS_EXCLUIDAS — main() deve reportar 1 pulado por
+        # essa razao, sem contar como novo nem como existente.
+        disparo, master, nomes_crm, optouts = self._preparar_arquivos(tmp_path)
+        conteudo = disparo.read_text(encoding="utf-8")
+        conteudo = conteudo.replace("5551993452254", generate_sql.DUPLICATAS_EXCLUIDAS[0])
+        disparo.write_text(conteudo, encoding="utf-8")
+        saida = tmp_path / "saida"
+        codigo = generate_sql.main([
+            "--disparo", str(disparo),
+            "--master", str(master),
+            "--nomes-crm", str(nomes_crm),
+            "--optouts", str(optouts),
+            "--saida", str(saida),
+            "--esperado-novos", "0",
+            "--esperado-existentes", "0",
+        ])
+        assert codigo == 0
+        saida_texto = capsys.readouterr().out
+        assert "duplicatas puladas (CRM): 1" in saida_texto
 
     def test_nomes_crm_invalido_aborta_e_nao_escreve_sql(self, tmp_path):
         disparo, master, _nomes_crm_valido, optouts = self._preparar_arquivos(tmp_path)
