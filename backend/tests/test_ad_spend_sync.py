@@ -53,9 +53,53 @@ def test_sync_endpoint_calls_sync(monkeypatch):
     called = {}
     async def fake_sync(days=30):
         called["days"] = days
-        return 5
-    monkeypatch.setattr(tr_router, "sync_google_ads_spend", fake_sync)
+        return {"google": 5, "meta": 0}
+    monkeypatch.setattr(tr_router, "sync_all_ad_spend", fake_sync)
     import asyncio
-    out = asyncio.run(tr_router.sync_google_ads_endpoint())
-    assert out == {"synced": 5}
+    out = asyncio.run(tr_router.sync_ads_endpoint())
+    assert out == {"google": 5, "meta": 0, "synced": 5}
     assert called["days"] == 30
+
+
+def test_sync_meta_noop_when_disabled(monkeypatch):
+    monkeypatch.setattr(s, "meta_ads_enabled", lambda: False)
+    import asyncio
+    assert asyncio.run(s.sync_meta_ads_spend(days=7)) == 0
+
+
+def test_sync_meta_upserts_platform_meta(monkeypatch):
+    captured = {}
+    class _Q:
+        def upsert(self, rows, on_conflict=None):
+            captured["rows"] = rows; captured["oc"] = on_conflict; return self
+        def execute(self):
+            class R: pass
+            r = R(); r.data = captured["rows"]; return r
+    class _SB:
+        def table(self, name): return _Q()
+    monkeypatch.setattr(s, "meta_ads_enabled", lambda: True)
+    monkeypatch.setattr(s, "get_supabase", lambda: _SB())
+    async def fake_fetch(a, b):
+        return [{"campaign_id": "1", "campaign_name": "Atacado WA", "date": "2026-08-01", "cost": 9.0}]
+    monkeypatch.setattr(s, "meta_fetch_campaign_spend", fake_fetch)
+    import asyncio
+    n = asyncio.run(s.sync_meta_ads_spend(days=7))
+    assert n == 1 and captured["rows"][0]["platform"] == "meta" and captured["oc"] == "platform,campaign_id,date"
+
+
+def test_sync_all_aggregates(monkeypatch):
+    async def g(days=30): return 3
+    async def m(days=30): return 2
+    monkeypatch.setattr(s, "sync_google_ads_spend", g)
+    monkeypatch.setattr(s, "sync_meta_ads_spend", m)
+    import asyncio
+    assert asyncio.run(s.sync_all_ad_spend(days=30)) == {"google": 3, "meta": 2}
+
+
+def test_sync_endpoint_uses_sync_all(monkeypatch):
+    import app.campaigns.traffic_router as tr
+    async def fake_all(days=30): return {"google": 2, "meta": 1}
+    monkeypatch.setattr(tr, "sync_all_ad_spend", fake_all)
+    import asyncio
+    out = asyncio.run(tr.sync_ads_endpoint())
+    assert out == {"google": 2, "meta": 1, "synced": 3}
