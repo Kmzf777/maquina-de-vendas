@@ -10,7 +10,7 @@ export async function POST() {
   }
   const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
   try {
-    const resp = await fetch(`${backendUrl}/api/traffic/sync-google-ads`, { method: "POST", cache: "no-store" });
+    const resp = await fetch(`${backendUrl}/api/traffic/sync-ads`, { method: "POST", cache: "no-store" });
     if (!resp.ok) return Response.json({ error: "sync_unavailable" }, { status: resp.status });
     return Response.json(await resp.json());
   } catch {

@@ -60,8 +60,8 @@ async def _reconcile_tick() -> None:
 
 
 async def _ad_spend_sync_tick() -> None:
-    from app.campaigns.ad_spend_sync import sync_google_ads_spend
-    await sync_google_ads_spend(days=30)
+    from app.campaigns.ad_spend_sync import sync_all_ad_spend
+    await sync_all_ad_spend(days=30)
 
 
 # (nome, tipo, fn, intervalo/fallback em segundos)
