@@ -24,7 +24,7 @@ function Card({ label, value }: { label: string; value: string }) {
 }
 
 export function CampaignKpis({ summary }: { summary: CampaignRow }) {
-  const isGoogle = summary.channel === "Google Ads";
+  const hasSpend = summary.investimento > 0 || summary.roas != null;
   const cards: { label: string; value: string }[] = [
     { label: "Leads", value: fmtInt(summary.leads) },
     { label: "Conversas", value: fmtInt(summary.conversas) },
@@ -34,7 +34,7 @@ export function CampaignKpis({ summary }: { summary: CampaignRow }) {
     { label: "Receita", value: fmtBRL(summary.receita) },
     { label: "Ticket médio", value: fmtBRL(summary.ticket_medio) },
     { label: "Conversão", value: fmtPct(summary.conversao) },
-    ...(isGoogle
+    ...(hasSpend
       ? [
           { label: "Investimento", value: fmtBRL(summary.investimento) },
           { label: "ROAS", value: fmtRoas(summary.roas) },

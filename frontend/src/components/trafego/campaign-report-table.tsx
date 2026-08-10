@@ -94,7 +94,7 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.clientes)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.pedidos)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtBRL(r.receita)}</TableCell>
-                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{r.channel === "Google Ads" ? fmtBRL(r.investimento) : "—"}</TableCell>
+                <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{r.investimento > 0 ? fmtBRL(r.investimento) : "—"}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtRoas(r.roas)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtBRL(r.ticket_medio)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtPct(r.conversao)}</TableCell>
