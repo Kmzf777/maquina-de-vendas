@@ -70,6 +70,15 @@ def gerar_insert_lead(dados, nome_crm):
     quem este lote CRIOU, em vez de inferir isso por "nao tem mensagens"
     (proxy falsa: leads pre-existentes tambem podem nao ter mensagens).
     gerar_update_conservador NUNCA deve escrever essa chave.
+
+    Fix round 3 (C3, Important): ai_enabled entra como literal 'false' na
+    VALUES, nunca via sql_literal (que renderizaria a STRING 'False', nao o
+    booleano). leads.ai_enabled e NOT NULL DEFAULT TRUE — sem isso, os 236
+    leads novos nascem com ai_enabled=true, e o motor de automacao
+    (backend/app/automation/triggers.py, stage_stagnation/no_sale_in_stage)
+    seleciona por "ai_enabled = true AND stage = <filtro>" sem checar
+    leads.opt_out. Nenhuma campanha esta ativa hoje, mas uma futura pegaria
+    esses leads.
     """
     phone = transform.normalizar_telefone(dados.get("whatsapp"))
     nome = transform.escolher_saudacao(nome_crm, dados.get("nome"))
@@ -78,8 +87,10 @@ def gerar_insert_lead(dados, nome_crm):
     metadata = json.dumps(metadata_dict, ensure_ascii=False)
     return (
         "INSERT INTO leads (phone, name, company, stage, status, channel, "
-        "assigned_to, cnpj, razao_social, nome_fantasia, email, endereco, metadata)\n"
-        "VALUES (%s, %s, %s, 'pending', 'imported', %s, %s::uuid, %s, %s, %s, %s, %s, %s::jsonb)\n"
+        "assigned_to, cnpj, razao_social, nome_fantasia, email, endereco, metadata, "
+        "ai_enabled)\n"
+        "VALUES (%s, %s, %s, 'pending', 'imported', %s, %s::uuid, %s, %s, %s, %s, %s, "
+        "%s::jsonb, false)\n"
         "ON CONFLICT (phone) DO NOTHING;" % (
             sql_literal(phone),
             sql_literal(nome),
@@ -87,7 +98,10 @@ def gerar_insert_lead(dados, nome_crm):
             sql_literal(CANAL_JOAO),
             sql_literal(JOAO_UUID),
             sql_literal(dados.get("cpf_cnpj")),
-            sql_literal(dados.get("razao_social")),
+            # Fallback igual ao de "company": 202 das 276 linhas trazem
+            # razao_social vazia no CSV de disparo, com o nome legal so em
+            # "nome". Sem o fallback, razao_social ficaria NULL indevidamente.
+            sql_literal(dados.get("razao_social") or dados.get("nome")),
             sql_literal(dados.get("saudacao")),
             sql_literal(dados.get("email")),
             sql_literal("/".join(p for p in [(dados.get("cidade") or "").strip(),
@@ -109,7 +123,11 @@ def gerar_update_conservador(dados, tem_dono):
                                  (dados.get("uf") or "").strip()] if p)
     sets = [
         "cnpj = COALESCE(NULLIF(cnpj, ''), %s)" % sql_literal(dados.get("cpf_cnpj")),
-        "razao_social = COALESCE(NULLIF(razao_social, ''), %s)" % sql_literal(dados.get("razao_social")),
+        # Mesmo fallback do INSERT (D5 lista razao_social como campo a
+        # preencher): 202 das 276 linhas trazem razao_social vazia no CSV
+        # de disparo, com o nome legal so em "nome".
+        "razao_social = COALESCE(NULLIF(razao_social, ''), %s)" % sql_literal(
+            dados.get("razao_social") or dados.get("nome")),
         "nome_fantasia = COALESCE(NULLIF(nome_fantasia, ''), %s)" % sql_literal(dados.get("saudacao")),
         "email = COALESCE(NULLIF(email, ''), %s)" % sql_literal(dados.get("email")),
         "endereco = COALESCE(NULLIF(endereco, ''), %s)" % sql_literal(local),
@@ -147,10 +165,21 @@ def gerar_insert_nota(dados, nome_crm):
 def gerar_update_optout(telefone, quando, disse):
     """Marca opt_out e registra a evidencia no metadata.
 
-    O metadata leva "lote" junto com a evidencia (Finding 2 do fix round 1):
-    sem isso, o rollback de opt-outs nao tem como saber que opt-out foi
-    aplicado POR ESTE lote, e desfaria opt-outs de qualquer lote — reabrindo
-    contato com quem pediu para nao ser contactado em outra campanha.
+    O metadata leva "optout_lote" junto com a evidencia (Finding 2 do fix
+    round 1): sem isso, o rollback de opt-outs nao tem como saber que
+    opt-out foi aplicado POR ESTE lote, e desfaria opt-outs de qualquer
+    lote — reabrindo contato com quem pediu para nao ser contactado em
+    outra campanha.
+
+    Fix round 3 (C1, CRITICAL): a chave e "optout_lote", NUNCA "lote". Uma
+    versao anterior gravava "lote" aqui, que e a MESMA chave que
+    gerar_insert_lead/gerar_update_conservador usam para marcar leads deste
+    lote — o rodape de verificacao contava "leads WHERE metadata->>'lote' ="
+    e os 51 opt-outs (100% disjuntos dos 276 leads/notas) inflavam essa
+    contagem para 327, disparando o RAISE EXCEPTION e fazendo rollback de
+    TUDO (276 leads + 276 notas perdidos). "optout_lote" e uma chave
+    distinta que so este UPDATE escreve — nunca colide com a contagem de
+    leads, que agora chaveia em metadata.origem (ver _gerar_rodape).
     """
     phone = transform.normalizar_telefone(telefone)
     evidencia = json.dumps(
@@ -158,7 +187,7 @@ def gerar_update_optout(telefone, quando, disse):
             "optout_quando": quando,
             "optout_disse": (disse or "")[:200],
             "optout_fonte": "mensagem_do_cliente",
-            "lote": LOTE,
+            "optout_lote": LOTE,
         },
         ensure_ascii=False,
     )
@@ -173,13 +202,38 @@ def gerar_update_optout(telefone, quando, disse):
 
 
 def gerar_normalizacao_telefone(antigo, novo):
-    """Corrige um phone para E.164, sem colidir com registro existente (D9)."""
-    return (
+    """Corrige um phone para E.164, sem colidir com registro existente (D9).
+
+    Fix round 3 (I3, Important): o UPDATE e guardado por
+    "NOT EXISTS (... outro.phone = novo)" — se outro lead JA tiver o
+    telefone novo, o UPDATE silenciosamente nao faz nada (0 linhas, sem
+    erro). O INSERT do lead que vem depois entao colide em
+    ON CONFLICT (phone) DO NOTHING com esse "outro" lead, e a nota de
+    briefing financeiro de um cliente vai para o card de um estranho, sem
+    aviso nenhum. O bloco DO $$ abaixo falha ALTO, dentro da transacao,
+    se depois do UPDATE nao existir exatamente 1 registro com o telefone
+    novo e 0 com o antigo.
+    """
+    update = (
         "UPDATE leads SET phone = %s\n"
         "WHERE phone = %s\n"
         "  AND NOT EXISTS (SELECT 1 FROM leads outro WHERE outro.phone = %s);" % (
             sql_literal(novo), sql_literal(antigo), sql_literal(novo))
     )
+    assercao = (
+        "DO $$\n"
+        "DECLARE n_novo integer; n_antigo integer;\n"
+        "BEGIN\n"
+        "  SELECT count(*) INTO n_novo FROM leads WHERE phone = %s;\n"
+        "  SELECT count(*) INTO n_antigo FROM leads WHERE phone = %s;\n"
+        "  IF n_novo <> 1 OR n_antigo <> 0 THEN\n"
+        "    RAISE EXCEPTION "
+        "'normalizacao de telefone falhou (%s -> %s): esperado 1 registro no "
+        "novo e 0 no antigo, encontrado novo=%%, antigo=%%', n_novo, n_antigo;\n"
+        "  END IF;\n"
+        "END $$;"
+    ) % (sql_literal(novo), sql_literal(antigo), antigo, novo)
+    return update + "\n\n" + assercao
 
 
 # NOTA (defeito do brief task-6): o cabecalho de referencia do brief citava
@@ -200,6 +254,11 @@ CABECALHO = """-- Preparacao da campanha de reativacao — lote %s
 -- de envio (fora do escopo desta preparacao de dados).
 \\set ON_ERROR_STOP on
 BEGIN;
+-- Fix round 3 (I6, Important): o texto das notas usa REATIVAÇÃO, há,
+-- Orçamentos, ⚠, travessões — psql deriva client_encoding do locale do
+-- container/terminal, e sem isso a nota pode chegar corrompida no card do
+-- vendedor.
+SET client_encoding TO 'UTF8';
 """ % LOTE
 
 def _bloco_verificacao(rotulo, expressao_where, esperado):
@@ -232,12 +291,25 @@ def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado):
     len(existentes) e len(optouts) em montar_arquivo — nunca literais fixos
     do lote atual — para que o check nunca possa divergir da realidade do
     que de fato foi passado para montar_arquivo.
+
+    Fix round 3 (C1, CRITICAL): a contagem de "leads do lote" NAO pode mais
+    chavear so em metadata->>'lote' — os 51 UPDATEs de opt-out sao 100%
+    disjuntos dos 276 leads/notas, mas (antes deste fix) tambem escreviam
+    "lote" no metadata, inflando a contagem para 236+40+51=327 e disparando
+    o RAISE EXCEPTION (rollback de tudo, leads e notas inclusos). A chave
+    "origem" (metadata.origem='reativacao_bling') e escrita SO por
+    gerar_insert_lead/gerar_update_conservador, nunca por
+    gerar_update_optout — combinada com "lote" (que agora e exclusiva
+    dessas duas funcoes, ja que o opt-out passou a usar "optout_lote"), fica
+    impossivel para as duas contagens colidirem de novo, mesmo se um lote
+    futuro reusar a mesma constante ORIGEM.
     """
     blocos = [
         "-- ── Verificacao (dentro da transacao; aborta se a contagem nao bater) ─────",
         _bloco_verificacao(
             "leads do lote",
-            "leads WHERE metadata->>'lote' = %s" % sql_literal(LOTE),
+            "leads WHERE metadata->>'origem' = %s AND metadata->>'lote' = %s" % (
+                sql_literal(ORIGEM), sql_literal(LOTE)),
             qtd_leads_esperado,
         ),
         _bloco_verificacao(
@@ -247,7 +319,7 @@ def _gerar_rodape(qtd_leads_esperado, qtd_notas_esperado, qtd_optouts_esperado):
         ),
         _bloco_verificacao(
             "opt-outs marcados",
-            "leads WHERE opt_out AND metadata->>'lote' = %s AND metadata->>'optout_fonte' = 'mensagem_do_cliente'"
+            "leads WHERE opt_out AND metadata->>'optout_lote' = %s AND metadata->>'optout_fonte' = 'mensagem_do_cliente'"
             % sql_literal(LOTE),
             qtd_optouts_esperado,
         ),
@@ -303,34 +375,48 @@ def montar_rollback():
     metadata.lote mas NAO tem metadata.criado_por_lote) sobrevive sempre.
 
     Fix round 1, Finding 2 (Important): o UPDATE que desfaz opt-out so pode
-    atingir opt-outs aplicados por ESTE lote (metadata->>'lote'), senao um
-    rollback futuro reabriria contato com quem pediu para nao ser
-    contactado em OUTRO lote.
+    atingir opt-outs aplicados por ESTE lote, senao um rollback futuro
+    reabriria contato com quem pediu para nao ser contactado em OUTRO lote.
+
+    Fix round 3 (C1/I2): o UPDATE de opt-out agora chaveia em
+    metadata->>'optout_lote' (nunca 'lote' — essa chave e exclusiva de
+    gerar_insert_lead/gerar_update_conservador desde o fix do C1) e limpa as
+    proprias chaves de evidencia (optout_quando/optout_disse/optout_fonte/
+    optout_lote) na MESMA instrucao que desmarca opt_out, em vez de deixar
+    para o UPDATE de metadata generico mais abaixo. O UPDATE de metadata
+    generico (chaves lote/origem/id_bling/icp_score/criado_por_lote) passa a
+    scopar por origem+lote juntos: so gerar_insert_lead/gerar_update_conservador
+    escrevem origem='reativacao_bling', entao esse UPDATE nunca mais pode
+    colidir com os opt-outs (que sao 100% disjuntos dos 276 leads/notas) nem
+    apagar por engano um metadata.origem pre-existente ('terceirizacao'/
+    'atacado', 344 usos em producao) de um lead que so recebeu opt-out.
     """
     return """-- Rollback do lote %(lote)s
 -- Remove SO o que este lote criou. Leads pre-existentes que receberam merge de
 -- metadata ou nota permanecem — apenas a nota e o metadata do lote saem.
 \\set ON_ERROR_STOP on
 BEGIN;
+SET client_encoding TO 'UTF8';
 
 DELETE FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
 
 UPDATE leads
-SET opt_out = false
-WHERE opt_out AND metadata->>'lote' = '%(lote)s' AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
+SET opt_out = false,
+    metadata = metadata - 'optout_quando' - 'optout_disse' - 'optout_fonte' - 'optout_lote'
+WHERE opt_out AND metadata->>'optout_lote' = '%(lote)s' AND metadata->>'optout_fonte' = 'mensagem_do_cliente';
 
 DELETE FROM leads l
 WHERE l.metadata->>'criado_por_lote' = '%(lote)s'
   AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id);
 
 UPDATE leads SET metadata = metadata - 'lote' - 'origem' - 'id_bling' - 'icp_score' - 'criado_por_lote'
-WHERE metadata->>'lote' = '%(lote)s';
+WHERE metadata->>'origem' = '%(origem)s' AND metadata->>'lote' = '%(lote)s';
 
 \\echo '--- deve retornar 0 ---'
 SELECT count(*) AS restantes FROM lead_notes WHERE content LIKE '%%%(lote)s%%';
 
 COMMIT;
-""" % {"lote": LOTE}
+""" % {"lote": LOTE, "origem": ORIGEM}
 
 
 def carregar_disparo(caminho):
@@ -357,8 +443,27 @@ def carregar_nomes_crm(caminho):
     se nenhuma linha for parseavel, explode com o caminho do arquivo e a
     primeira linha bruta, em vez de devolver silenciosamente um dict vazio
     que faria o script tratar TODOS os leads existentes como novos.
+
+    Fix round 3 (C2, CRITICAL): a chave do dict devolvido e o telefone
+    NORMALIZADO (via transform.normalizar_telefone), nao o texto crudo do
+    banco. O banco guarda phone em 10/11/12/13 digitos verbatim (extraido
+    via regexp_replace no runbook), mas enriquecer() consulta este dict com
+    o telefone JA normalizado (13 digitos). Com a chave crua, um lead como
+    Atma/Fernando ("11981154002", 11 digitos) nunca era encontrado pela
+    chave normalizada ("5511981154002") e caia em "novos" — e como o passo 1
+    (normalizacao D9) ja tinha renomeado a linha do banco para
+    "5511981154002", o INSERT subsequente colidia em
+    "ON CONFLICT (phone) DO NOTHING" e nao escrevia metadata/assigned_to
+    nenhum, nem disparava o UPDATE conservador. Producao tem 212 leads com
+    10 digitos e 191 com 11 — qualquer um deles reaparecendo numa lista
+    futura sofreria o mesmo defeito, so que criando uma DUPLICATA real (a
+    string normalizada e diferente da crua, entao o INSERT NAO colidiria).
+
+    Se dois telefones crus diferentes normalizarem para a MESMA chave, o
+    arquivo e ambiguo (provavelmente um duplicado logico de fato no banco)
+    — explode em vez de escolher um dos dois silenciosamente.
     """
-    nomes = {}
+    brutos = {}
     primeira_linha_bruta = ""
     vista_primeira_linha = False
     with open(caminho, encoding="utf-8") as fh:
@@ -374,18 +479,35 @@ def carregar_nomes_crm(caminho):
             else:
                 continue
             if fone.strip():
-                nomes[fone.strip()] = nome.strip()
+                brutos[fone.strip()] = nome.strip()
     # Fix round 2, Minor: um TSV cujo unico "\t" (real ou literal) esta na
     # linha de cabecalho ("telefone<TAB>nome") passa pela checagem "not
     # nomes" com uma unica entrada falsa {"telefone": "nome"} — mascarando
     # um arquivo sem dado nenhum. Um telefone de verdade e so digitos;
     # se a unica entrada nao for, trata como se nao tivesse achado nada.
-    quebrado = not nomes or (len(nomes) == 1 and not next(iter(nomes)).isdigit())
+    # (checagem feita sobre os telefones CRUS, antes de normalizar — mantem
+    # o comportamento original destes dois guardrails.)
+    quebrado = not brutos or (len(brutos) == 1 and not next(iter(brutos)).isdigit())
     if quebrado:
         raise ValueError(
             "nomes_crm: nenhuma linha com TAB encontrada em %s; primeira linha: %r"
             % (caminho, primeira_linha_bruta)
         )
+
+    nomes = {}
+    origem_por_normalizado = {}
+    for fone_bruto, nome in brutos.items():
+        normalizado = transform.normalizar_telefone(fone_bruto) or fone_bruto
+        outro_bruto = origem_por_normalizado.get(normalizado)
+        if outro_bruto is not None and outro_bruto != fone_bruto:
+            raise ValueError(
+                "nomes_crm: '%s' e '%s' normalizam para o mesmo telefone "
+                "'%s' em %s — arquivo ambiguo (provavel duplicata logica no "
+                "banco); resolva a duplicata antes de gerar o SQL."
+                % (outro_bruto, fone_bruto, normalizado, caminho)
+            )
+        origem_por_normalizado[normalizado] = fone_bruto
+        nomes[normalizado] = nome
     return nomes
 
 
@@ -496,10 +618,16 @@ def main(argv=None):
         print("ERRO: %s" % erro, file=sys.stderr)
         return 1
 
+    # Fix round 3 (C2, CRITICAL): mesma normalizacao de carregar_nomes_crm —
+    # o banco guarda telefone cru (10/11/12/13 digitos) e enriquecer()
+    # consulta "donos" com o telefone JA normalizado. Sem isso, um lead com
+    # dono em formato curto (ex.: 11 digitos) seria tratado como "sem dono"
+    # e teria assigned_to sobrescrito para o Joao.
     donos = set()
     if args.donos and os.path.exists(args.donos):
         with open(args.donos, encoding="utf-8") as fh:
-            donos = {l.strip() for l in fh if l.strip()}
+            donos = {transform.normalizar_telefone(l.strip()) or l.strip()
+                     for l in fh if l.strip()}
 
     with open(args.optouts, encoding="utf-8") as fh:
         optout_raw = json.load(fh)

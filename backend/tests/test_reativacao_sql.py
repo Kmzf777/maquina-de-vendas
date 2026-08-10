@@ -101,6 +101,25 @@ class TestGerarInsertLead:
         for tabela in generate_sql.TABELAS_PROIBIDAS:
             assert tabela not in sql
 
+    def test_ai_enabled_false_literal_nao_via_sql_literal(self):
+        # Fix round 3 (C3, Important): leads.ai_enabled e NOT NULL DEFAULT
+        # TRUE. Precisa entrar como literal booleano 'false' na VALUES, NAO
+        # via sql_literal (que renderizaria a STRING 'False' entre aspas).
+        sql = generate_sql.gerar_insert_lead(_dados(), None)
+        assert "ai_enabled" in sql
+        assert ", false)" in sql
+        assert "'False'" not in sql and "'false'" not in sql
+
+    def test_razao_social_cai_no_nome_quando_vazia(self):
+        # Fix menor: 202 das 276 linhas trazem razao_social vazia no CSV de
+        # disparo (o nome legal fica so em "nome"). Mesmo fallback de
+        # "company".
+        dados = _dados()
+        dados["razao_social"] = ""
+        dados["nome"] = "CAFE DO ANTONIO LTDA"
+        sql = generate_sql.gerar_insert_lead(dados, None)
+        assert "'CAFE DO ANTONIO LTDA'" in sql
+
     def test_marca_criado_por_lote(self):
         # Fix round 1, Finding 1 (CRITICAL): marcador explicito de que ESTE
         # lote criou o lead. "NOT EXISTS (messages)" sozinho e uma proxy
@@ -142,6 +161,15 @@ class TestUpdateConservador:
     def test_filtra_pelo_telefone_normalizado(self):
         sql = generate_sql.gerar_update_conservador(_dados(), tem_dono=False)
         assert "WHERE phone = '5551993452254'" in sql
+
+    def test_razao_social_cai_no_nome_quando_vazia(self):
+        # Mesmo fallback do INSERT (D5 lista razao_social como campo a
+        # preencher nos 40 leads existentes).
+        dados = _dados()
+        dados["razao_social"] = ""
+        dados["nome"] = "CAFE DO ANTONIO LTDA"
+        sql = generate_sql.gerar_update_conservador(dados, tem_dono=False)
+        assert "razao_social = COALESCE(NULLIF(razao_social, ''), 'CAFE DO ANTONIO LTDA')" in sql
 
     def test_nao_marca_criado_por_lote(self):
         # Fix round 1, Finding 1 (CRITICAL): e a outra metade do par que
@@ -205,13 +233,21 @@ class TestOptOut:
         sql = generate_sql.gerar_update_optout("5515996830664", "2026-07-31", "x")
         assert "AND opt_out IS NOT TRUE" in sql
 
-    def test_registra_lote_no_metadata(self):
+    def test_registra_optout_lote_no_metadata(self):
         # Fix round 1, Finding 2 (Important): sem o lote no metadata do
         # opt-out, o rollback nao tem como restringir o "desfazer opt-out" a
         # este lote — um rollback futuro reabriria contato com quem pediu
         # para nao ser contactado em OUTRO lote.
+        #
+        # Fix round 3 (C1, CRITICAL): a chave e "optout_lote", nunca "lote".
+        # "lote" e escrita por gerar_insert_lead/gerar_update_conservador; se
+        # o opt-out tambem escrevesse "lote", a contagem de "leads do lote"
+        # no rodape (que ja chaveava so em metadata->>'lote') incluiria os
+        # 51 opt-outs (disjuntos dos 276 leads/notas), inflando a contagem
+        # para 327 e disparando o RAISE EXCEPTION — rollback de tudo.
         sql = generate_sql.gerar_update_optout("5515996830664", "2026-07-31", "x")
-        assert '"lote": "%s"' % generate_sql.LOTE in sql
+        assert '"optout_lote": "%s"' % generate_sql.LOTE in sql
+        assert '"lote": "%s"' % generate_sql.LOTE not in sql
 
 
 class TestNormalizacaoTelefone:
@@ -224,6 +260,17 @@ class TestNormalizacaoTelefone:
     def test_protegido_contra_colisao(self):
         sql = generate_sql.gerar_normalizacao_telefone("11981154002", "5511981154002")
         assert "NOT EXISTS" in sql
+
+    def test_falha_alto_se_normalizacao_nao_efetivou(self):
+        # Fix round 3 (I3, Important): a guarda NOT EXISTS pode fazer o
+        # UPDATE nao afetar linha nenhuma silenciosamente (colisao com outro
+        # lead). Sem essa asercao, o INSERT que vem depois colidiria com o
+        # "outro" lead em ON CONFLICT DO NOTHING e a nota financeira de um
+        # cliente iria para o card de um estranho, sem erro nenhum.
+        sql = generate_sql.gerar_normalizacao_telefone("11981154002", "5511981154002")
+        assert "DO $$" in sql
+        assert "RAISE EXCEPTION" in sql
+        assert "n_novo <> 1" in sql and "n_antigo <> 0" in sql
 
 
 def _entradas():
@@ -268,10 +315,34 @@ class TestMontarArquivo:
     def test_verificacao_aborta_em_contagem_errada(self):
         # Fix round 1, Finding 3 (Important): um SELECT count(*) que so faz
         # \echo nao impede o COMMIT quando a contagem esta errada (psql -f
-        # roda tudo de uma vez). Cada uma das 3 checagens tem que ser capaz
-        # de abortar a transacao via RAISE EXCEPTION.
+        # roda tudo de uma vez). Cada uma das 3 checagens do rodape tem que
+        # ser capaz de abortar a transacao via RAISE EXCEPTION.
+        #
+        # Fix round 3 (I3, Important): contrato mudou de 3 para 4 —
+        # gerar_normalizacao_telefone (chamada 1x em _entradas(), que tem 1
+        # normalizacao) agora tambem emite seu proprio DO $$ ... RAISE
+        # EXCEPTION ... END $$ para travar contra colisao silenciosa de
+        # telefone (D9).
         sql = generate_sql.montar_arquivo(*_entradas())
-        assert sql.count("RAISE EXCEPTION") == 3
+        assert sql.count("RAISE EXCEPTION") == 4
+
+    def test_leads_do_lote_escopado_por_origem_e_lote(self):
+        # Fix round 3 (C1, CRITICAL): a contagem de "leads do lote" no
+        # rodape nao pode mais chavear so em metadata->>'lote' — os
+        # opt-outs sao disjuntos dos leads/notas e (antes deste fix)
+        # inflavam essa contagem via a mesma chave "lote". Agora chaveia em
+        # origem (escrita so por gerar_insert_lead/gerar_update_conservador)
+        # E lote, nunca em metadata->>'optout_lote'.
+        sql = generate_sql.montar_arquivo(*_entradas())
+        trecho_leads_do_lote = sql[sql.index("--- leads do lote"):sql.index("--- notas do lote")]
+        assert ("leads WHERE metadata->>'origem' = '%s' AND metadata->>'lote' = '%s'"
+                % (generate_sql.ORIGEM, generate_sql.LOTE)) in trecho_leads_do_lote
+        assert "optout_lote" not in trecho_leads_do_lote
+
+    def test_opt_outs_marcados_escopado_por_optout_lote(self):
+        sql = generate_sql.montar_arquivo(*_entradas())
+        assert ("leads WHERE opt_out AND metadata->>'optout_lote' = '%s'"
+                % generate_sql.LOTE) in sql
 
     def test_contagem_esperada_deriva_do_tamanho_das_entradas(self):
         # Fix round 1, Finding 3: os numeros esperados nao podem ser
@@ -321,9 +392,30 @@ class TestMontarRollback:
         # Fix round 1, Finding 2 (Important): sem o filtro por lote, um
         # rollback futuro desfaria opt-outs de OUTRO lote — reabrindo
         # contato com quem pediu para nao ser contactado.
+        #
+        # Fix round 3 (C1/I2): a chave e "optout_lote", nunca "lote" (essa
+        # ultima e exclusiva do UPDATE de metadata generico de leads
+        # criados/atualizados por este lote — ver test_metadata_generico_
+        # escopado_por_origem_e_lote). O mesmo UPDATE tambem limpa as chaves
+        # de evidencia do opt-out (optout_quando/optout_disse/optout_fonte/
+        # optout_lote) na mesma instrucao que desmarca opt_out.
         sql = generate_sql.montar_rollback()
         trecho_optout = sql[sql.index("SET opt_out = false"):sql.index("DELETE FROM leads")]
-        assert ("metadata->>'lote' = '%s'" % generate_sql.LOTE) in trecho_optout
+        assert ("metadata->>'optout_lote' = '%s'" % generate_sql.LOTE) in trecho_optout
+        assert "optout_lote" in trecho_optout and "'optout_quando'" in trecho_optout
+
+    def test_metadata_generico_escopado_por_origem_e_lote(self):
+        # Fix round 3 (I2, Important): o UPDATE que remove as chaves lote/
+        # origem/id_bling/icp_score/criado_por_lote so pode atingir leads
+        # que ESTE lote criou ou atualizou (metadata.origem='reativacao_bling'
+        # E metadata.lote=<LOTE>) — nunca os 51 opt-outs (que nao tem essas
+        # chaves) nem leads de origem diferente ('terceirizacao'/'atacado',
+        # 344 usos em producao) que por acaso carreguem metadata.lote de
+        # outro processo.
+        sql = generate_sql.montar_rollback()
+        trecho_metadata = sql[sql.index("UPDATE leads SET metadata = metadata -"):]
+        assert ("metadata->>'origem' = '%s'" % generate_sql.ORIGEM) in trecho_metadata
+        assert ("metadata->>'lote' = '%s'" % generate_sql.LOTE) in trecho_metadata
 
 
 class TestMotivosExclusao:
@@ -424,6 +516,50 @@ class TestCarregarNomesCrm:
         with pytest.raises(ValueError) as excinfo:
             generate_sql.carregar_nomes_crm(str(caminho))
         assert str(caminho) in str(excinfo.value)
+
+    def test_normaliza_telefone_curto_do_banco(self, tmp_path):
+        # Fix round 3 (C2, CRITICAL): o banco guarda phone verbatim (10/11/
+        # 12/13 digitos); a chave devolvida por carregar_nomes_crm tem que
+        # ser a NORMALIZADA (13 digitos), senao enriquecer() (que consulta
+        # com o telefone ja normalizado) nunca encontra este lead.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text("11981154002\tFernando\n", encoding="utf-8")
+        nomes = generate_sql.carregar_nomes_crm(str(caminho))
+        assert nomes == {"5511981154002": "Fernando"}
+        assert "11981154002" not in nomes
+
+    def test_explode_quando_dois_formatos_colidem_na_mesma_chave(self, tmp_path):
+        # Se dois telefones CRUS diferentes normalizarem para a mesma chave
+        # (duplicata logica de fato no banco), o arquivo e ambiguo — nao dar
+        # para escolher um dos dois nomes silenciosamente.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text(
+            "11981154002\tFernando\n5511981154002\tAtma IT\n", encoding="utf-8")
+        with pytest.raises(ValueError) as excinfo:
+            generate_sql.carregar_nomes_crm(str(caminho))
+        mensagem = str(excinfo.value)
+        assert "11981154002" in mensagem and "5511981154002" in mensagem
+
+
+class TestNomesCrmNormalizadoEnriquecer:
+    def test_telefone_curto_do_crm_casa_com_disparo_normalizado(self, tmp_path):
+        # Regressao pedida pela revisao (C2, CRITICAL): a duplicata lógica
+        # D9 (Atma/Fernando) tem que cair em "existentes", nunca em "novos"
+        # — senao o INSERT subsequente (apos a normalizacao do passo 1 ja
+        # ter renomeado a linha do banco para "5511981154002") colide em
+        # ON CONFLICT DO NOTHING e nao escreve metadata/assigned_to nenhum.
+        caminho = tmp_path / "nomes.tsv"
+        caminho.write_text("11981154002\tFernando\n", encoding="utf-8")
+        nomes_crm = generate_sql.carregar_nomes_crm(str(caminho))
+
+        dados = _dados()
+        dados["whatsapp"] = "5511981154002"
+        novos, existentes = generate_sql.enriquecer(
+            [dados], master={}, nomes_crm=nomes_crm, donos=set())
+
+        assert len(novos) == 0
+        assert len(existentes) == 1
+        assert existentes[0][1] == "Fernando"
 
 
 class TestExcluirOptoutsJaMarcados:

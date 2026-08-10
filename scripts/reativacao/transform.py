@@ -173,6 +173,15 @@ def montar_briefing(dados):
     linhas.append(PREFIXO_BRIEFING)
     linhas.append("")
 
+    # Fix round 3 (menor): PERFIL precisa renderizar sempre que o produto e
+    # conhecido, independente de o lead ter historico de compra — antes,
+    # essa linha vivia dentro do ramo "tem compra" e os 3 dos 46 leads de
+    # perfil atipico que nunca compraram (produto_para_citar preenchido
+    # mesmo sem faturamento) ficavam sem a linha PERFIL. Calcular produto e
+    # perfil aqui, fora dos dois ramos, e so decidir a linha no final.
+    produto = (dados.get("produto_para_citar") or "").strip()
+    perfil = classificar_perfil(produto)
+
     if _num(dados.get("total_gasto")) > 0:
         dias = formatar_inteiro(dados.get("dias_sem_comprar"))
         data = formatar_data(dados.get("ultima_compra"))
@@ -185,16 +194,15 @@ def montar_briefing(dados):
             formatar_reais(dados.get("total_gasto")),
             formatar_reais(dados.get("ticket_medio")),
         ))
-        produto = (dados.get("produto_para_citar") or "").strip()
         if produto:
             qtd = _int(dados.get("qtd_top1"))
             sufixo = " (%s un)" % formatar_inteiro(qtd) if qtd else ""
             linhas.append("Comprava: %s%s" % (produto, sufixo))
-        perfil = classificar_perfil(produto)
-        if perfil:
-            linhas.append("PERFIL: %s — abordagem diferente do café torrado de varejo" % perfil)
     else:
         linhas.append("LEAD SEM COMPRA — cadastrado no Bling, nunca faturou")
+
+    if perfil:
+        linhas.append("PERFIL: %s — abordagem diferente do café torrado de varejo" % perfil)
 
     linhas.append("")
 

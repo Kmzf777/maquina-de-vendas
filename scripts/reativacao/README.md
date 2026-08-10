@@ -8,9 +8,18 @@ Prepara os leads no CRM com briefing de contexto e registra os opt-outs pendente
 - Código: `scripts/reativacao/generate_sql.py` (não executa nada — só gera `preparar.sql` e `rollback.sql`), `scripts/reativacao/transform.py`
 
 Números do lote atual (`reativacao_bling_2026-08-10`), verificados contra a produção:
-**236 leads novos, 40 existentes, 276 notas, 51 opt-outs (10 pulados de 61
+**235 leads novos, 41 existentes, 276 notas, 51 opt-outs (10 pulados de 61
 candidatos detectados), 4 exclusões.** `preparar.sql` sai com ~6.600 linhas /
-~400 KB; `rollback.sql` com ~23 linhas.
+~400 KB; `rollback.sql` com ~25 linhas.
+
+**Nota sobre os números (fix round 3, C2):** a duplicata lógica da decisão D9
+(`Atma`, `11981154002` → `5511981154002`) só é reconhecida como "existente"
+depois que `carregar_nomes_crm` passou a normalizar as chaves do TSV — antes
+disso ela contava como "novo" e o `INSERT` correspondente era engolido pelo
+`ON CONFLICT (phone) DO NOTHING` (porque a normalização de telefone do passo 1
+já tinha renomeado a linha do banco). Por isso os números mudaram de
+**236/40** para **235/41** em relação a uma versão anterior deste runbook —
+a lista final de disparo continua em 272 (276 − 4 exclusões).
 
 ---
 
@@ -70,7 +79,7 @@ ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker exec \$D ps
 
 **Atenção:** `--donos` é opcional na sintaxe do CLI, mas **nunca rode sem
 ele** neste lote. Se o arquivo vier vazio ou for omitido, `gerar_update_conservador`
-trata *todos* os 40 leads existentes como "sem dono" e atribui `assigned_to`
+trata *todos* os 41 leads existentes como "sem dono" e atribui `assigned_to`
 ao João mesmo nos que já têm responsável — sobrescrevendo uma atribuição real.
 
 ### 1.3 Telefones já marcados `opt_out = true`
@@ -121,8 +130,8 @@ python scripts/reativacao/generate_sql.py \
   --donos /tmp/donos.txt \
   --optouts /tmp/optouts.json \
   --optouts-ja-marcados /tmp/optouts_ja_marcados.txt \
-  --esperado-novos 236 \
-  --esperado-existentes 40 \
+  --esperado-novos 235 \
+  --esperado-existentes 41 \
   --saida /tmp/reativacao
 ```
 
@@ -137,8 +146,8 @@ com os valores esperados do lote, nunca rode sem eles.
 **Saída esperada (stdout):**
 
 ```
-leads novos:      236
-leads existentes: 40
+leads novos:      235
+leads existentes: 41
 notas:            276
 opt-outs:         51
   pulados (confirmados no CRM):     10
@@ -164,9 +173,10 @@ continuaria recebendo mensagem).
 Guardrails de contagem (devem bater exatamente com os números do passo 3):
 
 ```bash
-grep -c "INSERT INTO leads"      /tmp/reativacao/preparar.sql   # 236
-grep -c "UPDATE leads SET"       /tmp/reativacao/preparar.sql   # 92  (40 existentes + 51 opt-outs + 1 normalizacao de telefone)
+grep -c "INSERT INTO leads"      /tmp/reativacao/preparar.sql   # 235
+grep -c "UPDATE leads SET"       /tmp/reativacao/preparar.sql   # 93  (41 existentes + 51 opt-outs + 1 normalizacao de telefone)
 grep -c "INSERT INTO lead_notes" /tmp/reativacao/preparar.sql   # 276
+grep -c "RAISE EXCEPTION"        /tmp/reativacao/preparar.sql   # 4   (3 do rodape + 1 da normalizacao de telefone D9)
 ```
 
 Guardrails de segurança (devem dar **zero**, sem exceção):
@@ -184,7 +194,7 @@ Conferir também o tamanho e o rollback:
 
 ```bash
 wc -l /tmp/reativacao/preparar.sql   # ~6.600 linhas
-wc -l /tmp/reativacao/rollback.sql   # ~23 linhas
+wc -l /tmp/reativacao/rollback.sql   # ~25 linhas
 ```
 
 Por fim, ler à mão os 4 blocos marcados `⚠ FORA DA CAMPANHA` dentro do SQL
@@ -210,20 +220,29 @@ nada fica pela metade.
 ## 6. Verificar
 
 **Não há verificação manual de números aqui.** Antes do `COMMIT;`, o próprio
-`preparar.sql` roda três blocos `DO $$ ... END $$` que contam
-(1) leads do lote, (2) notas do lote e (3) opt-outs marcados por este lote, e
-executam `RAISE EXCEPTION` se qualquer contagem for diferente do esperado
-(236+40=276 leads/notas, 51 opt-outs). Um `RAISE EXCEPTION` dentro de uma
+`preparar.sql` roda quatro blocos `DO $$ ... END $$` que contam/checam:
+(1) leads do lote (chaveado em `metadata->>'origem'` **e** `metadata->>'lote'`
+juntos — nunca só `lote`, para nunca colidir com a contagem de opt-outs, que
+usa a chave separada `optout_lote`), (2) notas do lote, (3) opt-outs marcados
+por este lote, e um quarto bloco logo após a normalização de telefone (D9),
+que verifica que ela de fato afetou exatamente 1 linha. Todos executam
+`RAISE EXCEPTION` se a contagem/condição não bater com o esperado
+(235+41=276 leads/notas, 51 opt-outs). Um `RAISE EXCEPTION` dentro de uma
 transação Postgres força o rollback automático de tudo que veio antes,
 inclusive dos `INSERT`s que pareciam ter dado certo — o psql retorna erro e o
 `COMMIT;` no final do arquivo nunca roda.
 
 Ou seja: **se o comando do passo 5 terminar sem erro (código de saída 0 e sem
 `ERROR` na saída), a preparação foi aplicada corretamente e já está
-committada.** Se aparecer `ERROR:  esperado N ..., encontrado M`, nada foi
-persistido — trate como falha completa, investigue a causa (normalmente um
-dos arquivos do passo 1 mudou entre a geração do SQL e a execução) e regenere
-o SQL do zero a partir do passo 1.
+committada.** Se aparecer `ERROR:  esperado N ..., encontrado M` (ou o erro de
+normalização de telefone), **a transação inteira foi revertida e nada foi
+escrito no banco** — nenhum lead, nenhuma nota, nenhum opt-out desta execução
+persiste, mesmo que o `psql` tenha impressos os `\echo` de sucesso antes do
+erro. Trate como falha completa, investigue a causa (normalmente um dos
+arquivos do passo 1 mudou entre a geração do SQL e a execução) e regenere o
+SQL do zero a partir do passo 1. Nunca assuma "deu quase certo" — ou o
+`COMMIT;` rodou (tudo persistiu) ou não rodou (nada persistiu); não há meio
+termo dentro de uma única transação.
 
 Ainda assim, é razoável confirmar visualmente as linhas `\echo` impressas
 durante a execução (`--- leads do lote (esperado: 276) ---`, etc.) — elas
@@ -243,19 +262,26 @@ ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker cp /tmp/rol
 1. Remove todas as `lead_notes` cujo conteúdo contém o identificador do lote
    (as 276 notas de briefing, novas e existentes).
 2. Desmarca `opt_out` **somente** nos leads que este lote marcou
-   (`metadata->>'lote'` igual ao lote **e** `optout_fonte = 'mensagem_do_cliente'`)
-   — opt-outs de qualquer outro lote/motivo não são tocados.
+   (`metadata->>'optout_lote'` igual ao lote **e**
+   `optout_fonte = 'mensagem_do_cliente'`) — opt-outs de qualquer outro
+   lote/motivo não são tocados — e, na mesma instrução, limpa as chaves de
+   evidência do opt-out (`optout_quando`, `optout_disse`, `optout_fonte`,
+   `optout_lote`).
 3. Apaga os leads que este lote **criou** — e só esses.
 4. Remove as chaves de metadata do lote (`lote`, `origem`, `id_bling`,
-   `icp_score`, `criado_por_lote`) de qualquer lead que ainda as tenha,
-   novo ou pré-existente.
+   `icp_score`, `criado_por_lote`) de qualquer lead que este lote criou ou
+   atualizou (`metadata->>'origem' = 'reativacao_bling'` **e**
+   `metadata->>'lote'` igual ao lote — as duas juntas, nunca só uma: os
+   opt-outs nunca gravam `origem`, então este passo nunca os alcança nem
+   apaga por engano um `metadata.origem` pré-existente de outra origem
+   `terceirizacao`/`atacado`).
 
 **Por que o critério do passo 3 é `metadata->>'criado_por_lote'`, e não "lead
 sem mensagem":** essa chave só é escrita por `gerar_insert_lead` (leads
 novos) — `gerar_update_conservador` (leads existentes) nunca a grava. Uma
 versão anterior do rollback usava "o lead não tem nenhuma mensagem" como
 único critério para decidir o que apagar, partindo da suposição de que só
-leads novos ficariam sem mensagem. Na produção real isso é falso: **3 dos 40
+leads novos ficariam sem mensagem. Na produção real isso é falso: **3 dos 41
 leads pré-existentes não têm mensagem nenhuma**, e esse rollback antigo teria
 apagado esses 3 leads reais junto com **4 notas** que já existiam antes deste
 lote. Chavear em `criado_por_lote` elimina esse risco por construção — a
@@ -268,7 +294,7 @@ dump do passo 0 em vez de confiar no rollback:
 - **Campos preenchidos em leads existentes.** `gerar_update_conservador` só
   preenche colunas que estavam vazias (`COALESCE(NULLIF(col, ''), ...)`) —
   o rollback não limpa `cnpj`, `razao_social`, `nome_fantasia`, `email`,
-  `endereco` nem `assigned_to` de volta ao estado anterior nesses 40 leads.
+  `endereco` nem `assigned_to` de volta ao estado anterior nesses 41 leads.
   Só a chave de metadata do lote sai; o valor de coluna que foi preenchido
   fica.
 - **A normalização de telefone da decisão D9** (`11981154002` →

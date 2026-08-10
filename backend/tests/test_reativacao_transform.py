@@ -145,6 +145,20 @@ class TestMontarBriefing:
         texto = transform.montar_briefing(_dados_base())
         assert "Vendedor anterior: Arthur Silva Boaventura" in texto
 
+    def test_perfil_atipico_aparece_mesmo_sem_historico_de_compra(self):
+        # Fix round 3 (menor): a linha PERFIL vivia dentro do ramo "tem
+        # compra" de montar_briefing — 3 dos 46 leads de perfil atipico que
+        # NUNCA compraram (produto_para_citar preenchido, mas
+        # total_gasto=0) ficavam sem a linha PERFIL. Precisa renderizar
+        # sempre que o produto for conhecido, independente do historico.
+        dados = _dados_base()
+        dados.update({"total_gasto": "0.00", "pedidos_faturados": "0",
+                      "ultima_compra": "", "dias_sem_comprar": "",
+                      "produto_para_citar": "Cápsula Compatível Nespresso"})
+        texto = transform.montar_briefing(dados)
+        assert "LEAD SEM COMPRA — cadastrado no Bling, nunca faturou" in texto
+        assert "PERFIL: cápsula" in texto
+
     def test_lead_sem_compra_troca_bloco_de_historico(self):
         dados = _dados_base()
         dados.update({"total_gasto": "0.00", "pedidos_faturados": "0",
