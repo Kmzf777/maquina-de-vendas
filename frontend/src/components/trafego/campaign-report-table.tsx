@@ -110,7 +110,7 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.clientes)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtInt(sub.pedidos)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(sub.receita)}</TableCell>
-                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{r.channel === "Google Ads" ? fmtBRL(sub.investimento) : "—"}</TableCell>
+                  <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{sub.investimento > 0 ? fmtBRL(sub.investimento) : "—"}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtRoas(sub.roas)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtBRL(subTicket)}</TableCell>
                   <TableCell className="text-right text-[13px] font-medium text-[#111111] tabular-nums">{fmtPct(subConversao)}</TableCell>
