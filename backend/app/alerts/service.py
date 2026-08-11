@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timezone, timedelta
 
 from app.db.supabase import get_supabase
@@ -8,6 +9,13 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 _BILLING_ERROR_CODE = 131042
+
+# Meta rejeita \n, \r, \t e 4+ espaços consecutivos em body_parameters de template
+# (WABA_BODY_PARAM_INVALID_FORMAT). Colapsa para 1 espaço p/ ficar bem abaixo do teto.
+_TEMPLATE_VAR_WHITESPACE_RE = re.compile(r"[\s]+")
+# Ceilings folgados p/ nunca colidir com o limite de 1024 chars/param da Meta.
+_TEMPLATE_VAR_MAX_TITLE = 200
+_TEMPLATE_VAR_MAX_BODY = 800
 
 
 def create_system_alert(
@@ -71,9 +79,66 @@ def _notify_sentry(type: str, title: str, message: str, severity: str) -> None:
         logger.debug("[ALERT] Sentry indisponível para despacho (fail-open): %s", exc)
 
 
-async def _send_admin_text(provider, phone: str, body: str) -> None:
-    """Envio awaitable com try próprio — a task agendada nunca morre com exceção solta."""
+def _sanitize_template_variable(text: str, max_len: int) -> str:
+    """Prepara uma string p/ virar body_parameter de template Meta.
+
+    Meta rejeita variáveis com \\n, \\r, \\t ou 4+ espaços consecutivos
+    (WABA_BODY_PARAM_INVALID_FORMAT). Colapsa qualquer whitespace pra 1 espaço,
+    tira as pontas e trunca com reticências se passar do teto. Vazio → "-" (Meta
+    também rejeita string vazia).
+    """
+    if not text:
+        return "-"
+    collapsed = _TEMPLATE_VAR_WHITESPACE_RE.sub(" ", str(text)).strip()
+    if not collapsed:
+        return "-"
+    if len(collapsed) > max_len:
+        collapsed = collapsed[: max_len - 1].rstrip() + "…"
+    return collapsed
+
+
+async def _send_admin_notification(
+    provider,
+    phone: str,
+    title: str,
+    message: str,
+    template_name: str | None,
+    template_language: str,
+) -> None:
+    """Envio awaitable com try próprio — a task agendada nunca morre com exceção solta.
+
+    Se `template_name` informado: tenta send_template primeiro (funciona fora da
+    janela de 24h se o template estiver aprovado). Qualquer falha (não aprovado,
+    rejeitado, provider quebrado) cai no send_text como cinto de segurança — pelo
+    menos entrega dentro da janela de 24h. Ambos os caminhos são fail-soft.
+    """
+    if template_name:
+        try:
+            components = [{
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": _sanitize_template_variable(title, _TEMPLATE_VAR_MAX_TITLE)},
+                    {"type": "text", "text": _sanitize_template_variable(message, _TEMPLATE_VAR_MAX_BODY)},
+                ],
+            }]
+            await provider.send_template(
+                phone,
+                template_name,
+                components=components,
+                language_code=template_language,
+            )
+            logger.info(
+                "[ALERT] alerta critical enviado via template %s (%s...)",
+                template_name, phone[:6],
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "[ALERT] template %s falhou (%s) — caindo para send_text",
+                template_name, exc,
+            )
     try:
+        body = f"🚨 {title}\n\n{message}"
         await provider.send_text(phone, body)
         logger.info("[ALERT] alerta critical enviado ao WhatsApp do admin (%s...)", phone[:6])
     except Exception as exc:
@@ -83,10 +148,15 @@ async def _send_admin_text(provider, phone: str, body: str) -> None:
 def _notify_whatsapp_admin(title: str, message: str) -> None:
     """Manda o alerta critical no WhatsApp do operador — best-effort, nunca levanta.
 
-    Limitação conhecida (documentada na spec): free-form só entrega com a janela de
-    24h do admin aberta; o canal GARANTIDO é o e-mail do Sentry. ADMIN_ALERT_PHONE
-    vazio = feature desligada (skip silencioso). Imports de channels/registry são
-    tardios para não criar ciclo (alerts é importado por módulos de baixo nível).
+    Entrega garantida fora da janela de 24h SÓ com template utility aprovado
+    (ADMIN_ALERT_TEMPLATE_NAME apontando para um template APPROVED pela Meta).
+    Sem template, cai em send_text free-form — só entrega DENTRO da janela de 24h;
+    para casos de exaustão longa (madrugada, fds sem contato do admin), o canal
+    garantido segue sendo o e-mail do Sentry.
+
+    ADMIN_ALERT_PHONE vazio = feature desligada (skip silencioso). Imports de
+    channels/registry são tardios para não criar ciclo (alerts é importado por
+    módulos de baixo nível).
     """
     try:
         if os.environ.get("REHEARSAL_MODE", "").lower() == "true":
@@ -107,11 +177,15 @@ def _notify_whatsapp_admin(title: str, message: str) -> None:
             logger.warning("[ALERT] nenhum canal disponível para alerta WhatsApp ao admin")
             return
         provider = get_provider(channel)
-        body = f"🚨 {title}\n\n{message}"
+        # Template UTILITY aprovado pela Meta é o ÚNICO canal garantido fora da janela
+        # de 24h do admin (send_text free-form não entrega). Se ADMIN_ALERT_TEMPLATE_NAME
+        # não estiver setado, mantém comportamento antigo (só send_text).
+        template_name = (os.environ.get("ADMIN_ALERT_TEMPLATE_NAME") or "").strip() or None
+        template_language = (os.environ.get("ADMIN_ALERT_TEMPLATE_LANGUAGE") or "pt_BR").strip() or "pt_BR"
         # create_system_alert é sync mas costuma rodar dentro de um event loop (worker/
         # webhook). Com loop ativo: agenda task (não bloqueia o caminho do incidente);
         # sem loop (script/cron sync): asyncio.run resolve na hora.
-        coro = _send_admin_text(provider, phone, body)
+        coro = _send_admin_notification(provider, phone, title, message, template_name, template_language)
         try:
             asyncio.get_running_loop().create_task(coro)
         except RuntimeError:

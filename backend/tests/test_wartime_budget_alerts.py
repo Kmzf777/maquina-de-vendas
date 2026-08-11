@@ -86,14 +86,29 @@ class _FakeSB:
 
 
 class _FakeProvider:
-    def __init__(self, fail=False):
-        self.sent = []
+    def __init__(self, fail=False, fail_template=False):
+        self.sent = []  # legado: guarda envios via send_text (compat com testes antigos)
+        self.sent_templates = []
+        self.template_attempts = 0  # incrementa em TODA chamada, mesmo que levante
         self._fail = fail
+        self._fail_template = fail_template
 
     async def send_text(self, to, body):
         if self._fail:
             raise RuntimeError("provider boom")
         self.sent.append((to, body))
+        return {"status": "ok"}
+
+    async def send_template(self, to, template_name, components=None, language_code="pt_BR"):
+        self.template_attempts += 1
+        if self._fail_template:
+            raise RuntimeError("template boom")
+        self.sent_templates.append({
+            "to": to,
+            "template_name": template_name,
+            "components": components or [],
+            "language_code": language_code,
+        })
         return {"status": "ok"}
 
 
@@ -351,6 +366,7 @@ def test_whatsapp_noop_sem_admin_alert_phone(monkeypatch):
 def test_whatsapp_envia_para_admin_via_canal_ativo(monkeypatch):
     monkeypatch.setenv("ADMIN_ALERT_PHONE", "5511999999999")
     monkeypatch.delenv("ALERT_CHANNEL_ID", raising=False)
+    monkeypatch.delenv("ADMIN_ALERT_TEMPLATE_NAME", raising=False)
     monkeypatch.setenv("REHEARSAL_MODE", "false")
     channel = {"id": "chan-ativo", "provider": "meta_cloud", "provider_config": {}}
     monkeypatch.setattr("app.channels.service.get_active_channel", lambda: channel)
@@ -365,6 +381,7 @@ def test_whatsapp_envia_para_admin_via_canal_ativo(monkeypatch):
 def test_whatsapp_prefere_alert_channel_id(monkeypatch):
     monkeypatch.setenv("ADMIN_ALERT_PHONE", "5511999999999")
     monkeypatch.setenv("ALERT_CHANNEL_ID", "chan-alerta")
+    monkeypatch.delenv("ADMIN_ALERT_TEMPLATE_NAME", raising=False)
     monkeypatch.setenv("REHEARSAL_MODE", "false")
     looked_up = []
     channel = {"id": "chan-alerta", "provider": "meta_cloud", "provider_config": {}}
@@ -421,6 +438,7 @@ async def test_whatsapp_com_loop_ativo_agenda_task(monkeypatch):
     # caminho do incidente. Cede o loop e verifica que a task rodou.
     monkeypatch.setenv("ADMIN_ALERT_PHONE", "5511999999999")
     monkeypatch.delenv("ALERT_CHANNEL_ID", raising=False)
+    monkeypatch.delenv("ADMIN_ALERT_TEMPLATE_NAME", raising=False)
     monkeypatch.setenv("REHEARSAL_MODE", "false")
     channel = {"id": "c1", "provider": "meta_cloud", "provider_config": {}}
     monkeypatch.setattr("app.channels.service.get_active_channel", lambda: channel)
@@ -431,3 +449,82 @@ async def test_whatsapp_com_loop_ativo_agenda_task(monkeypatch):
     assert provider.sent == []  # agendado, ainda não executado
     await asyncio.sleep(0)
     assert provider.sent == [("5511999999999", "🚨 t\n\nm")]
+
+
+# ── B5: Envio via template UTILITY (fora da janela de 24h) ───────────────────────
+# Free-form (send_text) só entrega DENTRO da janela de 24h do admin. Alertas
+# operacionais precisam chegar fora dela (madrugada, fds, incidente após dias sem
+# msg do admin) → template utility aprovado é o único canal garantido. Se
+# ADMIN_ALERT_TEMPLATE_NAME não estiver setado, mantém o comportamento antigo
+# (send_text). Se estiver e falhar (não aprovado/rejeitado), cai no send_text
+# como cinto de segurança (pelo menos entrega se a janela estiver aberta).
+
+def test_whatsapp_usa_template_quando_configurado(monkeypatch):
+    monkeypatch.setenv("ADMIN_ALERT_PHONE", "5511999999999")
+    monkeypatch.setenv("ADMIN_ALERT_TEMPLATE_NAME", "alerta_admin_sistema_v1")
+    monkeypatch.setenv("ADMIN_ALERT_TEMPLATE_LANGUAGE", "pt_BR")
+    monkeypatch.delenv("ALERT_CHANNEL_ID", raising=False)
+    monkeypatch.setenv("REHEARSAL_MODE", "false")
+    channel = {"id": "chan-ativo", "provider": "meta_cloud", "provider_config": {}}
+    monkeypatch.setattr("app.channels.service.get_active_channel", lambda: channel)
+    provider = _FakeProvider()
+    monkeypatch.setattr("app.whatsapp.registry.get_provider", lambda ch: provider)
+
+    alerts_svc._notify_whatsapp_admin("Teto estourado", "US$12.50 >= US$10.00")
+
+    assert provider.sent == []  # template preferido; send_text NÃO é chamado
+    assert len(provider.sent_templates) == 1
+    call = provider.sent_templates[0]
+    assert call["to"] == "5511999999999"
+    assert call["template_name"] == "alerta_admin_sistema_v1"
+    assert call["language_code"] == "pt_BR"
+    body = next(c for c in call["components"] if c["type"] == "body")
+    params = body["parameters"]
+    assert params[0] == {"type": "text", "text": "Teto estourado"}
+    assert params[1] == {"type": "text", "text": "US$12.50 >= US$10.00"}
+
+
+def test_whatsapp_template_falha_faz_fallback_para_text(monkeypatch):
+    monkeypatch.setenv("ADMIN_ALERT_PHONE", "5511999999999")
+    monkeypatch.setenv("ADMIN_ALERT_TEMPLATE_NAME", "alerta_admin_sistema_v1")
+    monkeypatch.delenv("ALERT_CHANNEL_ID", raising=False)
+    monkeypatch.setenv("REHEARSAL_MODE", "false")
+    channel = {"id": "chan-ativo", "provider": "meta_cloud", "provider_config": {}}
+    monkeypatch.setattr("app.channels.service.get_active_channel", lambda: channel)
+    provider = _FakeProvider(fail_template=True)
+    monkeypatch.setattr("app.whatsapp.registry.get_provider", lambda ch: provider)
+
+    alerts_svc._notify_whatsapp_admin("t", "m")
+
+    # tentou template E falhou (não appenda em sent_templates ao levantar) → send_text é o fallback
+    assert provider.template_attempts == 1
+    assert provider.sent_templates == []
+    assert provider.sent == [("5511999999999", "🚨 t\n\nm")]
+
+
+def test_whatsapp_sanitiza_newlines_e_espacos_em_variavel_do_template(monkeypatch):
+    """Meta rejeita \\n, \\r, \\t e 4+ espaços consecutivos em body_parameters.
+    Sanitiza para 1 espaço (bem abaixo do limite de 3)."""
+    import re
+
+    monkeypatch.setenv("ADMIN_ALERT_PHONE", "5511999999999")
+    monkeypatch.setenv("ADMIN_ALERT_TEMPLATE_NAME", "alerta_admin_sistema_v1")
+    monkeypatch.delenv("ALERT_CHANNEL_ID", raising=False)
+    monkeypatch.setenv("REHEARSAL_MODE", "false")
+    channel = {"id": "chan-ativo", "provider": "meta_cloud", "provider_config": {}}
+    monkeypatch.setattr("app.channels.service.get_active_channel", lambda: channel)
+    provider = _FakeProvider()
+    monkeypatch.setattr("app.whatsapp.registry.get_provider", lambda ch: provider)
+
+    alerts_svc._notify_whatsapp_admin(
+        "IA (Valeria)\nindisponivel\r\n— LLM fora",
+        "5 turnos\n\n\nfalharam\t\t.    Verifique   quota.",
+    )
+    body = next(c for c in provider.sent_templates[0]["components"] if c["type"] == "body")
+    p0, p1 = body["parameters"][0]["text"], body["parameters"][1]["text"]
+    for txt in (p0, p1):
+        assert "\n" not in txt and "\r" not in txt and "\t" not in txt
+        assert re.search(r"\s{2,}", txt) is None
+        assert txt == txt.strip() and txt != ""
+    assert "indisponivel" in p0 and "LLM fora" in p0
+    assert "falharam" in p1 and "Verifique quota" in p1
