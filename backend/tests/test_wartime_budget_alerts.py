@@ -331,7 +331,54 @@ def test_notify_external_engole_falha_do_whatsapp(monkeypatch):
         raise RuntimeError("whatsapp boom")
 
     monkeypatch.setattr(alerts_svc, "_notify_whatsapp_admin", _boom)
-    alerts_svc._notify_external("x", "t", "m", "critical")  # não levanta
+    # llm_down está no allowlist default de _whatsapp_admin_allowed_types → a chamada é
+    # tentada e o _boom levanta; o teste garante que _notify_external engole.
+    alerts_svc._notify_external("llm_down", "t", "m", "critical")  # não levanta
+
+
+# ── B6: Allowlist de tipos que disparam WhatsApp admin (audit 11/08) ─────────────
+# Antes: TODO alerta severity=critical disparava WhatsApp (llm_down, ai_unresponsive,
+# handoff_sla_escalation, billing_payment_issue, etc.). Isso acordava o admin fora do
+# horário comercial para incidentes que ele não pode acionar sozinho — a fila humana
+# não é problema do admin às 3h da manhã. Agora só tipos ligados ao LLM ("token
+# acabou": llm_down + llm_budget_exceeded) disparam WhatsApp por default. Restante
+# segue em system_alerts + Sentry (auditoria/e-mail). Override via
+# WHATSAPP_ADMIN_ALERT_TYPES=csv.
+
+def test_notify_external_critical_handoff_escalation_nao_dispara_whatsapp_por_default(monkeypatch):
+    monkeypatch.delenv("WHATSAPP_ADMIN_ALERT_TYPES", raising=False)
+    _install_fake_sentry(monkeypatch)
+    wa_calls = []
+    monkeypatch.setattr(alerts_svc, "_notify_whatsapp_admin", lambda t, m: wa_calls.append((t, m)))
+    alerts_svc._notify_external(
+        "handoff_sla_escalation",
+        "Fila humana acumulando: 3 lead(s)",
+        "detalhe",
+        "critical",
+    )
+    assert wa_calls == []  # NÃO acorda o admin — fila humana é responsabilidade do time
+
+
+def test_notify_external_critical_llm_down_dispara_whatsapp_por_default(monkeypatch):
+    monkeypatch.delenv("WHATSAPP_ADMIN_ALERT_TYPES", raising=False)
+    _install_fake_sentry(monkeypatch)
+    wa_calls = []
+    monkeypatch.setattr(alerts_svc, "_notify_whatsapp_admin", lambda t, m: wa_calls.append((t, m)))
+    alerts_svc._notify_external("llm_down", "IA fora", "detalhe", "critical")
+    assert wa_calls == [("IA fora", "detalhe")]
+
+
+def test_notify_external_respeita_allowlist_env(monkeypatch):
+    """WHATSAPP_ADMIN_ALERT_TYPES sobrepõe o default (CSV, whitespace tolerado)."""
+    monkeypatch.setenv("WHATSAPP_ADMIN_ALERT_TYPES", "handoff_sla_escalation, billing_payment_issue")
+    _install_fake_sentry(monkeypatch)
+    wa_calls = []
+    monkeypatch.setattr(alerts_svc, "_notify_whatsapp_admin", lambda t, m: wa_calls.append((t, m)))
+    # dentro do allowlist explícito
+    alerts_svc._notify_external("handoff_sla_escalation", "Fila", "detalhe", "critical")
+    # fora do allowlist explícito (mesmo sendo default)
+    alerts_svc._notify_external("llm_down", "IA fora", "detalhe", "critical")
+    assert wa_calls == [("Fila", "detalhe")]
 
 
 def test_create_system_alert_notifica_mesmo_com_insert_falhando(monkeypatch):

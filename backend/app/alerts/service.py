@@ -42,12 +42,36 @@ def create_system_alert(
     _notify_external(type, title, message, severity)
 
 
+# Tipos de alerta critical que disparam WhatsApp ao admin por default.
+# Restrito ao domínio "LLM não vai atender" (o incidente que o admin precisa acionar
+# 24/7): llm_down (Gemini caiu / 429 prepay depleted / 5xx / timeout) e
+# llm_budget_exceeded (kill-switch interno). Outros críticos (handoff_sla_*,
+# ai_unresponsive, billing_payment_issue) seguem gravando em system_alerts e Sentry
+# — não acordam o admin no WhatsApp fora do horário comercial. Override via
+# WHATSAPP_ADMIN_ALERT_TYPES=csv (ex.: llm_down,billing_payment_issue).
+_DEFAULT_WHATSAPP_ADMIN_ALERT_TYPES = "llm_down,llm_budget_exceeded"
+
+
+def _whatsapp_admin_allowed_types() -> set[str]:
+    """Allowlist de types que disparam WhatsApp ao admin.
+
+    Lê `WHATSAPP_ADMIN_ALERT_TYPES` (CSV, whitespace tolerado); vazio ou não setado
+    cai no default. Nunca retorna set vazio — vazio silencioso quebraria alertas
+    críticos legítimos; se o operador quer desligar, seta ADMIN_ALERT_PHONE="".
+    """
+    raw = (os.environ.get("WHATSAPP_ADMIN_ALERT_TYPES") or "").strip()
+    if not raw:
+        raw = _DEFAULT_WHATSAPP_ADMIN_ALERT_TYPES
+    parsed = {t.strip() for t in raw.split(",") if t.strip()}
+    return parsed or {t.strip() for t in _DEFAULT_WHATSAPP_ADMIN_ALERT_TYPES.split(",")}
+
+
 def _notify_external(type: str, title: str, message: str, severity: str) -> None:
     """Despacha o alerta para fora do CRM (wartime T2, 10/07).
 
     Roteamento por severidade:
       - critical → Sentry (level=error; e-mail do free tier é o canal garantido)
-                   + WhatsApp ao admin (ADMIN_ALERT_PHONE) — best-effort.
+                   + WhatsApp ao admin — SÓ para types em _whatsapp_admin_allowed_types().
       - warning  → só Sentry (level=warning).
       - demais   → nada (info/error legado continuam sendo só banner do CRM).
 
@@ -58,7 +82,7 @@ def _notify_external(type: str, title: str, message: str, severity: str) -> None
         if severity not in ("critical", "warning"):
             return
         _notify_sentry(type, title, message, severity)
-        if severity == "critical":
+        if severity == "critical" and type in _whatsapp_admin_allowed_types():
             _notify_whatsapp_admin(title, message)
     except Exception as exc:
         logger.warning("[ALERT] despacho externo falhou (seguindo sem): %s", exc)
