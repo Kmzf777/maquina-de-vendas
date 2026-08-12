@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveSearchChannelScope, highlightSegments } from "./message-search";
+import { resolveSearchChannelScope, highlightSegments, isOutboundMatch } from "./message-search";
 
 describe("resolveSearchChannelScope", () => {
   it("admin sem channel_id => null (sem restrição)", () => {
@@ -55,5 +55,21 @@ describe("highlightSegments", () => {
       { text: " ", match: false },
       { text: "café", match: true },
     ]);
+  });
+});
+
+describe("isOutboundMatch", () => {
+  it("cliente (user) => não é nossa (false)", () => {
+    expect(isOutboundMatch("user")).toBe(false);
+  });
+  it("vendedor (seller) => nossa (true)", () => {
+    expect(isOutboundMatch("seller")).toBe(true);
+  });
+  it("IA (agent) => nossa (true)", () => {
+    expect(isOutboundMatch("agent")).toBe(true);
+  });
+  it("null/undefined => trata como não-nossa (false)", () => {
+    expect(isOutboundMatch(null)).toBe(false);
+    expect(isOutboundMatch(undefined)).toBe(false);
   });
 });

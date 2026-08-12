@@ -1,7 +1,7 @@
 "use client";
 
 import type { MessageSearchResult } from "@/lib/types";
-import { highlightSegments } from "@/lib/message-search";
+import { highlightSegments, isOutboundMatch } from "@/lib/message-search";
 import { formatRelativeTime } from "@/lib/datetime";
 
 interface MessageSearchResultsProps {
@@ -36,6 +36,7 @@ export function MessageSearchResults({ query, results, loading, onSelect }: Mess
     <div>
       {results.map((r) => {
         const displayName = r.lead_name || r.lead_phone || "Desconhecido";
+        const outbound = isOutboundMatch(r.sent_by);
         const segments = highlightSegments(r.snippet, query);
         return (
           <button
@@ -55,6 +56,7 @@ export function MessageSearchResults({ query, results, loading, onSelect }: Mess
                 </span>
               </div>
               <p className="text-xs text-[#7b7b78] mt-0.5 line-clamp-2">
+                {outbound && <span className="text-[#4b7bbf] font-medium">Você: </span>}
                 {segments.map((seg, i) =>
                   seg.match ? (
                     <mark key={i} className="bg-yellow-200 text-[#111111] rounded-sm px-0.5">

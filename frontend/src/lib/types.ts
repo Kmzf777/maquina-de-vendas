@@ -427,4 +427,6 @@ export interface MessageSearchResult {
   lead_phone: string | null;
   channel_id: string;
   channel_name: string | null;
+  /** Quem enviou a mensagem que casou: "user" (cliente), "seller" (vendedor) ou "agent" (IA). */
+  sent_by: string | null;
 }

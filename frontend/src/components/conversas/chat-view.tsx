@@ -9,8 +9,8 @@ import { ChatHeader } from "@/components/conversas/chat-header";
 import { MessageList, type MessageListHandle } from "@/components/conversas/message-list";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
-import { useRouter } from "next/navigation";
 import { QuickReplyMenu } from "@/components/conversas/quick-reply-menu";
+import { QuickRepliesModal } from "@/components/config/quick-replies-modal";
 import { getSlashQuery, applyQuickReply, filterQuickReplies } from "@/lib/quick-replies";
 import { resolveLeadVariables } from "@/lib/lead-variables";
 
@@ -45,9 +45,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
-  const router = useRouter();
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrQuery, setQrQuery] = useState("");
   const [qrIndex, setQrIndex] = useState(0);
   const [sending, setSending] = useState(false);
@@ -128,12 +128,16 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     };
   }, []);
 
-  useEffect(() => {
+  const fetchQuickReplies = useCallback(() => {
     fetch("/api/quick-replies")
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setQuickReplies(Array.isArray(data) ? data : []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    fetchQuickReplies();
+  }, [fetchQuickReplies]);
 
   const qrFiltered = useMemo(() => filterQuickReplies(quickReplies, qrQuery), [quickReplies, qrQuery]);
 
@@ -291,8 +295,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   }
 
   function handleCreateQuickReply() {
+    // Abre o painel de Respostas Rápidas SOBRE a conversa (sem navegar p/ Config,
+    // que tirava o vendedor do chat e fazia ele perder o lugar).
     setQrOpen(false);
-    router.push("/config?tab=respostas-rapidas&new=1");
+    setQrModalOpen(true);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -825,6 +831,12 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         onClose={() => setQuickSendPhone(null)}
         onSuccess={() => setQuickSendPhone(null)}
         prefillPhone={quickSendPhone ?? undefined}
+      />
+
+      <QuickRepliesModal
+        open={qrModalOpen}
+        initialCreate
+        onClose={() => { setQrModalOpen(false); fetchQuickReplies(); }}
       />
     </div>
   );

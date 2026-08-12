@@ -28,6 +28,15 @@ export function resolveSearchChannelScope(
   return { kind: "ids", ids: allowed };
 }
 
+/**
+ * True quando o match veio de uma mensagem que NÓS enviamos (vendedor ou IA),
+ * i.e. qualquer `sent_by` diferente de "user" (o cliente). Usado para prefixar
+ * "Você:" no resultado da busca. null/undefined => trata como não-nossa.
+ */
+export function isOutboundMatch(sentBy: string | null | undefined): boolean {
+  return !!sentBy && sentBy !== "user";
+}
+
 export interface HighlightSegment {
   text: string;
   match: boolean;
