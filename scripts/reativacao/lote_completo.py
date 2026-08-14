@@ -149,6 +149,33 @@ def selecionar_faltantes(linhas, telefones_crm):
     return Coorte(novos, ja_no_crm, sem_telefone, duplicados)
 
 
+def gerar_pipeline_e_etapas():
+    """Funil + 8 etapas, idempotentes pelo UUID fixo.
+
+    owner_user_id NULL e is_universal false seguem o padrao dos funis da
+    Valeria: visiveis para todos, sem dono designado (decisao D3 do spec —
+    numero, template e dono sao decididos quando a campanha for montada).
+    """
+    partes = [
+        "-- Funil do lote e suas etapas",
+        "INSERT INTO pipelines (id, name, order_index, owner_user_id, is_universal)",
+        "VALUES (%s, %s, 99, NULL, false)" % (
+            sql_literal(PIPELINE_ID), sql_literal(PIPELINE_NOME)),
+        "ON CONFLICT (id) DO NOTHING;",
+        "",
+    ]
+    for indice, (key, label, cor, uuid_) in enumerate(ETAPAS):
+        partes.append(
+            "INSERT INTO pipeline_stages (id, pipeline_id, label, key, dot_color, "
+            "order_index, is_protected) VALUES (%s, %s, %s, %s, %s, %d, false) "
+            "ON CONFLICT (id) DO NOTHING;" % (
+                sql_literal(uuid_), sql_literal(PIPELINE_ID), sql_literal(label),
+                sql_literal(key), sql_literal(cor), indice)
+        )
+    partes.append("")
+    return "\n".join(partes)
+
+
 def carregar_csv(caminho):
     with open(caminho, encoding="utf-8-sig", newline="") as fh:
         return list(csv.DictReader(fh, delimiter=";"))

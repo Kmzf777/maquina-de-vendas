@@ -94,3 +94,27 @@ class TestSelecionarFaltantes:
         resultado = lote_completo.selecionar_faltantes(linhas, {"5534991461669"})
         assert resultado.novos == []
         assert resultado.ja_no_crm == 1
+
+
+class TestSqlFunil:
+    def test_cria_pipeline_com_uuid_fixo(self):
+        sql = lote_completo.gerar_pipeline_e_etapas()
+        assert lote_completo.PIPELINE_ID in sql
+        assert "INSERT INTO pipelines" in sql
+        assert "ON CONFLICT (id) DO NOTHING" in sql
+
+    def test_pipeline_nasce_sem_dono(self):
+        sql = lote_completo.gerar_pipeline_e_etapas()
+        assert "NULL" in sql.split("INSERT INTO pipelines")[1].split(";")[0]
+
+    def test_cria_as_oito_etapas_na_ordem(self):
+        sql = lote_completo.gerar_pipeline_e_etapas()
+        assert sql.count("INSERT INTO pipeline_stages") == 8
+        for indice, (_key, label, _cor, uuid_) in enumerate(lote_completo.ETAPAS):
+            assert uuid_ in sql
+            assert label in sql
+            assert ", %d, false)" % indice in sql
+
+    def test_nenhuma_etapa_e_protegida(self):
+        sql = lote_completo.gerar_pipeline_e_etapas()
+        assert "true)" not in sql.split("pipeline_stages")[-1]
