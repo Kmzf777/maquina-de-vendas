@@ -234,6 +234,27 @@ def gerar_insert_nota(linha):
     )
 
 
+UUID_POR_ETAPA = {key: uuid_ for key, _label, _cor, uuid_ in ETAPAS}
+
+
+def gerar_insert_deal(linha):
+    """Um deal por lead, na etapa do seu segmento.
+
+    Titulo segue a convencao de frontend/src/lib/import-deals.ts:33 —
+    "<nome> - <funil>". Idempotente: nao cria segundo deal no mesmo funil.
+    """
+    titulo = "%s - %s" % (nome_do_lead(linha), PIPELINE_NOME)
+    return (
+        "INSERT INTO deals (lead_id, title, value, stage, pipeline_id, stage_id)\n"
+        "SELECT l.id, %s, 0, 'novo', %s, %s FROM leads l WHERE l.phone = %s\n"
+        "  AND NOT EXISTS (SELECT 1 FROM deals d WHERE d.lead_id = l.id "
+        "AND d.pipeline_id = %s);" % (
+            sql_literal(titulo), sql_literal(PIPELINE_ID),
+            sql_literal(UUID_POR_ETAPA[etapa_de(linha)]),
+            sql_literal(linha["_phone"]), sql_literal(PIPELINE_ID))
+    )
+
+
 def gerar_pipeline_e_etapas():
     """Funil + 8 etapas, idempotentes pelo UUID fixo.
 

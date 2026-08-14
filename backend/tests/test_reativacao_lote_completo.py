@@ -219,3 +219,30 @@ class TestSqlNota:
         linha["_phone"] = lote_completo.telefone_da_linha(linha)
         sql = lote_completo.gerar_insert_nota(linha)
         assert "D''ANTONIO" in sql or "D'ANTONIO" not in sql.replace("''", "")
+
+
+class TestSqlDeal:
+    def test_deal_cai_na_etapa_do_segmento(self):
+        linha = _linha(segmento_reativacao="inativo_36m+")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_deal(linha)
+        assert "f6b9d2a7-0c83-4e16-8f57-2d0a1b5c6e95" in sql
+
+    def test_titulo_segue_a_convencao_do_crm(self):
+        linha = _linha(nome="CAFE TESTE LTDA")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_deal(linha)
+        assert "'Cafe Teste - Reativação Bling'" in sql
+
+    def test_valor_zero_e_stage_novo(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_deal(linha)
+        assert "0, 'novo'" in sql
+
+    def test_nao_duplica_deal_no_mesmo_funil(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_deal(linha)
+        assert "NOT EXISTS" in sql
+        assert lote_completo.PIPELINE_ID in sql
