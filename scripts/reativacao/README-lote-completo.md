@@ -1,6 +1,6 @@
 # Lote completo do Bling — runbook
 
-Cria **1.218 leads** no CRM com funil, 8 etapas, deals, tags e nota de briefing.
+Cria **1.208 leads** no CRM com funil, 8 etapas, deals, tags e nota de briefing.
 **Não dispara nada** — nenhum registro em `broadcasts`/`broadcast_leads`.
 
 - Spec: `docs/superpowers/specs/2026-08-14-reativacao-bling-lote-completo-design.md`
@@ -29,12 +29,12 @@ wc -l /tmp/telefones_crm.txt
 
 Esperado: ~4.200 linhas (`phone` + `wa_id` dos 2.339 leads). Arquivo vazio faz o CLI abortar
 com `ValueError` — comportamento certo: "CRM vazio" nunca é estado normal, e tratá-lo como
-tal criaria 1.218 leads duplicados sobre uma base que já os tem.
+tal criaria 1.208 leads duplicados sobre uma base que já os tem.
 
 > Sem acesso SSH, dá para gerar o mesmo arquivo pela API REST do Supabase com a
 > `SUPABASE_SERVICE_KEY` (`GET /rest/v1/leads?select=phone,wa_id`, paginando de 1.000 em
 > 1.000 — o PostgREST corta aí). Foi assim que a rodagem de conferência de 14/08/2026 foi
-> feita, e ela bateu os mesmos 1.218.
+> feita, e ela bateu os mesmos 1.208.
 
 ## 2. Gerar o SQL
 
@@ -42,7 +42,7 @@ tal criaria 1.218 leads duplicados sobre uma base que já os tem.
 python scripts/reativacao/lote_completo.py \
   --csv "leads-bling-completo-2026-08-08-br (1).csv" \
   --telefones-crm /tmp/telefones_crm.txt \
-  --esperado-novos 1218 \
+  --esperado-novos 1208 \
   --saida /tmp/lote_completo
 ```
 
@@ -51,9 +51,9 @@ Saída esperada:
 ```
 linhas no CSV:        2771
 ja no CRM:            288
-sem telefone:         1231
-duplicados no CSV:    34
-leads a criar:        1218
+sem telefone:         1242
+duplicados no CSV:    33
+leads a criar:        1208
 ```
 
 `--esperado-novos` não é documentação: se a contagem não bater exatamente, o CLI sai com
@@ -65,9 +65,9 @@ explicar por eles.
 
 ```bash
 cd /tmp/lote_completo
-grep -c "INSERT INTO leads"           preparar.sql   # 1218
-grep -c "INSERT INTO lead_notes"      preparar.sql   # 1218
-grep -c "INSERT INTO deals"           preparar.sql   # 1218
+grep -c "INSERT INTO leads"           preparar.sql   # 1208
+grep -c "INSERT INTO lead_notes"      preparar.sql   # 1208
+grep -c "INSERT INTO deals"           preparar.sql   # 1208
 grep -c "INSERT INTO pipelines"       preparar.sql   # 1
 grep -c "INSERT INTO pipeline_stages" preparar.sql   # 8
 grep -c "INSERT INTO tags"            preparar.sql   # 4
@@ -75,7 +75,7 @@ grep -c "INSERT INTO lead_tags"       preparar.sql   # 5
 grep -c "RAISE EXCEPTION"             preparar.sql   # 4
 grep -cE "broadcasts|broadcast_leads" preparar.sql   # 0  <- obrigatório
 grep -c "assigned_to"                 preparar.sql   # 0  <- obrigatório
-wc -l preparar.sql                                   # ~19.275
+wc -l preparar.sql                                   # ~19.130
 wc -l rollback.sql                                   # ~24
 ```
 
@@ -114,14 +114,14 @@ Esperado — **nenhuma linha pode passar de 1.000**:
 
 | Etapa | Deals |
 |---|---|
-| Ativo (0-3m) | 76 |
+| Ativo (0-3m) | 75 |
 | Inativo 3-6m | 68 |
 | Inativo 6-12m | 71 |
 | Inativo 12-24m | 63 |
-| Inativo 24-36m | 102 |
-| Inativo 36m+ | 670 |
+| Inativo 24-36m | 101 |
+| Inativo 36m+ | 665 |
 | Pedido sem faturar | 62 |
-| Nunca comprou | 106 |
+| Nunca comprou | 103 |
 
 E a tag fixa de inadimplência, que o modal de disparo lê para avisar:
 
@@ -138,28 +138,33 @@ scp /tmp/lote_completo/rollback.sql root@173.249.15.11:/tmp/
 ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker cp /tmp/rollback.sql \$D:/tmp/; docker exec \$D psql -U postgres -v ON_ERROR_STOP=1 -f /tmp/rollback.sql"
 ```
 
-Desfaz, nesta ordem: vínculos de tag dos leads criados, as 4 tags novas, os deals do funil,
-as 8 etapas, o funil, as notas de briefing e os leads que este lote criou (chaveado em
-`metadata->>'criado_por_lote'`).
+Desfaz, na ordem: vínculos de tag dos leads do lote, os deals do funil, as 8 etapas, o funil
+e os leads que este lote criou (chaveados em `metadata->>'criado_por_lote'`). As notas de
+briefing saem por `ON DELETE CASCADE`, junto com os leads.
 
-**Não toca no lote de 10/08.** Essa separação é deliberada e vale conhecer, porque a
-primeira versão não a tinha:
+**Ele não é "tudo ou nada", e isso é de propósito.** Três decisões que valem conhecer,
+porque a primeira versão do rollback errava nas três:
 
-- **A tag `B2B` não é apagada** — ela já existia e é usada por outros 271 leads. Só o
-  vínculo dos leads deste lote sai.
-- **As notas do lote de 10/08 não são apagadas.** Este lote usa
+- **As tags não são apagadas, só os vínculos.** `DELETE FROM tags` cascatearia em
+  `lead_tags` e levaria junto vínculos criados à mão depois da importação. E sumiria com o
+  UUID `3d1b8e6c-…` da tag `Débito vencido`, que está hardcoded em
+  `frontend/src/lib/constants.ts` — recriá-la pela UI geraria outro id e o aviso do modal de
+  disparo morreria em silêncio.
+- **Leads já trabalhados são preservados.** O `DELETE` tem guardas: não apaga lead que
+  tenha venda registrada, mensagem, uso de token, job de follow-up, evento de conversão ou
+  nota escrita à mão. `sales.lead_id` tem `ON DELETE CASCADE` — sem a guarda, uma venda
+  registrada sumiria em silêncio, e venda é o desfecho *esperado* deste lote.
+- **As notas do lote de 10/08 não são tocadas.** Este lote usa
   `author = 'Sistema — Reativação Bling 08/26'`, enquanto o de 10/08 usa
-  `'Sistema — Reativação Bling'`. Com a string repetida, o `DELETE` por autor levaria junto
-  as notas do outro lote, que não têm `criado_por_lote` para protegê-las.
+  `'Sistema — Reativação Bling'`.
 
-Ao contrário do lote de 10/08, aqui o rollback é completo: este lote só cria, nunca atualiza
-lead pré-existente nem normaliza telefone alheio. O único caso não coberto é um lead deste
-lote que já tenha recebido mensagem antes do rollback rodar — aí a conversa some junto com
-ele. Se isso for possível, restaure o dump do passo 0 em vez de rodar o rollback.
+Ao final o script reporta **quantos leads foram preservados pelas guardas**. Diferente de
+zero significa "esses já foram trabalhados e continuam no CRM — decida à mão o que fazer
+com eles", não erro. Se precisar mesmo apagar tudo, restaure o dump do passo 0.
 
 ## Duas coisas que valem saber antes de disparar
 
-**244 dos 1.218 são telefone fixo** e ficam gravados com 12 dígitos, sem o 9º dígito
+**241 dos 1.208 são telefone fixo** e ficam gravados com 12 dígitos, sem o 9º dígito
 injetado. Isso é proposital: injetá-lo em `(68) 3302-0386` produziria `68 9 3302-0386`, um
 celular válido que provavelmente pertence a outra pessoa — e este lote alimenta disparo de
 template. `metadata->>'whatsapp_tipo'` marca esses leads, e vale filtrá-los ao montar o

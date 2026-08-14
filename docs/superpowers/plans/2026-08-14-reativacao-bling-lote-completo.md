@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Gerar o SQL que cria no CRM os 1.218 leads do Bling que faltam — num funil dedicado com 8 etapas por recência, com tags, deals e briefing — e fazer o modal de disparo avisar quando houver inadimplentes entre os leads selecionados.
+**Goal:** Gerar o SQL que cria no CRM os 1.208 leads do Bling que faltam — num funil dedicado com 8 etapas por recência, com tags, deals e briefing — e fazer o modal de disparo avisar quando houver inadimplentes entre os leads selecionados.
 
 **Architecture:** Duas partes independentes. A Parte 1 é um gerador de SQL em Python (`scripts/reativacao/lote_completo.py`) que reaproveita a lógica pura já testada de `transform.py` e produz `preparar.sql` + `rollback.sql` para aplicação manual via `psql`; não executa nada contra o banco. A Parte 2 é frontend puro: uma função pura, um componente de banner e um guard de API, sem rota nova — o modal já recebe `lead_tags` e `metadata` de cada lead.
 
@@ -133,7 +133,7 @@ def normalizar_telefone_canonico(valor):
     movel comeca em 6-9 e o fixo em 2-5. Injetar o 9 em (34) 3215-1234 produz
     34 9 3215-1234 — um celular valido que provavelmente pertence a OUTRA
     pessoa. Como este lote alimenta disparo de template, isso mandaria
-    marketing para estranhos. Sao 244 fixos nos 1.218 leads do lote.
+    marketing para estranhos. Sao 241 fixos nos 1.208 leads do lote.
     normalize_phone tem esse defeito; aqui ele nao e reproduzido.
 
     Internacionais so passam intactos se ja vierem com 12+ digitos: um numero
@@ -553,7 +553,7 @@ def carregar_telefones_crm(caminho):
     """Lê o dump de telefones do CRM (uma coluna por linha) já normalizado.
 
     Aborta em arquivo vazio: tratar "CRM vazio" como estado normal faria o
-    script criar 1.218 leads duplicados sobre uma base que ja os tem.
+    script criar 1.208 leads duplicados sobre uma base que ja os tem.
     """
     with open(caminho, encoding="utf-8") as fh:
         fones = {transform.normalizar_telefone_canonico(l) for l in fh if l.strip()}
@@ -1424,26 +1424,26 @@ Esperado: ~2.339 linhas. **Se vier vazio, pare** — o CLI aborta com `ValueErro
 cd "Agentes AI/ValerIA" && python scripts/reativacao/lote_completo.py \
   --csv "leads-bling-completo-2026-08-08-br (1).csv" \
   --telefones-crm /tmp/telefones_crm.txt \
-  --esperado-novos 1218 \
+  --esperado-novos 1208 \
   --saida /tmp/lote_completo
 ```
 Esperado na saída:
 ```
 linhas no CSV:        2771
 ja no CRM:            288
-sem telefone:         1231
-duplicados no CSV:    34
-leads a criar:        1218
+sem telefone:         1242
+duplicados no CSV:    33
+leads a criar:        1208
 ```
 
-Se `leads a criar` divergir de 1.218, **não force o número**: investigue. A causa mais provável é a base ter mudado desde 14/08/2026 (leads novos entraram por conversa). Nesse caso, atualize `--esperado-novos` para o valor novo **depois** de confirmar que a diferença se explica por leads que passaram a existir.
+Se `leads a criar` divergir de 1.208, **não force o número**: investigue. A causa mais provável é a base ter mudado desde 14/08/2026 (leads novos entraram por conversa). Nesse caso, atualize `--esperado-novos` para o valor novo **depois** de confirmar que a diferença se explica por leads que passaram a existir.
 
 - [ ] **Step 3: Conferir os guardrails do arquivo**
 
 ```bash
-grep -c "INSERT INTO leads"           /tmp/lote_completo/preparar.sql   # 1218
-grep -c "INSERT INTO lead_notes"      /tmp/lote_completo/preparar.sql   # 1218
-grep -c "INSERT INTO deals"           /tmp/lote_completo/preparar.sql   # 1218
+grep -c "INSERT INTO leads"           /tmp/lote_completo/preparar.sql   # 1208
+grep -c "INSERT INTO lead_notes"      /tmp/lote_completo/preparar.sql   # 1208
+grep -c "INSERT INTO deals"           /tmp/lote_completo/preparar.sql   # 1208
 grep -c "INSERT INTO pipeline_stages" /tmp/lote_completo/preparar.sql   # 8
 grep -c "INSERT INTO tags"            /tmp/lote_completo/preparar.sql   # 4
 grep -c "RAISE EXCEPTION"             /tmp/lote_completo/preparar.sql   # 4
@@ -1462,7 +1462,7 @@ Confira que o nome do lead não é razão social crua, que a linha `ICP` não ap
 - [ ] **Step 5: Commit da conferência**
 
 ```bash
-git commit --allow-empty -m "chore(reativacao): rodagem real conferida (1218 leads, guardrails ok)"
+git commit --allow-empty -m "chore(reativacao): rodagem real conferida (1208 leads, guardrails ok)"
 ```
 
 ---
@@ -1479,7 +1479,7 @@ Crie `scripts/reativacao/README-lote-completo.md` com exatamente este conteúdo:
 ````markdown
 # Lote completo do Bling — runbook
 
-Cria 1.218 leads no CRM com funil, etapas, deals, tags e briefing.
+Cria 1.208 leads no CRM com funil, etapas, deals, tags e briefing.
 **Não dispara nada** — nenhum registro em `broadcasts`/`broadcast_leads`.
 
 - Spec: `docs/superpowers/specs/2026-08-14-reativacao-bling-lote-completo-design.md`
@@ -1506,7 +1506,7 @@ wc -l /tmp/telefones_crm.txt
 
 Esperado: ~2.339 linhas. Arquivo vazio faz o CLI abortar com `ValueError` — que
 é o comportamento certo: "CRM vazio" nunca é estado normal, e tratá-lo como tal
-criaria 1.218 leads duplicados.
+criaria 1.208 leads duplicados.
 
 ## 2. Gerar o SQL
 
@@ -1514,7 +1514,7 @@ criaria 1.218 leads duplicados.
 python scripts/reativacao/lote_completo.py \
   --csv "leads-bling-completo-2026-08-08-br (1).csv" \
   --telefones-crm /tmp/telefones_crm.txt \
-  --esperado-novos 1218 \
+  --esperado-novos 1208 \
   --saida /tmp/lote_completo
 ```
 
@@ -1525,9 +1525,9 @@ de mudar o número — a causa provável é a base ter ganhado leads desde 14/08
 ## 3. Conferir os guardrails
 
 ```bash
-grep -c "INSERT INTO leads"           /tmp/lote_completo/preparar.sql   # 1218
-grep -c "INSERT INTO lead_notes"      /tmp/lote_completo/preparar.sql   # 1218
-grep -c "INSERT INTO deals"           /tmp/lote_completo/preparar.sql   # 1218
+grep -c "INSERT INTO leads"           /tmp/lote_completo/preparar.sql   # 1208
+grep -c "INSERT INTO lead_notes"      /tmp/lote_completo/preparar.sql   # 1208
+grep -c "INSERT INTO deals"           /tmp/lote_completo/preparar.sql   # 1208
 grep -c "INSERT INTO pipeline_stages" /tmp/lote_completo/preparar.sql   # 8
 grep -c "INSERT INTO tags"            /tmp/lote_completo/preparar.sql   # 4
 grep -c "RAISE EXCEPTION"             /tmp/lote_completo/preparar.sql   # 4
@@ -1564,14 +1564,14 @@ Esperado — **nenhuma linha pode passar de 1.000**:
 
 | Etapa | Deals |
 |---|---|
-| Ativo (0-3m) | 76 |
+| Ativo (0-3m) | 75 |
 | Inativo 3-6m | 68 |
 | Inativo 6-12m | 71 |
 | Inativo 12-24m | 63 |
-| Inativo 24-36m | 102 |
-| Inativo 36m+ | 670 |
+| Inativo 24-36m | 101 |
+| Inativo 36m+ | 665 |
 | Pedido sem faturar | 62 |
-| Nunca comprou | 106 |
+| Nunca comprou | 103 |
 
 E a tag fixa de inadimplência, que o modal de disparo lê:
 
@@ -2138,7 +2138,7 @@ git commit --allow-empty -m "chore(disparo): verificacao manual do aviso de inad
 
 ## Riscos conhecidos
 
-**244 dos 1.218 são telefone fixo** (assinante começando em 2-5). Eles ficam gravados com 12 dígitos, sem o 9º injetado — o contrário fabricaria um celular que muito provavelmente pertence a **outra pessoa** (`(68) 3302-0386` do Poder Judiciário viraria `68 9 3302-0386`), e este lote alimenta disparo de template. Isso diverge de `backend/app/leads/service.py::normalize_phone` e de `frontend/src/lib/phone.ts`, que injetam o 9 em qualquer número de 12 dígitos começando com 55 — os dois têm o mesmo defeito, e corrigi-los é trabalho separado (afeta a base inteira, não só este lote).
+**241 dos 1.208 são telefone fixo** (assinante começando em 2-5). Eles ficam gravados com 12 dígitos, sem o 9º injetado — o contrário fabricaria um celular que muito provavelmente pertence a **outra pessoa** (`(68) 3302-0386` do Poder Judiciário viraria `68 9 3302-0386`), e este lote alimenta disparo de template. Isso diverge de `backend/app/leads/service.py::normalize_phone` e de `frontend/src/lib/phone.ts`, que injetam o 9 em qualquer número de 12 dígitos começando com 55 — os dois têm o mesmo defeito, e corrigi-los é trabalho separado (afeta a base inteira, não só este lote).
 
 A consequência de preservar 12 dígitos: se um desses fixos for um número de WhatsApp Business, o webhook vai gravar a forma de 13 dígitos e criar um segundo lead. É um risco menor que mandar marketing para estranho, mas existe. `whatsapp_tipo` fica em `metadata` para dar como filtrar esses 244 na hora de montar o disparo; se quiser que vire tag selecionável na UI, é uma linha em `TAGS_A_CRIAR` e uma chamada de `_vinculo_tag`.
 

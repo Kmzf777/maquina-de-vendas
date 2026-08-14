@@ -8,7 +8,7 @@
 
 | | Parte 1 — Dados | Parte 2 — Aviso na UI |
 |---|---|---|
-| O que é | 1.218 leads, funil, etapas, tags, briefings | banner de inadimplentes no modal de disparo |
+| O que é | 1.208 leads, funil, etapas, tags, briefings | banner de inadimplentes no modal de disparo |
 | Como vai ao ar | `preparar.sql` aplicado via `psql` na VPS | commit → push para `master` → GitHub Actions |
 | Depende de | — | da tag `Débito vencido` criada na Parte 1 |
 
@@ -25,8 +25,8 @@ CRM. Os outros 2.483 são invisíveis para o CRM: `broadcast_leads` referencia `
 então quem não tem lead não pode receber disparo, não aparece no Kanban e não tem
 histórico para o vendedor consultar.
 
-Dos 2.483 ausentes, **1.252 têm telefone utilizável** e somam **R$ 1.974.895 já faturados**. Os
-outros 1.231 não têm telefone nenhum ou têm número malformado (66 têm e-mail) e não têm como entrar num fluxo de
+Dos 2.483 ausentes, **1.241 têm telefone utilizável** e somam **R$ 1.951.716 já faturados**. Os
+outros 1.242 não têm telefone nenhum ou têm número malformado (66 têm e-mail) e não têm como entrar num fluxo de
 WhatsApp.
 
 Existe um segundo problema, descoberto ao investigar como o disparo seleciona público:
@@ -41,7 +41,7 @@ roda **no cliente, depois do corte**. Com 2.339 leads na base isso já quebra:
 | Revenda | 184 | 16 |
 | Já é Cliente | 19 | 2 |
 
-Todas as 11 tags perdem leads. Importar mais 1.218 leva a base a 3.557 e derruba a
+Todas as 11 tags perdem leads. Importar mais 1.208 leva a base a 3.557 e derruba a
 fração visível para ~28%.
 
 ## Escopo
@@ -57,7 +57,7 @@ vencido entre os selecionados — mostrando quais são e oferecendo desmarcá-lo
 
 - **Executar ou preparar disparo.** Nenhum registro em `broadcasts` ou `broadcast_leads`
   (decisão D3). Número, template e dono são decididos depois.
-- Os 1.231 contatos sem telefone utilizável.
+- Os 1.242 contatos sem telefone utilizável.
 - **Os 51 opt-outs pendentes** e o **enriquecimento dos 288 leads já existentes** — as
   duas partes do lote de 10/08 que este não cobre (ver "Estado do lote anterior"). Ambas
   precisam de rodada própria.
@@ -78,10 +78,10 @@ UTF-8 com BOM), na raiz do repositório.
 |---|---|
 | Contatos no CSV | 2.771 |
 | Já existem no CRM | 288 |
-| Ausentes sem telefone utilizável (66 com e-mail) | 1.231 |
-| Ausentes **com** telefone | 1.252 |
-| Telefones repetidos dentro desse grupo | −34 |
-| **Leads a criar** | **1.218** |
+| Ausentes sem telefone utilizável (66 com e-mail) | 1.242 |
+| Ausentes **com** telefone | 1.241 |
+| Telefones repetidos dentro desse grupo | −33 |
+| **Leads a criar** | **1.208** |
 
 O cruzamento normalizou os telefones com a mesma regra do backend
 (55 + DDD + 9 dígitos) e comparou contra `leads.phone` **e** `leads.wa_id`, com e-mail como
@@ -107,13 +107,13 @@ ao banco:**
 - `lead_notes` começando com `REATIVA`: **0**
 
 Este lote **cobre a criação de leads** daquele — os 276 são um subconjunto curado dos
-mesmos 2.771 contatos, e os que ainda não existem no CRM estão dentro dos 1.218. Mas
+mesmos 2.771 contatos, e os que ainda não existem no CRM estão dentro dos 1.208. Mas
 **não cobre duas partes** do lote anterior, que continuam pendentes:
 
 1. **Os 51 opt-outs detectados.** São contatos que disseram "não tenho interesse" /
    "parar mensagens" em disparos anteriores e seguem com `opt_out = false` — hoje a base
    inteira tem só 20 leads marcados. Eles **já existem** no CRM (por isso não estão nos
-   1.218) e continuam elegíveis para receber mensagem. É um risco vivo, independente
+   1.208) e continuam elegíveis para receber mensagem. É um risco vivo, independente
    deste lote.
 2. **O enriquecimento conservador dos leads que já existem** (D5 do lote anterior:
    preencher só campos vazios de `cnpj`, `razao_social`, `nome_fantasia`, `endereco`,
@@ -121,7 +121,7 @@ mesmos 2.771 contatos, e os que ainda não existem no CRM estão dentro dos 1.21
 
 A curadoria manual do lote anterior **não conflita com este lote**, verificado
 telefone a telefone: as 10 `DUPLICATAS_EXCLUIDAS` e as 4 de `MOTIVOS_EXCLUSAO` estão
-**todas** entre os 288 que já existem no CRM, portanto **nenhuma cai nos 1.218**. O
+**todas** entre os 288 que já existem no CRM, portanto **nenhuma cai nos 1.208**. O
 script deste lote não precisa carregar essas constantes — mas elas continuam válidas para
 a rodada futura de enriquecimento dos leads existentes.
 
@@ -160,12 +160,12 @@ em 2026-08-14:
 
 **D1 — Funil único, etapa por recência.** Um funil `Reativação Bling` com 8 etapas, uma
 por `segmento_reativacao`. O usuário escolheu esta forma sabendo do custo: filtrar "o
-funil inteiro" no disparo nunca devolverá os 1.218, porque o corte de 1.000 se aplica à
+funil inteiro" no disparo nunca devolverá os 1.208, porque o corte de 1.000 se aplica à
 consulta de `deals` do funil. **A seleção tem que ser sempre por etapa.** A maior etapa
-tem 670 leads, abaixo do teto, então cada etapa é integralmente selecionável.
+tem 665 leads, abaixo do teto, então cada etapa é integralmente selecionável.
 
 Efeito colateral favorável: como funil e etapa filtram server-side, o conjunto já chega
-ao cliente com ≤670 linhas — e aí o filtro de tag, que roda depois, passa a operar sobre
+ao cliente com ≤665 linhas — e aí o filtro de tag, que roda depois, passa a operar sobre
 o conjunto completo. **Tag combinada com etapa é confiável; tag sozinha não é.**
 
 **D2 — Inadimplentes entram normalmente.** Os 182 contatos com título vencido
@@ -211,24 +211,24 @@ Todas com `is_protected = false`, `order_index` na ordem abaixo (quente → frio
 
 | `key` | `label` | Leads | Já faturaram |
 |---|---|---|---|
-| `ativo_0_3m` | Ativo (0-3m) | 76 | R$ 355.797 |
+| `ativo_0_3m` | Ativo (0-3m) | 75 | R$ 355.577 |
 | `inativo_3_6m` | Inativo 3-6m | 68 | R$ 156.182 |
 | `inativo_6_12m` | Inativo 6-12m | 71 | R$ 54.363 |
 | `inativo_12_24m` | Inativo 12-24m | 63 | R$ 72.664 |
-| `inativo_24_36m` | Inativo 24-36m | 102 | R$ 172.894 |
-| `inativo_36m_mais` | Inativo 36m+ | 670 | R$ 1.162.995 |
+| `inativo_24_36m` | Inativo 24-36m | 101 | R$ 172.780 |
+| `inativo_36m_mais` | Inativo 36m+ | 665 | R$ 1.140.151 |
 | `pedido_sem_faturar` | Pedido sem faturar | 62 | — |
-| `lead_sem_compra` | Nunca comprou | 106 | — |
-| | **Total** | **1.218** | **R$ 1.974.895** |
+| `lead_sem_compra` | Nunca comprou | 103 | — |
+| | **Total** | **1.208** | **R$ 1.951.716** |
 
 ### Tags
 
 | Tag | Qtd | UUID | Estado |
 |---|---|---|---|
-| `Reativação Bling 08/26` | 1.218 | `7c4e2a19-3f68-4b02-9d5a-1e8f6c0b3d47` | nova, hardcoded |
-| `B2B` | 712 | `2249642b-e4f2-420e-8482-d07b325a28c8` | já existe |
+| `Reativação Bling 08/26` | 1.208 | `7c4e2a19-3f68-4b02-9d5a-1e8f6c0b3d47` | nova, hardcoded |
+| `B2B` | 706 | `2249642b-e4f2-420e-8482-d07b325a28c8` | já existe |
 | `E-commerce` | 298 | gerado no insert | nova |
-| `Sem vendedor` | 208 | gerado no insert | nova |
+| `Sem vendedor` | 204 | gerado no insert | nova |
 | `Débito vencido` | 182 | `3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210` | nova, **fixa** (D5) |
 
 Os UUIDs hardcoded existem por dois motivos distintos: o do lote deixa o `INSERT`
@@ -250,8 +250,8 @@ numeração brasileiro). Fixos começam em 2-5 e ficam com 12 dígitos.
 
 Injetar o 9 num fixo produz um celular válido que muito provavelmente pertence a **outra
 pessoa**: `(68) 3302-0386` do Poder Judiciário viraria `68 9 3302-0386`. Como este lote
-alimenta disparo de template, isso mandaria marketing para estranhos. São **244 fixos**
-entre os 1.218.
+alimenta disparo de template, isso mandaria marketing para estranhos. São **241 fixos**
+entre os 1.208.
 
 Isso **diverge** de `backend/app/leads/service.py::normalize_phone` e de
 `frontend/src/lib/phone.ts::normalizePhoneBR`, que injetam o 9 em qualquer número de 12
@@ -261,13 +261,13 @@ dígitos começando com 55. Os dois têm o mesmo defeito; corrigi-los afeta a ba
 O custo de preservar 12 dígitos: se um desses fixos for número de WhatsApp Business, o
 webhook gravará a forma de 13 dígitos e criará um segundo lead. É um risco menor que
 mandar marketing para estranho, mas existe. `whatsapp_tipo` fica em `metadata` para
-permitir filtrar os 244 na hora de montar o disparo.
+permitir filtrar os 241 na hora de montar o disparo.
 
 ### Campos do lead
 
 `phone` normalizado (55+DDD+9); `name` via `escolher_saudacao(nome_crm=None, nome_bling)`
 de `transform.py`, que remove código/CNPJ do início e sufixos empresariais — nenhum dos
-1.218 fica sem nome; `company` / `razao_social` com o nome legal do Bling; `nome_fantasia`,
+1.208 fica sem nome; `company` / `razao_social` com o nome legal do Bling; `nome_fantasia`,
 `cnpj`, `email`, `endereco`, `telefone_comercial` quando existirem;
 `stage='pending'`, `status='imported'`, `assigned_to = NULL`, `opt_out = false`.
 
@@ -391,20 +391,20 @@ string com vírgula decimal; lead com a tag mas não selecionado (não pode cont
 ### Parte 1 — Dados
 
 1. `pg_dump` gerado, com tamanho reportado, antes de qualquer escrita.
-2. `select count(*) from leads where metadata->>'origem'='reativacao_bling' and metadata->>'lote'='reativacao_bling_2026-08-14'` = **1.218**.
-3. `select count(*) from lead_notes where author='Sistema — Reativação Bling 08/26'` = **1.218**.
-4. `select count(*) from deals where pipeline_id=<funil>` = **1.218**, distribuídos pelas
+2. `select count(*) from leads where metadata->>'origem'='reativacao_bling' and metadata->>'lote'='reativacao_bling_2026-08-14'` = **1.208**.
+3. `select count(*) from lead_notes where author='Sistema — Reativação Bling 08/26'` = **1.208**.
+4. `select count(*) from deals where pipeline_id=<funil>` = **1.208**, distribuídos pelas
    8 etapas exatamente conforme a tabela de "Etapas".
 5. `select count(*) from pipeline_stages where pipeline_id=<funil>` = **8**.
-6. Vínculos em `lead_tags`: 1.218 do lote + 712 `B2B` + 298 `E-commerce` + 208
-   `Sem vendedor` + 182 `Débito vencido` = **2.618**.
+6. Vínculos em `lead_tags`: 1.208 do lote + 706 `B2B` + 298 `E-commerce` + 204
+   `Sem vendedor` + 182 `Débito vencido` = **2.598**.
 7. Zero registros criados em `broadcasts` ou `broadcast_leads`.
 8. Nenhum dos 2.339 leads pré-existentes é alterado (comparação com snapshot pré-execução).
 9. Rodar o script duas vezes não cria lead, nota, deal nem vínculo de tag duplicado.
 10. `rollback.sql` existe e devolve o banco ao estado do snapshot, incluindo remoção do
     funil e das 8 etapas.
 11. Cada etapa, consultada por `pipeline_id` + `stage_id`, devolve o total esperado sem
-    truncar (todas ≤ 670, abaixo do teto de 1.000).
+    truncar (todas ≤ 665, abaixo do teto de 1.000).
 12. A tag `Débito vencido` existe com o UUID `3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210` e tem
     exatamente 182 vínculos, e os 182 leads têm `valor_vencido`, `titulos_vencidos` e
     `dias_atraso_max` em `metadata`.
