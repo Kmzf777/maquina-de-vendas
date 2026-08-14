@@ -1,4 +1,5 @@
 # backend/tests/test_reativacao_lote_completo.py
+import csv
 import sys
 from pathlib import Path
 
@@ -336,3 +337,41 @@ class TestMontagem:
         sql = lote_completo.montar_rollback()
         assert "criado_por_lote" in sql
         assert lote_completo.LOTE in sql
+
+
+class TestCli:
+    def _escrever_csv(self, tmp_path, linhas):
+        caminho = tmp_path / "bling.csv"
+        campos = list(linhas[0].keys())
+        with caminho.open("w", encoding="utf-8-sig", newline="") as fh:
+            escritor = csv.DictWriter(fh, fieldnames=campos, delimiter=";")
+            escritor.writeheader()
+            for l in linhas:
+                escritor.writerow(l)
+        return caminho
+
+    def test_gera_os_dois_arquivos(self, tmp_path):
+        csv_path = self._escrever_csv(tmp_path, [
+            _linha(id_bling="1", whatsapp="5511900000001"),
+            _linha(id_bling="2", whatsapp="5511900000002"),
+        ])
+        crm = tmp_path / "crm.txt"
+        crm.write_text("5534999999999\n", encoding="utf-8")
+        saida = tmp_path / "out"
+        codigo = lote_completo.main([
+            "--csv", str(csv_path), "--telefones-crm", str(crm),
+            "--esperado-novos", "2", "--saida", str(saida)])
+        assert codigo == 0
+        assert (saida / "preparar.sql").exists()
+        assert (saida / "rollback.sql").exists()
+
+    def test_contagem_diferente_do_esperado_aborta_sem_escrever(self, tmp_path):
+        csv_path = self._escrever_csv(tmp_path, [_linha(id_bling="1", whatsapp="5511900000001")])
+        crm = tmp_path / "crm.txt"
+        crm.write_text("5534999999999\n", encoding="utf-8")
+        saida = tmp_path / "out"
+        codigo = lote_completo.main([
+            "--csv", str(csv_path), "--telefones-crm", str(crm),
+            "--esperado-novos", "999", "--saida", str(saida)])
+        assert codigo == 1
+        assert not (saida / "preparar.sql").exists()

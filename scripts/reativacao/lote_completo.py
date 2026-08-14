@@ -8,9 +8,12 @@ Difere de generate_sql.py (lote de 10/08) em tres pontos: usa
 transform.normalizar_telefone_canonico (injeta o 9o digito), cria funil +
 etapas + deals, e nao tem curadoria manual de saudacao nem score de ICP.
 """
+import argparse
 import csv
 import json
+import os
 import re
+import sys
 from collections import namedtuple
 
 import transform
@@ -434,3 +437,48 @@ def carregar_telefones_crm(caminho):
             "significa extracao quebrada, nao base vazia" % caminho
         )
     return fones
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Gera o SQL do lote completo do Bling.")
+    parser.add_argument("--csv", required=True, help="CSV completo do Bling")
+    parser.add_argument("--telefones-crm", required=True,
+                        help="uma coluna: todos os telefones que ja existem em leads")
+    parser.add_argument("--esperado-novos", type=int, required=True,
+                        help="trava: aborta se a contagem calculada nao bater")
+    parser.add_argument("--saida", required=True)
+    args = parser.parse_args(argv)
+
+    linhas = carregar_csv(args.csv)
+    telefones_crm = carregar_telefones_crm(args.telefones_crm)
+    coorte = selecionar_faltantes(linhas, telefones_crm)
+
+    print("linhas no CSV:        %d" % len(linhas))
+    print("ja no CRM:            %d" % coorte.ja_no_crm)
+    print("sem telefone:         %d" % coorte.sem_telefone)
+    print("duplicados no CSV:    %d" % coorte.duplicados_no_csv)
+    print("leads a criar:        %d" % len(coorte.novos))
+
+    if len(coorte.novos) != args.esperado_novos:
+        print("ERRO: contagem nao bate com o esperado -> %d != %d" % (
+            len(coorte.novos), args.esperado_novos), file=sys.stderr)
+        return 1
+
+    preparar = montar_arquivo(coorte.novos)
+    for tabela in TABELAS_PROIBIDAS:
+        if tabela in preparar:
+            print("ERRO: SQL referencia tabela proibida %r" % tabela, file=sys.stderr)
+            return 1
+
+    os.makedirs(args.saida, exist_ok=True)
+    with open(os.path.join(args.saida, "preparar.sql"), "w", encoding="utf-8") as fh:
+        fh.write(preparar)
+    with open(os.path.join(args.saida, "rollback.sql"), "w", encoding="utf-8") as fh:
+        fh.write(montar_rollback())
+    print("gerado: %s/preparar.sql" % args.saida)
+    print("gerado: %s/rollback.sql" % args.saida)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
