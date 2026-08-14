@@ -1,0 +1,171 @@
+# scripts/reativacao/lote_completo.py
+"""Gera o SQL do lote completo do Bling. Nao executa nada.
+
+O artefato revisavel e o proprio .sql, aplicado por um humano via psql depois
+do pg_dump. Ver docs/superpowers/plans/2026-08-14-reativacao-bling-lote-completo.md
+
+Difere de generate_sql.py (lote de 10/08) em tres pontos: usa
+transform.normalizar_telefone_canonico (injeta o 9o digito), cria funil +
+etapas + deals, e nao tem curadoria manual de saudacao nem score de ICP.
+"""
+import csv
+import json
+import re
+from collections import namedtuple
+
+import transform
+
+LOTE = "reativacao_bling_2026-08-14"
+ORIGEM = "reativacao_bling"
+AUTOR_NOTA = "Sistema — Reativação Bling"
+PREFIXO_BRIEFING = "REATIVAÇÃO BLING 14/08/2026 — lote reativacao_bling_2026-08-14"
+
+# UUIDs hardcoded: deixam os INSERTs idempotentes e dao ao rollback um alvo
+# preciso. O de TAG_DEBITO_VENCIDO e referenciado pelo frontend
+# (frontend/src/lib/constants.ts) — mudar aqui exige mudar la.
+PIPELINE_ID = "b2f9c31d-8a47-4e26-95c0-3d7a1f6e8b09"
+PIPELINE_NOME = "Reativação Bling"
+
+# (key, label, cor, uuid) — a ordem da tupla e a ordem no Kanban.
+ETAPAS = (
+    ("ativo_0_3m",         "Ativo (0-3m)",        "#5aad65", "a1c4e7b2-5d38-4f61-9a02-7e5b3c8d1f40"),
+    ("inativo_3_6m",       "Inativo 3-6m",        "#d4b84a", "b2d5f8c3-6e49-4a72-8b13-6f4c2d9e0a51"),
+    ("inativo_6_12m",      "Inativo 6-12m",       "#d4a04a", "c3e6a9d4-7f50-4b83-9c24-5a3d1e8f2b62"),
+    ("inativo_12_24m",     "Inativo 12-24m",      "#e07a7a", "d4f7b0e5-8a61-4c94-8d35-4b2e0f7a3c73"),
+    ("inativo_24_36m",     "Inativo 24-36m",      "#c46a6a", "e5a8c1f6-9b72-4d05-9e46-3c1f0a6b4d84"),
+    ("inativo_36m_mais",   "Inativo 36m+",        "#9ca3af", "f6b9d2a7-0c83-4e16-8f57-2d0a1b5c6e95"),
+    ("pedido_sem_faturar", "Pedido sem faturar",  "#9b7abf", "07cae3b8-1d94-4f27-9068-1e0b2c4d7fa6"),
+    ("lead_sem_compra",    "Nunca comprou",       "#b0aca6", "18dbf4c9-2ea5-4038-8179-0f1c3d5e8ab7"),
+)
+
+ETAPA_POR_SEGMENTO = {
+    "ativo_0_3m": "ativo_0_3m",
+    "inativo_3_6m": "inativo_3_6m",
+    "inativo_6_12m": "inativo_6_12m",
+    "inativo_12_24m": "inativo_12_24m",
+    "inativo_24_36m": "inativo_24_36m",
+    "inativo_36m+": "inativo_36m_mais",
+    "pedido_sem_faturar": "pedido_sem_faturar",
+    "lead_sem_compra": "lead_sem_compra",
+}
+
+TAG_LOTE_ID = "7c4e2a19-3f68-4b02-9d5a-1e8f6c0b3d47"
+TAG_LOTE_NOME = "Reativação Bling 08/26"
+TAG_DEBITO_ID = "3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210"
+TAG_DEBITO_NOME = "Débito vencido"
+TAG_B2B_ID = "2249642b-e4f2-420e-8482-d07b325a28c8"  # ja existe no banco
+TAG_ECOMMERCE_ID = "5e2f7a83-4b91-4c60-a8d2-9f3e1b0c7d54"
+TAG_SEM_VENDEDOR_ID = "6f3a8b94-5c02-4d71-b9e3-0a4f2c1d8e65"
+
+# (uuid, nome, cor) das tags que este lote cria. B2B fica fora: ja existe.
+TAGS_A_CRIAR = (
+    (TAG_LOTE_ID, TAG_LOTE_NOME, "#7C3AED"),
+    (TAG_DEBITO_ID, TAG_DEBITO_NOME, "#DC2626"),
+    (TAG_ECOMMERCE_ID, "E-commerce", "#0D9488"),
+    (TAG_SEM_VENDEDOR_ID, "Sem vendedor", "#6B7280"),
+)
+
+PLATAFORMAS_ECOMMERCE = ("TRAY TECNOLOGIA EM ECOMMERCE LTDA", "WooCommerce", "Licitação")
+
+# Guardrail: o SQL gerado nunca pode tocar o disparo.
+TABELAS_PROIBIDAS = ("broadcasts", "broadcast_leads")
+
+Coorte = namedtuple("Coorte", "novos ja_no_crm sem_telefone duplicados_no_csv")
+
+
+def sql_literal(valor):
+    """Escapa para literal SQL; vazio/None viram NULL."""
+    if valor is None:
+        return "NULL"
+    texto = str(valor).strip()
+    if not texto:
+        return "NULL"
+    return "'" + texto.replace("'", "''") + "'"
+
+
+def etapa_de(linha):
+    """Key da etapa a partir do segmento_reativacao do Bling."""
+    segmento = (linha.get("segmento_reativacao") or "").strip()
+    if segmento not in ETAPA_POR_SEGMENTO:
+        raise ValueError(
+            "segmento desconhecido no CSV: %r — o funil tem 8 etapas fixas e um "
+            "segmento novo faria o lead sumir silenciosamente" % segmento
+        )
+    return ETAPA_POR_SEGMENTO[segmento]
+
+
+def perfil_comercial(linha):
+    """B2B | E-commerce | Sem vendedor — vira tag.
+
+    IDs numericos no campo vendedor sao vendedores humanos cujo nome nao foi
+    resolvido na extracao do Bling, entao contam como B2B.
+    """
+    vendedor = (linha.get("vendedor") or "").strip()
+    if vendedor in PLATAFORMAS_ECOMMERCE:
+        return "E-commerce"
+    if not vendedor:
+        return "Sem vendedor"
+    return "B2B"
+
+
+def telefone_da_linha(linha):
+    """Primeiro telefone utilizavel de uma linha, na forma canonica.
+
+    O piso de 10 digitos descarta dado truncado no Bling (ex.: "+33 6 68 60 37",
+    que perdeu os dois ultimos digitos) e deixa a busca cair na proxima coluna,
+    onde costuma estar o numero completo. Sem ele, o lead entraria com um
+    telefone que nao disca.
+    """
+    for campo in ("whatsapp", "celular", "telefone"):
+        fone = transform.normalizar_telefone_canonico(linha.get(campo))
+        if len(fone) >= 10:
+            return fone
+    return ""
+
+
+def selecionar_faltantes(linhas, telefones_crm):
+    """Divide o CSV em: a criar, ja no CRM, sem telefone, duplicados.
+
+    `telefones_crm` deve chegar JA normalizado pela forma canonica — quem
+    carrega o arquivo do banco (carregar_telefones_crm) faz isso.
+    """
+    novos, vistos = [], set()
+    ja_no_crm = sem_telefone = duplicados = 0
+    for linha in linhas:
+        fone = telefone_da_linha(linha)
+        if not fone:
+            sem_telefone += 1
+            continue
+        if fone in telefones_crm:
+            ja_no_crm += 1
+            continue
+        if fone in vistos:
+            duplicados += 1
+            continue
+        vistos.add(fone)
+        enriquecida = dict(linha)
+        enriquecida["_phone"] = fone
+        novos.append(enriquecida)
+    return Coorte(novos, ja_no_crm, sem_telefone, duplicados)
+
+
+def carregar_csv(caminho):
+    with open(caminho, encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh, delimiter=";"))
+
+
+def carregar_telefones_crm(caminho):
+    """Lê o dump de telefones do CRM (uma coluna por linha) já normalizado.
+
+    Aborta em arquivo vazio: tratar "CRM vazio" como estado normal faria o
+    script criar 1.218 leads duplicados sobre uma base que ja os tem.
+    """
+    with open(caminho, encoding="utf-8") as fh:
+        fones = {transform.normalizar_telefone_canonico(l) for l in fh if l.strip()}
+    fones.discard("")
+    if not fones:
+        raise ValueError(
+            "telefones_crm vazio: %s — o CRM tem 2.339 leads, um arquivo vazio "
+            "significa extracao quebrada, nao base vazia" % caminho
+        )
+    return fones
