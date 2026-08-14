@@ -310,9 +310,31 @@ class TestNormalizarTelefoneCanonico:
         assert transform.normalizar_telefone_canonico("353892098541") == "353892098541"
 
     def test_internacional_de_onze_digitos_ganha_55_limitacao_conhecida(self):
-        # Limitacao aceita: um numero estrangeiro sem DDI e indistinguivel de um
-        # BR sem DDI. O CSV do Bling entrega os internacionais ja com 12+ digitos.
+        # Limitacao aceita: a protecao contra estrangeiro-virando-BR depende do
+        # '+'/'00' estar presente. Sem DDI, 33 e um DDD valido (Espirito Santo),
+        # entao o numero da Franca ainda ganha 55 — a ambiguidade e irredutivel.
         assert transform.normalizar_telefone_canonico("33612345678") == "5533612345678"
+
+    def test_ddi_com_mais_nao_vira_numero_brasileiro(self):
+        # +31 6 39758812 (Holanda) virava 5531639758812 — DDD 31, Belo Horizonte.
+        assert transform.normalizar_telefone_canonico("+31639758812") == "31639758812"
+        assert transform.normalizar_telefone_canonico("+33 6 68 60 37 28") == "33668603728"
+
+    def test_prefixo_internacional_zero_zero_e_removido_inteiro(self):
+        assert transform.normalizar_telefone_canonico("00971558120123") == "971558120123"
+
+    def test_ddd_inexistente_sem_ddi_e_recusado(self):
+        # 39, 56, 80 e 08 nao existem no Brasil; interpretar como BR fabricaria numero.
+        assert transform.normalizar_telefone_canonico("5691234567") == ""
+        assert transform.normalizar_telefone_canonico("39912345678") == ""
+
+    def test_ddi_55_com_ddd_valido_continua_normalizando(self):
+        # DDI 55 + DDD 55 (Santa Maria/RS) e legitimo, nao pode ser recusado.
+        assert transform.normalizar_telefone_canonico("(55) 99927-1784") == "5555999271784"
+        assert transform.normalizar_telefone_canonico("+5534991461669") == "5534991461669"
+
+    def test_ddi_explicito_em_numero_brasileiro_de_doze_digitos(self):
+        assert transform.normalizar_telefone_canonico("+553491461669") == "5534991461669"
 
     def test_formatado_com_pontuacao(self):
         # (43) 4245-3258 e FIXO (assinante comeca em 4): a pontuacao e removida,

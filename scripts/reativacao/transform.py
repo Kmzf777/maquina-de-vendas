@@ -35,6 +35,22 @@ def normalizar_telefone(valor):
     return ""
 
 
+# DDDs em uso no Brasil. Um numero de 10-11 digitos sem DDI cujo prefixo nao
+# esteja aqui nao e brasileiro — prefixar 55 fabricaria um celular real de
+# outra pessoa (ex.: +31 6 39758812 da Holanda viraria DDD 31, Belo Horizonte).
+DDD_VALIDOS = frozenset((
+    "11", "12", "13", "14", "15", "16", "17", "18", "19",
+    "21", "22", "24", "27", "28",
+    "31", "32", "33", "34", "35", "37", "38",
+    "41", "42", "43", "44", "45", "46", "47", "48", "49",
+    "51", "53", "54", "55",
+    "61", "62", "63", "64", "65", "66", "67", "68", "69",
+    "71", "73", "74", "75", "77", "79",
+    "81", "82", "83", "84", "85", "86", "87", "88", "89",
+    "91", "92", "93", "94", "95", "96", "97", "98", "99",
+))
+
+
 def normalizar_telefone_canonico(valor):
     """E.164 sem '+' com o 9o digito injetado APENAS em celular brasileiro.
 
@@ -55,22 +71,47 @@ def normalizar_telefone_canonico(valor):
     marketing para estranhos. Sao 244 fixos nos 1.218 leads do lote.
     normalize_phone tem esse defeito; aqui ele nao e reproduzido.
 
-    Internacionais so passam intactos se ja vierem com 12+ digitos: um numero
-    estrangeiro de 10 ou 11 digitos e indistinguivel de um BR sem DDI e ganha
-    o prefixo 55. O CSV do Bling entrega os 12 internacionais ja com DDI.
+    Como o DDI e detectado: '+' ou '00' no inicio do valor bruto, lidos ANTES
+    do re.sub que os apaga. Com DDI o numero passa como esta — nunca ganha 55 —
+    e so e validado por comprimento (8-15, a faixa da E.164). Sem DDI, um numero
+    de 10-11 digitos precisa comecar por DDD em uso no Brasil; se nao comecar e
+    recusado ('') em vez de virar um BR fabricado: era assim que +31 6 39758812
+    (Holanda) virava 5531639758812, um celular valido com DDD 31 (Belo
+    Horizonte), que receberia o disparo de marketing no lugar do dono real.
+
+    Limite conhecido: a protecao depende do '+'/'00' estar presente. Um numero
+    estrangeiro sem DDI cujo prefixo coincida com um DDD brasileiro (ex.: o
+    33 6 1234-5678 da Franca colide com o DDD 33, Espirito Santo) ainda ganha
+    o 55 — sem o DDI a ambiguidade e irredutivel.
     """
-    digitos = re.sub(r"\D", "", valor or "")
+    bruto = (valor or "").strip()
+    # O '+' e o '00' dizem "ja tem DDI". Precisam ser lidos ANTES do re.sub,
+    # que os apaga — foi assim que 17 numeros estrangeiros viravam celular BR.
+    tem_ddi = bruto.startswith("+") or bruto.startswith("00")
+    digitos = re.sub(r"\D", "", bruto)
     if not digitos:
         return ""
-    # Prefixo de tronco/selecao de operadora ("0" de "0 34 ...", as vezes com a
-    # operadora junto) aparece nos exports do Bling; nao faz parte do numero.
-    if digitos.startswith("0"):
-        digitos = digitos[1:]
-    if len(digitos) in (10, 11):
-        digitos = "55" + digitos
-    if len(digitos) not in (12, 13):
-        return ""
-    if len(digitos) == 12 and digitos.startswith("55") and digitos[4] in "6789":
+
+    if tem_ddi:
+        if digitos.startswith("00"):
+            digitos = digitos[2:]
+        # Ja em E.164: nunca prefixar 55, e aceitar o comprimento que vier.
+        if not 8 <= len(digitos) <= 15:
+            return ""
+    else:
+        # Zero inicial e prefixo de tronco/selecao de operadora nos exports do
+        # Bling ("0 34 9146-1669"), nao parte do numero.
+        if digitos.startswith("0"):
+            digitos = digitos[1:]
+        if len(digitos) in (10, 11):
+            if digitos[:2] not in DDD_VALIDOS:
+                return ""
+            digitos = "55" + digitos
+        if len(digitos) not in (12, 13):
+            return ""
+
+    if (len(digitos) == 12 and digitos.startswith("55")
+            and digitos[2:4] in DDD_VALIDOS and digitos[4] in "6789"):
         digitos = digitos[:4] + "9" + digitos[4:]
     return digitos
 
