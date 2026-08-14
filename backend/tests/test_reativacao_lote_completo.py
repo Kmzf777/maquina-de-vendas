@@ -20,7 +20,7 @@ def _linha(**kw):
         "produto_top1": "Cafe Canastra", "qtd_top1": "10", "ticket_medio": "100,00",
         "pedidos_faturados": "10", "dias_sem_comprar": "5", "qtd_nfe": "10",
         "orcamentos": "0", "razao_social": "", "nome_fantasia": "",
-        "telefone_comercial": "",
+        "telefone_comercial": "", "fantasia": "",
     }
     base.update(kw)
     return base
@@ -139,6 +139,15 @@ class TestSqlLead:
         linha["_phone"] = lote_completo.telefone_da_linha(linha)
         sql = lote_completo.gerar_insert_lead(linha)
         assert "'Cafe Teste'" in sql
+
+    def test_nome_fantasia_vem_da_coluna_fantasia_do_bling(self):
+        # A coluna do CSV do Bling e "fantasia"; "nome_fantasia" e o nome da
+        # coluna no CRM. Ler pelo nome do CRM devolvia NULL em todos os leads.
+        linha = _linha(nome="CAFE TESTE LTDA")
+        linha["fantasia"] = "Cafe do Teste"
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "'Cafe do Teste'" in sql
 
     def test_metadata_tem_as_chaves_de_rastreio(self):
         linha = _linha(id_bling="777", vendedor="Arthur Silva")

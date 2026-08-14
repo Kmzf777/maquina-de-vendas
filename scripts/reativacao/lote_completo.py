@@ -204,7 +204,9 @@ def gerar_insert_lead(linha):
             sql_literal(nome_do_lead(linha)),
             sql_literal(linha.get("nome")),
             sql_literal(linha.get("razao_social") or linha.get("nome")),
-            sql_literal(linha.get("nome_fantasia")),
+            # A coluna do CSV do Bling se chama "fantasia"; "nome_fantasia" e o
+            # nome da coluna no CRM. Ler pelo nome do CRM devolvia NULL sempre.
+            sql_literal(linha.get("fantasia")),
             sql_literal(re.sub(r"\D", "", linha.get("cpf_cnpj") or "")),
             sql_literal(linha.get("email")),
             sql_literal(linha.get("endereco_entrega") or linha.get("logradouro")),
