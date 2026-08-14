@@ -17,6 +17,12 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 # precisam desses valores os definem explicitamente via monkeypatch/mock.
 os.environ.setdefault("REHEARSAL_MODE", "false")
 os.environ.setdefault("AI_PHONE_NUMBER_ID", "")
+# Mesmo motivo: templates/service.py e preflight.py caem em os.environ["META_WABA_ID"]
+# quando o provider_config do canal nao traz waba_id, e test_templates_service
+# verifica justamente o 400 de "nao configurado". Com um .env.local real (o contrato
+# de ambiente pede META_WABA_ID preenchido), esse teste falhava na maquina do dev e
+# passava no CI — o pior tipo de teste, o que so quebra fora da esteira.
+os.environ.setdefault("META_WABA_ID", "")
 # Jitter de reação humana (processor._human_extra_first_delay) é sorteado por faixa
 # horária — num teste ele tornaria o pacing dependente da hora local (pulsos extras
 # de "digitando"). Baseline hermético: OFF na suíte; os testes do próprio jitter
