@@ -113,6 +113,13 @@ def normalizar_telefone_canonico(valor):
     if (len(digitos) == 12 and digitos.startswith("55")
             and digitos[2:4] in DDD_VALIDOS and digitos[4] in "6789"):
         digitos = digitos[:4] + "9" + digitos[4:]
+    # Um numero que se declara brasileiro (comeca com 55 e tem 12-13 digitos)
+    # precisa ter DDD em uso e assinante valido. Sem esta checagem o veredito
+    # dependia da formatacao: "(39) 6219-3432" era recusado no ramo de 10-11
+    # digitos, mas "553962193432" passava inteiro.
+    if digitos.startswith("55") and len(digitos) in (12, 13):
+        if digitos[2:4] not in DDD_VALIDOS or digitos[4] not in "23456789":
+            return ""
     return digitos
 
 

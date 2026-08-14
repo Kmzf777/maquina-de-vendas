@@ -328,6 +328,18 @@ class TestNormalizarTelefoneCanonico:
         assert transform.normalizar_telefone_canonico("5691234567") == ""
         assert transform.normalizar_telefone_canonico("39912345678") == ""
 
+    def test_ddd_inexistente_com_prefixo_55_e_recusado(self):
+        assert transform.normalizar_telefone_canonico("553962193432") == ""
+        assert transform.normalizar_telefone_canonico("550000000000") == ""
+
+    def test_assinante_invalido_e_recusado(self):
+        # Assinante nao pode comecar em 0 ou 1, nem fixo nem movel.
+        assert transform.normalizar_telefone_canonico("559811642549") == ""
+
+    def test_a_recusa_independe_da_formatacao(self):
+        assert (transform.normalizar_telefone_canonico("(39) 6219-3432")
+                == transform.normalizar_telefone_canonico("553962193432") == "")
+
     def test_ddi_55_com_ddd_valido_continua_normalizando(self):
         # DDI 55 + DDD 55 (Santa Maria/RS) e legitimo, nao pode ser recusado.
         assert transform.normalizar_telefone_canonico("(55) 99927-1784") == "5555999271784"
