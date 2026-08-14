@@ -35,7 +35,10 @@ export function InadimplentesWarning({
   if (variant === "review") {
     return (
       <p className="text-[13px] text-[#c41c1c]">
-        ⚠ {inadimplentes.length} dos {selectedLeadIds.size} com débito vencido ({total})
+        ⚠ {inadimplentes.length} dos {selectedLeadIds.size} com débito vencido
+        {/* Sem o guard, um lead tagueado à mão (sem valor_vencido no metadata)
+            faria a revisão exibir "(R$ 0,00)", que lê como dívida zerada. */}
+        {totalVencido > 0 && <> ({total})</>}
       </p>
     );
   }
