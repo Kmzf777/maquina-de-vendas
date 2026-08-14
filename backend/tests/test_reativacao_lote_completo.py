@@ -246,3 +246,52 @@ class TestSqlDeal:
         sql = lote_completo.gerar_insert_deal(linha)
         assert "NOT EXISTS" in sql
         assert lote_completo.PIPELINE_ID in sql
+
+
+class TestSqlTags:
+    def _coorte(self):
+        linhas = [
+            _linha(id_bling="1", whatsapp="5511900000001", vendedor="Arthur"),
+            _linha(id_bling="2", whatsapp="5511900000002", vendedor="WooCommerce"),
+            _linha(id_bling="3", whatsapp="5511900000003", vendedor=""),
+            _linha(id_bling="4", whatsapp="5511900000004", vendedor="Arthur",
+                   valor_vencido="500,00", titulos_vencidos="1", dias_atraso_max="30"),
+        ]
+        return lote_completo.selecionar_faltantes(linhas, set()).novos
+
+    def test_cria_as_quatro_tags_novas_e_nao_a_b2b(self):
+        sql = lote_completo.gerar_tags(self._coorte())
+        criacoes = [s for s in sql.split(";") if "INSERT INTO tags" in s]
+        assert len(criacoes) == 4
+        # B2B ja existe no banco: aparece no vinculo, nunca numa criacao.
+        assert all(lote_completo.TAG_B2B_ID not in c for c in criacoes)
+        assert lote_completo.TAG_B2B_ID in sql
+
+    def test_tag_do_lote_cobre_todos(self):
+        sql = lote_completo.gerar_tags(self._coorte())
+        bloco = [b for b in sql.split(";") if lote_completo.TAG_LOTE_ID in b and "lead_tags" in b][0]
+        for fone in ("5511900000001", "5511900000002", "5511900000003", "5511900000004"):
+            assert fone in bloco
+
+    def test_b2b_so_pega_quem_tem_vendedor_humano(self):
+        sql = lote_completo.gerar_tags(self._coorte())
+        bloco = [b for b in sql.split(";") if lote_completo.TAG_B2B_ID in b and "lead_tags" in b][0]
+        assert "5511900000001" in bloco
+        assert "5511900000004" in bloco
+        assert "5511900000002" not in bloco
+        assert "5511900000003" not in bloco
+
+    def test_debito_so_pega_quem_tem_valor_vencido(self):
+        sql = lote_completo.gerar_tags(self._coorte())
+        bloco = [b for b in sql.split(";") if lote_completo.TAG_DEBITO_ID in b and "lead_tags" in b][0]
+        assert "5511900000004" in bloco
+        assert "5511900000001" not in bloco
+
+    def test_vinculo_e_idempotente(self):
+        sql = lote_completo.gerar_tags(self._coorte())
+        assert sql.count("NOT EXISTS") >= 4
+
+    def test_tag_sem_ninguem_nao_gera_vinculo_vazio(self):
+        coorte = [c for c in self._coorte() if c["id_bling"] == "1"]
+        sql = lote_completo.gerar_tags(coorte)
+        assert lote_completo.TAG_DEBITO_ID not in sql.split("INSERT INTO lead_tags")[-1]

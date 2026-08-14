@@ -255,6 +255,54 @@ def gerar_insert_deal(linha):
     )
 
 
+def _vinculo_tag(tag_id, telefones):
+    """Associa a tag a um conjunto de telefones, sem duplicar vinculo.
+
+    NOT EXISTS em vez de ON CONFLICT porque nao ha garantia de constraint
+    unica em lead_tags(lead_id, tag_id).
+    """
+    if not telefones:
+        return ""
+    lista = ", ".join(sql_literal(f) for f in sorted(telefones))
+    return (
+        "INSERT INTO lead_tags (lead_id, tag_id)\n"
+        "SELECT l.id, %s FROM leads l WHERE l.phone IN (%s)\n"
+        "  AND NOT EXISTS (SELECT 1 FROM lead_tags t WHERE t.lead_id = l.id "
+        "AND t.tag_id = %s);\n" % (sql_literal(tag_id), lista, sql_literal(tag_id))
+    )
+
+
+def gerar_tags(coorte):
+    """Cria as tags do lote e associa cada uma ao seu subconjunto.
+
+    B2B ja existe no banco (2249642b-...), entao so ganha vinculo.
+    """
+    partes = ["-- Tags do lote"]
+    for tag_id, nome, cor in TAGS_A_CRIAR:
+        partes.append(
+            "INSERT INTO tags (id, name, color) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING;" % (
+                sql_literal(tag_id), sql_literal(nome), sql_literal(cor))
+        )
+    partes.append("")
+
+    por_perfil = {"B2B": set(), "E-commerce": set(), "Sem vendedor": set()}
+    todos, com_debito = set(), set()
+    for linha in coorte:
+        fone = linha["_phone"]
+        todos.add(fone)
+        por_perfil[perfil_comercial(linha)].add(fone)
+        if transform.parse_numero(linha.get("valor_vencido")) > 0:
+            com_debito.add(fone)
+
+    partes.append(_vinculo_tag(TAG_LOTE_ID, todos))
+    partes.append(_vinculo_tag(TAG_B2B_ID, por_perfil["B2B"]))
+    partes.append(_vinculo_tag(TAG_ECOMMERCE_ID, por_perfil["E-commerce"]))
+    partes.append(_vinculo_tag(TAG_SEM_VENDEDOR_ID, por_perfil["Sem vendedor"]))
+    partes.append(_vinculo_tag(TAG_DEBITO_ID, com_debito))
+    return "\n".join(p for p in partes if p is not None)
+
+
 def gerar_pipeline_e_etapas():
     """Funil + 8 etapas, idempotentes pelo UUID fixo.
 
