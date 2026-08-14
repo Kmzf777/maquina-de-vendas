@@ -283,14 +283,21 @@ class TestFormatarData:
 
 
 class TestNormalizarTelefoneCanonico:
-    def test_br_doze_digitos_recebe_nono_digito(self):
-        assert transform.normalizar_telefone_canonico("554342453258") == "5543942453258"
+    def test_celular_antigo_doze_digitos_recebe_nono_digito(self):
+        assert transform.normalizar_telefone_canonico("553491461669") == "5534991461669"
 
     def test_treze_digitos_permanece(self):
         assert transform.normalizar_telefone_canonico("5534991461669") == "5534991461669"
 
-    def test_fixo_dez_digitos_vira_treze(self):
-        assert transform.normalizar_telefone_canonico("3432151234") == "5534932151234"
+    def test_fixo_nao_recebe_nono_digito(self):
+        # (34) 3215-1234 e FIXO (assinante comeca em 3). Injetar o 9 aqui
+        # fabricaria 34 9 3215-1234, um celular que pode ser de outra pessoa.
+        assert transform.normalizar_telefone_canonico("3432151234") == "553432151234"
+        assert transform.normalizar_telefone_canonico("556833020386") == "556833020386"
+
+    def test_celular_antigo_de_dez_digitos_recebe_o_nono(self):
+        # (34) 9146-1669 e celular antigo (assinante comeca em 9).
+        assert transform.normalizar_telefone_canonico("3491461669") == "5534991461669"
 
     def test_onze_digitos_recebe_55(self):
         assert transform.normalizar_telefone_canonico("34991461669") == "5534991461669"
@@ -302,8 +309,17 @@ class TestNormalizarTelefoneCanonico:
         assert transform.normalizar_telefone_canonico("971542711390") == "971542711390"
         assert transform.normalizar_telefone_canonico("353892098541") == "353892098541"
 
+    def test_internacional_de_onze_digitos_ganha_55_limitacao_conhecida(self):
+        # Limitacao aceita: um numero estrangeiro sem DDI e indistinguivel de um
+        # BR sem DDI. O CSV do Bling entrega os internacionais ja com 12+ digitos.
+        assert transform.normalizar_telefone_canonico("33612345678") == "5533612345678"
+
     def test_formatado_com_pontuacao(self):
-        assert transform.normalizar_telefone_canonico("(43) 4245-3258") == "5543942453258"
+        # (43) 4245-3258 e FIXO (assinante comeca em 4): a pontuacao e removida,
+        # mas o 9 nao entra.
+        assert transform.normalizar_telefone_canonico("(43) 4245-3258") == "554342453258"
+        # E o mesmo numero com assinante movel mantem a injecao.
+        assert transform.normalizar_telefone_canonico("(43) 9245-3258") == "5543992453258"
 
     def test_vazio_e_invalido_devolvem_vazio(self):
         assert transform.normalizar_telefone_canonico("") == ""
@@ -311,9 +327,12 @@ class TestNormalizarTelefoneCanonico:
         assert transform.normalizar_telefone_canonico("123") == ""
 
     def test_divergencia_documentada_com_a_funcao_antiga(self):
-        # A funcao antiga preserva 12 digitos; a canonica injeta o 9.
-        assert transform.normalizar_telefone("554342453258") == "554342453258"
-        assert transform.normalizar_telefone_canonico("554342453258") == "5543942453258"
+        # A antiga preserva 12 digitos sempre; a canonica injeta o 9 so em movel.
+        assert transform.normalizar_telefone("553491461669") == "553491461669"
+        assert transform.normalizar_telefone_canonico("553491461669") == "5534991461669"
+        # E em fixo as duas concordam.
+        assert transform.normalizar_telefone("553432151234") == "553432151234"
+        assert transform.normalizar_telefone_canonico("553432151234") == "553432151234"
 
 
 class TestBriefingParametrizavel:

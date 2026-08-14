@@ -36,29 +36,41 @@ def normalizar_telefone(valor):
 
 
 def normalizar_telefone_canonico(valor):
-    """E.164 sem '+' COM o 9o digito BR injetado.
+    """E.164 sem '+' com o 9o digito injetado APENAS em celular brasileiro.
 
-    Espelha backend/app/leads/service.py::normalize_phone — a forma que o
-    webhook do WhatsApp grava em leads.phone. Diferente de
-    normalizar_telefone(), que preserva 12 digitos como estao.
+    Converge com backend/app/leads/service.py::normalize_phone para celulares —
+    a forma que o webhook do WhatsApp grava em leads.phone — e diverge dele de
+    proposito em fixos. Nao cobre BSUID nem telefone dobrado, que sao entradas
+    do webhook, nunca do CSV do Bling.
 
-    Usar a forma de 12 digitos num INSERT de lead cria duplicata logica: quando
-    a pessoa responder, o webhook grava o registro de 13 digitos e a conversa
-    fica partida entre dois leads (leads.phone e UNIQUE pela string exata).
+    Por que a forma de 13 digitos importa: gravar um celular com 12 digitos cria
+    duplicata logica — quando a pessoa responder, o webhook grava o registro de
+    13 digitos e a conversa fica partida entre dois leads (leads.phone e UNIQUE
+    pela string exata).
 
-    Numeros internacionais nao sao tocados: a injecao so acontece quando o
-    numero tem 12 digitos E comeca com 55.
+    Por que fixo NAO recebe o 9: no plano de numeracao brasileiro o assinante
+    movel comeca em 6-9 e o fixo em 2-5. Injetar o 9 em (34) 3215-1234 produz
+    34 9 3215-1234 — um celular valido que provavelmente pertence a OUTRA
+    pessoa. Como este lote alimenta disparo de template, isso mandaria
+    marketing para estranhos. Sao 244 fixos nos 1.218 leads do lote.
+    normalize_phone tem esse defeito; aqui ele nao e reproduzido.
+
+    Internacionais so passam intactos se ja vierem com 12+ digitos: um numero
+    estrangeiro de 10 ou 11 digitos e indistinguivel de um BR sem DDI e ganha
+    o prefixo 55. O CSV do Bling entrega os 12 internacionais ja com DDI.
     """
     digitos = re.sub(r"\D", "", valor or "")
     if not digitos:
         return ""
+    # Prefixo de tronco/selecao de operadora ("0" de "0 34 ...", as vezes com a
+    # operadora junto) aparece nos exports do Bling; nao faz parte do numero.
     if digitos.startswith("0"):
         digitos = digitos[1:]
     if len(digitos) in (10, 11):
         digitos = "55" + digitos
     if len(digitos) not in (12, 13):
         return ""
-    if len(digitos) == 12 and digitos.startswith("55"):
+    if len(digitos) == 12 and digitos.startswith("55") and digitos[4] in "6789":
         digitos = digitos[:4] + "9" + digitos[4:]
     return digitos
 
