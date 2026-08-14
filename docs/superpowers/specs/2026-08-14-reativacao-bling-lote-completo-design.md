@@ -1,8 +1,19 @@
-# Importação do lote completo do Bling para o CRM — design
+# Importação do lote completo do Bling + aviso de inadimplentes no disparo — design
 
 **Data:** 2026-08-14
 **Branch:** `feat/reativacao-bling-lote-completo`
-**Origem dos requisitos:** sessão de brainstorming em 2026-08-14 (4 decisões do usuário, registradas em "Decisões")
+**Origem dos requisitos:** sessão de brainstorming em 2026-08-14 (5 decisões do usuário, registradas em "Decisões")
+
+**Duas entregas, caminhos de deploy diferentes:**
+
+| | Parte 1 — Dados | Parte 2 — Aviso na UI |
+|---|---|---|
+| O que é | 1.240 leads, funil, etapas, tags, briefings | banner de inadimplentes no modal de disparo |
+| Como vai ao ar | `preparar.sql` aplicado via `psql` na VPS | commit → push para `master` → GitHub Actions |
+| Depende de | — | da tag `Débito vencido` criada na Parte 1 |
+
+A Parte 2 é inócua enquanto a Parte 1 não roda: sem nenhum lead com a tag, o banner
+simplesmente nunca aparece. As duas podem subir em qualquer ordem.
 **Antecessor:** `2026-08-08-reativacao-crm-preparacao-design.md` (lote de 276 contatos, **nunca aplicado** — ver "Estado do lote anterior")
 
 ---
@@ -35,9 +46,12 @@ fração visível para ~28%.
 
 ## Escopo
 
-Criar no CRM os leads ausentes que têm telefone, organizados num funil dedicado com
-etapas por recência de compra, marcados por tag de perfil, cada um com uma nota de
-briefing para o vendedor.
+**Parte 1.** Criar no CRM os leads ausentes que têm telefone, organizados num funil
+dedicado com etapas por recência de compra, marcados por tag de perfil, cada um com uma
+nota de briefing para o vendedor.
+
+**Parte 2.** Avisar, no modal de criação de disparo, quando houver leads com débito
+vencido entre os selecionados — mostrando quais são e oferecendo desmarcá-los.
 
 ### Fora de escopo
 
@@ -50,7 +64,10 @@ briefing para o vendedor.
 - Corrigir o teto de 1.000 em `GET /api/leads`. É um defeito real e está registrado em
   "Dívida técnica descoberta", mas o desenho deste lote foi feito para não depender da
   correção.
-- Alterar código de backend ou frontend.
+- **O aviso na aba CSV do disparo.** Naquele caminho o modal envia o arquivo direto para
+  `POST /api/broadcasts/{id}/import` e nunca vê os leads (que são criados no backend), então
+  não há o que checar no cliente. O aviso vale só para a aba CRM.
+- Alterar código de backend.
 
 ## Universo de dados
 
@@ -172,6 +189,14 @@ social do Bling — o problema que o lote anterior resolveu com a coluna `saudac
 haveria briefing, tag, metadata nem rollback) e um script via PostgREST (sem transação
 multi-statement, e o banco não tem backup).
 
+**D5 — A tag `Débito vencido` é fixa e o disparo avisa sobre ela.** A tag deixa de ser um
+rótulo qualquer e vira contrato: UUID hardcoded, protegida contra rename e exclusão na
+API, e lida pelo modal de disparo. Quando houver leads com ela entre os selecionados, o
+modal mostra um banner com a lista e um botão para desmarcá-los. **Não bloqueia a criação
+do disparo** — travar contradiria D2, que decidiu incluir os inadimplentes na base; o
+papel do aviso é garantir que a inclusão num disparo específico seja consciente, não
+impedi-la.
+
 ## Estrutura
 
 ### Funil
@@ -197,13 +222,17 @@ Todas com `is_protected = false`, `order_index` na ordem abaixo (quente → frio
 
 ### Tags
 
-| Tag | Qtd | Estado |
-|---|---|---|
-| `Reativação Bling 08/26` | 1.240 | nova (UUID hardcoded, como o lote anterior) |
-| `B2B` | 730 | já existe (`2249642b-…`) |
-| `E-commerce` | 299 | nova |
-| `Sem vendedor` | 211 | nova |
-| `Débito vencido` | 182 | nova |
+| Tag | Qtd | UUID | Estado |
+|---|---|---|---|
+| `Reativação Bling 08/26` | 1.240 | `7c4e2a19-3f68-4b02-9d5a-1e8f6c0b3d47` | nova, hardcoded |
+| `B2B` | 730 | `2249642b-e4f2-420e-8482-d07b325a28c8` | já existe |
+| `E-commerce` | 299 | gerado no insert | nova |
+| `Sem vendedor` | 211 | gerado no insert | nova |
+| `Débito vencido` | 182 | `3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210` | nova, **fixa** (D5) |
+
+Os UUIDs hardcoded existem por dois motivos distintos: o do lote deixa o `INSERT`
+idempotente e dá ao rollback um alvo preciso; o de `Débito vencido` é referenciado pelo
+código do frontend (ver Parte 2), então precisa ser estável entre ambientes.
 
 `B2B` = tem vendedor humano nomeado no Bling. `E-commerce` = origem Tray, WooCommerce ou
 Licitação. `Sem vendedor` = campo `vendedor` vazio. Os IDs numéricos do Bling no campo
@@ -224,6 +253,11 @@ de `transform.py`, que remove código/CNPJ do início e sufixos empresariais —
 `metadata`: `origem='reativacao_bling'`, `lote='reativacao_bling_2026-08-14'`, `id_bling`,
 `segmento`, `vendedor_anterior`, `total_gasto`, `ultima_compra`, `criado_por_lote=true`.
 As duas primeiras chaves juntas são o que o rollback usa — nunca `lote` sozinho.
+
+Nos 182 com débito, `metadata` recebe também `valor_vencido` (número), `titulos_vencidos`
+(inteiro) e `dias_atraso_max` (inteiro). São o que o banner da Parte 2 exibe. Ficam em
+`metadata` e não em colunas próprias porque `GET /api/leads` faz `select=*` — o dado chega
+ao modal sem consulta adicional nem migração de schema.
 
 ### Deal
 
@@ -263,7 +297,64 @@ Variações obrigatórias:
 - Sem a linha `ICP` do lote anterior: aquele score vinha do CSV master enriquecido com
   BrasilAPI, que não faz parte desta entrada.
 
+## Parte 2 — Aviso de inadimplentes no modal de disparo
+
+### Por que dá para fazer sem consulta nova
+
+`GET /api/leads` já devolve `*, lead_tags(tag_id, tags(*))`. O modal, portanto, tem em
+`leads` tanto as tags quanto o `metadata` de cada lead. O aviso é cálculo local sobre
+estado que já está carregado — nenhuma rota nova, nenhum round-trip.
+
+### A tag como contrato
+
+`TAG_DEBITO_VENCIDO_ID = "3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210"` em
+`frontend/src/lib/constants.ts` (onde já vive `DEAL_CATEGORIES`), e repetido em
+`scripts/reativacao/generate_sql.py`. A duplicação é deliberada — os dois lados precisam
+concordar e não compartilham runtime —, e é responsabilidade do plano manter um comentário
+cruzado em cada lado.
+
+`PUT` e `DELETE` em `frontend/src/app/api/tags/[id]/route.ts` passam a devolver **409** para
+esse ID, com mensagem explicando que o modal de disparo depende da tag. Sem isso, "tag
+fixa" seria só convenção: hoje qualquer um renomeia ou apaga uma tag pela UI e o aviso
+sumiria em silêncio — que é exatamente o modo de falha mais perigoso de um alerta.
+
+### Componentes
+
+- **`frontend/src/lib/inadimplentes.ts`** — função pura
+  `findInadimplentes(leads, selectedIds)` → `{ leads: Lead[]; totalVencido: number }`.
+  Filtra os selecionados que têm `lead_tags` com `tag_id === TAG_DEBITO_VENCIDO_ID`, soma
+  `metadata.valor_vencido`. Tolera `metadata` ausente, `valor_vencido` string, `null` ou
+  lixo (trata como 0) — leads tagueados à mão depois não terão essas chaves.
+- **`frontend/src/components/campaigns/inadimplentes-warning.tsx`** — o banner.
+  Props: `leads`, `selectedLeadIds`, `onDeselect(ids)`, `variant: "selection" | "review"`.
+  Componente separado porque `create-broadcast-modal.tsx` já tem ~1.250 linhas; enfiar mais
+  UI lá dentro piora um arquivo que já está grande demais.
+
+### Comportamento
+
+Não renderiza nada quando não há inadimplente selecionado.
+
+**`variant="selection"`** (step 3, acima da tabela): `⚠ N dos M selecionados têm débito
+vencido`, os 3 primeiros com nome, telefone, valor e dias de atraso, um `+N outros` que
+expande a lista inteira, e o botão **`Desmarcar os N`**, que chama `onDeselect` com os ids
+e remove todos de uma vez.
+
+**`variant="review"`** (step 4): uma linha compacta com a contagem e o total vencido. Sem
+botão. **Não desabilita o botão de criar o disparo** (D5).
+
+Leads com a tag mas sem `valor_vencido` no metadata aparecem na lista com nome e telefone,
+sem a parte monetária, e contam na contagem — nunca somem do aviso por falta de dado.
+
+### Testes
+
+`findInadimplentes` é função pura e ganha testes em `frontend/src/lib/inadimplentes.test.ts`,
+seguindo o padrão de `phone.test.ts` e `stats-mappers.test.ts` (vitest): nenhum
+selecionado; nenhum com a tag; alguns com a tag; `metadata` ausente; `valor_vencido` como
+string com vírgula decimal; lead com a tag mas não selecionado (não pode contar).
+
 ## Critérios de aceitação
+
+### Parte 1 — Dados
 
 1. `pg_dump` gerado, com tamanho reportado, antes de qualquer escrita.
 2. `select count(*) from leads where metadata->>'origem'='reativacao_bling' and metadata->>'lote'='reativacao_bling_2026-08-14'` = **1.240**.
@@ -280,6 +371,26 @@ Variações obrigatórias:
     funil e das 8 etapas.
 11. Cada etapa, consultada por `pipeline_id` + `stage_id`, devolve o total esperado sem
     truncar (todas ≤ 692, abaixo do teto de 1.000).
+12. A tag `Débito vencido` existe com o UUID `3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210` e tem
+    exatamente 182 vínculos, e os 182 leads têm `valor_vencido`, `titulos_vencidos` e
+    `dias_atraso_max` em `metadata`.
+
+### Parte 2 — Aviso na UI
+
+13. Sem inadimplente entre os selecionados, o modal fica **idêntico ao de hoje** — nenhum
+    espaço reservado, nenhuma borda a mais.
+14. Com inadimplentes selecionados, o banner aparece no step 3 com a contagem correta e os
+    3 primeiros nomes; `+N outros` expande para a lista completa.
+15. `Desmarcar os N` remove todos os inadimplentes da seleção numa ação, e o banner
+    desaparece.
+16. O step 4 mostra contagem e total vencido, e o botão de criar o disparo **continua
+    habilitado**.
+17. Um lead com a tag mas sem `metadata.valor_vencido` aparece na lista (nome e telefone) e
+    conta na contagem, sem quebrar a soma.
+18. `PUT` e `DELETE` em `/api/tags/3d1b8e6c-…` devolvem 409; outras tags seguem editáveis e
+    removíveis.
+19. `findInadimplentes` tem testes cobrindo os seis casos listados em "Testes", e a suíte do
+    frontend passa inteira.
 
 ## Dívida técnica descoberta
 
