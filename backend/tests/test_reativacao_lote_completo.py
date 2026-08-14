@@ -118,3 +118,64 @@ class TestSqlFunil:
     def test_nenhuma_etapa_e_protegida(self):
         sql = lote_completo.gerar_pipeline_e_etapas()
         assert "true)" not in sql.split("pipeline_stages")[-1]
+
+
+class TestSqlLead:
+    def test_insere_com_telefone_canonico(self):
+        linha = _linha(whatsapp="553491461669")   # celular antigo: ganha o 9
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "'5534991461669'" in sql
+        assert "ON CONFLICT (phone) DO NOTHING" in sql
+
+    def test_fixo_entra_com_doze_digitos(self):
+        linha = _linha(whatsapp="554342453258")   # fixo: preserva 12 digitos
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "'554342453258'" in sql
+
+    def test_nome_vem_limpo_de_sufixo_empresarial(self):
+        linha = _linha(nome="CAFE TESTE LTDA")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "'Cafe Teste'" in sql
+
+    def test_metadata_tem_as_chaves_de_rastreio(self):
+        linha = _linha(id_bling="777", vendedor="Arthur Silva")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        # Testa o dicionario direto: extrair JSON de dentro do SQL por split e
+        # fragil e o que quebra e o teste, nao o codigo.
+        metadata = lote_completo.metadata_do_lead(linha)
+        assert metadata["origem"] == lote_completo.ORIGEM
+        assert metadata["lote"] == lote_completo.LOTE
+        assert metadata["criado_por_lote"] == lote_completo.LOTE
+        assert metadata["id_bling"] == "777"
+        assert metadata["vendedor_anterior"] == "Arthur Silva"
+        assert metadata["segmento"] == "ativo_0_3m"
+
+    def test_metadata_carrega_debito_quando_existe(self):
+        linha = _linha(valor_vencido="1.234,56", titulos_vencidos="3", dias_atraso_max="190")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert '"valor_vencido": 1234.56' in sql
+        assert '"titulos_vencidos": 3' in sql
+        assert '"dias_atraso_max": 190' in sql
+
+    def test_metadata_omite_debito_quando_zerado(self):
+        linha = _linha(valor_vencido="0,00")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "valor_vencido" not in sql
+
+    def test_ai_enabled_entra_como_booleano_e_nao_string(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "'False'" not in sql
+        assert "false" in sql
+
+    def test_nao_escreve_assigned_to(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        assert "assigned_to" not in sql

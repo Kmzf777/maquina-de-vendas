@@ -149,6 +149,71 @@ def selecionar_faltantes(linhas, telefones_crm):
     return Coorte(novos, ja_no_crm, sem_telefone, duplicados)
 
 
+def metadata_do_lead(linha):
+    """Chaves de rastreio + os numeros do debito que o banner da UI exibe.
+
+    origem+lote juntas sao o que o rollback usa; criado_por_lote marca quem
+    este lote CRIOU (distinto de quem ele apenas tocou).
+    """
+    dados = {
+        "origem": ORIGEM,
+        "lote": LOTE,
+        "criado_por_lote": LOTE,
+        "id_bling": (linha.get("id_bling") or "").strip(),
+        "segmento": etapa_de(linha),
+        "vendedor_anterior": (linha.get("vendedor") or "").strip(),
+        "total_gasto": transform.parse_numero(linha.get("total_gasto")),
+        "ultima_compra": (linha.get("ultima_compra") or "").strip(),
+        "whatsapp_tipo": (linha.get("whatsapp_tipo") or "").strip(),
+        "phone_raw": (linha.get("whatsapp") or "").strip(),
+    }
+    if transform.parse_numero(linha.get("valor_vencido")) > 0:
+        dados["valor_vencido"] = transform.parse_numero(linha.get("valor_vencido"))
+        dados["titulos_vencidos"] = transform.parse_inteiro(linha.get("titulos_vencidos"))
+        dados["dias_atraso_max"] = transform.parse_inteiro(linha.get("dias_atraso_max"))
+    return dados
+
+
+def nome_do_lead(linha):
+    """leads.name e o que o cliente le como {{1}} no template do WhatsApp.
+
+    Este lote nao tem coluna 'saudacao' curada a mao (o de 10/08 tinha, para
+    276 linhas); escolher_saudacao limpa codigo/CNPJ do inicio e sufixos
+    empresariais do nome legal do Bling.
+    """
+    return transform.escolher_saudacao(None, linha.get("nome"))
+
+
+def gerar_insert_lead(linha):
+    """INSERT idempotente de um lead novo.
+
+    ai_enabled entra como literal booleano, nunca via sql_literal (que
+    renderizaria a STRING 'False'): leads.ai_enabled e NOT NULL DEFAULT TRUE, e
+    o motor de automacao seleciona por "ai_enabled = true AND stage = ...".
+
+    assigned_to fica de fora (decisao D3): sem dono ate a campanha ser montada.
+    """
+    metadata = json.dumps(metadata_do_lead(linha), ensure_ascii=False, sort_keys=True)
+    return (
+        "INSERT INTO leads (phone, name, company, razao_social, nome_fantasia, "
+        "cnpj, email, endereco, telefone_comercial, stage, status, channel, "
+        "ai_enabled, opt_out, metadata) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
+        "%s, 'pending', 'imported', 'manual', false, false, %s::jsonb) "
+        "ON CONFLICT (phone) DO NOTHING;" % (
+            sql_literal(linha["_phone"]),
+            sql_literal(nome_do_lead(linha)),
+            sql_literal(linha.get("nome")),
+            sql_literal(linha.get("razao_social") or linha.get("nome")),
+            sql_literal(linha.get("nome_fantasia")),
+            sql_literal(re.sub(r"\D", "", linha.get("cpf_cnpj") or "")),
+            sql_literal(linha.get("email")),
+            sql_literal(linha.get("endereco_entrega") or linha.get("logradouro")),
+            sql_literal(linha.get("telefone")),
+            sql_literal(metadata),
+        )
+    )
+
+
 def gerar_pipeline_e_etapas():
     """Funil + 8 etapas, idempotentes pelo UUID fixo.
 
