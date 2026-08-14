@@ -1,11 +1,22 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { TAG_DEBITO_VENCIDO_ID } from "@/lib/constants";
+
+// A tag fixa de inadimplência é contrato do modal de disparo: se alguém a
+// renomear ou apagar pela UI, o aviso de débito vencido some em silêncio —
+// o pior modo de falha possível para um alerta.
+const TAG_FIXA_ERRO =
+  "A tag \"Débito vencido\" é fixa: o modal de criação de disparo depende dela " +
+  "para avisar sobre leads inadimplentes.";
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (id === TAG_DEBITO_VENCIDO_ID) {
+    return NextResponse.json({ error: TAG_FIXA_ERRO }, { status: 409 });
+  }
   const supabase = await getServiceSupabase();
   const { name, color } = await request.json();
 
@@ -28,6 +39,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (id === TAG_DEBITO_VENCIDO_ID) {
+    return NextResponse.json({ error: TAG_FIXA_ERRO }, { status: 409 });
+  }
   const supabase = await getServiceSupabase();
 
   const { error } = await supabase
