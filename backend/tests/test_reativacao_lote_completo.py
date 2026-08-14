@@ -304,3 +304,35 @@ class TestSqlTags:
         coorte = [c for c in self._coorte() if c["id_bling"] == "1"]
         sql = lote_completo.gerar_tags(coorte)
         assert lote_completo.TAG_DEBITO_ID not in sql.split("INSERT INTO lead_tags")[-1]
+
+
+class TestMontagem:
+    def _coorte(self):
+        linhas = [_linha(id_bling=str(i), whatsapp="551190000%04d" % i) for i in range(1, 4)]
+        return lote_completo.selecionar_faltantes(linhas, set()).novos
+
+    def test_abre_em_transacao_e_fecha_com_commit(self):
+        sql = lote_completo.montar_arquivo(self._coorte())
+        assert sql.startswith("\\set ON_ERROR_STOP on")
+        assert "BEGIN;" in sql
+        assert sql.rstrip().endswith("COMMIT;")
+
+    def test_nunca_toca_as_tabelas_de_disparo(self):
+        sql = lote_completo.montar_arquivo(self._coorte())
+        for tabela in lote_completo.TABELAS_PROIBIDAS:
+            assert tabela not in sql
+
+    def test_tem_bloco_de_verificacao_por_contagem(self):
+        sql = lote_completo.montar_arquivo(self._coorte())
+        assert sql.count("RAISE EXCEPTION") == 4
+        assert "esperado 3" in sql
+
+    def test_rollback_remove_na_ordem_de_dependencia(self):
+        sql = lote_completo.montar_rollback()
+        pos = [sql.index(t) for t in ("lead_tags", "deals", "pipeline_stages", "pipelines")]
+        assert pos == sorted(pos)
+
+    def test_rollback_apaga_so_o_que_este_lote_criou(self):
+        sql = lote_completo.montar_rollback()
+        assert "criado_por_lote" in sql
+        assert lote_completo.LOTE in sql

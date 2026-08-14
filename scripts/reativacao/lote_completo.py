@@ -332,6 +332,88 @@ def gerar_pipeline_e_etapas():
     return "\n".join(partes)
 
 
+def _bloco_verificacao(rotulo, expressao_where, esperado):
+    """RAISE EXCEPTION aborta a transacao inteira e desfaz tudo que veio antes."""
+    return (
+        "\\echo '--- %s (esperado %d) ---'\n"
+        "DO $$\nDECLARE encontrado integer;\nBEGIN\n"
+        "  SELECT count(*) INTO encontrado FROM %s;\n"
+        "  IF encontrado <> %d THEN\n"
+        "    RAISE EXCEPTION 'esperado %d em %s, encontrado %%', encontrado;\n"
+        "  END IF;\nEND $$;\n" % (
+            rotulo, esperado, expressao_where, esperado, esperado, rotulo)
+    )
+
+
+def montar_arquivo(coorte):
+    """preparar.sql completo, em transacao unica."""
+    total = len(coorte)
+    partes = [
+        "\\set ON_ERROR_STOP on",
+        "-- Lote %s — %d leads. NAO EDITAR A MAO: regenerar com lote_completo.py" % (LOTE, total),
+        "BEGIN;",
+        "",
+        gerar_pipeline_e_etapas(),
+        "-- Leads",
+    ]
+    partes.extend(gerar_insert_lead(l) for l in coorte)
+    partes.append("\n-- Notas de briefing")
+    partes.extend(gerar_insert_nota(l) for l in coorte)
+    partes.append("\n-- Deals")
+    partes.extend(gerar_insert_deal(l) for l in coorte)
+    partes.append("")
+    partes.append(gerar_tags(coorte))
+    partes.append("-- Verificacao (aborta a transacao inteira se nao bater)")
+    partes.append(_bloco_verificacao(
+        "leads do lote",
+        "leads WHERE metadata->>'origem' = '%s' AND metadata->>'lote' = '%s'" % (ORIGEM, LOTE),
+        total))
+    partes.append(_bloco_verificacao(
+        "notas do lote", "lead_notes WHERE author = '%s'" % AUTOR_NOTA, total))
+    partes.append(_bloco_verificacao(
+        "deals do funil", "deals WHERE pipeline_id = '%s'" % PIPELINE_ID, total))
+    partes.append(_bloco_verificacao(
+        "etapas do funil", "pipeline_stages WHERE pipeline_id = '%s'" % PIPELINE_ID,
+        len(ETAPAS)))
+    partes.append("COMMIT;")
+    return "\n".join(partes)
+
+
+def montar_rollback():
+    """Desfaz exatamente o que este lote criou, na ordem de dependencia."""
+    tags_do_lote = [TAG_LOTE_ID, TAG_DEBITO_ID, TAG_ECOMMERCE_ID,
+                    TAG_SEM_VENDEDOR_ID, TAG_B2B_ID]
+    lista_tags = ", ".join(sql_literal(t) for t in tags_do_lote)
+    return "\n".join([
+        "\\set ON_ERROR_STOP on",
+        "-- Rollback do lote %s" % LOTE,
+        "BEGIN;",
+        "",
+        "-- 1. Vinculos de tag dos leads que este lote criou.",
+        "DELETE FROM lead_tags WHERE tag_id IN (%s) AND lead_id IN (" % lista_tags,
+        "  SELECT id FROM leads WHERE metadata->>'criado_por_lote' = %s);" % sql_literal(LOTE),
+        "",
+        "-- 2. As tags que este lote criou (B2B ja existia: nao apagar).",
+        "DELETE FROM tags WHERE id IN (%s);" % ", ".join(
+            sql_literal(t) for t, _n, _c in TAGS_A_CRIAR),
+        "",
+        "-- 3. Deals do funil, depois as etapas, depois o funil.",
+        "DELETE FROM deals WHERE pipeline_id = %s;" % sql_literal(PIPELINE_ID),
+        "DELETE FROM pipeline_stages WHERE pipeline_id = %s;" % sql_literal(PIPELINE_ID),
+        "DELETE FROM pipelines WHERE id = %s;" % sql_literal(PIPELINE_ID),
+        "",
+        "-- 4. Notas de briefing deste lote.",
+        "DELETE FROM lead_notes WHERE author = %s;" % sql_literal(AUTOR_NOTA),
+        "",
+        "-- 5. Os leads que este lote CRIOU (nunca os pre-existentes).",
+        "DELETE FROM leads WHERE metadata->>'criado_por_lote' = %s;" % sql_literal(LOTE),
+        "",
+        "\\echo '--- deve retornar 0 ---'",
+        "SELECT count(*) FROM leads WHERE metadata->>'criado_por_lote' = %s;" % sql_literal(LOTE),
+        "COMMIT;",
+    ])
+
+
 def carregar_csv(caminho):
     with open(caminho, encoding="utf-8-sig", newline="") as fh:
         return list(csv.DictReader(fh, delimiter=";"))
