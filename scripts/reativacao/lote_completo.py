@@ -76,7 +76,8 @@ PLATAFORMAS_ECOMMERCE = ("TRAY TECNOLOGIA EM ECOMMERCE LTDA", "WooCommerce", "Li
 # Guardrail: o SQL gerado nunca pode tocar o disparo.
 TABELAS_PROIBIDAS = ("broadcasts", "broadcast_leads")
 
-Coorte = namedtuple("Coorte", "novos ja_no_crm sem_telefone duplicados_no_csv")
+Coorte = namedtuple(
+    "Coorte", "novos ja_no_crm sem_telefone duplicados_no_csv nao_parseavel")
 
 
 def sql_literal(valor):
@@ -136,11 +137,17 @@ def selecionar_faltantes(linhas, telefones_crm):
     carrega o arquivo do banco (carregar_telefones_crm) faz isso.
     """
     novos, vistos = [], set()
-    ja_no_crm = sem_telefone = duplicados = 0
+    ja_no_crm = sem_telefone = duplicados = nao_parseavel = 0
     for linha in linhas:
         fone = telefone_da_linha(linha)
         if not fone:
             sem_telefone += 1
+            # Distingue "cadastro sem telefone" de "tinha telefone e nos
+            # descartamos" — ex.: dois numeros no mesmo campo
+            # ("(19) 3211-6200 / (19) 3211-6333") ou numero truncado no Bling.
+            if any(re.search(r"\d", linha.get(campo) or "")
+                   for campo in ("whatsapp", "celular", "telefone")):
+                nao_parseavel += 1
             continue
         if fone in telefones_crm:
             ja_no_crm += 1
@@ -152,7 +159,7 @@ def selecionar_faltantes(linhas, telefones_crm):
         enriquecida = dict(linha)
         enriquecida["_phone"] = fone
         novos.append(enriquecida)
-    return Coorte(novos, ja_no_crm, sem_telefone, duplicados)
+    return Coorte(novos, ja_no_crm, sem_telefone, duplicados, nao_parseavel)
 
 
 def metadata_do_lead(linha):
@@ -266,8 +273,9 @@ def gerar_insert_deal(linha):
 def _vinculo_tag(tag_id, telefones):
     """Associa a tag a um conjunto de telefones, sem duplicar vinculo.
 
-    NOT EXISTS em vez de ON CONFLICT porque nao ha garantia de constraint
-    unica em lead_tags(lead_id, tag_id).
+    lead_tags tem PRIMARY KEY (lead_id, tag_id) — supabase/migrations/
+    002_crm_enrichment.sql:66 — entao ON CONFLICT DO NOTHING serviria igual.
+    O NOT EXISTS faz o mesmo sem depender do nome da constraint.
     """
     if not telefones:
         return ""
@@ -395,27 +403,43 @@ def montar_rollback():
         "-- Rollback do lote %s" % LOTE,
         "BEGIN;",
         "",
-        "-- 1. Vinculos de tag dos leads que este lote criou.",
+        "-- 1. Vinculos de tag dos leads que este lote criou (as cinco tags).",
+        "--    As tags NAO sao apagadas de proposito: o DELETE cascatearia em",
+        "--    lead_tags e levaria vinculos criados a mao depois da importacao. E o",
+        "--    UUID da tag \"Debito vencido\" esta hardcoded em",
+        "--    frontend/src/lib/constants.ts — recria-la pela UI geraria outro id e o",
+        "--    aviso do modal de disparo morreria em silencio.",
         "DELETE FROM lead_tags WHERE tag_id IN (%s) AND lead_id IN (" % lista_tags,
         "  SELECT id FROM leads WHERE metadata->>'criado_por_lote' = %s);" % sql_literal(LOTE),
         "",
-        "-- 2. As tags que este lote criou (B2B ja existia: nao apagar).",
-        "DELETE FROM tags WHERE id IN (%s);" % ", ".join(
-            sql_literal(t) for t, _n, _c in TAGS_A_CRIAR),
-        "",
-        "-- 3. Deals do funil, depois as etapas, depois o funil.",
+        "-- 2. Deals do funil, depois as etapas, depois o funil.",
         "DELETE FROM deals WHERE pipeline_id = %s;" % sql_literal(PIPELINE_ID),
         "DELETE FROM pipeline_stages WHERE pipeline_id = %s;" % sql_literal(PIPELINE_ID),
         "DELETE FROM pipelines WHERE id = %s;" % sql_literal(PIPELINE_ID),
         "",
-        "-- 4. Notas de briefing deste lote.",
+        "-- 3. Notas de briefing deste lote.",
         "DELETE FROM lead_notes WHERE author = %s;" % sql_literal(AUTOR_NOTA),
         "",
-        "-- 5. Os leads que este lote CRIOU (nunca os pre-existentes).",
-        "DELETE FROM leads WHERE metadata->>'criado_por_lote' = %s;" % sql_literal(LOTE),
+        "-- 4. Os leads que este lote CRIOU (nunca os pre-existentes), pulando os que",
+        "--    ja foram trabalhados. sales, messages e conversion_events cascateiam em",
+        "--    silencio (venda registrada sumiria sem aviso); token_usage e",
+        "--    follow_up_jobs referenciam leads SEM ON DELETE e abortariam o rollback",
+        "--    inteiro. A ultima guarda pega nota escrita a mao por vendedor.",
+        "DELETE FROM leads l WHERE l.metadata->>'criado_por_lote' = %s" % sql_literal(LOTE),
+        "  AND NOT EXISTS (SELECT 1 FROM sales s WHERE s.lead_id = l.id)",
+        "  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id)",
+        "  AND NOT EXISTS (SELECT 1 FROM conversion_events e WHERE e.lead_id = l.id)",
+        "  AND NOT EXISTS (SELECT 1 FROM token_usage t WHERE t.lead_id = l.id)",
+        "  AND NOT EXISTS (SELECT 1 FROM follow_up_jobs f WHERE f.lead_id = l.id)",
+        "  AND NOT EXISTS (SELECT 1 FROM lead_notes n WHERE n.lead_id = l.id",
+        "                    AND n.author <> %s);" % sql_literal(AUTOR_NOTA),
         "",
-        "\\echo '--- deve retornar 0 ---'",
-        "SELECT count(*) FROM leads WHERE metadata->>'criado_por_lote' = %s;" % sql_literal(LOTE),
+        "\\echo '--- leads do lote preservados pelas guardas (esperado: 0) ---'",
+        "\\echo 'Diferente de zero significa: esses leads ja foram trabalhados (venda,'",
+        "\\echo 'mensagem, conversao, custo de IA, follow-up agendado ou nota escrita a'",
+        "\\echo 'mao) e NAO foram apagados. Decida a mao o que fazer com cada um.'",
+        "SELECT count(*) AS leads_preservados FROM leads",
+        "  WHERE metadata->>'criado_por_lote' = %s;" % sql_literal(LOTE),
         "COMMIT;",
     ])
 
@@ -459,6 +483,7 @@ def main(argv=None):
     print("linhas no CSV:        %d" % len(linhas))
     print("ja no CRM:            %d" % coorte.ja_no_crm)
     print("sem telefone:         %d" % coorte.sem_telefone)
+    print("  destes, com texto no campo mas nao parseavel: %d" % coorte.nao_parseavel)
     print("duplicados no CSV:    %d" % coorte.duplicados_no_csv)
     print("leads a criar:        %d" % len(coorte.novos))
 

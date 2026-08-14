@@ -88,6 +88,18 @@ class TestSelecionarFaltantes:
         resultado = lote_completo.selecionar_faltantes(linhas, set())
         assert resultado.novos[0]["_phone"] == "5511988887777"
 
+    def test_conta_separado_quem_tinha_texto_no_campo_mas_nao_parseavel(self):
+        # Sem essa separacao, "cadastro sem telefone" e "tinha telefone e a
+        # gente descartou" viram o mesmo numero no relatorio.
+        linhas = [
+            _linha(id_bling="1", whatsapp="", celular="", telefone=""),
+            _linha(id_bling="2", whatsapp="(19) 3211-6200 / (19) 3211-6333",
+                   celular="", telefone=""),
+        ]
+        resultado = lote_completo.selecionar_faltantes(linhas, set())
+        assert resultado.sem_telefone == 2
+        assert resultado.nao_parseavel == 1
+
     def test_crm_e_comparado_normalizado(self):
         # O CSV traz o celular antigo de 12 digitos; a coorte normaliza para 13,
         # que e a forma que o CRM guarda. Tem que casar.
@@ -341,6 +353,28 @@ class TestMontagem:
         sql = lote_completo.montar_rollback()
         assert "criado_por_lote" in sql
         assert lote_completo.LOTE in sql
+
+    def test_rollback_remove_os_vinculos_mas_nunca_as_tags(self):
+        # Apagar a tag cascatearia em lead_tags e levaria vinculo feito a mao; e
+        # o UUID de "Debito vencido" esta hardcoded no frontend.
+        sql = lote_completo.montar_rollback()
+        assert "DELETE FROM tags" not in sql
+        assert "DELETE FROM lead_tags" in sql
+        for tag_id in (lote_completo.TAG_LOTE_ID, lote_completo.TAG_DEBITO_ID,
+                       lote_completo.TAG_ECOMMERCE_ID, lote_completo.TAG_SEM_VENDEDOR_ID,
+                       lote_completo.TAG_B2B_ID):
+            assert tag_id in sql
+
+    def test_rollback_preserva_lead_ja_trabalhado(self):
+        sql = lote_completo.montar_rollback()
+        for tabela in ("sales", "messages", "conversion_events",
+                       "token_usage", "follow_up_jobs"):
+            assert "FROM %s " % tabela in sql
+
+    def test_rollback_reporta_quantos_leads_sobraram(self):
+        sql = lote_completo.montar_rollback()
+        assert "leads_preservados" in sql
+        assert "deve retornar 0" not in sql
 
 
 class TestCli:
