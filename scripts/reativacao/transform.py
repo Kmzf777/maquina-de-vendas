@@ -35,6 +35,34 @@ def normalizar_telefone(valor):
     return ""
 
 
+def normalizar_telefone_canonico(valor):
+    """E.164 sem '+' COM o 9o digito BR injetado.
+
+    Espelha backend/app/leads/service.py::normalize_phone — a forma que o
+    webhook do WhatsApp grava em leads.phone. Diferente de
+    normalizar_telefone(), que preserva 12 digitos como estao.
+
+    Usar a forma de 12 digitos num INSERT de lead cria duplicata logica: quando
+    a pessoa responder, o webhook grava o registro de 13 digitos e a conversa
+    fica partida entre dois leads (leads.phone e UNIQUE pela string exata).
+
+    Numeros internacionais nao sao tocados: a injecao so acontece quando o
+    numero tem 12 digitos E comeca com 55.
+    """
+    digitos = re.sub(r"\D", "", valor or "")
+    if not digitos:
+        return ""
+    if digitos.startswith("0"):
+        digitos = digitos[1:]
+    if len(digitos) in (10, 11):
+        digitos = "55" + digitos
+    if len(digitos) not in (12, 13):
+        return ""
+    if len(digitos) == 12 and digitos.startswith("55"):
+        digitos = digitos[:4] + "9" + digitos[4:]
+    return digitos
+
+
 def escolher_saudacao(nome_crm, nome_bling):
     """Nome para a variavel {{1}} do template.
 

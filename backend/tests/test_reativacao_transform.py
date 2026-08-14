@@ -280,3 +280,37 @@ class TestFormatarData:
 
     def test_sentinela_bling_ano_zero_com_dia_mes_validos(self):
         assert transform.formatar_data("0000-01-01") == ""
+
+
+class TestNormalizarTelefoneCanonico:
+    def test_br_doze_digitos_recebe_nono_digito(self):
+        assert transform.normalizar_telefone_canonico("554342453258") == "5543942453258"
+
+    def test_treze_digitos_permanece(self):
+        assert transform.normalizar_telefone_canonico("5534991461669") == "5534991461669"
+
+    def test_fixo_dez_digitos_vira_treze(self):
+        assert transform.normalizar_telefone_canonico("3432151234") == "5534932151234"
+
+    def test_onze_digitos_recebe_55(self):
+        assert transform.normalizar_telefone_canonico("34991461669") == "5534991461669"
+
+    def test_zero_inicial_e_descartado(self):
+        assert transform.normalizar_telefone_canonico("034991461669") == "5534991461669"
+
+    def test_internacional_nao_recebe_nono_digito(self):
+        assert transform.normalizar_telefone_canonico("971542711390") == "971542711390"
+        assert transform.normalizar_telefone_canonico("353892098541") == "353892098541"
+
+    def test_formatado_com_pontuacao(self):
+        assert transform.normalizar_telefone_canonico("(43) 4245-3258") == "5543942453258"
+
+    def test_vazio_e_invalido_devolvem_vazio(self):
+        assert transform.normalizar_telefone_canonico("") == ""
+        assert transform.normalizar_telefone_canonico(None) == ""
+        assert transform.normalizar_telefone_canonico("123") == ""
+
+    def test_divergencia_documentada_com_a_funcao_antiga(self):
+        # A funcao antiga preserva 12 digitos; a canonica injeta o 9.
+        assert transform.normalizar_telefone("554342453258") == "554342453258"
+        assert transform.normalizar_telefone_canonico("554342453258") == "5543942453258"
