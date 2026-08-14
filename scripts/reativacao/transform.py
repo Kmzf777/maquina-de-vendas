@@ -185,11 +185,12 @@ def formatar_documento(doc):
     return doc or ""
 
 
-def montar_briefing(dados):
+def montar_briefing(dados, prefixo=None):
     """Monta o texto da nota que o vendedor le no card do lead.
 
-    Regras em docs/superpowers/specs/2026-08-08-reativacao-crm-preparacao-design.md
-    (secao 'Regras de conteudo do briefing').
+    `prefixo` permite reuso entre lotes (o de 10/08 usa o default). Regras em
+    docs/superpowers/specs/2026-08-08-reativacao-crm-preparacao-design.md e
+    docs/superpowers/specs/2026-08-14-reativacao-bling-lote-completo-design.md
     """
     linhas = []
 
@@ -198,7 +199,7 @@ def montar_briefing(dados):
         linhas.append("⚠ FORA DA CAMPANHA: %s" % motivo)
         linhas.append("")
 
-    linhas.append(PREFIXO_BRIEFING)
+    linhas.append(prefixo or PREFIXO_BRIEFING)
     linhas.append("")
 
     # Fix round 3 (menor): PERFIL precisa renderizar sempre que o produto e
@@ -274,10 +275,22 @@ def montar_briefing(dados):
     if vendedor:
         linhas.append("Vendedor anterior: %s" % vendedor)
 
-    linhas.append("ICP %s (%s) · id_bling %s" % (
-        dados.get("icp_score") or "?",
-        dados.get("icp_faixa") or "?",
-        dados.get("id_bling") or "?",
-    ))
+    icp = (dados.get("icp_score") or "").strip()
+    if icp:
+        linhas.append("ICP %s (%s) · id_bling %s" % (
+            icp,
+            dados.get("icp_faixa") or "?",
+            dados.get("id_bling") or "?",
+        ))
+    else:
+        # Lotes sem enriquecimento de ICP (ex.: reativacao_bling_2026-08-14)
+        # nao devem renderizar "ICP ? (?)".
+        linhas.append("id_bling %s" % (dados.get("id_bling") or "?"))
 
     return "\n".join(linhas)
+
+
+# Aliases publicos dos parsers: outros modulos do pacote (lote_completo.py)
+# precisam deles, e depender de nome com underscore atravessa fronteira de API.
+parse_numero = _num
+parse_inteiro = _int

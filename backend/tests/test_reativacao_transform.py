@@ -314,3 +314,36 @@ class TestNormalizarTelefoneCanonico:
         # A funcao antiga preserva 12 digitos; a canonica injeta o 9.
         assert transform.normalizar_telefone("554342453258") == "554342453258"
         assert transform.normalizar_telefone_canonico("554342453258") == "5543942453258"
+
+
+class TestBriefingParametrizavel:
+    def _dados_minimos(self):
+        return {
+            "total_gasto": "0", "cpf_cnpj": "", "cidade": "Uberlandia", "uf": "MG",
+            "id_bling": "999", "qtd_nfe": "0", "orcamentos": "0", "vendedor": "",
+        }
+
+    def test_prefixo_customizado_aparece(self):
+        texto = transform.montar_briefing(self._dados_minimos(), prefixo="LOTE XPTO")
+        assert "LOTE XPTO" in texto
+        assert transform.PREFIXO_BRIEFING not in texto
+
+    def test_prefixo_padrao_continua_o_do_lote_anterior(self):
+        texto = transform.montar_briefing(self._dados_minimos())
+        assert transform.PREFIXO_BRIEFING in texto
+
+    def test_sem_icp_score_a_linha_vira_so_id_bling(self):
+        texto = transform.montar_briefing(self._dados_minimos())
+        assert "id_bling 999" in texto
+        assert "ICP" not in texto
+
+    def test_com_icp_score_a_linha_completa_permanece(self):
+        dados = self._dados_minimos()
+        dados["icp_score"] = "55"
+        dados["icp_faixa"] = "C - medio"
+        texto = transform.montar_briefing(dados)
+        assert "ICP 55 (C - medio) · id_bling 999" in texto
+
+    def test_parsers_publicos_expostos(self):
+        assert transform.parse_numero("1.234,56") == 1234.56
+        assert transform.parse_inteiro("42") == 42
