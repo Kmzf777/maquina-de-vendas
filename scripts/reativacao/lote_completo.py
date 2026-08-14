@@ -20,7 +20,10 @@ import transform
 
 LOTE = "reativacao_bling_2026-08-14"
 ORIGEM = "reativacao_bling"
-AUTOR_NOTA = "Sistema — Reativação Bling"
+# Precisa ser DIFERENTE do AUTOR_NOTA de generate_sql.py (lote de 10/08), que e
+# "Sistema — Reativação Bling". Com a string repetida, o bloco de verificacao
+# contaria as notas dos dois lotes e o DELETE do rollback apagaria as do outro.
+AUTOR_NOTA = "Sistema — Reativação Bling 08/26"
 PREFIXO_BRIEFING = "REATIVAÇÃO BLING 14/08/2026 — lote reativacao_bling_2026-08-14"
 
 # UUIDs hardcoded: deixam os INSERTs idempotentes e dao ao rollback um alvo
@@ -475,8 +478,8 @@ def main(argv=None):
         fh.write(preparar)
     with open(os.path.join(args.saida, "rollback.sql"), "w", encoding="utf-8") as fh:
         fh.write(montar_rollback())
-    print("gerado: %s/preparar.sql" % args.saida)
-    print("gerado: %s/rollback.sql" % args.saida)
+    print("gerado: %s" % os.path.join(args.saida, "preparar.sql"))
+    print("gerado: %s" % os.path.join(args.saida, "rollback.sql"))
     return 0
 
 

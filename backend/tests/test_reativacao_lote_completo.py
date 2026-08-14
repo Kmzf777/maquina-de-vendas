@@ -217,6 +217,10 @@ class TestSqlNota:
         sql = lote_completo.gerar_insert_nota(linha)
         assert "LEAD SEM COMPRA" in sql
 
+    def test_autor_da_nota_nao_colide_com_o_lote_anterior(self):
+        import generate_sql
+        assert lote_completo.AUTOR_NOTA != generate_sql.AUTOR_NOTA
+
     def test_e_idempotente_por_autor(self):
         linha = _linha()
         linha["_phone"] = lote_completo.telefone_da_linha(linha)
@@ -375,3 +379,16 @@ class TestCli:
             "--esperado-novos", "999", "--saida", str(saida)])
         assert codigo == 1
         assert not (saida / "preparar.sql").exists()
+
+    def test_tabela_proibida_no_sql_aborta_sem_escrever(self, tmp_path, monkeypatch):
+        csv_path = self._escrever_csv(tmp_path, [_linha(id_bling="1", whatsapp="5511900000001")])
+        crm = tmp_path / "crm.txt"
+        crm.write_text("5534999999999\n", encoding="utf-8")
+        saida = tmp_path / "out"
+        monkeypatch.setattr(lote_completo, "montar_arquivo",
+                            lambda coorte: "INSERT INTO broadcast_leads (lead_id) VALUES ('x');")
+        codigo = lote_completo.main([
+            "--csv", str(csv_path), "--telefones-crm", str(crm),
+            "--esperado-novos", "1", "--saida", str(saida)])
+        assert codigo == 1
+        assert not saida.exists()
