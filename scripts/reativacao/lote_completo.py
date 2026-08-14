@@ -214,6 +214,26 @@ def gerar_insert_lead(linha):
     )
 
 
+def dados_do_briefing(linha):
+    """Adapta os nomes de coluna do CSV cru para o que montar_briefing espera."""
+    dados = dict(linha)
+    dados["produto_para_citar"] = (linha.get("produto_top1") or "").strip()
+    return dados
+
+
+def gerar_insert_nota(linha):
+    """Nota de briefing, idempotente: nao duplica se ja houver nota deste autor."""
+    conteudo = transform.montar_briefing(dados_do_briefing(linha), prefixo=PREFIXO_BRIEFING)
+    return (
+        "INSERT INTO lead_notes (lead_id, author, content)\n"
+        "SELECT l.id, %s, %s FROM leads l WHERE l.phone = %s\n"
+        "  AND NOT EXISTS (SELECT 1 FROM lead_notes n WHERE n.lead_id = l.id "
+        "AND n.author = %s);" % (
+            sql_literal(AUTOR_NOTA), sql_literal(conteudo),
+            sql_literal(linha["_phone"]), sql_literal(AUTOR_NOTA))
+    )
+
+
 def gerar_pipeline_e_etapas():
     """Funil + 8 etapas, idempotentes pelo UUID fixo.
 

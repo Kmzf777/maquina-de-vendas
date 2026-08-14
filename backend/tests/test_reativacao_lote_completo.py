@@ -179,3 +179,43 @@ class TestSqlLead:
         linha["_phone"] = lote_completo.telefone_da_linha(linha)
         sql = lote_completo.gerar_insert_lead(linha)
         assert "assigned_to" not in sql
+
+
+class TestSqlNota:
+    def test_usa_o_prefixo_do_lote_e_nao_o_de_agosto_10(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_nota(linha)
+        assert "REATIVAÇÃO BLING 14/08/2026" in sql
+        assert "10/08/2026" not in sql
+
+    def test_nao_renderiza_icp(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        assert "ICP" not in lote_completo.gerar_insert_nota(linha)
+
+    def test_linha_de_debito_aparece_quando_ha_vencido(self):
+        linha = _linha(valor_vencido="1.234,56", titulos_vencidos="3", dias_atraso_max="190")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_nota(linha)
+        assert "DÉBITO VENCIDO" in sql
+        assert "190" in sql
+
+    def test_lead_sem_compra_troca_o_bloco_de_historico(self):
+        linha = _linha(total_gasto="0,00", segmento_reativacao="lead_sem_compra")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_nota(linha)
+        assert "LEAD SEM COMPRA" in sql
+
+    def test_e_idempotente_por_autor(self):
+        linha = _linha()
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_nota(linha)
+        assert "NOT EXISTS" in sql
+        assert lote_completo.AUTOR_NOTA in sql
+
+    def test_aspas_simples_no_conteudo_sao_escapadas(self):
+        linha = _linha(nome="CAFE D'ANTONIO")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_nota(linha)
+        assert "D''ANTONIO" in sql or "D'ANTONIO" not in sql.replace("''", "")
