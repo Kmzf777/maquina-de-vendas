@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
-import SystemAlertBanner from "@/components/SystemAlertBanner";
 
 const geist = Geist({
   subsets: ["latin"],
@@ -25,7 +24,6 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body suppressHydrationWarning className={`${geist.variable} ${geist.className}`}>
-        <SystemAlertBanner />
         {children}
       </body>
     </html>
