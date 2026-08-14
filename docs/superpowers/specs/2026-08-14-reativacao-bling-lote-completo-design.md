@@ -334,13 +334,20 @@ sumiria em silêncio — que é exatamente o modo de falha mais perigoso de um a
 
 Não renderiza nada quando não há inadimplente selecionado.
 
-**`variant="selection"`** (step 3, acima da tabela): `⚠ N dos M selecionados têm débito
+O modal tem **6 passos** (`Configuração, Template, Leads, Ação, Agendamento, Revisão`); os
+dois pontos de inserção são o **passo 3 (Leads)** e o **passo 6 (Revisão)**.
+
+**`variant="selection"`** (passo 3, acima da tabela): `⚠ N dos M selecionados têm débito
 vencido`, os 3 primeiros com nome, telefone, valor e dias de atraso, um `+N outros` que
 expande a lista inteira, e o botão **`Desmarcar os N`**, que chama `onDeselect` com os ids
 e remove todos de uma vez.
 
-**`variant="review"`** (step 4): uma linha compacta com a contagem e o total vencido. Sem
-botão. **Não desabilita o botão de criar o disparo** (D5).
+**`variant="review"`** (passo 6, logo abaixo da linha "Leads: N leads do CRM"): uma linha
+compacta com a contagem e o total vencido. Sem botão. **Não desabilita o botão de criar o
+disparo** (D5).
+
+O `Lead` do modal é uma interface **local** (`create-broadcast-modal.tsx:20`), não a de
+`@/lib/types` — ela já declara `lead_tags`, mas **não** `metadata`. Precisa ganhar o campo.
 
 Leads com a tag mas sem `valor_vencido` no metadata aparecem na lista com nome e telefone,
 sem a parte monetária, e contam na contagem — nunca somem do aviso por falta de dado.
@@ -379,12 +386,12 @@ string com vírgula decimal; lead com a tag mas não selecionado (não pode cont
 
 13. Sem inadimplente entre os selecionados, o modal fica **idêntico ao de hoje** — nenhum
     espaço reservado, nenhuma borda a mais.
-14. Com inadimplentes selecionados, o banner aparece no step 3 com a contagem correta e os
-    3 primeiros nomes; `+N outros` expande para a lista completa.
+14. Com inadimplentes selecionados, o banner aparece no passo 3 (Leads) com a contagem
+    correta e os 3 primeiros nomes; `+N outros` expande para a lista completa.
 15. `Desmarcar os N` remove todos os inadimplentes da seleção numa ação, e o banner
     desaparece.
-16. O step 4 mostra contagem e total vencido, e o botão de criar o disparo **continua
-    habilitado**.
+16. O passo 6 (Revisão) mostra contagem e total vencido, e o botão de criar o disparo
+    **continua habilitado**.
 17. Um lead com a tag mas sem `metadata.valor_vencido` aparece na lista (nome e telefone) e
     conta na contagem, sem quebrar a soma.
 18. `PUT` e `DELETE` em `/api/tags/3d1b8e6c-…` devolvem 409; outras tags seguem editáveis e
