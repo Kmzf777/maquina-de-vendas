@@ -365,6 +365,13 @@ class TestMontagem:
                        lote_completo.TAG_B2B_ID):
             assert tag_id in sql
 
+    def test_rollback_nao_apaga_notas_por_autor(self):
+        # A FK tem ON DELETE CASCADE: as notas dos leads apagados vao junto, e as
+        # dos leads preservados pelas guardas ficam. Apagar por autor aqui
+        # tiraria o briefing de quem alguem ja esta trabalhando.
+        sql = lote_completo.montar_rollback()
+        assert "DELETE FROM lead_notes" not in sql
+
     def test_rollback_preserva_lead_ja_trabalhado(self):
         sql = lote_completo.montar_rollback()
         for tabela in ("sales", "messages", "conversion_events",
