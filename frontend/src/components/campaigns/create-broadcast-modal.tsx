@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Channel, AgentProfile } from "@/lib/types";
 import { TemplatePreviewCard, autoSuggestToken, type MetaTemplate } from "@/components/campaigns/template-preview-card";
 import { LeadFilterPanel, type LeadFilters } from "@/components/campaigns/lead-filter-panel";
+import { InadimplentesWarning } from "@/components/campaigns/inadimplentes-warning";
 import { CreateTemplateModal } from "@/components/canais/create-template-modal";
 import {
   AlertDialog,
@@ -24,6 +25,7 @@ interface Lead {
   company: string | null;
   nome_fantasia: string | null;
   lead_tags?: { tag_id: string; tags: { id: string; name: string; color: string } | null }[];
+  metadata?: Record<string, unknown> | null;
 }
 
 interface MovePipeline {
@@ -449,6 +451,14 @@ export function CreateBroadcastModal({
     setLastCheckedIndex(null);
   };
 
+  const deselectLeads = useCallback((ids: string[]) => {
+    setSelectedLeadIds((atual) => {
+      const proximo = new Set(atual);
+      ids.forEach((id) => proximo.delete(id));
+      return proximo;
+    });
+  }, []);
+
   // ─── Create broadcast ─────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!selectedTemplate) return;
@@ -867,6 +877,13 @@ export function CreateBroadcastModal({
                         </div>
                       </div>
 
+                      <InadimplentesWarning
+                        leads={leads}
+                        selectedLeadIds={selectedLeadIds}
+                        onDeselect={deselectLeads}
+                        variant="selection"
+                      />
+
                       {/* Count badge */}
                       <div className="text-[13px] font-medium text-[#111111]">
                         {selectedLeadIds.size > 0 ? (
@@ -1214,6 +1231,13 @@ export function CreateBroadcastModal({
                         : "—"}
                     </span>
                   </p>
+                  {leadTab === "crm" && (
+                    <InadimplentesWarning
+                      leads={leads}
+                      selectedLeadIds={selectedLeadIds}
+                      variant="review"
+                    />
+                  )}
                   <p>
                     <span className="text-[#7b7b78]">Agente:</span>{" "}
                     <span className="text-[#111111]">{resolvedAgentName}</span>
