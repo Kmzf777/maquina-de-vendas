@@ -75,3 +75,13 @@ export const ENROLLMENT_STATUS_LABELS: Record<string, string> = {
   exhausted: "Esgotado",
   completed: "Completou",
 };
+
+/**
+ * Tag fixa de inadimplência. O modal de criação de disparo depende dela para
+ * avisar quando há leads com débito vencido entre os selecionados, então o
+ * UUID é estável entre ambientes e a API bloqueia rename/exclusão dessa tag.
+ *
+ * Duplicado em scripts/reativacao/lote_completo.py (TAG_DEBITO_ID) — os dois
+ * lados não compartilham runtime. Mudar aqui exige mudar lá.
+ */
+export const TAG_DEBITO_VENCIDO_ID = "3d1b8e6c-7a24-4f95-b8d1-5c0e9a47f210";
