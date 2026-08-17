@@ -116,9 +116,13 @@ class TestSqlFunil:
         assert "INSERT INTO pipelines" in sql
         assert "ON CONFLICT (id) DO NOTHING" in sql
 
-    def test_pipeline_nasce_sem_dono(self):
+    def test_pipeline_nasce_com_dono(self):
+        # Sem owner_user_id, a regra "admin OU dono OU universal" deixa o funil e
+        # os 1.208 cards invisiveis para todo vendedor. Foi o bug da 1a aplicacao.
         sql = lote_completo.gerar_pipeline_e_etapas()
-        assert "NULL" in sql.split("INSERT INTO pipelines")[1].split(";")[0]
+        insert = sql.split("INSERT INTO pipelines")[1].split(";")[0]
+        assert lote_completo.PIPELINE_OWNER_ID in insert
+        assert "NULL" not in insert
 
     def test_cria_as_oito_etapas_na_ordem(self):
         sql = lote_completo.gerar_pipeline_e_etapas()

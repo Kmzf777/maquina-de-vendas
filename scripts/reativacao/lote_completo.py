@@ -31,6 +31,11 @@ PREFIXO_BRIEFING = "REATIVAÇÃO BLING 14/08/2026 — lote reativacao_bling_2026
 # (frontend/src/lib/constants.ts) — mudar aqui exige mudar la.
 PIPELINE_ID = "b2f9c31d-8a47-4e26-95c0-3d7a1f6e8b09"
 PIPELINE_NOME = "Reativação Bling"
+# Dono do funil = Joao (joao@cafecanastra.com), unico vendedor que trabalha esta
+# carteira. Sem dono, nenhum vendedor enxerga o funil nem os cards — ver a
+# docstring de gerar_pipeline_e_etapas. Para abrir a todos os vendedores em vez
+# de um so, o caminho e is_universal = true, nao owner NULL.
+PIPELINE_OWNER_ID = "1c3c78ed-ef47-4dca-9a63-2052f28e8fd6"
 
 # (key, label, cor, uuid) — a ordem da tupla e a ordem no Kanban.
 ETAPAS = (
@@ -322,15 +327,22 @@ def gerar_tags(coorte):
 def gerar_pipeline_e_etapas():
     """Funil + 8 etapas, idempotentes pelo UUID fixo.
 
-    owner_user_id NULL e is_universal false seguem o padrao dos funis da
-    Valeria: visiveis para todos, sem dono designado (decisao D3 do spec —
-    numero, template e dono sao decididos quando a campanha for montada).
+    O funil PRECISA de dono. A regra de visibilidade (pipeline-access.ts e a
+    policy deals_select) e "admin OU owner_user_id = auth.uid() OU
+    is_universal": com owner NULL e is_universal false, o funil e os 1.208 cards
+    ficam invisiveis para TODO vendedor, so admin enxerga. Foi o que aconteceu
+    na primeira aplicacao — o Joao nao via o funil.
+
+    Nao confundir com os funis "Valeria - ..." e "Arthur - Exportacao", que
+    tambem estao com owner NULL: eles sao administrativos de fato (o Arthur e
+    admin), nao um contraexemplo de que NULL funciona para vendedor.
     """
     partes = [
         "-- Funil do lote e suas etapas",
         "INSERT INTO pipelines (id, name, order_index, owner_user_id, is_universal)",
-        "VALUES (%s, %s, 99, NULL, false)" % (
-            sql_literal(PIPELINE_ID), sql_literal(PIPELINE_NOME)),
+        "VALUES (%s, %s, 99, %s, false)" % (
+            sql_literal(PIPELINE_ID), sql_literal(PIPELINE_NOME),
+            sql_literal(PIPELINE_OWNER_ID)),
         "ON CONFLICT (id) DO NOTHING;",
         "",
     ]

@@ -179,9 +179,8 @@ que quem monta o disparo possa excluí-los conscientemente e o vendedor saiba an
 falar.
 
 **D3 — Sem disparo nesta etapa.** Nenhum registro em `broadcasts`/`broadcast_leads`, nem
-canal, nem template. `assigned_to` fica vazio e o funil fica sem dono (`owner_user_id = NULL`),
-como "Valeria - Importação Leads Frios". Número, template e responsável são decididos
-quando a campanha for montada.
+canal, nem template. `assigned_to` dos leads fica vazio. **O funil, porém, precisa de dono** — ver
+"Visibilidade do funil".
 
 **D4 — Gravação por SQL gerado.** Adaptar `scripts/reativacao/generate_sql.py`, que já
 produz `preparar.sql` + `rollback.sql` em transação única com blocos `RAISE EXCEPTION`
@@ -202,8 +201,28 @@ impedi-la.
 
 ### Funil
 
-`Reativação Bling` — `owner_user_id = NULL`, `is_universal = false`, `order_index` após os
-existentes.
+`Reativação Bling` — `owner_user_id` = João (`1c3c78ed-…`), `is_universal = false`,
+`order_index` após os existentes.
+
+**Visibilidade do funil (corrigido em 2026-08-17, depois de aplicado).** A regra em
+`frontend/src/lib/supabase/pipeline-access.ts` e na policy `deals_select` é *admin OU
+`owner_user_id = auth.uid()` OU `is_universal`*. O funil nasceu com `owner_user_id = NULL`
+e `is_universal = false`, o que o tornou — e aos 1.208 cards — **invisível para todo
+vendedor**; só admin enxergava. O João reportou o funil faltando.
+
+O engano foi tomar `Valeria - …` e `Arthur - Exportação` como precedente de "NULL funciona":
+esses funis são administrativos de fato (o Arthur é `admin`, o único `vendedor` real é o
+João), então ninguém tinha notado. Hoje `pipelines` está assim:
+
+| Configuração | Quem enxerga |
+|---|---|
+| `owner_user_id = <uid>` | o dono + admins |
+| `is_universal = true` | todos os vendedores + admins |
+| ambos vazios | **só admins** |
+
+Dono resolve para um vendedor; `is_universal = true` é o caminho se a carteira tiver que
+ser trabalhada por vários. Dono também concede gestão da estrutura (renomear, mexer nas
+etapas, excluir); `is_universal` concede só escrita de deals.
 
 ### Etapas
 

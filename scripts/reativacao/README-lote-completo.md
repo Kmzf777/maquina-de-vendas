@@ -123,6 +123,18 @@ Esperado — **nenhuma linha pode passar de 1.000**:
 | Pedido sem faturar | 62 |
 | Nunca comprou | 103 |
 
+**Confirme também que o funil tem dono** — sem isso ele é invisível para todo vendedor
+(a regra é *admin OU dono OU universal*), e foi assim que o João ficou sem ver os 1.208
+cards na primeira aplicação:
+
+```bash
+ssh root@173.249.15.11 "D=\$(docker ps -qf name=supabase_db); docker exec \$D psql -U postgres -c \"select name, owner_user_id, is_universal from pipelines where id = 'b2f9c31d-8a47-4e26-95c0-3d7a1f6e8b09'\""
+```
+
+Esperado: `owner_user_id = 1c3c78ed-ef47-4dca-9a63-2052f28e8fd6` (João). Se a carteira
+passar a ser trabalhada por mais de um vendedor, o caminho é `is_universal = true`, não
+apagar o dono.
+
 E a tag fixa de inadimplência, que o modal de disparo lê para avisar:
 
 ```bash
