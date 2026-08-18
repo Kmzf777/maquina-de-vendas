@@ -12,6 +12,10 @@ class FakeTable:
     def upsert(self, rows, on_conflict=None):
         self.store.setdefault(self.name, []).extend(rows)
         self.store["on_conflict"] = on_conflict
+        # Conta chamadas de upsert por tabela — necessario para provar que o
+        # sync grava em lotes (mais de uma chamada), e nao num upsert gigante.
+        calls_key = "upsert_calls_" + self.name
+        self.store[calls_key] = self.store.get(calls_key, 0) + 1
         return self
 
     def select(self, *_a, **_k):
@@ -113,6 +117,25 @@ def test_sem_estado_anterior_cai_para_sync_completo(monkeypatch):
     asyncio.run(prod.sync_products(client, full=False))
 
     assert client.params["criterio"] == 5
+
+
+def test_sync_grava_em_lotes_sem_perder_o_resto_do_buffer(monkeypatch):
+    # 7 itens com batch_size=3: dois lotes cheios (3 + 3) e um lote de sobra (1)
+    # feito no flush apos o laco. Se alguem remover o flush final, o item que
+    # sobrou no buffer some — e o total gravado fica menor que o que entrou.
+    store = {}
+    itens = [{"id": i, "nome": f"Produto {i}", "situacao": "A"} for i in range(1, 8)]
+    client = FakeClient(itens)
+    monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(prod, "_save_sync_state", lambda *a, **k: None)
+
+    n = asyncio.run(prod.sync_products(client, full=True, batch_size=3))
+
+    assert n == 7
+    assert len(store["bling_products"]) == 7
+    # mais de uma chamada de upsert prova que o sync grava em lotes, e nao
+    # tudo de uma vez num upsert gigante.
+    assert store["upsert_calls_bling_products"] > 1
 
 
 def test_apply_webhook_product_faz_upsert(monkeypatch):
