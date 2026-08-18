@@ -406,6 +406,16 @@ export interface Sale {
   conversation_id: string | null;
   notes: string | null;
   created_at: string;
+  // Projeção do pedido no Bling (20260818_bling_integration.sql). Opcionais
+  // porque vendas anteriores à integração não têm nada disso preenchido.
+  bling_order_id?: number | null;
+  bling_order_number?: number | null;
+  bling_situacao_id?: number | null;
+  bling_situacao_nome?: string | null;
+  origin?: "crm" | "bling" | "manual";
+  status?: "registrada" | "cancelada" | "pendente_bling";
+  payment_method_id?: number | null;
+  payment_terms?: string | null;
   leads?: { id: string; name: string | null; phone: string; company: string | null } | null;
   deals?: { id: string; title: string } | null;
 }

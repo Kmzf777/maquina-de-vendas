@@ -3,6 +3,14 @@
 import Link from "next/link";
 import { Pencil, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/types";
+import { blingOrderUrl, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
+
+// Cores da paleta da tabela para cada tom devolvido por saleStatus().
+const TONE_COLOR: Record<StatusTone, string> = {
+  neutral: "#7b7b78",
+  warning: "#ff5600",
+  danger: "#c41c1c",
+};
 
 interface SalesTableProps {
   sales: Sale[];
@@ -47,13 +55,21 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
               <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Lead</th>
               <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Produto</th>
               <th className="text-right py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Valor</th>
+              <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Pedido</th>
+              <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Situação</th>
               <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Vendedor</th>
               <th className="text-left py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Deal</th>
               <th className="text-right py-3 px-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] font-medium">Ações</th>
             </tr>
           </thead>
           <tbody>
-            {sales.map((sale) => (
+            {sales.map((sale) => {
+              const pedidoUrl = blingOrderUrl(sale.bling_order_id);
+              // O numero do pedido so chega no enriquecimento/webhook; enquanto
+              // nao chega, o link existe e o rotulo ainda nao — dai o fallback.
+              const pedido = orderLabel(sale) || (pedidoUrl ? "Ver no Bling" : "");
+              const situacao = saleStatus(sale);
+              return (
               <tr key={sale.id} className="border-b border-[#dedbd6]/50 hover:bg-[#faf9f6] transition-colors">
                 <td className="py-3 px-3 text-[#7b7b78] whitespace-nowrap">
                   {new Date(sale.sold_at).toLocaleDateString("pt-BR")}
@@ -73,6 +89,28 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
                 <td className="py-3 px-3 text-[#111111] max-w-[200px] truncate">{sale.product}</td>
                 <td className="py-3 px-3 text-[#111111] text-right whitespace-nowrap font-medium">
                   R$ {Number(sale.value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </td>
+                <td className="py-3 px-3 whitespace-nowrap">
+                  {!pedido ? (
+                    <span className="text-[#7b7b78]">—</span>
+                  ) : pedidoUrl ? (
+                    <a
+                      href={pedidoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Abrir pedido no Bling"
+                      className="text-[#111111] hover:underline"
+                    >
+                      {pedido}
+                    </a>
+                  ) : (
+                    <span className="text-[#111111]">{pedido}</span>
+                  )}
+                </td>
+                <td className="py-3 px-3 whitespace-nowrap">
+                  <span className="text-[12px]" style={{ color: TONE_COLOR[situacao.tone] }}>
+                    {situacao.label}
+                  </span>
                 </td>
                 <td className="py-3 px-3 text-[#7b7b78] max-w-[140px] truncate">{sale.sold_by || "—"}</td>
                 <td className="py-3 px-3">
@@ -105,7 +143,8 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
