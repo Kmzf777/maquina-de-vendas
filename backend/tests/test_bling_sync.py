@@ -50,6 +50,38 @@ class FakeClient:
             yield item
 
 
+class FakeSupabaseCountingBatches:
+    """Registra CADA chamada a upsert() como um lote separado — todos os fixtures
+    acima tem 1 item so, entao o buffer/flush por batch_size nunca estoura; sem
+    isso, trocar o loop por um unico upsert(list(...)) passaria despercebido."""
+    def __init__(self):
+        self.batches: list[list[dict]] = []
+
+    def table(self, _name):
+        return self
+
+    def upsert(self, rows, on_conflict=None):
+        self.batches.append(list(rows))
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    def execute(self):
+        class R:
+            data = None
+        return R()
+
+
 def test_contato_normaliza_telefone_com_a_funcao_do_crm():
     """O casamento lead <-> contato depende de a normalizacao ser a MESMA dos dois
     lados. O Bling guarda '(51) 99269-6163'; leads.phone guarda '5551992696163'."""
@@ -85,6 +117,19 @@ def test_to_e164_br_e_idempotente_quando_ja_tem_ddi_com_mais():
 
 def test_to_e164_br_e_idempotente_quando_ja_tem_ddi_sem_mais():
     assert sync._to_e164_br("55 51 99269-6163") == "5551992696163"
+
+
+def test_to_e164_br_fixo_com_ddi_nao_ganha_9_espurio():
+    """Bug real: '+55 34 3232-1000' tem 12 digitos comecando com 55 — o MESMO
+    formato que um celular local sem o 9o digito. Se _to_e164_br delegasse pra
+    normalize_phone depois de ja ter o DDI misturado no texto, ela nao teria
+    como distinguir os dois casos e inseriria um 9 espurio no fixo, fazendo
+    duas grafias do MESMO numero (com e sem DDI) produzirem valores diferentes
+    — o que quebra o casamento da Task 8 silenciosamente."""
+    esperado = sync._to_e164_br("(34) 3232-1000")
+    assert esperado == "553432321000"
+    assert sync._to_e164_br("+55 34 3232-1000") == esperado
+    assert sync._to_e164_br("55 34 3232-1000") == esperado
 
 
 def test_to_e164_br_vazio_none_e_lixo_viram_none():
@@ -153,6 +198,23 @@ def test_sync_contacts_completo_usa_criterio_1_todos(monkeypatch):
     assert client.params["/contatos"]["criterio"] == 1
 
 
+def test_sync_contacts_estoura_batch_size_em_varios_upserts(monkeypatch):
+    """batch_size pequeno (3) com 7 contatos: tem que sair em mais de uma
+    chamada de upsert (prova que o buffer realmente flusha em lotes), e o total
+    gravado tem que bater com os 7 contatos, sem perder nem duplicar nenhum."""
+    fake = FakeSupabaseCountingBatches()
+    contatos = [{"id": i, "nome": f"Contato {i}", "tipo": "F"} for i in range(1, 8)]
+    client = FakeClient({"/contatos": contatos})
+    monkeypatch.setattr(sync, "get_supabase", lambda: fake)
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    n = asyncio.run(sync.sync_contacts(client, batch_size=3))
+
+    assert n == 7
+    assert len(fake.batches) > 1
+    assert sum(len(b) for b in fake.batches) == 7
+
+
 def test_sync_payment_methods_e_sellers(monkeypatch):
     store = {}
     client = FakeClient({
@@ -176,6 +238,20 @@ def test_tick_nao_faz_nada_quando_desabilitado(monkeypatch):
     monkeypatch.setattr(sync, "sync_all", lambda *a, **k: chamou.append(True))
     asyncio.run(sync.bling_sync_tick())
     assert chamou == []
+
+
+def test_tick_engole_excecao_de_sync_all_sem_derrubar_o_worker(monkeypatch):
+    """O tick e chamado a cada 24h dentro do mesmo loop que roda broadcasts,
+    followups etc. — se sync_all levantar (Bling fora do ar, token revogado,
+    rate limit estourado) e a excecao vazasse, o worker inteiro morreria."""
+    monkeypatch.setattr(sync.config, "enabled", lambda: True)
+
+    async def sync_all_com_falha(*_a, **_k):
+        raise RuntimeError("Bling fora do ar")
+
+    monkeypatch.setattr(sync, "sync_all", sync_all_com_falha)
+
+    asyncio.run(sync.bling_sync_tick())  # nao pode levantar
 
 
 def test_worker_registra_o_tick_de_sync():

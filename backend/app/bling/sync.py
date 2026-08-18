@@ -32,32 +32,51 @@ def _to_e164_br(raw: str | None) -> str | None:
 
     O Bling guarda telefone em texto livre DIGITADO POR HUMANO: as vezes local
     ("(51) 99269-6163"), as vezes ja com o DDI ("+55 51 99269-6163"). `leads.phone`
-    e sempre E.164 com o 55 do Brasil. Por isso chamamos `normalize_phone` (a
-    MESMA funcao que normaliza `leads.phone`) no valor cru primeiro — ela limpa a
-    formatacao e resolve o 9o digito faltante em celulares — e SO DEPOIS decidimos
-    se prefixamos o "55". Prefixar antes de chamar normalize_phone quebraria fixo:
-    um numero de 10 digitos (DDD+8) viraria 12 apos o 55, disparando por engano a
-    insercao do 9o digito que `normalize_phone` reserva para celular.
+    e sempre E.164 com o 55 do Brasil.
 
-    A funcao precisa ser IDEMPOTENTE em relacao ao DDI porque nada impede o
-    contato de ja vir com "55" no campo (ex.: "+55 51 99269-6163"): prefixar de
-    novo sem checar produziria "555551992696163", que nao casa com nada — o lead
-    vira "sem contato" e a Task 8 cria um contato NOVO e DUPLICADO no Bling para
-    um cliente que ja existe. Por isso decidimos pelo COMPRIMENTO dos digitos
-    limpos, nao por regex no texto cru:
-      - 10 ou 11 digitos => local (DDD + fixo de 8 ou celular de 9). Prefixa 55.
-      - 12 ou 13 digitos comecando com 55 => ja tem DDI. Devolve como esta.
-      - qualquer outro comprimento/formato => None. Um numero que nao encaixa em
-        nenhum desses formatos nao pode virar chave de casamento: e melhor "sem
-        telefone" do que um telefone errado que casa com o cliente errado.
+    A funcao e AUTOSSUFICIENTE de proposito: ela extrai os digitos do texto cru
+    ELA MESMA e decide pelo comprimento ANTES de cogitar chamar `normalize_phone`.
+    Nao da pra so delegar tudo pra `normalize_phone`: ela insere um 9o digito
+    sempre que ve 12 digitos comecando com "55", supondo celular sem o 9 — mas um
+    FIXO que ja veio com DDI tambem bate 12 digitos (55 + DDD + 8), e essas duas
+    situacoes sao indistinguiveis so pelo comprimento depois que o "55" ja esta
+    misturado no meio do numero. Repro do bug que isso evita:
+        digitos("(34) 3232-1000")   = "3432321000"    (10, fixo local)
+        digitos("+55 34 3232-1000") = "553432321000"  (12, MESMO fixo, com DDI)
+    Se essa segunda string passasse por `normalize_phone`, ela veria 12 digitos
+    comecando com 55 e inseriria um 9 espurio, virando "5534932321000" (13,
+    ERRADO) — duas grafias do mesmo numero produzindo valores diferentes, o que
+    quebra o casamento da Task 8 silenciosamente.
+
+    Por isso a ordem e: (1) extrair digitos crus por conta propria; (2) se ja tem
+    12/13 digitos com "55" na frente, devolver direto, SEM tocar em
+    normalize_phone; (3) so para o formato local (10/11 digitos, sem DDI) — onde
+    a heuristica do 9o digito nao tem como disparar por engano — reaproveitar
+    `normalize_phone` (a MESMA funcao que normaliza `leads.phone`) para limpar e
+    so ENTAO prefixar o "55" por ultimo. Prefixar antes de chamar normalize_phone
+    reintroduziria o bug acima.
+
+    LIMITACAO CONHECIDA que a Task 8 precisa saber: `normalize_phone`, do lado do
+    CRM, tem essa MESMA heuristica ambigua. Como `leads.phone` so e populado a
+    partir do JID do WhatsApp — que e sempre celular, nunca fixo — a suposicao
+    dela se sustenta la (todo 12-digitos-comecando-com-55 que aparece via
+    WhatsApp É de fato um celular sem o 9). Consequencia pratica: o casamento por
+    TELEFONE entre CRM e Bling so e confiavel para `celular_e164`. `telefone_e164`
+    (fixo) fica no espelho como informativo — nunca deve virar chave de
+    casamento, porque do lado do CRM nao existe um numero de fixo com o qual
+    comparar (WhatsApp nao tem fixo).
     """
-    limpo = normalize_phone(raw)
-    if not limpo:
+    if not raw:
         return None
-    if len(limpo) in (10, 11):
-        return f"55{limpo}"
-    if len(limpo) in (12, 13) and limpo.startswith("55"):
-        return limpo
+    # Digitos crus, sem NENHUMA heuristica — soh assim da pra decidir pelo
+    # comprimento antes de saber se e seguro delegar a normalize_phone.
+    digitos = "".join(ch for ch in raw if ch.isdigit())
+    if len(digitos) in (12, 13) and digitos.startswith("55"):
+        return digitos
+    if len(digitos) in (10, 11):
+        limpo = normalize_phone(raw)
+        if limpo and len(limpo) in (10, 11):
+            return f"55{limpo}"
     return None
 
 
