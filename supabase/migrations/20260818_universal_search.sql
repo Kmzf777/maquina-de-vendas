@@ -2,6 +2,10 @@
 -- mesmo padrão de unaccent+trigram de 20260812_search_all_messages.sql, mais
 -- uma extensão não-destrutiva de search_customer_messages (docs_only + paginação
 -- + lead_id, necessário para o deep-link /conversas?lead_id=).
+--
+-- As 4 funções ficam executáveis SOMENTE por service_role (ver bloco de grants
+-- de cada uma). Todos os chamadores são rotas /api/* do Next que usam
+-- getServiceSupabase() — nenhuma chama estes RPCs com a chave anon/authenticated.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -31,8 +35,10 @@ CREATE INDEX IF NOT EXISTS idx_leads_nome_fantasia_trgm
 DROP FUNCTION IF EXISTS search_leads(text, text, timestamptz, timestamptz, int, int);
 
 -- Leads não têm dono (ver spec §5): sem parâmetro de escopo por role.
--- p_stage filtra pelo mesmo campo `stage` (segmento: secretaria/atacado/
--- private_label/exportacao/consumo) que a página /leads já usa como filtro.
+-- p_stage filtra leads.stage — o segmento do agente (secretaria/atacado/
+-- private_label/exportacao/consumo), mesmo campo do filtro "Stage" da barra de
+-- filtros de /leads (leads-filter-bar.tsx, alimentado por AGENT_STAGES em
+-- lib/constants.ts). NÃO confundir com o stage_id do deal, que é outra coisa.
 CREATE OR REPLACE FUNCTION search_leads(
   search_query text,
   p_stage text DEFAULT NULL,
@@ -84,7 +90,15 @@ AS $$
   OFFSET GREATEST(p_offset, 0);
 $$;
 
-GRANT EXECUTE ON FUNCTION search_leads(text, text, timestamptz, timestamptz, int, int) TO authenticated, service_role;
+-- Todas as 4 funções desta migration são SECURITY DEFINER e tratam parâmetro de
+-- escopo NULL como "sem restrição" (e search_leads/search_sales nem têm escopo).
+-- Por isso só `service_role` executa — mesmo raciocínio da auditoria de
+-- 20260704_revoke_search_customer_messages_public.sql. CREATE FUNCTION concede
+-- EXECUTE a PUBLIC por padrão, então o REVOKE abaixo não é redundante.
+REVOKE EXECUTE ON FUNCTION public.search_leads(text, text, timestamptz, timestamptz, int, int)
+  FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.search_leads(text, text, timestamptz, timestamptz, int, int)
+  TO service_role;
 
 -- ============================================================
 -- search_deals
@@ -161,14 +175,18 @@ AS $$
   OFFSET GREATEST(p_offset, 0);
 $$;
 
-GRANT EXECUTE ON FUNCTION search_deals(text, uuid[], uuid, uuid, timestamptz, timestamptz, int, int) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.search_deals(text, uuid[], uuid, uuid, timestamptz, timestamptz, int, int)
+  FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.search_deals(text, uuid[], uuid, uuid, timestamptz, timestamptz, int, int)
+  TO service_role;
 
 -- ============================================================
 -- search_sales
 -- ============================================================
 
+-- sales.product é NOT NULL, então o índice não precisa de predicado parcial.
 CREATE INDEX IF NOT EXISTS idx_sales_product_trgm
-  ON sales USING gin (f_unaccent(lower(product)) gin_trgm_ops) WHERE product IS NOT NULL;
+  ON sales USING gin (f_unaccent(lower(product)) gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_sales_notes_trgm
   ON sales USING gin (f_unaccent(lower(notes)) gin_trgm_ops) WHERE notes IS NOT NULL;
 
@@ -230,7 +248,10 @@ AS $$
   OFFSET GREATEST(p_offset, 0);
 $$;
 
-GRANT EXECUTE ON FUNCTION search_sales(text, timestamptz, timestamptz, int, int) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.search_sales(text, timestamptz, timestamptz, int, int)
+  FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.search_sales(text, timestamptz, timestamptz, int, int)
+  TO service_role;
 
 -- ============================================================
 -- search_customer_messages: extensão não-destrutiva
@@ -279,17 +300,20 @@ AS $$
     FROM messages m
     JOIN conversations c ON c.id = m.conversation_id
     WHERE m.role IN ('user', 'assistant')
+      -- O OR de LIKE fica intacto (igual a 20260812) porque é a forma que o
+      -- planner consegue resolver pelos índices trigram de messages. Colocar
+      -- docs_only dentro de um CASE aqui tornaria o predicado não-indexável.
       AND (
-        CASE WHEN docs_only THEN
-          m.document_name IS NOT NULL
-          AND f_unaccent(lower(m.document_name)) LIKE '%' || f_unaccent(lower(search_query)) || '%'
-        ELSE
-          (m.content IS NOT NULL
-            AND f_unaccent(lower(m.content)) LIKE '%' || f_unaccent(lower(search_query)) || '%')
-          OR (m.document_name IS NOT NULL
-            AND f_unaccent(lower(m.document_name)) LIKE '%' || f_unaccent(lower(search_query)) || '%')
-        END
+        (m.content IS NOT NULL
+          AND f_unaccent(lower(m.content)) LIKE '%' || f_unaccent(lower(search_query)) || '%')
+        OR (m.document_name IS NOT NULL
+          AND f_unaccent(lower(m.document_name)) LIKE '%' || f_unaccent(lower(search_query)) || '%')
       )
+      -- docs_only = filtro separado: "restrinja a mensagens COM anexo", que é o
+      -- que o toggle "Só documentos/mídia" da UI promete — e não "case apenas
+      -- contra o nome do arquivo". Logo, um anexo cuja LEGENDA casa a busca
+      -- também aparece com docs_only = true (intencional).
+      AND (NOT docs_only OR m.document_name IS NOT NULL)
       AND (channel_ids IS NULL OR c.channel_id = ANY (channel_ids))
   ),
   deduped AS (
@@ -311,5 +335,14 @@ AS $$
   OFFSET GREATEST(p_offset, 0);
 $$;
 
--- anon permanece SEM acesso (revogado em 20260704_revoke_search_customer_messages_public.sql).
-GRANT EXECUTE ON FUNCTION search_customer_messages(text, uuid[], int, boolean, int) TO authenticated, service_role;
+-- O DROP+CREATE acima cria uma função com OID NOVO, e CREATE FUNCTION concede
+-- EXECUTE a PUBLIC por padrão — ou seja, o REVOKE da auditoria de
+-- 20260704_revoke_search_customer_messages_public.sql morreu junto com a função
+-- antiga e precisa ser reaplicado aqui. Sem isto, `anon` volta a poder chamar a
+-- função via /rest/v1/rpc com channel_ids:null e vazar TODAS as mensagens.
+-- (Este é o mesmo furo que 20260812_search_all_messages.sql deixou aberto ao
+-- recriar a função sem reaplicar o revoke.)
+REVOKE EXECUTE ON FUNCTION public.search_customer_messages(text, uuid[], int, boolean, int)
+  FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.search_customer_messages(text, uuid[], int, boolean, int)
+  TO service_role;
