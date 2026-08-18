@@ -129,10 +129,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS leads_bling_contact_id_key
 
 -- Seed: os 1.208 leads da reativacao (aplicados em 17/08/2026) ja carregam o ID
 -- do contato do Bling em metadata. Vinculo de graca, sem ambiguidade.
+-- length <= 18 blinda o CAST contra overflow de bigint (max 19 digitos): sem
+-- o limite, um valor sujo com 20+ digitos passa no regex, estoura o CAST e
+-- aborta a migration inteira (o runner executa o arquivo como uma query so).
 UPDATE leads
    SET bling_contact_id = (metadata->>'id_bling')::bigint
  WHERE bling_contact_id IS NULL
-   AND metadata->>'id_bling' ~ '^[0-9]+$';
+   AND metadata->>'id_bling' ~ '^[0-9]+$'
+   AND length(metadata->>'id_bling') <= 18;
 
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS bling_order_id      bigint;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS bling_order_number  integer;

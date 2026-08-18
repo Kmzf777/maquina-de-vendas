@@ -1,4 +1,5 @@
 import pathlib
+import re
 
 SQL = pathlib.Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "20260818_bling_integration.sql"
 
@@ -33,6 +34,9 @@ def test_pedido_bling_e_unico_em_sales():
     sql = _sql().lower()
     assert "sales_bling_order_id_key" in sql
     assert "unique index" in sql
+    # UNIQUE parcial: sem o WHERE, o indice colide com todas as vendas legadas
+    # (bling_order_id IS NULL) assim que a migration roda em producao.
+    assert "where bling_order_id is not null" in sql
 
 
 def test_seed_do_id_bling_vem_do_metadata():
@@ -40,6 +44,10 @@ def test_seed_do_id_bling_vem_do_metadata():
     # os 1.208 leads da reativacao ja carregam metadata->>'id_bling'
     assert "metadata->>'id_bling'" in sql
     assert "~ '^[0-9]+$'" in sql
+    # blindagem contra overflow de bigint (max 19 digitos): sem o limite de
+    # tamanho, um valor sujo com 20+ digitos passa no regex, estoura o CAST e
+    # aborta a migration inteira (o runner executa o arquivo como uma query so).
+    assert "length(metadata->>'id_bling') <= 18" in sql
 
 
 def test_vendas_legadas_viram_origin_manual():
@@ -58,8 +66,16 @@ def test_rls_ligado_em_todas_as_tabelas_novas():
 
 
 def test_credentials_nao_expoe_leitura_para_authenticated():
-    """bling_credentials guarda refresh_token — so service_role le."""
+    """bling_credentials guarda refresh_token — so service_role le.
+
+    Varre o arquivo inteiro (nao so o bloco de criacao da tabela): nenhuma
+    statement CREATE POLICY que mencione bling_credentials pode conceder
+    acesso a authenticated, onde quer que ela apareca no arquivo.
+    """
     sql = _sql()
-    bloco = sql[sql.index("bling_credentials"):]
-    bloco = bloco[:bloco.index("bling_products")] if "bling_products" in bloco else bloco
-    assert "TO authenticated" not in bloco
+    policies = re.findall(r"CREATE POLICY.*?;", sql, flags=re.IGNORECASE | re.DOTALL)
+    ofensoras = [
+        p for p in policies
+        if "bling_credentials" in p.lower() and "authenticated" in p.lower()
+    ]
+    assert not ofensoras, ofensoras
