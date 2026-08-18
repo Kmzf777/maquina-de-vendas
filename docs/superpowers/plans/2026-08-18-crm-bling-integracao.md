@@ -619,6 +619,16 @@ git commit -m "feat(bling): config e hierarquia de erros"
 
 ### Task 3: Rate limiter (token-bucket Redis)
 
+> **Superado em parte pelo commit `e8dc01f7`.** A revisão de qualidade apontou que
+> os dois `_incr` sequenciais custam dois round-trips no caminho quente do modal de
+> venda — com um Redis lento-mas-vivo, ~3-4s sem nunca cair no fail-closed. O
+> módulo em produção passou a fazer os dois contadores num **único script Lua**
+> (`{status, valor}`: 0 ok, 1 estourou o segundo, 2 estourou o dia) e ganhou
+> cooldown de 30s após falha de Redis, no padrão de `buffer/lead_lock.py`. Isso
+> também eliminou por construção o modo de falha "Redis morreu entre os dois
+> contadores". O texto abaixo é o registro do que foi pedido originalmente;
+> `backend/app/bling/ratelimit.py` é a verdade.
+
 **Files:**
 - Create: `backend/app/bling/ratelimit.py`
 - Test: `backend/tests/test_bling_ratelimit.py`
