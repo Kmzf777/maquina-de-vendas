@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 import app.bling.orders as orders
-from app.bling.errors import BlingValidationError
+from app.bling.errors import BlingServerError, BlingValidationError
 
 
 # ---------- parcelas ----------
@@ -175,6 +175,69 @@ def test_payload_omite_loja_e_situacao_quando_nao_configurados(monkeypatch):
     assert "vendedor" not in payload
 
 
+def test_parcelas_dividem_o_total_liquido_com_desconto_em_reais(monkeypatch):
+    """Itens de R$267,00 com R$67,00 de desconto = pedido de R$200,00. Parcelar
+    o BRUTO cobraria R$67 a mais do que o pedido vale."""
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-18",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe 250g", "quantidade": 10,
+                "valor_unitario": 26.70, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [30, 60]}, seller_id=None,
+        discount={"valor": 67.00, "unidade": "REAL"},
+    )
+
+    assert [x["valor"] for x in payload["parcelas"]] == [100.0, 100.0]
+    assert sum(x["valor"] for x in payload["parcelas"]) == 200.00
+    assert payload["desconto"] == {"valor": 67.0, "unidade": "REAL"}
+
+
+def test_parcelas_dividem_o_total_liquido_com_desconto_percentual(monkeypatch):
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-18",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe 250g", "quantidade": 10,
+                "valor_unitario": 26.70, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [30, 60]}, seller_id=None,
+        discount={"valor": 10, "unidade": "PERCENTUAL"},
+    )
+
+    # 267,00 - 10% = 240,30 -> 120,15 + 120,15
+    assert [x["valor"] for x in payload["parcelas"]] == [120.15, 120.15]
+    assert round(sum(x["valor"] for x in payload["parcelas"]), 2) == 240.30
+
+
+def test_desconto_liquido_e_calculado_em_decimal():
+    assert orders.apply_discount(Decimal("267.00"), None) == Decimal("267.00")
+    assert orders.apply_discount(Decimal("267.00"), {"valor": 0}) == Decimal("267.00")
+    assert orders.apply_discount(
+        Decimal("267.00"), {"valor": 67, "unidade": "REAL"}) == Decimal("200.00")
+    assert orders.apply_discount(
+        Decimal("267.00"), {"valor": 10, "unidade": "PERCENTUAL"}) == Decimal("240.30")
+    # unidade ausente cai em REAL, como o payload enviado ao Bling
+    assert orders.apply_discount(
+        Decimal("100.00"), {"valor": 25}) == Decimal("75.00")
+
+
+def test_desconto_maior_que_o_total_e_recusado(monkeypatch):
+    """Liquido negativo nao vira pedido: a guarda de parcelas recusa."""
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    with pytest.raises(BlingValidationError):
+        orders.build_order_payload(
+            contact_id=1, sold_at="2026-08-18",
+            itens=[{"bling_product_id": 1, "descricao": "X", "quantidade": 1,
+                    "valor_unitario": 10.0, "desconto_percentual": 0}],
+            payment={"method_id": 45, "terms": [0]}, seller_id=None,
+            discount={"valor": 50.00, "unidade": "REAL"},
+        )
+
+
 def test_payload_recusa_pedido_sem_itens():
     with pytest.raises(BlingValidationError):
         orders.build_order_payload(contact_id=1, sold_at="2026-08-18", itens=[],
@@ -241,6 +304,9 @@ class FakeQuery:
 
     def delete(self):
         self.captured["delete"] = True
+        # registrado no store para o teste conseguir afirmar que NENHUM delete
+        # aconteceu (webhook resumido nao pode apagar sale_items)
+        self.store.setdefault(self.name + "_deletes", []).append(True)
         return self
 
     def execute(self):
@@ -275,8 +341,11 @@ def test_create_order_persiste_venda_e_itens(monkeypatch):
 
         async def get(self, path, params=None):
             assert path == "/pedidos/vendas/34215992"
+            # `total` DIVERGENTE dos itens de proposito: se o codigo tirar o
+            # dinheiro daqui em vez de calcular dos itens, o assert de `value`
+            # abaixo reprova.
             return {"data": {"id": 34215992, "numero": 1234,
-                             "situacao": {"id": 6, "valor": 6}, "total": 267.0}}
+                             "situacao": {"id": 6, "valor": 6}, "total": 999.99}}
 
     itens = [{"bling_product_id": 123, "codigo": "CAN-250", "descricao": "Cafe 250g",
               "quantidade": 10, "valor_unitario": 26.70, "desconto_percentual": 0}]
@@ -293,10 +362,98 @@ def test_create_order_persiste_venda_e_itens(monkeypatch):
     venda = store["sales_inserts"][0]
     assert venda["origin"] == "crm"
     assert venda["status"] == "registrada"
-    assert venda["value"] == 267.0
+    assert venda["value"] == 267.0, "o valor vem dos itens (10 x 26,70), nao do GET"
     assert venda["product"] == "Cafe 250g"
     assert venda["bling_order_id"] == 34215992
-    assert len(store["sale_items_inserts"][0]) == 1
+    assert venda["lead_id"] == "L1" and venda["deal_id"] == "D1"
+    assert venda["payment_method_id"] == 45
+    assert venda["payment_terms"] == "30"
+
+    # os VALORES do item, nao so a contagem de linhas
+    linhas = store["sale_items_inserts"][0]
+    assert len(linhas) == 1
+    assert linhas[0]["bling_product_id"] == 123
+    assert linhas[0]["descricao"] == "Cafe 250g"
+    assert linhas[0]["quantidade"] == 10.0
+    assert linhas[0]["valor_unitario"] == 26.70
+    assert linhas[0]["total"] == 267.0
+    assert linhas[0]["ordem"] == 0
+    assert linhas[0]["sale_id"] == "SALE-1"
+
+    # o GET so enriquece: numero e situacao entram por UPDATE depois do insert
+    assert store["sales_inserts"][0]["bling_order_number"] is None
+    assert store["sales_updates"][0] == {"bling_order_number": 1234,
+                                         "bling_situacao_id": 6}
+
+
+def test_create_order_grava_a_venda_mesmo_se_o_get_de_detalhe_falhar(monkeypatch):
+    """O POST sucedeu: o pedido JA existe no ERP. Se o GET seguinte falhar com
+    erro transitorio e a excecao subir, a `sales` nunca e gravada e o worker de
+    fila retenta — fazendo um SEGUNDO POST e duplicando o pedido no Bling.
+
+    O bling_order_id precisa estar persistido antes de qualquer coisa que possa
+    falhar; numero e situacao sao cosmeticos e o webhook os completa.
+    """
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    class FakeClientGetQuebrado:
+        async def post(self, path, json=None):
+            return {"data": {"id": 34215992}}
+
+        async def get(self, path, params=None):
+            raise BlingServerError("504 do Bling")
+
+    out = asyncio.run(orders.create_order(
+        FakeClientGetQuebrado(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by="v@e.com",
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 10,
+                "valor_unitario": 26.70, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [30]}, seller_id=None,
+    ))
+
+    venda = store["sales_inserts"][0]
+    assert venda["bling_order_id"] == 34215992, "o id do pedido nao pode se perder"
+    assert venda["bling_order_number"] is None
+    assert venda["bling_situacao_id"] is None
+    assert venda["value"] == 267.0
+    assert out["bling_order_id"] == 34215992
+    assert out["bling_order_number"] is None
+    # nada de UPDATE de enriquecimento, porque o GET falhou
+    assert "sales_updates" not in store
+
+
+def test_create_order_desconta_o_cabecalho_do_valor_gravado(monkeypatch):
+    """Desconto de cabecalho tem que sair de `sales.value` tambem — senao o CRM
+    grava receita inflada em toda venda com desconto."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            return {"data": {"id": 1}}
+
+        async def get(self, path, params=None):
+            return {"data": {"id": 1, "numero": 7, "situacao": {"id": 6}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 10,
+                "valor_unitario": 26.70, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        discount={"valor": 67.00, "unidade": "REAL"},
+    ))
+
+    assert store["sales_inserts"][0]["value"] == 200.0, "267,00 - 67,00 de desconto"
 
 
 def test_upsert_from_bling_marca_origin_bling_para_venda_nova(monkeypatch):
@@ -335,9 +492,108 @@ def test_upsert_from_bling_preserva_origin_crm_de_venda_existente(monkeypatch):
     assert linha["deal_id"] == "D1"
 
 
+def test_upsert_com_itens_substitui_os_sale_items(monkeypatch):
+    """Contrapartida do teste do payload resumido: quando o pedido TRAZ itens,
+    os sale_items sao de fato trocados pelos do Bling (delete + insert)."""
+    store = {"row_sales": [{"id": "SALE-1", "origin": "bling", "deal_id": None,
+                            "status": "registrada"}]}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    pedido = {
+        "id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0,
+        "situacao": {"id": 9},
+        "itens": [{"produto": {"id": 1}, "codigo": "A", "descricao": "Item A",
+                   "quantidade": 3, "valor": 50.0, "desconto": 0}],
+    }
+    asyncio.run(orders.upsert_from_bling(pedido, lead_id="L1",
+                                         event_date="2026-08-10T10:00:00Z"))
+
+    assert store["sale_items_deletes"] == [True], "os itens antigos saem"
+    linhas = store["sale_items_inserts"][0]
+    assert len(linhas) == 1
+    assert linhas[0]["descricao"] == "Item A"
+    assert linhas[0]["quantidade"] == 3.0
+    assert linhas[0]["valor_unitario"] == 50.0
+    assert linhas[0]["total"] == 150.0
+    assert linhas[0]["sale_id"] == "SALE-1"
+    assert store["sales_upserts"][0]["product"] == "Item A"
+
+
+def test_upsert_resumido_nao_apaga_itens_nem_reescreve_o_produto(monkeypatch):
+    """order.updated costuma vir com corpo resumido, SEM `itens`. O DELETE
+    incondicional zerava os sale_items de uma venda que o CRM tinha acabado de
+    gravar completa, e ainda trocava `product` por "Pedido Bling"."""
+    store = {"row_sales": [{"id": "SALE-1", "origin": "crm", "deal_id": "D1",
+                            "status": "registrada"}]}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    # payload magro: sem a chave `itens`
+    pedido = {"id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0,
+              "situacao": {"id": 9}}
+    asyncio.run(orders.upsert_from_bling(pedido, lead_id="L1",
+                                         event_date="2026-08-10T10:00:00Z"))
+
+    assert "sale_items_deletes" not in store, "webhook resumido nao apaga itens"
+    assert "sale_items_inserts" not in store
+    linha = store["sales_upserts"][0]
+    assert "product" not in linha, "o resumo do produto existente e preservado"
+
+
+def test_upsert_de_venda_nova_sem_itens_ainda_preenche_product(monkeypatch):
+    """`product` e NOT NULL: venda que nasce pelo webhook sem itens precisa de
+    algum resumo."""
+    store = {"row_sales": []}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    asyncio.run(orders.upsert_from_bling(
+        {"id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0},
+        lead_id="L1", event_date="2026-08-10T10:00:00Z"))
+
+    assert store["sales_upserts"][0]["product"] == "Pedido Bling"
+
+
+def test_upsert_preserva_status_cancelada(monkeypatch):
+    """Venda cancelada nao volta a 'registrada' no proximo evento do pedido."""
+    store = {"row_sales": [{"id": "SALE-1", "origin": "bling", "deal_id": None,
+                            "status": "cancelada"}]}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    asyncio.run(orders.upsert_from_bling(
+        {"id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0, "itens": []},
+        lead_id="L1", event_date="2026-08-11T10:00:00Z"))
+
+    assert store["sales_upserts"][0]["status"] == "cancelada"
+
+
+def test_upsert_sem_data_no_pedido_nao_grava_string_none(monkeypatch):
+    """Sem guarda, `data` ausente virava "NoneT12:00:00+00:00" e quebrava no
+    Postgres no meio do processamento do webhook."""
+    store = {"row_sales": []}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    asyncio.run(orders.upsert_from_bling(
+        {"id": 999, "numero": 77, "total": 150.0, "itens": []},
+        lead_id="L1", event_date="2026-08-11T10:00:00Z"))
+
+    linha = store["sales_upserts"][0]
+    assert "None" not in str(linha.get("sold_at"))
+    assert linha["sold_at"] == "2026-08-11T10:00:00Z", "cai para a data do evento"
+
+
 def test_cancel_marca_status_sem_apagar(monkeypatch):
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
     asyncio.run(orders.cancel_from_bling(999, event_date="2026-08-11T10:00:00Z"))
-    assert store["sales_updates"][0]["status"] == "cancelada"
+
+    # conjunto EXATO de chaves: o cancelamento nao pode zerar valor, apagar
+    # lead_id nem mexer em nada alem do status e da data do evento
+    assert store["sales_updates"] == [{"status": "cancelada",
+                                       "bling_event_date": "2026-08-11T10:00:00Z"}]
+    assert "sales_deletes" not in store
+    assert "sale_items_deletes" not in store

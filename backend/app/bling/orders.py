@@ -46,6 +46,25 @@ def order_total(itens: list[dict]) -> Decimal:
     return _money(sum((item_total(i) for i in itens), Decimal("0")))
 
 
+def apply_discount(total: Decimal, discount: dict | None) -> Decimal:
+    """Total LIQUIDO: o desconto de cabecalho reduz o que sera parcelado.
+
+    O Bling aceita 'REAL' (valor absoluto) e 'PERCENTUAL' (% sobre o total dos
+    itens). Parcelar o bruto cobraria do cliente mais do que o pedido vale — e
+    gravaria receita inflada em `sales.value`. Desconto maior que o total deixa
+    o liquido negativo de proposito: a guarda de `build_installments` recusa e o
+    valor negativo aparece na mensagem, em vez de virar zero silencioso.
+    """
+    if not discount:
+        return total
+    valor = _dec(discount.get("valor"))
+    if valor <= 0:
+        return total
+    if str(discount.get("unidade") or "REAL").upper() == "PERCENTUAL":
+        return _money(total * (Decimal("1") - valor / Decimal("100")))
+    return _money(total - valor)
+
+
 def product_summary(itens: list[dict]) -> str:
     """Resumo derivado para `sales.product`, que continua NOT NULL e alimenta a busca."""
     if not itens:
@@ -125,7 +144,9 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
             type_="MISSING_REQUIRED_FIELD_ERROR", status=422,
         )
 
-    total = order_total(itens)
+    # As parcelas dividem o LIQUIDO. O desconto de cabecalho e aplicado antes de
+    # parcelar, senao a soma das parcelas fica maior que o total do pedido.
+    total = apply_discount(order_total(itens), discount)
     payload: dict = {
         "contato": {"id": int(contact_id)},
         # O Bling exige as tres datas; sem prazo de entrega definido no CRM,
@@ -225,10 +246,13 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
     criado = await client.post("/pedidos/vendas", payload)
     order_id = int((criado.get("data") or {})["id"])
 
-    # O POST devolve so o id. `numero` e `situacao` resolvidos vem no GET.
-    detalhe = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
-
-    total = order_total(itens)
+    # ---- daqui para baixo o pedido JA EXISTE no ERP ----
+    # Gravar a linha com o bling_order_id vem antes de qualquer coisa que possa
+    # falhar. Se uma excecao subisse daqui, o worker de fila retentaria
+    # create_order e faria um SEGUNDO POST: pedido duplicado no Bling, estoque
+    # baixado duas vezes. O bling_order_id na `sales` e a chave que amarra o
+    # pedido ao CRM, entao ele e o primeiro a ser persistido.
+    total = apply_discount(order_total(itens), discount)
     linha = {
         "lead_id": lead_id,
         "deal_id": deal_id,
@@ -239,41 +263,75 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         "origin": "crm",
         "status": "registrada",
         "bling_order_id": order_id,
-        "bling_order_number": detalhe.get("numero"),
-        "bling_situacao_id": (detalhe.get("situacao") or {}).get("id"),
+        # `numero` e a situacao resolvida so existem apos o GET abaixo; sao
+        # cosmeticos e o webhook order.updated os completa se o GET falhar.
+        "bling_order_number": None,
+        "bling_situacao_id": None,
         "payment_method_id": payment.get("method_id"),
         "payment_terms": "/".join(str(d) for d in (payment.get("terms") or [0])),
         "notes": notes or None,
     }
     sale_id = await asyncio.to_thread(_insert_sale, linha)
-    await asyncio.to_thread(_insert_items, sale_id, [
-        {
-            "bling_product_id": i["bling_product_id"],
-            "codigo": i.get("codigo"),
-            "descricao": i["descricao"],
-            "quantidade": float(_dec(i["quantidade"])),
-            "valor_unitario": float(_dec(i["valor_unitario"])),
-            "desconto_percentual": float(_dec(i.get("desconto_percentual"))),
-            "total": float(item_total(i)),
-            "ordem": ordem,
-        }
-        for ordem, i in enumerate(itens)
-    ])
+
+    # Itens e enriquecimento sao best-effort pelo mesmo motivo: uma falha aqui
+    # nao pode virar retentativa, porque a retentativa duplica o pedido. Os dois
+    # sao recuperaveis — `upsert_from_bling` reescreve itens e numero quando o
+    # order.updated chegar.
+    try:
+        await asyncio.to_thread(_insert_items, sale_id, [
+            {
+                "bling_product_id": i["bling_product_id"],
+                "codigo": i.get("codigo"),
+                "descricao": i["descricao"],
+                "quantidade": float(_dec(i["quantidade"])),
+                "valor_unitario": float(_dec(i["valor_unitario"])),
+                "desconto_percentual": float(_dec(i.get("desconto_percentual"))),
+                "total": float(item_total(i)),
+                "ordem": ordem,
+            }
+            for ordem, i in enumerate(itens)
+        ])
+    except Exception:
+        logger.exception("[BLING] pedido %s criado, mas falhou ao gravar os itens",
+                         order_id)
+
+    numero = None
+    try:
+        # O POST devolve so o id. `numero` e a situacao resolvida vem no GET.
+        detalhe = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
+        numero = detalhe.get("numero")
+        await asyncio.to_thread(_update_sale, order_id, {
+            "bling_order_number": numero,
+            "bling_situacao_id": (detalhe.get("situacao") or {}).get("id"),
+        })
+    except Exception:
+        logger.warning("[BLING] pedido %s criado, mas o GET de detalhe falhou; "
+                       "numero e situacao ficam para o webhook", order_id,
+                       exc_info=True)
 
     logger.info("[BLING] pedido %s (numero %s) criado para o lead %s",
-                order_id, detalhe.get("numero"), lead_id)
+                order_id, numero, lead_id)
     return {
         "sale_id": sale_id,
         "bling_order_id": order_id,
-        "bling_order_number": detalhe.get("numero"),
+        "bling_order_number": numero,
     }
 
 
 def _existing_sale(order_id: int) -> dict | None:
-    res = (get_supabase().table("sales").select("id, origin, deal_id, lead_id")
+    res = (get_supabase().table("sales").select("id, origin, deal_id, lead_id, status")
            .eq("bling_order_id", order_id).limit(1).execute())
     linhas = getattr(res, "data", None) or []
     return linhas[0] if linhas else None
+
+
+def _sold_at_iso(pedido: dict, event_date: str | None) -> str | None:
+    """Data da venda em timestamptz. Sem guarda, um pedido sem `data` viraria a
+    string "NoneT12:00:00+00:00" e explodiria no Postgres no meio do webhook."""
+    data = str(pedido.get("data") or "").strip()
+    if data:
+        return f"{data}T12:00:00+00:00"
+    return event_date or None
 
 
 def _upsert_sale(row: dict) -> str | None:
@@ -299,24 +357,41 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
     order_id = int(pedido["id"])
     existente = await asyncio.to_thread(_existing_sale, order_id)
 
+    # Payload de webhook costuma vir RESUMIDO, sem `itens`. Nesse caso nao
+    # tocamos em sale_items nem em `product`: um order.updated magro apagaria os
+    # itens que o CRM acabou de gravar completos e reescreveria o resumo do
+    # produto para "Pedido Bling".
+    traz_itens = bool(pedido.get("itens"))
+
     linha = {
         "bling_order_id": order_id,
         "lead_id": (existente or {}).get("lead_id") or lead_id,
         # Venda vinda do ERP entra sem deal (D7); venda do CRM mantem o dela.
         "deal_id": (existente or {}).get("deal_id"),
-        "sold_at": f"{pedido.get('data')}T12:00:00+00:00",
         "value": float(_dec(pedido.get("total"))),
-        "product": product_summary(_map_bling_items(pedido)),
         # A origem e imutavel depois de definida: o webhook de volta nao pode
         # reescrever 'crm' para 'bling'.
         "origin": (existente or {}).get("origin") or "bling",
-        "status": "registrada",
+        # Venda ja cancelada nao volta a 'registrada' no proximo evento.
+        "status": ("cancelada" if (existente or {}).get("status") == "cancelada"
+                   else "registrada"),
         "bling_order_number": pedido.get("numero"),
         "bling_situacao_id": (pedido.get("situacao") or {}).get("id"),
         "bling_event_date": event_date,
     }
+
+    sold_at = _sold_at_iso(pedido, event_date)
+    if sold_at:
+        linha["sold_at"] = sold_at
+
+    if traz_itens:
+        linha["product"] = product_summary(_map_bling_items(pedido))
+    elif not existente:
+        # Venda nova sem itens no payload: `product` e NOT NULL e precisa de algo.
+        linha["product"] = "Pedido Bling"
+
     sale_id = await asyncio.to_thread(_upsert_sale, linha)
-    if sale_id:
+    if sale_id and traz_itens:
         await asyncio.to_thread(_replace_items, sale_id, _map_bling_items(pedido))
     return sale_id
 
