@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent,
@@ -105,7 +106,7 @@ function DraggableDealCard({ deal, onClick }: { deal: Deal; onClick: (deal: Deal
   );
 }
 
-export default function VendasPage() {
+function VendasPageInner() {
   const { role } = useCurrentRole();
   const isAdmin = role === "admin";
   const { pipelines, loading: pipelinesLoading, refetch: refetchPipelines } = usePipelines();
@@ -125,6 +126,48 @@ export default function VendasPage() {
   const [showActive, setShowActive] = useState(true);
   const [lostDeal, setLostDeal] = useState<{ deal: Deal; stageId: string } | null>(null);
   const [bulkMoveStage, setBulkMoveStage] = useState<PipelineStage | null>(null);
+
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const deepLinkDealId = useRef<string | null>(null);
+  const deepLinkApplied = useRef(false);
+
+  // Deep-link: /busca?deal_id= pode apontar pra um deal fora do funil aberto.
+  // 1o efeito: descobre o funil do deal e troca o funil selecionado.
+  useEffect(() => {
+    const dealId = searchParams.get("deal_id");
+    if (!dealId || deepLinkApplied.current || deepLinkDealId.current) return;
+    deepLinkDealId.current = dealId;
+
+    // 404 = deal inexistente OU fora do escopo de funis do usuario (a rota nao
+    // confirma existencia por enumeracao). Nos dois casos desiste em silencio,
+    // sem alerta e sem deixar a pagina esperando: so limpa a URL.
+    const giveUp = () => {
+      deepLinkDealId.current = null;
+      deepLinkApplied.current = true;
+      router.replace("/vendas");
+    };
+
+    fetch(`/api/deals/${dealId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((deal) => {
+        if (deal?.pipeline_id) setSelectedPipelineId(deal.pipeline_id);
+        else giveUp();
+      })
+      .catch(giveUp);
+  }, [searchParams, router]);
+
+  // 2o efeito: quando o funil certo estiver selecionado e `deals` (ja filtrado
+  // por ele) tiver carregado, abre o deal e limpa a URL.
+  useEffect(() => {
+    if (deepLinkApplied.current || !deepLinkDealId.current || dealsLoading) return;
+    const match = deals.find((d) => d.id === deepLinkDealId.current);
+    if (match) {
+      setSelectedDealId(match.id);
+      deepLinkApplied.current = true;
+      router.replace("/vendas");
+    }
+  }, [deals, dealsLoading, router]);
 
   // Auto-selecionar primeiro pipeline
   useEffect(() => {
@@ -371,5 +414,13 @@ export default function VendasPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function VendasPage() {
+  return (
+    <Suspense>
+      <VendasPageInner />
+    </Suspense>
   );
 }
