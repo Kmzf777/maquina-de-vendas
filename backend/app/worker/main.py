@@ -64,6 +64,11 @@ async def _ad_spend_sync_tick() -> None:
     await sync_all_ad_spend(days=30)
 
 
+async def _bling_sync_tick() -> None:
+    from app.bling.sync import bling_sync_tick
+    await bling_sync_tick()
+
+
 # (nome, tipo, fn, intervalo/fallback em segundos)
 TASK_SPECS = [
     ("broadcasts", "event", _broadcasts_tick, 60),
@@ -74,6 +79,7 @@ TASK_SPECS = [
     ("channel-health", "periodic", _channel_health_tick, 300),
     ("reconcile", "periodic", _reconcile_tick, 300),
     ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 86400),
+    ("bling-sync", "periodic", _bling_sync_tick, 86400),
 ]
 
 
