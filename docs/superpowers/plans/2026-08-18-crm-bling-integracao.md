@@ -3931,7 +3931,14 @@ git commit -m "feat(bling): outbox de pedidos com backoff no worker"
 **Files:**
 - Create: `backend/app/bling/webhook_router.py`
 - Modify: `backend/app/main.py` (registrar o router)
+- Modify: `backend/app/events/bus.py` (acrescentar `"bling-webhook"` a `DOMAINS`)
 - Test: `backend/tests/test_bling_webhook.py`
+
+> `DOMAINS` em `app/events/bus.py` é allow-list fechada. Sem acrescentar
+> `"bling-webhook"` ali, `emit_event` recusa o domínio, devolve `False`, e o
+> wake-up nunca dispara — os eventos ficariam esperando a varredura de fallback
+> de 60s. O nome tem que ser idêntico ao da task em `TASK_SPECS`, porque
+> `run_event_driven(name, fn, name, seconds)` usa o nome como stream.
 
 - [ ] **Step 1: Escrever os testes que falham**
 
@@ -4123,10 +4130,19 @@ def _insert_event(row: dict) -> bool:
 
 
 async def _notify_worker() -> None:
-    """Acorda o tick de processamento (o worker tambem varre por fallback)."""
+    """Acorda o tick de processamento (o worker tambem varre por fallback).
+
+    `emit_event` e SINCRONA e faz I/O no Redis — precisa de to_thread para nao
+    bloquear o event loop dentro do request, que tem 5s de orcamento.
+
+    O dominio e o NOME DA TASK no worker ("bling-webhook", com hifen), porque
+    run_event_driven em app/worker/main.py usa o nome como stream. E o dominio
+    precisa estar em bus.DOMAINS, que e allow-list fechada: fora dela,
+    emit_event recusa e devolve False sem emitir nada.
+    """
     try:
-        from app.events.bus import publish
-        await publish("bling_webhook")
+        from app.events.bus import emit_event
+        await asyncio.to_thread(emit_event, "bling-webhook")
     except Exception:  # noqa: BLE001 — o fallback periodico cobre
         pass
 
@@ -5579,6 +5595,12 @@ export function buildInstallments(
   const totalCentavos = cents(total);
   const n = prazos.length;
   const base = Math.round(totalCentavos / n);
+  // O backend RECUSA divisões em que alguma parcela ficaria sem valor
+  // (`base > 0 && ultima > 0` em `build_installments`). Só acontece abaixo de
+  // R$0,66 — nenhuma venda real — mas sem esta checagem o modal exibiria uma
+  // parcela de R$0,00 e o backend devolveria 422 sem o vendedor entender por quê.
+  const ultimaCentavos = totalCentavos - base * (n - 1);
+  if (base <= 0 || ultimaCentavos <= 0) return [];
 
   return prazos.map((dias, i) => {
     // A última parcela absorve o resto: 100,00/3 = 33,33 + 33,33 + 33,34.
