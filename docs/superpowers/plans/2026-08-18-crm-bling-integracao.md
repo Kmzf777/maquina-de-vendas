@@ -730,7 +730,12 @@ class FakeRedisFalhaNaSegunda:
 
 def test_falha_no_contador_diario_tambem_e_fail_closed(monkeypatch, _no_sleep):
     """Protege o caminho em que o Redis cai NO MEIO dos dois contadores."""
-    monkeypatch.setattr(rl, "_get_client", lambda: FakeRedisFalhaNaSegunda())
+    # Instancia UNICA, ligada fora do lambda. `acquire()` chama _get_client()
+    # uma vez por contador; um `lambda: FakeRedisFalhaNaSegunda()` construiria
+    # um fake novo a cada chamada, `chamadas` voltaria a zero e o teste nunca
+    # alcancaria o caminho que pretende testar (passaria contra codigo quebrado).
+    fake = FakeRedisFalhaNaSegunda()
+    monkeypatch.setattr(rl, "_get_client", lambda: fake)
     monkeypatch.setattr(rl.time, "time", lambda: 1_000_000.0)
 
     with pytest.raises(BlingRateLimitError):
