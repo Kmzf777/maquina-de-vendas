@@ -124,3 +124,28 @@ def test_router_registrado_no_app():
     from app.main import app as fastapi_app
     rotas = {getattr(r, "path", "") for r in fastapi_app.routes}
     assert "/webhook/bling" in rotas
+
+
+async def test_notify_worker_emite_no_dominio_bling_webhook(monkeypatch):
+    """`_notify_worker` tem que chamar a API real do bus (emit_event), nao a
+    `publish` inexistente — foi esse o bug que passou pelos testes originais
+    porque eles monkeypatcham `_notify_worker` inteiro."""
+    chamadas = []
+
+    def fake_emit_event(domain, payload=None):
+        chamadas.append(domain)
+        return True
+
+    monkeypatch.setattr("app.events.bus.emit_event", fake_emit_event)
+
+    await wr._notify_worker()
+
+    assert chamadas == ["bling-webhook"]
+
+
+def test_bling_webhook_esta_registrado_em_domains():
+    """Sem isso, `emit_event` recusa o dominio e devolve False sem emitir nada
+    (ver `app/events/bus.py`). Trava a regressao de alguem reordenar/reescrever
+    DOMAINS no futuro."""
+    from app.events.bus import DOMAINS
+    assert "bling-webhook" in DOMAINS

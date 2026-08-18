@@ -47,10 +47,16 @@ def _insert_event(row: dict) -> bool:
 
 
 async def _notify_worker() -> None:
-    """Acorda o tick de processamento (o worker tambem varre por fallback)."""
+    """Acorda o tick de processamento (o worker tambem varre por fallback).
+
+    `emit_event` e SINCRONA e faz I/O no Redis — precisa de to_thread para nao
+    bloquear o event loop dentro do request do webhook, que tem 5s de orcamento.
+    O dominio e o nome da task no worker ("bling-webhook"), porque
+    run_event_driven usa o nome como stream.
+    """
     try:
-        from app.events.bus import publish
-        await publish("bling_webhook")
+        from app.events.bus import emit_event
+        await asyncio.to_thread(emit_event, "bling-webhook")
     except Exception:  # noqa: BLE001 — o fallback periodico cobre
         pass
 
