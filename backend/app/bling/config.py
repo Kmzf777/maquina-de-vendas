@@ -5,7 +5,10 @@ campo no Settings do pydantic. Motivo pratico — o Settings tem `extra: allow`,
 aceita a variavel no .env mas NAO cria o atributo, entao `settings.bling_client_id`
 levantaria AttributeError.
 """
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 # A v3 e a unica com OAuth/JWT. A v2 esta descontinuada.
 API_BASE = "https://api.bling.com.br/Api/v3"
@@ -32,6 +35,7 @@ def _env_int(name: str) -> int | None:
     try:
         return int(raw)
     except ValueError:
+        logger.warning("Valor invalido para %s: %r (esperava inteiro)", name, raw)
         return None
 
 
@@ -63,13 +67,17 @@ def lead_default_stage() -> str:
     return _env("BLING_LEAD_DEFAULT_STAGE") or "novo"
 
 
+def is_configured() -> bool:
+    """Tem credenciais para falar com o Bling? Fonte unica desta regra."""
+    return bool(client_id() and client_secret())
+
+
 def require_credentials() -> tuple[str, str]:
     """Devolve (client_id, client_secret) ou levanta BlingNotConfigured."""
     from app.bling.errors import BlingNotConfigured
 
-    cid, csec = client_id(), client_secret()
-    if not cid or not csec:
+    if not is_configured():
         raise BlingNotConfigured(
             "BLING_CLIENT_ID e BLING_CLIENT_SECRET precisam estar configurados"
         )
-    return cid, csec
+    return client_id(), client_secret()
