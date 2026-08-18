@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { SalesMetricsCards } from "@/components/sales/sales-metrics-cards";
 import { SalesFiltersBar } from "@/components/sales/sales-filters";
 import { SalesTable } from "@/components/sales/sales-table";
@@ -24,7 +25,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function PainelVendasPage() {
+function PainelVendasPageInner() {
   const [filters, setFilters] = useState<SalesFilters>({
     from: startOfMonth(),
     to: today(),
@@ -36,6 +37,27 @@ export default function PainelVendasPage() {
   const { sales, count, loading, refetch } = useSales(filters);
   const [showCreate, setShowCreate] = useState(false);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
+
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const deepLinkApplied = useRef(false);
+
+  // Deep-link: /busca?sale_id= pode apontar pra uma venda fora do periodo/pagina
+  // atual da listagem, entao busca direto por id em vez de depender de `sales`.
+  // Resposta nao-ok (404/erro de rede) so nao abre nada — sem alerta, sem travar.
+  useEffect(() => {
+    if (deepLinkApplied.current) return;
+    const saleId = searchParams.get("sale_id");
+    if (!saleId) return;
+    deepLinkApplied.current = true;
+    fetch(`/api/sales/${saleId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((sale) => {
+        if (sale) setEditingSale(sale);
+      })
+      .catch(() => {})
+      .finally(() => router.replace("/painel-vendas"));
+  }, [searchParams, router]);
 
   useEffect(() => {
     setMetricsLoading(true);
@@ -96,5 +118,13 @@ export default function PainelVendasPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function PainelVendasPage() {
+  return (
+    <Suspense>
+      <PainelVendasPageInner />
+    </Suspense>
   );
 }
