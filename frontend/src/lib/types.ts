@@ -484,6 +484,8 @@ export interface ConversationSearchResult {
   lead_phone: string | null;
   channel_id: string | null;
   channel_name: string | null;
-  sent_by: string;
+  /** Nullable: `messages.sent_by` tem DEFAULT 'agent' mas aceita NULL (002_crm_enrichment.sql).
+   *  Mesma nullability de `MessageSearchResult.sent_by`, que vem do mesmo RPC. */
+  sent_by: string | null;
   total_count: number;
 }
