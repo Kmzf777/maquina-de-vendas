@@ -6212,18 +6212,33 @@ Nada disto é automatizável e tudo é bloqueante:
 4. Preencher no `.env` de produção: `BLING_ENABLED=true`, `BLING_CLIENT_ID`,
    `BLING_CLIENT_SECRET`, `BLING_REDIRECT_URI`, `BLING_STORE_ID`,
    `BLING_ORDER_SITUACAO_ID`, `BLING_LEAD_DEFAULT_STAGE`.
-5. Aplicar `supabase/migrations/20260818_bling_integration.sql` no Supabase.
-6. Conectar via `/config` → "Conectar ao Bling" e confirmar `/api/bling/status`.
-7. Rodar `POST /api/bling/sync?full=true` e conferir as contagens.
-8. Configurar o webhook `order` no app apontando para
+5. **Antes de aplicar a migration**, checar `id_bling` duplicado. O índice UNIQUE
+   `leads_bling_contact_id_key` é criado *antes* do `UPDATE` de seed; se dois leads
+   carregarem o mesmo `metadata->>'id_bling'`, o `UPDATE` viola a unicidade e **a
+   migration inteira aborta** (o runner executa o arquivo como uma query só).
+
+   ```sql
+   SELECT metadata->>'id_bling' AS id_bling, count(*)
+     FROM leads
+    WHERE metadata->>'id_bling' ~ '^[0-9]+$'
+    GROUP BY 1 HAVING count(*) > 1;
+   ```
+
+   Vazio → aplica sem medo. Com linhas → decidir qual lead fica com o vínculo antes
+   de rodar (os 1.208 leads da reativação de 17/08/2026 são a origem provável).
+
+6. Aplicar `supabase/migrations/20260818_bling_integration.sql` no Supabase.
+7. Conectar via `/config` → "Conectar ao Bling" e confirmar `/api/bling/status`.
+8. Rodar `POST /api/bling/sync?full=true` e conferir as contagens.
+9. Configurar o webhook `order` no app apontando para
    `https://api.canastrainteligencia.com/webhook/bling`, versão `v1`, ações
    created/updated/deleted. Repetir para `product`.
-9. Confirmar o formato da URL de deep-link do pedido e ajustar
+10. Confirmar o formato da URL de deep-link do pedido e ajustar
    `BLING_ORDER_URL_TEMPLATE`.
-10. Mapear os vendedores em `/config`.
-11. Teste E2E ao vivo: registrar uma venda real de valor baixo, conferir o pedido no
+11. Mapear os vendedores em `/config`.
+12. Teste E2E ao vivo: registrar uma venda real de valor baixo, conferir o pedido no
     Bling, alterar a situação lá e confirmar que o CRM reflete.
-12. Só então rodar `POST /api/bling/backfill` (12 meses).
+13. Só então rodar `POST /api/bling/backfill` (12 meses).
 
 - [ ] **Push (com autorização do usuário)**
 
