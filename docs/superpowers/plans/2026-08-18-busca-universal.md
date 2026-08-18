@@ -42,6 +42,14 @@ nova, pois suas listas são filtradas/paginadas.
    funil; o `GET` novo (Task 3) sem guarda deixaria um vendedor ler deal de funil alheio por id. Task 3 aplica
    `getAllowedPipelineIds()` e devolve **404** (não 403) quando fora do escopo, para não confirmar existência por
    enumeração. `GET /api/sales/[id]` fica **sem** guarda de propósito — vendas são globais hoje (spec §5).
+4. **`/api/search` roda sempre as 4 RPCs.** O desenho original pulava as entidades inativas quando `tab` era
+   específico, o que zerava a contagem das outras abas — mas a barra de abas mostra a contagem de todas. Como
+   `COUNT(*) OVER()` varre o conjunto inteiro independentemente do `LIMIT`, pular não economizava quase nada.
+   As inativas passam a rodar com `max_results = 1` só para colher `total_count`.
+5. **A Task 8 precisa de controle de paginação.** O desenho original plumbava o estado `page` até a rota mas nunca
+   criava UI para trocar de página — o "ver todos (N) >" levava à aba cheia e parava nos primeiros 20 resultados.
+   Task 8 ganha controles Anterior/Próxima derivados de `count` e `limitForTab`, com a navegação travada no total
+   de páginas (o que também neutraliza o caso de offset além do fim, em que a rota devolve `count: 0`).
 
 ---
 
