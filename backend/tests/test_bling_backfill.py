@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 
 import app.bling.backfill as bf
 
@@ -97,10 +97,34 @@ def test_run_retoma_da_ultima_janela_concluida(monkeypatch):
     client = FakeClient()
     monkeypatch.setattr(bf, "_new_client", lambda: client)
     monkeypatch.setattr(bf, "_save_progress", lambda cursor: None)
-    monkeypatch.setattr(bf, "_load_progress", lambda: "2026-06-30")
 
-    asyncio.run(bf.run(months=12))
+    # Data FIXA (nao datetime.now()): sem isso, o numero de janelas restantes
+    # varia com o dia em que a suite roda, e o teste pode passar por outro
+    # motivo — ou passar vacuamente — dependendo da data.
+    hoje = date(2027, 1, 15)
+    inicio = hoje - timedelta(days=30 * 12 - 1)
+    todas = bf.build_windows(inicio, hoje)
+    # Trava a premissa do teste: se `run()` mudar a formula de inicio/fim,
+    # este assert falha aqui, alto e claro, em vez de invalidar silenciosamente
+    # o resto do teste.
+    assert len(todas) == 12
 
-    primeiras = [p["dataInicial"] for p in client.params]
-    assert all(d > "2026-06-30" for d in primeiras), \
-        "janelas ja concluidas nao podem ser refeitas"
+    # Simula progresso ja salvo ate o fim da 6a janela (indice 5): restam
+    # exatamente as ultimas 6, nem uma a mais nem a menos.
+    cursor = todas[5][1]
+    restantes_esperadas = todas[6:]
+    monkeypatch.setattr(bf, "_load_progress", lambda: cursor)
+
+    out = asyncio.run(bf.run(months=12, hoje=hoje))
+
+    # Afirma que a lista nao esta vazia ANTES de qualquer comparacao: com a
+    # lista vazia, as checagens seguintes seriam vacuamente verdadeiras e o
+    # teste passaria mesmo com a retomada quebrada.
+    assert client.params, "nenhuma janela foi consultada — a retomada nao provou nada"
+
+    consultadas = [(p["dataInicial"], p["dataFinal"]) for p in client.params]
+    assert len(consultadas) == len(restantes_esperadas) == 6, \
+        "numero de janelas consultadas tem que bater exatamente com as pendentes"
+    assert consultadas == restantes_esperadas, \
+        "janelas ja concluidas nao podem ser refeitas nem faltar nenhuma pendente"
+    assert out["janelas"] == 6
