@@ -40,7 +40,8 @@ class Resolution:
 
     status:
       linked    — vinculado (determinístico). `contact_id` preenchido.
-      ambiguous — mais de um contato com o mesmo documento. Decide o humano.
+      ambiguous — mais de um contato com o mesmo documento, OU o contato certo ja
+                  pertence a outro lead. Nos dois casos decide o humano.
       suggested — casou por telefone/e-mail. Precisa de confirmacao.
       missing   — nao existe contato correspondente. Fluxo de criacao.
     """
@@ -206,17 +207,51 @@ def _link(lead_id: str, contact_id: int) -> None:
      .update({"bling_contact_id": contact_id}).eq("id", lead_id).execute())
 
 
+def _e_violacao_de_unicidade(exc: Exception) -> bool:
+    """A violacao veio do UNIQUE parcial de `leads.bling_contact_id` (SQLSTATE 23505)?
+
+    Dois leads com o mesmo CNPJ e plausivel (matriz e filial cadastradas separado,
+    lead duplicado por importacao). O primeiro a resolver fica com o contato; o
+    segundo bate no indice. Isso NAO e bug — e informacao — mas sem tratamento vira
+    500 opaco, e em `create_contact` vira laco de falha permanente: o contato ja
+    existe, entao toda tentativa futura repete GET → acha → `_link` → 500.
+
+    Checa `code` e o texto porque a pista depende da versao do supabase-py/postgrest.
+    """
+    codigo = getattr(exc, "code", "") or ""
+    texto = f"{codigo} {exc}".lower()
+    return "23505" in texto or "duplicate key" in texto
+
+
 async def resolve(lead: dict) -> Resolution:
     """Resolve o contato Bling de um lead. Ver docstring do modulo."""
     if lead.get("bling_contact_id"):
         return Resolution("linked", int(lead["bling_contact_id"]), reason="vinculo_existente")
 
     doc = doc_digits(lead.get("cnpj"))
-    if doc:
+    # O DV e validado ANTES de o documento virar chave. Este e o unico ramo que
+    # vincula sozinho e GRAVA, entao a chave precisa ser digna disso. Numa base
+    # importada de ERP (os 1.208 leads da reativacao) o campo vem com placeholder
+    # ("00000000000", "1") e digitacao errada — lixo casa com lixo igual no espelho
+    # e produziria vinculo permanente nascido de nada. Documento invalido nao para
+    # o fluxo: cai para telefone/e-mail, que so sugerem.
+    if doc and is_valid_document(doc):
         achados = await asyncio.to_thread(_query_by_doc, doc)
         if len(achados) == 1:
             contact_id = int(achados[0]["id"])
-            await asyncio.to_thread(_link, lead["id"], contact_id)
+            try:
+                await asyncio.to_thread(_link, lead["id"], contact_id)
+            except Exception as exc:
+                if not _e_violacao_de_unicidade(exc):
+                    raise
+                # O contato ja e de outro lead. Nao ha escolha automatica certa:
+                # devolve para o humano em vez de estourar 500 sem diagnostico.
+                logger.warning(
+                    "[BLING] contato %s ja vinculado a outro lead — %s fica para "
+                    "decisao humana", contact_id, lead.get("id"),
+                )
+                return Resolution("ambiguous", None, achados,
+                                  reason="contato_ja_vinculado")
             return Resolution("linked", contact_id, reason="documento")
         if len(achados) > 1:
             # Dois contatos com o mesmo CPF/CNPJ e sujeira no ERP. Escolher um
@@ -275,7 +310,13 @@ async def create_contact(client, lead: dict, dados: dict) -> int:
 
         # Re-checagem AO VIVO: o espelho pode estar minutos atrasado.
         vivo = await client.get("/contatos", {"numeroDocumento": doc})
-        existentes = vivo.get("data") or []
+        # E NAO confia no filtro do servidor: reconfere o documento item a item. Se
+        # o Bling ignorar `numeroDocumento` — parametro desconhecido, REST costuma
+        # devolver a colecao inteira em vez de erro — `data[0]` seria um contato
+        # QUALQUER da conta, e vincularíamos o cliente a ele. Falha silenciosa e
+        # catastrofica, no ponto exato que existe para impedir duplicata.
+        existentes = [c for c in (vivo.get("data") or [])
+                      if doc_digits(c.get("numeroDocumento")) == doc]
         if existentes:
             if len(existentes) > 1:
                 # O ERP ja tem duplicata para este documento. Vincular ao primeiro
@@ -315,18 +356,65 @@ async def create_contact(client, lead: dict, dados: dict) -> int:
             "situacao": "A",
             "endereco": dados.get("endereco"),
         })
-        await asyncio.to_thread(_link, lead["id"], contact_id)
+        try:
+            await asyncio.to_thread(_link, lead["id"], contact_id)
+        except Exception as exc:
+            if not _e_violacao_de_unicidade(exc):
+                raise
+            # Sem isto o vendedor entra num laco de falha permanente: o contato ja
+            # existe no Bling, entao cada nova tentativa refaz GET → acha → 500.
+            raise BlingValidationError(
+                "este contato do Bling ja esta vinculado a outro lead",
+                type_="CONFLICT",
+                description=(
+                    f"O contato {contact_id} pertence a outro lead do CRM. "
+                    "Abra o lead existente ou desfaca o vinculo antes de continuar."
+                ),
+                status=409,
+            ) from exc
         return contact_id
 
 
 # --------------------------------------------------------------------------
 # Caminho inverso: contato do Bling sem lead no CRM
 # --------------------------------------------------------------------------
-def _find_lead(coluna: str, valor) -> str | None:
-    res = (get_supabase().table("leads").select("id")
+def _find_lead(coluna: str, valor) -> dict | None:
+    """Devolve a LINHA do lead, nao so o id.
+
+    `bling_contact_id` e `cnpj` vem junto porque quem chama precisa dos dois para
+    decidir se pode gravar o vinculo — reaproveitar a linha e gravar o vinculo sao
+    decisoes separadas. Ver `_pode_vincular_por_telefone`.
+    """
+    res = (get_supabase().table("leads").select("id, bling_contact_id, cnpj")
            .eq(coluna, valor).limit(1).execute())
     linhas = getattr(res, "data", None) or []
-    return linhas[0]["id"] if linhas else None
+    return linhas[0] if linhas else None
+
+
+def _pode_vincular_por_telefone(lead_row: dict, doc_contato: str | None) -> bool:
+    """O telefone bateu — mas isso autoriza GRAVAR o vinculo neste lead?
+
+    Duas recusas, as duas por motivo de nota fiscal:
+
+    1. O lead JA tem `bling_contact_id`. Esse vinculo veio de documento (unico ramo
+       que vincula sozinho) ou de confirmacao humana. Um palpite de telefone nunca
+       o substitui: o lead passaria a apontar para outro cadastro e a proxima venda
+       sairia no CNPJ errado. O indice UNIQUE nao protege disso — ele impede dois
+       leads apontarem para o mesmo contato, nao um lead trocar de contato.
+    2. Os documentos existem dos dois lados e DIVERGEM. Documentos diferentes sao
+       clientes diferentes, por mais que o telefone bata: numero compartilhado
+       (matriz, escritorio do contador, celular do socio que responde por duas
+       empresas) e comum na base real.
+
+    Nos dois casos o lead ainda e REAPROVEITADO (devolvemos o id, nao duplicamos);
+    so o vinculo e que nao e gravado.
+    """
+    if lead_row.get("bling_contact_id") is not None:
+        return False
+    doc_lead = doc_digits(lead_row.get("cnpj"))
+    if doc_lead and doc_contato and doc_lead != doc_contato:
+        return False
+    return True
 
 
 def _insert_lead(payload: dict) -> str | None:
@@ -341,27 +429,37 @@ async def ensure_lead(contato: dict) -> str | None:
 
     achado = await asyncio.to_thread(_find_lead, "bling_contact_id", contact_id)
     if achado:
-        return achado
+        return achado["id"]
 
     doc = contato.get("doc_digits")
     if doc:
         achado = await asyncio.to_thread(_find_lead, "cnpj", doc)
         if achado:
-            await asyncio.to_thread(_link, achado, contact_id)
-            return achado
+            # Mesmo casando por documento, nao regrava vinculo ja existente: o lead
+            # pode estar preso a OUTRO contato (documento duplicado no ERP), e
+            # trocar por baixo mandaria a proxima venda para o cadastro errado.
+            if achado.get("bling_contact_id") is None:
+                await asyncio.to_thread(_link, achado["id"], contact_id)
+            return achado["id"]
 
-    telefone = contato.get("celular_e164") or contato.get("telefone_e164")
+    # SO celular como chave, nunca o fixo: um fixo de empresa e compartilhado entre
+    # varios contatos do Bling, e aqui o telefone GRAVA vinculo — prenderia leads
+    # distintos ao mesmo cadastro. O fixo continua no espelho
+    # (`bling_contacts.telefone_e164`), entao nada se perde. Em `_query_by_phones`
+    # o fixo pode entrar, porque la o resultado so SUGERE.
+    telefone = contato.get("celular_e164")
     if telefone:
-        # ASSIMETRIA PROPOSITAL com `resolve`: la, telefone so SUGERE; aqui ele
-        # VINCULA. Os riscos sao opostos. `resolve` decide em que cadastro do ERP
-        # a venda entra — errar emite nota no CNPJ errado. Aqui nada e escrito no
-        # ERP: so escolhemos a que lead do CRM o contato se prende. E `leads.phone`
-        # e UNIQUE: nao reaproveitar o lead achado nao seria "mais seguro", seria
-        # estourar a constraint no insert logo abaixo.
+        # ASSIMETRIA PROPOSITAL com `resolve`: la, telefone so SUGERE; aqui pode
+        # gravar. Os riscos sao opostos — `resolve` decide em que cadastro do ERP a
+        # venda entra, enquanto aqui nada e escrito no ERP — e `leads.phone` e
+        # UNIQUE, entao ignorar o lead achado nao seria "mais seguro", seria
+        # estourar a constraint no insert. Mas gravar o vinculo continua sendo uma
+        # decisao separada de reaproveitar a linha: ver `_pode_vincular_por_telefone`.
         achado = await asyncio.to_thread(_find_lead, "phone", telefone)
         if achado:
-            await asyncio.to_thread(_link, achado, contact_id)
-            return achado
+            if _pode_vincular_por_telefone(achado, doc):
+                await asyncio.to_thread(_link, achado["id"], contact_id)
+            return achado["id"]
 
     endereco = contato.get("endereco") or {}
     partes = [endereco.get("municipio"), endereco.get("uf")]
