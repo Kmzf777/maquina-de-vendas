@@ -69,6 +69,11 @@ async def _bling_sync_tick() -> None:
     await bling_sync_tick()
 
 
+async def _bling_jobs_tick() -> None:
+    from app.bling.jobs import bling_jobs_tick
+    await bling_jobs_tick()
+
+
 # (nome, tipo, fn, intervalo/fallback em segundos)
 TASK_SPECS = [
     ("broadcasts", "event", _broadcasts_tick, 60),
@@ -80,6 +85,7 @@ TASK_SPECS = [
     ("reconcile", "periodic", _reconcile_tick, 300),
     ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 86400),
     ("bling-sync", "periodic", _bling_sync_tick, 86400),
+    ("bling-jobs", "periodic", _bling_jobs_tick, 30),
 ]
 
 
