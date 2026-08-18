@@ -658,7 +658,7 @@ Backend (`backend/tests/`, pytest com `asyncio_mode=auto`):
 Frontend (`vitest`): geração de parcelas no cliente, cálculo de total, e o fluxo de
 resolução de contato no modal.
 
-**Baseline atual: 2.727 testes.** A suíte inteira precisa passar antes do push.
+**Baseline atual: 3.010 testes.** A suíte inteira precisa passar antes do push.
 
 ---
 

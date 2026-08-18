@@ -340,15 +340,18 @@ CREATE INDEX IF NOT EXISTS bling_jobs_pending_idx
 -- ===========================================================================
 -- Padrao de 20260618_products_catalog.sql: RLS ligado + SELECT para authenticated.
 -- Escrita fica so no service_role (backend), que ignora RLS por natureza.
-ALTER TABLE bling_products        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bling_contacts        ENABLE ROW LEVEL SECURITY;
+-- Espaco unico entre as palavras de proposito: o teste desta task faz match de
+-- substring exata ("alter table X enable row level security"), entao alinhar
+-- por colunas quebraria o teste.
+ALTER TABLE bling_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bling_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bling_payment_methods ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bling_sellers         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bling_seller_map      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bling_sync_state      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bling_webhook_events  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bling_jobs            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sale_items            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bling_sellers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bling_seller_map ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bling_sync_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bling_webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bling_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_items ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS bling_products_select        ON bling_products;
 DROP POLICY IF EXISTS bling_contacts_select        ON bling_contacts;
@@ -5307,7 +5310,7 @@ Expected: PASS — 5 passed
 - [ ] **Step 6: Rodar a suíte inteira do backend**
 
 Run: `cd backend && python -m pytest -q`
-Expected: todos os testes existentes continuam passando (baseline 2.727) + os novos.
+Expected: todos os testes existentes continuam passando (baseline 3.010) + os novos.
 
 - [ ] **Step 7: Commit**
 
@@ -5327,7 +5330,7 @@ git commit -m "feat(bling): backfill retomavel de 12 meses"
 > LÓGICA PURA em arquivos `.test.ts` colocados ao lado do fonte. Não existe
 > `@testing-library/react`, nem jsdom/happy-dom, nem um único `.test.tsx`.
 > Instalar um runner de DOM só para esta feature mexeria na configuração de uma
-> suíte de 2.727 testes por um ganho que a separação lógica/componente já entrega.
+> suíte de 3.010 testes por um ganho que a separação lógica/componente já entrega.
 > Por isso, nesta fase, **toda regra de negócio sai do componente** para módulos
 > em `src/lib/`, que são os testados; o componente fica só com renderização e é
 > validado por `type-check` e pelo teste manual do checklist final.
@@ -6194,7 +6197,7 @@ cd backend && python -m pytest -q
 cd ../frontend && npm test && npm run type-check && npm run lint
 ```
 
-Expected: tudo verde. Baseline do backend antes desta feature: **2.727 testes**.
+Expected: tudo verde. Baseline do backend antes desta feature: **3.010 testes**.
 
 - [ ] **Checklist manual antes do go-live**
 
