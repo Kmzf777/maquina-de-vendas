@@ -285,3 +285,10 @@ async def bling_status():
 async def sync_endpoint(full: bool = False):
     from app.bling.sync import sync_all
     return await sync_all(full=full)
+
+
+@router.post("/backfill")
+async def backfill_endpoint(months: int = 12):
+    """Importacao historica sob demanda (nao roda automatico)."""
+    from app.bling.backfill import run
+    return await run(months=months)
