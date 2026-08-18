@@ -5531,7 +5531,7 @@ describe("productSummary", () => {
 
 - [ ] **Step 2: Rodar e confirmar que falha**
 
-Run: `cd frontend && npx vitest run src/lib/__tests__/bling.test.ts`
+Run: `cd frontend && npx vitest run src/lib/bling.test.ts`
 Expected: FAIL — `Failed to resolve import "@/lib/bling"`
 
 - [ ] **Step 3: Implementar os helpers**
@@ -5626,8 +5626,8 @@ export function productSummary(itens: { descricao: string }[]): string {
 
 - [ ] **Step 4: Rodar e confirmar que passa**
 
-Run: `cd frontend && npx vitest run src/lib/__tests__/bling.test.ts`
-Expected: PASS — 10 passed
+Run: `cd frontend && npx vitest run src/lib/bling.test.ts`
+Expected: PASS — 13 passed
 
 - [ ] **Step 5: Criar os proxies**
 
