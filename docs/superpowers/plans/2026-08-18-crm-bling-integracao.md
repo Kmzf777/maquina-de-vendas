@@ -1041,12 +1041,23 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
         await fake_cache_set("jwt-novo", 60)
         return "jwt-novo"
 
+    # O fake precisa de exclusao mutua DE VERDADE. Um _Ctx cujo __aenter__ so
+    # devolve True nao serializa nada: sob asyncio.gather as duas corrotinas
+    # entram juntas, ambas releem o cache como None no unico ponto de suspensao
+    # (o to_thread do _stored_refresh_token) e chamam _refresh_now duas vezes —
+    # o teste falha contra codigo CORRETO. O lock real do Redis serializa porque
+    # o `set(nx=True)` e o polling sao pontos de suspensao genuinos; o asyncio.Lock
+    # abaixo reproduz essa semantica.
+    trava = asyncio.Lock()
+
     async def fake_lock():
         class _Ctx:
             async def __aenter__(self):
+                await trava.acquire()
                 return True
 
             async def __aexit__(self, *a):
+                trava.release()
                 return False
         return _Ctx()
 
