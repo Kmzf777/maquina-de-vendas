@@ -741,3 +741,201 @@ def test_cancel_marca_status_sem_apagar(monkeypatch):
                                        "bling_event_date": "2026-08-11T10:00:00Z"}]
     assert "sales_deletes" not in store
     assert "sale_items_deletes" not in store
+
+
+# ---------- vinculo com a conversa e fechamento do deal ----------
+
+class FakeCrmQuery:
+    """Query que APLICA os filtros `.eq`.
+
+    O FakeQuery de cima devolve sempre a mesma linha por tabela — suficiente
+    para os testes de projecao, mas esconderia justamente a regressao que
+    importa aqui: sem filtrar de verdade, a busca do stage acharia "Fechado
+    Ganho" mesmo SEM o filtro por pipeline_id, e o teste dos dois funis passaria
+    vazio enquanto o bug voltava.
+    """
+
+    def __init__(self, store, name):
+        self.store, self.name = store, name
+        self.filtros = {}
+        self.op = "select"
+        self.payload = None
+        self.unico = False
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, col, val):
+        self.filtros[col] = val
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
+    def maybe_single(self):
+        self.unico = True
+        return self
+
+    def insert(self, payload):
+        self.op, self.payload = "insert", payload
+        return self
+
+    def update(self, payload):
+        self.op, self.payload = "update", payload
+        return self
+
+    def execute(self):
+        class R:
+            pass
+        r = R()
+        if self.op == "insert":
+            self.store.setdefault(self.name + "_inserts", []).append(self.payload)
+            r.data = [{"id": "SALE-1"}]
+            return r
+        if self.op == "update":
+            self.store.setdefault(self.name + "_updates", []).append(
+                {"set": self.payload, "where": dict(self.filtros)})
+            r.data = []
+            return r
+        linhas = [row for row in self.store.get("rows_" + self.name, [])
+                  if all(row.get(k) == v for k, v in self.filtros.items())]
+        r.data = (linhas[0] if linhas else None) if self.unico else linhas
+        return r
+
+
+class FakeCrmDb:
+    def __init__(self, store):
+        self.store = store
+
+    def table(self, name):
+        return FakeCrmQuery(self.store, name)
+
+
+class ClientePedidoOk:
+    """Bling que aceita o pedido e devolve o detalhe."""
+
+    async def post(self, path, json=None):
+        return {"data": {"id": 34215992}}
+
+    async def get(self, path, params=None):
+        return {"data": {"id": 34215992, "numero": 1234, "situacao": {"id": 6}}}
+
+
+_ITENS = [{"bling_product_id": 123, "codigo": "CAN-250", "descricao": "Cafe 250g",
+           "quantidade": 1, "valor_unitario": 100.00, "desconto_percentual": 0}]
+
+
+def _cria_pedido(**extra):
+    return asyncio.run(orders.create_order(
+        ClientePedidoOk(),
+        lead_id="L1", contact_id=555, sold_at="2026-08-18", sold_by="v@e.com",
+        itens=_ITENS, payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        **extra))
+
+
+def _prepara(monkeypatch, store):
+    # Instancia unica fora do lambda: um FakeCrmDb novo a cada chamada perderia
+    # os inserts/updates acumulados que os asserts leem.
+    fake_db = FakeCrmDb(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+
+def test_create_order_grava_o_vinculo_com_a_conversa(monkeypatch):
+    """`sales.conversation_id` liga a venda ao atendimento que a gerou.
+
+    O POST /api/sales sempre gravou esse campo; quem registra a venda pelo chat
+    perderia a rastreabilidade se o modo Bling nao o repassasse.
+    """
+    store = {}
+    _prepara(monkeypatch, store)
+
+    _cria_pedido(deal_id=None, conversation_id="CONV-9")
+
+    assert store["sales_inserts"][0]["conversation_id"] == "CONV-9"
+
+
+def test_create_order_sem_conversa_grava_nulo(monkeypatch):
+    """Venda registrada fora do chat continua valida — o campo so fica nulo."""
+    store = {}
+    _prepara(monkeypatch, store)
+
+    _cria_pedido(deal_id=None)
+
+    assert store["sales_inserts"][0]["conversation_id"] is None
+
+
+def test_create_order_fecha_o_deal_no_stage_do_pipeline_certo(monkeypatch):
+    """A key 'fechado_ganho' se repete a cada funil.
+
+    Os dois pipelines abaixo tem stages homonimos e o do funil ERRADO vem
+    primeiro de proposito: uma busca so por `key` devolveria ele e o card seria
+    movido para outro quadro, sumindo de onde o vendedor o procura.
+    """
+    store = {
+        "rows_deals": [{"id": "D1", "pipeline_id": "P-VENDAS"}],
+        "rows_pipeline_stages": [
+            {"id": "ST-OUTRO", "pipeline_id": "P-OUTRO", "key": "fechado_ganho"},
+            {"id": "ST-CERTO", "pipeline_id": "P-VENDAS", "key": "fechado_ganho"},
+        ],
+    }
+    _prepara(monkeypatch, store)
+
+    _cria_pedido(deal_id="D1")
+
+    movimentos = store["deals_updates"]
+    assert len(movimentos) == 1
+    assert movimentos[0]["set"]["stage_id"] == "ST-CERTO", \
+        "o stage tem de ser o do funil do proprio deal"
+    assert movimentos[0]["where"] == {"id": "D1"}
+    assert movimentos[0]["set"]["closed_at"], "a venda carimba o fechamento"
+    assert movimentos[0]["set"]["updated_at"]
+
+
+def test_create_order_sem_deal_nao_tenta_mover_nada(monkeypatch):
+    store = {}
+    _prepara(monkeypatch, store)
+
+    _cria_pedido(deal_id=None)
+
+    assert "deals_updates" not in store
+
+
+def test_create_order_sem_stage_ganho_no_funil_nao_move_nem_quebra(monkeypatch):
+    """Funil sem 'Fechado Ganho' (o stage e opcional) nao pode derrubar a venda."""
+    store = {
+        "rows_deals": [{"id": "D1", "pipeline_id": "P-VENDAS"}],
+        "rows_pipeline_stages": [
+            {"id": "ST-OUTRO", "pipeline_id": "P-OUTRO", "key": "fechado_ganho"},
+        ],
+    }
+    _prepara(monkeypatch, store)
+
+    out = _cria_pedido(deal_id="D1")
+
+    assert out["bling_order_id"] == 34215992
+    assert "deals_updates" not in store
+
+
+def test_falha_ao_fechar_o_deal_nao_derruba_a_venda(monkeypatch):
+    """Depois do POST aceito, NADA levanta.
+
+    O pedido ja existe no ERP e na `sales`. Deixar a excecao subir marcaria a
+    venda como falha e faria a fila retentar — criando um SEGUNDO pedido no
+    Bling e baixando o estoque duas vezes. Um deal no stage errado e barato
+    perto disso.
+    """
+    store = {}
+    _prepara(monkeypatch, store)
+
+    def explode(_deal_id):
+        raise RuntimeError("pipeline_stages fora do ar")
+
+    monkeypatch.setattr(orders, "_move_deal_to_won", explode)
+
+    out = _cria_pedido(deal_id="D1")
+
+    assert out["bling_order_id"] == 34215992
+    assert out["bling_order_number"] == 1234
+    assert store["sales_inserts"][0]["deal_id"] == "D1"

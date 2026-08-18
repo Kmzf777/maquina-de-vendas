@@ -199,13 +199,17 @@ def test_sucesso_devolve_201_com_numero_do_pedido(monkeypatch):
     monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
 
     resp = asyncio.run(br.create_order_endpoint(br.OrderIn(
-        lead_id="L1", deal_id="D1", sold_at="2026-08-18", sold_by="v@e.com",
+        lead_id="L1", deal_id="D1", conversation_id="CONV-9",
+        sold_at="2026-08-18", sold_by="v@e.com",
         items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
         payment=br.PaymentIn(method_id=45, terms=[0]),
     )))
 
     assert resp.status_code == 201
     assert "1234" in resp.body.decode()
+    # A conversa de origem tem de atravessar o router ate a `sales`: e o vinculo
+    # entre a venda e o atendimento que a gerou, que o POST /api/sales ja grava.
+    assert capturado["conversation_id"] == "CONV-9"
     # O Bling recusa item sem `descricao` mesmo quando o `produto.id` vai junto:
     # a descricao tem de ser completada a partir do espelho antes do POST.
     assert capturado["itens"][0]["descricao"] == "Cafe Classico 250g"

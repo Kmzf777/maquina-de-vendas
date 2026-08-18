@@ -8,7 +8,7 @@ arredondamento e a soma das parcelas precisa fechar EXATAMENTE com o total —
 um centavo de diferenca e recusa do Bling.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.bling import config
@@ -232,6 +232,44 @@ def _insert_items(sale_id: str, itens: list[dict]) -> None:
     get_supabase().table("sale_items").insert(linhas).execute()
 
 
+# Key do stage "Fechado Ganho". Ela se REPETE a cada funil (e unica por
+# pipeline, nao global), o que torna o filtro por pipeline_id obrigatorio.
+_WON_STAGE_KEY = "fechado_ganho"
+
+
+def _move_deal_to_won(deal_id: str) -> bool:
+    """Move o deal para "Fechado Ganho" — mesmo efeito do POST /api/sales.
+
+    Registrar a venda e o que fecha o deal; sem isso o card fica parado no
+    funil e o Kanban passa a mentir sobre o que ainda esta em aberto.
+
+    O stage e procurado DENTRO do pipeline do proprio deal. Sem esse filtro a
+    busca por `key` acharia o "Fechado Ganho" de QUALQUER funil e o card seria
+    movido para um pipeline que nao e o dele — sumindo do quadro onde o
+    vendedor o procura.
+    """
+    sb = get_supabase()
+    deal = getattr(sb.table("deals").select("pipeline_id")
+                   .eq("id", deal_id).maybe_single().execute(), "data", None) or {}
+    pipeline_id = deal.get("pipeline_id")
+    if not pipeline_id:
+        return False
+
+    stage = getattr(sb.table("pipeline_stages").select("id")
+                    .eq("pipeline_id", pipeline_id)
+                    .eq("key", _WON_STAGE_KEY)
+                    .maybe_single().execute(), "data", None) or {}
+    stage_id = stage.get("id")
+    if not stage_id:
+        return False
+
+    agora = datetime.now(timezone.utc).isoformat()
+    (sb.table("deals")
+     .update({"stage_id": stage_id, "closed_at": agora, "updated_at": agora})
+     .eq("id", deal_id).execute())
+    return True
+
+
 async def _find_order_by_key(client, idempotency_key: str) -> dict | None:
     """Procura no Bling um pedido ja criado com este `numeroLoja`.
 
@@ -250,7 +288,8 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
                        sold_at: str, sold_by: str | None, itens: list[dict],
                        payment: dict, seller_id: int | None,
                        discount: dict | None = None, notes: str = "",
-                       idempotency_key: str | None = None) -> dict:
+                       idempotency_key: str | None = None,
+                       conversation_id: str | None = None) -> dict:
     """Cria o pedido no Bling e projeta em `sales` + `sale_items`.
 
     `idempotency_key` vai para o campo `numeroLoja` (o "numero do pedido na loja
@@ -292,6 +331,10 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
     linha = {
         "lead_id": lead_id,
         "deal_id": deal_id,
+        # Liga a venda ao atendimento que a gerou. Quem registra a venda a partir
+        # do chat depende disso para a rastreabilidade — o POST /api/sales sempre
+        # gravou este campo, e o modo Bling nao pode ser um degrau para tras.
+        "conversation_id": conversation_id,
         "sold_at": f"{sold_at}T12:00:00+00:00",
         "value": float(total),
         "product": product_summary(itens),
@@ -347,6 +390,20 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         logger.warning("[BLING] pedido %s criado, mas o GET de detalhe falhou; "
                        "numero e situacao ficam para o webhook", order_id,
                        exc_info=True)
+
+    # Fecha o deal, como faz o POST /api/sales. Fica AQUI e nao no router para
+    # que o caminho da fila (jobs.py retentando) tambem mova o card — senao a
+    # venda que passou pelo 202 deixaria o deal parado no funil para sempre.
+    if deal_id:
+        try:
+            await asyncio.to_thread(_move_deal_to_won, deal_id)
+        except Exception:
+            # Mesma regra do resto do bloco: depois do POST aceito nada levanta.
+            # Um deal no stage errado e cosmetico e corrigivel na mao; propagar
+            # o erro marcaria como falha uma venda que ja existe no ERP e faria
+            # a fila retentar, duplicando o pedido.
+            logger.exception("[BLING] pedido %s criado, mas falhou ao mover o "
+                             "deal %s para Fechado Ganho", order_id, deal_id)
 
     logger.info("[BLING] pedido %s (numero %s) criado para o lead %s",
                 order_id, numero, lead_id)

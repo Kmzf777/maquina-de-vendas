@@ -46,6 +46,9 @@ class PaymentIn(BaseModel):
 class OrderIn(BaseModel):
     lead_id: str
     deal_id: str | None = None
+    # Quem registra a venda a partir do chat manda a conversa de origem; e o que
+    # liga a venda ao atendimento que a gerou, como ja faz o POST /api/sales.
+    conversation_id: str | None = None
     sold_at: str
     sold_by: str | None = None
     items: list[OrderItemIn]
@@ -194,6 +197,7 @@ async def create_order_endpoint(body: OrderIn):
     kwargs = {
         "lead_id": body.lead_id,
         "deal_id": body.deal_id,
+        "conversation_id": body.conversation_id,
         "contact_id": resolucao.contact_id,
         "sold_at": body.sold_at,
         "sold_by": body.sold_by,
