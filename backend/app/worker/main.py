@@ -74,6 +74,11 @@ async def _bling_jobs_tick() -> None:
     await bling_jobs_tick()
 
 
+async def _bling_webhook_tick() -> None:
+    from app.bling.webhook_processor import bling_webhook_tick
+    await bling_webhook_tick()
+
+
 # (nome, tipo, fn, intervalo/fallback em segundos)
 TASK_SPECS = [
     ("broadcasts", "event", _broadcasts_tick, 60),
@@ -86,6 +91,9 @@ TASK_SPECS = [
     ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 86400),
     ("bling-sync", "periodic", _bling_sync_tick, 86400),
     ("bling-jobs", "periodic", _bling_jobs_tick, 30),
+    # "event": o receiver publica no event bus ao gravar o webhook — o
+    # processamento acorda na hora, com varredura de fallback a cada 60s.
+    ("bling-webhook", "event", _bling_webhook_tick, 60),
 ]
 
 
