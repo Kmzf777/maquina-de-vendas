@@ -17,6 +17,19 @@ class FakeResponse:
         return self._payload
 
 
+class FakeResponseCorpoQuebrado:
+    """Simula um 200/201 cujo corpo nao e JSON valido (proxy quebrado, HTML de
+    erro disfarcado de sucesso). Tem `content` nao vazio, ao contrario de um
+    204 de verdade."""
+
+    def __init__(self, status_code=200, content=b"<html>erro</html>"):
+        self.status_code = status_code
+        self.content = content
+
+    def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
 class FakeHTTP:
     """Devolve respostas de uma fila e grava as requisicoes feitas."""
 
@@ -151,3 +164,54 @@ def test_paginate_percorre_ate_pagina_incompleta(token):
     assert asyncio.run(run()) == [{"id": 1}, {"id": 2}, {"id": 3}]
     assert http.requests[0]["params"]["pagina"] == 1
     assert http.requests[1]["params"]["pagina"] == 2
+
+
+def test_paginate_leva_teto_de_paginas_e_levanta_server_error(token, monkeypatch):
+    # Reduz o teto para nao ter que simular 1000 paginas: com _MAX_PAGES = 2 e
+    # um endpoint que so devolve paginas CHEIAS (bug do lado do Bling, ou
+    # limite ignorado), o paginate deve desistir e falhar alto em vez de
+    # rodar para sempre / estourar o teto diario local.
+    monkeypatch.setattr(bc, "_MAX_PAGES", 2)
+    http = FakeHTTP([
+        FakeResponse(200, {"data": [{"id": 1}, {"id": 2}]}),
+        FakeResponse(200, {"data": [{"id": 3}, {"id": 4}]}),
+    ])
+    client = bc.BlingClient(http=http)
+
+    async def run():
+        return [item async for item in client.paginate("/produtos", limite=2)]
+
+    with pytest.raises(BlingServerError):
+        asyncio.run(run())
+    assert len(http.requests) == 2, "nao deve tentar uma 3a pagina alem do teto"
+
+
+def test_max_attempts_configuravel_nao_retenta(token):
+    # O modal de venda (sincrono, vendedor olhando a tela) precisa de um teto
+    # de tentativas bem menor que o default de 3 — 93s de retry e inaceitavel
+    # ali.
+    http = FakeHTTP([FakeResponse(500)])
+    client = bc.BlingClient(http=http, max_attempts=1)
+
+    with pytest.raises(BlingServerError):
+        asyncio.run(client.get("/produtos"))
+    assert len(http.requests) == 1, "max_attempts=1 nao pode retentar"
+
+
+def test_200_com_corpo_quebrado_loga_erro_e_devolve_vazio(token, caplog):
+    # Corpo nao vazio que falha o parse JSON (proxy quebrado, HTML de erro
+    # disfarcado de 200) precisa ficar visivel em log — ao contrario do 204
+    # de verdade, que e silencioso de proposito. No fluxo de criacao de
+    # pedido, engolir isso em silencio pode significar que o pedido nasceu no
+    # Bling e o id de retorno se perdeu.
+    http = FakeHTTP([FakeResponseCorpoQuebrado()])
+    client = bc.BlingClient(http=http)
+
+    with caplog.at_level("ERROR", logger="app.bling.client"):
+        out = asyncio.run(client.get("/produtos"))
+
+    assert out == {}
+    mensagens = [rec.getMessage() for rec in caplog.records]
+    assert any("corpo" in m.lower() and "produtos" in m for m in mensagens)
+    # Nunca logar o corpo da resposta em si.
+    assert not any("<html>" in m for m in mensagens)
