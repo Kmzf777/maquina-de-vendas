@@ -23,7 +23,7 @@ import httpx
 import redis.asyncio as aioredis
 
 from app.bling import config
-from app.bling.errors import BlingAuthError, BlingNotConfigured
+from app.bling.errors import BlingAuthError, BlingNotConfigured, BlingServerError
 from app.config import settings
 from app.db.supabase import get_supabase
 
@@ -36,6 +36,11 @@ _LOCK_TTL = 30
 _STATE_TTL = 600
 # Renova quando faltar menos que isso para expirar (access_token dura 6h).
 _RENEW_MARGIN_SECONDS = 300
+# upsert do _persist: poucas tentativas, delay curto. Perder o refresh_token
+# rotacionado aqui e catastrofico — o Bling ja invalidou o antigo do lado dele —
+# entao vale insistir mesmo em erros que normalmente nao seriam retentados.
+_PERSIST_RETRY_ATTEMPTS = 3
+_PERSIST_RETRY_DELAY_SECONDS = 0.3
 
 _redis: aioredis.Redis | None = None
 
@@ -129,10 +134,36 @@ async def _persist(payload: dict) -> None:
         "scope": payload.get("scope") or "",
         "updated_at": now.isoformat(),
     }
-    await asyncio.to_thread(
-        lambda: get_supabase().table("bling_credentials")
-        .upsert(row, on_conflict="id").execute()
-    )
+
+    def _upsert():
+        return (get_supabase().table("bling_credentials")
+                .upsert(row, on_conflict="id").execute())
+
+    ultimo_erro: Exception | None = None
+    for tentativa in range(1, _PERSIST_RETRY_ATTEMPTS + 1):
+        try:
+            await asyncio.to_thread(_upsert)
+            ultimo_erro = None
+            break
+        except Exception as exc:  # noqa: BLE001 — qualquer falha aqui e catastrofica
+            ultimo_erro = exc
+            if tentativa < _PERSIST_RETRY_ATTEMPTS:
+                await asyncio.sleep(_PERSIST_RETRY_DELAY_SECONDS)
+
+    if ultimo_erro is not None:
+        # Nesse ponto o Bling ja rotacionou o refresh_token do lado dele — se nao
+        # persistir agora, o token antigo que ainda esta no Postgres ja foi
+        # invalidado la, e a proxima tentativa toma 401 sem nenhuma pista do
+        # motivo real. NUNCA logar o payload/token aqui — so o TIPO do erro, para
+        # nao vazar segredo caso a excecao da lib carregue o corpo da resposta na
+        # propria mensagem.
+        logger.critical(
+            "[BLING AUTH] refresh_token rotacionado no Bling mas NAO persistido "
+            "no Postgres apos %d tentativas (%s) — reautorizacao manual necessaria",
+            _PERSIST_RETRY_ATTEMPTS, type(ultimo_erro).__name__,
+        )
+        raise ultimo_erro
+
     logger.info("[BLING AUTH] tokens renovados; access expira em %ss", expires_in)
     await _cache_set(row["access_token"], max(60, expires_in - _RENEW_MARGIN_SECONDS))
 
@@ -143,9 +174,15 @@ def _stored_row() -> dict | None:
     return getattr(res, "data", None)
 
 
-def _stored_refresh_token() -> str | None:
-    row = _stored_row() or {}
-    return row.get("refresh_token")
+def _seconds_until(iso_ts: str | None) -> float:
+    """Segundos ate o timestamp ISO 8601 informado. Ausente/invalido conta como
+    ja vencido (-1), forcando o caminho de renovacao em vez de usar lixo."""
+    if not iso_ts:
+        return -1.0
+    try:
+        return (datetime.fromisoformat(iso_ts) - datetime.now(timezone.utc)).total_seconds()
+    except ValueError:
+        return -1.0
 
 
 async def _cache_get() -> str | None:
@@ -173,7 +210,11 @@ async def _refresh_lock():
         owned = False
 
         async def __aenter__(self):
-            for _ in range(60):  # ate ~30s esperando quem esta renovando
+            # 70x0.5s = ~35s > _LOCK_TTL (30s): da folga para pelo menos uma
+            # tentativa depois que o TTL do lock anterior expirar sozinho — se a
+            # janela de espera fosse igual ao TTL, quem espera podia desistir no
+            # exato instante em que a chave morreria, sem nunca tentar de novo.
+            for _ in range(70):
                 if await client.set(_LOCK_KEY, token, nx=True, ex=_LOCK_TTL):
                     self.owned = True
                     return True
@@ -204,8 +245,25 @@ async def get_access_token() -> str:
         if cached:
             return cached
         if not owned:
-            raise BlingAuthError("nao foi possivel obter o lock de refresh")
-        refresh_token = await asyncio.to_thread(_stored_refresh_token)
+            # Contencao momentanea (outro processo esta renovando agora), NAO
+            # credencial morta — precisa ser TRANSIENT para o modal de venda
+            # enfileirar e tentar de novo, em vez de mandar o vendedor refazer
+            # o fluxo OAuth em /config por causa de um timeout de lock.
+            raise BlingServerError("nao foi possivel obter o lock de refresh (timeout)")
+
+        # Rele o Postgres INTEIRO, nao so o refresh_token: um FLUSHALL no Redis
+        # (incidente 07/06/2026) zera o cache mas NAO o Postgres. Sem reler o
+        # access_token persistido aqui, cache vazio + chamadas sequenciais viram
+        # chamadas reais ao /oauth/token mesmo com um token ainda valido por
+        # horas guardado — e 20 chamadas em 60s bloqueiam o IP por 60 minutos.
+        row = await asyncio.to_thread(_stored_row) or {}
+        access_token = row.get("access_token")
+        restante = _seconds_until(row.get("access_expires_at"))
+        if access_token and restante > _RENEW_MARGIN_SECONDS:
+            await _cache_set(access_token, max(60, int(restante) - _RENEW_MARGIN_SECONDS))
+            return access_token
+
+        refresh_token = row.get("refresh_token")
         if not refresh_token:
             raise BlingNotConfigured(
                 "nenhum refresh_token salvo — refaca o fluxo OAuth em /config"
