@@ -5469,6 +5469,29 @@ describe("buildInstallments", () => {
     expect(Math.round(soma * 100) / 100).toBe(100);
   });
 
+  it("usa arredondamento half-up, nao floor — paridade com o backend", () => {
+    // ESTE TESTE EXISTE PARA IMPEDIR UMA "SIMPLIFICACAO" ESPECIFICA.
+    // Trocar Math.round por Math.floor no calculo de `base` parece inofensivo e
+    // a soma continua fechando — mas divide diferente em 46,7% dos totais
+    // realistas (medido em ~1M de combinacoes de R$1 a R$2.000). O backend usa
+    // Decimal com ROUND_HALF_UP; com floor, o vendedor veria na tela uma divisao
+    // diferente da que foi gravada no ERP, e sem erro nenhum para denunciar.
+    //
+    // R$10,01 em 2x: half-up da [5.01, 5.00]; floor daria [5.00, 5.01].
+    expect(buildInstallments(10.01, [0, 30], "2026-08-18").map((x) => x.valor))
+      .toEqual([5.01, 5.0]);
+    // R$10,00 em 6x: half-up da 1.67 x5 + 1.65; floor daria 1.66 x5 + 1.70.
+    expect(buildInstallments(10, [0, 30, 60, 90, 120, 150], "2026-08-18")
+      .map((x) => x.valor)).toEqual([1.67, 1.67, 1.67, 1.67, 1.67, 1.65]);
+  });
+
+  it("a ultima parcela pode ser MENOR que as demais", () => {
+    // Consequencia do half-up que contraria a leitura literal de "a ultima
+    // absorve o resto". O espelho TS precisa reproduzir isso, nao "consertar".
+    const p = buildInstallments(10, [0, 30, 60, 90, 120, 150], "2026-08-18");
+    expect(p[p.length - 1].valor).toBeLessThan(p[0].valor);
+  });
+
   it("nunca deixa centavo sobrando", () => {
     for (const total of [10, 99.99, 1234.56, 0.03]) {
       const p = buildInstallments(total, [0, 30, 60], "2026-08-18");
@@ -5559,6 +5582,9 @@ export function buildInstallments(
 
   return prazos.map((dias, i) => {
     // A última parcela absorve o resto: 100,00/3 = 33,33 + 33,33 + 33,34.
+    // `base` usa Math.round (half-up), NUNCA Math.floor — ver o teste de
+    // paridade. Floor fecha a soma igual, mas divide diferente do backend em
+    // quase metade dos totais, e a divergência é silenciosa.
     const valorCentavos = i < n - 1 ? base : totalCentavos - base * (n - 1);
     const vencimento = new Date(`${soldAt}T12:00:00Z`);
     vencimento.setUTCDate(vencimento.getUTCDate() + dias);
