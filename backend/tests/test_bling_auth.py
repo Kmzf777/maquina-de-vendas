@@ -218,3 +218,88 @@ def test_tokens_nunca_aparecem_no_log(creds, caplog, monkeypatch):
         }))
     assert "SEGREDO-AAA" not in caplog.text
     assert "SEGREDO-BBB" not in caplog.text
+
+
+class FakeRedis:
+    """Redis fake em memoria para os testes de state (setex/delete).
+
+    Instancia UNICA injetada fora do lambda (`fake = FakeRedis(); monkeypatch.setattr(
+    auth, "_get_redis", lambda: fake)`). Um `lambda: FakeRedis()` construiria um Redis
+    novo a cada chamada — o `delete` de `consume_state` nunca acharia a chave gravada
+    pelo `setex` de `new_state`, e o teste de "queima" passaria pelo motivo errado
+    (mesmo erro de fake-sem-instancia-unica ja visto nesta feature).
+    """
+
+    def __init__(self):
+        self.store = {}  # key -> (value, ttl)
+        self.delete_calls = 0
+
+    async def setex(self, key, ttl, value):
+        self.store[key] = (value, ttl)
+
+    async def delete(self, key):
+        self.delete_calls += 1
+        if key in self.store:
+            del self.store[key]
+            return 1
+        return 0
+
+    async def get(self, key):
+        item = self.store.get(key)
+        return item[0] if item else None
+
+
+def test_new_state_gera_valores_unicos_e_grava_no_redis_com_ttl(monkeypatch):
+    """O state anti-CSRF precisa expirar. `setex`, nunca `set` sem TTL — um state
+    que nunca expira derruba a janela de 10 min que existe para limitar a superficie
+    de ataque (alguem induzindo o admin a autorizar um app Bling que nao e o nosso)."""
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    s1 = asyncio.run(auth.new_state())
+    s2 = asyncio.run(auth.new_state())
+
+    assert s1 and s2
+    assert s1 != s2
+    assert (auth._STATE_PREFIX + s1) in fake.store
+    _, ttl1 = fake.store[auth._STATE_PREFIX + s1]
+    assert ttl1 == auth._STATE_TTL
+    assert ttl1 > 0
+
+
+def test_consume_state_true_para_state_existente(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+    state = asyncio.run(auth.new_state())
+
+    assert asyncio.run(auth.consume_state(state)) is True
+
+
+def test_consume_state_false_para_state_inexistente(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    assert asyncio.run(auth.consume_state("nunca-existiu")) is False
+
+
+def test_consume_state_queima_o_valor_impedindo_replay(monkeypatch):
+    """Ponto central da defesa anti-CSRF: um state reutilizavel nao protege contra
+    replay. Mesma chamada duas vezes com o MESMO state: True na primeira, False na
+    segunda — senao um state capturado uma vez poderia ser reaproveitado."""
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+    state = asyncio.run(auth.new_state())
+
+    primeira = asyncio.run(auth.consume_state(state))
+    segunda = asyncio.run(auth.consume_state(state))
+
+    assert primeira is True
+    assert segunda is False
+
+
+def test_consume_state_vazio_retorna_false_sem_tocar_redis(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    assert asyncio.run(auth.consume_state("")) is False
+    assert fake.delete_calls == 0
