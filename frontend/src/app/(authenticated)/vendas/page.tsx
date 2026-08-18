@@ -22,6 +22,7 @@ import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
 import { BulkMoveDealsModal } from "@/components/deals/bulk-move-deals-modal";
 import { useCurrentRole } from "@/hooks/use-current-role";
 import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
+import { dealMatchesSearch } from "@/lib/search";
 
 function DroppableColumn({
   id, title, dotColor, deals, onDealClick, onBulkMove,
@@ -259,16 +260,7 @@ export default function VendasPage() {
     const stage = stages.find((s) => s.id === d.stage_id);
     if (showActive && stage?.is_protected) return false;
     if (category && d.category !== category) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const lead = d.leads;
-      const match =
-        d.title.toLowerCase().includes(q) ||
-        (lead?.name || "").toLowerCase().includes(q) ||
-        (lead?.company || "").toLowerCase().includes(q) ||
-        (lead?.phone || "").includes(q);
-      if (!match) return false;
-    }
+    if (search && !dealMatchesSearch(search, d)) return false;
     return true;
   });
 

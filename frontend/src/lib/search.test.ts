@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { foldText, leadMatchesSearch } from "./search";
+import { foldText, leadMatchesSearch, dealMatchesSearch } from "./search";
 
 describe("foldText", () => {
   it("strips diacritics and lowercases", () => {
@@ -44,5 +44,44 @@ describe("leadMatchesSearch", () => {
 
   it("tolerates null fields", () => {
     expect(leadMatchesSearch("x", { name: null, phone: null })).toBe(false);
+  });
+});
+
+describe("dealMatchesSearch", () => {
+  const deal = {
+    title: "Kit Canastra Atacado",
+    leads: {
+      name: "José da Silva",
+      company: "Café Canastra",
+      phone: "5534999998888",
+      nome_fantasia: "Canastra Grãos",
+    },
+  };
+
+  it("returns true for empty query", () => {
+    expect(dealMatchesSearch("", deal)).toBe(true);
+  });
+
+  it("matches deal title accent-insensitively", () => {
+    expect(dealMatchesSearch("atacado", deal)).toBe(true);
+    expect(dealMatchesSearch("CANASTRA", deal)).toBe(true);
+  });
+
+  it("matches lead name, company and nome_fantasia accent-insensitively", () => {
+    expect(dealMatchesSearch("jose", deal)).toBe(true);
+    expect(dealMatchesSearch("cafe", deal)).toBe(true);
+    expect(dealMatchesSearch("graos", deal)).toBe(true);
+  });
+
+  it("matches phone typed with formatting", () => {
+    expect(dealMatchesSearch("(34) 99999-8888", deal)).toBe(true);
+  });
+
+  it("returns false when nothing matches", () => {
+    expect(dealMatchesSearch("zzz", deal)).toBe(false);
+  });
+
+  it("tolerates missing leads join", () => {
+    expect(dealMatchesSearch("x", { title: "Sem lead" })).toBe(false);
   });
 });
