@@ -10,6 +10,7 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
     "/qualificacao",
     "/vendas",
     "/painel-vendas",
+    "/busca",
     "/canais",
     "/estatisticas",
     "/trafego",
@@ -23,6 +24,7 @@ export const ROLE_PAGES: Record<UserRole, string[]> = {
     "/qualificacao",
     "/vendas",
     "/painel-vendas",
+    "/busca",
   ],
 };
 
