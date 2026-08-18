@@ -142,3 +142,166 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
     if internal_notes:
         payload["observacoesInternas"] = internal_notes
     return payload
+
+
+# --------------------------------------------------------------------------
+# Criacao e projecao em sales
+# --------------------------------------------------------------------------
+import asyncio  # noqa: E402 — agrupado aqui para manter as funcoes puras acima isoladas
+
+from app.db.supabase import get_supabase  # noqa: E402
+
+
+def _map_bling_items(pedido: dict) -> list[dict]:
+    """Traduz itens do pedido do Bling para linhas de `sale_items`."""
+    saida = []
+    for ordem, item in enumerate(pedido.get("itens") or []):
+        quantidade = _dec(item.get("quantidade"))
+        valor = _dec(item.get("valor"))
+        desconto = _dec(item.get("desconto"))
+        total = _money(quantidade * valor * (Decimal("1") - desconto / Decimal("100")))
+        saida.append({
+            "bling_product_id": (item.get("produto") or {}).get("id"),
+            "codigo": item.get("codigo") or None,
+            "descricao": item.get("descricao") or "Item",
+            "quantidade": float(quantidade),
+            "valor_unitario": float(valor),
+            "desconto_percentual": float(desconto),
+            "total": float(total),
+            "ordem": ordem,
+        })
+    return saida
+
+
+def _insert_sale(row: dict) -> str:
+    res = get_supabase().table("sales").insert(row).execute()
+    return (getattr(res, "data", None) or [{}])[0].get("id")
+
+
+def _insert_items(sale_id: str, itens: list[dict]) -> None:
+    if not itens:
+        return
+    linhas = [{**i, "sale_id": sale_id} for i in itens]
+    get_supabase().table("sale_items").insert(linhas).execute()
+
+
+async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id: int,
+                       sold_at: str, sold_by: str | None, itens: list[dict],
+                       payment: dict, seller_id: int | None,
+                       discount: dict | None = None, notes: str = "") -> dict:
+    """Cria o pedido no Bling e projeta em `sales` + `sale_items`."""
+    payload = build_order_payload(
+        contact_id=contact_id, sold_at=sold_at, itens=itens, payment=payment,
+        seller_id=seller_id, discount=discount, notes=notes,
+        internal_notes=f"CRM lead {lead_id}" + (f" - deal {deal_id}" if deal_id else ""),
+    )
+
+    criado = await client.post("/pedidos/vendas", payload)
+    order_id = int((criado.get("data") or {})["id"])
+
+    # O POST devolve so o id. `numero` e `situacao` resolvidos vem no GET.
+    detalhe = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
+
+    total = order_total(itens)
+    linha = {
+        "lead_id": lead_id,
+        "deal_id": deal_id,
+        "sold_at": f"{sold_at}T12:00:00+00:00",
+        "value": float(total),
+        "product": product_summary(itens),
+        "sold_by": sold_by,
+        "origin": "crm",
+        "status": "registrada",
+        "bling_order_id": order_id,
+        "bling_order_number": detalhe.get("numero"),
+        "bling_situacao_id": (detalhe.get("situacao") or {}).get("id"),
+        "payment_method_id": payment.get("method_id"),
+        "payment_terms": "/".join(str(d) for d in (payment.get("terms") or [0])),
+        "notes": notes or None,
+    }
+    sale_id = await asyncio.to_thread(_insert_sale, linha)
+    await asyncio.to_thread(_insert_items, sale_id, [
+        {
+            "bling_product_id": i["bling_product_id"],
+            "codigo": i.get("codigo"),
+            "descricao": i["descricao"],
+            "quantidade": float(_dec(i["quantidade"])),
+            "valor_unitario": float(_dec(i["valor_unitario"])),
+            "desconto_percentual": float(_dec(i.get("desconto_percentual"))),
+            "total": float(item_total(i)),
+            "ordem": ordem,
+        }
+        for ordem, i in enumerate(itens)
+    ])
+
+    logger.info("[BLING] pedido %s (numero %s) criado para o lead %s",
+                order_id, detalhe.get("numero"), lead_id)
+    return {
+        "sale_id": sale_id,
+        "bling_order_id": order_id,
+        "bling_order_number": detalhe.get("numero"),
+    }
+
+
+def _existing_sale(order_id: int) -> dict | None:
+    res = (get_supabase().table("sales").select("id, origin, deal_id, lead_id")
+           .eq("bling_order_id", order_id).limit(1).execute())
+    linhas = getattr(res, "data", None) or []
+    return linhas[0] if linhas else None
+
+
+def _upsert_sale(row: dict) -> str | None:
+    res = (get_supabase().table("sales")
+           .upsert(row, on_conflict="bling_order_id").execute())
+    return (getattr(res, "data", None) or [{}])[0].get("id")
+
+
+def _replace_items(sale_id: str, itens: list[dict]) -> None:
+    get_supabase().table("sale_items").delete().eq("sale_id", sale_id).execute()
+    if itens:
+        get_supabase().table("sale_items").insert(
+            [{**i, "sale_id": sale_id} for i in itens]).execute()
+
+
+async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
+                            event_date: str | None) -> str | None:
+    """Projeta um pedido do Bling em `sales` (webhook e backfill).
+
+    O UNIQUE em `bling_order_id` faz o pedido que o CRM acabou de criar casar com
+    a linha ja gravada — nao duplica quando o webhook volta.
+    """
+    order_id = int(pedido["id"])
+    existente = await asyncio.to_thread(_existing_sale, order_id)
+
+    linha = {
+        "bling_order_id": order_id,
+        "lead_id": (existente or {}).get("lead_id") or lead_id,
+        # Venda vinda do ERP entra sem deal (D7); venda do CRM mantem o dela.
+        "deal_id": (existente or {}).get("deal_id"),
+        "sold_at": f"{pedido.get('data')}T12:00:00+00:00",
+        "value": float(_dec(pedido.get("total"))),
+        "product": product_summary(_map_bling_items(pedido)),
+        # A origem e imutavel depois de definida: o webhook de volta nao pode
+        # reescrever 'crm' para 'bling'.
+        "origin": (existente or {}).get("origin") or "bling",
+        "status": "registrada",
+        "bling_order_number": pedido.get("numero"),
+        "bling_situacao_id": (pedido.get("situacao") or {}).get("id"),
+        "bling_event_date": event_date,
+    }
+    sale_id = await asyncio.to_thread(_upsert_sale, linha)
+    if sale_id:
+        await asyncio.to_thread(_replace_items, sale_id, _map_bling_items(pedido))
+    return sale_id
+
+
+def _update_sale(order_id: int, payload: dict) -> None:
+    (get_supabase().table("sales").update(payload)
+     .eq("bling_order_id", order_id).execute())
+
+
+async def cancel_from_bling(order_id: int, *, event_date: str | None) -> None:
+    """`order.deleted`: marca cancelada, preserva linha e itens."""
+    await asyncio.to_thread(_update_sale, int(order_id), {
+        "status": "cancelada", "bling_event_date": event_date,
+    })
