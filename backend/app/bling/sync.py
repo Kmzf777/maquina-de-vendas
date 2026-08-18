@@ -30,16 +30,35 @@ def _digits(value: str | None) -> str | None:
 def _to_e164_br(raw: str | None) -> str | None:
     """Normaliza um telefone cru do Bling para o MESMO formato de `leads.phone`.
 
-    O Bling guarda telefone em formato local, sem DDI (ex.: "(51) 99269-6163" ou
-    "51 3714-1000"). `leads.phone` e sempre E.164 com o 55 do Brasil. Por isso
-    chamamos `normalize_phone` (a mesma funcao que normaliza `leads.phone`) no
-    valor cru primeiro — ela limpa a formatacao e resolve o 9o digito faltante
-    em celulares — e SO DEPOIS prefixamos o "55". Prefixar antes quebraria fixo:
-    um numero de 10 digitos (DDD+8) viraria 12 apos o 55, disparando por engano
-    a insercao do 9o digito que `normalize_phone` reserva para celular.
+    O Bling guarda telefone em texto livre DIGITADO POR HUMANO: as vezes local
+    ("(51) 99269-6163"), as vezes ja com o DDI ("+55 51 99269-6163"). `leads.phone`
+    e sempre E.164 com o 55 do Brasil. Por isso chamamos `normalize_phone` (a
+    MESMA funcao que normaliza `leads.phone`) no valor cru primeiro — ela limpa a
+    formatacao e resolve o 9o digito faltante em celulares — e SO DEPOIS decidimos
+    se prefixamos o "55". Prefixar antes de chamar normalize_phone quebraria fixo:
+    um numero de 10 digitos (DDD+8) viraria 12 apos o 55, disparando por engano a
+    insercao do 9o digito que `normalize_phone` reserva para celular.
+
+    A funcao precisa ser IDEMPOTENTE em relacao ao DDI porque nada impede o
+    contato de ja vir com "55" no campo (ex.: "+55 51 99269-6163"): prefixar de
+    novo sem checar produziria "555551992696163", que nao casa com nada — o lead
+    vira "sem contato" e a Task 8 cria um contato NOVO e DUPLICADO no Bling para
+    um cliente que ja existe. Por isso decidimos pelo COMPRIMENTO dos digitos
+    limpos, nao por regex no texto cru:
+      - 10 ou 11 digitos => local (DDD + fixo de 8 ou celular de 9). Prefixa 55.
+      - 12 ou 13 digitos comecando com 55 => ja tem DDI. Devolve como esta.
+      - qualquer outro comprimento/formato => None. Um numero que nao encaixa em
+        nenhum desses formatos nao pode virar chave de casamento: e melhor "sem
+        telefone" do que um telefone errado que casa com o cliente errado.
     """
     limpo = normalize_phone(raw)
-    return f"55{limpo}" if limpo else None
+    if not limpo:
+        return None
+    if len(limpo) in (10, 11):
+        return f"55{limpo}"
+    if len(limpo) in (12, 13) and limpo.startswith("55"):
+        return limpo
+    return None
 
 
 def map_contact(bruto: dict) -> dict:

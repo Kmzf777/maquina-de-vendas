@@ -67,6 +67,51 @@ def test_contato_normaliza_telefone_com_a_funcao_do_crm():
     assert row["email"] == "adm@projetos360.com.br"
 
 
+def test_to_e164_br_celular_local_ganha_o_55():
+    assert sync._to_e164_br("(51) 99269-6163") == "5551992696163"
+
+
+def test_to_e164_br_fixo_local_ganha_o_55():
+    assert sync._to_e164_br("51 3714-1000") == "555137141000"
+
+
+def test_to_e164_br_e_idempotente_quando_ja_tem_ddi_com_mais():
+    """Texto livre digitado por humano: nada impede o "+55" ja vir no campo. Se
+    prefixassemos de novo sem checar, '5551992696163' viraria '555551992696163'
+    — nao casa com nada, e a Task 8 cria um contato NOVO e DUPLICADO no Bling
+    para um cliente que ja existe."""
+    assert sync._to_e164_br("+55 51 99269-6163") == "5551992696163"
+
+
+def test_to_e164_br_e_idempotente_quando_ja_tem_ddi_sem_mais():
+    assert sync._to_e164_br("55 51 99269-6163") == "5551992696163"
+
+
+def test_to_e164_br_vazio_none_e_lixo_viram_none():
+    assert sync._to_e164_br("") is None
+    assert sync._to_e164_br(None) is None
+    assert sync._to_e164_br("abc") is None
+    assert sync._to_e164_br("123") is None
+
+
+def test_to_e164_br_numero_absurdo_vira_none():
+    """20 digitos nao encaixa em local (10/11) nem em DDI+local (12/13). Melhor
+    'sem telefone' do que uma chave de casamento errada."""
+    assert sync._to_e164_br("11111111112222222222") is None
+
+
+def test_to_e164_br_bate_com_normalize_phone_do_leads_phone():
+    """A invariante que faz a Task 8 funcionar: para o MESMO numero, o valor que
+    _to_e164_br produz a partir do formato do Bling tem que ser IGUAL ao valor
+    que normalize_phone produz a partir do formato que o CRM grava em
+    leads.phone (o JID do WhatsApp, que ja vem com o DDI). Se essa igualdade
+    quebrar, o casamento lead <-> contato falha silenciosamente e a integracao
+    duplica o contato no ERP do cliente."""
+    formato_bling = "(51) 99269-6163"
+    formato_crm = "5551992696163"  # como chega via webhook do WhatsApp, com DDI
+    assert sync._to_e164_br(formato_bling) == sync.normalize_phone(formato_crm)
+
+
 def test_contato_sem_documento_fica_com_doc_digits_nulo():
     row = sync.map_contact({"id": 1, "nome": "X", "tipo": "F"})
     assert row["doc_digits"] is None
