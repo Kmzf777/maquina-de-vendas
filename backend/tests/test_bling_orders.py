@@ -44,6 +44,57 @@ def test_parcelas_exige_pelo_menos_um_prazo():
         orders.build_installments(Decimal("100.00"), [], 45, "2026-08-18")
 
 
+def test_parcelas_recusam_divisao_sem_centavos_suficientes():
+    """R$0,03 em 4x deixaria a ULTIMA parcela negativa (0,01+0,01+0,01-0,01).
+
+    Recusar aqui e melhor do que deixar o Bling recusar: o erro que ele devolve
+    nao menciona parcelas, e o vendedor fica olhando um erro generico sem saber
+    que o problema e a divisao.
+    """
+    # fronteira de baixo: 4 centavos em 4x ainda da 1 centavo por parcela
+    p = orders.build_installments(Decimal("0.04"), [0, 30, 60, 90], 45, "2026-08-18")
+    assert [x["valor"] for x in p] == [0.01, 0.01, 0.01, 0.01]
+
+    # um centavo a menos e a divisao deixa de caber
+    with pytest.raises(BlingValidationError) as exc:
+        orders.build_installments(Decimal("0.03"), [0, 30, 60, 90], 45, "2026-08-18")
+    assert "0,03" in str(exc.value), "a mensagem precisa citar o valor"
+    assert "4" in str(exc.value), "a mensagem precisa citar o numero de parcelas"
+
+
+def test_parcelas_recusam_divisao_que_zera_alguma_parcela():
+    """Ter centavos sobrando nao basta. Duas divisoes escapam de uma checagem
+    ingenua de 'total em centavos >= n':
+
+    - 0,06 em 4x: a base arredonda para 0,02 e a ULTIMA fica 0,00;
+    - 0,03 em 12x: a base arredonda para 0,00 e ONZE parcelas ficam zeradas.
+    """
+    with pytest.raises(BlingValidationError):
+        orders.build_installments(Decimal("0.06"), [0, 30, 60, 90], 45, "2026-08-18")
+    with pytest.raises(BlingValidationError):
+        orders.build_installments(Decimal("0.03"), [30 * i for i in range(12)],
+                                  45, "2026-08-18")
+
+
+def test_toda_divisao_aceita_tem_parcelas_positivas_e_soma_exata():
+    """Trava de regressao sobre o invariante real: o que a funcao ACEITA nunca
+    tem parcela <= 0 e sempre soma exatamente o total."""
+    aceitas = 0
+    for cents in range(1, 300):
+        total = (Decimal(cents) / Decimal(100)).quantize(Decimal("0.01"))
+        for n in (1, 2, 3, 4, 6, 12):
+            try:
+                p = orders.build_installments(
+                    total, [30 * i for i in range(n)], 45, "2026-08-18")
+            except BlingValidationError:
+                continue  # divisao recusada na origem — comportamento esperado
+            aceitas += 1
+            assert all(x["valor"] > 0 for x in p), (total, n, p)
+            soma = sum((Decimal(str(x["valor"])) for x in p), Decimal("0"))
+            assert soma == total, (total, n, soma)
+    assert aceitas > 1000, "a varredura precisa exercitar divisoes de verdade"
+
+
 def test_parse_terms_aceita_string_do_bling():
     assert orders.parse_terms("30/60/90") == [30, 60, 90]
     assert orders.parse_terms("0") == [0]
@@ -128,6 +179,28 @@ def test_payload_recusa_pedido_sem_itens():
     with pytest.raises(BlingValidationError):
         orders.build_order_payload(contact_id=1, sold_at="2026-08-18", itens=[],
                                    payment={"method_id": 45, "terms": [0]}, seller_id=None)
+
+
+def test_payload_recusa_item_sem_vinculo_com_o_bling():
+    """Produto do CRM sem mapeamento no Bling faria int(None) -> TypeError -> 500.
+    A mensagem cita a descricao para o vendedor saber QUAL produto corrigir."""
+    # campo ausente
+    with pytest.raises(BlingValidationError) as exc:
+        orders.build_order_payload(
+            contact_id=1, sold_at="2026-08-18",
+            itens=[{"descricao": "Cafe Sem Vinculo 250g", "quantidade": 1,
+                    "valor_unitario": 10.0, "desconto_percentual": 0}],
+            payment={"method_id": 45, "terms": [0]}, seller_id=None)
+    assert "Cafe Sem Vinculo 250g" in str(exc.value)
+
+    # campo presente porem None
+    with pytest.raises(BlingValidationError) as exc2:
+        orders.build_order_payload(
+            contact_id=1, sold_at="2026-08-18",
+            itens=[{"bling_product_id": None, "descricao": "Drip Sem Vinculo",
+                    "quantidade": 1, "valor_unitario": 10.0, "desconto_percentual": 0}],
+            payment={"method_id": 45, "terms": [0]}, seller_id=None)
+    assert "Drip Sem Vinculo" in str(exc2.value)
 
 
 # ---------- criacao e projecao ----------

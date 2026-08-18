@@ -70,16 +70,31 @@ def build_installments(total: Decimal, terms: list[int], method_id: int | None,
             type_="MISSING_REQUIRED_FIELD_ERROR", status=422,
         )
 
-    base = datetime.strptime(sold_at, "%Y-%m-%d").date()
     n = len(terms)
     valor_base = _money(total / Decimal(n))
+    valor_ultima = _money(total - valor_base * Decimal(n - 1))
+
+    # Sem centavos suficientes a divisao produz parcela invalida, de DUAS formas
+    # distintas — as duas precisam ser barradas:
+    #   valor_base == 0   -> 0,03 em 12x = onze parcelas de ZERO e uma de 0,03;
+    #   valor_ultima <= 0 -> 0,06 em 4x  = 0,02+0,02+0,02+0,00 (a base arredonda
+    #                        para cima e nao sobra nada), e 0,02 em 4x chega a
+    #                        ficar NEGATIVA.
+    # O Bling recusaria, mas com um erro que nao menciona parcelas; recusar aqui
+    # diz ao vendedor exatamente qual e o problema.
+    if valor_base <= 0 or valor_ultima <= 0:
+        valor_brl = f"{total:.2f}".replace(".", ",")  # so o numero vira virgula
+        raise BlingValidationError(
+            f"nao e possivel dividir R$ {valor_brl} em {n} parcelas: "
+            "alguma parcela ficaria sem valor",
+            type_="VALIDATION_ERROR", status=422,
+        )
+
+    base = datetime.strptime(sold_at, "%Y-%m-%d").date()
     parcelas = []
     for i, dias in enumerate(terms):
-        if i < n - 1:
-            valor = valor_base
-        else:
-            # Fecha exato: o resto de 100/3 vai para a ultima parcela.
-            valor = _money(total - valor_base * Decimal(n - 1))
+        # Fecha exato: o resto de 100/3 vai para a ultima parcela.
+        valor = valor_base if i < n - 1 else valor_ultima
         parcelas.append({
             "dataVencimento": (base + timedelta(days=int(dias))).isoformat(),
             "valor": float(valor),
@@ -96,6 +111,17 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
     if not itens:
         raise BlingValidationError(
             "o pedido precisa de pelo menos um item",
+            type_="MISSING_REQUIRED_FIELD_ERROR", status=422,
+        )
+
+    # Produto do CRM sem mapeamento no Bling faria int(None) estourar TypeError
+    # la embaixo — 500 opaco em vez de 422 legivel. A mensagem cita a descricao
+    # porque o vendedor precisa saber QUAL produto esta sem vinculo.
+    sem_vinculo = [str(i.get("descricao") or "item sem descricao")
+                   for i in itens if not i.get("bling_product_id")]
+    if sem_vinculo:
+        raise BlingValidationError(
+            "produto sem vinculo com o Bling: " + ", ".join(sem_vinculo),
             type_="MISSING_REQUIRED_FIELD_ERROR", status=422,
         )
 
