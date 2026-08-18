@@ -10,6 +10,7 @@ conserta e ainda conta para o bloqueio de IP (300 erros em 10s).
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from app.bling import config
 from app.bling.errors import TRANSIENT
@@ -32,6 +33,21 @@ def _insert(row: dict) -> None:
 
 
 async def enqueue(kind: str, payload: dict, *, sale_id: str | None = None) -> None:
+    payload = dict(payload)  # copia: nao mutamos o dict do chamador
+
+    if kind == "create_order" and not payload.get("idempotency_key"):
+        # A chave de idempotencia nasce AQUI, uma unica vez, e vai gravada no
+        # job. Toda tentativa le a mesma linha e reusa a mesma chave; se cada
+        # tentativa gerasse a sua, o `numeroLoja` mudaria e o Bling criaria um
+        # pedido NOVO a cada retentativa — exatamente o que se quer evitar.
+        #
+        # Por que o caminho SINCRONO (router chamando create_order direto) nao
+        # gera chave: la nao existe retentativa. Se o POST sincrono falhar, o
+        # router enfileira um job novo e a chave nasce aqui. Gerar chave no
+        # sincrono so gastaria uma consulta a mais no orcamento de 3 req/s sem
+        # proteger nada.
+        payload["idempotency_key"] = f"crm-{uuid4().hex[:16]}"
+
     await asyncio.to_thread(_insert, {
         "kind": kind,
         "payload": payload,
@@ -40,7 +56,8 @@ async def enqueue(kind: str, payload: dict, *, sale_id: str | None = None) -> No
         "sale_id": sale_id,
         "run_after": _now().isoformat(),
     })
-    logger.info("[BLING JOBS] enfileirado %s (sale=%s)", kind, sale_id)
+    logger.info("[BLING JOBS] enfileirado %s (sale=%s, chave=%s)",
+                kind, sale_id, payload.get("idempotency_key"))
 
 
 def _claim() -> list[dict]:
@@ -60,8 +77,14 @@ async def _handle_create_order(payload: dict, job: dict) -> dict:
     from app.bling.client import BlingClient
     from app.bling.orders import create_order
 
+    # A chave veio gravada no payload pelo enqueue e e a MESMA em toda
+    # tentativa. Sai por pop (de uma copia) porque `create_order` a recebe como
+    # parametro nomeado, nao como parte dos dados do pedido.
+    kwargs = dict(payload)
+    idempotency_key = kwargs.pop("idempotency_key", None)
+
     async with BlingClient() as client:
-        return await create_order(client, **payload)
+        return await create_order(client, idempotency_key=idempotency_key, **kwargs)
 
 
 _HANDLERS = {"create_order": _handle_create_order}

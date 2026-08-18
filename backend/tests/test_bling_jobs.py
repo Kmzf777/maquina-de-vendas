@@ -59,6 +59,76 @@ def test_enqueue_grava_job_pendente(monkeypatch):
     assert job["sale_id"] == "S1"
 
 
+def test_enqueue_gera_chave_de_idempotencia(monkeypatch):
+    """A chave nasce no enfileiramento e vai gravada no job — e ela que vira
+    `numeroLoja` no Bling e impede o pedido de nascer duas vezes."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(jobs, "get_supabase", lambda: fake_db)
+
+    original = {"lead_id": "L1"}
+    asyncio.run(jobs.enqueue("create_order", original, sale_id="S1"))
+
+    payload = store["bling_jobs_inserts"][0]["payload"]
+    assert payload["idempotency_key"].startswith("crm-")
+    assert payload["lead_id"] == "L1"
+    assert "idempotency_key" not in original, "nao muta o dict do chamador"
+
+
+def test_enqueue_preserva_chave_ja_existente(monkeypatch):
+    """Reenfileirar um job que ja tem chave nao pode trocar a chave: seria o
+    mesmo que gerar uma nova por tentativa."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(jobs, "get_supabase", lambda: fake_db)
+
+    asyncio.run(jobs.enqueue("create_order",
+                             {"lead_id": "L1", "idempotency_key": "crm-fixa"}))
+
+    assert store["bling_jobs_inserts"][0]["payload"]["idempotency_key"] == "crm-fixa"
+
+
+def test_chave_de_idempotencia_e_estavel_entre_tentativas(monkeypatch):
+    """Duas tentativas do MESMO job precisam mandar a mesma chave. Se cada
+    tentativa gerasse a sua, o `numeroLoja` mudaria e o Bling criaria um pedido
+    novo a cada retentativa — o mecanismo nao protegeria nada."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(jobs, "get_supabase", lambda: fake_db)
+
+    # enfileira UMA vez: e aqui que a chave nasce
+    asyncio.run(jobs.enqueue("create_order", {"lead_id": "L1"}, sale_id="S1"))
+    payload_do_job = store["bling_jobs_inserts"][0]["payload"]
+
+    chaves = []
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    async def fake_create_order(client, **kwargs):
+        chaves.append(kwargs.get("idempotency_key"))
+        return {"sale_id": "S1"}
+
+    import app.bling.client as client_mod
+    import app.bling.orders as orders_mod
+    monkeypatch.setattr(client_mod, "BlingClient", FakeClient)
+    monkeypatch.setattr(orders_mod, "create_order", fake_create_order)
+
+    job = {"id": "J1", "kind": "create_order", "payload": payload_do_job}
+    # duas tentativas leem a MESMA linha do banco
+    asyncio.run(jobs._handle_create_order(payload_do_job, job))
+    asyncio.run(jobs._handle_create_order(payload_do_job, job))
+
+    assert chaves[0] is not None and chaves[0].startswith("crm-")
+    assert chaves[0] == chaves[1], "as duas tentativas usam a MESMA chave"
+    # a chave e parametro nomeado, nao dado do pedido
+    assert "idempotency_key" in payload_do_job, "o pop nao pode esvaziar o job"
+
+
 def test_drain_marca_done_no_sucesso(monkeypatch):
     store = {"row_bling_jobs": [{"id": "J1", "kind": "create_order",
                                  "payload": {"lead_id": "L1"}, "attempts": 0}]}

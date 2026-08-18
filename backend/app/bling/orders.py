@@ -232,19 +232,55 @@ def _insert_items(sale_id: str, itens: list[dict]) -> None:
     get_supabase().table("sale_items").insert(linhas).execute()
 
 
+async def _find_order_by_key(client, idempotency_key: str) -> dict | None:
+    """Procura no Bling um pedido ja criado com este `numeroLoja`.
+
+    Uma falha aqui NAO e silenciada de proposito: se a consulta nao respondeu,
+    nao sabemos se o pedido existe, e postar no escuro e justamente o que
+    duplica. Deixando a excecao subir, o job retenta com a MESMA chave e a
+    consulta e refeita.
+    """
+    resp = await client.get("/pedidos/vendas",
+                            params={"numerosLojas[]": [idempotency_key]})
+    achados = resp.get("data") or []
+    return achados[0] if achados else None
+
+
 async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id: int,
                        sold_at: str, sold_by: str | None, itens: list[dict],
                        payment: dict, seller_id: int | None,
-                       discount: dict | None = None, notes: str = "") -> dict:
-    """Cria o pedido no Bling e projeta em `sales` + `sale_items`."""
-    payload = build_order_payload(
-        contact_id=contact_id, sold_at=sold_at, itens=itens, payment=payment,
-        seller_id=seller_id, discount=discount, notes=notes,
-        internal_notes=f"CRM lead {lead_id}" + (f" - deal {deal_id}" if deal_id else ""),
-    )
+                       discount: dict | None = None, notes: str = "",
+                       idempotency_key: str | None = None) -> dict:
+    """Cria o pedido no Bling e projeta em `sales` + `sale_items`.
 
-    criado = await client.post("/pedidos/vendas", payload)
-    order_id = int((criado.get("data") or {})["id"])
+    `idempotency_key` vai para o campo `numeroLoja` (o "numero do pedido na loja
+    de origem"), que o Bling guarda e permite filtrar via `numerosLojas[]`. Com
+    ela, uma retentativa que ja tinha POSTado com sucesso reencontra o pedido em
+    vez de criar o segundo. Quem gera a chave e o `enqueue` da fila, uma unica
+    vez por job — ver o comentario la sobre o caminho sincrono.
+    """
+    # Retentativa: o pedido pode ja existir no ERP de uma tentativa anterior que
+    # POSTou e caiu antes de gravar a `sales`.
+    reaproveitado = None
+    if idempotency_key:
+        reaproveitado = await _find_order_by_key(client, idempotency_key)
+
+    if reaproveitado:
+        order_id = int(reaproveitado["id"])
+        logger.warning("[BLING] pedido %s reaproveitado pela chave %s — nao POSTa "
+                       "de novo (tentativa anterior criou e falhou depois)",
+                       order_id, idempotency_key)
+    else:
+        payload = build_order_payload(
+            contact_id=contact_id, sold_at=sold_at, itens=itens, payment=payment,
+            seller_id=seller_id, discount=discount, notes=notes,
+            internal_notes=f"CRM lead {lead_id}" + (f" - deal {deal_id}" if deal_id else ""),
+        )
+        if idempotency_key:
+            payload["numeroLoja"] = idempotency_key
+
+        criado = await client.post("/pedidos/vendas", payload)
+        order_id = int((criado.get("data") or {})["id"])
 
     # ---- daqui para baixo o pedido JA EXISTE no ERP ----
     # Gravar a linha com o bling_order_id vem antes de qualquer coisa que possa
@@ -297,8 +333,11 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
 
     numero = None
     try:
-        # O POST devolve so o id. `numero` e a situacao resolvida vem no GET.
-        detalhe = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
+        # O POST devolve so o id. `numero` e a situacao resolvida vem no GET —
+        # mas o pedido reaproveitado ja veio completo da consulta por chave,
+        # entao nao gastamos outra requisicao do orcamento de 3 req/s.
+        detalhe = reaproveitado or (
+            await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
         numero = detalhe.get("numero")
         await asyncio.to_thread(_update_sale, order_id, {
             "bling_order_number": numero,

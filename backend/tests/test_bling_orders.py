@@ -427,6 +427,150 @@ def test_create_order_grava_a_venda_mesmo_se_o_get_de_detalhe_falhar(monkeypatch
     assert "sales_updates" not in store
 
 
+def test_create_order_com_chave_reaproveita_pedido_ja_criado(monkeypatch):
+    """Ultimo caminho para pedido duplicado: a tentativa anterior POSTou com
+    sucesso e caiu ao gravar a `sales` (Supabase fora, deadlock). Na retentativa
+    o pedido JA existe no ERP — a consulta por `numerosLojas[]` o encontra e o
+    POST nao acontece de novo."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    chamadas = []
+
+    class FakeClientComPedidoExistente:
+        async def post(self, path, json=None):
+            chamadas.append(("POST", path))
+            raise AssertionError("nao pode POSTar: o pedido ja existe no Bling")
+
+        async def get(self, path, params=None):
+            chamadas.append(("GET", path, params))
+            assert params == {"numerosLojas[]": ["crm-abc123"]}
+            return {"data": [{"id": 34215992, "numero": 1234,
+                              "situacao": {"id": 6}}]}
+
+    out = asyncio.run(orders.create_order(
+        FakeClientComPedidoExistente(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by="v@e.com",
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 10,
+                "valor_unitario": 26.70, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [30]}, seller_id=None,
+        idempotency_key="crm-abc123",
+    ))
+
+    assert [c[0] for c in chamadas] == ["GET"], "so a consulta, nenhum POST"
+    assert out["bling_order_id"] == 34215992
+    assert out["bling_order_number"] == 1234
+    venda = store["sales_inserts"][0]
+    assert venda["bling_order_id"] == 34215992
+    assert venda["value"] == 267.0
+    # o pedido encontrado ja veio completo: nada de GET de detalhe extra
+    assert store["sales_updates"][0] == {"bling_order_number": 1234,
+                                         "bling_situacao_id": 6}
+
+
+def test_create_order_nao_posta_se_a_consulta_por_chave_falhar(monkeypatch):
+    """Se a consulta por chave nao respondeu, nao sabemos se o pedido existe.
+    Engolir o erro e POSTar no escuro e exatamente o que duplica o pedido — a
+    excecao tem que subir para o job retentar com a MESMA chave."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    class FakeClientConsultaQuebrada:
+        async def post(self, path, json=None):
+            raise AssertionError("nao pode POSTar sem saber se o pedido ja existe")
+
+        async def get(self, path, params=None):
+            raise BlingServerError("504 na consulta por numerosLojas[]")
+
+    with pytest.raises(BlingServerError):
+        asyncio.run(orders.create_order(
+            FakeClientConsultaQuebrada(),
+            lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+            sold_by=None,
+            itens=[{"bling_product_id": 123, "descricao": "Cafe 250g",
+                    "quantidade": 1, "valor_unitario": 10.0,
+                    "desconto_percentual": 0}],
+            payment={"method_id": 45, "terms": [0]}, seller_id=None,
+            idempotency_key="crm-ghi789",
+        ))
+
+    assert "sales_inserts" not in store, "nada foi projetado"
+
+
+def test_create_order_com_chave_envia_numero_loja_no_payload(monkeypatch):
+    """Sem pedido previo, posta normalmente — mas carimba a chave em
+    `numeroLoja`, senao a proxima tentativa nao teria como reencontra-lo."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    postados = []
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            postados.append(json)
+            return {"data": {"id": 777}}
+
+        async def get(self, path, params=None):
+            if path == "/pedidos/vendas":
+                return {"data": []}          # nenhum pedido com essa chave
+            return {"data": {"id": 777, "numero": 9, "situacao": {"id": 6}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        idempotency_key="crm-def456",
+    ))
+
+    assert postados[0]["numeroLoja"] == "crm-def456"
+    assert store["sales_inserts"][0]["bling_order_id"] == 777
+
+
+def test_create_order_sem_chave_nao_consulta_antes_de_postar(monkeypatch):
+    """Sem chave nao ha o que reencontrar: a consulta seria requisicao jogada
+    fora no orcamento de 3 req/s."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    gets = []
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            assert "numeroLoja" not in json
+            return {"data": {"id": 777}}
+
+        async def get(self, path, params=None):
+            gets.append(path)
+            return {"data": {"id": 777, "numero": 9, "situacao": {"id": 6}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+    ))
+
+    assert gets == ["/pedidos/vendas/777"], "so o GET de detalhe, sem busca por chave"
+
+
 def test_create_order_desconta_o_cabecalho_do_valor_gravado(monkeypatch):
     """Desconto de cabecalho tem que sair de `sales.value` tambem — senao o CRM
     grava receita inflada em toda venda com desconto."""
