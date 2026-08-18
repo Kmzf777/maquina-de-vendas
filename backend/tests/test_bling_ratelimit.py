@@ -7,34 +7,34 @@ from app.bling.errors import BlingDailyCapError, BlingRateLimitError
 
 
 class FakeRedis:
-    """Redis em memoria com a semantica de INCR/EXPIRE que o script Lua usa."""
+    """Espelha o script Lua UNICO que `acquire()` agora chama.
+
+    Um so `eval` recebe as duas chaves (segundo, dia) e os dois limites, e decide
+    tudo atomicamente — igual ao script real: {status, valor}, onde 0 = ok,
+    1 = estourou o limite por segundo (contador diario NAO e tocado), 2 = estourou
+    o teto diario.
+    """
 
     def __init__(self, fail: bool = False):
         self.counts: dict[str, int] = {}
         self.fail = fail
+        self.calls = 0
 
-    async def eval(self, script, numkeys, key, *args):
+    async def eval(self, script, numkeys, *args):
+        self.calls += 1
         if self.fail:
             raise ConnectionError("redis down")
-        self.counts[key] = self.counts.get(key, 0) + 1
-        return self.counts[key]
+        sec_key, day_key, _sec_ttl, _day_ttl, sec_limit, day_limit = args
 
+        sec = self.counts[sec_key] = self.counts.get(sec_key, 0) + 1
+        if sec > int(sec_limit):
+            return [1, sec]
 
-class FakeRedisFalhaNaSegunda:
-    """Deixa o contador por segundo passar e derruba o diario.
+        day = self.counts[day_key] = self.counts.get(day_key, 0) + 1
+        if day > int(day_limit):
+            return [2, day]
 
-    Sem isso, o `except` do contador diario fica sem cobertura: o FakeRedis(fail=True)
-    ja explode na primeira chamada e a execucao nunca chega la.
-    """
-
-    def __init__(self):
-        self.chamadas = 0
-
-    async def eval(self, script, numkeys, key, *args):
-        self.chamadas += 1
-        if self.chamadas == 1:
-            return 1          # contador por segundo: dentro do orcamento
-        raise ConnectionError("redis caiu entre os dois contadores")
+        return [0, day]
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +47,14 @@ def _no_sleep(monkeypatch):
 
     monkeypatch.setattr(rl.asyncio, "sleep", fake_sleep)
     return slept
+
+
+@pytest.fixture(autouse=True)
+def _reset_cooldown(monkeypatch):
+    """Zera o cooldown pos-falha antes de cada teste — e estado de MODULO (nao
+    passa por monkeypatch dentro de `_mark_unavailable`), entao vaza entre testes
+    sem isso. Mesmo padrao usado em `test_lead_lock_2026_06_24.py`."""
+    monkeypatch.setattr(rl, "_unavailable_until", 0.0, raising=False)
 
 
 def test_tres_chamadas_no_mesmo_segundo_passam(monkeypatch, _no_sleep):
@@ -97,15 +105,19 @@ def test_redis_fora_do_ar_e_fail_closed(monkeypatch, _no_sleep):
         asyncio.run(rl.acquire())
 
 
-def test_redis_cai_entre_o_contador_por_segundo_e_o_diario_e_fail_closed(
-    monkeypatch, _no_sleep
-):
-    """Isola o `except` do contador DIARIO. Sem este teste, uma regressao que
-    trocasse o `raise` por um `return` silencioso ali passaria batido — e e
-    exatamente o caminho que protege contra bloqueio de IP indeterminado."""
-    fake = FakeRedisFalhaNaSegunda()
+def test_falha_ativa_cooldown_e_proxima_chamada_nao_toca_redis(monkeypatch, _no_sleep):
+    """Depois de uma falha, a chamada seguinte tem que recusar IMEDIATAMENTE, sem
+    sequer tentar `eval` de novo — senao toda chamada durante uma queda prolongada
+    paga o timeout de CONEXAO inteiro (o job de sync em lote pagaria ~2-4s/item).
+    Prova contando as chamadas no fake: se o cooldown nao ativou, `calls` sobe."""
+    fake = FakeRedis(fail=True)
     monkeypatch.setattr(rl, "_get_client", lambda: fake)
     monkeypatch.setattr(rl.time, "time", lambda: 1_000_000.0)
 
     with pytest.raises(BlingRateLimitError):
         asyncio.run(rl.acquire())
+    assert fake.calls == 1
+
+    with pytest.raises(BlingRateLimitError):
+        asyncio.run(rl.acquire())
+    assert fake.calls == 1, "cooldown deveria evitar nova tentativa de conexao ao Redis"
