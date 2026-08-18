@@ -23,6 +23,26 @@ o deep-link de `/leads` não precisa de rota nova (mesmo padrão que `/conversas
 `/vendas` (deals por pipeline) e `/painel-vendas` (vendas paginadas por período) continuam precisando de rota `GET`
 nova, pois suas listas são filtradas/paginadas.
 
+**Correções descobertas durante a execução (incorporadas às tasks abaixo):**
+
+1. **`proxy.ts` faz parte do escopo.** `frontend/src/lib/auth/proxy-coverage.test.ts` enumera automaticamente os
+   diretórios de `src/app/api` e `src/app/(authenticated)` e falha se algum não estiver no `config.matcher` de
+   `frontend/src/proxy.ts`. Criar `app/api/search/` (Task 5) e `app/(authenticated)/busca/` (Task 8) **quebra a
+   suíte** e, pior, deixa as rotas novas fora do gating de auth do proxy, se o matcher não for atualizado junto.
+   Task 5 adiciona `"/api/search/:path*"`; Task 9 adiciona `"/busca/:path*"`. (`/api/sales/:path*` e
+   `/api/deals/:path*` já estão no matcher — verificado.)
+2. **Grants das RPCs: `service_role` apenas.** A auditoria de 2026-07-04
+   (`20260704_revoke_search_customer_messages_public.sql`) revogou `EXECUTE` de `PUBLIC`/`anon`/`authenticated` em
+   `search_customer_messages` porque a função é `SECURITY DEFINER` e trata escopo `NULL` como "sem restrição". Como
+   a migration da Task 2 faz `DROP`+`CREATE` dessa função, o OID novo perde aquele revoke e o `CREATE FUNCTION`
+   reconcede `EXECUTE` a `PUBLIC` por padrão. A Task 2 portanto reaplica `REVOKE ... FROM PUBLIC, anon,
+   authenticated` + `GRANT ... TO service_role` nas **quatro** funções. O único chamador é `/api/search`, que usa
+   `getServiceSupabase()` (service role key) — verificado em `frontend/src/lib/supabase/api.ts`.
+3. **`GET /api/deals/[id]` precisa de guarda de escopo.** `PATCH`/`DELETE` nesse arquivo já validam permissão de
+   funil; o `GET` novo (Task 3) sem guarda deixaria um vendedor ler deal de funil alheio por id. Task 3 aplica
+   `getAllowedPipelineIds()` e devolve **404** (não 403) quando fora do escopo, para não confirmar existência por
+   enumeração. `GET /api/sales/[id]` fica **sem** guarda de propósito — vendas são globais hoje (spec §5).
+
 ---
 
 ### Task 1: Fix da busca local em `/vendas`
@@ -833,8 +853,12 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `frontend/src/app/api/search/route.ts`
+- Modify: `frontend/src/proxy.ts` (adicionar `"/api/search/:path*"` ao `config.matcher`)
 
 **Depende de:** Task 2 (RPCs precisam existir no banco) e Task 4 (`lib/universal-search.ts`).
+
+**Obrigatório:** adicione `"/api/search/:path*"` ao array `matcher` em `frontend/src/proxy.ts` (junto dos demais
+`"/api/..."`). Sem isso, `proxy-coverage.test.ts` falha e a rota fica fora do gating de auth do proxy.
 
 - [ ] **Step 1: Implementar a rota**
 
@@ -1567,6 +1591,10 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `frontend/src/components/sidebar.tsx`
 - Modify: `frontend/src/lib/auth/roles.ts`
+- Modify: `frontend/src/proxy.ts` (adicionar `"/busca/:path*"` ao `config.matcher`)
+
+**Obrigatório:** adicione `"/busca/:path*"` ao array `matcher` em `frontend/src/proxy.ts` (junto das demais páginas,
+logo após `"/painel-vendas/:path*"`). Sem isso, `proxy-coverage.test.ts` falha e a página fica fora do gating de auth.
 
 - [ ] **Step 1: Adicionar o item no sidebar**
 
