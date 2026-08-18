@@ -707,6 +707,34 @@ def test_redis_fora_do_ar_e_fail_closed(monkeypatch, _no_sleep):
 
     with pytest.raises(BlingRateLimitError):
         asyncio.run(rl.acquire())
+
+
+class FakeRedisFalhaNaSegunda:
+    """Deixa o contador por segundo passar e derruba o diario.
+
+    Sem este fake, o `except` do contador diario fica SEM COBERTURA: o
+    FakeRedis(fail=True) ja explode na primeira chamada `eval` (a do contador
+    por segundo) e a execucao nunca chega la. Confirmado por teste de mutacao —
+    trocar o `raise` daquele except por `return` mantinha a suite verde.
+    """
+
+    def __init__(self):
+        self.chamadas = 0
+
+    async def eval(self, script, numkeys, key, *args):
+        self.chamadas += 1
+        if self.chamadas == 1:
+            return 1  # contador por segundo: dentro do orcamento
+        raise ConnectionError("redis caiu entre os dois contadores")
+
+
+def test_falha_no_contador_diario_tambem_e_fail_closed(monkeypatch, _no_sleep):
+    """Protege o caminho em que o Redis cai NO MEIO dos dois contadores."""
+    monkeypatch.setattr(rl, "_get_client", lambda: FakeRedisFalhaNaSegunda())
+    monkeypatch.setattr(rl.time, "time", lambda: 1_000_000.0)
+
+    with pytest.raises(BlingRateLimitError):
+        asyncio.run(rl.acquire())
 ```
 
 - [ ] **Step 2: Rodar o teste e confirmar que falha**
@@ -818,7 +846,7 @@ async def acquire() -> None:
 - [ ] **Step 4: Rodar o teste e confirmar que passa**
 
 Run: `cd backend && python -m pytest tests/test_bling_ratelimit.py -v`
-Expected: PASS — 4 passed
+Expected: PASS — 5 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1289,7 +1317,10 @@ async def status() -> dict:
     """Resumo para /api/bling/status: conectado, expiracoes, escopos."""
     row = await asyncio.to_thread(_stored_row) or {}
     return {
-        "configured": bool(config.client_id() and config.client_secret()),
+        # Fonte unica da regra "o que conta como configurado" (config.is_configured).
+        # Repetir a condicao aqui faria os dois lados divergirem no dia em que a
+        # integracao passar a exigir tambem o redirect_uri.
+        "configured": config.is_configured(),
         "connected": bool(row.get("refresh_token")),
         "access_expires_at": row.get("access_expires_at"),
         "refresh_expires_at": row.get("refresh_expires_at"),
