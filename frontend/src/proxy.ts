@@ -107,6 +107,7 @@ export const config = {
     "/api/model-pricing/:path*",
     "/api/quick-replies/:path*",
     "/api/sales/:path*",
+    "/api/search/:path*",
     "/api/system-alerts/:path*",
   ],
 };
