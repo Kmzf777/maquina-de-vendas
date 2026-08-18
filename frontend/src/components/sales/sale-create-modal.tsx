@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { TeamUser, Sale } from "@/lib/types";
 import {
   Dialog,
@@ -20,6 +20,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { leadMatchesSearch } from "@/lib/search";
 import { ChevronDownIcon, CheckIcon } from "lucide-react";
+import { BlingOrderForm } from "@/components/sales/bling-order-form";
+import {
+  BlingContactResolver,
+  type BlingContactCandidate,
+} from "@/components/sales/bling-contact-resolver";
+import type { OrderPayloadResult } from "@/lib/bling-order-state";
 
 interface LeadDeal {
   id: string;
@@ -46,8 +52,22 @@ interface SaleCreateModalProps {
   conversationId?: string | null;
   currentUserEmail?: string;
   editingSale?: Sale | null;
+  /**
+   * Modo Bling: o pedido é montado com itens do catálogo e lançado no ERP em vez
+   * de gravar produto em texto livre. Vem de `/api/bling/status`. Sem ela (ou
+   * falsa) o modal se comporta exatamente como sempre se comportou.
+   */
+  blingEnabled?: boolean;
+  /** `condicao_pagamento` do contato no Bling, quando quem abre o modal a conhece. */
+  blingCondicaoPagamento?: string | null;
   onClose: () => void;
   onSaved: () => void;
+}
+
+interface ContactResolution {
+  status: "ambiguous" | "suggested" | "missing";
+  reason?: string;
+  candidates: BlingContactCandidate[];
 }
 
 const fieldLabel = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1";
@@ -62,10 +82,15 @@ export function SaleCreateModal({
   conversationId,
   currentUserEmail,
   editingSale,
+  blingEnabled,
+  blingCondicaoPagamento,
   onClose,
   onSaved,
 }: SaleCreateModalProps) {
   const isEditing = !!editingSale;
+  // Editar venda continua sendo PATCH em `sales`: o pedido já existe no ERP e
+  // não se refaz por aqui.
+  const blingMode = !!blingEnabled && !isEditing;
 
   const [selectedLeadId, setSelectedLeadId] = useState(
     editingSale?.lead_id ?? leadId ?? ""
@@ -95,6 +120,17 @@ export function SaleCreateModal({
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ── modo Bling ───────────────────────────────────────────────────────────
+  const [orderResult, setOrderResult] = useState<OrderPayloadResult | null>(null);
+  const [resolution, setResolution] = useState<ContactResolution | null>(null);
+  const [sucesso, setSucesso] = useState<{ titulo: string; detalhe: string } | null>(
+    null
+  );
+  // Deal criado inline numa tentativa anterior: sem guardar o id, cada retentativa
+  // depois do 409 criaria um deal novo para a mesma venda.
+  const [createdDealId, setCreatedDealId] = useState<string | null>(null);
+  const orderPayloadRef = useRef<Record<string, unknown> | null>(null);
 
   // ── initial data fetches ─────────────────────────────────────────────────
   useEffect(() => {
@@ -132,10 +168,97 @@ export function SaleCreateModal({
       );
   }, [selectedLeadId, isEditing, lockedDealId]);
 
+  // ── pedido no Bling ──────────────────────────────────────────────────────
+  /**
+   * Posta em `/api/bling/orders` e trata os quatro desfechos do contrato:
+   * 201 criado, 202 na fila, 409 contato não resolvido, 422 recusa do Bling.
+   */
+  const postBlingOrder = useCallback(
+    async (payload: Record<string, unknown>) => {
+      orderPayloadRef.current = payload;
+      setSaving(true);
+      setError(null);
+
+      const res = await fetch("/api/bling/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      const body: Record<string, unknown> = res
+        ? await res.json().catch(() => ({}))
+        : {};
+      setSaving(false);
+
+      if (!res) {
+        setError("Não foi possível falar com o servidor. Tente de novo.");
+        return;
+      }
+
+      if (res.status === 201) {
+        const numero = body.bling_order_number ?? body.bling_order_id;
+        setResolution(null);
+        // `onSaved` fica para o "Concluir": nos chamadores ele desmonta o modal,
+        // e o número do pedido sumiria antes de o vendedor conseguir lê-lo.
+        setSucesso({
+          titulo: `Pedido #${numero} criado no Bling`,
+          detalhe: "A venda também já está registrada no CRM.",
+        });
+        return;
+      }
+
+      if (res.status === 202) {
+        setResolution(null);
+        setSucesso({
+          titulo: "Venda registrada",
+          detalhe:
+            "O pedido está sendo enviado ao Bling e aparece por lá assim que o ERP responder.",
+        });
+        return;
+      }
+
+      if (res.status === 409) {
+        // O backend não chuta o contato: quem decide é o vendedor. Nada foi
+        // criado — nem contato, nem venda —, então o formulário segue montado.
+        const status = body.status;
+        setResolution({
+          status:
+            status === "ambiguous" || status === "suggested" ? status : "missing",
+          reason: typeof body.reason === "string" ? body.reason : undefined,
+          candidates: Array.isArray(body.candidates)
+            ? (body.candidates as BlingContactCandidate[])
+            : [],
+        });
+        return;
+      }
+
+      if (res.status === 422) {
+        // Mensagem original do Bling — é ela que diz o que corrigir.
+        setError(
+          [body.message, body.detail].filter(Boolean).join(" ") ||
+            "O Bling recusou o pedido."
+        );
+        return;
+      }
+
+      setError(
+        (body.message as string) ??
+          (body.error as string) ??
+          "Erro ao lançar o pedido no Bling"
+      );
+    },
+    []
+  );
+
+  const retryAfterContact = useCallback(() => {
+    setResolution(null);
+    if (orderPayloadRef.current) void postBlingOrder(orderPayloadRef.current);
+  }, [postBlingOrder]);
+
   // ── submit ───────────────────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!product.trim() || !value) {
+    if (resolution || sucesso) return;
+    if (!blingMode && (!product.trim() || !value)) {
       setError("Produto e valor são obrigatórios");
       return;
     }
@@ -178,6 +301,43 @@ export function SaleCreateModal({
 
     if (!lockedDealId && !linkExisting && !linkNew) {
       setError("Vincule a um deal existente ou crie um novo deal");
+      return;
+    }
+
+    if (blingMode) {
+      if (!orderResult?.valid) {
+        setError(
+          "Escolha ao menos um produto com quantidade e a forma de pagamento"
+        );
+        return;
+      }
+
+      // `/api/bling/orders` recebe `deal_id` pronto — o deal inline é criado
+      // antes, e o id fica guardado para a retentativa não criar um segundo.
+      let deal: string | null = lockedDealId ?? (linkExisting ? dealId : createdDealId);
+      if (!deal && linkNew) {
+        setSaving(true);
+        setError(null);
+        const criado = await fetch("/api/deals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lead_id: selectedLeadId,
+            title: newDealTitle.trim(),
+            pipeline_id: newDealPipeline,
+          }),
+        }).catch(() => null);
+        const corpo = criado ? await criado.json().catch(() => ({})) : {};
+        if (!criado?.ok || !corpo?.id) {
+          setError(corpo?.error ?? "Não foi possível criar o deal");
+          setSaving(false);
+          return;
+        }
+        deal = corpo.id as string;
+        setCreatedDealId(deal);
+      }
+
+      await postBlingOrder({ ...orderResult.payload, deal_id: deal ?? null });
       return;
     }
 
@@ -224,12 +384,25 @@ export function SaleCreateModal({
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const resolvedLeadId = selectedLeadId || leadId || "";
+  // Só existe no modo `pickLead` (é a lista carregada para o combobox); serve
+  // para pré-preencher o cadastro do contato e poupar digitação do vendedor.
+  const leadSelecionado = leads.find((l) => l.id === resolvedLeadId);
+
+  /** Fecha avisando o chamador quando o pedido já foi lançado (recarrega a lista). */
+  function fecharModal() {
+    if (sucesso) onSaved();
+    onClose();
+  }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open onOpenChange={(open) => { if (!open) fecharModal(); }}>
       <DialogContent
         showCloseButton={false}
-        className="bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full max-w-md shadow-lg gap-0"
+        className={`bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full shadow-lg gap-0 ${
+          blingMode
+            ? "max-w-2xl max-h-[88vh] overflow-y-auto"
+            : "max-w-md"
+        }`}
       >
         {/* Header */}
         <DialogHeader className="flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
@@ -238,7 +411,7 @@ export function SaleCreateModal({
           </DialogTitle>
           <button
             type="button"
-            onClick={onClose}
+            onClick={fecharModal}
             aria-label="Fechar"
             className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 transition-colors"
           >
@@ -258,8 +431,12 @@ export function SaleCreateModal({
           </button>
         </DialogHeader>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        {/* Form — fica montado (só escondido) enquanto o resolvedor de contato
+            aparece, senão o vendedor perderia o pedido inteiro que já digitou. */}
+        <form
+          onSubmit={handleSubmit}
+          className={`p-5 space-y-4 ${resolution || sucesso ? "hidden" : ""}`}
+        >
 
           {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
           {pickLead && !isEditing && (
@@ -323,33 +500,50 @@ export function SaleCreateModal({
             </div>
           )}
 
-          {/* Product */}
-          <div>
-            <label className={fieldLabel}>Produto / Serviço *</label>
-            <Input
-              type="text"
-              value={product}
-              onChange={(e) => setProduct(e.target.value)}
-              placeholder="Ex: Café especial 5kg"
-              className={fieldInput}
-              required
+          {/* Itens do Bling — substituem produto em texto livre e valor único */}
+          {blingMode ? (
+            <BlingOrderForm
+              meta={{
+                leadId: resolvedLeadId,
+                dealId: lockedDealId ?? (dealId || null),
+                soldAt,
+                soldBy: soldBy && soldBy !== "__none__" ? soldBy : null,
+                notes: notes.trim(),
+              }}
+              condicaoPagamento={blingCondicaoPagamento}
+              onChange={setOrderResult}
             />
-          </div>
+          ) : (
+            <>
+              {/* Product */}
+              <div>
+                <label className={fieldLabel}>Produto / Serviço *</label>
+                <Input
+                  type="text"
+                  value={product}
+                  onChange={(e) => setProduct(e.target.value)}
+                  placeholder="Ex: Café especial 5kg"
+                  className={fieldInput}
+                  required
+                />
+              </div>
 
-          {/* Value */}
-          <div>
-            <label className={fieldLabel}>Valor (R$) *</label>
-            <Input
-              type="number"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="0,00"
-              min="0"
-              step="0.01"
-              className={fieldInput}
-              required
-            />
-          </div>
+              {/* Value */}
+              <div>
+                <label className={fieldLabel}>Valor (R$) *</label>
+                <Input
+                  type="number"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="0,00"
+                  min="0"
+                  step="0.01"
+                  className={fieldInput}
+                  required
+                />
+              </div>
+            </>
+          )}
 
           {/* Sale date */}
           <div>
@@ -420,7 +614,10 @@ export function SaleCreateModal({
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      {dealId && dealId !== "__new__" && (
+                      {/* Quem move o deal para Fechado Ganho é o POST /api/sales.
+                          O pedido do Bling grava a venda pelo backend e não passa
+                          por lá, então em modo Bling a promessa não vale. */}
+                      {dealId && dealId !== "__new__" && !blingMode && (
                         <p className="text-[11px] text-[#7b7b78] mt-1">
                           O deal será movido para Fechado Ganho automaticamente.
                         </p>
@@ -494,6 +691,14 @@ export function SaleCreateModal({
             <p className="text-[12px] text-red-600">{error}</p>
           )}
 
+          {/* Por que o botão está desabilitado */}
+          {blingMode && !error && !orderResult?.valid && (
+            <p className="text-[11px] text-[#7b7b78]">
+              Escolha ao menos um produto com quantidade e a forma de pagamento
+              para lançar o pedido.
+            </p>
+          )}
+
           {/* Actions */}
           <div className="flex gap-2 pt-2">
             <button
@@ -505,13 +710,55 @@ export function SaleCreateModal({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || (blingMode && !orderResult?.valid)}
               className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
             >
-              {saving ? "Salvando..." : isEditing ? "Salvar" : "Registrar Venda"}
+              {saving
+                ? "Salvando..."
+                : isEditing
+                  ? "Salvar"
+                  : blingMode
+                    ? "Lançar pedido no Bling"
+                    : "Registrar Venda"}
             </button>
           </div>
         </form>
+
+        {/* 409 — o vendedor decide qual é o cliente no Bling */}
+        {resolution && (
+          <div className="p-5">
+            <BlingContactResolver
+              leadId={resolvedLeadId}
+              status={resolution.status}
+              reason={resolution.reason}
+              candidates={resolution.candidates}
+              defaults={{
+                nome: leadSelecionado?.name ?? "",
+                telefone: leadSelecionado?.phone ?? "",
+              }}
+              onResolved={retryAfterContact}
+              onCancel={() => setResolution(null)}
+            />
+          </div>
+        )}
+
+        {/* 201/202 — o número do pedido é a informação que o vendedor procura */}
+        {sucesso && (
+          <div className="p-5 text-center space-y-3">
+            <div className="mx-auto w-10 h-10 rounded-full bg-[#1f9d57]/10 flex items-center justify-center">
+              <CheckIcon className="size-5 text-[#1f9d57]" />
+            </div>
+            <p className="text-[15px] text-[#111111]">{sucesso.titulo}</p>
+            <p className="text-[12px] text-[#7b7b78]">{sucesso.detalhe}</p>
+            <button
+              type="button"
+              onClick={fecharModal}
+              className="w-full py-2 text-[13px] font-medium text-white rounded-[4px] bg-[#1f9d57] hover:bg-[#1b8a4c] transition-colors"
+            >
+              Concluir
+            </button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
