@@ -337,7 +337,15 @@ export function SaleCreateModal({
         setCreatedDealId(deal);
       }
 
-      await postBlingOrder({ ...orderResult.payload, deal_id: deal ?? null });
+      // `conversation_id` não passa pelo `buildOrderPayload` (é do modal, não do
+      // pedido), mas é a rastreabilidade que o caminho não-Bling já grava: quem
+      // registra a venda a partir do chat vê a venda ligada ao atendimento que a
+      // gerou. A retentativa pós-409 reenvia o payload inteiro, então herda o campo.
+      await postBlingOrder({
+        ...orderResult.payload,
+        deal_id: deal ?? null,
+        conversation_id: conversationId || null,
+      });
       return;
     }
 
@@ -614,10 +622,7 @@ export function SaleCreateModal({
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      {/* Quem move o deal para Fechado Ganho é o POST /api/sales.
-                          O pedido do Bling grava a venda pelo backend e não passa
-                          por lá, então em modo Bling a promessa não vale. */}
-                      {dealId && dealId !== "__new__" && !blingMode && (
+                      {dealId && dealId !== "__new__" && (
                         <p className="text-[11px] text-[#7b7b78] mt-1">
                           O deal será movido para Fechado Ganho automaticamente.
                         </p>
