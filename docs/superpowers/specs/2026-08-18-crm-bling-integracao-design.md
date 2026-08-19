@@ -266,8 +266,19 @@ CREATE INDEX sale_items_sale_id_idx ON sale_items (sale_id);
   legado, anterior à integração). A migration marca as linhas existentes:
   `UPDATE sales SET origin = 'manual' WHERE bling_order_id IS NULL;` — roda uma vez,
   antes de qualquer venda nova, então não pega nada criado pela integração.
-- `status`: `registrada` | `cancelada` | `pendente_bling` (venda gravada no CRM cujo
-  pedido ainda não subiu ao Bling — §9.2, caminho da fila).
+- `status`: `registrada` | `cancelada` | `pendente_bling`.
+
+  **`pendente_bling` não é escrito pela implementação atual.** O desenho original
+  previa gravar a venda no CRM antes de o pedido subir; o que ficou é melhor: no
+  caminho da fila (§9.2) o router enfileira e devolve `202` **sem** criar linha em
+  `sales`, e a venda nasce quando o job conclui — com o `bling_order_id` já em mãos.
+  Criar uma linha antes colidiria com a inserção que o próprio `create_order` faz sob
+  a chave de idempotência, e uma venda "fantasma" no painel é pior que uma venda que
+  aparece dois minutos depois. O `202` já avisa o vendedor na hora.
+
+  O valor permanece no schema e a tabela de `/vendas` sabe exibi-lo, mas hoje é
+  caminho morto. Quem for reativá-lo precisa resolver a colisão com a idempotência
+  primeiro.
 - `product` (texto, `NOT NULL`) continua existindo e passa a guardar um **resumo
   derivado** dos itens (`"Café Canastra Clássico Moído 250g +2 itens"`), para não quebrar
   a busca e as telas que já leem esse campo.
@@ -604,8 +615,10 @@ bloqueia a venda.
   - bloco de resolução de contato quando a API devolve `409`: lista de candidatos ou
     formulário de documento + endereço;
   - o campo `product` de texto livre some no modo Bling (vira resumo derivado).
-- **`/vendas`**: colunas de número do pedido e situação do Bling; link direto para o
-  pedido no Bling; badge para `status='cancelada'` e `pendente_bling`.
+- **`/painel-vendas`**: colunas de número do pedido e situação do Bling; link direto
+  para o pedido no Bling; badge para `status='cancelada'`.
+  (A tabela de vendas é renderizada por `/painel-vendas`; `/vendas` é o Kanban de
+  deals — a spec dizia `/vendas` por engano.)
   O formato da URL de deep-link do pedido **não** está no OpenAPI — deve ser confirmado
   abrindo um pedido real no Bling e copiando o padrão, na task que constrói a tela.
   Até lá o link fica atrás de uma constante única (`BLING_ORDER_URL_TEMPLATE`).
