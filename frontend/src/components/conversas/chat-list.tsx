@@ -4,6 +4,12 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { CONVERSATION_TABS, AGENT_STAGES, UNREAD_TAB_KEY } from "@/lib/constants";
 import type { Conversation, Channel, MessageSearchResult } from "@/lib/types";
 import { MessageSearchResults } from "@/components/conversas/message-search-results";
+import { leadMatchesSearch } from "@/lib/search";
+import {
+  CONTACT_SEARCH_MIN_LEN,
+  conversationMatchesTab,
+  mergeContactResults,
+} from "@/lib/contact-search";
 import { formatRelativeTime } from "@/lib/datetime";
 import { getWindowStatus } from "@/lib/window-status";
 import { businessMinutesElapsed } from "@/lib/business-hours";
@@ -110,36 +116,59 @@ export function ChatList({
   const [search, setSearch] = useState("");
   const [msgResults, setMsgResults] = useState<MessageSearchResult[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
+  const [contactResults, setContactResults] = useState<Conversation[]>([]);
+  const [contactLoading, setContactLoading] = useState(false);
   const searchAbortRef = useRef<AbortController | null>(null);
 
-  // Busca server-side de conteúdo (>= 2 chars), debounced, latest-wins.
+  // Busca server-side (>= 2 chars), debounced, latest-wins — em duas frentes no
+  // mesmo ciclo: CONTATOS e MENSAGENS. A de contatos existe porque a lista
+  // carregada para no teto de 1.000 linhas do PostgREST: filtrar só o que está
+  // em memória jurava "Nenhum contato encontrado" com a conversa viva no banco.
   useEffect(() => {
     const q = search.trim();
-    if (q.length < 2) {
+    if (q.length < CONTACT_SEARCH_MIN_LEN) {
       setMsgResults([]);
+      setContactResults([]);
       setMsgLoading(false);
+      setContactLoading(false);
       searchAbortRef.current?.abort();
       return;
     }
     setMsgLoading(true);
-    const handle = setTimeout(async () => {
+    setContactLoading(true);
+    const handle = setTimeout(() => {
       searchAbortRef.current?.abort();
       const ac = new AbortController();
       searchAbortRef.current = ac;
-      try {
-        const url = selectedChannelId
-          ? `/api/conversations/search?q=${encodeURIComponent(q)}&channel_id=${selectedChannelId}`
-          : `/api/conversations/search?q=${encodeURIComponent(q)}`;
-        const res = await fetch(url, { signal: ac.signal });
-        if (!res.ok) { setMsgResults([]); return; }
-        const data = await res.json();
-        setMsgResults(Array.isArray(data) ? data : []);
-      } catch (err) {
-        if ((err as Error)?.name === "AbortError") return;
-        setMsgResults([]);
-      } finally {
-        if (!ac.signal.aborted) setMsgLoading(false);
-      }
+      const channelParam = selectedChannelId ? `&channel_id=${selectedChannelId}` : "";
+
+      const run = async <T,>(
+        path: string,
+        apply: (rows: T[]) => void,
+        done: () => void,
+      ) => {
+        try {
+          const res = await fetch(path, { signal: ac.signal });
+          const data = res.ok ? await res.json() : [];
+          if (!ac.signal.aborted) apply(Array.isArray(data) ? data : []);
+        } catch (err) {
+          if ((err as Error)?.name === "AbortError") return;
+          apply([]);
+        } finally {
+          if (!ac.signal.aborted) done();
+        }
+      };
+
+      void run<Conversation>(
+        `/api/conversations/search-contacts?q=${encodeURIComponent(q)}${channelParam}`,
+        setContactResults,
+        () => setContactLoading(false),
+      );
+      void run<MessageSearchResult>(
+        `/api/conversations/search?q=${encodeURIComponent(q)}${channelParam}`,
+        setMsgResults,
+        () => setMsgLoading(false),
+      );
     }, 300);
     return () => clearTimeout(handle);
   }, [search, selectedChannelId]);
@@ -181,20 +210,22 @@ export function ChatList({
     onSelectConversation(conv);
   };
 
-  const filteredConversations = conversations
-    .filter((conv) => {
-      if (activeTab === UNREAD_TAB_KEY) return (conv.unread_count ?? 0) > 0;
-      if (activeTab === "todos") return true;
-      if (activeTab === "pessoal") return !conv.leads;
-      return conv.leads?.stage === activeTab;
-    })
-    .filter((conv) => {
-      if (!search) return true;
-      const q = search.toLowerCase();
-      const name = conv.leads?.name || conv.leads?.phone || "";
-      const phone = conv.leads?.phone || "";
-      return name.toLowerCase().includes(q) || phone.includes(q);
-    });
+  const searchQuery = search.trim();
+  const isServerSearching = searchQuery.length >= CONTACT_SEARCH_MIN_LEN;
+
+  // Local: o que já está em memória, com o MESMO matcher do servidor
+  // (accent-insensitive, cobrindo empresa/razão social e telefone formatado).
+  const localMatches = conversations
+    .filter((conv) => conversationMatchesTab(conv, activeTab))
+    .filter((conv) => (searchQuery ? leadMatchesSearch(searchQuery, conv.leads ?? {}) : true));
+
+  // Remoto: o que só existe além do teto da lista. A aba filtra os dois lados.
+  const filteredConversations = isServerSearching
+    ? mergeContactResults(
+        localMatches,
+        contactResults.filter((conv) => conversationMatchesTab(conv, activeTab)),
+      )
+    : localMatches;
 
   function renderConversationRow(conv: Conversation) {
     const lead = conv.leads;
@@ -452,15 +483,21 @@ export function ChatList({
 
       {/* Lista / resultados de busca */}
       <div className="flex-1 overflow-y-auto py-1">
-        {search.trim().length >= 2 ? (
+        {isServerSearching ? (
           <>
             <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9b9b98]">
               Conversas
             </p>
-            {filteredConversations.length === 0 ? (
+            {filteredConversations.length === 0 && !contactLoading ? (
               <p className="text-[#7b7b78] text-xs px-3 py-2">Nenhum contato encontrado.</p>
             ) : (
               filteredConversations.map((conv) => renderConversationRow(conv))
+            )}
+            {contactLoading && (
+              <div className="px-3 py-2 flex items-center gap-2 text-[11px] text-[#7b7b78]">
+                <span className="w-3 h-3 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin flex-shrink-0" />
+                Buscando contatos...
+              </div>
             )}
             <p className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9b9b98]">
               Mensagens

@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { getAllowedChannelIds, ChannelAccessError } from "@/lib/supabase/channel-access";
+import {
+  conversationSelect,
+  enrichConversations,
+  type EnrichableConversation,
+} from "@/lib/supabase/conversation-enrichment";
 
 interface EvolutionChat {
   id?: string;
@@ -131,6 +136,9 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const channelId = searchParams.get("channel_id");
   const status = searchParams.get("status");
+  // Filtro por lead: usado pelo deep-link `/conversas?lead_id=...`, que precisa
+  // abrir a conversa mesmo quando ela está fora do teto de linhas da listagem.
+  const leadId = searchParams.get("lead_id");
 
   // Determina quais channel_ids o usuário logado pode ver.
   // Falha de auth lança ChannelAccessError → respondemos 401, NUNCA [] silencioso
@@ -146,14 +154,11 @@ export async function GET(request: NextRequest) {
   }
 
   // 1. Get DB conversations
-  let dbQuery = supabase
-    .from("conversations")
-    .select(
-      "*, first_seller_response_at, last_seller_response_at, leads(id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, telefone_comercial, email, instagram, traffic_type, utm_source), channels(id, name, phone, provider, agent_profile_id, mode, agent_profiles(id, name, prompt_key)), agent_profiles(id, name, prompt_key)"
-    );
+  let dbQuery = supabase.from("conversations").select(conversationSelect());
 
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
   if (status) dbQuery = dbQuery.eq("status", status);
+  if (leadId) dbQuery = dbQuery.eq("lead_id", leadId);
   // Restringe ao conjunto de canais permitidos para o usuário logado
   if (allowedChannelIds !== null) {
     if (allowedChannelIds.length === 0) {
@@ -163,55 +168,16 @@ export async function GET(request: NextRequest) {
     dbQuery = dbQuery.in("channel_id", allowedChannelIds);
   }
 
-  const { data: dbConversations, error: dbError } = await dbQuery
+  const { data: dbRows, error: dbError } = await dbQuery
     .order("last_msg_at", { ascending: false, nullsFirst: false });
   // Não devolver [] silencioso em erro de query: a UI não distingue erro de
   // "zero conversas" e apagaria a lista. Responder 500 mantém o estado anterior.
   if (dbError) {
     return NextResponse.json({ error: dbError.message }, { status: 500 });
   }
-
-  // Fetch last message text for meta_cloud conversations via RPC
-  const metaConvIds = (dbConversations || [])
-    .filter((c) => (c.channels as { provider?: string } | null)?.provider === "meta_cloud")
-    .map((c) => c.id as string);
-
-  const lastMsgMap = new Map<string, string>();
-  const lastDirMap = new Map<string, "inbound" | "outbound">();
-  if (metaConvIds.length > 0) {
-    const { data: lastMsgs } = await supabase.rpc("get_last_messages", {
-      conv_ids: metaConvIds,
-    });
-    for (const row of lastMsgs || []) {
-      let prefix = "";
-      if (row.sent_by === "seller") prefix = "Vendedor: ";
-      else if (["broadcast", "campaign", "automation", "followup", "cadence"].includes(row.sent_by)) prefix = "Disparo: ";
-      else if (row.role === "assistant") prefix = "IA: ";
-      lastMsgMap.set(row.conversation_id, prefix + row.content);
-      // role "user" = lead falou por último → inbound; caso contrário nós falamos → outbound
-      lastDirMap.set(row.conversation_id, row.role === "user" ? "inbound" : "outbound");
-    }
-  }
-
-  // Fetch active deal (pipeline + stage) for all DB conversation leads
-  const allLeadIds = (dbConversations || [])
-    .map((c) => (c.leads as { id?: string } | null)?.id)
-    .filter(Boolean) as string[];
-
-  type DealInfo = { pipeline_name: string; stage_label: string; stage_dot_color: string };
-  const dealMap = new Map<string, DealInfo>();
-  if (allLeadIds.length > 0) {
-    const { data: dealRows } = await supabase.rpc("get_lead_deals", {
-      lead_ids: allLeadIds,
-    });
-    for (const row of dealRows || []) {
-      dealMap.set(row.lead_id, {
-        pipeline_name: row.pipeline_name,
-        stage_label: row.stage_label,
-        stage_dot_color: row.stage_dot_color,
-      });
-    }
-  }
+  // O select é montado em runtime, então o supabase-js não infere a forma da
+  // linha — o contrato real está em EnrichableConversation.
+  const dbConversations = (dbRows ?? []) as unknown as EnrichableConversation[];
 
   // 2. Get Evolution channels and fetch their chats
   let channelsQuery = supabase
@@ -250,33 +216,22 @@ export async function GET(request: NextRequest) {
   // 3. Merge: DB conversations take priority (they have real IDs)
   // Build a set of phones that already have DB conversations per channel
   const dbPhoneKeys = new Set(
-    (dbConversations || []).map((c) => {
+    dbConversations.map((c) => {
       const lead = c.leads as { phone?: string } | null;
       return `${c.channel_id}_${lead?.phone || ""}`;
     })
   );
 
   // Add last_message_text + deal info to DB conversations
-  const dbWithLastMsg = (dbConversations || []).map((c) => {
-    const leadId = (c.leads as { id?: string } | null)?.id ?? "";
-    const deal = dealMap.get(leadId);
-    return {
-      ...c,
-      last_message_text: lastMsgMap.get(c.id as string) ?? null,
-      last_message_direction: lastDirMap.get(c.id as string) ?? null,
-      deal_pipeline_name: deal?.pipeline_name ?? null,
-      deal_stage_label: deal?.stage_label ?? null,
-      deal_stage_dot_color: deal?.stage_dot_color ?? null,
-    };
-  });
+  const dbWithLastMsg = await enrichConversations(supabase, dbConversations);
 
   // Add Evolution conversations that don't already exist in DB
-  const merged = [...dbWithLastMsg];
+  const merged: EnrichableConversation[] = [...dbWithLastMsg];
   for (const evoConv of evoConversations) {
     if (!evoConv) continue;
     const key = `${evoConv.channel_id}_${(evoConv.leads as { phone: string }).phone}`;
     if (!dbPhoneKeys.has(key)) {
-      merged.push(evoConv);
+      merged.push(evoConv as unknown as EnrichableConversation);
     }
   }
 

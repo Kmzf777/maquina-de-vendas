@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { foldText, leadMatchesSearch } from "./search";
+import {
+  foldText,
+  leadMatchesSearch,
+  buildAccentInsensitivePattern,
+  buildLeadSearchOrFilter,
+} from "./search";
 
 describe("foldText", () => {
   it("strips diacritics and lowercases", () => {
@@ -44,5 +49,63 @@ describe("leadMatchesSearch", () => {
 
   it("tolerates null fields", () => {
     expect(leadMatchesSearch("x", { name: null, phone: null })).toBe(false);
+  });
+});
+
+describe("buildAccentInsensitivePattern", () => {
+  it("expands each letter into its accented variants", () => {
+    expect(buildAccentInsensitivePattern("aisl")).toBe("[aàáâãäå][iìíîï]sl");
+  });
+
+  it("folds the query first, so accented input matches unaccented data", () => {
+    // "José" e "jose" precisam gerar o MESMO padrão — a busca é simétrica.
+    expect(buildAccentInsensitivePattern("José")).toBe(
+      buildAccentInsensitivePattern("jose"),
+    );
+  });
+
+  it("never emits characters that break the PostgREST or=() parser", () => {
+    const pattern = buildAccentInsensitivePattern("a.b,c(d)e*f") ?? "";
+    expect(pattern).not.toMatch(/[.,()*\\]/);
+  });
+
+  it("keeps spaces so multi-word queries match", () => {
+    expect(buildAccentInsensitivePattern("aislan piuco")).toContain(" ");
+  });
+
+  it("returns null when there is nothing searchable left", () => {
+    expect(buildAccentInsensitivePattern("")).toBeNull();
+    expect(buildAccentInsensitivePattern("   ")).toBeNull();
+    expect(buildAccentInsensitivePattern("...")).toBeNull();
+  });
+
+  it("matches the same rows the client-side matcher would", () => {
+    // Paridade: o padrão do servidor tem de casar exatamente o que
+    // leadMatchesSearch casa no cliente — senão a lista mente de novo.
+    const names = ["Aislan Piuco", "José da Silva", "Jose Lima", "DALECAFÉ", "Zé"];
+    for (const query of ["aisl", "jose", "JOSÉ", "cafe", "ze"]) {
+      const re = new RegExp(buildAccentInsensitivePattern(query) ?? "$^", "i");
+      for (const name of names) {
+        expect(re.test(name)).toBe(leadMatchesSearch(query, { name }));
+      }
+    }
+  });
+});
+
+describe("buildLeadSearchOrFilter", () => {
+  it("covers every text field the client matcher looks at", () => {
+    const filter = buildLeadSearchOrFilter("cafe") ?? "";
+    for (const col of ["name", "company", "razao_social", "nome_fantasia"]) {
+      expect(filter).toContain(`${col}.imatch.`);
+    }
+  });
+
+  it("adds a phone term only when the query carries digits", () => {
+    expect(buildLeadSearchOrFilter("(34) 99999-8888")).toContain("phone.ilike.*34999998888*");
+    expect(buildLeadSearchOrFilter("aisl")).not.toContain("phone.ilike");
+  });
+
+  it("returns null for an unsearchable query", () => {
+    expect(buildLeadSearchOrFilter("  ")).toBeNull();
   });
 });

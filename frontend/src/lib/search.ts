@@ -32,3 +32,71 @@ export function leadMatchesSearch(query: string, lead: LeadSearchFields): boolea
 
   return false;
 }
+
+/**
+ * Letras latinas e as variantes acentuadas que devem casar com elas. Serve de
+ * substituto ao `unaccent()` do Postgres, que não está disponível como filtro
+ * inline no PostgREST (exigiria uma migration/RPC só para a busca).
+ */
+const ACCENT_CLASSES: Record<string, string> = {
+  a: "aàáâãäå",
+  c: "cç",
+  e: "eèéêë",
+  i: "iìíîï",
+  n: "nñ",
+  o: "oòóôõö",
+  u: "uùúûü",
+  y: "yýÿ",
+};
+
+/** Colunas de texto do lead cobertas pela busca — espelha {@link leadMatchesSearch}. */
+const LEAD_TEXT_COLUMNS = ["name", "company", "razao_social", "nome_fantasia"] as const;
+
+/**
+ * Constrói um padrão POSIX para o operador `imatch` (`~*`) do PostgREST que casa
+ * `query` ignorando acentos NOS DOIS SENTIDOS: a query é dobrada antes (logo
+ * "José" vira "jose") e cada letra vira uma classe com suas variantes (logo
+ * "jose" casa "José"). Equivale ao `foldText(campo).includes(foldText(query))`
+ * que o cliente aplica em {@link leadMatchesSearch}.
+ *
+ * O padrão NUNCA contém `.`, `,`, `(`, `)`, `*` ou `\`: são separadores da sintaxe
+ * `or=(coluna.operador.valor,...)` do PostgREST — ou metacaracteres de regex — e
+ * quebrariam o parse do servidor. Tudo fora de `[a-z0-9 ]` vira espaço.
+ *
+ * @returns o padrão, ou null quando não sobra nada pesquisável.
+ */
+export function buildAccentInsensitivePattern(query: string): string | null {
+  const folded = foldText(query)
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!folded) return null;
+
+  return Array.from(folded)
+    .map((ch) => {
+      const variants = ACCENT_CLASSES[ch];
+      return variants ? `[${variants}]` : ch;
+    })
+    .join("");
+}
+
+/**
+ * Monta o valor do filtro `or=(...)` que a busca de contatos aplica sobre a
+ * tabela `leads` embutida. Cobre os mesmos campos de {@link leadMatchesSearch}:
+ * texto (accent-insensitive, via `imatch`) e telefone (substring de dígitos, via
+ * `ilike`) — este último só entra quando a query tem algum dígito.
+ *
+ * @returns o filtro, ou null quando não há nada pesquisável (o chamador deve
+ *          responder lista vazia sem ir ao banco).
+ */
+export function buildLeadSearchOrFilter(query: string): string | null {
+  const pattern = buildAccentInsensitivePattern(query);
+  if (!pattern) return null;
+
+  const terms = LEAD_TEXT_COLUMNS.map((col) => `${col}.imatch.${pattern}`);
+
+  const digits = query.replace(/\D/g, "");
+  if (digits) terms.push(`phone.ilike.*${digits}*`);
+
+  return terms.join(",");
+}

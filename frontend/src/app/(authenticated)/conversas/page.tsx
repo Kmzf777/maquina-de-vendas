@@ -146,6 +146,32 @@ function ConversasContent() {
     [patchList],
   );
 
+  /**
+   * Injeta no cache da lista uma conversa que veio de fora dela (busca de
+   * contatos, resultado de mensagem, deep-link). Sem isso a seleção é derivada
+   * de `conversations.find` e cairia no fallback — abrindo o chat ERRADO, o
+   * último que estava na tela.
+   */
+  const ensureInList = useCallback(
+    (conv: Conversation) => {
+      patchList((list) =>
+        list.some((c) => c.id === conv.id) ? list : sortByLastMsgDesc([...list, conv]),
+      );
+    },
+    [patchList],
+  );
+
+  /** Busca avulsa de uma conversa fora da lista carregada. null = sem acesso/inexistente. */
+  const fetchConversationById = useCallback(async (id: string): Promise<Conversation | null> => {
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (!res.ok) return null;
+      return (await res.json()) as Conversation;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Seleção derivada do cache; fallback para o último objeto conhecido cobre o
   // instante em que a conversa sai da lista (paridade com o `updated ?? prev` antigo).
   const lastSelectedRef = useRef<Conversation | null>(null);
@@ -157,16 +183,36 @@ function ConversasContent() {
 
   // Deep-link: pre-select conversation by lead_id from URL param
   useEffect(() => {
-    if (deepLinkApplied.current || conversations.length === 0) return;
+    if (deepLinkApplied.current || convPending) return;
     const leadId = searchParams.get("lead_id");
     if (!leadId) return;
+
+    deepLinkApplied.current = true;
     const match = conversations.find((c) => (c.leads as Lead | undefined | null)?.id === leadId);
     if (match) {
       setSelectedId(match.id);
-      deepLinkApplied.current = true;
       router.replace("/conversas");
+      return;
     }
-  }, [conversations, searchParams, router]);
+
+    // Lead fora da lista carregada (teto de linhas do PostgREST): busca sob
+    // demanda em vez de ignorar o link em silêncio.
+    void (async () => {
+      try {
+        const res = await fetch(`/api/conversations?lead_id=${encodeURIComponent(leadId)}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as Conversation[];
+        const conv = Array.isArray(data) ? data[0] : null; // a rota já ordena por last_msg_at desc
+        if (!conv) return;
+        ensureInList(conv);
+        setSelectedId(conv.id);
+      } catch {
+        // deep-link é conveniência: falha silenciosa mantém a lista utilizável
+      } finally {
+        router.replace("/conversas");
+      }
+    })();
+  }, [conversations, convPending, searchParams, router, ensureInList]);
 
   // Realtime SEM refetch integral por evento (corte de Egress): o payload do
   // UPDATE já traz a linha nova de `conversations` — aplicamos o delta no cache
@@ -252,13 +298,22 @@ function ConversasContent() {
   }, [selectedChannelId, queryClient, supabase, patchList]);
 
   function handleSelectConversation(conv: Conversation) {
+    // A lista pode entregar um resultado da busca server-side, que não está no
+    // cache — sem injetar, a seleção derivada abriria o chat anterior.
+    ensureInList(conv);
     setSelectedId(conv.id);
     setPendingScrollMessageId(null);
     setMobileView("chat");
   }
 
-  function handleSelectMessageResult(conversationId: string, messageId: string) {
-    if (!conversations.some((c) => c.id === conversationId)) return; // fora do escopo
+  async function handleSelectMessageResult(conversationId: string, messageId: string) {
+    if (!conversations.some((c) => c.id === conversationId)) {
+      // Conversa fora da lista carregada: busca antes de selecionar. Antes isso
+      // era um `return` mudo — o clique no resultado simplesmente não fazia nada.
+      const conv = await fetchConversationById(conversationId);
+      if (!conv) return;
+      ensureInList(conv);
+    }
     setSelectedId(conversationId);
     setPendingScrollMessageId(messageId);
     setMobileView("chat");
