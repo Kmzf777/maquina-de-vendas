@@ -5,6 +5,7 @@ import { TagsTab } from "@/components/config/tags-tab";
 import { PricingTab } from "@/components/config/pricing-tab";
 import { LpWebhookTab } from "@/components/config/lp-webhook-tab";
 import { SlaTab } from "@/components/config/sla-tab";
+import { BlingSettings } from "@/components/config/bling-settings";
 import { QuickRepliesModal } from "@/components/config/quick-replies-modal";
 import { createClient } from "@/lib/supabase/client";
 
@@ -15,7 +16,7 @@ const BASE_TABS = [
   { key: "respostas-rapidas", label: "Respostas Rápidas" },
 ] as const;
 
-type TabKey = "tags" | "pricing" | "lp-webhook" | "sla" | "respostas-rapidas";
+type TabKey = "tags" | "pricing" | "lp-webhook" | "sla" | "bling" | "respostas-rapidas";
 
 export default function ConfigPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("tags");
@@ -26,7 +27,12 @@ export default function ConfigPage() {
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data }) => {
-      setIsAdmin(data.user?.app_metadata?.role === "admin");
+      const admin = data.user?.app_metadata?.role === "admin";
+      setIsAdmin(admin);
+      // O callback do OAuth do Bling volta em /config?bling=ok — abre a aba certa.
+      if (admin && new URLSearchParams(window.location.search).has("bling")) {
+        setActiveTab("bling");
+      }
     });
   }, []);
 
@@ -43,7 +49,9 @@ export default function ConfigPage() {
 
   const tabs: { key: TabKey; label: string }[] = [
     ...BASE_TABS,
-    ...(isAdmin ? [{ key: "sla" as const, label: "SLA" }] : []),
+    ...(isAdmin
+      ? [{ key: "sla" as const, label: "SLA" }, { key: "bling" as const, label: "Bling" }]
+      : []),
   ];
 
   return (
@@ -73,6 +81,7 @@ export default function ConfigPage() {
           {activeTab === "pricing" && <PricingTab />}
           {activeTab === "lp-webhook" && <LpWebhookTab />}
           {activeTab === "sla" && isAdmin && <SlaTab />}
+          {activeTab === "bling" && isAdmin && <BlingSettings />}
           {activeTab === "respostas-rapidas" && (
             <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
               <div className="flex items-center justify-between mb-2">

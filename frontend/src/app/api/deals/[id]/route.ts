@@ -1,6 +1,37 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { assertCanWriteDealsInPipeline } from "@/lib/supabase/pipeline-access";
+import { assertCanWriteDealsInPipeline, getAllowedPipelineIds } from "@/lib/supabase/pipeline-access";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const supabase = await getServiceSupabase();
+  const { data, error } = await supabase
+    .from("deals")
+    .select("*, leads(id, name, company, phone, nome_fantasia, notes), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!data) return NextResponse.json({ error: "Deal não encontrado." }, { status: 404 });
+
+  // Escopo de leitura: vendedor só enxerga deals de funis próprios + universais.
+  // Deal sem pipeline_id não tem funil para conferir → visível apenas para admin.
+  // Devolve 404 (e não 403) de propósito: 403 confirmaria a existência do deal,
+  // vazando informação por enumeração de id.
+  let allowed: string[] | null;
+  try {
+    allowed = await getAllowedPipelineIds(supabase);
+  } catch {
+    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+  if (allowed !== null && (!data.pipeline_id || !allowed.includes(data.pipeline_id))) {
+    return NextResponse.json({ error: "Deal não encontrado." }, { status: 404 });
+  }
+
+  return NextResponse.json(data);
+}
 
 export async function PATCH(
   request: NextRequest,

@@ -33,6 +33,28 @@ export function leadMatchesSearch(query: string, lead: LeadSearchFields): boolea
   return false;
 }
 
+export interface DealSearchFields {
+  title: string;
+  leads?: LeadSearchFields | null;
+}
+
+/**
+ * True when `query` matches o deal pelo título OU pelos campos do lead vinculado
+ * (mesma lógica de `leadMatchesSearch`, accent-insensitive + telefone por dígitos).
+ * Empty/whitespace query matches everything.
+ */
+export function dealMatchesSearch(query: string, deal: DealSearchFields): boolean {
+  const raw = query.trim();
+  if (!raw) return true;
+
+  const q = foldText(raw);
+  if (foldText(deal.title).includes(q)) return true;
+
+  if (deal.leads && leadMatchesSearch(query, deal.leads)) return true;
+
+  return false;
+}
+
 /**
  * Letras latinas e as variantes acentuadas que devem casar com elas. Serve de
  * substituto ao `unaccent()` do Postgres, que não está disponível como filtro

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
 import { getTemperature } from "@/lib/temperature";
 import { LeadGridCard } from "@/components/leads/lead-grid-card";
@@ -14,7 +15,7 @@ import { leadMatchesSearch } from "@/lib/search";
 
 const LEADS_PER_PAGE = 30;
 
-export default function LeadsPage() {
+function LeadsPageInner() {
   const { leads, loading } = useRealtimeLeads();
   const [tags, setTags] = useState<Tag[]>([]);
   const [leadTagsMap, setLeadTagsMap] = useState<Record<string, string[]>>({});
@@ -26,6 +27,32 @@ export default function LeadsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [mobileSelectedLead, setMobileSelectedLead] = useState<Lead | null>(null);
+
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const deepLinkLeadId = useRef<string | null>(null);
+  const deepLinkApplied = useRef(false);
+
+  // Deep-link: pre-seleciona o lead vindo de /busca?lead_id=. `leads` ja carrega
+  // a tabela inteira (useRealtimeLeads pagina ate o fim), entao o lead buscado
+  // ja esta na lista assim que ela terminar de carregar.
+  // 1o efeito: guarda o id da URL (mesmo desenho em dois passos de /vendas).
+  useEffect(() => {
+    const leadId = searchParams.get("lead_id");
+    if (!leadId || deepLinkApplied.current || deepLinkLeadId.current) return;
+    deepLinkLeadId.current = leadId;
+  }, [searchParams]);
+
+  // 2o efeito: quando a lista terminar de carregar, abre o modal e limpa a URL.
+  useEffect(() => {
+    if (deepLinkApplied.current || !deepLinkLeadId.current || loading) return;
+    const match = leads.find((l) => l.id === deepLinkLeadId.current);
+    if (match) {
+      setSelectedLead(match);
+      deepLinkApplied.current = true;
+      router.replace("/leads");
+    }
+  }, [leads, loading, router]);
 
   const supabase = createClient();
 
@@ -427,5 +454,13 @@ export default function LeadsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function LeadsPage() {
+  return (
+    <Suspense>
+      <LeadsPageInner />
+    </Suspense>
   );
 }

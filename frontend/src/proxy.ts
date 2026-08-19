@@ -76,6 +76,7 @@ export const config = {
     "/qualificacao/:path*",
     "/vendas/:path*",
     "/painel-vendas/:path*",
+    "/busca/:path*",
     "/canais/:path*",
     "/estatisticas/:path*",
     "/trafego/:path*",
@@ -86,6 +87,7 @@ export const config = {
     "/api/users/:path*",
     "/api/agent-profiles/:path*",
     "/api/admin/:path*",
+    "/api/bling/:path*",
     "/api/broadcasts/:path*",
     "/api/automation/:path*",
     "/api/campaigns/:path*",
@@ -107,6 +109,7 @@ export const config = {
     "/api/model-pricing/:path*",
     "/api/quick-replies/:path*",
     "/api/sales/:path*",
+    "/api/search/:path*",
     "/api/system-alerts/:path*",
   ],
 };

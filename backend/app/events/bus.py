@@ -15,7 +15,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-DOMAINS = ("broadcasts", "followups", "automation")
+DOMAINS = ("broadcasts", "followups", "automation", "bling-webhook")
 _MAXLEN = 1024
 
 _client: redis.Redis | None = None

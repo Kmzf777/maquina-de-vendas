@@ -406,6 +406,16 @@ export interface Sale {
   conversation_id: string | null;
   notes: string | null;
   created_at: string;
+  // Projeção do pedido no Bling (20260818_bling_integration.sql). Opcionais
+  // porque vendas anteriores à integração não têm nada disso preenchido.
+  bling_order_id?: number | null;
+  bling_order_number?: number | null;
+  bling_situacao_id?: number | null;
+  bling_situacao_nome?: string | null;
+  origin?: "crm" | "bling" | "manual";
+  status?: "registrada" | "cancelada" | "pendente_bling";
+  payment_method_id?: number | null;
+  payment_terms?: string | null;
   leads?: { id: string; name: string | null; phone: string; company: string | null } | null;
   deals?: { id: string; title: string } | null;
 }
@@ -429,4 +439,63 @@ export interface MessageSearchResult {
   channel_name: string | null;
   /** Quem enviou a mensagem que casou: "user" (cliente), "seller" (vendedor) ou "agent" (IA). */
   sent_by: string | null;
+}
+
+export interface LeadSearchResult {
+  id: string;
+  name: string | null;
+  company: string | null;
+  phone: string;
+  status: string;
+  stage: string;
+  nome_fantasia: string | null;
+  cnpj: string | null;
+  created_at: string;
+  total_count: number;
+}
+
+export interface DealSearchResult {
+  id: string;
+  title: string;
+  value: number;
+  pipeline_id: string | null;
+  pipeline_name: string | null;
+  stage_id: string | null;
+  stage_label: string | null;
+  lead_id: string;
+  lead_name: string | null;
+  lead_phone: string;
+  created_at: string;
+  total_count: number;
+}
+
+export interface SaleSearchResult {
+  id: string;
+  product: string;
+  value: number;
+  sold_at: string;
+  notes: string | null;
+  lead_id: string;
+  lead_name: string | null;
+  lead_phone: string;
+  deal_id: string | null;
+  deal_title: string | null;
+  total_count: number;
+}
+
+export interface ConversationSearchResult {
+  conversation_id: string;
+  message_id: string;
+  snippet: string;
+  match_created_at: string;
+  match_count: number;
+  lead_id: string | null;
+  lead_name: string | null;
+  lead_phone: string | null;
+  channel_id: string | null;
+  channel_name: string | null;
+  /** Nullable: `messages.sent_by` tem DEFAULT 'agent' mas aceita NULL (002_crm_enrichment.sql).
+   *  Mesma nullability de `MessageSearchResult.sent_by`, que vem do mesmo RPC. */
+  sent_by: string | null;
+  total_count: number;
 }
