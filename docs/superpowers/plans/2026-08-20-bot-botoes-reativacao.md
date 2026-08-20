@@ -838,6 +838,8 @@ from app.webhook.meta_parser import parse_meta_webhook_payload
 
 def _payload(mensagem: dict) -> dict:
     return {"entry": [{"changes": [{"value": {
+        # parse_meta_webhook_payload descarta o change inteiro sem este campo.
+        "messaging_product": "whatsapp",
         "metadata": {"phone_number_id": "123"},
         "contacts": [{"wa_id": "5511999999999", "profile": {"name": "Fulano"}}],
         "messages": [{"from": "5511999999999", "id": "wamid.1",
@@ -1026,8 +1028,9 @@ Em `backend/app/buffer/processor.py`, dentro de `_resolve_media`, no laço
                 metadata = json.loads(base64.b64decode(match.group(2)).decode())
                 message_type = meta_type
                 # Clique de botão: o título vira o texto visível da mensagem, para o
-                # vendedor ver no histórico o que o lead tocou. Os outros meta-tipos
-                # continuam sendo renderizados por _apply_media_signal.
+                # vendedor ver no histórico o que o lead tocou. Sem isso o clique seria
+                # gravado em branco — a mesma "mensagem fantasma" que a reação resolve
+                # logo abaixo com o emoji.
                 if meta_type == "button":
                     replacement = (metadata or {}).get("title", "")
 ```
