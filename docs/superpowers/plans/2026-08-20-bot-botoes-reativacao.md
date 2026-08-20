@@ -653,6 +653,10 @@ class Efeitos:
     optout: bool = False
     handoff: bool = False
     recontato_meses: int | None = None
+    # Desliga lead.ai_enabled sem carimbar handoff. Necessário porque "encerrado" só
+    # tira o bot do caminho: no número da ValerIA o LLM assumiria a conversa logo em
+    # seguida, que é o contrário de entregar ao vendedor.
+    silenciar_ia: bool = False
 
 
 @dataclass(frozen=True)
@@ -732,7 +736,7 @@ def _nudge(no: str) -> Decisao:
 
 _ENTREGAR_AO_HUMANO = Decisao(
     proximo_no=flows.NO_ENCERRADO,
-    efeitos=Efeitos(tags=(flows.TAG_HUMANO,)),
+    efeitos=Efeitos(tags=(flows.TAG_HUMANO,), silenciar_ia=True),
 )
 
 
@@ -1278,6 +1282,19 @@ def test_falha_de_tag_nao_bloqueia():
     assert ok is True
 
 
+def test_silenciar_ia_desliga_a_ia_sem_carimbar_handoff():
+    """Sem isto, no número da ValerIA o LLM assume a conversa que o bot acabou de largar."""
+    with patch("app.button_flow.effects.add_tags_to_lead"),          patch("app.button_flow.effects.update_lead") as upd,          patch("app.button_flow.effects.append_lead_observation"),          patch("app.button_flow.effects.save_message"):
+        ok = effects.aplicar(
+            Efeitos(tags=(flows.TAG_HUMANO,), silenciar_ia=True),
+            lead=LEAD, conversation_id="c1",
+        )
+
+    assert ok is True
+    upd.assert_called_once_with("lead-1", ai_enabled=False)
+    assert not any("metadata" in c.kwargs for c in upd.call_args_list),         "silenciar_ia nao pode carimbar metadata.handoff"
+
+
 def test_handoff_desliga_ia_e_carimba_metadata():
     with patch("app.button_flow.effects.add_tags_to_lead"), \
          patch("app.button_flow.effects.update_lead") as upd, \
@@ -1377,6 +1394,9 @@ def aplicar(efeitos: Efeitos, *, lead: dict, conversation_id: str) -> bool:
     if efeitos.optout and not _aplicar_optout(lead, conversation_id):
         return False
 
+    if efeitos.silenciar_ia:
+        _silenciar_ia(lead, conversation_id)
+
     if efeitos.handoff:
         _aplicar_handoff(lead, conversation_id)
 
@@ -1401,6 +1421,25 @@ def _aplicar_optout(lead: dict, conversation_id: str) -> bool:
     _anotar(lead_id, conversation_id,
             "🚫 [OPT-OUT] Lead clicou em 'Não quero mais receber' no bot de reativação.")
     return True
+
+
+def _silenciar_ia(lead: dict, conversation_id: str) -> None:
+    """Entrega a conversa ao vendedor sem carimbar handoff.
+
+    Encerrar o nó só tira o BOT do caminho — no número da ValerIA o LLM assumiria em
+    seguida. Aqui NÃO usamos o carimbo de handoff de propósito: ele marcaria como lead
+    qualificado alguém que só escreveu texto livre duas vezes, sujando a cascata de
+    Qualificados/Aceites.
+    """
+    lead_id = lead["id"]
+    try:
+        update_lead(lead_id, ai_enabled=False)
+    except Exception as exc:
+        logger.warning("[BUTTON FLOW] falha ao silenciar IA do lead %s: %s", lead_id, exc)
+        return
+    _anotar(lead_id, conversation_id,
+            "🙋 [ATENDIMENTO HUMANO] Lead insistiu em texto livre no bot de reativação; "
+            "IA desligada, conversa entregue ao vendedor.")
 
 
 def _aplicar_handoff(lead: dict, conversation_id: str) -> None:

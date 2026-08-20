@@ -280,7 +280,14 @@ reimplementada.
 | Quente | tag + `ai_enabled=false` + nota no lead + cartão do João (só no nº da ValerIA) | `add_tags_to_lead`, `update_lead`, `append_lead_observation`, `provider.send_contact` |
 | 1/3/6 meses | tag + `leads.metadata.recontatar_em` (ISO) | `add_tags_to_lead`, `update_lead` |
 | Recusou | `opt_out=true` + `ai_enabled=false` + Blacklist + cancela follow-ups + tag | `update_lead`, `apply_optout_side_effects` |
-| Texto livre 2× | tag `Reativação: Atendimento humano`, bot silencia | `add_tags_to_lead` |
+| Texto livre 2× | tag `Reativação: Atendimento humano` + `ai_enabled=false` | `add_tags_to_lead`, `update_lead` |
+
+**Encerrar o nó não basta para "entregar ao humano".** Um nó `encerrado` só tira o *bot*
+do caminho: no número da ValerIA, o LLM assumiria a conversa em seguida — o oposto da
+decisão de produto e a volta do custo por token que este agente existe para eliminar. Por
+isso o desfecho de texto livre também desliga `lead.ai_enabled`. Ele **não** usa o efeito
+de handoff: carimbar `metadata.handoff` marcaria como lead qualificado alguém que nunca
+qualificou, poluindo a cascata de Qualificados/Aceites.
 
 `add_tags_to_lead` resolve tags por nome exato e **nunca cria tags novas** — logo a
 migração precisa semear as seis tags. Sem o seed, as tags são silenciosamente ignoradas.
