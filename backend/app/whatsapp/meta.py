@@ -314,6 +314,41 @@ class MetaCloudClient(WhatsAppProvider):
             "reaction": {"message_id": target_wamid, "emoji": emoji},
         }, request_type="send_reaction")
 
+    async def send_interactive_buttons(
+        self, to: str, body: str, buttons: list[tuple[str, str]]
+    ) -> dict:
+        """Mensagem interativa com botões de resposta (máx. 3, título ≤ 20 chars).
+
+        Só funciona com a janela de 24h ABERTA — fora dela, a Meta exige template.
+        O bot de botões só usa este caminho depois de o lead ter clicado/escrito,
+        o que abre a janela.
+        """
+        if not 1 <= len(buttons) <= 3:
+            raise ValueError(
+                f"send_interactive_buttons aceita de 1 a 3 botões, recebeu {len(buttons)}"
+            )
+        result = await self._post({
+            "messaging_product": "whatsapp",
+            **_recipient_field(to),
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": body},
+                "action": {
+                    "buttons": [
+                        {"type": "reply", "reply": {"id": bid, "title": titulo}}
+                        for bid, titulo in buttons
+                    ]
+                },
+            },
+        }, request_type="send_interactive_buttons")
+        # Mesma defesa de send_text: a Meta devolve HTTP 200 com erro embutido.
+        if not isinstance(result, dict) or "messages" not in result:
+            raise RuntimeError(
+                f"Meta send_interactive_buttons rejected (missing messages): {result!r}"
+            )
+        return result
+
     async def send_audio(self, to: str, audio_url: str) -> dict:
         return await self._post({
             "messaging_product": "whatsapp",
