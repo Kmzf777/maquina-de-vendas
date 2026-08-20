@@ -255,19 +255,33 @@ def test_limites_da_meta_nos_botoes():
             assert len(b.titulo) <= 20, f"{no}/{b.id}: título > 20 chars na interativa"
 
 
-def test_rotulos_do_template_batem_com_os_botoes_do_no_inicial():
-    """Os rótulos exigidos do template aprovado são os mesmos do nó inicial.
+def test_rotulo_do_template_e_aceito_pelo_botao_correspondente():
+    """Nível 1 tem DOIS rótulos por botão: o do template e o da interativa.
 
-    Se divergirem, o preflight bloquearia todo disparo — ou pior, deixaria passar
-    um template cujos cliques o motor nunca casaria.
+    A Meta permite 25 chars no botão de template e só 20 no de mensagem interativa,
+    e dois dos rótulos aprovados têm 22 — não cabem na interativa. O template mantém
+    a copy aprovada; o reoferecimento usa a versão curta. Os dois têm que casar o
+    mesmo clique, senão o lead que responde ao template cai no vazio.
     """
-    titulos_do_no = [b.titulo for b in flows.BOTOES_POR_NO[flows.NO_INTERESSE]]
-    assert list(flows.ROTULOS_TEMPLATE_NIVEL1) == titulos_do_no
+    for botao, rotulo in zip(flows.BOTOES_INTERESSE, flows.ROTULOS_TEMPLATE_NIVEL1):
+        assert rotulo in botao.titulos_aceitos
+        assert botao.titulo in botao.titulos_aceitos
 
 
 def test_rotulos_do_template_cabem_no_limite_de_template():
     for rotulo in flows.ROTULOS_TEMPLATE_NIVEL1:
         assert len(rotulo) <= 25, f"{rotulo!r}: título > 25 chars no template"
+
+
+def test_nenhum_rotulo_aceito_e_ambiguo():
+    """Dois botões que aceitam o mesmo texto tornariam o clique indecidível."""
+    vistos: dict[str, str] = {}
+    for no, botoes in flows.BOTOES_POR_NO.items():
+        for b in botoes:
+            for titulo in b.titulos_aceitos:
+                chave = titulo.strip().lower()
+                assert chave not in vistos, f"{titulo!r} já é aceito por {vistos[chave]}"
+                vistos[chave] = f"{no}/{b.id}"
 
 
 def test_todo_prazo_tem_tag_e_meses():
@@ -317,8 +331,22 @@ TAG_HUMANO = "Reativação: Atendimento humano"
 
 @dataclass(frozen=True)
 class Botao:
+    """Um botão do fluxo.
+
+    `titulo` é o rótulo da mensagem INTERATIVA (limite Meta: 20 chars).
+    `rotulo_template` é o rótulo aprovado no TEMPLATE (limite: 25 chars), quando ele
+    precisa ser diferente por não caber nos 20. O motor aceita os dois ao casar um
+    clique — é o mesmo botão, em duas superfícies com limites diferentes.
+    """
     id: str
     titulo: str
+    rotulo_template: str | None = None
+
+    @property
+    def titulos_aceitos(self) -> tuple[str, ...]:
+        if self.rotulo_template and self.rotulo_template != self.titulo:
+            return (self.titulo, self.rotulo_template)
+        return (self.titulo,)
 
 
 @dataclass(frozen=True)
@@ -331,18 +359,23 @@ class Prazo:
 
 
 # ── Nível 1: interesse ──────────────────────────────────────────────────────
-# Os TÍTULOS aqui são os mesmos rótulos do template aprovado na Meta. Os IDs só
-# valem para o reoferecimento (nudge), que sai como mensagem interativa: quick
-# reply de template não aceita payload customizado — o payload chega igual ao
+# Os IDs só valem para o reoferecimento (nudge), que sai como mensagem interativa:
+# quick reply de template não aceita payload customizado — o payload chega igual ao
 # texto do botão. Por isso o motor casa nível 1 por id OU por título normalizado.
+#
+# Dois rótulos por botão: a Meta permite 25 chars no template e só 20 na interativa,
+# e a copy aprovada de dois deles tem 22. O template (a mensagem que os leads de fato
+# recebem no disparo) fica com a copy aprovada; o nudge usa a versão curta.
 BTN_QUENTE = Botao("interesse_quente", "Quero comprar agora")
-BTN_TALVEZ = Botao("interesse_talvez", "Talvez em alguns meses")
-BTN_SAIR = Botao("interesse_sair", "Não quero mais receber")
+BTN_TALVEZ = Botao("interesse_talvez", "Mais pra frente", "Talvez em alguns meses")
+BTN_SAIR = Botao("interesse_sair", "Sair da lista", "Não quero mais receber")
 
 BOTOES_INTERESSE: tuple[Botao, ...] = (BTN_QUENTE, BTN_TALVEZ, BTN_SAIR)
 
 # Contrato com o template aprovado — verificado pelo preflight do disparo.
-ROTULOS_TEMPLATE_NIVEL1: tuple[str, ...] = tuple(b.titulo for b in BOTOES_INTERESSE)
+ROTULOS_TEMPLATE_NIVEL1: tuple[str, ...] = tuple(
+    b.rotulo_template or b.titulo for b in BOTOES_INTERESSE
+)
 
 # ── Nível 2: prazo de recontato ─────────────────────────────────────────────
 PRAZOS: tuple[Prazo, ...] = (
@@ -457,6 +490,13 @@ def test_clique_sair_faz_optout():
     assert d.mensagem.corpo == flows.MSG_OPTOUT
     assert d.efeitos.optout is True
     assert d.efeitos.tags == (flows.TAG_RECUSOU,)
+
+
+def test_clique_casa_pelo_rotulo_curto_da_interativa():
+    """O nudge sai com o rótulo curto; o clique nele tem que valer o mesmo."""
+    d = engine.decidir(estado(nudged=True), Clique("Sair da lista", "Sair da lista"),
+                       canal_do_vendedor=False)
+    assert d.efeitos.optout is True
 
 
 def test_clique_do_nudge_casa_por_id():
@@ -639,10 +679,14 @@ def normalizar(texto: str) -> str:
 _POR_ID: dict[str, tuple[str, Botao]] = {
     b.id: (no, b) for no, botoes in flows.BOTOES_POR_NO.items() for b in botoes
 }
+# Todos os rótulos aceitos de cada botão entram no índice: um clique vindo do
+# template traz o rótulo longo, um vindo do nudge traz o curto — os dois são o
+# mesmo botão (ver Botao.titulos_aceitos).
 _POR_TITULO: dict[str, tuple[str, Botao]] = {
-    normalizar(b.titulo): (no, b)
+    normalizar(titulo): (no, b)
     for no, botoes in flows.BOTOES_POR_NO.items()
     for b in botoes
+    for titulo in b.titulos_aceitos
 }
 
 

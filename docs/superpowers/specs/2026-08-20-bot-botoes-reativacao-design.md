@@ -83,10 +83,26 @@ Copy definitiva, para não ser inventada na implementação. Vive em `flows.py`.
 | `nudge` | "Pra facilitar, é só tocar numa das opções abaixo:" + os botões do nó atual |
 
 **O nudge do nível 1 não reenvia o template.** Como o lead acabou de escrever, a janela de
-24h está aberta, então o reoferecimento sai como mensagem **interativa** com os mesmos três
-rótulos, agora com ids nossos (`interesse_quente`, `interesse_talvez`, `interesse_sair`).
-Consequência: no nó `aguardando_interesse` o bot precisa casar **duas** formas de clique —
-payload igual ao texto do botão (veio do template) ou id `interesse_*` (veio do nudge).
+24h está aberta, então o reoferecimento sai como mensagem **interativa**, com ids nossos
+(`interesse_quente`, `interesse_talvez`, `interesse_sair`). Consequência: no nó
+`aguardando_interesse` o bot precisa casar **duas** formas de clique — payload igual ao
+texto do botão (veio do template) ou id `interesse_*` (veio do nudge).
+
+**Dois limites de tamanho, dois conjuntos de rótulos.** A Meta permite 25 caracteres no
+botão de template e apenas **20** no botão de mensagem interativa. Dois dos rótulos
+aprovados têm 22 caracteres, então não cabem na interativa. O template — que é a mensagem
+que os 1.208 leads de fato recebem — mantém a copy aprovada; só o reoferecimento usa uma
+versão curta:
+
+| id | rótulo no template (≤25) | rótulo na interativa (≤20) |
+|---|---|---|
+| `interesse_quente` | `Quero comprar agora` (19) | o mesmo |
+| `interesse_talvez` | `Talvez em alguns meses` (22) | `Mais pra frente` (15) |
+| `interesse_sair` | `Não quero mais receber` (22) | `Sair da lista` (13) |
+
+Cada botão do nível 1 declara os dois rótulos, e o motor aceita qualquer um deles ao casar
+um clique. Os rótulos do nível 2 (`Daqui a 1 mês`, `Daqui a 3 meses`, `Daqui a 6 meses`)
+cabem nos dois limites e não precisam de versão curta.
 
 `{prazo}` é substituído por "daqui a 1 mês" / "daqui a 3 meses" / "daqui a 6 meses".
 
