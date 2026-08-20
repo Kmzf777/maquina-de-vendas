@@ -51,3 +51,20 @@ def test_todo_prazo_tem_tag_e_meses():
         assert prazo.meses > 0
         assert prazo.tag.startswith("Reativação: ")
         assert prazo.rotulo_humano
+
+
+def test_ids_de_botao_sao_unicos_em_todo_o_fluxo():
+    """O motor indexa cliques por id num dict achatado sobre TODOS os nós.
+
+    Uma colisão de id não daria erro: o dict comprehension sobrescreve em
+    silêncio e o clique passaria a cair no nó errado. A unicidade por nó
+    (test_limites_da_meta_nos_botoes) não cobre isso.
+    """
+    ids = [b.id for botoes in flows.BOTOES_POR_NO.values() for b in botoes]
+    assert len(ids) == len(set(ids)), f"ids repetidos entre nós: {ids}"
+
+
+def test_todo_no_com_botoes_tem_corpo_de_nudge():
+    """O reoferecimento lê o corpo pelo nó; um nó sem corpo seria KeyError."""
+    assert set(flows.CORPO_NUDGE_POR_NO) == set(flows.BOTOES_POR_NO)
+
