@@ -136,9 +136,11 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     }
 
                 elif msg_type == "button":
-                    # Quick reply de TEMPLATE. A Meta não permite payload customizado em
-                    # template — o payload chega igual ao texto do botão. O que prova que
-                    # foi clique (e não digitação) é o próprio msg_type == "button".
+                    # Quick reply de TEMPLATE. Hoje não enviamos parâmetro `payload` no
+                    # componente de botão do template, então a Meta devolve o payload igual
+                    # ao TEXTO do botão, e o casamento do nível 1 é por texto normalizado.
+                    # O que prova que foi clique (e não digitação) é o próprio
+                    # msg_type == "button".
                     btn = msg.get("button", {})
                     text = btn.get("text", "")
                     parsed_type = "button"

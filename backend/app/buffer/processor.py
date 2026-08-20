@@ -2123,7 +2123,7 @@ async def _resolve_media(
     Returns (resolved_text, media_url, message_type, document_name, metadata).
     Audio: downloaded, transcribed, uploaded to Supabase Storage.
     Image/video/document/sticker: media_id extracted only, no download.
-    Location/contact/reaction: metadata dict extracted from base64 JSON.
+    Location/contact/reaction/button: metadata dict extracted from base64 JSON.
     `lead_id`/`stage`: atribuição da contabilidade da transcrição (token_usage).
     """
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
@@ -2222,16 +2222,27 @@ async def _resolve_media(
     for match in re.finditer(meta_b64_pattern, text):
         meta_type = match.group(1)
         replacement = ""
-        if meta_type in ("location", "contact", "reaction", "button") and message_type is None:
+        if meta_type == "button" and metadata is None:
+            # Decodifica mesmo que outro tipo já tenha reivindicado message_type: o lead
+            # pode ter tocado no botão E mandado uma foto na mesma janela. O clique é a
+            # intenção determinística do turno e não pode ser engolido pela mídia — quem
+            # prova o clique é a presença de `payload` no metadata, não o message_type.
+            try:
+                metadata = json.loads(base64.b64decode(match.group(2)).decode())
+                # message_type só é reivindicado quando está livre: a mídia da mesma janela
+                # mantém o seu próprio tipo (e a sua storage_url), que o CRM usa p/ renderizar.
+                if message_type is None:
+                    message_type = "button"
+                # O título vira o texto visível, para o vendedor ver no histórico em qual
+                # botão o lead tocou. Sem título, "[botão]" — nunca mensagem em branco, que
+                # no CRM vira "mensagem fantasma" (mesmo motivo da reação, logo abaixo).
+                replacement = (metadata or {}).get("title") or "[botão]"
+            except Exception as e:
+                logger.warning(f"Failed to decode metadata for {meta_type}: {e}")
+        elif meta_type in ("location", "contact", "reaction") and message_type is None:
             try:
                 metadata = json.loads(base64.b64decode(match.group(2)).decode())
                 message_type = meta_type
-                # Clique de botão: o título vira o texto visível da mensagem, para o
-                # vendedor ver no histórico o que o lead tocou. Sem isso o clique seria
-                # gravado em branco — a mesma "mensagem fantasma" que a reação resolve
-                # logo abaixo com o emoji.
-                if meta_type == "button":
-                    replacement = (metadata or {}).get("title", "")
                 if meta_type == "reaction":
                     # Reação NUNCA pode ser salva em branco — senão vira "mensagem fantasma"
                     # no CRM, sem o vendedor saber o que houve (auditoria 2026-06-22, lead
@@ -2240,6 +2251,14 @@ async def _resolve_media(
                     replacement = f"[reagiu com {_emoji}]"
             except Exception as e:
                 logger.warning(f"Failed to decode metadata for {meta_type}: {e}")
+        elif meta_type in ("location", "contact", "reaction", "button"):
+            # Segundo marcador de metadado na mesma janela: só um cabe no turno (há um único
+            # slot de message_type/metadata). Antes ele sumia sem rastro — agora fica o log,
+            # senão o suporte não tem como explicar a mensagem que o lead jura ter mandado.
+            logger.info(
+                "[BUFFER] 2º marcador %s na mesma janela descartado (turno já resolvido como %s)",
+                meta_type, message_type,
+            )
         text = text.replace(match.group(0), replacement)
 
     return text.strip(), storage_url, message_type, document_name, metadata
