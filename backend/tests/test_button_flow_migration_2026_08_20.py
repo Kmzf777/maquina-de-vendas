@@ -29,10 +29,12 @@ def test_adiciona_colunas_de_forma_idempotente(sql: str):
 
 def test_constraint_de_kind_dentro_de_do_block(sql: str):
     # ADD CONSTRAINT não aceita IF NOT EXISTS — sem o DO block a migração
-    # quebra na segunda execução.
-    assert "DO $$" in sql
-    assert "agent_profiles_kind_check" in sql
-    assert "'llm'" in sql and "'button_flow'" in sql
+    # quebra na segunda execução. Fatiamos o bloco DO $$ ... END $$; e
+    # verificamos QUE O ADD CONSTRAINT está dentro dele — não só que ambos
+    # aparecem em algum lugar do arquivo.
+    bloco = sql[sql.index("DO $$"):sql.index("END $$;")]
+    assert "ADD CONSTRAINT agent_profiles_kind_check" in bloco
+    assert "'llm'" in bloco and "'button_flow'" in bloco
 
 
 def test_semeia_o_agente_com_prompt_key_estavel(sql: str):

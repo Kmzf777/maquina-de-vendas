@@ -16,7 +16,9 @@ ALTER TABLE agent_profiles
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'agent_profiles_kind_check'
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'agent_profiles_kind_check'
+      AND conrelid = 'agent_profiles'::regclass
   ) THEN
     ALTER TABLE agent_profiles
       ADD CONSTRAINT agent_profiles_kind_check
