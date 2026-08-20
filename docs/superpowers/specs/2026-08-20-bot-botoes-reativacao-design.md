@@ -236,12 +236,23 @@ Mudança em três pontos, seguindo o padrão já estabelecido para `location`/`c
 3. **`buffer/processor.py:2225`** — `"button"` entra na tupla de tipos decodificados em
    `_resolve_media`, devolvendo `message_type="button"` e o `metadata`.
 
-**Nível 1 (template):** a Meta não permite payload customizado em quick-reply de
-template — o payload chega igual ao texto do botão. O sinal de "foi clique, não digitação"
-é o próprio `msg_type == "button"`; o casamento é por texto normalizado contra os rótulos
-declarados em `flows.py`.
+**Nível 1 (template):** a Meta *permite* payload customizado em quick-reply de template
+(componente com `sub_type: "quick_reply"`), mas este repositório nunca envia esse
+componente — então o payload chega igual ao texto do botão, e o casamento do nível 1 é por
+texto normalizado contra os rótulos declarados em `flows.py`. O sinal de "foi clique, não
+digitação" é o próprio `msg_type == "button"` no webhook.
 **Nível 2 (interativa):** nós controlamos o `id` — `prazo_1m`, `prazo_3m`, `prazo_6m` —
 e o casamento é exato.
+
+**O clique reivindica o `metadata`, não o `message_type`.** Os laços de mídia do
+`_resolve_media` rodam antes do laço de meta-tipos e o de áudio toma o `message_type` sem
+guarda. Um lead que toca no botão **e** manda uma foto na mesma janela de buffer perderia o
+clique inteiro, em silêncio. Por isso o botão decodifica o `metadata` mesmo quando o
+`message_type` já foi reivindicado por uma mídia, e só assume o `message_type` se ele
+estiver livre. **A prova do clique é a presença de `payload` no `metadata`** — é nisso que
+o runner (4.6) decide entre `Clique` e `Texto`, não no `message_type`. Um segundo marcador
+de botão na mesma janela é descartado *com log*: o primeiro toque vence, o que também é o
+default seguro dado que um dos botões é o opt-out.
 
 ### 4.6 Envio de botões interativos
 
@@ -395,6 +406,14 @@ opt-out imediato. Na Meta isso tende a virar *block/report*, que derruba a quali
 número. O gancho fica pronto: `engine.decidir` recebe o texto e basta uma regra a mais no
 núcleo puro para ligar o comportamento. Recomendação registrada para revisão após o
 primeiro lote.
+
+**Uma reação na mesma janela de buffer ainda engole o clique.** `metadata` é um slot só.
+O clique passou a vencer a *mídia* (4.5), mas uma reação que chegue antes na mesma janela
+reivindica o `metadata` — ela precisa dele para o `target_wamid` — e o clique cai no ramo
+de descarte. O descarte é **logado**, não silencioso, e o efeito prático é o bot ficar mudo
+naquele turno: o lead toca de novo e o fluxo segue. Resolver de verdade exigiria um segundo
+slot de metadata ou uma regra de precedência clique-sobre-reação, que quebraria a paridade
+de comportamento da reação por um caso raro. Aceito.
 
 **Rótulos duplicados entre template e código.** Os textos dos botões do nível 1 vivem no
 template aprovado na Meta e também em `flows.py`. O preflight (4.7) é a proteção: um

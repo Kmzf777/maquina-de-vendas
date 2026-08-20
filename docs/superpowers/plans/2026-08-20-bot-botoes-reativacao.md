@@ -1790,11 +1790,15 @@ def _canal_do_vendedor(channel: dict) -> bool:
 
 
 def _evento(texto: str, message_type: str | None, metadata: dict | None):
-    if message_type == "button" and metadata:
-        return Clique(
-            payload=metadata.get("payload") or "",
-            titulo=metadata.get("title") or texto or "",
-        )
+    """Traduz o inbound em Clique ou Texto.
+
+    A prova do clique é `payload` no metadata, NÃO `message_type == "button"`: quando o
+    lead toca no botão e manda uma foto na mesma janela de buffer, a mídia fica com o
+    message_type e só o metadata carrega o clique (ver _resolve_media).
+    """
+    payload = (metadata or {}).get("payload")
+    if payload:
+        return Clique(payload=payload, titulo=(metadata or {}).get("title") or texto or "")
     return Texto(conteudo=texto or "")
 
 
