@@ -2222,10 +2222,16 @@ async def _resolve_media(
     for match in re.finditer(meta_b64_pattern, text):
         meta_type = match.group(1)
         replacement = ""
-        if meta_type in ("location", "contact", "reaction") and message_type is None:
+        if meta_type in ("location", "contact", "reaction", "button") and message_type is None:
             try:
                 metadata = json.loads(base64.b64decode(match.group(2)).decode())
                 message_type = meta_type
+                # Clique de botão: o título vira o texto visível da mensagem, para o
+                # vendedor ver no histórico o que o lead tocou. Sem isso o clique seria
+                # gravado em branco — a mesma "mensagem fantasma" que a reação resolve
+                # logo abaixo com o emoji.
+                if meta_type == "button":
+                    replacement = (metadata or {}).get("title", "")
                 if meta_type == "reaction":
                     # Reação NUNCA pode ser salva em branco — senão vira "mensagem fantasma"
                     # no CRM, sem o vendedor saber o que houve (auditoria 2026-06-22, lead

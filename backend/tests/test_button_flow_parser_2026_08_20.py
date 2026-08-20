@@ -66,3 +66,31 @@ def test_texto_digitado_igual_ao_rotulo_nao_vira_clique():
     }))
     assert msgs[0].type == "text"
     assert msgs[0].metadata is None
+
+
+import base64
+import json
+
+from app.buffer.processor import _resolve_media
+
+
+async def test_clique_atravessa_o_buffer_preservando_o_payload():
+    """O buffer achata mensagens em TEXTO; metadados só sobrevivem via meta_b64.
+
+    Mesmo mecanismo já usado por location/contact/reaction. Sem isto, o payload
+    do botão morre entre o webhook e o processor.
+    """
+    meta = {"payload": "prazo_6m", "title": "Daqui a 6 meses"}
+    b64 = base64.b64encode(json.dumps(meta).encode()).decode()
+
+    # Assinatura real: _resolve_media(text, provider, lead_id=None, stage="")
+    # → (resolved_text, media_url, message_type, document_name, metadata)
+    texto, _url, tipo, _doc, metadata = await _resolve_media(
+        f"[button: meta_b64={b64}]", None,
+    )
+
+    assert tipo == "button"
+    assert metadata == meta
+    # O texto visível no CRM é o título do botão — o vendedor precisa enxergar
+    # no histórico o que o lead clicou.
+    assert texto.strip() == "Daqui a 6 meses"
