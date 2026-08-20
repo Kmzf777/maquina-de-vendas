@@ -778,11 +778,16 @@ def _decidir_botao(no: str, botao: Botao, *, canal_do_vendedor: bool) -> Decisao
                 proximo_no=flows.NO_PRAZO,
                 mensagem=Mensagem(corpo=flows.CORPO_PRAZO, botoes=flows.BOTOES_PRAZO),
             )
-        return Decisao(
-            proximo_no=flows.NO_ENCERRADO,
-            mensagem=Mensagem(corpo=flows.MSG_OPTOUT),
-            efeitos=Efeitos(tags=(flows.TAG_RECUSOU,), optout=True),
-        )
+        if botao.id == flows.BTN_SAIR.id:
+            return Decisao(
+                proximo_no=flows.NO_ENCERRADO,
+                mensagem=Mensagem(corpo=flows.MSG_OPTOUT),
+                efeitos=Efeitos(tags=(flows.TAG_RECUSOU,), optout=True),
+            )
+        # Botão declarado no nó de interesse mas sem tratamento aqui: hoje inalcançável
+        # (só existem três). Cair no opt-out por fall-through seria o pior default
+        # possível — um botão novo desligaria o lead da base sem ninguém pedir.
+        return Decisao(proximo_no=no, ignorar=True)
 
     prazo = next(p for p in flows.PRAZOS if p.id == botao.id)
     return Decisao(
