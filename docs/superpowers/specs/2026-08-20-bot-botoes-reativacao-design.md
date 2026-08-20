@@ -305,7 +305,29 @@ migração precisa semear as seis tags. Sem o seed, as tags são silenciosamente
 
 O handoff do branch quente é uma versão enxuta do `encaminhar_humano`: **sem** o resumo
 de qualificação por LLM (não há conversa para resumir — houve um clique) e **sem** o
-rescue job. Grava `metadata.handoff` e uma nota objetiva com o desfecho do clique.
+rescue job. Grava três coisas:
+
+- `metadata.handoff` — lido por `follow_up.service.should_proactive_handoff`, que só
+  checa presença;
+- o **marcador de sistema** produzido por `handoff_system_marker` — é ele, e não o
+  `metadata`, que a RPC `dashboard_funnel_conversion` conta (ela casa
+  `messages.content LIKE '[encaminhar\_humano] Lead encaminhado%'`). Sem esse marcador o
+  handoff do bot existe no CRM mas some do KPI do funil, e o operador veria 200 leads
+  quentes com zero transbordos;
+- uma nota legível no lead com o desfecho do clique.
+
+Esse marcador tem **quatro** consumidores, todos casando a mesma string, e o operador
+precisa saber disso antes do lote de 1.208:
+
+| consumidor | efeito de incluir o handoff do bot |
+|---|---|
+| `dashboard_funnel_conversion.with_handoff` | o que queríamos: o transbordo aparece no funil |
+| `dashboard_kpis.handoffs` | o contador de transbordos sobe |
+| SLA humano pós-handoff | passa a medir também os leads do bot — legítimo, o João realmente deve resposta a eles, mas move a p50/p95 |
+| `dashboard_kpis.cost_per_handoff_usd` | **vai cair**: handoff do bot custa zero token e entra no denominador. É a leitura honesta de "custo de IA por transbordo" na operação inteira, mas quem ler como "custo do funil da ValerIA" vai ver uma melhora que não aconteceu |
+
+O `watchdog` diário conta o mesmo marcador, e a UI de `/conversas` passa a renderizar o
+card azul de transbordo também nas conversas do bot — efeito colateral desejável.
 
 ## 6. Migração de banco
 
