@@ -4,7 +4,7 @@ Sem I/O: tudo aqui opera sobre dicts e dataclasses, no mesmo espírito de
 app/agent/persona.py. É a camada onde a matriz de comportamento tem que estar
 100% coberta, porque é a única que roda igual em produção e no teste.
 """
-from app.button_flow import flows
+from app.button_flow import engine, flows
 
 
 def test_limites_da_meta_nos_botoes():
@@ -36,12 +36,18 @@ def test_rotulos_do_template_cabem_no_limite_de_template():
 
 
 def test_nenhum_rotulo_aceito_e_ambiguo():
-    """Dois botões que aceitam o mesmo texto tornariam o clique indecidível."""
+    """Dois botões que aceitam o mesmo texto tornariam o clique indecidível.
+
+    Usa a MESMA normalização do motor (engine.normalizar, que também tira
+    acento): checar só com .lower() deixaria passar dois rótulos que diferem
+    apenas por acento — eles colidiriam em _POR_TITULO sem erro nenhum, e um
+    dos botões passaria a rotear para o nó do outro.
+    """
     vistos: dict[str, str] = {}
     for no, botoes in flows.BOTOES_POR_NO.items():
         for b in botoes:
             for titulo in b.titulos_aceitos:
-                chave = titulo.strip().lower()
+                chave = engine.normalizar(titulo)
                 assert chave not in vistos, f"{titulo!r} já é aceito por {vistos[chave]}"
                 vistos[chave] = f"{no}/{b.id}"
 
@@ -69,7 +75,6 @@ def test_todo_no_com_botoes_tem_corpo_de_nudge():
     assert set(flows.CORPO_NUDGE_POR_NO) == set(flows.BOTOES_POR_NO)
 
 
-from app.button_flow import engine
 from app.button_flow.engine import Clique, Decisao, Texto
 
 
@@ -219,3 +224,18 @@ def test_estado_corrompido_devolve_ao_humano():
     d = engine.decidir({"node": 42}, Texto("oi"), canal_do_vendedor=False)
     assert d.proximo_no == flows.NO_ENCERRADO
     assert d.efeitos.tags == (flows.TAG_HUMANO,)
+
+
+# ── Defesa contra fall-through ──────────────────────────────────────────────
+def test_botao_de_nivel_1_sem_tratamento_nao_faz_optout():
+    """Fall-through nunca pode virar opt-out — é o efeito mais destrutivo do fluxo.
+
+    Chama a função privada de propósito: por construção esse caso é inalcançável
+    pela API pública (só existem os três botões declarados, e um id de fora não
+    casa em _casar), e o objetivo do teste é justamente pinar o ramo defensivo.
+    """
+    botao_novo = flows.Botao("interesse_desconhecido", "Outra coisa")
+    d = engine._decidir_botao(flows.NO_INTERESSE, botao_novo, canal_do_vendedor=False)
+    assert d.ignorar is True
+    assert d.efeitos.optout is False
+    assert d.mensagem is None
