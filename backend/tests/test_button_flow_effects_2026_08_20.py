@@ -7,6 +7,17 @@ from app.button_flow.engine import Efeitos
 
 LEAD = {"id": "lead-1", "phone": "5511999999999", "name": "Fulano", "metadata": {}}
 
+# Prefixo literal do padrão que o dashboard casa em messages.role='system'
+# (supabase/migrations/20260712_dashboard_rpcs.sql, dashboard_kpis.handoff_msgs e
+# dashboard_funnel_conversion.with_handoff):
+#     content LIKE '[encaminhar\_humano] Lead encaminhado%'
+# O \_ do SQL é só o underscore escapado; o literal é o texto abaixo.
+MARCADOR_DO_DASHBOARD = "[encaminhar_humano] Lead encaminhado"
+
+
+def _mensagens_de_sistema(save) -> list[str]:
+    return [c.args[2] for c in save.call_args_list if c.args[1] == "system"]
+
 
 def test_tags_sao_aplicadas_pelo_helper_existente():
     with patch("app.button_flow.effects.add_tags_to_lead") as add:
@@ -69,7 +80,7 @@ def test_silenciar_ia_desliga_a_ia_sem_carimbar_handoff():
     with patch("app.button_flow.effects.add_tags_to_lead"), \
          patch("app.button_flow.effects.update_lead") as upd, \
          patch("app.button_flow.effects.append_lead_observation"), \
-         patch("app.button_flow.effects.save_message"):
+         patch("app.button_flow.effects.save_message") as save:
         ok = effects.aplicar(
             Efeitos(tags=(flows.TAG_HUMANO,), silenciar_ia=True),
             lead=LEAD, conversation_id="c1",
@@ -79,6 +90,8 @@ def test_silenciar_ia_desliga_a_ia_sem_carimbar_handoff():
     upd.assert_called_once_with("lead-1", ai_enabled=False)
     assert not any("metadata" in c.kwargs for c in upd.call_args_list), \
         "silenciar_ia nao pode carimbar metadata.handoff"
+    assert not any(t.startswith(MARCADOR_DO_DASHBOARD) for t in _mensagens_de_sistema(save)), \
+        "texto livre nao e transbordo: contar como handoff inflaria o KPI do dashboard"
 
 
 def test_handoff_desliga_ia_e_carimba_metadata():
@@ -97,6 +110,32 @@ def test_handoff_desliga_ia_e_carimba_metadata():
     assert carimbo, "handoff precisa carimbar metadata.handoff (cascata de qualificados)"
     assert carimbo[0].kwargs["metadata"]["handoff"]["vendedor"]
     obs.assert_called_once()
+
+
+def test_handoff_grava_o_marcador_que_o_dashboard_conta():
+    """Sem esta mensagem o lead é entregue ao vendedor e mesmo assim some do KPI.
+
+    Nem o KPI de handoffs nem a conversão do funil olham `metadata.handoff`: os dois
+    casam `content LIKE '[encaminhar\\_humano] Lead encaminhado%'` em
+    messages.role='system'. Quem mudar o texto do marcador quebra este teste — e o
+    que quebra de verdade é a contagem de transbordos do dashboard.
+    """
+    with patch("app.button_flow.effects.add_tags_to_lead"), \
+         patch("app.button_flow.effects.update_lead"), \
+         patch("app.button_flow.effects.append_lead_observation"), \
+         patch("app.button_flow.effects.save_message") as save:
+        effects.aplicar(Efeitos(handoff=True), lead=LEAD, conversation_id="c1")
+
+    marcadores = [c for c in save.call_args_list
+                  if c.args[1] == "system" and c.args[2].startswith(MARCADOR_DO_DASHBOARD)]
+    assert marcadores, f"nenhum marcador de handoff em {_mensagens_de_sistema(save)}"
+    # Exatamente UM: dashboard_kpis.handoff_msgs faz count(*) de mensagens, então um
+    # marcador repetido contaria o mesmo transbordo duas vezes.
+    assert len(marcadores) == 1
+    marcador = marcadores[0]
+    assert marcador.args[0] == "lead-1"
+    # O RPC junta messages -> conversations; sem conversation_id o marcador fica órfão.
+    assert marcador.kwargs["conversation_id"] == "c1"
 
 
 def test_carimbo_do_handoff_preserva_o_resto_do_metadata():
