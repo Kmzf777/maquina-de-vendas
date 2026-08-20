@@ -148,8 +148,25 @@ ALTER TABLE sales ADD COLUMN IF NOT EXISTS status              text NOT NULL DEF
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_method_id   bigint;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_terms       text;
 
-CREATE UNIQUE INDEX IF NOT EXISTS sales_bling_order_id_key
-  ON sales (bling_order_id) WHERE bling_order_id IS NOT NULL;
+-- Indice UNICO NAO-PARCIAL, de proposito. A versao original tinha
+-- `WHERE bling_order_id IS NOT NULL` e quebrava TODO upsert de pedido em
+-- producao com SQLSTATE 42P10 ("no unique or exclusion constraint matching the
+-- ON CONFLICT specification"): o Postgres so infere um indice PARCIAL se o
+-- mesmo predicado for repetido no ON CONFLICT, e o parametro `on_conflict=` do
+-- PostgREST (usado por `_upsert_sale` em orders.py) emite apenas a lista de
+-- colunas, nunca o WHERE. Sem o predicado o indice parcial e invisivel para a
+-- inferencia e o pedido nunca chega em `sales`.
+-- O predicado tambem nao agregava nada: no Postgres NULLs nunca conflitam entre
+-- si num indice unico, entao as vendas legadas sem `bling_order_id` convivem
+-- igual nas duas versoes. A unica diferenca real era quebrar o ON CONFLICT.
+-- Os dubles do Supabase nos testes nao pegam isso — e inferencia do Postgres de
+-- verdade, so aparece contra o banco real.
+--
+-- O DROP e obrigatorio: um ambiente que ja tenha a versao PARCIAL do indice
+-- passaria batido pelo `IF NOT EXISTS` (o nome existe) e continuaria quebrado.
+DROP INDEX IF EXISTS sales_bling_order_id_key;
+CREATE UNIQUE INDEX sales_bling_order_id_key
+  ON sales (bling_order_id);
 
 -- Vendas que ja existiam antes da integracao nao sao tocadas por nenhuma rotina.
 -- Roda uma vez, antes de qualquer venda nova: nao pega nada criado pela integracao.
