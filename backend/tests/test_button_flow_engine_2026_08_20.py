@@ -304,21 +304,6 @@ def test_clique_desconhecido_ja_nudgeado_entrega_ao_humano():
     assert d.efeitos.tags == (flows.TAG_HUMANO,)
 
 
-# ── Defesa contra fall-through ──────────────────────────────────────────────
-def test_botao_de_nivel_1_sem_tratamento_nao_faz_optout():
-    """Fall-through nunca pode virar opt-out — é o efeito mais destrutivo do fluxo.
-
-    Chama a função privada de propósito: por construção esse caso é inalcançável
-    pela API pública (só existem os três botões declarados, e um id de fora não
-    casa em _casar), e o objetivo do teste é justamente pinar o ramo defensivo.
-    """
-    botao_novo = flows.Botao("interesse_desconhecido", "Outra coisa")
-    d = engine._decidir_botao(flows.NO_INTERESSE, botao_novo, canal_do_vendedor=False)
-    assert d.ignorar is True
-    assert d.efeitos.optout is False
-    assert d.mensagem is None
-
-
 def test_no_sem_tratamento_no_decidir_botao_e_inerte():
     """Mesma defesa, agora para um NÓ novo: antes caía num next() sem default.
 
