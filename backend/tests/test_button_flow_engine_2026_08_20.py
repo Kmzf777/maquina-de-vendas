@@ -4,7 +4,12 @@ Sem I/O: tudo aqui opera sobre dicts e dataclasses, no mesmo espírito de
 app/agent/persona.py. É a camada onde a matriz de comportamento tem que estar
 100% coberta, porque é a única que roda igual em produção e no teste.
 """
+import dataclasses
+
+import pytest
+
 from app.button_flow import engine, flows
+from app.button_flow.engine import Clique, Texto
 
 
 def test_limites_da_meta_nos_botoes():
@@ -73,9 +78,6 @@ def test_ids_de_botao_sao_unicos_em_todo_o_fluxo():
 def test_todo_no_com_botoes_tem_corpo_de_nudge():
     """O reoferecimento lê o corpo pelo nó; um nó sem corpo seria KeyError."""
     assert set(flows.CORPO_NUDGE_POR_NO) == set(flows.BOTOES_POR_NO)
-
-
-from app.button_flow.engine import Clique, Decisao, Texto
 
 
 def estado(no: str = flows.NO_INTERESSE, nudged: bool = False) -> dict:
@@ -220,7 +222,8 @@ def test_estado_vazio_comeca_no_no_inicial():
     assert d.efeitos.handoff is True
 
 
-def test_estado_corrompido_devolve_ao_humano():
+def test_estado_sem_flow_devolve_ao_humano():
+    """Dict sem a chave `flow`: sai já na checagem de versão, antes de olhar o nó."""
     d = engine.decidir({"node": 42}, Texto("oi"), canal_do_vendedor=False)
     assert d.proximo_no == flows.NO_ENCERRADO
     assert d.efeitos.tags == (flows.TAG_HUMANO,)
@@ -239,3 +242,133 @@ def test_botao_de_nivel_1_sem_tratamento_nao_faz_optout():
     assert d.ignorar is True
     assert d.efeitos.optout is False
     assert d.mensagem is None
+
+
+def test_estado_com_no_desconhecido_devolve_ao_humano():
+    """Versão certa, nó que não existe: o fluxo mudou debaixo do lead.
+
+    Distinto dos casos acima de propósito: `{"node": 42}` sem `flow` nunca chega
+    na whitelist de nós, então só este teste cobre esse ramo do _estado_valido.
+    """
+    d = engine.decidir({"flow": flows.FLOW_ID, "node": "aguardando_orcamento"},
+                       Texto("oi"), canal_do_vendedor=False)
+    assert d.proximo_no == flows.NO_ENCERRADO
+    assert d.efeitos.tags == (flows.TAG_HUMANO,)
+
+
+def test_flow_state_que_nao_e_objeto_devolve_ao_humano():
+    """jsonb aceita escalar e array; nenhum dos dois é "conversa não iniciada".
+
+    A string quebraria no .get(); a lista vazia é falsy e reiniciaria o lead no nó
+    inicial, renudgeando quem já tinha sido entregue ao vendedor.
+    """
+    for corrompido in ("aguardando_interesse", []):
+        d = engine.decidir(corrompido, Texto("oi"), canal_do_vendedor=False)
+        assert d.proximo_no == flows.NO_ENCERRADO, corrompido
+        assert d.efeitos.tags == (flows.TAG_HUMANO,), corrompido
+        assert d.mensagem is None, corrompido
+        assert d.marcar_nudge is False, corrompido
+
+
+def test_estado_dict_vazio_comeca_no_no_inicial():
+    """`{}` e None são o mesmo caso: disparo semeou a conversa, bot ainda não agiu."""
+    d = engine.decidir({}, Clique("Quero comprar agora", "Quero comprar agora"),
+                       canal_do_vendedor=False)
+    assert d.efeitos.handoff is True
+
+
+# ── Entrega ao humano ───────────────────────────────────────────────────────
+def test_entrega_ao_humano_silencia_a_ia_sem_carimbar_handoff():
+    """Encerrar o nó só tira o BOT do caminho — no número da ValerIA o LLM
+    assumiria em seguida. silenciar_ia é o que entrega de fato ao vendedor;
+    handoff=True seria errado aqui (carimbaria lead qualificado que nunca foi)."""
+    d = engine.decidir(estado(nudged=True), Texto("me liga"), canal_do_vendedor=False)
+    assert d.efeitos.silenciar_ia is True
+    assert d.efeitos.handoff is False
+    assert d.efeitos.tags == (flows.TAG_HUMANO,)
+
+
+def test_texto_livre_no_nivel_2_ja_nudgeado_entrega_ao_humano():
+    d = engine.decidir(estado(flows.NO_PRAZO, nudged=True), Texto("sei lá"),
+                       canal_do_vendedor=False)
+    assert d.proximo_no == flows.NO_ENCERRADO
+    assert d.efeitos.tags == (flows.TAG_HUMANO,)
+    assert d.efeitos.silenciar_ia is True
+
+
+def test_clique_desconhecido_ja_nudgeado_entrega_ao_humano():
+    """Botão de fora do fluxo conta como texto livre também na segunda vez."""
+    d = engine.decidir(estado(nudged=True), Clique("botao_de_outro_bot", "Sei lá"),
+                       canal_do_vendedor=False)
+    assert d.proximo_no == flows.NO_ENCERRADO
+    assert d.efeitos.tags == (flows.TAG_HUMANO,)
+
+
+# ── Defesa contra fall-through ──────────────────────────────────────────────
+def test_botao_de_nivel_1_sem_tratamento_nao_faz_optout():
+    """Fall-through nunca pode virar opt-out — é o efeito mais destrutivo do fluxo.
+
+    Chama a função privada de propósito: por construção esse caso é inalcançável
+    pela API pública (só existem os três botões declarados, e um id de fora não
+    casa em _casar), e o objetivo do teste é justamente pinar o ramo defensivo.
+    """
+    botao_novo = flows.Botao("interesse_desconhecido", "Outra coisa")
+    d = engine._decidir_botao(flows.NO_INTERESSE, botao_novo, canal_do_vendedor=False)
+    assert d.ignorar is True
+    assert d.efeitos.optout is False
+    assert d.mensagem is None
+
+
+def test_no_sem_tratamento_no_decidir_botao_e_inerte():
+    """Mesma defesa, agora para um NÓ novo: antes caía num next() sem default.
+
+    Também privada pelo mesmo motivo: _estado_valido barra nó desconhecido antes
+    de chegar aqui, então o ramo só é alcançável se o fluxo ganhar um nó novo.
+    """
+    d = engine._decidir_botao("aguardando_orcamento", flows.BTN_QUENTE,
+                              canal_do_vendedor=False)
+    assert d.ignorar is True
+    assert d.proximo_no == "aguardando_orcamento"
+    assert d.mensagem is None
+    assert d.efeitos.tags == ()
+    assert d.efeitos.optout is False
+
+
+# ── normalizar ──────────────────────────────────────────────────────────────
+def test_normalizar_aceita_none_e_vazio():
+    """O payload do webhook é opcional em vários formatos da Meta."""
+    assert engine.normalizar(None) == ""
+    assert engine.normalizar("") == ""
+
+
+def test_normalizar_tira_caixa_acento_e_espaco_invisivel():
+    assert engine.normalizar("  NÃO QUERO MAIS RECEBER  ") == "nao quero mais receber"
+    # NBSP: o NFKD converte pra espaço comum, então rótulo com espaço duro casa.
+    assert engine.normalizar(" Sair da lista ") == "sair da lista"
+
+
+def test_normalizar_nao_remove_emoji_nem_largura_zero():
+    """Limite conhecido: emoji e ZWSP atravessam a normalização.
+
+    Um rótulo aprovado com emoji só casa se o template tiver exatamente o mesmo
+    emoji. Isso é seguro porque o preflight do disparo (Task 10) compara os
+    rótulos do template com ESTA função e recusa o disparo se divergirem — o
+    desencontro aparece antes do envio, não no clique do lead.
+    """
+    assert engine.normalizar("Sair da lista 👍") == "sair da lista 👍"
+    assert engine.normalizar("Sair​da lista") == "sair​da lista"
+
+
+# ── Imutabilidade ───────────────────────────────────────────────────────────
+def test_decisoes_sao_congeladas():
+    """_ENTREGAR_AO_HUMANO é um singleton de módulo compartilhado entre turnos.
+
+    Só é seguro compartilhar enquanto as dataclasses forem frozen: um efeito
+    escrito por engano num turno vazaria para todos os leads seguintes do processo.
+    """
+    d = engine.decidir(estado(nudged=True), Texto("me liga"), canal_do_vendedor=False)
+    assert d is engine._ENTREGAR_AO_HUMANO
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        d.proximo_no = flows.NO_INTERESSE
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        d.efeitos.optout = True

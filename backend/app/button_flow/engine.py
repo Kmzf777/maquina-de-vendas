@@ -12,7 +12,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from app.button_flow import flows
-from app.button_flow.flows import Botao
+from app.button_flow.flows import Botao, Prazo
 
 
 # ── Eventos de entrada ──────────────────────────────────────────────────────
@@ -45,6 +45,10 @@ class Efeitos:
     optout: bool = False
     handoff: bool = False
     recontato_meses: int | None = None
+    # Desliga lead.ai_enabled sem carimbar handoff. Necessário porque "encerrado"
+    # só tira o bot do caminho: no número da ValerIA o LLM assumiria a conversa
+    # logo em seguida, que é o contrário de entregar ao vendedor.
+    silenciar_ia: bool = False
 
 
 @dataclass(frozen=True)
@@ -56,11 +60,14 @@ class Decisao:
     ignorar: bool = False
 
 
-def normalizar(texto: str) -> str:
+def normalizar(texto: str | None) -> str:
     """Minúsculas, sem acento, sem espaço nas pontas — para casar rótulo de template.
 
     Necessário porque quick reply de template devolve o payload igual ao TEXTO do
     botão, e o teclado do lead (ou o próprio WhatsApp) pode devolver sem acento.
+
+    Aceita None porque o payload do webhook é opcional em vários formatos da Meta;
+    o chamador não deve precisar tratar isso antes de comparar.
     """
     sem_acento = unicodedata.normalize("NFKD", texto or "")
     sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
@@ -80,6 +87,7 @@ _POR_TITULO: dict[str, tuple[str, Botao]] = {
     for b in botoes
     for titulo in b.titulos_aceitos
 }
+_PRAZO_POR_ID: dict[str, Prazo] = {p.id: p for p in flows.PRAZOS}
 
 
 def _casar(clique: Clique) -> tuple[str, Botao] | None:
@@ -100,7 +108,13 @@ def _estado_valido(estado: dict | None) -> str | None:
     o disparo semeou e ainda não passou pelo bot. Já um `flow` de outra versão ou
     um `node` que não existe são incompatíveis — o fluxo mudou debaixo do lead e a
     única resposta segura é devolver ao humano.
+
+    Um flow_state que não é objeto é corrompido, não "não iniciado": jsonb aceita
+    escalar e array, e tratar `[]` como ausente reiniciaria o lead do zero e o
+    renudgearia, enquanto uma string quebraria no .get() logo abaixo.
     """
+    if estado is not None and not isinstance(estado, dict):
+        return None
     if not estado:
         return flows.NO_INTERESSE
     if estado.get("flow") != flows.FLOW_ID:
@@ -124,7 +138,7 @@ def _nudge(no: str) -> Decisao:
 
 _ENTREGAR_AO_HUMANO = Decisao(
     proximo_no=flows.NO_ENCERRADO,
-    efeitos=Efeitos(tags=(flows.TAG_HUMANO,)),
+    efeitos=Efeitos(tags=(flows.TAG_HUMANO,), silenciar_ia=True),
 )
 
 
@@ -176,14 +190,19 @@ def _decidir_botao(no: str, botao: Botao, *, canal_do_vendedor: bool) -> Decisao
                 mensagem=Mensagem(corpo=flows.MSG_OPTOUT),
                 efeitos=Efeitos(tags=(flows.TAG_RECUSOU,), optout=True),
             )
-        # Botão declarado no nó de interesse mas sem tratamento aqui: hoje inalcançável
-        # (só existem três). Cair no opt-out por fall-through seria o pior default
-        # possível — um botão novo desligaria o lead da base sem ninguém pedir.
-        return Decisao(proximo_no=no, ignorar=True)
+        # Um botão novo no nível 1 cai no retorno inerte do fim. Isso é deliberado:
+        # antes o opt-out era o fall-through, e um botão novo desligaria o lead da
+        # base sem ninguém pedir — o pior default possível.
+    elif no == flows.NO_PRAZO:
+        prazo = _PRAZO_POR_ID.get(botao.id)
+        if prazo is not None:
+            return Decisao(
+                proximo_no=flows.NO_ENCERRADO,
+                mensagem=Mensagem(corpo=flows.MSG_PRAZO_FECHAMENTO.format(prazo=prazo.rotulo_humano)),
+                efeitos=Efeitos(tags=(prazo.tag,), recontato_meses=prazo.meses),
+            )
 
-    prazo = next(p for p in flows.PRAZOS if p.id == botao.id)
-    return Decisao(
-        proximo_no=flows.NO_ENCERRADO,
-        mensagem=Mensagem(corpo=flows.MSG_PRAZO_FECHAMENTO.format(prazo=prazo.rotulo_humano)),
-        efeitos=Efeitos(tags=(prazo.tag,), recontato_meses=prazo.meses),
-    )
+    # Nó ou botão sem tratamento aqui: inerte, nunca destrutivo. Hoje inalcançável,
+    # mas um nó novo no fluxo não pode produzir efeito de CRM por acidente — nem
+    # estourar StopIteration, que o runner engoliria como silêncio permanente.
+    return Decisao(proximo_no=no, ignorar=True)
