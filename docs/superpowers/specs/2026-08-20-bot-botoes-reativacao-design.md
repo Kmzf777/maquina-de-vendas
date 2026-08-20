@@ -80,7 +80,13 @@ Copy definitiva, para não ser inventada na implementação. Vive em `flows.py`.
 | `quente.joao` | "Perfeito! Já te chamo por aqui pra gente resolver." |
 | `prazo.fechamento` | "Combinado, {prazo}. Vou anotar aqui e te chamo nessa época. Qualquer coisa antes disso, é só me escrever!" |
 | `optout.confirmacao` | "Entendido, não te mando mais nada. Obrigado pelo tempo e um abraço!" |
-| `nudge` | Reenvia o corpo do nó atual + os mesmos botões, prefixado por "Pra facilitar, é só tocar numa das opções:" |
+| `nudge` | "Pra facilitar, é só tocar numa das opções abaixo:" + os botões do nó atual |
+
+**O nudge do nível 1 não reenvia o template.** Como o lead acabou de escrever, a janela de
+24h está aberta, então o reoferecimento sai como mensagem **interativa** com os mesmos três
+rótulos, agora com ids nossos (`interesse_quente`, `interesse_talvez`, `interesse_sair`).
+Consequência: no nó `aguardando_interesse` o bot precisa casar **duas** formas de clique —
+payload igual ao texto do botão (veio do template) ou id `interesse_*` (veio do nudge).
 
 `{prazo}` é substituído por "daqui a 1 mês" / "daqui a 3 meses" / "daqui a 6 meses".
 
@@ -314,10 +320,11 @@ O princípio é o do resto do repositório: **fail-soft, nunca derrubar o turno*
   lead já recebeu a resposta e não pode ficar preso.
 - **Exceção deliberada:** falha ao gravar `opt_out=true` **bloqueia** o avanço e alerta,
   porque continuar disparando para quem pediu para sair é o pior desfecho possível.
-- Clique repetido no mesmo botão (lead toca duas vezes) → idempotente: o nó já mudou, o
-  clique não casa com nenhum botão do nó atual, e cai na regra de texto livre.
-- Clique num botão de um nó antigo (lead rola a conversa e clica no template de novo) →
-  ignorado com log, sem reprocessar efeitos.
+- Clique num botão que pertence ao fluxo mas **não ao nó atual** — inclui o caso do lead
+  tocar duas vezes no mesmo botão, e o de rolar a conversa e clicar no template de novo →
+  **ignorado**: log, nenhum efeito, nenhuma mensagem, nenhum nudge. Deliberadamente não
+  cai na regra de texto livre: tocar de novo num botão não é o lead se recusando a usar
+  os botões.
 - `flow_state` corrompido ou de uma versão antiga do fluxo (`flow != "reativacao_v1"`) →
   bot silencia e devolve ao humano.
 
