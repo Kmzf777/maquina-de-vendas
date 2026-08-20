@@ -7,7 +7,7 @@ import type { Sale } from "@/lib/types";
  * lugar do código que precisa mudar.
  */
 export const BLING_ORDER_URL_TEMPLATE =
-  "https://www.bling.com.br/pedidos.vendas.php#/{id}";
+  "https://www.bling.com.br/vendas.php#edit/{id}";
 
 export type StatusTone = "neutral" | "warning" | "danger";
 
