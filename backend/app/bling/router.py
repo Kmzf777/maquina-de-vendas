@@ -97,6 +97,37 @@ async def list_products(q: str | None = Query(None), limit: int = Query(50, le=2
     return {"data": data}
 
 
+def _query_catalog(q: str | None, situacao: str | None, page: int, limit: int):
+    """Catalogo completo, paginado. Diferente de `_query_products`, que fixa
+    situacao='A' e teto de 200 porque nasceu para um combobox.
+
+    A paginacao e explicita de proposito: o PostgREST corta em 1000 linhas por
+    padrao, e um catalogo maior que isso viraria truncamento silencioso."""
+    inicio = (page - 1) * limit
+    query = (get_supabase().table("bling_products")
+             .select("id, codigo, nome, preco, unidade, situacao, saldo_virtual, "
+                     "imagem_url", count="exact"))
+    if situacao:
+        query = query.eq("situacao", situacao)
+    if q:
+        alvo = f"%{_termo_seguro(q)}%"
+        query = query.or_(f"nome.ilike.{alvo},codigo.ilike.{alvo}")
+    res = query.order("nome").range(inicio, inicio + limit - 1).execute()
+    return getattr(res, "data", None) or [], getattr(res, "count", None) or 0
+
+
+@router.get("/catalog")
+async def list_catalog(q: str | None = Query(None), situacao: str | None = Query(None),
+                        page: int = Query(1, ge=1), limit: int = Query(50, le=200)):
+    """Catalogo do espelho para a tela de produtos — nunca a API do Bling.
+
+    Diferente de GET /products (combobox de pedido: so ativos, teto de 200),
+    aqui a paginacao e explicita e o total vem do PostgREST via `count=exact`.
+    """
+    data, total = await asyncio.to_thread(_query_catalog, q, situacao, page, limit)
+    return {"data": data, "page": page, "limit": limit, "total": total}
+
+
 def _query_contacts(q: str | None, limit: int, contact_id: int | None = None):
     query = (get_supabase().table("bling_contacts")
              .select("id, nome, fantasia, doc_digits, telefone_e164, celular_e164, "

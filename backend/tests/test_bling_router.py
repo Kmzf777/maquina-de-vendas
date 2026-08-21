@@ -13,7 +13,11 @@ class FakeQuery:
         self.rows = rows
         self.captured = {}
 
-    def select(self, *_a, **_k):
+    def select(self, *_a, **kwargs):
+        # `count="exact"` e como o catalogo paginado pede o total ao PostgREST
+        # junto da pagina — sem chamada separada.
+        if "count" in kwargs:
+            self.captured["select_count"] = kwargs["count"]
         return self
 
     def eq(self, c, v):
@@ -42,6 +46,10 @@ class FakeQuery:
     def limit(self, *_a, **_k):
         return self
 
+    def range(self, start, end):
+        self.captured["range"] = (start, end)
+        return self
+
     def maybe_single(self):
         return self
 
@@ -49,7 +57,13 @@ class FakeQuery:
         class R:
             pass
         r = R()
-        r.data = self.rows
+        if "range" in self.captured:
+            start, end = self.captured["range"]
+            r.data = self.rows[start:end + 1]
+            r.count = len(self.rows) if self.captured.get("select_count") else None
+        else:
+            r.data = self.rows
+            r.count = None
         return r
 
 
@@ -301,6 +315,43 @@ def test_unlink_endpoint_devolve_unlinked(monkeypatch):
     assert chamadas == ["lead-1"]
 
 
+async def test_catalogo_pagina_de_verdade_e_devolve_total(monkeypatch):
+    # Diferente de /products (combobox, teto de 200, so ativos), /catalog e
+    # para uma tela de listagem: precisa paginar de verdade e dizer o total.
+    produtos = [{"id": i, "nome": f"Produto {i:02d}"} for i in range(1, 51)]
+    sb = FakeSupabase({"bling_products": produtos})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    pagina2 = await br.list_catalog(q=None, situacao=None, page=2, limit=20)
+
+    assert len(pagina2["data"]) == 20
+    assert pagina2["page"] == 2
+    assert pagina2["total"] == 50
+    assert pagina2["data"][0]["nome"] == "Produto 21"
+
+
+async def test_catalogo_filtra_por_situacao_e_busca_quando_informados(monkeypatch):
+    sb = FakeSupabase({"bling_products": [{"id": 1, "nome": "Cafe Classico 250g"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    await br.list_catalog(q="classico", situacao="A", page=1, limit=50)
+
+    assert sb.queries[0].captured["eq"]["situacao"] == "A"
+    assert "classico" in sb.queries[0].captured["or"].lower()
+
+
+async def test_catalogo_sem_filtros_nao_aplica_eq_nem_or(monkeypatch):
+    # Diferente de /products, /catalog nao fixa situacao='A' — sem filtro
+    # explicito, devolve o catalogo inteiro (ativos e inativos).
+    sb = FakeSupabase({"bling_products": []})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    await br.list_catalog(q=None, situacao=None, page=1, limit=50)
+
+    assert "eq" not in sb.queries[0].captured
+    assert "or" not in sb.queries[0].captured
+
+
 def test_router_registrado_no_app():
     """O router precisa estar montado no app.
 
@@ -324,5 +375,6 @@ def test_router_expoe_as_rotas_esperadas():
 
     rotas = {r.path for r in bling_router.routes}
     assert "/api/bling/products" in rotas
+    assert "/api/bling/catalog" in rotas
     assert "/api/bling/orders" in rotas
     assert "/api/bling/status" in rotas
