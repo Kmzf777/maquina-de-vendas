@@ -279,7 +279,125 @@ a faixa de situações intermediárias (Em aberto, Faturado, etc.) que fica invi
 
 ---
 
+## Rodada de 21/08/2026 — a integração existia, mas era inalcançável
+
+Depois de tudo acima funcionar no sentido **ERP → CRM**, o usuário testou e reportou que
+o CRM "continuava igual". Estava certo. Quatro achados, do mais grave ao menor.
+
+### 1. O modo Bling do modal de venda nunca rodou em produção
+
+`sale-create-modal.tsx` decidia o modo assim:
+
+```ts
+const blingMode = !!blingEnabled && !isEditing;
+```
+
+`blingEnabled` é uma **prop**, e nenhum dos quatro chamadores a passava —
+`painel-vendas/page.tsx`, `deal-detail-sidebar.tsx`, `contact-detail.tsx`,
+`lead-detail-modal.tsx`. `blingMode` era sempre `false`. As ~1.500 linhas de
+`sale-create-modal` + `bling-order-form` + `bling-contact-resolver` estavam
+implementadas, testadas por nada, e **inalcançáveis**. O sentido CRM → Bling nunca
+executou.
+
+A correção não foi passar a prop nos quatro lugares. Foi inverter o default: o modal
+consulta `/api/bling/status` por um hook e decide sozinho; a prop continua existindo e
+**vence quando informada**. Assim omitir passou a significar "pergunte ao backend", e o
+defeito não volta quando alguém criar um quinto ponto que abre o modal.
+
+**Falha ao consultar o status BLOQUEIA o registro**, em vez de cair no modo legado.
+Cair no legado reintroduziria o mesmo defeito de forma intermitente e invisível: venda
+avulsa entrando no CRM sem ninguém perceber. Falha de rede é transitória; venda gravada
+fora do ERP é permanente.
+
+### 2. Popover dentro de Dialog não rola (Radix + react-remove-scroll)
+
+Sintoma: os dropdowns de lead e de produto abriam, mas não rolavam.
+
+O `Dialog` do Radix usa `react-remove-scroll`, que só permite rolar dentro do elemento
+travado — `handleScroll.js`: `var targetInLock = endTarget.contains(target)`, e a lista
+de permitidos é `[lockRef.current, ...shards]` (`SideEffect.js:31`). Não existe atributo
+de escape.
+
+O `PopoverContent` do projeto sempre envolvia o conteúdo em `PopoverPrimitive.Portal`,
+que renderiza no `body` — **fora** do `DialogContent`. Logo o wheel era descartado. O CSS
+dos dois dropdowns estava correto o tempo todo (`max-h-64 overflow-y-auto`).
+
+O Radix não expõe a API de `shards`, então a saída foi uma prop `portal` no
+`PopoverContent`, **`true` por padrão**, com `portal={false}` só nos dois popovers que
+vivem dentro do diálogo.
+
+`sale-create-modal.tsx` era o único lugar do projeto com Popover dentro de Dialog — por
+isso o defeito nunca tinha aparecido.
+
+### 3. Editar pedido abria com o formulário vazio — e o PUT substitui o pedido no ERP
+
+Ao ligar a edição de venda contra o Bling (`PUT /pedidos/vendas/{id}`), o formulário de
+itens nascia **em branco**, porque o modal não carregava `sale_items`. Como o PUT
+substitui o pedido pelo conteúdo do formulário, um vendedor que abrisse a edição de um
+pedido de 11 itens para mudar uma observação **apagaria os 11 itens no sistema fiscal**.
+
+Corrigido antes de ir ao ar: as três rotas que alimentam o modal (`/api/sales`,
+`/api/sales/[id]`, `/api/leads/[id]/sales`) passaram a embutir `sale_items(*)` ordenado
+por `ordem`, e o formulário abre preenchido.
+
+Dois gates relacionados, ambos load-bearing:
+
+- `blingEditable = !isEditing || !!editingSale?.bling_order_id` — as 91 vendas
+  anteriores à integração têm `bling_order_id` nulo; sem o gate, editá-las tentaria
+  `PUT /api/bling/orders/undefined`.
+- `/api/leads/[id]/sales` usava lista explícita de colunas e não trazia campo nenhum do
+  Bling. Como o gate decide por `bling_order_id`, editar a partir do painel de contato
+  caía no PATCH local mesmo com pedido no ERP: o CRM mudava e o Bling não, **em
+  silêncio**. Divergir por omissão de coluna num `select` não tem nem a defesa do selo de
+  divergência.
+
+### 4. `PATCH /api/sales/[id]` descarta campo fora do allowlist, sem erro
+
+A rota filtra chaves desconhecidas silenciosamente. `bling_divergent` e
+`bling_divergence` precisaram entrar no allowlist — sem isso a marcação de divergência
+seria descartada sem nenhum sinal, e a funcionalidade não faria nada visível.
+
+### Divergência: o desenho e por que 202 não conta
+
+Edição recusada pelo Bling (pedido faturado) pode valer no CRM, mas a venda fica marcada
+(`sales.bling_divergent`) com o diff em `sales.bling_divergence`.
+
+**Só 422 marca.** 202 e 5xx são transitórios — o pedido não foi recusado, só não foi
+entregue. Marcar divergência neles transformaria instabilidade de rede em ruído
+permanente no relatório. É a mesma distinção que `TRANSIENT` já fazia no `POST /orders`.
+
+O 202 do update **não enfileira job**: `jobs.py` só tem handler para `create_order`, e
+enfileirar um `update_order` prometeria uma retentativa que falharia em silêncio como
+"kind desconhecido". Devolve 202 honesto e a retentativa fica com o usuário.
+
+---
+
+## Tooling de teste nesta VPS
+
+Não vem instalado. Montar uma vez:
+
+```bash
+cd frontend && npm ci
+cd ../backend && python3 -m venv .venv && \
+  .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+```
+
+**`TZ=UTC` é obrigatório no frontend.** A VPS roda em CEST e o CI em UTC; sem ele três
+testes de `src/lib/stats-mappers.test.ts` (gap-fill de datas) falham por aritmética de
+fuso. Estão verdes no CI — não os "conserte".
+
+O `vitest` roda em `environment: "node"` e só inclui `src/**/*.test.ts`. Não há jsdom nem
+testing-library, e nenhum `.test.tsx`. O padrão do projeto é extrair a decisão para função
+pura em `src/lib/` e testar lá (`sale-display.ts`, `bling-order-state.ts`,
+`bling-gate.ts`, `bling-divergence.ts`). Componentes ficam finos e sem teste próprio.
+
+O lint tem **31 erros pré-existentes** em arquivos não relacionados. O critério é não
+adicionar erro novo, não zerar.
+
+---
+
 ## Estado no fim desta sessão
+
 
 | Item | Situação |
 |---|---|
@@ -291,7 +409,11 @@ a faixa de situações intermediárias (Em aberto, Faturado, etc.) que fica invi
 | Webhooks `order` + `product` | ✅ entregando |
 | Bug do índice `42P10` | ✅ corrigido |
 | Deep-link do pedido | ✅ corrigido |
-| `bling_situacao_nome` | ⚠️ sem produtor (ver seção acima) |
+| Modo Bling no modal de venda | ✅ alcançável (21/08) |
+| Vínculo Bling no detalhe do lead | ✅ |
+| Tela `/produtos` | ✅ |
+| Editar venda reflete no Bling | ✅ com selo de divergência |
+| `bling_situacao_nome` | ⚠️ falta o escopo de Situações no app |
 | Mapeamento de vendedores | ⏳ pendente |
 | Teste E2E de venda real | ⏳ pendente |
 | Backfill de 12 meses | ⏳ pendente (por último) |
