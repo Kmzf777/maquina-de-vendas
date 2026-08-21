@@ -26,6 +26,8 @@ import {
   type BlingContactCandidate,
 } from "@/components/sales/bling-contact-resolver";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
+import { useBlingStatus } from "@/hooks/use-bling-status";
+import { blingGate } from "@/lib/bling-gate";
 
 interface LeadDeal {
   id: string;
@@ -90,7 +92,16 @@ export function SaleCreateModal({
   const isEditing = !!editingSale;
   // Editar venda continua sendo PATCH em `sales`: o pedido já existe no ERP e
   // não se refaz por aqui.
-  const blingMode = !!blingEnabled && !isEditing;
+  const blingStatus = useBlingStatus();
+  const gate = blingGate({
+    loading: blingStatus.loading,
+    error: blingStatus.error,
+    // A prop continua existindo e VENCE quando informada: quem quiser forcar o
+    // modo (teste, chamador especifico) nao passa a depender de rede.
+    enabled: blingEnabled ?? blingStatus.enabled,
+    isEditing,
+  });
+  const blingMode = gate.mode === "bling";
 
   const [selectedLeadId, setSelectedLeadId] = useState(
     editingSale?.lead_id ?? leadId ?? ""
@@ -704,6 +715,10 @@ export function SaleCreateModal({
             </p>
           )}
 
+          {gate.message && (
+            <p className="text-[12px] text-red-600">{gate.message}</p>
+          )}
+
           {/* Actions */}
           <div className="flex gap-2 pt-2">
             <button
@@ -715,7 +730,7 @@ export function SaleCreateModal({
             </button>
             <button
               type="submit"
-              disabled={saving || (blingMode && !orderResult?.valid)}
+              disabled={saving || !gate.canSubmit || (blingMode && !orderResult?.valid)}
               className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
             >
               {saving
