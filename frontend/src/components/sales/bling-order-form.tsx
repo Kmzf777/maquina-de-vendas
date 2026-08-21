@@ -270,7 +270,7 @@ export function BlingOrderForm({
                       <ChevronDownIcon className="size-4 shrink-0 text-[#8a8a8a]" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="p-0 w-(--radix-popover-trigger-width) min-w-[280px]">
+                  <PopoverContent className="p-0 w-(--radix-popover-trigger-width) min-w-[280px]" portal={false}>
                     <div className="p-2 border-b border-[#eee]">
                       <input
                         autoFocus

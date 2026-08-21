@@ -487,7 +487,7 @@ export function SaleCreateModal({
                     <ChevronDownIcon className="size-4 text-[#8a8a8a]" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="p-0">
+                <PopoverContent className="p-0" portal={false}>
                   <div className="p-2 border-b border-[#eee]">
                     <Input
                       autoFocus
