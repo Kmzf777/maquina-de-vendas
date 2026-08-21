@@ -76,6 +76,7 @@ export const config = {
     "/qualificacao/:path*",
     "/vendas/:path*",
     "/painel-vendas/:path*",
+    "/produtos/:path*",
     "/busca/:path*",
     "/canais/:path*",
     "/estatisticas/:path*",
