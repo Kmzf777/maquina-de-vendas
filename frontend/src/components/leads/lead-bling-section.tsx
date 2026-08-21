@@ -6,17 +6,9 @@
  * mas vive na tela de leads em vez de aparecer só quando uma venda esbarra em
  * um 409.
  *
- * Vinculado: mostra os dados do contato (buscados no espelho local) e um botão
- * para desvincular. Não vinculado: busca com debounce no espelho e um botão
- * "Vincular" por resultado.
- *
- * `GET /api/bling/contacts/search` só filtra por nome/fantasia/doc_digits — não
- * existe filtro por id. Para achar os dados do contato já vinculado, a busca é
- * feita pelo CNPJ do lead (quando o CRM tem um) e o resultado é filtrado pelo
- * id no cliente, como o espelho permite. Sem CNPJ no lead (vínculo feito por
- * telefone/e-mail/confirmação manual), não há como recuperar os dados — mostra
- * só o id com o link para o Bling. Um `GET /api/bling/contacts/{id}` (ou um
- * filtro por id no `/search` existente) resolveria isso de vez; ver relatório.
+ * Vinculado: mostra os dados do contato (buscados no espelho local, por id) e
+ * um botão para desvincular. Não vinculado: busca com debounce no espelho e um
+ * botão "Vincular" por resultado.
  */
 
 import { useEffect, useState } from "react";
@@ -39,10 +31,6 @@ export interface BlingContactSummary {
 interface LeadBlingSectionProps {
   leadId: string;
   blingContactId: number | null;
-  /** CNPJ/CPF do lead, quando existir — usado só para achar os dados do
-   *  contato já vinculado (ver nota acima). Nunca envolvido no fluxo de
-   *  vincular/desvincular em si. */
-  leadDocument?: string | null;
   onChanged: () => void;
 }
 
@@ -60,7 +48,14 @@ async function searchContacts(q: string): Promise<BlingContactSummary[]> {
   return (body?.data ?? []) as BlingContactSummary[];
 }
 
-export function LeadBlingSection({ leadId, blingContactId, leadDocument, onChanged }: LeadBlingSectionProps) {
+async function fetchContactById(id: number): Promise<BlingContactSummary | null> {
+  const res = await fetch(`/api/bling/contacts/search?id=${id}`, { cache: "no-store" });
+  const body = await res.json().catch(() => ({}));
+  const data = (body?.data ?? []) as BlingContactSummary[];
+  return data[0] ?? null;
+}
+
+export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlingSectionProps) {
   // --- Contato já vinculado ------------------------------------------------
   const [contact, setContact] = useState<BlingContactSummary | null>(null);
   const [loadingContact, setLoadingContact] = useState(false);
@@ -76,11 +71,9 @@ export function LeadBlingSection({ leadId, blingContactId, leadDocument, onChang
 
     let cancelled = false;
     setLoadingContact(true);
-    const termo = (leadDocument || "").replace(/\D/g, "");
-    searchContacts(termo)
-      .then((results) => {
+    fetchContactById(blingContactId)
+      .then((found) => {
         if (cancelled) return;
-        const found = results.find((c) => c.id === blingContactId);
         if (found) setContact(found);
         else setContactNotFound(true);
       })
@@ -93,7 +86,7 @@ export function LeadBlingSection({ leadId, blingContactId, leadDocument, onChang
     return () => {
       cancelled = true;
     };
-  }, [blingContactId, leadDocument]);
+  }, [blingContactId]);
 
   async function handleUnlink() {
     setUnlinking(true);

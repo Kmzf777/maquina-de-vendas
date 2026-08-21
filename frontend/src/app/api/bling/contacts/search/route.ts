@@ -10,10 +10,13 @@ const backend = () =>
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const q = sp.get("q") || "";
+  const id = sp.get("id");
   const limit = sp.get("limit") || "20";
   try {
+    const params = new URLSearchParams({ q, limit });
+    if (id) params.set("id", id);
     const resp = await fetch(
-      `${backend()}/api/bling/contacts/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(limit)}`,
+      `${backend()}/api/bling/contacts/search?${params.toString()}`,
       { cache: "no-store" }
     );
     if (!resp.ok) return Response.json({ error: "contacts_search_unavailable" }, { status: resp.status });

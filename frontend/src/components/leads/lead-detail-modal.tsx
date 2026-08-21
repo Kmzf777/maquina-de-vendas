@@ -369,7 +369,6 @@ export function LeadDetailModal({
                 <LeadBlingSection
                   leadId={lead.id}
                   blingContactId={blingContactId}
-                  leadDocument={form.cnpj}
                   onChanged={fetchBlingContactId}
                 />
               </div>
