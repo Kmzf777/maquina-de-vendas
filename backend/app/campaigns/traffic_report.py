@@ -523,6 +523,40 @@ def _meta_campaign_by_lead(sb, leads: list[dict[str, Any]]) -> dict[str, str]:
         return {}
 
 
+def select_campaign_leads(leads: list[dict[str, Any]], channel: str, campaign: str,
+                         campaigns: dict[str, dict[str, Any]] | None = None,
+                         campaign_id_by_lead: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Leads de UMA linha do relatorio. Puro.
+
+    O rotulo da linha e o nome da campanha NA PLATAFORMA, nao o utm_campaign do lead (varios
+    slugs caem na mesma campanha). Entao o drill-down precisa resolver o lead do mesmo jeito
+    que o build_campaign_report resolveu — comparar com utm_campaign cru so acharia zero."""
+    campaigns = campaigns or {}
+    campaign_id_by_lead = campaign_id_by_lead or {}
+    in_channel = [l for l in leads if derive_channel(l) == channel]
+
+    if not campaigns:  # canal nao pago: a linha e o proprio utm_campaign
+        return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
+
+    def _resolve(l):
+        cid = campaign_id_by_lead.get(l.get("id"))
+        if cid and cid in campaigns:
+            return cid
+        return resolve_campaign_id(_s(l.get("utm_campaign")), _s(l.get("utm_medium")), campaigns)
+
+    if campaign.startswith(_UNATTRIBUTED):
+        # "(nao atribuido) - slug" ou "(nao atribuido)" puro: sobras daquele slug.
+        sufixo = campaign[len(_UNATTRIBUTED):].lstrip(" \u00b7").strip().lower()
+        return [l for l in in_channel
+                if _resolve(l) is None and _s(l.get("utm_campaign")).lower() == sufixo]
+
+    target = next((cid for cid, c in campaigns.items() if c["name"] == campaign), None)
+    if target is None:
+        # Linha antiga/rotulo desconhecido: cai no comportamento legado por utm_campaign.
+        return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
+    return [l for l in in_channel if _resolve(l) == target]
+
+
 def _empty_summary(channel: str, campaign: str) -> dict[str, Any]:
     return {"channel": channel, "campaign": campaign, "leads": 0, "conversas": 0, "closer": 0,
             "clientes": 0, "pedidos": 0, "receita": 0.0, "ticket_medio": 0.0, "conversao": 0.0,
@@ -578,10 +612,10 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         sb = get_supabase()
         lo, hi = _resolve_window(period, date_from, date_to)
         all_leads = _fetch_leads(sb, mode, lo, hi)
-        selected = [
-            l for l in all_leads
-            if derive_channel(l) == channel and (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign
-        ]
+        spend_by_channel = _spend_by_channel(sb, lo, hi)
+        camp_by_lead = _meta_campaign_by_lead(sb, all_leads)
+        campaigns = _index_campaigns(spend_by_channel.get(channel))
+        selected = select_campaign_leads(all_leads, channel, campaign, campaigns, camp_by_lead)
         if not selected:
             return {"summary": _empty_summary(channel, campaign), "leads": [], "timeseries": []}
         lead_ids = [l["id"] for l in selected if l.get("id")]
@@ -590,8 +624,7 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
         report = build_campaign_report(
             selected, conversed, closers, sales, mode, period,
-            spend_by_channel=_spend_by_channel(sb, lo, hi),
-            campaign_id_by_lead=_meta_campaign_by_lead(sb, selected),
+            spend_by_channel=spend_by_channel, campaign_id_by_lead=camp_by_lead,
         )
         # So a linha DESTA campanha interessa: as demais linhas vem das campanhas que
         # gastaram na janela sem lead selecionado (ver build_campaign_report).
@@ -650,10 +683,9 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
         sb = get_supabase()
         lo, hi = _resolve_window(period, date_from, date_to)
         leads = _fetch_leads(sb, mode, lo, hi)
-        selected = [
-            l for l in leads
-            if derive_channel(l) == channel and (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign
-        ]
+        campaigns = _index_campaigns(_spend_by_channel(sb, lo, hi).get(channel))
+        selected = select_campaign_leads(leads, channel, campaign, campaigns,
+                                         _meta_campaign_by_lead(sb, leads))
         if not selected:
             return []
         lead_ids = [l["id"] for l in selected if l.get("id")]

@@ -620,3 +620,41 @@ def test_traffic_report_reads_every_lead_not_just_first_page(monkeypatch):
     monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
     out = tr.traffic_report(period="30d", mode="lead")
     assert out["total"]["leads"] == 1500
+
+
+def test_drilldown_selects_by_platform_campaign_not_raw_utm():
+    """O rótulo da linha é o nome da campanha na plataforma; o lead guarda o slug de utm.
+
+    Comparar rótulo com utm_campaign cru acharia ZERO lead e o drill-down abriria vazio."""
+    campaigns = tr._index_campaigns(_GADS)
+    leads = [_lead("a", gclid="1", utm_campaign="terceirizacao"),
+             _lead("b", gclid="2", utm_campaign="leads_search_terceirizacao"),
+             _lead("c", gclid="3", utm_campaign="pmax_atacado")]
+    got = tr.select_campaign_leads(leads, "Google Ads",
+                                   "Leads-Search | Terceirização | 20.03.24", campaigns)
+    assert {l["id"] for l in got} == {"a", "b"}
+
+
+def test_drilldown_unattributed_row_selects_its_own_slug():
+    campaigns = tr._index_campaigns(_GADS)
+    leads = [_lead("a", gclid="1", utm_campaign="campanha_fantasma"),
+             _lead("b", gclid="2", utm_campaign="terceirizacao")]
+    got = tr.select_campaign_leads(leads, "Google Ads",
+                                   "(não atribuído) · campanha_fantasma", campaigns)
+    assert [l["id"] for l in got] == ["a"]
+
+
+def test_drilldown_uses_meta_ad_id_when_present():
+    campaigns = tr._index_campaigns(
+        [{"campaign_id": "m_pl", "campaign_name": "PL | WA | 10.07.26", "cost": 10.0}])
+    leads = [_lead("a", ctwa_clid="x"), _lead("b", ctwa_clid="y")]
+    got = tr.select_campaign_leads(leads, "Meta Ads", "PL | WA | 10.07.26", campaigns,
+                                   {"a": "m_pl"})
+    assert [l["id"] for l in got] == ["a"]
+
+
+def test_drilldown_non_paid_channel_still_matches_raw_utm():
+    leads = [_lead("a", utm_source="instagram", utm_campaign="bio"),
+             _lead("b", utm_source="instagram", utm_campaign="outra")]
+    got = tr.select_campaign_leads(leads, "Orgânico", "bio", {})
+    assert [l["id"] for l in got] == ["a"]
