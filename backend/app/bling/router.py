@@ -97,20 +97,31 @@ async def list_products(q: str | None = Query(None), limit: int = Query(50, le=2
     return {"data": data}
 
 
-def _query_contacts(q: str | None, limit: int):
+def _query_contacts(q: str | None, limit: int, contact_id: int | None = None):
     query = (get_supabase().table("bling_contacts")
              .select("id, nome, fantasia, doc_digits, telefone_e164, celular_e164, "
                      "email, situacao, endereco"))
-    if q:
+    if contact_id is not None:
+        # id e exato (chave do espelho): combinar com o `or_` de texto nao faz
+        # sentido, entao o id vence e o texto e ignorado.
+        query = query.eq("id", contact_id)
+    elif q:
         alvo = f"%{_termo_seguro(q)}%"
         query = query.or_(f"nome.ilike.{alvo},fantasia.ilike.{alvo},doc_digits.ilike.{alvo}")
     return getattr(query.order("nome").limit(limit).execute(), "data", None) or []
 
 
 @router.get("/contacts/search")
-async def search_contacts(q: str | None = Query(None), limit: int = Query(20, le=100)):
-    """Busca no ESPELHO, nunca no Bling — o campo dispara a cada tecla."""
-    return {"data": await asyncio.to_thread(_query_contacts, q, limit)}
+async def search_contacts(q: str | None = Query(None), id: int | None = Query(None),
+                           limit: int = Query(20, le=100)):
+    """Busca no ESPELHO, nunca no Bling — o campo dispara a cada tecla.
+
+    `id` busca exata pela chave do espelho — usada pela tela de detalhe do
+    lead para carregar o contato ja vinculado (`leads.bling_contact_id`)
+    mesmo quando o lead nao tem CNPJ para servir de termo de busca (vinculo
+    por telefone/e-mail ou escolhido a mao).
+    """
+    return {"data": await asyncio.to_thread(_query_contacts, q, limit, id)}
 
 
 def _query_payment_methods():

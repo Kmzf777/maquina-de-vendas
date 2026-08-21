@@ -99,7 +99,7 @@ def test_contacts_search_filtra_no_espelho(monkeypatch):
     sb = FakeSupabase({"bling_contacts": [{"id": 1, "nome": "Empresa X"}]})
     monkeypatch.setattr(br, "get_supabase", lambda: sb)
 
-    out = asyncio.run(br.search_contacts(q="empresa", limit=20))
+    out = asyncio.run(br.search_contacts(q="empresa", id=None, limit=20))
 
     assert out["data"][0]["nome"] == "Empresa X"
     assert "empresa" in sb.queries[0].captured["or"].lower()
@@ -108,8 +108,31 @@ def test_contacts_search_filtra_no_espelho(monkeypatch):
 def test_contacts_search_sem_termo_nao_aplica_filtro_de_texto(monkeypatch):
     sb = FakeSupabase({"bling_contacts": []})
     monkeypatch.setattr(br, "get_supabase", lambda: sb)
-    asyncio.run(br.search_contacts(q=None, limit=20))
+    asyncio.run(br.search_contacts(q=None, id=None, limit=20))
     assert "or" not in sb.queries[0].captured
+
+
+def test_contacts_search_por_id_filtra_por_igualdade(monkeypatch):
+    # A tela de detalhe do lead precisa achar o contato vinculado mesmo sem
+    # CNPJ no lead (vinculo por telefone/e-mail/escolha manual) — id e exato.
+    sb = FakeSupabase({"bling_contacts": [{"id": 42, "nome": "Empresa Y"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    out = asyncio.run(br.search_contacts(id=42, limit=20))
+
+    assert out["data"][0]["nome"] == "Empresa Y"
+    assert sb.queries[0].captured["eq"]["id"] == 42
+
+
+def test_contacts_search_por_id_ignora_filtro_de_texto(monkeypatch):
+    # id e exato: combinar com o `or_` de texto nao faz sentido — id vence.
+    sb = FakeSupabase({"bling_contacts": [{"id": 42, "nome": "Empresa Y"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    asyncio.run(br.search_contacts(q="qualquer coisa", id=42, limit=20))
+
+    assert "or" not in sb.queries[0].captured
+    assert sb.queries[0].captured["eq"]["id"] == 42
 
 
 def test_payment_methods_so_recebimentos_e_ativas(monkeypatch):
