@@ -397,6 +397,23 @@ export interface CampaignEnrollment {
   campaigns?: { id: string; name: string; status: string; created_at: string } | null;
 }
 
+/**
+ * Linha de `sale_items` (20260818_bling_integration.sql) — item de um pedido
+ * lançado no Bling, gravado no CRM na mesma transação da venda.
+ */
+export interface SaleItem {
+  id: string;
+  sale_id: string;
+  bling_product_id: number | null;
+  codigo: string | null;
+  descricao: string;
+  quantidade: number;
+  valor_unitario: number;
+  desconto_percentual: number;
+  total: number;
+  ordem: number;
+}
+
 export interface Sale {
   id: string;
   lead_id: string;
@@ -429,6 +446,9 @@ export interface Sale {
   } | null;
   leads?: { id: string; name: string | null; phone: string; company: string | null } | null;
   deals?: { id: string; title: string } | null;
+  /** Itens do pedido, quando a rota que devolveu a venda os embute. Ausente
+   *  (não `[]`) em rotas que não fazem esse select — ver `linesFromSaleItems`. */
+  sale_items?: SaleItem[];
 }
 
 export interface TeamUser {

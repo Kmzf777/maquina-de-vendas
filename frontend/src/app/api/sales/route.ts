@@ -16,8 +16,17 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from("sales")
-    .select("*, leads(id, name, phone, company), deals(id, title)", { count: "exact" })
+    // `sale_items` embutido: a edição de venda (SaleCreateModal + BlingOrderForm)
+    // reabre o formulário com esses itens quando a venda tem pedido no Bling — sem
+    // eles o PUT em /pedidos/vendas/{id} substituiria os itens do pedido no ERP
+    // pelo que estivesse (vazio) no formulário. Ordenado por `ordem`, a ordem do
+    // pedido original.
+    .select(
+      "*, leads(id, name, phone, company), deals(id, title), sale_items(*)",
+      { count: "exact" }
+    )
     .order("sold_at", { ascending: false })
+    .order("ordem", { foreignTable: "sale_items", ascending: true })
     .range(offset, offset + limit - 1);
 
   if (leadId) query = query.eq("lead_id", leadId);

@@ -25,7 +25,10 @@ import {
   BlingContactResolver,
   type BlingContactCandidate,
 } from "@/components/sales/bling-contact-resolver";
-import type { OrderPayloadResult } from "@/lib/bling-order-state";
+import {
+  linesFromSaleItems,
+  type OrderPayloadResult,
+} from "@/lib/bling-order-state";
 import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { productSummary } from "@/lib/bling";
@@ -709,6 +712,9 @@ export function SaleCreateModal({
                 notes: notes.trim(),
               }}
               condicaoPagamento={blingCondicaoPagamento}
+              initialLines={
+                isEditing ? linesFromSaleItems(editingSale?.sale_items) : undefined
+              }
               onChange={setOrderResult}
             />
           ) : (

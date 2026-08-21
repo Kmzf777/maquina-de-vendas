@@ -6,9 +6,11 @@ import {
   buildOrderPayload,
   defaultPaymentMethodId,
   lineTotal,
+  linesFromSaleItems,
   removeLine,
   updateLine,
 } from "@/lib/bling-order-state";
+import type { SaleItem } from "@/lib/types";
 
 const PRODUTOS = [
   { id: 123, codigo: "CAN-CLA-250", nome: "Cafe Canastra Classico Moido 250g",
@@ -130,6 +132,45 @@ describe("lineTotal", () => {
   });
   it("linha vazia vale zero", () => {
     expect(lineTotal(blankLine())).toBe(0);
+  });
+});
+
+describe("linesFromSaleItems", () => {
+  const item = (patch: Partial<SaleItem>): SaleItem => ({
+    id: "i1", sale_id: "s1", bling_product_id: 123, codigo: "CAN-CLA-250",
+    descricao: "Cafe Canastra Classico Moido 250g", quantidade: 2,
+    valor_unitario: 26.7, desconto_percentual: 0, total: 53.4, ordem: 0,
+    ...patch,
+  });
+
+  it("converte item em linha preservando produto, codigo, descricao, quantidade, valor e desconto", () => {
+    const linhas = linesFromSaleItems([item({ desconto_percentual: 10 })]);
+    expect(linhas).toEqual([{
+      blingProductId: 123,
+      descricao: "Cafe Canastra Classico Moido 250g",
+      codigo: "CAN-CLA-250",
+      unidade: null,
+      quantidade: 2,
+      valorUnitario: 26.7,
+      descontoPercentual: 10,
+    }]);
+  });
+
+  it("respeita a ordem (ordem), mesmo que os itens cheguem fora de ordem", () => {
+    const linhas = linesFromSaleItems([
+      item({ id: "b", descricao: "Segundo", ordem: 1 }),
+      item({ id: "a", descricao: "Primeiro", ordem: 0 }),
+    ]);
+    expect(linhas.map((l) => l.descricao)).toEqual(["Primeiro", "Segundo"]);
+  });
+
+  it("lista vazia devolve uma linha em branco, nao um formulario sem linhas", () => {
+    expect(linesFromSaleItems([])).toEqual([blankLine()]);
+  });
+
+  it("undefined/null tambem devolvem uma linha em branco", () => {
+    expect(linesFromSaleItems(undefined)).toEqual([blankLine()]);
+    expect(linesFromSaleItems(null)).toEqual([blankLine()]);
   });
 });
 

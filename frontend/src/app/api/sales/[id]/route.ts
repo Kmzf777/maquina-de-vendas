@@ -9,7 +9,11 @@ export async function GET(
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("sales")
-    .select("*, leads(id, name, phone, company), deals(id, title)")
+    // sale_items embutido: ver comentário equivalente em /api/sales — este é o
+    // caminho do deep-link (/painel-vendas?sale_id=), que também abre o modal
+    // de edição e precisa dos itens já preenchidos.
+    .select("*, leads(id, name, phone, company), deals(id, title), sale_items(*)")
+    .order("ordem", { foreignTable: "sale_items", ascending: true })
     .eq("id", id)
     .maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
