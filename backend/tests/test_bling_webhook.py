@@ -121,9 +121,19 @@ def test_nao_faz_io_com_o_bling_dentro_do_request(client, gravados, monkeypatch)
 
 
 def test_router_registrado_no_app():
-    from app.main import app as fastapi_app
-    rotas = {getattr(r, "path", "") for r in fastapi_app.routes}
-    assert "/webhook/bling" in rotas
+    """Guarda em NIVEL DE FONTE — ver a mesma nota em test_bling_router.py."""
+    import inspect
+    import app.main as main_module
+
+    src = inspect.getsource(main_module)
+    assert "from app.bling.webhook_router import router as bling_webhook_router" in src
+    assert "app.include_router(bling_webhook_router)" in src
+
+
+def test_webhook_router_expoe_a_rota():
+    from app.bling.webhook_router import router as bling_webhook_router
+
+    assert "/webhook/bling" in {r.path for r in bling_webhook_router.routes}
 
 
 async def test_notify_worker_emite_no_dominio_bling_webhook(monkeypatch):

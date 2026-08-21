@@ -226,8 +226,27 @@ def test_oauth_callback_rejeita_state_invalido(monkeypatch):
 
 
 def test_router_registrado_no_app():
-    from app.main import app as fastapi_app
-    rotas = {getattr(r, "path", "") for r in fastapi_app.routes}
+    """O router precisa estar montado no app.
+
+    Guarda em NIVEL DE FONTE (mesma convencao de test_cadence_definition_api_2026_07_10):
+    inspecionar `app.main.app.routes` em runtime e fragil a poluicao de modulos entre
+    testes — o app pode chegar aqui parcialmente montado por outro teste, e ai a asserticao
+    falha SO no runner do CI (foi exatamente o que derrubou o deploy em 21/08/2026).
+
+    As rotas em si continuam cobertas pelos testes de comportamento deste arquivo."""
+    import inspect
+    import app.main as main_module
+
+    src = inspect.getsource(main_module)
+    assert "from app.bling.router import router as bling_router" in src
+    assert "app.include_router(bling_router)" in src
+
+
+def test_router_expoe_as_rotas_esperadas():
+    """Prefixo e paths do proprio router (objeto isolado, imune a poluicao de modulos)."""
+    from app.bling.router import router as bling_router
+
+    rotas = {r.path for r in bling_router.routes}
     assert "/api/bling/products" in rotas
     assert "/api/bling/orders" in rotas
     assert "/api/bling/status" in rotas
