@@ -97,6 +97,22 @@ async def list_products(q: str | None = Query(None), limit: int = Query(50, le=2
     return {"data": data}
 
 
+def _query_contacts(q: str | None, limit: int):
+    query = (get_supabase().table("bling_contacts")
+             .select("id, nome, fantasia, doc_digits, telefone_e164, celular_e164, "
+                     "email, situacao, endereco"))
+    if q:
+        alvo = f"%{_termo_seguro(q)}%"
+        query = query.or_(f"nome.ilike.{alvo},fantasia.ilike.{alvo},doc_digits.ilike.{alvo}")
+    return getattr(query.order("nome").limit(limit).execute(), "data", None) or []
+
+
+@router.get("/contacts/search")
+async def search_contacts(q: str | None = Query(None), limit: int = Query(20, le=100)):
+    """Busca no ESPELHO, nunca no Bling — o campo dispara a cada tecla."""
+    return {"data": await asyncio.to_thread(_query_contacts, q, limit)}
+
+
 def _query_payment_methods():
     rows = getattr(get_supabase().table("bling_payment_methods")
                    .select("*").order("descricao").execute(), "data", None) or []
@@ -250,6 +266,13 @@ async def link_contact_endpoint(lead_id: str, contact_id: int):
     """Confirma manualmente um candidato sugerido."""
     await contacts.link(lead_id, contact_id)
     return {"linked": True}
+
+
+@router.post("/contacts/unlink")
+async def unlink_contact_endpoint(lead_id: str):
+    """Desfaz o vinculo lead-contato (a proxima venda volta a resolucao por documento)."""
+    await contacts.unlink(lead_id)
+    return {"unlinked": True}
 
 
 # --------------------------------------------------------------------------

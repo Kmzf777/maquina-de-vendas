@@ -5,6 +5,7 @@ import pytest
 import app.bling.router as br
 from app.bling.contacts import Resolution
 from app.bling.errors import BlingServerError, BlingValidationError
+from app.bling import contacts
 
 
 class FakeQuery:
@@ -25,6 +26,10 @@ class FakeQuery:
 
     def or_(self, expr):
         self.captured["or"] = expr
+        return self
+
+    def update(self, values):
+        self.captured["update"] = values
         return self
 
     def ilike(self, c, v):
@@ -81,6 +86,29 @@ def test_products_sem_busca_nao_aplica_filtro_de_texto(monkeypatch):
     sb = FakeSupabase({"bling_products": []})
     monkeypatch.setattr(br, "get_supabase", lambda: sb)
     asyncio.run(br.list_products(q=None))
+    assert "or" not in sb.queries[0].captured
+
+
+def test_busca_de_contato_sanitiza_o_termo():
+    # Virgula e parentese COMPOEM a sintaxe do filtro `or` do PostgREST: sem
+    # neutralizar, o resto do texto vira filtro.
+    assert br._termo_seguro("Ltda, (ME)") == "Ltda   ME"
+
+
+def test_contacts_search_filtra_no_espelho(monkeypatch):
+    sb = FakeSupabase({"bling_contacts": [{"id": 1, "nome": "Empresa X"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    out = asyncio.run(br.search_contacts(q="empresa", limit=20))
+
+    assert out["data"][0]["nome"] == "Empresa X"
+    assert "empresa" in sb.queries[0].captured["or"].lower()
+
+
+def test_contacts_search_sem_termo_nao_aplica_filtro_de_texto(monkeypatch):
+    sb = FakeSupabase({"bling_contacts": []})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+    asyncio.run(br.search_contacts(q=None, limit=20))
     assert "or" not in sb.queries[0].captured
 
 
@@ -223,6 +251,31 @@ def test_oauth_callback_rejeita_state_invalido(monkeypatch):
     monkeypatch.setattr(br.auth, "consume_state", fake_consume)
     resp = asyncio.run(br.oauth_callback(code="c", state="ruim"))
     assert resp.status_code == 400
+
+
+def test_unlink_limpa_o_vinculo_do_lead(monkeypatch):
+    sb = FakeSupabase({})
+    monkeypatch.setattr(contacts, "get_supabase", lambda: sb)
+
+    asyncio.run(contacts.unlink("lead-1"))
+
+    q = sb.queries[0]
+    assert q.captured["update"] == {"bling_contact_id": None}
+    assert q.captured["eq"] == {"id": "lead-1"}
+
+
+def test_unlink_endpoint_devolve_unlinked(monkeypatch):
+    chamadas = []
+
+    async def fake_unlink(lead_id):
+        chamadas.append(lead_id)
+
+    monkeypatch.setattr(br.contacts, "unlink", fake_unlink)
+
+    resp = asyncio.run(br.unlink_contact_endpoint(lead_id="lead-1"))
+
+    assert resp == {"unlinked": True}
+    assert chamadas == ["lead-1"]
 
 
 def test_router_registrado_no_app():

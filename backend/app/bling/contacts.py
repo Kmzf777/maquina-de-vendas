@@ -278,6 +278,19 @@ async def link(lead_id: str, contact_id: int) -> None:
     await asyncio.to_thread(_link, lead_id, contact_id)
 
 
+def _unlink(lead_id: str) -> None:
+    (get_supabase().table("leads")
+     .update({"bling_contact_id": None}).eq("id", lead_id).execute())
+
+
+async def unlink(lead_id: str) -> None:
+    """Desfaz o vinculo. Verbo proprio, e nao `link` com nulo, porque desvincular
+    tem consequencia diferente: a proxima venda do lead volta a cair na resolucao
+    por documento, e um nulo acidental no payload de `link` nao pode ser capaz de
+    apagar vinculo em silencio."""
+    await asyncio.to_thread(_unlink, lead_id)
+
+
 # --------------------------------------------------------------------------
 # Criacao
 # --------------------------------------------------------------------------
