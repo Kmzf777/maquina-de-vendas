@@ -55,9 +55,15 @@ interface SaleCreateModalProps {
   currentUserEmail?: string;
   editingSale?: Sale | null;
   /**
-   * Modo Bling: o pedido é montado com itens do catálogo e lançado no ERP em vez
-   * de gravar produto em texto livre. Vem de `/api/bling/status`. Sem ela (ou
-   * falsa) o modal se comporta exatamente como sempre se comportou.
+   * Força o modo Bling, no qual o pedido é montado com itens do catálogo e
+   * lançado no ERP em vez de gravar produto em texto livre.
+   *
+   * **Omitir é o normal:** sem a prop, o modal consulta `/api/bling/status`
+   * pelo `useBlingStatus` e decide sozinho. Informar a prop VENCE a consulta —
+   * serve para forçar o modo sem depender de rede, não para uso corriqueiro.
+   *
+   * Cuidado: até 21/08/2026 omitir significava "modo legado", e como nenhum dos
+   * quatro chamadores passava a prop, o modo Bling era inalcançável em produção.
    */
   blingEnabled?: boolean;
   /** `condicao_pagamento` do contato no Bling, quando quem abre o modal a conhece. */
