@@ -88,12 +88,36 @@ def test_sync_meta_upserts_platform_meta(monkeypatch):
 
 
 def test_sync_all_aggregates(monkeypatch):
-    async def g(days=30): return 3
-    async def m(days=30): return 2
-    monkeypatch.setattr(s, "sync_google_ads_spend", g)
-    monkeypatch.setattr(s, "sync_meta_ads_spend", m)
+    async def g(days): return 3, None
+    async def m(days): return 2, None
+    monkeypatch.setattr(s, "_sync_google", g)
+    monkeypatch.setattr(s, "_sync_meta", m)
     import asyncio
-    assert asyncio.run(s.sync_all_ad_spend(days=30)) == {"google": 3, "meta": 2}
+    assert asyncio.run(s.sync_all_ad_spend(days=30)) == {"google": 3, "meta": 2, "errors": {}}
+
+
+def test_sync_all_reports_api_error_instead_of_silent_zero(monkeypatch):
+    """Erro de API não pode ficar indistinguível de "dia sem gasto" — foi assim que a versão
+    v21 morta do Google Ads passou dez dias sem sincronizar sem ninguém perceber."""
+    async def g(days): return 0, "HTTP 404 em v21 — versão descontinuada"
+    async def m(days): return 5, None
+    monkeypatch.setattr(s, "_sync_google", g)
+    monkeypatch.setattr(s, "_sync_meta", m)
+    import asyncio
+    out = asyncio.run(s.sync_all_ad_spend(days=30))
+    assert out["google"] == 0 and out["meta"] == 5
+    assert "404" in out["errors"]["google"] and "meta" not in out["errors"]
+
+
+def test_google_api_error_surfaces_as_error_not_empty(monkeypatch):
+    """fetch_campaign_spend levanta AdsFetchError; o sync converte em recibo, não em zero mudo."""
+    from app.campaigns.google_ads import AdsFetchError
+    monkeypatch.setattr(s, "google_ads_enabled", lambda: True)
+    async def boom(a, b): raise AdsFetchError("HTTP 404")
+    monkeypatch.setattr(s, "fetch_campaign_spend", boom)
+    import asyncio
+    n, err = asyncio.run(s._sync_google(7))
+    assert n == 0 and "404" in err
 
 
 def test_sync_endpoint_uses_sync_all(monkeypatch):

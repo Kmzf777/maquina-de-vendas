@@ -39,6 +39,9 @@ async def traffic_campaign_endpoint(channel: str, campaign: str, period: str = "
 
 @router.post("/sync-ads")
 async def sync_ads_endpoint():
-    """Dispara o sync de investimento (Google + Meta) sob demanda (admin-only na UI)."""
+    """Dispara o sync de investimento (Google + Meta) sob demanda (admin-only na UI).
+
+    `errors` sobe junto: a UI precisa separar "dia sem gasto" de "API caiu" — foi essa
+    confusão que deixou o Google Ads dez dias sem sincronizar sem ninguém perceber."""
     res = await sync_all_ad_spend(days=30)
-    return {**res, "synced": int(res.get("google", 0)) + int(res.get("meta", 0))}
+    return {**res, "synced": int(res.get("google", 0) or 0) + int(res.get("meta", 0) or 0)}

@@ -23,7 +23,7 @@ export default function TrafegoPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; tone: "ok" | "warn" | "erro" } | null>(null);
 
   // handler do seletor de mês (YYYY-MM) → converte p/ from/to do 1º ao último dia
   const onMonth = (ym: string) => {
@@ -34,22 +34,32 @@ export default function TrafegoPage() {
     setDateTo(`${ym}-${String(last).padStart(2, "0")}`);
   };
 
+  // Um erro de API NÃO pode se parecer com "dia sem gasto": foi exatamente essa confusão que
+  // deixou o Google Ads dez dias sem sincronizar (versão v21 descontinuada, 404 silencioso)
+  // enquanto o botão dizia "sem dados novos". O backend devolve `errors` por plataforma.
   const handleRefresh = async () => {
     setSyncing(true);
     try {
       const r = await fetch("/api/traffic/sync", { method: "POST" });
       const d = await r.json().catch(() => ({}));
-      if (typeof d.synced === "number") {
-        setToast(d.synced > 0 ? `${d.synced} linha(s) de investimento sincronizadas` : "Sem dados novos do Google Ads");
+      const errors: Record<string, string> = d?.errors ?? {};
+      const falhou = Object.keys(errors);
+      if (falhou.length > 0) {
+        const nomes = falhou.map((k) => (k === "google" ? "Google Ads" : "Meta Ads")).join(" e ");
+        setToast({ text: `${nomes} não respondeu: ${errors[falhou[0]]}`, tone: "erro" });
+      } else if (typeof d.synced === "number") {
+        setToast(d.synced > 0
+          ? { text: `${d.synced} linha(s) de investimento sincronizadas`, tone: "ok" }
+          : { text: "APIs responderam, mas não há gasto novo no período", tone: "warn" });
       } else {
-        setToast("Não foi possível sincronizar agora");
+        setToast({ text: "Não foi possível sincronizar agora", tone: "erro" });
       }
     } catch {
-      setToast("Não foi possível sincronizar agora");
+      setToast({ text: "Não foi possível sincronizar agora", tone: "erro" });
     } finally {
       setSyncing(false);
       setRefreshTick((t) => t + 1);
-      setTimeout(() => setToast(null), 6000);
+      setTimeout(() => setToast(null), 9000);
     }
   };
 
@@ -157,7 +167,17 @@ export default function TrafegoPage() {
         )}
       </div>
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#111111] text-white text-[13px] px-4 py-3 rounded-[6px] shadow-lg">{toast}</div>
+        // Chip escuro do sistema + um ponto de status: o estado vem da cor do ponto, não de um
+        // bloco colorido — mantém o tom sóbrio da página e ainda separa erro de "sem gasto".
+        <div className="fixed bottom-6 right-6 z-50 flex items-start gap-2.5 max-w-[420px] bg-[#111111] text-white text-[13px] px-4 py-3 rounded-[6px] shadow-lg">
+          <span
+            aria-hidden
+            className={`mt-[5px] w-[7px] h-[7px] rounded-full flex-shrink-0 ${
+              toast.tone === "erro" ? "bg-[#ff5a4d]" : toast.tone === "warn" ? "bg-[#ffb020]" : "bg-[#0bdf50]"
+            }`}
+          />
+          <span className="leading-[1.45]">{toast.text}</span>
+        </div>
       )}
     </div>
   );

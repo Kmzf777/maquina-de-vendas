@@ -166,6 +166,13 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                 referral: dict = msg.get("referral") or {}
                 ctwa_clid: str | None = referral.get("ctwa_clid")
                 ctwa_origem: str | None = origem_from_referral(referral)
+                # `source_id` so vem quando source_type == "ad": e o ID do anuncio. E o unico
+                # vinculo lead->campanha que a Meta manda no WhatsApp (nao ha utm_campaign no
+                # CTWA), e o mapa anuncio->campanha vem depois pela Marketing API.
+                meta_ad_id: str | None = (
+                    str(referral.get("source_id")) if referral.get("source_id")
+                    and str(referral.get("source_type", "ad")).lower() == "ad" else None
+                )
 
                 messages.append(IncomingMessage(
                     from_number=from_number,
@@ -182,6 +189,7 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     quoted_wamid=quoted_wamid,
                     ctwa_clid=ctwa_clid,
                     ctwa_origem=ctwa_origem,
+                    meta_ad_id=meta_ad_id,
                     bsuid=bsuid,
                     username=username,
                 ))

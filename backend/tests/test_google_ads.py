@@ -35,3 +35,17 @@ def test_fetch_campaign_spend_noop_when_disabled(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     import asyncio
     assert asyncio.run(g.fetch_campaign_spend("2026-08-01", "2026-08-31")) == []
+
+
+def test_api_version_is_not_a_sunset_one():
+    """v21 e anteriores foram descontinuadas: a URL responde 404 (HTML) e o gasto do Google
+    parava de sincronizar em silêncio. Guarda contra voltar para uma versão morta."""
+    assert g._DEFAULT_API_VERSION not in {"v17", "v18", "v19", "v20", "v21"}
+    assert int(g._DEFAULT_API_VERSION.lstrip("v")) >= 22
+
+
+def test_api_version_overridable_by_env(monkeypatch):
+    monkeypatch.setenv("GOOGLE_ADS_API_VERSION", "v23")
+    assert g._api_version() == "v23"
+    monkeypatch.delenv("GOOGLE_ADS_API_VERSION")
+    assert g._api_version() == g._DEFAULT_API_VERSION

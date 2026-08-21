@@ -98,14 +98,43 @@ no container do backend.
 3. Abra `/trafego` como admin → as linhas de canal **Google Ads** devem mostrar
    **Investimento** e **ROAS**.
 
-## Casamento campanha ↔ ROAS (importante)
+## Versão da API — a armadilha que já nos custou 10 dias
 
-O ROAS por linha só aparece quando o **`campaign_name` do Google Ads == `utm_campaign`** do
-lead (comparação sem espaços e sem diferenciar maiúsculas). Garanta que os links de anúncio
-que levam às landing pages usem `utm_campaign` **igual ao nome da campanha no Google Ads**.
-Se as campanhas usarem só auto-tagging (gclid, sem `utm_campaign` padronizado), o
-investimento entra na conta mas não casa por linha — padronize os UTMs para destravar o ROAS
-por campanha.
+O Google **descontinua cada versão da API ~1 ano depois do lançamento**. A versão morta não
+devolve um erro tratável: devolve **404 em HTML**. Como o client é fail-soft, isso virava
+"nenhum spend retornado" e o sync seguia reportando sucesso — em 11/08/2026 a v21 morreu e o
+investimento do Google ficou dez dias congelado sem ninguém perceber.
+
+Hoje: `_DEFAULT_API_VERSION` em `backend/app/campaigns/google_ads.py` (**v22**), e o env
+`GOOGLE_ADS_API_VERSION` sobrepõe sem redeploy quando a próxima cair.
+
+Para descobrir quais versões estão vivas:
+
+```bash
+curl -s "https://googleads.googleapis.com/\$discovery/rest?version=v22" | head -3
+# 404 com "Discovery document not found" = versão morta
+```
+
+O botão **Atualizar** do /trafego agora diferencia "API não respondeu" de "não há gasto no
+período" — se aparecer a mensagem de erro citando a versão, é isso.
+
+## Casamento campanha ↔ ROAS
+
+O relatório é ancorado na **campanha da plataforma**, não no slug de utm: cada campanha do
+Google Ads vira uma linha e recebe seu gasto **exatamente uma vez**. Vários `utm_campaign`
+que apontam para a mesma campanha (ex.: `terceirizacao` e `leads_search_terceirizacao`, ou os
+sufixos `_sitelink_NN`) somam leads na MESMA linha em vez de cobrarem o custo cheio cada um.
+
+O casamento usa os tokens do `utm_campaign` contra o nome da campanha, com o `utm_medium`
+como desempate (`medium=pmax` escolhe "PMAX | Atacado" quando "atacado" também caberia na
+campanha de Search). Sem casamento confiável o lead cai em **"(não atribuído)"** — nunca é
+chutado numa campanha, porque errar a campanha é pior que admitir que não sabe.
+
+Campanha que gastou e não gerou lead **continua aparecendo** com leads = 0: escondê-la
+subestimaria o investimento do canal e inflaria o ROAS.
+
+> Quer atribuição perfeita por linha? Padronize o `utm_campaign` com o nome da campanha, ou
+> adicione `{campaignid}` ao tracking template — o id é imune a renomeação de campanha.
 
 ## Diagnóstico rápido
 
@@ -113,5 +142,7 @@ por campanha.
 |---|---|
 | ROAS "—" em tudo | secrets ausentes, cron não rodou, ou `ad_spend` vazia |
 | ROAS "—" só em algumas campanhas | `utm_campaign` ≠ nome da campanha no Google Ads |
-| Sync imprime 0 linhas | developer token ainda em "Test access", janela sem gasto, ou credenciais inválidas |
+| Sync imprime 0 linhas | **versão da API descontinuada (404)**, developer token em "Test access", janela sem gasto, ou credenciais inválidas |
+| Investimento parado numa data | quase sempre versão da API morta — ver seção acima |
+| Linha "(não atribuído)" com leads | `utm_campaign` não casa com nenhuma campanha (ou casa com 2 e o `utm_medium` não desempata) |
 | Erro de auth no log | refresh token expirado (republicar o app OAuth) ou client id/secret errados |

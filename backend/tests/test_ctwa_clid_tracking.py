@@ -198,3 +198,39 @@ def test_get_or_create_lead_omits_ctwa_clid_when_absent():
         get_or_create_lead("5511999999999", name="Maria", channel="whatsapp")
 
     assert "ctwa_clid" not in captured["data"]
+
+
+# --------------------------------------------------------------------------- #
+# Parser — referral.source_id (o ANÚNCIO). É o único elo lead→campanha do Meta:
+# um lead de CTWA não traz utm_campaign nenhum, então sem isso o investimento do
+# Meta não gruda em campanha e o ROAS do /trafego fica vazio.
+# --------------------------------------------------------------------------- #
+
+def test_parse_ctwa_referral_extracts_meta_ad_id():
+    payload = _make_meta_payload({
+        "type": "text",
+        "text": {"body": "vi o anuncio"},
+        "referral": {
+            "source_type": "ad",
+            "source_id": "120250281981050163",
+            "source_url": "https://fb.me/abc",
+            "ctwa_clid": "clid_1",
+        },
+    })
+    msgs = parse_meta_webhook_payload(payload)
+    assert msgs[0].meta_ad_id == "120250281981050163"
+
+
+def test_parse_organic_message_has_no_meta_ad_id():
+    payload = _make_meta_payload({"type": "text", "text": {"body": "ola"}})
+    assert parse_meta_webhook_payload(payload)[0].meta_ad_id is None
+
+
+def test_parse_ignores_source_id_when_referral_is_not_an_ad():
+    """source_type='post' (post orgânico compartilhado) não tem campanha por trás."""
+    payload = _make_meta_payload({
+        "type": "text",
+        "text": {"body": "vi seu post"},
+        "referral": {"source_type": "post", "source_id": "123", "ctwa_clid": "c"},
+    })
+    assert parse_meta_webhook_payload(payload)[0].meta_ad_id is None

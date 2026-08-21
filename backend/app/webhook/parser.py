@@ -18,6 +18,7 @@ class IncomingMessage:
     quoted_wamid: str | None = None  # wamid of the message being replied to
     ctwa_clid: str | None = None  # Click-to-WhatsApp click id (Meta Ads referral) — base p/ CAPI
     ctwa_origem: str | None = None  # Origem do funil derivada do referral CTWA (atacado/terceirizacao)
+    meta_ad_id: str | None = None  # referral.source_id: o ANUNCIO do CTWA. Unico elo lead->campanha do Meta
     bsuid: str | None = None       # Business-Scoped User ID (from_user_id) — fallback identity
     username: str | None = None    # WhatsApp username (contacts.profile.username), if adopted
 

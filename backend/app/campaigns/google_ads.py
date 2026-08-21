@@ -11,6 +11,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+class AdsFetchError(RuntimeError):
+    """Falha REAL de API (404 de versão morta, token expirado, quota). Distinta de "sem gasto":
+    o sync precisa dessa diferença para o botão Atualizar reportar o erro em vez de "sem dados"."""
+
 _REQUIRED_ENV = (
     "GOOGLE_ADS_DEVELOPER_TOKEN",
     "GOOGLE_ADS_CLIENT_ID",
@@ -19,8 +24,16 @@ _REQUIRED_ENV = (
     "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
     "GOOGLE_ADS_CUSTOMER_ID",
 )
-_API_VERSION = "v21"
+# Versão da API do Google Ads. O Google faz sunset de cada versão ~1 ano depois do lançamento
+# e a versão morta responde 404 (HTML, não JSON) — o que o fail-soft daqui transformava em
+# "sem investimento" silencioso. Manter atualizada; `GOOGLE_ADS_API_VERSION` permite corrigir
+# em produção via env sem redeploy quando a próxima virar.
+_DEFAULT_API_VERSION = "v22"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+def _api_version() -> str:
+    return os.getenv("GOOGLE_ADS_API_VERSION") or _DEFAULT_API_VERSION
 
 
 def google_ads_enabled() -> bool:
@@ -80,7 +93,7 @@ async def fetch_campaign_spend(date_from: str, date_to: str) -> list[dict[str, A
         return []
     customer_id = (os.getenv("GOOGLE_ADS_CUSTOMER_ID") or "").replace("-", "")
     login_cid = (os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").replace("-", "")
-    url = f"https://googleads.googleapis.com/{_API_VERSION}/customers/{customer_id}/googleAds:search"
+    url = f"https://googleads.googleapis.com/{_api_version()}/customers/{customer_id}/googleAds:search"
     headers = {
         "Authorization": f"Bearer {token}",
         "developer-token": os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN") or "",
@@ -107,6 +120,13 @@ async def fetch_campaign_spend(date_from: str, date_to: str) -> list[dict[str, A
                 if not page_token:
                     break
         return rows
+    except httpx.HTTPStatusError as exc:
+        # 404 aqui quase sempre = versão da API descontinuada (o Google devolve HTML, não JSON).
+        detail = f"HTTP {exc.response.status_code} em {_api_version()}"
+        if exc.response.status_code == 404:
+            detail += " — versão da API provavelmente descontinuada (ver GOOGLE_ADS_API_VERSION)"
+        logger.error("google_ads: fetch_campaign_spend falhou: %s", detail)
+        raise AdsFetchError(detail) from exc
     except Exception as exc:
         logger.error("google_ads: fetch_campaign_spend falhou: %s", exc)
-        return []
+        raise AdsFetchError(str(exc)) from exc

@@ -415,6 +415,7 @@ def is_lead_blacklisted(lead_id: str) -> bool:
 # só estas chaves de `tracking` são gravadas, evitando injeção de colunas arbitrárias.
 TRACKING_COLUMNS: tuple[str, ...] = (
     "ctwa_clid",     # Click-to-WhatsApp (anúncio → WhatsApp)
+    "meta_ad_id",    # ID do anúncio CTWA (referral.source_id) — liga o lead à campanha Meta
     "fbclid",        # Facebook click id (anúncio → site/LP)
     "gclid",         # Google click id (anúncio → site/LP)
     "utm_source",

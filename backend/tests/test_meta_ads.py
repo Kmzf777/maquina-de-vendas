@@ -34,3 +34,21 @@ def test_fetch_campaign_spend_noop_when_disabled(monkeypatch):
 def test_normalize_act_id():
     assert m._act("123456") == "act_123456"
     assert m._act("act_123456") == "act_123456"
+
+
+def test_parse_ad_campaign_rows_maps_ad_to_campaign():
+    data = [
+        {"ad_id": "120250281981050163", "campaign_id": "120250281981040163", "campaign_name": "PL | WA"},
+        {"ad_id": "120250281981050163", "campaign_id": "120250281981040163", "campaign_name": "PL | WA"},
+        {"ad_id": "999", "campaign_id": "", "campaign_name": "sem campanha"},
+    ]
+    out = m.parse_ad_campaign_rows(data)
+    assert out == [{"ad_id": "120250281981050163", "campaign_id": "120250281981040163",
+                    "campaign_name": "PL | WA"}]
+
+
+def test_fetch_ad_campaign_map_noop_when_disabled(monkeypatch):
+    for k in ("META_ADS_ACCESS_TOKEN", "META_ACCESS_TOKEN", "META_AD_ACCOUNT_ID"):
+        monkeypatch.delenv(k, raising=False)
+    import asyncio
+    assert asyncio.run(m.fetch_ad_campaign_map("2026-08-01", "2026-08-31")) == []

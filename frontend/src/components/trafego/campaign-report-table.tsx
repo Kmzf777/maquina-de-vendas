@@ -87,7 +87,18 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
                 onClick={() => onRowClick(r)}
               >
                 <TableCell><ChannelBadge channel={r.channel} /></TableCell>
-                <TableCell className="text-[14px] text-[#111111] font-medium max-w-[240px] truncate">{r.campaign}</TableCell>
+                {/* "(não atribuído)" é sobra de tagueamento, não campanha: entra apagado para
+                    não competir com as campanhas reais na leitura da tabela. */}
+                <TableCell
+                  title={r.campaign}
+                  className={`text-[14px] max-w-[240px] truncate ${
+                    r.campaign.startsWith("(não atribuído)")
+                      ? "text-[#7b7b78] italic"
+                      : "text-[#111111] font-medium"
+                  }`}
+                >
+                  {r.campaign}
+                </TableCell>
                 <TableCell className="text-right text-[14px] text-[#111111] tabular-nums">{fmtInt(r.leads)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.conversas)}</TableCell>
                 <TableCell className="text-right text-[14px] text-[#7b7b78] tabular-nums">{fmtInt(r.closer)}</TableCell>

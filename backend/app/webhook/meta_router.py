@@ -38,6 +38,7 @@ def _register_lead(
     ctwa_clid: str | None = None,
     ctwa_origem: str | None = None,
     bsuid: str | None = None,
+    meta_ad_id: str | None = None,
 ) -> None:
     """Ensure the lead exists in the CRM the moment they contact us (BackgroundTask).
 
@@ -82,6 +83,14 @@ def _register_lead(
             update_lead(lead["id"], ctwa_clid=ctwa_clid, traffic_type="paid")
     except Exception as exc:
         logger.warning("Failed to capture ctwa_clid=%s for lead %s: %s", ctwa_clid, lead.get("id"), exc)
+    # Anuncio CTWA (referral.source_id): e o que da campanha ao lead do Meta no /trafego.
+    # Last-touch como o ctwa_clid — o clique mais recente e o que explica esta conversa.
+    # Fail-soft: se a coluna ainda nao existe (migration pendente), so loga.
+    try:
+        if lead and meta_ad_id and lead.get("meta_ad_id") != meta_ad_id:
+            update_lead(lead["id"], meta_ad_id=meta_ad_id, traffic_type="paid")
+    except Exception as exc:
+        logger.warning("Failed to capture meta_ad_id=%s for lead %s: %s", meta_ad_id, lead.get("id"), exc)
     # Atribuição do funil (Opção B): carimba origem do anúncio CTWA quando ainda não há
     # origem no lead. First-touch vence — não sobrescreve uma origem já capturada (LP/CTWA
     # anterior). Mensagens orgânicas trazem ctwa_origem=None e são no-op.
@@ -583,7 +592,8 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
 
         # Register lead immediately — guarantees CRM entry before buffer flushes.
         # ctwa_clid (se presente) vincula o lead ao clique do anúncio Meta Ads (CTWA).
-        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid, msg.ctwa_origem, msg.bsuid)
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid,
+                                  msg.ctwa_origem, msg.bsuid, msg.meta_ad_id)
 
         # CA#1: o read receipt (tique azul) NÃO é mais disparado aqui na ingestão — isso
         # marcava a mensagem como lida instantaneamente (tique de robô). Agora o mark_read

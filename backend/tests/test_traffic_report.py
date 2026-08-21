@@ -170,6 +170,7 @@ import app.campaigns.traffic_report as tr
 class _FakeQuery:
     def __init__(self, rows):
         self._rows = rows
+        self._range = None
 
     def select(self, *a, **k): return self
     def gte(self, *a, **k): return self
@@ -178,9 +179,21 @@ class _FakeQuery:
     def is_(self, *a, **k): return self
     def in_(self, *a, **k): return self
     def eq(self, *a, **k): return self
+    def range(self, start, end):
+        # Fatia de verdade (inclusiva nas duas pontas, como o PostgREST) — um fake que
+        # ignorasse o range faria a paginação parecer certa mesmo quebrada.
+        self._range = (start, end)
+        return self
+
     def execute(self):
         class R: pass
-        r = R(); r.data = self._rows; return r
+        r = R()
+        rows = self._rows
+        if self._range is not None:
+            start, end = self._range
+            rows = rows[start:end + 1]
+        r.data = rows
+        return r
 
 
 class _FakeSupabase:
@@ -374,7 +387,7 @@ def test_build_roas_only_for_google_rows():
     leads = [_lead("a", gclid="1", utm_campaign="Atacado"),
              _lead("b", fbclid="2", utm_campaign="MetaCamp")]
     sales = {"a": {"count": 1, "value": 300.0}, "b": {"count": 1, "value": 100.0}}
-    spend_by_channel = {"Google Ads": {"atacado": 100.0}}  # normalizado (trim+lower)
+    spend_by_channel = {"Google Ads": [{"campaign_id": "c1", "campaign_name": "Atacado", "cost": 100.0}]}
     out = _bcr(leads, set(), set(), sales, mode="lead", period="30d", spend_by_channel=spend_by_channel)
     rows = {(r["channel"], r["campaign"]): r for r in out["rows"]}
     g = rows[("Google Ads", "Atacado")]
@@ -398,11 +411,15 @@ def test_build_roas_google_and_meta_rows():
     leads = [_lead("a", gclid="1", utm_campaign="atacado"),
              _lead("b", fbclid="2", utm_campaign="pl_wa_01")]
     sales = {"a": {"count": 1, "value": 300.0}, "b": {"count": 1, "value": 200.0}}
-    spend_by_channel = {"Google Ads": {"atacado": 100.0}, "Meta Ads": {"pl_wa_01": 50.0}}
+    spend_by_channel = {
+        "Google Ads": [{"campaign_id": "c1", "campaign_name": "Atacado", "cost": 100.0}],
+        "Meta Ads": [{"campaign_id": "m1", "campaign_name": "pl_wa_01", "cost": 50.0}],
+    }
     out = build_campaign_report(leads, set(), set(), sales, mode="lead", period="30d",
                                 spend_by_channel=spend_by_channel)
     rows = {(r["channel"], r["campaign"]): r for r in out["rows"]}
-    g = rows[("Google Ads", "atacado")]
+    # O rótulo agora é o nome da campanha na plataforma, não o slug de utm.
+    g = rows[("Google Ads", "Atacado")]
     assert g["investimento"] == 100.0 and g["roas"] == 3.0
     mrow = rows[("Meta Ads", "pl_wa_01")]
     assert mrow["investimento"] == 50.0 and mrow["roas"] == 4.0
@@ -462,3 +479,144 @@ def test_campaign_detail_end_to_end(monkeypatch):
 def test_router_exposes_campaign_path():
     from app.campaigns.traffic_router import router
     assert "/api/traffic/campaign" in {r.path for r in router.routes}
+
+
+# ---------------------------------------------------------------------------------------
+# Atribuição de investimento ancorada na CAMPANHA (regressões dos bugs do /trafego).
+# ---------------------------------------------------------------------------------------
+
+_GADS = [
+    {"campaign_id": "c_terc", "campaign_name": "Leads-Search | Terceirização | 20.03.24", "cost": 948.10},
+    {"campaign_id": "c_atac", "campaign_name": "Leads-Search | Atacado | 12.07.22 | LP Vídeo", "cost": 692.40},
+    {"campaign_id": "c_pmax", "campaign_name": "PMAX | Atacado", "cost": 654.50},
+]
+
+
+def _gads_report(leads):
+    return _bcr(leads, set(), set(), {}, mode="lead", period="30d",
+                spend_by_channel={"Google Ads": _GADS})
+
+
+def test_spend_not_duplicated_across_utm_variants():
+    """Dois slugs da MESMA campanha viram UMA linha e o custo entra uma vez só.
+
+    Era o bug principal: 'terceirizacao' e 'leads_search_terceirizacao' cobravam R$ 948,10
+    cada um, então o investimento do Google aparecia inflado (R$ 5.974,81 vs R$ 2.295,00)."""
+    leads = [_lead("a", gclid="1", utm_campaign="terceirizacao"),
+             _lead("b", gclid="2", utm_campaign="leads_search_terceirizacao")]
+    out = _gads_report(leads)
+    terc = [r for r in out["rows"] if r["campaign"].startswith("Leads-Search | Terceiriza")]
+    assert len(terc) == 1, "slugs da mesma campanha têm de colapsar numa linha"
+    assert terc[0]["leads"] == 2
+    assert terc[0]["investimento"] == 948.10
+
+
+def test_channel_investment_equals_real_platform_spend():
+    """Invariante central: o subtotal do canal é EXATAMENTE o gasto da plataforma na janela."""
+    leads = [_lead("a", gclid="1", utm_campaign="terceirizacao"),
+             _lead("b", gclid="2", utm_campaign="leads_search_terceirizacao"),
+             _lead("c", gclid="3", utm_campaign="atacado_video"),
+             _lead("d", gclid="4", utm_campaign="lp_video"),
+             _lead("e", gclid="5", utm_campaign="leads_search_atacado_sitelink_02"),
+             _lead("f", gclid="6", utm_campaign="pmax_atacado_sitelink_03")]
+    out = _gads_report(leads)
+    assert out["channel_subtotals"]["Google Ads"]["investimento"] == 2295.00
+    assert sum(r["investimento"] for r in out["rows"]) == 2295.00
+
+
+def test_utm_medium_breaks_ambiguity_instead_of_zeroing():
+    """'atacado' cabe na Search e na PMAX; o medium decide. Antes virava investimento 0,00."""
+    leads = [_lead("a", gclid="1", utm_campaign="atacado", utm_medium="pmax")]
+    out = _gads_report(leads)
+    row = next(r for r in out["rows"] if r["leads"] == 1)
+    assert row["campaign"] == "PMAX | Atacado"
+    assert row["investimento"] == 654.50
+
+
+def test_campaign_with_spend_and_no_leads_still_appears():
+    """Campanha que gastou sem gerar lead não pode sumir — sumir subestima o investimento."""
+    out = _gads_report([_lead("a", gclid="1", utm_campaign="terceirizacao")])
+    pmax = next(r for r in out["rows"] if r["campaign"] == "PMAX | Atacado")
+    assert pmax["leads"] == 0 and pmax["investimento"] == 654.50
+    assert pmax["roas"] == 0.0
+
+
+def test_unresolved_slug_goes_to_unattributed_row_with_no_spend():
+    """Sem casamento confiável, o lead vai para '(não atribuído)' — nunca para a campanha errada."""
+    out = _gads_report([_lead("a", gclid="1", utm_campaign="campanha_que_nao_existe")])
+    un = next(r for r in out["rows"] if r["campaign"].startswith("(não atribuído)"))
+    assert un["leads"] == 1 and un["investimento"] == 0.0
+    assert "campanha_que_nao_existe" in un["campaign"]
+
+
+def test_meta_lead_attributed_by_ad_id():
+    """Lead de CTWA não tem utm_campaign: a campanha vem do anúncio (meta_ad_id)."""
+    meta = [{"campaign_id": "m_pl", "campaign_name": "PL | WA | 10.07.26", "cost": 674.98}]
+    leads = [_lead("a", ctwa_clid="x", utm_campaign="")]
+    out = _bcr(leads, set(), set(), {"a": {"count": 1, "value": 1000.0}}, mode="lead", period="30d",
+               spend_by_channel={"Meta Ads": meta}, campaign_id_by_lead={"a": "m_pl"})
+    row = next(r for r in out["rows"] if r["campaign"] == "PL | WA | 10.07.26")
+    assert row["leads"] == 1 and row["investimento"] == 674.98
+    assert row["roas"] == round(1000.0 / 674.98, 2)
+
+
+def test_meta_channel_roas_correct_even_without_per_lead_attribution():
+    """Sem meta_ad_id (leads antigos) a campanha fica '(não atribuído)', mas o ROAS do CANAL
+    continua certo — o investimento vem do lado da campanha, não do lead."""
+    meta = [{"campaign_id": "m_pl", "campaign_name": "PL | WA", "cost": 100.0},
+            {"campaign_id": "m_br", "campaign_name": "Branding", "cost": 100.0}]
+    leads = [_lead("a", ctwa_clid="x", utm_campaign="")]
+    out = _bcr(leads, set(), set(), {"a": {"count": 1, "value": 400.0}}, mode="lead", period="30d",
+               spend_by_channel={"Meta Ads": meta})
+    sub = out["channel_subtotals"]["Meta Ads"]
+    assert sub["investimento"] == 200.0
+    assert sub["roas"] == 2.0
+
+
+def test_resolve_campaign_id_prefers_exact_name():
+    campaigns = tr._index_campaigns([
+        {"campaign_id": "a", "campaign_name": "Atacado", "cost": 1.0},
+        {"campaign_id": "b", "campaign_name": "Atacado | LP", "cost": 1.0},
+    ])
+    assert tr.resolve_campaign_id("atacado", "", campaigns) == "a"
+
+
+def test_resolve_campaign_id_returns_none_when_truly_ambiguous():
+    campaigns = tr._index_campaigns([
+        {"campaign_id": "a", "campaign_name": "Search | Atacado", "cost": 1.0},
+        {"campaign_id": "b", "campaign_name": "Display | Atacado", "cost": 1.0},
+    ])
+    assert tr.resolve_campaign_id("atacado", "", campaigns) is None
+
+
+def test_resolve_campaign_id_ignores_sitelink_and_dates():
+    campaigns = tr._index_campaigns(
+        [{"campaign_id": "a", "campaign_name": "PMAX | Atacado", "cost": 1.0}])
+    assert tr.resolve_campaign_id("pmax_atacado_sitelink_03", "", campaigns) == "a"
+
+
+def test_fetch_all_pages_past_the_postgrest_cap():
+    """O PostgREST corta em 1.000 linhas sem avisar; _fetch_all tem de percorrer tudo.
+
+    Era o motivo de o /trafego reportar 1.000 leads numa janela que tinha 2.324."""
+    rows = [{"id": str(i)} for i in range(2324)]
+    calls = {"n": 0}
+
+    def build():
+        calls["n"] += 1
+        return _FakeQuery(rows)
+
+    out = tr._fetch_all(build)
+    assert len(out) == 2324
+    assert calls["n"] == 3  # 1000 + 1000 + 324
+
+
+def test_traffic_report_reads_every_lead_not_just_first_page(monkeypatch):
+    tables = {
+        "leads": [{"id": str(i), "gclid": "g", "utm_campaign": "black",
+                   "created_at": "2026-08-01T00:00:00Z"} for i in range(1500)],
+        "conversations": [], "deals": [], "pipeline_stages": [], "sales": [], "ad_spend": [],
+    }
+    monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
+    out = tr.traffic_report(period="30d", mode="lead")
+    assert out["total"]["leads"] == 1500

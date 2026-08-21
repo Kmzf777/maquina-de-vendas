@@ -70,6 +70,23 @@ campanha no Meta** (comparação sem acento/número, com fuzzy por tokens). A ge
 Gerenciador do Meta** contenha essas palavras-chave (ex.: campanha "Atacado WhatsApp" casa com
 `atacado_wa`). Nomes muito diferentes não casam → o gasto entra na conta mas não por linha.
 
+## Atribuição de campanha no CTWA (Click-to-WhatsApp)
+
+Um lead que chega por CTWA **não tem `utm_campaign` nenhum** — o WhatsApp não carrega UTMs.
+O que a Meta manda no webhook é `referral.source_id`, que é o **ID do anúncio**. Por isso a
+atribuição do Meta funciona em dois passos:
+
+1. o webhook carimba `leads.meta_ad_id` a partir de `referral.source_id`;
+2. o sync do Meta Ads popula `meta_ad_campaigns` (anúncio → campanha) via insights `level=ad`.
+
+Sem esses dois, os leads do Meta caem todos em **"(não atribuído)"**. Isso **não** quebra o
+investimento nem o ROAS do canal: o gasto é ancorado na campanha, então o subtotal "Meta Ads"
+bate com o Gerenciador de qualquer jeito — só a quebra por campanha é que fica pendente.
+
+> Leads anteriores a 21/08/2026 não têm `meta_ad_id` (o webhook descartava o `source_id`), e
+> não há como recuperar isso pela API — o `ctwa_clid` não é reversível. A atribuição por
+> campanha do Meta passa a valer para os leads novos.
+
 ## Diagnóstico rápido
 
 | Sintoma | Causa provável |
@@ -78,3 +95,5 @@ Gerenciador do Meta** contenha essas palavras-chave (ex.: campanha "Atacado What
 | Sync Meta volta 0 linhas | token sem `ads_read`, conta errada, ou sem gasto na janela |
 | Erro de auth no log | token inválido/revogado, ou o App sem acesso à Marketing API |
 | ROAS "—" só em algumas campanhas | `utm_campaign` não casa com o nome da campanha no Meta |
+| Todos os leads Meta em "(não atribuído)" | migration `20260821` não aplicada, ou leads antigos sem `meta_ad_id` |
+| Subtotal do canal certo, linhas sem lead | esperado enquanto o `meta_ad_id` não acumula (ver seção acima) |
