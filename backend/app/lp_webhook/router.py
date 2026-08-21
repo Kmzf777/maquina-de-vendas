@@ -21,6 +21,10 @@ class LandingPagePayload(BaseModel):
     utm_source: str = ""
     utm_medium: str = ""
     utm_campaign: str = ""
+    # ID do anuncio do Meta ({{ad.id}} na URL do anuncio). Resolve a CAMPANHA de forma exata
+    # via meta_ad_campaigns, sem depender do utm_campaign casar com o nome da campanha —
+    # e imune a renomeacao de campanha no Gerenciador.
+    meta_ad_id: str = ""
 
 
 class LpWebhookSettings(BaseModel):
@@ -45,6 +49,7 @@ async def landing_page_webhook(payload: LandingPagePayload, request: Request):
         "utm_source": payload.utm_source,
         "utm_medium": payload.utm_medium,
         "utm_campaign": payload.utm_campaign,
+        "meta_ad_id": payload.meta_ad_id,
     }
     return await process_landing_page_lead(data, redis)
 

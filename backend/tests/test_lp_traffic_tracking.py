@@ -84,3 +84,48 @@ def test_persist_lead_tracking_does_not_overwrite_with_empty():
             {"gclid": "", "utm_campaign": "   "},
         )
     upd.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# meta_ad_id vindo da LP — o ID do anúncio ({{ad.id}}) resolve a campanha do Meta
+# de forma exata, sem depender do utm_campaign casar com o nome da campanha.
+# --------------------------------------------------------------------------- #
+
+def test_lp_payload_aceita_meta_ad_id():
+    """O router monta o dict de rastreio a partir do modelo; se o campo não existir
+    no modelo, o valor enviado pela LP é descartado silenciosamente."""
+    from app.lp_webhook.router import LandingPagePayload
+
+    p = LandingPagePayload(whatsapp="5511999999999", meta_ad_id="120250281981050163")
+    assert p.meta_ad_id == "120250281981050163"
+
+
+def test_meta_ad_id_esta_na_whitelist_de_rastreio():
+    from app.leads.service import TRACKING_COLUMNS
+
+    assert "meta_ad_id" in TRACKING_COLUMNS
+
+
+def test_get_or_create_lead_grava_meta_ad_id():
+    captured = {}
+
+    def fake_insert(data):
+        captured["data"] = data
+        m = MagicMock()
+        m.execute.return_value = MagicMock(data=[{"id": "L9", **data}])
+        return m
+
+    mock_select = MagicMock()
+    mock_select.eq.return_value.execute.return_value = MagicMock(data=[])
+    mock_table = MagicMock()
+    mock_table.select.return_value = mock_select
+    mock_table.insert.side_effect = fake_insert
+    mock_sb = MagicMock()
+    mock_sb.table.return_value = mock_table
+
+    with patch("app.leads.service.get_supabase", return_value=mock_sb):
+        from app.leads.service import get_or_create_lead
+        get_or_create_lead("5511988887777", name="Joao",
+                           tracking={"fbclid": "fb_9", "meta_ad_id": "120250785252590163"})
+
+    assert captured["data"]["meta_ad_id"] == "120250785252590163"
