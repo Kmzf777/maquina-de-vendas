@@ -25,7 +25,20 @@ export async function PATCH(
   const body = await request.json();
   const supabase = await getServiceSupabase();
 
-  const ALLOWED = ["product", "value", "sold_at", "sold_by", "notes", "deal_id", "conversation_id"];
+  // `bling_divergent`/`bling_divergence` entram aqui a partir da edicao em modo
+  // Bling (Fase E): o CRM grava a alteracao mesmo quando o Bling recusa, e essas
+  // colunas tornam a divergencia auditavel em vez de silenciosa.
+  const ALLOWED = [
+    "product",
+    "value",
+    "sold_at",
+    "sold_by",
+    "notes",
+    "deal_id",
+    "conversation_id",
+    "bling_divergent",
+    "bling_divergence",
+  ];
   const updates = Object.fromEntries(
     Object.entries(body).filter(([k]) => ALLOWED.includes(k))
   );

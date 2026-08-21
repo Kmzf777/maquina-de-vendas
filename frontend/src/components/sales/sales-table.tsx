@@ -111,6 +111,19 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
                   <span className="text-[12px]" style={{ color: TONE_COLOR[situacao.tone] }}>
                     {situacao.label}
                   </span>
+                  {sale.bling_divergent && (
+                    <span
+                      title={
+                        sale.bling_divergence?.fields.length
+                          ? `Divergente do Bling: ${sale.bling_divergence.fields.join(", ")}`
+                          : "Divergente do Bling"
+                      }
+                      className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-[4px] border"
+                      style={{ color: TONE_COLOR.danger, borderColor: TONE_COLOR.danger }}
+                    >
+                      DIVERGENTE
+                    </span>
+                  )}
                 </td>
                 <td className="py-3 px-3 text-[#7b7b78] max-w-[140px] truncate">{sale.sold_by || "—"}</td>
                 <td className="py-3 px-3">

@@ -418,6 +418,15 @@ export interface Sale {
   status?: "registrada" | "cancelada" | "pendente_bling";
   payment_method_id?: number | null;
   payment_terms?: string | null;
+  // Divergencia entre o que o CRM guarda e o que o Bling aceitou, quando uma
+  // edicao foi salva so no CRM porque o Bling recusou (20260821_sales_divergencia_bling.sql).
+  bling_divergent?: boolean | null;
+  bling_divergence?: {
+    fields: string[];
+    bling: Record<string, unknown>;
+    crm: Record<string, unknown>;
+    at: string;
+  } | null;
   leads?: { id: string; name: string | null; phone: string; company: string | null } | null;
   deals?: { id: string; title: string } | null;
 }

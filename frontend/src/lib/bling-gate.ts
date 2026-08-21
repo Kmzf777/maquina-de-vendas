@@ -7,6 +7,11 @@
  * conserta (venda avulsa entrando no CRM sem ninguem perceber), so que
  * intermitente. Falha de rede e transitoria; venda gravada fora do ERP e
  * permanente.
+ *
+ * `isEditing` NAO influencia mais o modo (Fase E): editar uma venda agora pode
+ * significar um PUT no pedido do Bling, entao confirmar a conexao importa tanto
+ * quanto na criacao. Ate 21/08/2026 `isEditing` forcava modo legado aqui — a
+ * edicao era PATCH puramente local e o ERP nunca era tocado.
  */
 export type BlingMode = "loading" | "bling" | "legacy" | "error";
 
@@ -23,11 +28,7 @@ export interface BlingGate {
   message?: string;
 }
 
-export function blingGate({ loading, error, enabled, isEditing }: BlingGateInput): BlingGate {
-  // Editar venda e PATCH local: nao toca no ERP nesta fase, entao nem o
-  // carregamento nem a falha do status importam.
-  if (isEditing) return { mode: "legacy", canSubmit: true };
-
+export function blingGate({ loading, error, enabled }: BlingGateInput): BlingGate {
   if (loading) return { mode: "loading", canSubmit: false };
 
   if (error) {

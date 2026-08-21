@@ -28,6 +28,8 @@ import {
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
+import { productSummary } from "@/lib/bling";
+import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
 
 interface LeadDeal {
   id: string;
@@ -96,8 +98,9 @@ export function SaleCreateModal({
   onSaved,
 }: SaleCreateModalProps) {
   const isEditing = !!editingSale;
-  // Editar venda continua sendo PATCH em `sales`: o pedido já existe no ERP e
-  // não se refaz por aqui.
+  // Editar venda com o Bling ligado agora dá PUT no pedido do ERP (Fase E) —
+  // ver `blingMode` abaixo, que também exige que a venda tenha um pedido
+  // (`bling_order_id`) para ter o que alterar.
   const blingStatus = useBlingStatus();
   const gate = blingGate({
     loading: blingStatus.loading,
@@ -107,11 +110,16 @@ export function SaleCreateModal({
     enabled: blingEnabled ?? blingStatus.enabled,
     isEditing,
   });
-  const blingMode = gate.mode === "bling";
+  // Editar exige mais que o Bling estar ligado: só faz sentido dar PUT numa
+  // venda que já tem pedido no ERP. Vendas de antes desta integração (ou
+  // registradas em modo legado) não têm `bling_order_id` — continuam editando
+  // local mesmo com o Bling ligado, porque não há pedido para alterar.
+  const blingEditable = !isEditing || !!editingSale?.bling_order_id;
+  const blingMode = gate.mode === "bling" && blingEditable;
   // Layout: `loading` ainda nao sabe o modo, mas abrir pequeno e pular para
   // grande quando o status chega e pior do que abrir grande. Tratar loading
   // como Bling aqui evita o salto de tamanho.
-  const blingLayout = gate.mode === "bling" || gate.mode === "loading";
+  const blingLayout = (gate.mode === "bling" || gate.mode === "loading") && blingEditable;
 
   const [selectedLeadId, setSelectedLeadId] = useState(
     editingSale?.lead_id ?? leadId ?? ""
@@ -152,6 +160,16 @@ export function SaleCreateModal({
   // depois do 409 criaria um deal novo para a mesma venda.
   const [createdDealId, setCreatedDealId] = useState<string | null>(null);
   const orderPayloadRef = useRef<Record<string, unknown> | null>(null);
+
+  // ── edição em modo Bling (PUT no pedido) ────────────────────────────────
+  // 422: o Bling recusou a alteração. Fica pendente até o vendedor decidir —
+  // "Salvar só no CRM" marca divergência; cancelar mantém o pedido como está
+  // nos dois lados.
+  const [pendingBlingUpdate, setPendingBlingUpdate] = useState<{
+    message: string;
+    payload: OrderPayloadResult["payload"];
+    total: number;
+  } | null>(null);
 
   // ── initial data fetches ─────────────────────────────────────────────────
   useEffect(() => {
@@ -275,16 +293,159 @@ export function SaleCreateModal({
     if (orderPayloadRef.current) void postBlingOrder(orderPayloadRef.current);
   }, [postBlingOrder]);
 
+  /**
+   * PATCH local que fecha a edição em modo Bling, tanto no caminho feliz (200,
+   * sem divergência) quanto na decisão de "salvar só no CRM" (422, marcando
+   * divergência). `product`/`value` vêm dos itens do pedido, não dos campos de
+   * texto livre — esses ficam escondidos enquanto `blingMode` está ativo.
+   */
+  const saveLocalAfterBlingPut = useCallback(
+    async (
+      payload: OrderPayloadResult["payload"],
+      total: number,
+      divergencia: { bling_divergent: boolean; bling_divergence: Divergence | null }
+    ) => {
+      setSaving(true);
+      setError(null);
+      const res = await fetch(`/api/sales/${editingSale!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product: productSummary(payload.items),
+          value: total,
+          sold_at: new Date(soldAt + "T12:00:00").toISOString(),
+          sold_by: soldBy && soldBy !== "__none__" ? soldBy : null,
+          notes: notes.trim() || null,
+          ...divergencia,
+        }),
+      });
+      setSaving(false);
+      if (!res.ok) {
+        const msg = res.headers.get("content-type")?.includes("json")
+          ? (await res.json().catch(() => ({}))).error
+          : null;
+        setError(msg ?? "Erro ao salvar venda");
+        return;
+      }
+      onSaved();
+      onClose();
+    },
+    [editingSale, soldAt, soldBy, notes, onSaved, onClose]
+  );
+
+  /**
+   * PUT em `/api/bling/orders/{bling_order_id}` e trata os quatro desfechos:
+   * 200 alterado (grava local, limpa divergência), 202 erro transitório (não
+   * salva nada — é retentativa, não recusa), 409 contato não resolvido, 422
+   * recusa de validação (fica pendente até o vendedor decidir).
+   */
+  const putBlingOrder = useCallback(
+    async (payload: OrderPayloadResult["payload"], total: number) => {
+      setSaving(true);
+      setError(null);
+
+      const orderId = editingSale?.bling_order_id;
+      const res = await fetch(`/api/bling/orders/${orderId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      const body: Record<string, unknown> = res
+        ? await res.json().catch(() => ({}))
+        : {};
+      setSaving(false);
+
+      if (!res) {
+        setError("Não foi possível falar com o servidor. Tente de novo.");
+        return;
+      }
+
+      if (res.status === 200) {
+        await saveLocalAfterBlingPut(payload, total, {
+          bling_divergent: false,
+          bling_divergence: null,
+        });
+        return;
+      }
+
+      if (res.status === 202) {
+        // Erro TRANSITÓRIO: não é recusa, é retentativa. Não salva nada local
+        // e não marca divergência — confundir os dois viraria ruído permanente.
+        setError(
+          "Bling indisponível no momento. Tente salvar de novo em instantes."
+        );
+        return;
+      }
+
+      if (res.status === 422) {
+        // Mensagem original do Bling — é ela que diz por que recusou.
+        const message =
+          [body.message, body.detail].filter(Boolean).join(" ") ||
+          "O Bling recusou a alteração.";
+        setPendingBlingUpdate({ message, payload, total });
+        return;
+      }
+
+      if (res.status === 409) {
+        setError(
+          (body.reason as string) ??
+            "Não foi possível confirmar o contato vinculado no Bling."
+        );
+        return;
+      }
+
+      setError(
+        (body.message as string) ??
+          (body.error as string) ??
+          "Erro ao atualizar o pedido no Bling"
+      );
+    },
+    [editingSale, saveLocalAfterBlingPut]
+  );
+
+  /** "Salvar só no CRM" após o Bling recusar (422): grava local e marca divergência. */
+  const confirmSaveLocalOnly = useCallback(async () => {
+    if (!pendingBlingUpdate) return;
+    const { payload, total } = pendingBlingUpdate;
+    const divergencia = divergenceFrom(
+      {
+        value: editingSale!.value,
+        product: editingSale!.product,
+        notes: editingSale!.notes,
+      },
+      { value: total, product: productSummary(payload.items), notes: notes.trim() || null },
+      new Date().toISOString()
+    );
+    setPendingBlingUpdate(null);
+    await saveLocalAfterBlingPut(payload, total, {
+      bling_divergent: true,
+      bling_divergence: divergencia,
+    });
+  }, [pendingBlingUpdate, editingSale, notes, saveLocalAfterBlingPut]);
+
   // ── submit ───────────────────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (resolution || sucesso) return;
+    if (resolution || sucesso || pendingBlingUpdate) return;
     if (!blingMode && (!product.trim() || !value)) {
       setError("Produto e valor são obrigatórios");
       return;
     }
 
     if (isEditing) {
+      // Bling ligado e venda com pedido no ERP: a edição vira PUT no pedido,
+      // não PATCH direto — o Bling precisa aceitar a mudança primeiro.
+      if (blingMode) {
+        if (!orderResult?.valid) {
+          setError(
+            "Escolha ao menos um produto com quantidade e a forma de pagamento"
+          );
+          return;
+        }
+        await putBlingOrder(orderResult.payload, orderResult.total);
+        return;
+      }
+
       setSaving(true);
       setError(null);
       const res = await fetch(`/api/sales/${editingSale!.id}`, {
@@ -464,7 +625,7 @@ export function SaleCreateModal({
             aparece, senão o vendedor perderia o pedido inteiro que já digitou. */}
         <form
           onSubmit={handleSubmit}
-          className={`p-5 space-y-4 ${resolution || sucesso ? "hidden" : ""}`}
+          className={`p-5 space-y-4 ${resolution || sucesso || pendingBlingUpdate ? "hidden" : ""}`}
         >
 
           {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
@@ -529,8 +690,12 @@ export function SaleCreateModal({
             </div>
           )}
 
-          {/* Itens do Bling — substituem produto em texto livre e valor único */}
-          {gate.mode === "loading" ? (
+          {/* Itens do Bling — substituem produto em texto livre e valor único.
+              Sem `blingEditable` (edição de venda sem pedido no ERP) nem vale
+              esperar o status carregar: o resultado nunca muda essa venda para
+              modo Bling, então mostrar o formulário legado direto evita um
+              "verificando conexão" que não leva a lugar nenhum. */}
+          {gate.mode === "loading" && blingEditable ? (
             <div className="px-5 py-8 text-center text-[13px] text-[#7b7b78]">
               Verificando conexão com o Bling…
             </div>
@@ -791,6 +956,38 @@ export function SaleCreateModal({
             >
               Concluir
             </button>
+          </div>
+        )}
+
+        {/* 422 na edição — o Bling recusou a alteração (pedido já faturado,
+            tipicamente); o vendedor decide se a mudança vale só no CRM. */}
+        {pendingBlingUpdate && (
+          <div className="p-5 space-y-3">
+            <p className="text-[13px] text-[#111111]">
+              O Bling recusou a alteração:
+            </p>
+            <p className="text-[12px] text-red-600">{pendingBlingUpdate.message}</p>
+            <p className="text-[12px] text-[#7b7b78]">
+              Você pode salvar essa alteração só no CRM. A venda ficará marcada
+              como divergente do Bling até alguém revisar.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingBlingUpdate(null)}
+                className="flex-1 py-2 text-[13px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] hover:bg-[#faf9f6] transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmSaveLocalOnly}
+                disabled={saving}
+                className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
+              >
+                {saving ? "Salvando..." : "Salvar só no CRM"}
+              </button>
+            </div>
           </div>
         )}
       </DialogContent>

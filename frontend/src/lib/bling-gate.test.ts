@@ -20,9 +20,9 @@ describe("blingGate", () => {
     expect(g.canSubmit).toBe(true);
   });
 
-  it("editar venda continua legado mesmo com Bling ligado (Fase E muda isso)", () => {
+  it("editar venda com Bling ligado entra em modo bling (Fase E)", () => {
     const g = blingGate({ loading: false, error: null, enabled: true, isEditing: true });
-    expect(g.mode).toBe("legacy");
+    expect(g.mode).toBe("bling");
   });
 
   // O teste que da nome a fase: falhar NAO pode virar venda avulsa silenciosa.
@@ -33,9 +33,13 @@ describe("blingGate", () => {
     expect(g.message).toContain("Bling");
   });
 
-  it("falha durante edicao nao bloqueia: edicao nao toca no ERP nesta fase", () => {
+  // Fase E: editar passou a tocar o ERP (PUT no pedido), entao falha durante
+  // edicao agora bloqueia igual a criacao — confirmar a conexao importa tanto
+  // quanto na criacao, porque editar sem saber se o Bling responde arriscaria
+  // a mesma divergencia silenciosa que a fase anterior evitava so na criacao.
+  it("falha durante edicao BLOQUEIA, igual a criacao (Fase E)", () => {
     const g = blingGate({ loading: false, error: "timeout", enabled: null, isEditing: true });
-    expect(g.mode).toBe("legacy");
-    expect(g.canSubmit).toBe(true);
+    expect(g.mode).toBe("error");
+    expect(g.canSubmit).toBe(false);
   });
 });
