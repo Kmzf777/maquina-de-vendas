@@ -600,6 +600,56 @@ def test_create_order_desconta_o_cabecalho_do_valor_gravado(monkeypatch):
     assert store["sales_inserts"][0]["value"] == 200.0, "267,00 - 67,00 de desconto"
 
 
+# ---------- update ----------
+
+def test_update_order_manda_put_com_o_payload_do_pedido():
+    """PUT /pedidos/vendas/{id} recebe o MESMO payload que o POST monta — o
+    Bling nao tem um formato separado para alteracao."""
+    chamadas = []
+
+    class FakeClient:
+        async def put(self, path, json=None):
+            chamadas.append((path, json))
+            return {"data": {"id": 34215992}}
+
+    itens = [{"bling_product_id": 123, "codigo": "CAN-250", "descricao": "Cafe 250g",
+              "quantidade": 10, "valor_unitario": 26.70, "desconto_percentual": 0}]
+    payment = {"method_id": 45, "terms": [30]}
+
+    out = asyncio.run(orders.update_order(
+        FakeClient(), order_id=34215992, contact_id=555, sold_at="2026-08-18",
+        itens=itens, payment=payment, seller_id=None, notes="",
+    ))
+
+    assert out == {"data": {"id": 34215992}}
+    path, payload = chamadas[0]
+    assert path == "/pedidos/vendas/34215992"
+    assert payload == orders.build_order_payload(
+        contact_id=555, sold_at="2026-08-18", itens=itens,
+        payment=payment, seller_id=None, notes="",
+    )
+
+
+def test_update_order_nao_engole_recusa_de_validacao():
+    """A recusa (pedido ja faturado, tipicamente) tem que subir intacta: quem
+    chama e que decide virar divergencia, nao `update_order`."""
+    class FakeClientRecusa:
+        async def put(self, path, json=None):
+            raise BlingValidationError("pedido faturado nao aceita alteracao",
+                                       type_="VALIDATION_ERROR", status=422)
+
+    itens = [{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 10,
+              "valor_unitario": 26.70, "desconto_percentual": 0}]
+
+    with pytest.raises(BlingValidationError) as exc:
+        asyncio.run(orders.update_order(
+            FakeClientRecusa(), order_id=34215992, contact_id=555,
+            sold_at="2026-08-18", itens=itens,
+            payment={"method_id": 45, "terms": [0]}, seller_id=None, notes="",
+        ))
+    assert "faturado" in str(exc.value)
+
+
 def test_upsert_from_bling_marca_origin_bling_para_venda_nova(monkeypatch):
     store = {"row_sales": []}
     fake_db = FakeSupabase(store)

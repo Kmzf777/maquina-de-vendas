@@ -9,6 +9,20 @@ Contrato de POST /api/bling/orders:
 A diferenca entre 202 e 422 e a que mais importa: so erro TRANSITORIO vira job.
 Um payload invalido na fila viraria retentativa infinita e, pior, rajada de erro
 conta para o bloqueio de IP do Bling (300 erros em 10s => 10 min bloqueado).
+
+Contrato de PUT /api/bling/orders/{order_id}:
+  200 -> pedido alterado no Bling
+  202 -> erro TRANSITORIO; NAO e recusa, e retentativa. Sem job: o PUT nao tem
+         idempotency_key porque nao precisa — reenviar o mesmo PUT nao duplica
+         nada, entao o proprio vendedor tentando salvar de novo basta.
+  409 -> contato nao resolvido (raro aqui: o vinculo e persistido desde a
+         criacao do pedido; so volta a acontecer se alguem desfez o vinculo
+         manualmente depois)
+  422 -> o Bling recusou a alteracao (pedido ja faturado, tipicamente),
+         repassado com a mensagem original. Quem decide o que fazer com a
+         recusa (inclusive marcar a venda como divergente) e quem chama —
+         este endpoint so tenta e devolve a resposta. Por isso, diferente do
+         POST, o PUT nao escreve em `sales`.
 """
 import asyncio
 import logging
@@ -19,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from app.bling import auth, config, contacts, jobs
 from app.bling.errors import TRANSIENT, BlingError, BlingValidationError
-from app.bling.orders import create_order
+from app.bling.orders import create_order, update_order
 from app.config import settings
 from app.db.supabase import get_supabase
 
@@ -283,6 +297,85 @@ async def create_order_endpoint(body: OrderIn):
         return JSONResponse({"error": "bling", "message": str(exc)}, status_code=502)
 
     return JSONResponse({**out, "status": "created"}, status_code=201)
+
+
+@router.put("/orders/{order_id}")
+async def update_order_endpoint(order_id: int, body: OrderIn):
+    """422 quando o Bling recusa (pedido faturado, tipicamente) — a UI pergunta
+    se salva so no CRM e marca divergencia. 202 quando o erro e transitorio:
+    ai NAO e divergencia, e retentativa (sem job — ver docstring do modulo)."""
+    lead = await asyncio.to_thread(_load_lead, body.lead_id)
+    if not lead:
+        return JSONResponse({"error": "lead_not_found"}, status_code=404)
+
+    # Mesma resolucao do POST. Na pratica cai direto no atalho `linked`: o
+    # vinculo lead-contato foi persistido quando o pedido foi criado e
+    # `contacts.resolve` o devolve sem I/O extra (ve o comentario no modulo
+    # `contacts`). So volta a exigir decisao humana se o vinculo tiver sido
+    # desfeito manualmente depois — o mesmo caso que o POST ja trata, entao
+    # reusar em vez de inventar um caminho novo para o PUT.
+    resolucao = await contacts.resolve(lead)
+    if resolucao.status != "linked":
+        return JSONResponse({
+            "error": "contact_unresolved",
+            "status": resolucao.status,
+            "reason": resolucao.reason,
+            "candidates": resolucao.candidates,
+        }, status_code=409)
+
+    itens = [{
+        "bling_product_id": i.bling_product_id,
+        "codigo": i.codigo,
+        "descricao": i.descricao or "",
+        "unidade": i.unidade,
+        "quantidade": i.quantidade,
+        "valor_unitario": i.valor_unitario,
+        "desconto_percentual": i.desconto_percentual,
+    } for i in body.items]
+
+    # Descricao e obrigatoria no item mesmo com produto.id — completa do espelho.
+    faltando = [i for i in itens if not i["descricao"]]
+    if faltando:
+        por_id = await asyncio.to_thread(
+            _products_by_id, [i["bling_product_id"] for i in faltando]
+        )
+        for item in faltando:
+            p = por_id.get(item["bling_product_id"]) or {}
+            item["descricao"] = p.get("nome") or "Item"
+            item["codigo"] = item["codigo"] or p.get("codigo")
+            item["unidade"] = item["unidade"] or p.get("unidade")
+
+    kwargs = {
+        "order_id": order_id,
+        "contact_id": resolucao.contact_id,
+        "sold_at": body.sold_at,
+        "itens": itens,
+        "payment": {"method_id": body.payment.method_id, "terms": body.payment.terms},
+        "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by),
+        "notes": body.notes,
+    }
+
+    from app.bling.client import BlingClient
+    try:
+        async with BlingClient() as client:
+            await update_order(client, **kwargs)
+    except BlingValidationError as exc:
+        # Repetir a mesma alteracao recusada nunca conserta — nao vira retentativa.
+        # Quem chama decide se salva local e marca divergencia.
+        return JSONResponse({
+            "error": "validation", "message": str(exc),
+            "detail": exc.description, "type": exc.type,
+        }, status_code=422)
+    except TRANSIENT as exc:
+        # Sem job: o PUT e seguro de reenviar (nao ha duplicacao possivel como
+        # no POST), entao o proprio vendedor tentando salvar de novo basta.
+        logger.warning("[BLING] PUT do pedido %s falhou (transitorio): %s", order_id, exc)
+        return JSONResponse({"status": "bling_unavailable", "reason": str(exc)},
+                            status_code=202)
+    except BlingError as exc:
+        return JSONResponse({"error": "bling", "message": str(exc)}, status_code=502)
+
+    return JSONResponse({"status": "updated", "bling_order_id": order_id}, status_code=200)
 
 
 @router.post("/contacts")

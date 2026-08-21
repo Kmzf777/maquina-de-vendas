@@ -191,6 +191,27 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
     return payload
 
 
+async def update_order(client, *, order_id: int, contact_id: int, sold_at: str,
+                       itens: list[dict], payment: dict, seller_id: int | None,
+                       notes: str) -> dict:
+    """Altera o pedido no Bling. Reaproveita o mesmo payload do POST — o Bling
+    nao tem formato separado para alteracao.
+
+    Nao trata a recusa: quem chama e que decide o que fazer com ela. A
+    distincao importa — recusa de validacao (pedido ja faturado, tipicamente)
+    e decisao de negocio (o CRM segue com a edicao e marca divergencia), erro
+    transitorio e retentativa. Por isso esta funcao tambem nao toca `sales`:
+    diferente de `create_order`, nao ha projecao aqui para nao acoplar a
+    chamada ao Bling com a decisao — que e do chamador — de gravar a mudanca
+    no CRM mesmo quando o ERP recusa.
+    """
+    payload = build_order_payload(
+        contact_id=contact_id, sold_at=sold_at, itens=itens,
+        payment=payment, seller_id=seller_id, notes=notes,
+    )
+    return await client.put(f"/pedidos/vendas/{order_id}", payload)
+
+
 # --------------------------------------------------------------------------
 # Criacao e projecao em sales
 # --------------------------------------------------------------------------

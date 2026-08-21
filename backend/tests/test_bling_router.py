@@ -281,6 +281,117 @@ def test_sucesso_devolve_201_com_numero_do_pedido(monkeypatch):
     assert capturado["itens"][0]["codigo"] == "CAF250"
 
 
+def test_atualizar_pedido_devolve_409_quando_contato_nao_resolve(monkeypatch):
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "cnpj": None})
+
+    async def fake_resolve(lead):
+        return Resolution("suggested", None, [{"id": 77, "nome": "Empresa X"}], "telefone")
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 409
+    corpo = resp.body.decode()
+    assert "contact_unresolved" in corpo
+    assert "Empresa X" in corpo
+
+
+def test_atualizar_pedido_devolve_202_quando_erro_e_transitorio(monkeypatch):
+    """Erro transitorio no PUT NAO e recusa — e retentativa. Sem job: o frontend
+    e que decide tentar de novo, nao ha marca de divergencia aqui."""
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "bling_contact_id": 555})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    async def fake_resolve(lead):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        raise BlingServerError("bling fora do ar")
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 202
+    corpo = resp.body.decode()
+    assert "queued" not in corpo, "nada foi enfileirado: o PUT nao precisa de job"
+
+
+def test_atualizar_pedido_erro_de_validacao_devolve_422_com_mensagem_original(monkeypatch):
+    """E o caso central da task: o Bling recusa (pedido ja faturado) e a
+    mensagem original tem que atravessar intacta para o frontend decidir."""
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "bling_contact_id": 555})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    async def fake_resolve(lead):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        raise BlingValidationError("pedido faturado nao aceita alteracao",
+                                   description="situacao", type_="VALIDATION_ERROR")
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 422
+    corpo = resp.body.decode()
+    assert "pedido faturado nao aceita alteracao" in corpo
+    assert "situacao" in corpo
+
+
+def test_atualizar_pedido_sucesso_devolve_200(monkeypatch):
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "bling_contact_id": 555})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    capturado = {}
+
+    async def fake_resolve(lead):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        capturado.update(k)
+        return {"data": {"id": 34215992}}
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18", sold_by="v@e.com",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 200
+    corpo = resp.body.decode()
+    assert "34215992" in corpo
+    assert capturado["order_id"] == 34215992
+    # mesma completude de itens que o POST ja faz: descricao/codigo do espelho
+    assert capturado["itens"][0]["descricao"] == "Cafe Classico 250g"
+    assert capturado["itens"][0]["codigo"] == "CAF250"
+
+
 def test_oauth_callback_rejeita_state_invalido(monkeypatch):
     async def fake_consume(state):
         return False
