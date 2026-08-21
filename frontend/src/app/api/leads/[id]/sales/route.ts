@@ -11,12 +11,16 @@ export async function GET(
     .from("sales")
     // sale_items embutido pelo mesmo motivo do /api/sales: esta lista alimenta
     // o "editar venda" do painel de contato (contact-detail.tsx via
-    // useLeadSales). Nota: esta rota ainda não seleciona `bling_order_id`, então
-    // o gate `blingEditable` do modal nunca vê pedido no Bling a partir daqui —
-    // a edição cai no PATCH local, não no PUT que consome estes itens. Ficam
-    // aqui mesmo assim para não deixar a rota inconsistente com as demais.
+    // useLeadSales). Os campos do Bling entram aqui porque o modal decide por
+    // eles: sem `bling_order_id` o gate `blingEditable` nunca enxerga pedido no
+    // ERP a partir desta tela, e editar cairia no PATCH local — o CRM mudaria e
+    // o Bling não, em silêncio. Divergência silenciosa é justamente o que a
+    // integração existe para evitar.
     .select(
-      "id, sold_at, value, product, sold_by, deal_id, notes, deals(id, title), sale_items(*)"
+      "id, sold_at, value, product, sold_by, deal_id, notes, " +
+        "bling_order_id, bling_order_number, bling_situacao_id, bling_situacao_nome, " +
+        "origin, status, bling_divergent, bling_divergence, " +
+        "deals(id, title), sale_items(*)"
     )
     .eq("lead_id", id)
     .order("sold_at", { ascending: false })
