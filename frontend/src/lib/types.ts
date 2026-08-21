@@ -30,6 +30,8 @@ export interface Lead {
   traffic_type?: "paid" | "organic" | null;
   utm_source?: string | null;
   utm_campaign?: string | null;
+  // ERP
+  bling_contact_id?: number | null;
 }
 
 export interface Pipeline {
