@@ -108,6 +108,10 @@ export function SaleCreateModal({
     isEditing,
   });
   const blingMode = gate.mode === "bling";
+  // Layout: `loading` ainda nao sabe o modo, mas abrir pequeno e pular para
+  // grande quando o status chega e pior do que abrir grande. Tratar loading
+  // como Bling aqui evita o salto de tamanho.
+  const blingLayout = gate.mode === "bling" || gate.mode === "loading";
 
   const [selectedLeadId, setSelectedLeadId] = useState(
     editingSale?.lead_id ?? leadId ?? ""
@@ -424,7 +428,7 @@ export function SaleCreateModal({
       <DialogContent
         showCloseButton={false}
         className={`bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full shadow-lg gap-0 ${
-          blingMode
+          blingLayout
             ? "max-w-2xl max-h-[88vh] overflow-y-auto"
             : "max-w-md"
         }`}
@@ -526,7 +530,11 @@ export function SaleCreateModal({
           )}
 
           {/* Itens do Bling — substituem produto em texto livre e valor único */}
-          {blingMode ? (
+          {gate.mode === "loading" ? (
+            <div className="px-5 py-8 text-center text-[13px] text-[#7b7b78]">
+              Verificando conexão com o Bling…
+            </div>
+          ) : blingMode ? (
             <BlingOrderForm
               meta={{
                 leadId: resolvedLeadId,
