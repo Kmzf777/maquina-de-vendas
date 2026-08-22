@@ -104,7 +104,10 @@ def test_sync_incremental_manda_data_alteracao_inicial(monkeypatch):
 
     asyncio.run(prod.sync_products(client, full=False))
 
-    assert client.params["dataAlteracaoInicial"] == "2026-08-17T00:00:00+00:00"
+    # Convertido para o formato que o Bling exige ('Y-m-d H:i:s') com a margem
+    # de seguranca de 6h subtraida -- NAO e mais o ISO 8601 cru gravado em
+    # bling_sync_state (esse formato cru e o que o Bling recusava com 400).
+    assert client.params["dataAlteracaoInicial"] == "2026-08-16 18:00:00"
     assert "criterio" not in client.params
 
 

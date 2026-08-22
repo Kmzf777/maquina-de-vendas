@@ -9,6 +9,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from app.bling.dates import to_bling_datetime
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,11 @@ async def sync_products(client, *, full: bool = False, batch_size: int = 200) ->
     if not full:
         estado = await asyncio.to_thread(_load_sync_state, _RESOURCE)
         desde = (estado or {}).get("last_sync_at")
-        if desde:
-            params["dataAlteracaoInicial"] = desde
+        # `desde` esta em ISO 8601; o Bling exige 'Y-m-d H:i:s'. Ver
+        # `to_bling_datetime` para o porque da margem de seguranca.
+        data_formatada = to_bling_datetime(desde)
+        if data_formatada:
+            params["dataAlteracaoInicial"] = data_formatada
         else:
             full = True
     if full:

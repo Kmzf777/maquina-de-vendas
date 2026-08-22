@@ -1,4 +1,6 @@
 import asyncio
+import re
+from datetime import datetime
 
 import app.bling.sync as sync
 
@@ -173,6 +175,36 @@ def test_contato_extrai_endereco_para_jsonb():
     assert row["endereco"]["cep"] == "38400084"
 
 
+def test_to_bling_datetime_converte_iso_com_timezone_para_formato_bling():
+    """O Bling rejeita (400) qualquer coisa que nao seja 'Y-m-d H:i:s' exato:
+    sem 'T', sem offset, sem microssegundos. margin_hours=0 isola o teste do
+    formato puro, sem misturar com a margem de seguranca (testada a parte)."""
+    resultado = sync.to_bling_datetime("2026-08-19T23:46:59.734435+00:00", margin_hours=0)
+    assert resultado == "2026-08-19 23:46:59"
+    assert "T" not in resultado
+    assert "+" not in resultado
+    assert "." not in resultado
+
+
+def test_to_bling_datetime_aplica_margem_de_seguranca():
+    """A margem tem que empurrar o resultado para TRAS do instante de entrada
+    -- nunca para frente. Reprocessar e inofensivo (upsert on_conflict=id);
+    perder registro por a janela comecar tarde demais nao e."""
+    entrada = "2026-08-19T23:46:59+00:00"
+    resultado = sync.to_bling_datetime(entrada)
+    dt_resultado = datetime.strptime(resultado, "%Y-%m-%d %H:%M:%S")
+    dt_entrada = datetime.fromisoformat(entrada).replace(tzinfo=None)
+    assert dt_resultado < dt_entrada
+
+
+def test_to_bling_datetime_entrada_invalida_ou_vazia_vira_none():
+    """None sinaliza pro chamador cair no caminho `full` (criterio=Todos) em
+    vez de mandar uma string invalida ao Bling e levar 400."""
+    assert sync.to_bling_datetime(None) is None
+    assert sync.to_bling_datetime("") is None
+    assert sync.to_bling_datetime("lixo") is None
+
+
 def test_sync_contacts_incremental_usa_data_alteracao(monkeypatch):
     store = {"row_bling_sync_state": {"last_sync_at": "2026-08-17T00:00:00+00:00"}}
     client = FakeClient({"/contatos": [{"id": 1, "nome": "A", "tipo": "J"}]})
@@ -182,7 +214,25 @@ def test_sync_contacts_incremental_usa_data_alteracao(monkeypatch):
     n = asyncio.run(sync.sync_contacts(client))
 
     assert n == 1
-    assert client.params["/contatos"]["dataAlteracaoInicial"] == "2026-08-17T00:00:00+00:00"
+    # Convertido para o formato do Bling ('Y-m-d H:i:s', sem T/offset) com a
+    # margem de seguranca de 6h subtraida -- NAO e mais o ISO 8601 cru.
+    assert client.params["/contatos"]["dataAlteracaoInicial"] == "2026-08-16 18:00:00"
+
+
+def test_sync_contacts_manda_data_alteracao_ja_formatada_para_o_bling(monkeypatch):
+    """Este e o teste que pega a regressao de verdade: o formato NO FIO que o
+    Bling recusou com 400 em producao era o ISO 8601 cru (com 'T', offset e
+    microssegundos). Aqui garantimos que o que sai no parametro HTTP bate
+    exatamente com 'Y-m-d H:i:s', o formato que o Bling exige."""
+    store = {"row_bling_sync_state": {"last_sync_at": "2026-08-19T23:46:59.734435+00:00"}}
+    client = FakeClient({"/contatos": [{"id": 1, "nome": "A", "tipo": "J"}]})
+    monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    asyncio.run(sync.sync_contacts(client))
+
+    enviado = client.params["/contatos"]["dataAlteracaoInicial"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", enviado)
 
 
 def test_sync_contacts_completo_usa_criterio_1_todos(monkeypatch):

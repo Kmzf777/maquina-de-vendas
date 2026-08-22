@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.bling import config
+from app.bling.dates import to_bling_datetime  # re-exportada: ver docstring do modulo
 from app.bling.products import sync_products
 from app.db.supabase import get_supabase
 from app.leads.service import normalize_phone
@@ -132,7 +133,11 @@ async def sync_contacts(client, *, batch_size: int = 200) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
     estado = await asyncio.to_thread(_load_sync_state, "contacts")
     desde = (estado or {}).get("last_sync_at")
-    params = {"dataAlteracaoInicial": desde} if desde else {"criterio": _CRITERIO_TODOS}
+    # `desde` esta em ISO 8601 (o que `bling_sync_state.last_sync_at` guarda); o
+    # Bling exige 'Y-m-d H:i:s'. Ver `to_bling_datetime` para o porque da margem.
+    data_formatada = to_bling_datetime(desde)
+    params = ({"dataAlteracaoInicial": data_formatada} if data_formatada
+              else {"criterio": _CRITERIO_TODOS})
 
     total, buffer = 0, []
     async for bruto in client.paginate("/contatos", params):
