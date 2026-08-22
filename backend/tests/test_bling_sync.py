@@ -42,14 +42,20 @@ class FakeSupabase:
 
 
 class FakeClient:
-    def __init__(self, por_path):
+    def __init__(self, por_path, get_responses=None):
         self.por_path = por_path
         self.params = {}
+        self.get_responses = get_responses or {}
+        self.get_calls = []
 
     async def paginate(self, path, params=None, limite=100):
         self.params[path] = params
         for item in self.por_path.get(path, []):
             yield item
+
+    async def get(self, path, params=None):
+        self.get_calls.append(path)
+        return self.get_responses.get(path, {"data": []})
 
 
 class FakeSupabaseCountingBatches:
@@ -280,6 +286,92 @@ def test_sync_payment_methods_e_sellers(monkeypatch):
 
     assert store["bling_payment_methods"][0]["descricao"] == "Boleto"
     assert store["bling_sellers"][0]["nome"] == "Joao Bras"
+
+
+def test_sync_situacoes_mapeia_id_nome_cor_modulo_id(monkeypatch):
+    """Forma real da API (verificada em producao, escopo recem-concedido):
+    GET /situacoes/modulos devolve o(s) modulo(s); GET /situacoes/modulos/{id}
+    devolve as situacoes daquele modulo, com `nome` e `cor` — o nome que o
+    pedido e o webhook NUNCA trazem (so mandam `{id, valor}`)."""
+    store = {}
+    client = FakeClient({}, get_responses={
+        "/situacoes/modulos": {"data": [
+            {"id": 98310, "nome": "Vendas", "descricao": "Pedidos de Venda",
+             "criarSituacoes": True},
+        ]},
+        "/situacoes/modulos/98310": {"data": [
+            {"id": 6, "nome": "Em aberto", "cor": "#E9DC40", "idHerdado": 0},
+            {"id": 9, "nome": "Atendido", "cor": "#3FB57A", "idHerdado": 0},
+        ]},
+    })
+    monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    n = asyncio.run(sync.sync_situacoes(client))
+
+    assert n == 2
+    rows = {r["id"]: r for r in store["bling_situacoes"]}
+    assert rows[6]["nome"] == "Em aberto"
+    assert rows[6]["cor"] == "#E9DC40"
+    assert rows[6]["modulo_id"] == 98310
+    assert rows[9]["nome"] == "Atendido"
+    assert rows[9]["cor"] == "#3FB57A"
+    assert rows[9]["modulo_id"] == 98310
+    # idHerdado NAO e guardado — sem uso hoje (YAGNI).
+    assert "idHerdado" not in rows[6]
+
+
+def test_sync_situacoes_modulo_sem_situacoes_nao_quebra(monkeypatch):
+    store = {}
+    client = FakeClient({}, get_responses={
+        "/situacoes/modulos": {"data": [
+            {"id": 98310, "nome": "Vendas", "descricao": "Pedidos de Venda"},
+        ]},
+        "/situacoes/modulos/98310": {"data": []},
+    })
+    monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    n = asyncio.run(sync.sync_situacoes(client))
+
+    assert n == 0
+
+
+def test_sync_all_inclui_situacoes(monkeypatch):
+    """sync_all passa a rodar sync_situacoes e devolver a contagem no dict de
+    retorno, no mesmo padrao dos outros syncs."""
+    async def fake_products(client, *, full=False):
+        return 1
+
+    async def fake_contacts(client):
+        return 2
+
+    async def fake_payment_methods(client):
+        return 3
+
+    async def fake_sellers(client):
+        return 4
+
+    async def fake_situacoes(client):
+        return 9
+
+    class FakeBlingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(sync, "sync_products", fake_products)
+    monkeypatch.setattr(sync, "sync_contacts", fake_contacts)
+    monkeypatch.setattr(sync, "sync_payment_methods", fake_payment_methods)
+    monkeypatch.setattr(sync, "sync_sellers", fake_sellers)
+    monkeypatch.setattr(sync, "sync_situacoes", fake_situacoes)
+    monkeypatch.setattr("app.bling.client.BlingClient", FakeBlingClient)
+
+    resultado = asyncio.run(sync.sync_all())
+
+    assert resultado["situacoes"] == 9
 
 
 def test_tick_nao_faz_nada_quando_desabilitado(monkeypatch):
