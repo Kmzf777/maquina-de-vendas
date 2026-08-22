@@ -403,9 +403,11 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         detalhe = reaproveitado or (
             await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
         numero = detalhe.get("numero")
+        situacao_id = (detalhe.get("situacao") or {}).get("id")
         await asyncio.to_thread(_update_sale, order_id, {
             "bling_order_number": numero,
-            "bling_situacao_id": (detalhe.get("situacao") or {}).get("id"),
+            "bling_situacao_id": situacao_id,
+            "bling_situacao_nome": await asyncio.to_thread(_situacao_nome, situacao_id),
         })
     except Exception:
         logger.warning("[BLING] pedido %s criado, mas o GET de detalhe falhou; "
@@ -433,6 +435,29 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         "bling_order_id": order_id,
         "bling_order_number": numero,
     }
+
+
+def _situacao_nome(situacao_id: int | None) -> str | None:
+    """Nome da situacao a partir do espelho. Ausencia devolve None, nunca levanta:
+    situacao criada no painel e ainda nao sincronizada nao pode derrubar o
+    processamento do webhook.
+
+    Le SO de `bling_situacoes` (o espelho preenchido por `sync_situacoes`) —
+    nunca chama a API do Bling aqui: essa funcao roda no meio do processamento
+    do webhook e do POST de criacao, onde uma chamada extra so acrescentaria
+    latencia e mais um jeito de falhar.
+    """
+    if situacao_id is None:
+        return None
+    try:
+        res = (get_supabase().table("bling_situacoes")
+               .select("nome").eq("id", int(situacao_id)).limit(1).execute())
+    except Exception:
+        logger.warning("[BLING] lookup de situacao %s no espelho falhou",
+                       situacao_id, exc_info=True)
+        return None
+    linhas = getattr(res, "data", None) or []
+    return linhas[0].get("nome") if linhas else None
 
 
 def _existing_sale(order_id: int) -> dict | None:
@@ -494,6 +519,8 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
                    else "registrada"),
         "bling_order_number": pedido.get("numero"),
         "bling_situacao_id": (pedido.get("situacao") or {}).get("id"),
+        "bling_situacao_nome": await asyncio.to_thread(
+            _situacao_nome, (pedido.get("situacao") or {}).get("id")),
         "bling_event_date": event_date,
     }
 
