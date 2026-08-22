@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.bling import config
+from app.bling.dates import to_bling_datetime  # re-exportada: ver docstring do modulo
 from app.bling.products import sync_products
 from app.db.supabase import get_supabase
 from app.leads.service import normalize_phone
@@ -132,7 +133,11 @@ async def sync_contacts(client, *, batch_size: int = 200) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
     estado = await asyncio.to_thread(_load_sync_state, "contacts")
     desde = (estado or {}).get("last_sync_at")
-    params = {"dataAlteracaoInicial": desde} if desde else {"criterio": _CRITERIO_TODOS}
+    # `desde` esta em ISO 8601 (o que `bling_sync_state.last_sync_at` guarda); o
+    # Bling exige 'Y-m-d H:i:s'. Ver `to_bling_datetime` para o porque da margem.
+    data_formatada = to_bling_datetime(desde)
+    params = ({"dataAlteracaoInicial": data_formatada} if data_formatada
+              else {"criterio": _CRITERIO_TODOS})
 
     total, buffer = 0, []
     async for bruto in client.paginate("/contatos", params):
@@ -185,8 +190,47 @@ async def sync_sellers(client) -> int:
     return len(rows)
 
 
+async def sync_situacoes(client) -> int:
+    """Espelha as situacoes de pedido (nome, cor, modulo) em `bling_situacoes`.
+
+    Existe porque nem o pedido nem o webhook trazem o NOME da situacao — os
+    dois so mandam `{id, valor}`. O nome so esta em
+    GET /situacoes/modulos/{idModulo}.
+
+    Sincroniza TODOS os modulos que a conta devolver, sem tentar adivinhar
+    qual e "o de vendas" por casamento de nome/descricao: e mais simples (a
+    conta de producao so tem um modulo mesmo) e mais robusto se o Bling passar
+    a expor outros — o lookup de uma situacao e sempre por `id`, unico entre
+    modulos de qualquer forma.
+    """
+    started_at = datetime.now(timezone.utc).isoformat()
+    modulos = (await client.get("/situacoes/modulos")).get("data") or []
+
+    rows = []
+    for modulo in modulos:
+        modulo_id = modulo.get("id")
+        if modulo_id is None:
+            continue
+        situacoes = (await client.get(f"/situacoes/modulos/{modulo_id}")).get("data") or []
+        for s in situacoes:
+            rows.append({
+                "id": int(s["id"]),
+                "nome": s.get("nome") or "",
+                "modulo_id": int(modulo_id),
+                # cor vem de graca da API e e o que permite o CRM mostrar o
+                # status na MESMA cor do painel do Bling. idHerdado nao entra:
+                # sem uso hoje (YAGNI).
+                "cor": s.get("cor"),
+                "synced_at": started_at,
+            })
+
+    await _upsert("bling_situacoes", rows)
+    await asyncio.to_thread(_save_sync_state, "situacoes", last_sync_at=started_at)
+    return len(rows)
+
+
 async def sync_all(*, full: bool = False) -> dict:
-    """Roda os quatro syncs em sequencia (nunca em paralelo: 3 req/s e da conta)."""
+    """Roda os cinco syncs em sequencia (nunca em paralelo: 3 req/s e da conta)."""
     from app.bling.client import BlingClient
 
     async with BlingClient() as client:
@@ -194,8 +238,10 @@ async def sync_all(*, full: bool = False) -> dict:
         contatos = await sync_contacts(client)
         formas = await sync_payment_methods(client)
         vendedores = await sync_sellers(client)
+        situacoes = await sync_situacoes(client)
     return {"produtos": produtos, "contatos": contatos,
-            "formas_pagamento": formas, "vendedores": vendedores}
+            "formas_pagamento": formas, "vendedores": vendedores,
+            "situacoes": situacoes}
 
 
 async def bling_sync_tick() -> None:

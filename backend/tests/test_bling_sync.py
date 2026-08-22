@@ -1,4 +1,6 @@
 import asyncio
+import re
+from datetime import datetime
 
 import app.bling.sync as sync
 
@@ -40,14 +42,20 @@ class FakeSupabase:
 
 
 class FakeClient:
-    def __init__(self, por_path):
+    def __init__(self, por_path, get_responses=None):
         self.por_path = por_path
         self.params = {}
+        self.get_responses = get_responses or {}
+        self.get_calls = []
 
     async def paginate(self, path, params=None, limite=100):
         self.params[path] = params
         for item in self.por_path.get(path, []):
             yield item
+
+    async def get(self, path, params=None):
+        self.get_calls.append(path)
+        return self.get_responses.get(path, {"data": []})
 
 
 class FakeSupabaseCountingBatches:
@@ -173,6 +181,36 @@ def test_contato_extrai_endereco_para_jsonb():
     assert row["endereco"]["cep"] == "38400084"
 
 
+def test_to_bling_datetime_converte_iso_com_timezone_para_formato_bling():
+    """O Bling rejeita (400) qualquer coisa que nao seja 'Y-m-d H:i:s' exato:
+    sem 'T', sem offset, sem microssegundos. margin_hours=0 isola o teste do
+    formato puro, sem misturar com a margem de seguranca (testada a parte)."""
+    resultado = sync.to_bling_datetime("2026-08-19T23:46:59.734435+00:00", margin_hours=0)
+    assert resultado == "2026-08-19 23:46:59"
+    assert "T" not in resultado
+    assert "+" not in resultado
+    assert "." not in resultado
+
+
+def test_to_bling_datetime_aplica_margem_de_seguranca():
+    """A margem tem que empurrar o resultado para TRAS do instante de entrada
+    -- nunca para frente. Reprocessar e inofensivo (upsert on_conflict=id);
+    perder registro por a janela comecar tarde demais nao e."""
+    entrada = "2026-08-19T23:46:59+00:00"
+    resultado = sync.to_bling_datetime(entrada)
+    dt_resultado = datetime.strptime(resultado, "%Y-%m-%d %H:%M:%S")
+    dt_entrada = datetime.fromisoformat(entrada).replace(tzinfo=None)
+    assert dt_resultado < dt_entrada
+
+
+def test_to_bling_datetime_entrada_invalida_ou_vazia_vira_none():
+    """None sinaliza pro chamador cair no caminho `full` (criterio=Todos) em
+    vez de mandar uma string invalida ao Bling e levar 400."""
+    assert sync.to_bling_datetime(None) is None
+    assert sync.to_bling_datetime("") is None
+    assert sync.to_bling_datetime("lixo") is None
+
+
 def test_sync_contacts_incremental_usa_data_alteracao(monkeypatch):
     store = {"row_bling_sync_state": {"last_sync_at": "2026-08-17T00:00:00+00:00"}}
     client = FakeClient({"/contatos": [{"id": 1, "nome": "A", "tipo": "J"}]})
@@ -182,7 +220,25 @@ def test_sync_contacts_incremental_usa_data_alteracao(monkeypatch):
     n = asyncio.run(sync.sync_contacts(client))
 
     assert n == 1
-    assert client.params["/contatos"]["dataAlteracaoInicial"] == "2026-08-17T00:00:00+00:00"
+    # Convertido para o formato do Bling ('Y-m-d H:i:s', sem T/offset) com a
+    # margem de seguranca de 6h subtraida -- NAO e mais o ISO 8601 cru.
+    assert client.params["/contatos"]["dataAlteracaoInicial"] == "2026-08-16 18:00:00"
+
+
+def test_sync_contacts_manda_data_alteracao_ja_formatada_para_o_bling(monkeypatch):
+    """Este e o teste que pega a regressao de verdade: o formato NO FIO que o
+    Bling recusou com 400 em producao era o ISO 8601 cru (com 'T', offset e
+    microssegundos). Aqui garantimos que o que sai no parametro HTTP bate
+    exatamente com 'Y-m-d H:i:s', o formato que o Bling exige."""
+    store = {"row_bling_sync_state": {"last_sync_at": "2026-08-19T23:46:59.734435+00:00"}}
+    client = FakeClient({"/contatos": [{"id": 1, "nome": "A", "tipo": "J"}]})
+    monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    asyncio.run(sync.sync_contacts(client))
+
+    enviado = client.params["/contatos"]["dataAlteracaoInicial"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", enviado)
 
 
 def test_sync_contacts_completo_usa_criterio_1_todos(monkeypatch):
@@ -230,6 +286,92 @@ def test_sync_payment_methods_e_sellers(monkeypatch):
 
     assert store["bling_payment_methods"][0]["descricao"] == "Boleto"
     assert store["bling_sellers"][0]["nome"] == "Joao Bras"
+
+
+def test_sync_situacoes_mapeia_id_nome_cor_modulo_id(monkeypatch):
+    """Forma real da API (verificada em producao, escopo recem-concedido):
+    GET /situacoes/modulos devolve o(s) modulo(s); GET /situacoes/modulos/{id}
+    devolve as situacoes daquele modulo, com `nome` e `cor` — o nome que o
+    pedido e o webhook NUNCA trazem (so mandam `{id, valor}`)."""
+    store = {}
+    client = FakeClient({}, get_responses={
+        "/situacoes/modulos": {"data": [
+            {"id": 98310, "nome": "Vendas", "descricao": "Pedidos de Venda",
+             "criarSituacoes": True},
+        ]},
+        "/situacoes/modulos/98310": {"data": [
+            {"id": 6, "nome": "Em aberto", "cor": "#E9DC40", "idHerdado": 0},
+            {"id": 9, "nome": "Atendido", "cor": "#3FB57A", "idHerdado": 0},
+        ]},
+    })
+    monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    n = asyncio.run(sync.sync_situacoes(client))
+
+    assert n == 2
+    rows = {r["id"]: r for r in store["bling_situacoes"]}
+    assert rows[6]["nome"] == "Em aberto"
+    assert rows[6]["cor"] == "#E9DC40"
+    assert rows[6]["modulo_id"] == 98310
+    assert rows[9]["nome"] == "Atendido"
+    assert rows[9]["cor"] == "#3FB57A"
+    assert rows[9]["modulo_id"] == 98310
+    # idHerdado NAO e guardado — sem uso hoje (YAGNI).
+    assert "idHerdado" not in rows[6]
+
+
+def test_sync_situacoes_modulo_sem_situacoes_nao_quebra(monkeypatch):
+    store = {}
+    client = FakeClient({}, get_responses={
+        "/situacoes/modulos": {"data": [
+            {"id": 98310, "nome": "Vendas", "descricao": "Pedidos de Venda"},
+        ]},
+        "/situacoes/modulos/98310": {"data": []},
+    })
+    monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
+
+    n = asyncio.run(sync.sync_situacoes(client))
+
+    assert n == 0
+
+
+def test_sync_all_inclui_situacoes(monkeypatch):
+    """sync_all passa a rodar sync_situacoes e devolver a contagem no dict de
+    retorno, no mesmo padrao dos outros syncs."""
+    async def fake_products(client, *, full=False):
+        return 1
+
+    async def fake_contacts(client):
+        return 2
+
+    async def fake_payment_methods(client):
+        return 3
+
+    async def fake_sellers(client):
+        return 4
+
+    async def fake_situacoes(client):
+        return 9
+
+    class FakeBlingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(sync, "sync_products", fake_products)
+    monkeypatch.setattr(sync, "sync_contacts", fake_contacts)
+    monkeypatch.setattr(sync, "sync_payment_methods", fake_payment_methods)
+    monkeypatch.setattr(sync, "sync_sellers", fake_sellers)
+    monkeypatch.setattr(sync, "sync_situacoes", fake_situacoes)
+    monkeypatch.setattr("app.bling.client.BlingClient", FakeBlingClient)
+
+    resultado = asyncio.run(sync.sync_all())
+
+    assert resultado["situacoes"] == 9
 
 
 def test_tick_nao_faz_nada_quando_desabilitado(monkeypatch):

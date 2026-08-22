@@ -70,6 +70,15 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
             {stageInfo.label}
           </span>
         )}
+        {lead.channel === "bling" && (
+          <span
+            title="Lead criado a partir de um contato do Bling"
+            className="px-2 py-0.5 rounded-[4px] text-[11px] font-medium border"
+            style={{ borderColor: "#5b8aad44", color: "#5b8aad", backgroundColor: "#5b8aad15" }}
+          >
+            Bling
+          </span>
+        )}
         {tags.slice(0, 2).map((tag) => (
           <span
             key={tag.id}

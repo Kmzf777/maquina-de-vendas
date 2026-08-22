@@ -383,7 +383,36 @@ def test_create_order_persiste_venda_e_itens(monkeypatch):
     # o GET so enriquece: numero e situacao entram por UPDATE depois do insert
     assert store["sales_inserts"][0]["bling_order_number"] is None
     assert store["sales_updates"][0] == {"bling_order_number": 1234,
-                                         "bling_situacao_id": 6}
+                                         "bling_situacao_id": 6,
+                                         "bling_situacao_nome": None}
+
+
+def test_create_order_preenche_nome_da_situacao_a_partir_do_espelho(monkeypatch):
+    """`bling_situacao_nome` vem do espelho local `bling_situacoes`, nunca de
+    uma chamada extra ao Bling: o GET de detalhe do pedido so traz `situacao.id`."""
+    store = {"row_bling_situacoes": [{"id": 6, "nome": "Em aberto"}]}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "store_id", lambda: None)
+    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            return {"data": {"id": 1}}
+
+        async def get(self, path, params=None):
+            return {"data": {"id": 1, "numero": 7, "situacao": {"id": 6}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+    ))
+
+    assert store["sales_updates"][0]["bling_situacao_nome"] == "Em aberto"
 
 
 def test_create_order_grava_a_venda_mesmo_se_o_get_de_detalhe_falhar(monkeypatch):
@@ -469,7 +498,8 @@ def test_create_order_com_chave_reaproveita_pedido_ja_criado(monkeypatch):
     assert venda["value"] == 267.0
     # o pedido encontrado ja veio completo: nada de GET de detalhe extra
     assert store["sales_updates"][0] == {"bling_order_number": 1234,
-                                         "bling_situacao_id": 6}
+                                         "bling_situacao_id": 6,
+                                         "bling_situacao_nome": None}
 
 
 def test_create_order_nao_posta_se_a_consulta_por_chave_falhar(monkeypatch):
@@ -600,6 +630,56 @@ def test_create_order_desconta_o_cabecalho_do_valor_gravado(monkeypatch):
     assert store["sales_inserts"][0]["value"] == 200.0, "267,00 - 67,00 de desconto"
 
 
+# ---------- update ----------
+
+def test_update_order_manda_put_com_o_payload_do_pedido():
+    """PUT /pedidos/vendas/{id} recebe o MESMO payload que o POST monta — o
+    Bling nao tem um formato separado para alteracao."""
+    chamadas = []
+
+    class FakeClient:
+        async def put(self, path, json=None):
+            chamadas.append((path, json))
+            return {"data": {"id": 34215992}}
+
+    itens = [{"bling_product_id": 123, "codigo": "CAN-250", "descricao": "Cafe 250g",
+              "quantidade": 10, "valor_unitario": 26.70, "desconto_percentual": 0}]
+    payment = {"method_id": 45, "terms": [30]}
+
+    out = asyncio.run(orders.update_order(
+        FakeClient(), order_id=34215992, contact_id=555, sold_at="2026-08-18",
+        itens=itens, payment=payment, seller_id=None, notes="",
+    ))
+
+    assert out == {"data": {"id": 34215992}}
+    path, payload = chamadas[0]
+    assert path == "/pedidos/vendas/34215992"
+    assert payload == orders.build_order_payload(
+        contact_id=555, sold_at="2026-08-18", itens=itens,
+        payment=payment, seller_id=None, notes="",
+    )
+
+
+def test_update_order_nao_engole_recusa_de_validacao():
+    """A recusa (pedido ja faturado, tipicamente) tem que subir intacta: quem
+    chama e que decide virar divergencia, nao `update_order`."""
+    class FakeClientRecusa:
+        async def put(self, path, json=None):
+            raise BlingValidationError("pedido faturado nao aceita alteracao",
+                                       type_="VALIDATION_ERROR", status=422)
+
+    itens = [{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 10,
+              "valor_unitario": 26.70, "desconto_percentual": 0}]
+
+    with pytest.raises(BlingValidationError) as exc:
+        asyncio.run(orders.update_order(
+            FakeClientRecusa(), order_id=34215992, contact_id=555,
+            sold_at="2026-08-18", itens=itens,
+            payment={"method_id": 45, "terms": [0]}, seller_id=None, notes="",
+        ))
+    assert "faturado" in str(exc.value)
+
+
 def test_upsert_from_bling_marca_origin_bling_para_venda_nova(monkeypatch):
     store = {"row_sales": []}
     fake_db = FakeSupabase(store)
@@ -619,6 +699,37 @@ def test_upsert_from_bling_marca_origin_bling_para_venda_nova(monkeypatch):
     assert linha["bling_order_id"] == 999
     assert linha["deal_id"] is None, "venda vinda do ERP entra sem deal (decisao D7)"
     assert store["on_conflict_sales"] == "bling_order_id"
+
+
+def test_upsert_from_bling_preenche_nome_da_situacao_do_espelho(monkeypatch):
+    store = {"row_sales": [], "row_bling_situacoes": [{"id": 9, "nome": "Atendido"}]}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    pedido = {"id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0,
+              "situacao": {"id": 9, "valor": 9}, "itens": []}
+    asyncio.run(orders.upsert_from_bling(pedido, lead_id="L1",
+                                         event_date="2026-08-10T10:00:00Z"))
+
+    assert store["sales_upserts"][0]["bling_situacao_nome"] == "Atendido"
+
+
+def test_upsert_from_bling_situacao_ausente_do_espelho_nao_quebra(monkeypatch):
+    """Este e o teste que importa: uma situacao nova, criada no painel do Bling
+    e ainda nao sincronizada para `bling_situacoes`, NAO PODE derrubar o
+    processamento do webhook — so grava o nome como None."""
+    store = {"row_sales": [], "row_bling_situacoes": []}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    pedido = {"id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0,
+              "situacao": {"id": 424242, "valor": 0}, "itens": []}
+    asyncio.run(orders.upsert_from_bling(pedido, lead_id="L1",
+                                         event_date="2026-08-10T10:00:00Z"))
+
+    linha = store["sales_upserts"][0]
+    assert linha["bling_situacao_id"] == 424242
+    assert linha["bling_situacao_nome"] is None
 
 
 def test_upsert_from_bling_preserva_origin_crm_de_venda_existente(monkeypatch):

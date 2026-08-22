@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { LeadBroadcastHistory } from "./lead-broadcast-history";
+import { LeadBlingSection } from "./lead-bling-section";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
@@ -56,6 +57,7 @@ export function LeadDetailModal({
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string; category: string | null }>>([]);
   const [showCreateSale, setShowCreateSale] = useState(false);
+  const [blingContactId, setBlingContactId] = useState<number | null>(lead.bling_contact_id ?? null);
 
   const temp = getTemperature(lead.last_msg_at);
   const tempConfig = TEMPERATURE_CONFIG[temp];
@@ -111,6 +113,23 @@ export function LeadDetailModal({
   useEffect(() => {
     fetchLeadDeals();
   }, [fetchLeadDeals]);
+
+  // `lead` é a prop que abriu o modal — depois de vincular/desvincular no
+  // Bling, ninguém a atualiza (não há polling), então a seção guarda seu
+  // próprio estado e o recarrega direto do banco, como `fetchLeadDeals` já faz.
+  const fetchBlingContactId = useCallback(() => {
+    import("@/lib/supabase/client").then(({ createClient }) => {
+      const supabase = createClient();
+      supabase
+        .from("leads")
+        .select("bling_contact_id")
+        .eq("id", lead.id)
+        .single()
+        .then(({ data }) => {
+          if (data) setBlingContactId(data.bling_contact_id);
+        });
+    });
+  }, [lead.id]);
 
   function updateField(field: string, value: string | number) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -343,6 +362,15 @@ export function LeadDetailModal({
                     ))}
                   </div>
                 </div>
+              </div>
+
+              {/* Bling */}
+              <div className="mt-5 pt-4 border-t border-[#dedbd6]">
+                <LeadBlingSection
+                  leadId={lead.id}
+                  blingContactId={blingContactId}
+                  onChanged={fetchBlingContactId}
+                />
               </div>
 
               {/* CRM Status row */}

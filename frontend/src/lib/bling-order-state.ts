@@ -11,6 +11,7 @@ import {
   orderTotal,
   type BlingInstallment,
 } from "@/lib/bling";
+import type { SaleItem } from "@/lib/types";
 
 export interface BlingProduct {
   id: number;
@@ -84,6 +85,38 @@ export function blankLine(): OrderLine {
 
 export function addLine(linhas: OrderLine[]): OrderLine[] {
   return [...linhas, blankLine()];
+}
+
+/**
+ * Linhas iniciais do formulário de edição, a partir dos `sale_items` que a
+ * venda já tem no CRM.
+ *
+ * Existe porque `BlingOrderForm` nascia sempre com uma linha em branco, mesmo
+ * em edição — e o PUT em `/pedidos/vendas/{id}` no Bling substitui os itens do
+ * pedido pelo que estiver no formulário no momento do submit. Sem isto, abrir
+ * a edição de um pedido de 11 itens para mudar uma observação e salvar apagava
+ * os outros 10 itens no ERP.
+ *
+ * Lista vazia devolve uma linha em branco — nunca um formulário sem nenhuma
+ * linha, que ninguém consegue usar.
+ */
+export function linesFromSaleItems(
+  items: SaleItem[] | null | undefined,
+): OrderLine[] {
+  if (!items || items.length === 0) return [blankLine()];
+  return [...items]
+    .sort((a, b) => a.ordem - b.ordem)
+    .map((item) => ({
+      blingProductId: item.bling_product_id,
+      descricao: item.descricao,
+      codigo: item.codigo,
+      // `sale_items` não guarda unidade — só existe no catálogo do Bling.
+      // Fica sem efeito no payload; é puramente informativo na tela.
+      unidade: null,
+      quantidade: Number(item.quantidade),
+      valorUnitario: Number(item.valor_unitario),
+      descontoPercentual: Number(item.desconto_percentual),
+    }));
 }
 
 /** Nunca deixa o formulário sem nenhuma linha. */

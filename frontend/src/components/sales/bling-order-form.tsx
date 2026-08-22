@@ -45,6 +45,13 @@ interface BlingOrderFormProps {
   };
   /** `condicao_pagamento` do contato no Bling, quando o modal a conhece. */
   condicaoPagamento?: string | null;
+  /**
+   * Linhas com que o formulário nasce. Omitir é o normal ao criar (começa com
+   * uma linha em branco); editar um pedido que já tem itens no ERP deve passar
+   * `linesFromSaleItems(editingSale.sale_items)` aqui — o PUT no Bling manda o
+   * que estiver no formulário, então nascer vazio apaga os itens que não vieram.
+   */
+  initialLines?: OrderLine[];
   onChange: (result: OrderPayloadResult) => void;
 }
 
@@ -78,11 +85,14 @@ type CampoNumerico = "quantidade" | "valorUnitario" | "descontoPercentual";
 export function BlingOrderForm({
   meta,
   condicaoPagamento,
+  initialLines,
   onChange,
 }: BlingOrderFormProps) {
   const { leadId, dealId, soldAt, soldBy, notes } = meta;
 
-  const [linhas, setLinhas] = useState<OrderLine[]>([blankLine()]);
+  const [linhas, setLinhas] = useState<OrderLine[]>(
+    () => initialLines ?? [blankLine()],
+  );
   const [paymentMethodId, setPaymentMethodId] = useState<number | null>(null);
   // Enquanto o vendedor não digita nada, os prazos são os do contato no Bling —
   // derivado, não copiado, para que a condição valha mesmo se chegar depois do
@@ -270,7 +280,7 @@ export function BlingOrderForm({
                       <ChevronDownIcon className="size-4 shrink-0 text-[#8a8a8a]" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="p-0 w-(--radix-popover-trigger-width) min-w-[280px]">
+                  <PopoverContent className="p-0 w-(--radix-popover-trigger-width) min-w-[280px]" portal={false}>
                     <div className="p-2 border-b border-[#eee]">
                       <input
                         autoFocus

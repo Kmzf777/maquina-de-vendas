@@ -5,6 +5,7 @@ import pytest
 import app.bling.router as br
 from app.bling.contacts import Resolution
 from app.bling.errors import BlingServerError, BlingValidationError
+from app.bling import contacts
 
 
 class FakeQuery:
@@ -12,7 +13,11 @@ class FakeQuery:
         self.rows = rows
         self.captured = {}
 
-    def select(self, *_a, **_k):
+    def select(self, *_a, **kwargs):
+        # `count="exact"` e como o catalogo paginado pede o total ao PostgREST
+        # junto da pagina — sem chamada separada.
+        if "count" in kwargs:
+            self.captured["select_count"] = kwargs["count"]
         return self
 
     def eq(self, c, v):
@@ -27,6 +32,10 @@ class FakeQuery:
         self.captured["or"] = expr
         return self
 
+    def update(self, values):
+        self.captured["update"] = values
+        return self
+
     def ilike(self, c, v):
         self.captured["ilike"] = (c, v)
         return self
@@ -37,6 +46,10 @@ class FakeQuery:
     def limit(self, *_a, **_k):
         return self
 
+    def range(self, start, end):
+        self.captured["range"] = (start, end)
+        return self
+
     def maybe_single(self):
         return self
 
@@ -44,7 +57,13 @@ class FakeQuery:
         class R:
             pass
         r = R()
-        r.data = self.rows
+        if "range" in self.captured:
+            start, end = self.captured["range"]
+            r.data = self.rows[start:end + 1]
+            r.count = len(self.rows) if self.captured.get("select_count") else None
+        else:
+            r.data = self.rows
+            r.count = None
         return r
 
 
@@ -82,6 +101,52 @@ def test_products_sem_busca_nao_aplica_filtro_de_texto(monkeypatch):
     monkeypatch.setattr(br, "get_supabase", lambda: sb)
     asyncio.run(br.list_products(q=None))
     assert "or" not in sb.queries[0].captured
+
+
+def test_busca_de_contato_sanitiza_o_termo():
+    # Virgula e parentese COMPOEM a sintaxe do filtro `or` do PostgREST: sem
+    # neutralizar, o resto do texto vira filtro.
+    assert br._termo_seguro("Ltda, (ME)") == "Ltda   ME"
+
+
+def test_contacts_search_filtra_no_espelho(monkeypatch):
+    sb = FakeSupabase({"bling_contacts": [{"id": 1, "nome": "Empresa X"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    out = asyncio.run(br.search_contacts(q="empresa", id=None, limit=20))
+
+    assert out["data"][0]["nome"] == "Empresa X"
+    assert "empresa" in sb.queries[0].captured["or"].lower()
+
+
+def test_contacts_search_sem_termo_nao_aplica_filtro_de_texto(monkeypatch):
+    sb = FakeSupabase({"bling_contacts": []})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+    asyncio.run(br.search_contacts(q=None, id=None, limit=20))
+    assert "or" not in sb.queries[0].captured
+
+
+def test_contacts_search_por_id_filtra_por_igualdade(monkeypatch):
+    # A tela de detalhe do lead precisa achar o contato vinculado mesmo sem
+    # CNPJ no lead (vinculo por telefone/e-mail/escolha manual) — id e exato.
+    sb = FakeSupabase({"bling_contacts": [{"id": 42, "nome": "Empresa Y"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    out = asyncio.run(br.search_contacts(id=42, limit=20))
+
+    assert out["data"][0]["nome"] == "Empresa Y"
+    assert sb.queries[0].captured["eq"]["id"] == 42
+
+
+def test_contacts_search_por_id_ignora_filtro_de_texto(monkeypatch):
+    # id e exato: combinar com o `or_` de texto nao faz sentido — id vence.
+    sb = FakeSupabase({"bling_contacts": [{"id": 42, "nome": "Empresa Y"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    asyncio.run(br.search_contacts(q="qualquer coisa", id=42, limit=20))
+
+    assert "or" not in sb.queries[0].captured
+    assert sb.queries[0].captured["eq"]["id"] == 42
 
 
 def test_payment_methods_so_recebimentos_e_ativas(monkeypatch):
@@ -216,6 +281,117 @@ def test_sucesso_devolve_201_com_numero_do_pedido(monkeypatch):
     assert capturado["itens"][0]["codigo"] == "CAF250"
 
 
+def test_atualizar_pedido_devolve_409_quando_contato_nao_resolve(monkeypatch):
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "cnpj": None})
+
+    async def fake_resolve(lead):
+        return Resolution("suggested", None, [{"id": 77, "nome": "Empresa X"}], "telefone")
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 409
+    corpo = resp.body.decode()
+    assert "contact_unresolved" in corpo
+    assert "Empresa X" in corpo
+
+
+def test_atualizar_pedido_devolve_202_quando_erro_e_transitorio(monkeypatch):
+    """Erro transitorio no PUT NAO e recusa — e retentativa. Sem job: o frontend
+    e que decide tentar de novo, nao ha marca de divergencia aqui."""
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "bling_contact_id": 555})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    async def fake_resolve(lead):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        raise BlingServerError("bling fora do ar")
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 202
+    corpo = resp.body.decode()
+    assert "queued" not in corpo, "nada foi enfileirado: o PUT nao precisa de job"
+
+
+def test_atualizar_pedido_erro_de_validacao_devolve_422_com_mensagem_original(monkeypatch):
+    """E o caso central da task: o Bling recusa (pedido ja faturado) e a
+    mensagem original tem que atravessar intacta para o frontend decidir."""
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "bling_contact_id": 555})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    async def fake_resolve(lead):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        raise BlingValidationError("pedido faturado nao aceita alteracao",
+                                   description="situacao", type_="VALIDATION_ERROR")
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 422
+    corpo = resp.body.decode()
+    assert "pedido faturado nao aceita alteracao" in corpo
+    assert "situacao" in corpo
+
+
+def test_atualizar_pedido_sucesso_devolve_200(monkeypatch):
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "bling_contact_id": 555})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    capturado = {}
+
+    async def fake_resolve(lead):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        capturado.update(k)
+        return {"data": {"id": 34215992}}
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email: None)
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18", sold_by="v@e.com",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 200
+    corpo = resp.body.decode()
+    assert "34215992" in corpo
+    assert capturado["order_id"] == 34215992
+    # mesma completude de itens que o POST ja faz: descricao/codigo do espelho
+    assert capturado["itens"][0]["descricao"] == "Cafe Classico 250g"
+    assert capturado["itens"][0]["codigo"] == "CAF250"
+
+
 def test_oauth_callback_rejeita_state_invalido(monkeypatch):
     async def fake_consume(state):
         return False
@@ -223,6 +399,68 @@ def test_oauth_callback_rejeita_state_invalido(monkeypatch):
     monkeypatch.setattr(br.auth, "consume_state", fake_consume)
     resp = asyncio.run(br.oauth_callback(code="c", state="ruim"))
     assert resp.status_code == 400
+
+
+def test_unlink_limpa_o_vinculo_do_lead(monkeypatch):
+    sb = FakeSupabase({})
+    monkeypatch.setattr(contacts, "get_supabase", lambda: sb)
+
+    asyncio.run(contacts.unlink("lead-1"))
+
+    q = sb.queries[0]
+    assert q.captured["update"] == {"bling_contact_id": None}
+    assert q.captured["eq"] == {"id": "lead-1"}
+
+
+def test_unlink_endpoint_devolve_unlinked(monkeypatch):
+    chamadas = []
+
+    async def fake_unlink(lead_id):
+        chamadas.append(lead_id)
+
+    monkeypatch.setattr(br.contacts, "unlink", fake_unlink)
+
+    resp = asyncio.run(br.unlink_contact_endpoint(lead_id="lead-1"))
+
+    assert resp == {"unlinked": True}
+    assert chamadas == ["lead-1"]
+
+
+async def test_catalogo_pagina_de_verdade_e_devolve_total(monkeypatch):
+    # Diferente de /products (combobox, teto de 200, so ativos), /catalog e
+    # para uma tela de listagem: precisa paginar de verdade e dizer o total.
+    produtos = [{"id": i, "nome": f"Produto {i:02d}"} for i in range(1, 51)]
+    sb = FakeSupabase({"bling_products": produtos})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    pagina2 = await br.list_catalog(q=None, situacao=None, page=2, limit=20)
+
+    assert len(pagina2["data"]) == 20
+    assert pagina2["page"] == 2
+    assert pagina2["total"] == 50
+    assert pagina2["data"][0]["nome"] == "Produto 21"
+
+
+async def test_catalogo_filtra_por_situacao_e_busca_quando_informados(monkeypatch):
+    sb = FakeSupabase({"bling_products": [{"id": 1, "nome": "Cafe Classico 250g"}]})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    await br.list_catalog(q="classico", situacao="A", page=1, limit=50)
+
+    assert sb.queries[0].captured["eq"]["situacao"] == "A"
+    assert "classico" in sb.queries[0].captured["or"].lower()
+
+
+async def test_catalogo_sem_filtros_nao_aplica_eq_nem_or(monkeypatch):
+    # Diferente de /products, /catalog nao fixa situacao='A' — sem filtro
+    # explicito, devolve o catalogo inteiro (ativos e inativos).
+    sb = FakeSupabase({"bling_products": []})
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    await br.list_catalog(q=None, situacao=None, page=1, limit=50)
+
+    assert "eq" not in sb.queries[0].captured
+    assert "or" not in sb.queries[0].captured
 
 
 def test_router_registrado_no_app():
@@ -248,5 +486,6 @@ def test_router_expoe_as_rotas_esperadas():
 
     rotas = {r.path for r in bling_router.routes}
     assert "/api/bling/products" in rotas
+    assert "/api/bling/catalog" in rotas
     assert "/api/bling/orders" in rotas
     assert "/api/bling/status" in rotas

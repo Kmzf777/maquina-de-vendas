@@ -9,6 +9,20 @@ Contrato de POST /api/bling/orders:
 A diferenca entre 202 e 422 e a que mais importa: so erro TRANSITORIO vira job.
 Um payload invalido na fila viraria retentativa infinita e, pior, rajada de erro
 conta para o bloqueio de IP do Bling (300 erros em 10s => 10 min bloqueado).
+
+Contrato de PUT /api/bling/orders/{order_id}:
+  200 -> pedido alterado no Bling
+  202 -> erro TRANSITORIO; NAO e recusa, e retentativa. Sem job: o PUT nao tem
+         idempotency_key porque nao precisa — reenviar o mesmo PUT nao duplica
+         nada, entao o proprio vendedor tentando salvar de novo basta.
+  409 -> contato nao resolvido (raro aqui: o vinculo e persistido desde a
+         criacao do pedido; so volta a acontecer se alguem desfez o vinculo
+         manualmente depois)
+  422 -> o Bling recusou a alteracao (pedido ja faturado, tipicamente),
+         repassado com a mensagem original. Quem decide o que fazer com a
+         recusa (inclusive marcar a venda como divergente) e quem chama —
+         este endpoint so tenta e devolve a resposta. Por isso, diferente do
+         POST, o PUT nao escreve em `sales`.
 """
 import asyncio
 import logging
@@ -19,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from app.bling import auth, config, contacts, jobs
 from app.bling.errors import TRANSIENT, BlingError, BlingValidationError
-from app.bling.orders import create_order
+from app.bling.orders import create_order, update_order
 from app.config import settings
 from app.db.supabase import get_supabase
 
@@ -95,6 +109,64 @@ async def list_products(q: str | None = Query(None), limit: int = Query(50, le=2
     """Busca no ESPELHO, nunca no Bling — o combobox dispara a cada tecla."""
     data = await asyncio.to_thread(_query_products, q, limit)
     return {"data": data}
+
+
+def _query_catalog(q: str | None, situacao: str | None, page: int, limit: int):
+    """Catalogo completo, paginado. Diferente de `_query_products`, que fixa
+    situacao='A' e teto de 200 porque nasceu para um combobox.
+
+    A paginacao e explicita de proposito: o PostgREST corta em 1000 linhas por
+    padrao, e um catalogo maior que isso viraria truncamento silencioso."""
+    inicio = (page - 1) * limit
+    query = (get_supabase().table("bling_products")
+             .select("id, codigo, nome, preco, unidade, situacao, saldo_virtual, "
+                     "imagem_url", count="exact"))
+    if situacao:
+        query = query.eq("situacao", situacao)
+    if q:
+        alvo = f"%{_termo_seguro(q)}%"
+        query = query.or_(f"nome.ilike.{alvo},codigo.ilike.{alvo}")
+    res = query.order("nome").range(inicio, inicio + limit - 1).execute()
+    return getattr(res, "data", None) or [], getattr(res, "count", None) or 0
+
+
+@router.get("/catalog")
+async def list_catalog(q: str | None = Query(None), situacao: str | None = Query(None),
+                        page: int = Query(1, ge=1), limit: int = Query(50, le=200)):
+    """Catalogo do espelho para a tela de produtos — nunca a API do Bling.
+
+    Diferente de GET /products (combobox de pedido: so ativos, teto de 200),
+    aqui a paginacao e explicita e o total vem do PostgREST via `count=exact`.
+    """
+    data, total = await asyncio.to_thread(_query_catalog, q, situacao, page, limit)
+    return {"data": data, "page": page, "limit": limit, "total": total}
+
+
+def _query_contacts(q: str | None, limit: int, contact_id: int | None = None):
+    query = (get_supabase().table("bling_contacts")
+             .select("id, nome, fantasia, doc_digits, telefone_e164, celular_e164, "
+                     "email, situacao, endereco"))
+    if contact_id is not None:
+        # id e exato (chave do espelho): combinar com o `or_` de texto nao faz
+        # sentido, entao o id vence e o texto e ignorado.
+        query = query.eq("id", contact_id)
+    elif q:
+        alvo = f"%{_termo_seguro(q)}%"
+        query = query.or_(f"nome.ilike.{alvo},fantasia.ilike.{alvo},doc_digits.ilike.{alvo}")
+    return getattr(query.order("nome").limit(limit).execute(), "data", None) or []
+
+
+@router.get("/contacts/search")
+async def search_contacts(q: str | None = Query(None), id: int | None = Query(None),
+                           limit: int = Query(20, le=100)):
+    """Busca no ESPELHO, nunca no Bling — o campo dispara a cada tecla.
+
+    `id` busca exata pela chave do espelho — usada pela tela de detalhe do
+    lead para carregar o contato ja vinculado (`leads.bling_contact_id`)
+    mesmo quando o lead nao tem CNPJ para servir de termo de busca (vinculo
+    por telefone/e-mail ou escolhido a mao).
+    """
+    return {"data": await asyncio.to_thread(_query_contacts, q, limit, id)}
 
 
 def _query_payment_methods():
@@ -227,6 +299,85 @@ async def create_order_endpoint(body: OrderIn):
     return JSONResponse({**out, "status": "created"}, status_code=201)
 
 
+@router.put("/orders/{order_id}")
+async def update_order_endpoint(order_id: int, body: OrderIn):
+    """422 quando o Bling recusa (pedido faturado, tipicamente) — a UI pergunta
+    se salva so no CRM e marca divergencia. 202 quando o erro e transitorio:
+    ai NAO e divergencia, e retentativa (sem job — ver docstring do modulo)."""
+    lead = await asyncio.to_thread(_load_lead, body.lead_id)
+    if not lead:
+        return JSONResponse({"error": "lead_not_found"}, status_code=404)
+
+    # Mesma resolucao do POST. Na pratica cai direto no atalho `linked`: o
+    # vinculo lead-contato foi persistido quando o pedido foi criado e
+    # `contacts.resolve` o devolve sem I/O extra (ve o comentario no modulo
+    # `contacts`). So volta a exigir decisao humana se o vinculo tiver sido
+    # desfeito manualmente depois — o mesmo caso que o POST ja trata, entao
+    # reusar em vez de inventar um caminho novo para o PUT.
+    resolucao = await contacts.resolve(lead)
+    if resolucao.status != "linked":
+        return JSONResponse({
+            "error": "contact_unresolved",
+            "status": resolucao.status,
+            "reason": resolucao.reason,
+            "candidates": resolucao.candidates,
+        }, status_code=409)
+
+    itens = [{
+        "bling_product_id": i.bling_product_id,
+        "codigo": i.codigo,
+        "descricao": i.descricao or "",
+        "unidade": i.unidade,
+        "quantidade": i.quantidade,
+        "valor_unitario": i.valor_unitario,
+        "desconto_percentual": i.desconto_percentual,
+    } for i in body.items]
+
+    # Descricao e obrigatoria no item mesmo com produto.id — completa do espelho.
+    faltando = [i for i in itens if not i["descricao"]]
+    if faltando:
+        por_id = await asyncio.to_thread(
+            _products_by_id, [i["bling_product_id"] for i in faltando]
+        )
+        for item in faltando:
+            p = por_id.get(item["bling_product_id"]) or {}
+            item["descricao"] = p.get("nome") or "Item"
+            item["codigo"] = item["codigo"] or p.get("codigo")
+            item["unidade"] = item["unidade"] or p.get("unidade")
+
+    kwargs = {
+        "order_id": order_id,
+        "contact_id": resolucao.contact_id,
+        "sold_at": body.sold_at,
+        "itens": itens,
+        "payment": {"method_id": body.payment.method_id, "terms": body.payment.terms},
+        "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by),
+        "notes": body.notes,
+    }
+
+    from app.bling.client import BlingClient
+    try:
+        async with BlingClient() as client:
+            await update_order(client, **kwargs)
+    except BlingValidationError as exc:
+        # Repetir a mesma alteracao recusada nunca conserta — nao vira retentativa.
+        # Quem chama decide se salva local e marca divergencia.
+        return JSONResponse({
+            "error": "validation", "message": str(exc),
+            "detail": exc.description, "type": exc.type,
+        }, status_code=422)
+    except TRANSIENT as exc:
+        # Sem job: o PUT e seguro de reenviar (nao ha duplicacao possivel como
+        # no POST), entao o proprio vendedor tentando salvar de novo basta.
+        logger.warning("[BLING] PUT do pedido %s falhou (transitorio): %s", order_id, exc)
+        return JSONResponse({"status": "bling_unavailable", "reason": str(exc)},
+                            status_code=202)
+    except BlingError as exc:
+        return JSONResponse({"error": "bling", "message": str(exc)}, status_code=502)
+
+    return JSONResponse({"status": "updated", "bling_order_id": order_id}, status_code=200)
+
+
 @router.post("/contacts")
 async def create_contact_endpoint(body: ContactIn):
     """Cria o contato no Bling e vincula ao lead (fluxo do 409)."""
@@ -250,6 +401,13 @@ async def link_contact_endpoint(lead_id: str, contact_id: int):
     """Confirma manualmente um candidato sugerido."""
     await contacts.link(lead_id, contact_id)
     return {"linked": True}
+
+
+@router.post("/contacts/unlink")
+async def unlink_contact_endpoint(lead_id: str):
+    """Desfaz o vinculo lead-contato (a proxima venda volta a resolucao por documento)."""
+    await contacts.unlink(lead_id)
+    return {"unlinked": True}
 
 
 # --------------------------------------------------------------------------
