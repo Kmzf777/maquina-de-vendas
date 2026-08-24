@@ -41,7 +41,7 @@ export interface BlingGate {
   message?: string;
 }
 
-export function blingGate({ loading, error, enabled, skipBling }: BlingGateInput): BlingGate {
+export function blingGate({ loading, error, enabled, isEditing, skipBling }: BlingGateInput): BlingGate {
   if (skipBling) return { mode: "legacy", canSubmit: true };
   if (loading) return { mode: "loading", canSubmit: false };
 
@@ -49,10 +49,15 @@ export function blingGate({ loading, error, enabled, skipBling }: BlingGateInput
     return {
       mode: "error",
       canSubmit: false,
-      message:
-        "Nao foi possivel confirmar a conexao com o Bling. " +
-        "Registrar agora criaria uma venda fora do ERP, entao o envio esta bloqueado. " +
-        "Para registrar assim mesmo, marque \"Registrar sem enviar ao Bling\".",
+      // A caixa "Registrar sem enviar ao Bling" so existe na tela quando NAO
+      // esta editando (ver `podeEscaparDoBling` no modal) — mencionar essa
+      // instrucao durante a edicao apontaria para um controle que nao esta la.
+      message: isEditing
+        ? "Nao foi possivel confirmar a conexao com o Bling. " +
+          "Editar agora poderia gravar uma divergencia silenciosa em relacao ao pedido no ERP, entao o envio esta bloqueado."
+        : "Nao foi possivel confirmar a conexao com o Bling. " +
+          "Registrar agora criaria uma venda fora do ERP, entao o envio esta bloqueado. " +
+          "Para registrar assim mesmo, marque \"Registrar sem enviar ao Bling\".",
     };
   }
 

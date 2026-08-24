@@ -106,34 +106,30 @@ export function SaleCreateModal({
   // (`bling_order_id`) para ter o que alterar.
   const blingStatus = useBlingStatus();
   const [skipBling, setSkipBling] = useState(false);
-  const gate = blingGate({
+  const gateInputBase = {
     loading: blingStatus.loading,
     error: blingStatus.error,
     // A prop continua existindo e VENCE quando informada: quem quiser forcar o
     // modo (teste, chamador especifico) nao passa a depender de rede.
     enabled: blingEnabled ?? blingStatus.enabled,
     isEditing,
-    skipBling,
-  });
+  };
+  const gate = blingGate({ ...gateInputBase, skipBling });
   // Gate hipotetico ignorando a escolha do vendedor: e ele que diz se a
   // escapatoria faz sentido nesta tela. Sem isto, marcar a caixa faria o proprio
   // `gate` virar "legacy" e a caixa sumiria da tela ao ser marcada.
-  const gateSemSkip = blingGate({
-    loading: blingStatus.loading,
-    error: blingStatus.error,
-    enabled: blingEnabled ?? blingStatus.enabled,
-    isEditing,
-    skipBling: false,
-  });
+  const gateSemSkip = blingGate({ ...gateInputBase, skipBling: false });
   // Editar exige mais que o Bling estar ligado: só faz sentido dar PUT numa
   // venda que já tem pedido no ERP. Vendas de antes desta integração (ou
   // registradas em modo legado) não têm `bling_order_id` — continuam editando
   // local mesmo com o Bling ligado, porque não há pedido para alterar.
   const blingEditable = !isEditing || !!editingSale?.bling_order_id;
-  // A escapatoria so faz sentido quando o Bling estaria no caminho: modo bling
-  // (o vendedor teria que montar o pedido) ou erro (o modal estaria travado).
+  // So na CRIACAO. Ao editar uma venda que ja tem pedido no Bling, a alteracao
+  // precisa passar por PUT no ERP (Fase E) ou ser marcada como divergente —
+  // deixar escapar aqui gravaria a divergencia em silencio, que e o defeito que
+  // `bling_divergent` foi criado para tornar visivel.
   const podeEscaparDoBling =
-    blingEditable && (gateSemSkip.mode === "bling" || gateSemSkip.mode === "error");
+    !isEditing && blingEditable && (gateSemSkip.mode === "bling" || gateSemSkip.mode === "error");
   const blingMode = gate.mode === "bling" && blingEditable;
   // Layout: `loading` ainda nao sabe o modo, mas abrir pequeno e pular para
   // grande quando o status chega e pior do que abrir grande. Tratar loading

@@ -68,4 +68,21 @@ describe("blingGate", () => {
     const g = blingGate({ loading: false, error: null, enabled: true, isEditing: false, skipBling: false });
     expect(g.mode).toBe("bling");
   });
+
+  // A caixa "Registrar sem enviar ao Bling" so aparece na tela quando NAO esta
+  // editando — a mensagem de erro so pode mencionar essa instrucao quando ela
+  // corresponde a algo que o vendedor realmente ve.
+  it("erro na criacao menciona a caixa de escapatoria", () => {
+    const g = blingGate({ loading: false, error: "timeout", enabled: null, isEditing: false });
+    expect(g.mode).toBe("error");
+    expect(g.canSubmit).toBe(false);
+    expect(g.message).toContain("Registrar sem enviar ao Bling");
+  });
+
+  it("erro na edicao NAO menciona a caixa de escapatoria", () => {
+    const g = blingGate({ loading: false, error: "timeout", enabled: null, isEditing: true });
+    expect(g.mode).toBe("error");
+    expect(g.canSubmit).toBe(false);
+    expect(g.message).not.toContain("Registrar sem enviar ao Bling");
+  });
 });
