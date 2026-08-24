@@ -50,6 +50,17 @@ describe("salesScopeFilter", () => {
     expect(() => salesScopeFilter({ ...vendedor, email: "a(b)@x.com" }, true)).toThrow();
   });
 
+  it("e-mail com porcento e recusado — e curinga de ILIKE", () => {
+    expect(() => salesScopeFilter({ ...vendedor, email: "j%@x.com" }, true)).toThrow();
+  });
+
+  // `_` e curinga de um caractere, mas recusa-lo travaria usuarios reais.
+  it("underscore no e-mail e aceito", () => {
+    expect(salesScopeFilter({ ...vendedor, email: "joao_silva@x.com" }, true)).toContain(
+      "joao_silva@x.com"
+    );
+  });
+
   // O ponto tem que passar: todo e-mail tem um no dominio, e o PostgREST o
   // aceita sem aspas (verificado contra o servidor real).
   it("ponto no dominio e aceito", () => {

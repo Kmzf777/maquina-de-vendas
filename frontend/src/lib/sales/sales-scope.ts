@@ -31,7 +31,14 @@ export class SalesScopeError extends Error {
 //     escape, entao a unica defesa e recusar. Um `*` no e-mail transformaria a
 //     comparacao exata numa busca por prefixo e ALARGARIA o escopo.
 //   - `,` `(` `)` `:` sao separadores da sintaxe; recusados por precaucao.
-const RESERVADOS_POSTGREST = /[,()*:]/;
+//   - `%` e o curinga multi-caractere de ILIKE no proprio Postgres — mesmo
+//     risco do `*`, que e so o alias do PostgREST para ele.
+//   - `_` (curinga de UM caractere) fica PERMITIDO de proposito: recusa-lo
+//     travaria fora do sistema qualquer usuario com underscore no e-mail, que
+//     e comum, e o alargamento possivel e de um unico caractere numa posicao
+//     fixa — para pegar outra pessoa, o e-mail dela teria que diferir
+//     exatamente ali. O custo de recusar supera o risco de aceitar.
+const RESERVADOS_POSTGREST = /[,()*:%]/;
 
 function emailValido(email: string | undefined): string {
   const limpo = (email ?? "").trim();
