@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Pencil, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/types";
-import { blingOrderUrl, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
+import { blingOrderUrl, foraDoBling, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
 
 // Cores da paleta da tabela para cada tom devolvido por saleStatus().
 const TONE_COLOR: Record<StatusTone, string> = {
@@ -91,13 +91,13 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
                   R$ {Number(sale.value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </td>
                 <td className="py-3 px-3 whitespace-nowrap">
-                  {!pedido ? (
-                    // Sem rotulo de pedido significa, necessariamente, sem
-                    // `bling_order_id`: `pedido` so fica vazio quando `orderLabel`
-                    // E `blingOrderUrl` estao vazios, e o segundo so esvazia sem
-                    // id de pedido. Por isso nao ha fallback aqui — nao existe
-                    // estado em que esta celula esteja vazia e a venda esteja
-                    // dentro do Bling.
+                  {/* `foraDoBling` decide antes de qualquer coisa: a ausencia de
+                      `bling_order_id` e o que define estar fora do ERP. Decidir
+                      por `!pedido` daria no mesmo hoje, mas so porque nenhum
+                      caminho de escrita grava `bling_order_number` sem id — e o
+                      banco nao garante isso. Se algum dia gravar, a celula
+                      mostraria o numero e esconderia justamente o selo. */}
+                  {foraDoBling(sale) ? (
                     <span
                       className="text-[11px] text-[#7b7b78] border border-[#dedbd6] rounded-[3px] px-[6px] py-[2px]"
                       title="Venda registrada no CRM sem pedido no Bling"

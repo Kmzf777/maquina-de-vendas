@@ -58,7 +58,9 @@ describe("blingOrderUrl", () => {
   it("sem id nao ha link", () => {
     expect(blingOrderUrl(null)).toBe("");
   });
+});
 
+describe("foraDoBling", () => {
   it("fora do Bling e definido pela ausencia de pedido, nao pelo origin", () => {
     const manualSemPedido: Sale = { ...base, origin: "manual", bling_order_id: null };
     const crmSemPedido: Sale = { ...base, origin: "crm", bling_order_id: null };
