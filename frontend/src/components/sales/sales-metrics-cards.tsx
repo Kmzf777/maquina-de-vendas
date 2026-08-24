@@ -46,8 +46,13 @@ export function SalesMetricsCards({ metrics, loading }: SalesMetricsCardsProps) 
         value={metrics ? `R$ ${fmt(metrics.avg_value)}` : "R$ 0,00"}
         loading={loading}
       />
+      {/* "(geral)" nao e enfeite: os tres cards acima respeitam o escopo por
+          vendedor, este nao. A RPC `get_avg_repurchase_cycle_days` agrega a
+          tabela inteira no banco e nao aceita filtro sem mudar a assinatura da
+          funcao. Sem o rotulo, o vendedor leria quatro numeros lado a lado
+          supondo que os quatro sao dele. */}
       <MetricCard
-        label="Ciclo médio de recompra"
+        label="Ciclo médio de recompra (geral)"
         value={
           metrics?.avg_repurchase_cycle_days != null
             ? `${metrics.avg_repurchase_cycle_days} dias`
