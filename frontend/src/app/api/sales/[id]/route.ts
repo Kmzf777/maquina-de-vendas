@@ -1,18 +1,32 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+import { getCurrentUser, type CurrentUser } from "@/lib/supabase/pipeline-access";
 import { podeVerVenda, scopeAtivo, SalesScopeError } from "@/lib/sales/sales-scope";
 
 type Guarda = { ok: true } | { ok: false; resposta: NextResponse };
 
 /**
  * Venda fora do escopo responde 404, nao 403: 403 confirmaria que ela existe.
+ *
+ * A sessao e resolvida ANTES de tocar a linha: se checassemos a linha
+ * primeiro, um chamador sem sessao receberia 404 para id inexistente e 401
+ * para id existente, o que confirma existencia de UUID sem exigir sessao
+ * valida. Na pratica o `proxy.ts` ja barra requisicao sem sessao antes da
+ * rota, mas a ordem aqui e defesa em profundidade, nao um furo aberto.
  */
 async function guardaDeVenda(
   supabase: Awaited<ReturnType<typeof getServiceSupabase>>,
   id: string,
 ): Promise<Guarda> {
   if (!scopeAtivo()) return { ok: true };
+
+  let user: CurrentUser;
+  try {
+    user = await getCurrentUser();
+  } catch (err) {
+    const msg = err instanceof SalesScopeError ? err.message : "Não autenticado";
+    return { ok: false, resposta: NextResponse.json({ error: msg }, { status: 401 }) };
+  }
 
   const { data: linha, error } = await supabase
     .from("sales")
@@ -27,7 +41,6 @@ async function guardaDeVenda(
   }
 
   try {
-    const user = await getCurrentUser();
     const pode = podeVerVenda(linha, { userId: user.userId, email: user.email, role: user.role }, true);
     if (!pode) {
       return { ok: false, resposta: NextResponse.json({ error: "Venda não encontrada." }, { status: 404 }) };
