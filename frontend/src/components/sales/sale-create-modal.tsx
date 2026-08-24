@@ -146,20 +146,16 @@ export function SaleCreateModal({
   const [soldAt, setSoldAt] = useState(
     (editingSale?.sold_at ?? new Date().toISOString()).slice(0, 10)
   );
-  const [soldBy, setSoldBy] = useState(
-    editingSale?.sold_by ?? currentUserEmail ?? ""
+  // `soldBy` e derivado, nao estado puro: e a escolha explicita do vendedor
+  // OU, enquanto ninguem escolheu, o usuario logado. Guardar so a escolha
+  // resolve a corrida de graca — `currentUserEmail` chega de forma assincrona
+  // (useCurrentUserEmail), e com estado puro o valor inicial "" ficaria
+  // congelado, gravando sold_by = NULL. Derivando, o e-mail entra sozinho
+  // assim que chega, e a escolha manual (inclusive "__none__") sempre vence.
+  const [soldByEscolhido, setSoldBy] = useState<string | null>(
+    editingSale?.sold_by ?? null
   );
-
-  // `currentUserEmail` chega de forma assincrona. Se o modal montar antes de a
-  // sessao resolver, o `useState` acima fixa `soldBy` em "" e nunca mais e
-  // reinicializado — a venda gravaria sold_by = NULL, que e exatamente o
-  // defeito que esta entrega fecha, reduzido a uma corrida. Preenche quando o
-  // e-mail chega, sem sobrescrever escolha manual (inclusive "__none__") nem
-  // edicao de venda existente.
-  useEffect(() => {
-    if (isEditing || !currentUserEmail) return;
-    setSoldBy((atual) => atual || currentUserEmail);
-  }, [currentUserEmail, isEditing]);
+  const soldBy = soldByEscolhido ?? currentUserEmail ?? "";
 
   const [dealId, setDealId] = useState(lockedDealId ?? "");
   const [creatingDeal, setCreatingDeal] = useState(false);
