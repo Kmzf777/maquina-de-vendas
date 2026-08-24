@@ -337,6 +337,10 @@ export function SaleCreateModal({
           product: productSummary(payload.items),
           value: total,
           sold_at: new Date(soldAt + "T12:00:00").toISOString(),
+          // O dropdown não oferece mais "__none__" (removido — venda sem
+          // vendedor não tem motivo legítimo neste modal), mas a checagem
+          // sobrevive: vendas antigas em edição podem ter esse valor gravado
+          // de quando a opção existia, e ela também cobre `soldBy` vazio.
           sold_by: soldBy && soldBy !== "__none__" ? soldBy : null,
           notes: notes.trim() || null,
           ...divergencia,
@@ -806,7 +810,6 @@ export function SaleCreateModal({
                 <SelectValue placeholder="Nenhum" />
               </SelectTrigger>
               <SelectContent position="popper">
-                <SelectItem value="__none__">Nenhum</SelectItem>
                 {users.map((u) => (
                   <SelectItem key={u.id} value={u.email}>
                     {u.name || u.email}
