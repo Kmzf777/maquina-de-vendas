@@ -105,6 +105,7 @@ export function SaleCreateModal({
   // ver `blingMode` abaixo, que também exige que a venda tenha um pedido
   // (`bling_order_id`) para ter o que alterar.
   const blingStatus = useBlingStatus();
+  const [skipBling, setSkipBling] = useState(false);
   const gate = blingGate({
     loading: blingStatus.loading,
     error: blingStatus.error,
@@ -112,12 +113,27 @@ export function SaleCreateModal({
     // modo (teste, chamador especifico) nao passa a depender de rede.
     enabled: blingEnabled ?? blingStatus.enabled,
     isEditing,
+    skipBling,
+  });
+  // Gate hipotetico ignorando a escolha do vendedor: e ele que diz se a
+  // escapatoria faz sentido nesta tela. Sem isto, marcar a caixa faria o proprio
+  // `gate` virar "legacy" e a caixa sumiria da tela ao ser marcada.
+  const gateSemSkip = blingGate({
+    loading: blingStatus.loading,
+    error: blingStatus.error,
+    enabled: blingEnabled ?? blingStatus.enabled,
+    isEditing,
+    skipBling: false,
   });
   // Editar exige mais que o Bling estar ligado: só faz sentido dar PUT numa
   // venda que já tem pedido no ERP. Vendas de antes desta integração (ou
   // registradas em modo legado) não têm `bling_order_id` — continuam editando
   // local mesmo com o Bling ligado, porque não há pedido para alterar.
   const blingEditable = !isEditing || !!editingSale?.bling_order_id;
+  // A escapatoria so faz sentido quando o Bling estaria no caminho: modo bling
+  // (o vendedor teria que montar o pedido) ou erro (o modal estaria travado).
+  const podeEscaparDoBling =
+    blingEditable && (gateSemSkip.mode === "bling" || gateSemSkip.mode === "error");
   const blingMode = gate.mode === "bling" && blingEditable;
   // Layout: `loading` ainda nao sabe o modo, mas abrir pequeno e pular para
   // grande quando o status chega e pior do que abrir grande. Tratar loading
@@ -698,6 +714,24 @@ export function SaleCreateModal({
               esperar o status carregar: o resultado nunca muda essa venda para
               modo Bling, então mostrar o formulário legado direto evita um
               "verificando conexão" que não leva a lugar nenhum. */}
+          {podeEscaparDoBling && (
+            <label className="flex items-start gap-2 px-1 py-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={skipBling}
+                onChange={(e) => setSkipBling(e.target.checked)}
+                className="mt-[3px] h-[14px] w-[14px] accent-[#111111]"
+              />
+              <span className="text-[13px] leading-[1.4] text-[#111111]">
+                Registrar sem enviar ao Bling
+                <span className="block text-[12px] text-[#7b7b78]">
+                  Use para pedidos que já foram lançados na outra empresa. A venda
+                  entra no CRM e nenhum pedido é criado no Bling.
+                </span>
+              </span>
+            </label>
+          )}
+
           {gate.mode === "loading" && blingEditable ? (
             <div className="px-5 py-8 text-center text-[13px] text-[#7b7b78]">
               Verificando conexão com o Bling…
