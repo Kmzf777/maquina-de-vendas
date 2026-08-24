@@ -60,13 +60,14 @@ describe("blingOrderUrl", () => {
   });
 
   it("fora do Bling e definido pela ausencia de pedido, nao pelo origin", () => {
-    // `as Sale`: foraDoBling recebe so Pick<Sale, "bling_order_id"> de proposito
-    // (o discriminador nao e o origin), mas isso faz o TS aplicar excess property
-    // check no literal com `origin` — o cast evita o falso positivo sem alargar
-    // a assinatura da funcao.
-    expect(foraDoBling({ ...base, origin: "manual", bling_order_id: null } as Sale)).toBe(true);
-    expect(foraDoBling({ ...base, origin: "crm", bling_order_id: null } as Sale)).toBe(true);
-    expect(foraDoBling({ ...base, origin: "bling", bling_order_id: 5991 } as Sale)).toBe(false);
-    expect(foraDoBling({ ...base, origin: "crm", bling_order_id: 5991 } as Sale)).toBe(false);
+    const manualSemPedido: Sale = { ...base, origin: "manual", bling_order_id: null };
+    const crmSemPedido: Sale = { ...base, origin: "crm", bling_order_id: null };
+    const doBling: Sale = { ...base, origin: "bling", bling_order_id: 5991 };
+    const crmComPedido: Sale = { ...base, origin: "crm", bling_order_id: 5991 };
+
+    expect(foraDoBling(manualSemPedido)).toBe(true);
+    expect(foraDoBling(crmSemPedido)).toBe(true);
+    expect(foraDoBling(doBling)).toBe(false);
+    expect(foraDoBling(crmComPedido)).toBe(false);
   });
 });
