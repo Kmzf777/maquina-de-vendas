@@ -282,31 +282,53 @@ restaurar nada.
 - Migration: idempotência (rodar duas vezes preserva `sold_by_anterior`) e rollback
   restaurando NULL e não-NULL corretamente.
 
-## Verificação obrigatória antes de implementar
+## Duplicação: verificada, e fora do escopo
 
-Ainda não foi conferido se as 91 vendas `manual` têm contraparte entre as 1.012
-importadas. O import deduplica **apenas** por `bling_order_id`
-(`orders.py:_existing_sale`), e venda lançada à mão antes da integração não tem
-esse campo — logo o sync de 12 meses pode ter criado uma segunda linha para o
-mesmo pedido do mundo real.
+A suspeita era de duplicação sistemática. O import deduplica **apenas** por
+`bling_order_id` (`orders.py:_existing_sale`), e venda lançada à mão antes da
+integração não tem esse campo — logo o sync de 12 meses poderia ter criado uma
+segunda linha para cada pedido já registrado no CRM. O usuário descreveu o fluxo
+anterior como "registrava no Bling e lançava no CRM no fim de semana", o que faria
+esperar par para quase todas as 91.
+
+Medido em 24/08/2026, casando por valor idêntico e data a menos de 7 dias
+(ignorando `lead_id`, porque a importação resolve lead pelo contato do Bling e
+costuma cair num lead diferente do escolhido à mão):
+
+| | |
+|---|---|
+| manuais com alguma candidata a par | **15** |
+| total de manuais | **91** |
+
+**Decisão: não vira bloco desta spec.** Quinze linhas — e 15 é teto, não verdade,
+porque valor idêntico com data próxima também casa recompra legítima — é limpeza
+manual, não código. Automatizar seria pior que não fazer: distinguir "mesma venda
+contada duas vezes" de "o cliente comprou o mesmo café de novo" exige olhar o
+pedido, coisa que nenhuma heurística de valor e data resolve.
+
+O achado colateral importa mais para o desenho do que o próprio 15: **76 vendas
+manuais não têm contraparte alguma no Bling integrado**. A explicação provável é
+que sejam do CNPJ 2. Isso confirma que a escapatória do Bloco 1 não cobre um caso
+raro — cobre a maioria do que o vendedor registra no CRM.
+
+Consulta usada, para quem precisar repetir a medição:
 
 ```sql
-SELECT c.id AS id_crm, b.id AS id_bling, c.lead_id, c.value,
-       c.sold_at AS data_crm, b.sold_at AS data_bling, b.bling_order_number
+SELECT count(DISTINCT c.id) AS manuais_com_par,
+       (SELECT count(*) FROM sales WHERE origin = 'manual') AS total_manuais
   FROM sales c
   JOIN sales b
-    ON b.lead_id = c.lead_id
-   AND b.value   = c.value
-   AND b.origin  = 'bling'
-   AND abs(extract(epoch FROM b.sold_at - c.sold_at)) < 86400 * 3
- WHERE c.origin = 'manual'
- ORDER BY c.sold_at DESC;
+    ON b.origin = 'bling'
+   AND b.value  = c.value
+   AND abs(extract(epoch FROM b.sold_at - c.sold_at)) < 86400 * 7
+ WHERE c.origin = 'manual';
 ```
 
-Regra de decisão: **vazio** → os três blocos seguem como estão. **Com linhas** → a
-deduplicação vira um quarto bloco e é tratada **antes** do Bloco 2, porque filtrar
-melhor uma lista que conta a mesma venda duas vezes não resolve a dor do vendedor,
-só reorganiza um total errado.
+Uma ressalva sobre o alcance dessa medição: ela só enxerga duplicata em que valor
+e data batem. Não enxergaria o caso de a venda manual ter sido digitada com valor
+diferente (frete incluso no total do Bling, arredondamento). Se depois de limpar
+as 15 os números do vendedor continuarem não fechando, o próximo corte é por
+período e volume, não por linha.
 
 ## Fora de escopo, de propósito
 
