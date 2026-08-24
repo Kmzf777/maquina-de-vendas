@@ -151,7 +151,7 @@ export function SaleCreateModal({
   // resolve a corrida de graca — `currentUserEmail` chega de forma assincrona
   // (useCurrentUserEmail), e com estado puro o valor inicial "" ficaria
   // congelado, gravando sold_by = NULL. Derivando, o e-mail entra sozinho
-  // assim que chega, e a escolha manual (inclusive "__none__") sempre vence.
+  // assim que chega, e a escolha manual no dropdown sempre vence.
   const [soldByEscolhido, setSoldBy] = useState<string | null>(
     editingSale?.sold_by ?? null
   );
