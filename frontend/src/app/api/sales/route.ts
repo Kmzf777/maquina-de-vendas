@@ -106,6 +106,10 @@ export async function POST(request: NextRequest) {
       deal_id: dealId,
       conversation_id: body.conversation_id || null,
       notes: body.notes?.trim() || null,
+      // Explicito de proposito: o DEFAULT da coluna e 'crm', que significa
+      // "criada no CRM E virou pedido no Bling". Esta rota e o caminho SEM
+      // pedido no ERP, entao 'manual' e o valor correto.
+      origin: "manual",
     })
     .select("*, leads(id, name, phone, company), deals(id, title)")
     .single();
