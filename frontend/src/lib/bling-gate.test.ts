@@ -42,4 +42,30 @@ describe("blingGate", () => {
     expect(g.mode).toBe("error");
     expect(g.canSubmit).toBe(false);
   });
+
+  // O caso que da nome a mudanca: com skipBling, falhar ao consultar o status
+  // NAO pode bloquear — a venda nem vai para o Bling, entao a conexao e
+  // irrelevante. Antes desta mudanca o modal travava por completo aqui.
+  it("skipBling destrava mesmo quando o status falhou", () => {
+    const g = blingGate({ loading: false, error: "timeout", enabled: null, isEditing: false, skipBling: true });
+    expect(g.mode).toBe("legacy");
+    expect(g.canSubmit).toBe(true);
+  });
+
+  it("skipBling vence o modo bling", () => {
+    const g = blingGate({ loading: false, error: null, enabled: true, isEditing: false, skipBling: true });
+    expect(g.mode).toBe("legacy");
+    expect(g.canSubmit).toBe(true);
+  });
+
+  it("skipBling nao espera o status carregar", () => {
+    const g = blingGate({ loading: true, error: null, enabled: null, isEditing: false, skipBling: true });
+    expect(g.mode).toBe("legacy");
+    expect(g.canSubmit).toBe(true);
+  });
+
+  it("sem skipBling, nada muda", () => {
+    const g = blingGate({ loading: false, error: null, enabled: true, isEditing: false, skipBling: false });
+    expect(g.mode).toBe("bling");
+  });
 });
