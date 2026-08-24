@@ -1,5 +1,43 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+import { podeVerVenda, scopeAtivo, SalesScopeError } from "@/lib/sales/sales-scope";
+
+type Guarda = { ok: true } | { ok: false; resposta: NextResponse };
+
+/**
+ * Venda fora do escopo responde 404, nao 403: 403 confirmaria que ela existe.
+ */
+async function guardaDeVenda(
+  supabase: Awaited<ReturnType<typeof getServiceSupabase>>,
+  id: string,
+): Promise<Guarda> {
+  if (!scopeAtivo()) return { ok: true };
+
+  const { data: linha, error } = await supabase
+    .from("sales")
+    .select("sold_by, origin")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    return { ok: false, resposta: NextResponse.json({ error: error.message }, { status: 500 }) };
+  }
+  if (!linha) {
+    return { ok: false, resposta: NextResponse.json({ error: "Venda não encontrada." }, { status: 404 }) };
+  }
+
+  try {
+    const user = await getCurrentUser();
+    const pode = podeVerVenda(linha, { userId: user.userId, email: user.email, role: user.role }, true);
+    if (!pode) {
+      return { ok: false, resposta: NextResponse.json({ error: "Venda não encontrada." }, { status: 404 }) };
+    }
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof SalesScopeError ? err.message : "Não autenticado";
+    return { ok: false, resposta: NextResponse.json({ error: msg }, { status: 401 }) };
+  }
+}
 
 export async function GET(
   _request: NextRequest,
@@ -7,6 +45,8 @@ export async function GET(
 ) {
   const { id } = await params;
   const supabase = await getServiceSupabase();
+  const guarda = await guardaDeVenda(supabase, id);
+  if (!guarda.ok) return guarda.resposta;
   const { data, error } = await supabase
     .from("sales")
     // sale_items embutido: ver comentário equivalente em /api/sales — este é o
@@ -28,6 +68,8 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json();
   const supabase = await getServiceSupabase();
+  const guarda = await guardaDeVenda(supabase, id);
+  if (!guarda.ok) return guarda.resposta;
 
   // `bling_divergent`/`bling_divergence` entram aqui a partir da edicao em modo
   // Bling (Fase E): o CRM grava a alteracao mesmo quando o Bling recusa, e essas
@@ -63,6 +105,8 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const supabase = await getServiceSupabase();
+  const guarda = await guardaDeVenda(supabase, id);
+  if (!guarda.ok) return guarda.resposta;
   const { error } = await supabase.from("sales").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
