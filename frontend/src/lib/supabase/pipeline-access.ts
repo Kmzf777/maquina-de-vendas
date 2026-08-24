@@ -6,6 +6,11 @@ type Guard = { ok: true } | { ok: false; error: string; status: number };
 
 export interface CurrentUser {
   userId: string;
+  // Opcional de proposito: `pipeline-access.test.ts` e outros chamadores
+  // constroem CurrentUser a mao. Campo obrigatorio quebraria esses literais sem
+  // ganho nenhum — quem precisa do e-mail e so o escopo de vendas, e ele ja
+  // trata ausencia levantando SalesScopeError.
+  email?: string;
   role: string | undefined;
 }
 
@@ -49,7 +54,11 @@ export async function getCurrentUser(): Promise<CurrentUser> {
     if (error) throw error;
     const userId = data.user?.id;
     if (!userId) throw new Error("no authenticated user");
-    return { userId, role: data.user?.app_metadata?.role as string | undefined };
+    return {
+      userId,
+      email: data.user?.email,
+      role: data.user?.app_metadata?.role as string | undefined,
+    };
   } catch (err) {
     throw new PipelineAccessError(
       `auth check failed: ${err instanceof Error ? err.message : String(err)}`,
