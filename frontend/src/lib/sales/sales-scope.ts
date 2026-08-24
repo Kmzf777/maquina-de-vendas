@@ -1,11 +1,14 @@
 /**
  * Quem enxerga quais vendas em /painel-vendas.
  *
- * Funcao pura e separada da rota porque a regra tem duas consequencias que
+ * Funcao pura e separada da rota porque a regra tem consequencias que
  * precisam de teste: a comparacao de e-mail e insensivel a maiusculas (o seed
- * grava "Comercial2@..." com C maiusculo, e `eq` casaria zero linhas), e um
- * e-mail ausente ou com virgula LEVANTA em vez de devolver "sem escopo" —
- * devolver null ali abriria a base inteira por acidente.
+ * grava "Comercial2@..." com C maiusculo, e `eq` casaria zero linhas); um
+ * e-mail ausente ou com caractere reservado do PostgREST LEVANTA em vez de
+ * devolver "sem escopo" — devolver null ali abriria a base inteira por
+ * acidente; e o filtro `or=(col.op.valor,...)` e montado por concatenacao,
+ * entao caracteres que o PostgREST trata como sintaxe ou curinga precisam ser
+ * recusados antes de entrar no valor (ver RESERVADOS_POSTGREST abaixo).
  */
 export interface SalesScopeUser {
   userId: string;
@@ -20,12 +23,22 @@ export class SalesScopeError extends Error {
   }
 }
 
+// Caracteres que alteram a sintaxe ou a semantica do `or=(col.op.valor,...)` do
+// PostgREST. Testado contra o servidor real em 24/08/2026:
+//   - `.` FUNCIONA sem aspas e e obrigatorio permitir (todo e-mail tem um no
+//     dominio); o parser separa nos dois primeiros pontos e o resto e valor.
+//   - `*` e curinga de `ilike` (alias de `%`) e aspas NAO neutralizam — nao ha
+//     escape, entao a unica defesa e recusar. Um `*` no e-mail transformaria a
+//     comparacao exata numa busca por prefixo e ALARGARIA o escopo.
+//   - `,` `(` `)` `:` sao separadores da sintaxe; recusados por precaucao.
+const RESERVADOS_POSTGREST = /[,()*:]/;
+
 function emailValido(email: string | undefined): string {
   const limpo = (email ?? "").trim();
   if (!limpo) throw new SalesScopeError("usuario sem e-mail: escopo de vendas indeterminado");
-  // A virgula separa termos no `or` do PostgREST. E-mail nao tem virgula; se
-  // tiver, recusamos em vez de montar um filtro com um termo a mais.
-  if (limpo.includes(",")) throw new SalesScopeError("e-mail invalido para escopo de vendas");
+  if (RESERVADOS_POSTGREST.test(limpo)) {
+    throw new SalesScopeError("e-mail invalido para escopo de vendas");
+  }
   return limpo;
 }
 

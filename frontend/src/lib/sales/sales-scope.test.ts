@@ -39,6 +39,22 @@ describe("salesScopeFilter", () => {
   it("e-mail com virgula e recusado", () => {
     expect(() => salesScopeFilter({ ...vendedor, email: "a,b@x.com" }, true)).toThrow();
   });
+
+  // `*` e curinga de ilike e nao tem escape: sem esta recusa, um e-mail com `*`
+  // viraria busca por prefixo e alargaria o escopo em vez de restringi-lo.
+  it("e-mail com asterisco e recusado — alargaria o escopo", () => {
+    expect(() => salesScopeFilter({ ...vendedor, email: "j*@x.com" }, true)).toThrow();
+  });
+
+  it("e-mail com parenteses e recusado", () => {
+    expect(() => salesScopeFilter({ ...vendedor, email: "a(b)@x.com" }, true)).toThrow();
+  });
+
+  // O ponto tem que passar: todo e-mail tem um no dominio, e o PostgREST o
+  // aceita sem aspas (verificado contra o servidor real).
+  it("ponto no dominio e aceito", () => {
+    expect(salesScopeFilter(vendedor, true)).toContain("joao@cafecanastra.com");
+  });
 });
 
 describe("podeVerVenda", () => {
