@@ -82,7 +82,7 @@ e dependeria de `bling_seller_map` estar preenchido. Com um único vendedor real
 | D1 | A escapatória é **genérica**: não declara empresa nem exige motivo. | Modelar o CNPJ na venda deixaria o histórico conciliável quando o segundo Bling for integrado, mas foi recusado por custo/benefício agora. |
 | D2 | **Sem fricção e sem chave global**: qualquer vendedor marca a caixa e registra. | Confirmação extra e/ou toggle em `/config` foram recusados. Risco assumido: a escapatória vira o caminho padrão e a integração eroda sem ninguém perceber, já que D1 não pede justificativa. |
 | D3 | Vendedor vê as próprias vendas **mais** as de `origin = 'bling'`. | Escopo estrito esconderia do vendedor as 1.012 importadas — justamente o material que ele precisa para conferir. Resolveria o pedido literal e pioraria o problema real. |
-| D4 | O painel ganha filtro de origem (Todas / CRM / Bling). | — |
+| D4 | **Nenhuma mudança na barra de filtros.** O seletor de origem foi desenhado e recusado em 24/08. | Conforto de conferência, não necessidade. Cortado para reduzir o tamanho da entrega. |
 | D5 | Toda venda `origin = 'manual'` passa a ser do joao, **inclusive as que já têm outro vendedor gravado**. | O usuário confirmou duas vezes que foi ele quem vendeu tudo. `Comercial2@cafecanastra.com` é conta antiga do CRM. |
 | D6 | Nada escreve no Bling. | — |
 
@@ -157,19 +157,19 @@ DELETE). Sem o `[id]` o escopo é cosmético: `/painel-vendas?sale_id=` é deep-
 qualquer id abriria qualquer venda. Venda fora do escopo responde **404**, não 403
 — 403 confirmaria que ela existe.
 
-### Filtro de origem
+### Nenhuma mudança na barra de filtros
 
-`SalesFilters` ganha `origin?: "crm" | "bling"`, e a barra ganha um Select
-**"Origem: Todas / Registradas no CRM / Vindas do Bling"**, no padrão dos filtros
-existentes. "Registradas no CRM" cobre `origin IN ('crm','manual')` — os dois
-valores nasceram no CRM, e a distinção entre eles não interessa ao vendedor.
+Cortado do escopo em 24/08. O seletor de origem ("Todas / CRM / Bling") chegou a
+ser desenhado e foi recusado: é conforto de conferência, não necessidade. O
+dropdown "Vendedor" que já existe na barra também **fica como está** — perde
+sentido para quem só enxerga as próprias vendas, mas escondê-lo é cosmético e não
+justifica tocar no componente.
 
-O filtro **intersecta** o escopo, nunca o substitui: filtro escolhido pelo usuário
-não pode alargar o que o servidor decidiu. Vale igualmente para `/api/sales/metrics`,
-senão o KPI do topo discorda da lista logo abaixo.
-
-Para `role = "vendedor"`, o filtro "Vendedor" que já existe na barra perde sentido
-e é ocultado.
+A consequência a registrar: se um filtro da barra for usado por um vendedor, ele
+opera **dentro** do escopo, nunca por fora. O escopo é aplicado no servidor antes
+de qualquer parâmetro vindo da URL, então nenhum filtro é capaz de alargar o que o
+servidor já decidiu. Isso vale para os filtros de hoje e para qualquer um que
+venha depois.
 
 ### Rollback
 
@@ -263,7 +263,7 @@ restaurar nada.
 | `/api/bling/status` falha e escapatória **não** marcada | Bloqueado, como hoje. |
 | Vendedor abre `?sale_id=` de venda fora do escopo | 404. |
 | Sessão não resolve | 401 em todas as rotas de venda. |
-| `admin` | Não afetado por escopo nem por filtro padrão. |
+| `admin` | Não afetado pelo escopo: continua vendo todas as vendas. |
 | `SALES_SCOPE_BY_SELLER` desligada | Todas as rotas voltam ao comportamento anterior. |
 
 ## Testes
@@ -274,9 +274,9 @@ restaurar nada.
   regressão que passaria despercebida, porque nada na tela mostra o `origin` cru.
 - `sales-scope.test.ts` (novo, puro): admin sem escopo; vendedor com escopo;
   comparação de e-mail insensível a maiúsculas; flag desligada devolve escopo vazio.
-- Rotas: sem sessão → 401; vendedor pedindo `sale_id` alheio → 404; `origin=crm`
-  como vendedor não traz venda `manual` de outro; métricas e lista concordam sob o
-  mesmo filtro.
+- Rotas: sem sessão → 401; vendedor pedindo `sale_id` alheio → 404; parâmetro
+  `sold_by` na URL **não** alarga o escopo de um vendedor (a tentativa de pedir as
+  vendas de outro continua devolvendo só as dele); lista e métricas concordam.
 - Frontend: os quatro chamadores passam `currentUserEmail`; a checkbox troca os
   campos do formulário e o endpoint de destino.
 - Migration: idempotência (rodar duas vezes preserva `sold_by_anterior`) e rollback
