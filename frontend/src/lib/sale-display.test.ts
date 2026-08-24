@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blingOrderUrl, orderLabel, saleStatus } from "@/lib/sale-display";
+import { blingOrderUrl, foraDoBling, orderLabel, saleStatus } from "@/lib/sale-display";
 import type { Sale } from "@/lib/types";
 
 const base: Sale = {
@@ -57,5 +57,16 @@ describe("blingOrderUrl", () => {
 
   it("sem id nao ha link", () => {
     expect(blingOrderUrl(null)).toBe("");
+  });
+
+  it("fora do Bling e definido pela ausencia de pedido, nao pelo origin", () => {
+    // `as Sale`: foraDoBling recebe so Pick<Sale, "bling_order_id"> de proposito
+    // (o discriminador nao e o origin), mas isso faz o TS aplicar excess property
+    // check no literal com `origin` — o cast evita o falso positivo sem alargar
+    // a assinatura da funcao.
+    expect(foraDoBling({ ...base, origin: "manual", bling_order_id: null } as Sale)).toBe(true);
+    expect(foraDoBling({ ...base, origin: "crm", bling_order_id: null } as Sale)).toBe(true);
+    expect(foraDoBling({ ...base, origin: "bling", bling_order_id: 5991 } as Sale)).toBe(false);
+    expect(foraDoBling({ ...base, origin: "crm", bling_order_id: 5991 } as Sale)).toBe(false);
   });
 });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Pencil, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/types";
-import { blingOrderUrl, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
+import { blingOrderUrl, foraDoBling, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
 
 // Cores da paleta da tabela para cada tom devolvido por saleStatus().
 const TONE_COLOR: Record<StatusTone, string> = {
@@ -92,7 +92,16 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
                 </td>
                 <td className="py-3 px-3 whitespace-nowrap">
                   {!pedido ? (
-                    <span className="text-[#7b7b78]">—</span>
+                    foraDoBling(sale) ? (
+                      <span
+                        className="text-[11px] text-[#7b7b78] border border-[#dedbd6] rounded-[3px] px-[6px] py-[2px]"
+                        title="Venda registrada no CRM sem pedido no Bling"
+                      >
+                        Fora do Bling
+                      </span>
+                    ) : (
+                      <span className="text-[#7b7b78]">—</span>
+                    )
                   ) : pedidoUrl ? (
                     <a
                       href={pedidoUrl}

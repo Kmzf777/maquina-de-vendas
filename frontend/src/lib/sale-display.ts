@@ -29,3 +29,13 @@ export function orderLabel(sale: Sale): string {
 export function blingOrderUrl(orderId: number | null | undefined): string {
   return orderId ? BLING_ORDER_URL_TEMPLATE.replace("{id}", String(orderId)) : "";
 }
+
+/**
+ * A venda esta fora do Bling? O discriminador e a AUSENCIA de pedido, nao o
+ * `origin`: `bling_order_id IS NULL` e a unica condicao verdadeira para os tres
+ * casos que estao de fato fora do ERP (venda anterior a integracao, venda da
+ * escapatoria, venda legada) e falsa para os que estao dentro.
+ */
+export function foraDoBling(sale: Pick<Sale, "bling_order_id">): boolean {
+  return !sale.bling_order_id;
+}
