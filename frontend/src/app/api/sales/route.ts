@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { getCurrentUser } from "@/lib/supabase/pipeline-access";
-import { salesScopeFilter, scopeAtivo, SalesScopeError } from "@/lib/sales/sales-scope";
+import { resolverEscopoDeVendas } from "@/lib/sales/sales-scope-route";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -16,22 +15,9 @@ export async function GET(request: NextRequest) {
 
   const supabase = await getServiceSupabase();
 
-  // Escopo imposto no servidor. A rota usa service role (ignora RLS) e ate hoje
-  // nao checava sessao: o `sold_by` da query string era conveniencia, nao
-  // seguranca. Fail-closed — sem identidade, 401.
-  let escopo: string | null = null;
-  if (scopeAtivo()) {
-    try {
-      const user = await getCurrentUser();
-      escopo = salesScopeFilter(
-        { userId: user.userId, email: user.email, role: user.role },
-        true,
-      );
-    } catch (err) {
-      const msg = err instanceof SalesScopeError ? err.message : "Não autenticado";
-      return NextResponse.json({ error: msg }, { status: 401 });
-    }
-  }
+  const escopoRes = await resolverEscopoDeVendas();
+  if (!escopoRes.ok) return escopoRes.resposta;
+  const escopo = escopoRes.escopo;
 
   let query = supabase
     .from("sales")
@@ -54,8 +40,10 @@ export async function GET(request: NextRequest) {
   if (to) query = query.lte("sold_at", to.length === 10 ? `${to}T23:59:59.999Z` : to);
   if (search) query = query.ilike("product", `%${search}%`);
 
-  // Depois dos filtros da URL, nunca antes: o escopo restringe, e nenhum
-  // parametro do cliente pode alarga-lo.
+  // O escopo entra como um parametro `or` proprio, que o PostgREST combina com
+  // os filtros da URL usando AND. Por isso o `sold_by` da query string so pode
+  // RESTRINGIR o conjunto ja permitido — nunca alarga-lo. A posicao desta linha
+  // e irrelevante para a semantica; o que garante isso e o AND, nao a ordem.
   if (escopo) query = query.or(escopo);
 
   const { data, error, count } = await query;

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
-import { getCurrentUser } from "@/lib/supabase/pipeline-access";
-import { salesScopeFilter, scopeAtivo, SalesScopeError } from "@/lib/sales/sales-scope";
+import { resolverEscopoDeVendas } from "@/lib/sales/sales-scope-route";
 
 export async function GET(
   _request: Request,
@@ -10,21 +9,9 @@ export async function GET(
   const { id } = await params;
   const supabase = await getServiceSupabase();
 
-  // Mesmo escopo de /api/sales. Sem isto, o painel de contato mostraria a venda
-  // que o painel de vendas esconde — e o escopo viraria enfeite.
-  let escopo: string | null = null;
-  if (scopeAtivo()) {
-    try {
-      const user = await getCurrentUser();
-      escopo = salesScopeFilter(
-        { userId: user.userId, email: user.email, role: user.role },
-        true,
-      );
-    } catch (err) {
-      const msg = err instanceof SalesScopeError ? err.message : "Não autenticado";
-      return NextResponse.json({ error: msg }, { status: 401 });
-    }
-  }
+  const escopoRes = await resolverEscopoDeVendas();
+  if (!escopoRes.ok) return escopoRes.resposta;
+  const escopo = escopoRes.escopo;
 
   let query = supabase
     .from("sales")
