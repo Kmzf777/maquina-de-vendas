@@ -6,6 +6,7 @@ import { SalesMetricsCards } from "@/components/sales/sales-metrics-cards";
 import { SalesFiltersBar } from "@/components/sales/sales-filters";
 import { SalesTable } from "@/components/sales/sales-table";
 import { useSales, type SalesFilters } from "@/hooks/use-sales";
+import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import type { Sale } from "@/lib/types";
 
@@ -37,6 +38,7 @@ function PainelVendasPageInner() {
   const { sales, count, loading, refetch } = useSales(filters);
   const [showCreate, setShowCreate] = useState(false);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  const currentUserEmail = useCurrentUserEmail();
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -113,6 +115,7 @@ function PainelVendasPageInner() {
         <SaleCreateModal
           pickLead={!editingSale}
           editingSale={editingSale}
+          currentUserEmail={currentUserEmail}
           onClose={() => { setShowCreate(false); setEditingSale(null); }}
           onSaved={() => { refetch(); setShowCreate(false); setEditingSale(null); }}
         />

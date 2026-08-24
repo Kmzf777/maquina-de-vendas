@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { useLeadSales } from "@/hooks/use-lead-sales";
+import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
@@ -66,7 +67,7 @@ export function ContactDetail({
   const [showCreateDeal, setShowCreateDeal] = useState(false);
   const [showCreateSale, setShowCreateSale] = useState(false);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
-  const [currentUserEmail, setCurrentUserEmail] = useState<string>("");
+  const currentUserEmail = useCurrentUserEmail();
   const lead = conversation.leads as Lead | undefined | null;
   const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
   const channel = conversation.channels;
@@ -89,14 +90,6 @@ export function ContactDetail({
     fetch("/api/pipelines")
       .then((r) => r.json())
       .then((data) => setPipelines(Array.isArray(data) ? data : []));
-  }, []);
-
-  useEffect(() => {
-    import("@/lib/supabase/client").then(({ createClient }) => {
-      createClient().auth.getSession().then(({ data: { session } }) => {
-        setCurrentUserEmail(session?.user?.email ?? "");
-      });
-    });
   }, []);
 
   async function updateLeadField(field: string, value: string) {

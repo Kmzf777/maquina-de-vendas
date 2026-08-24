@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Deal, PipelineStage } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
+import { useCurrentUserEmail } from "@/hooks/use-current-user";
 
 function formatCurrency(value: number): string {
   if (value === 0) return "R$ 0";
@@ -25,6 +26,7 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
   const [showFinalizeSale, setShowFinalizeSale] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const currentUserEmail = useCurrentUserEmail();
   const [form, setForm] = useState({
     title: deal.title,
     value: deal.value,
@@ -258,6 +260,7 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
           leadId={deal.lead_id}
           lockedDealId={deal.id}
           lockedDealTitle={deal.title}
+          currentUserEmail={currentUserEmail}
           onClose={() => setShowFinalizeSale(false)}
           onSaved={() => setShowFinalizeSale(false)}
         />

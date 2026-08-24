@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { LeadBroadcastHistory } from "./lead-broadcast-history";
 import { LeadBlingSection } from "./lead-bling-section";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
+import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { AGENT_STAGES, LEAD_CHANNELS, DEAL_STAGES } from "@/lib/constants";
@@ -58,6 +59,7 @@ export function LeadDetailModal({
   const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string; category: string | null }>>([]);
   const [showCreateSale, setShowCreateSale] = useState(false);
   const [blingContactId, setBlingContactId] = useState<number | null>(lead.bling_contact_id ?? null);
+  const currentUserEmail = useCurrentUserEmail();
 
   const temp = getTemperature(lead.last_msg_at);
   const tempConfig = TEMPERATURE_CONFIG[temp];
@@ -667,6 +669,7 @@ export function LeadDetailModal({
         <div onClick={(e) => e.stopPropagation()}>
           <SaleCreateModal
             leadId={lead.id}
+            currentUserEmail={currentUserEmail}
             onClose={() => setShowCreateSale(false)}
             onSaved={() => {
               setShowCreateSale(false);
