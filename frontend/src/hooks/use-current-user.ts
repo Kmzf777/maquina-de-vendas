@@ -33,11 +33,26 @@ export function useCurrentUserEmail(): string {
   const [email, setEmail] = useState<string>(cache ?? "");
 
   useEffect(() => {
-    if (cache !== null) return;
     let vivo = true;
-    fetchEmail().then((e) => vivo && setEmail(e));
+    if (cache === null) fetchEmail().then((e) => vivo && setEmail(e));
+
+    // Invalida o cache quando a sessao muda. O app navega com router.push e
+    // nunca recarrega o modulo (ver `handleSignOut` em sidebar.tsx), entao sem
+    // isto um logout seguido de login com outra conta na MESMA aba deixaria o
+    // e-mail antigo aqui — e a venda seguinte seria atribuida a pessoa errada,
+    // em silencio. Cache velho em `use-bling-status` erra um estado de UI;
+    // aqui erraria dado de negocio.
+    const assinatura = import("@/lib/supabase/client").then(({ createClient }) =>
+      createClient().auth.onAuthStateChange((_evento, session) => {
+        cache = session?.user?.email ?? "";
+        inflight = null;
+        if (vivo) setEmail(cache);
+      }),
+    );
+
     return () => {
       vivo = false;
+      assinatura.then(({ data }) => data.subscription.unsubscribe());
     };
   }, []);
 

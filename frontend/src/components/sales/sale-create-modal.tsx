@@ -149,6 +149,18 @@ export function SaleCreateModal({
   const [soldBy, setSoldBy] = useState(
     editingSale?.sold_by ?? currentUserEmail ?? ""
   );
+
+  // `currentUserEmail` chega de forma assincrona. Se o modal montar antes de a
+  // sessao resolver, o `useState` acima fixa `soldBy` em "" e nunca mais e
+  // reinicializado — a venda gravaria sold_by = NULL, que e exatamente o
+  // defeito que esta entrega fecha, reduzido a uma corrida. Preenche quando o
+  // e-mail chega, sem sobrescrever escolha manual (inclusive "__none__") nem
+  // edicao de venda existente.
+  useEffect(() => {
+    if (isEditing || !currentUserEmail) return;
+    setSoldBy((atual) => atual || currentUserEmail);
+  }, [currentUserEmail, isEditing]);
+
   const [dealId, setDealId] = useState(lockedDealId ?? "");
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [newDealTitle, setNewDealTitle] = useState("");
