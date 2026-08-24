@@ -75,6 +75,28 @@ export function podeVerVenda(
   return (sale.sold_by ?? "").toLowerCase() === email;
 }
 
+/**
+ * Qual vendedor entra na RPC `get_avg_repurchase_cycle_days`.
+ *
+ * A RPC agrega no banco e NAO passa pelo filtro `or` do escopo, entao o
+ * parametro nao pode vir cru da URL: um vendedor pediria o e-mail de outro e
+ * leria o ciclo de recompra alheio — vazamento de agregado, invisivel porque a
+ * lista ao lado continuaria correta.
+ *
+ * Admin le o que pediu (inclusive `null` = a operacao toda). Vendedor le sempre
+ * o proprio, filtrado ou nao — nunca o global. Com "Todos" selecionado isso
+ * deixa o card mais estreito que os outros tres (que incluem as vendas
+ * importadas do ERP, sem dono), e essa e a troca deliberada: preferimos o card
+ * dizer menos a dizer respeito a outra pessoa.
+ */
+export function vendedorDaRecompra(
+  user: SalesScopeUser | null,
+  soldByDaUrl: string | null,
+): string | null {
+  if (!user || user.role === "admin") return soldByDaUrl || null;
+  return emailValido(user.email);
+}
+
 /** Le a chave de rollback. Ligada por padrao: so "0"/"false" desligam. */
 export function scopeAtivo(): boolean {
   const raw = (process.env.SALES_SCOPE_BY_SELLER ?? "").trim().toLowerCase();

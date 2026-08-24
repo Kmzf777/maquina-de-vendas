@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { salesScopeFilter, podeVerVenda } from "@/lib/sales/sales-scope";
+import { salesScopeFilter, podeVerVenda, vendedorDaRecompra } from "@/lib/sales/sales-scope";
 
 const admin = { userId: "u1", email: "comercial@cafecanastra.com", role: "admin" };
 const vendedor = { userId: "u2", email: "joao@cafecanastra.com", role: "vendedor" };
@@ -91,5 +91,35 @@ describe("podeVerVenda", () => {
 
   it("flag desligada libera tudo", () => {
     expect(podeVerVenda({ sold_by: "outro@x.com", origin: "manual" }, vendedor, false)).toBe(true);
+  });
+});
+
+describe("vendedorDaRecompra", () => {
+  it("admin le o que pediu", () => {
+    expect(vendedorDaRecompra(admin, "outro@x.com")).toBe("outro@x.com");
+  });
+
+  it("admin sem filtro le a operacao toda", () => {
+    expect(vendedorDaRecompra(admin, null)).toBeNull();
+  });
+
+  // O que a funcao existe para impedir: a RPC nao passa pelo filtro `or` do
+  // escopo, entao aceitar o e-mail da URL deixaria um vendedor ler o ciclo de
+  // recompra de outro — vazamento de agregado, com a lista ao lado correta.
+  it("vendedor pedindo outro e-mail continua lendo o proprio", () => {
+    expect(vendedorDaRecompra(vendedor, "outro@x.com")).toBe("joao@cafecanastra.com");
+  });
+
+  it("vendedor sem filtro le o proprio, nunca o global", () => {
+    expect(vendedorDaRecompra(vendedor, null)).toBe("joao@cafecanastra.com");
+  });
+
+  it("escopo desligado devolve o filtro da URL", () => {
+    expect(vendedorDaRecompra(null, "qualquer@x.com")).toBe("qualquer@x.com");
+    expect(vendedorDaRecompra(null, null)).toBeNull();
+  });
+
+  it("vendedor sem e-mail e recusado, nao vira global", () => {
+    expect(() => vendedorDaRecompra({ ...vendedor, email: "" }, null)).toThrow();
   });
 });

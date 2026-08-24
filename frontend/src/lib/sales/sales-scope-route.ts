@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/supabase/pipeline-access";
-import { salesScopeFilter, scopeAtivo, SalesScopeError } from "@/lib/sales/sales-scope";
+import {
+  salesScopeFilter,
+  scopeAtivo,
+  SalesScopeError,
+  type SalesScopeUser,
+} from "@/lib/sales/sales-scope";
 
 /**
  * Resolve o escopo de vendas para uma rota, ou devolve a resposta 401 pronta.
@@ -12,21 +17,26 @@ import { salesScopeFilter, scopeAtivo, SalesScopeError } from "@/lib/sales/sales
  * formato de resposta (404, nao 401).
  */
 export type EscopoResolvido =
-  | { ok: true; escopo: string | null }
+  | { ok: true; escopo: string | null; user: SalesScopeUser | null }
   | { ok: false; resposta: NextResponse };
 
+/**
+ * `user` vem junto porque nem tudo se resolve com o filtro `or`. A RPC de
+ * recompra agrega no banco e nao passa pelo `.or()`, entao quem a chama precisa
+ * decidir sozinho qual vendedor entra — e para isso precisa saber quem esta
+ * logado. `null` quando o escopo esta desligado: nao ha decisao a tomar.
+ */
 export async function resolverEscopoDeVendas(): Promise<EscopoResolvido> {
-  if (!scopeAtivo()) return { ok: true, escopo: null };
+  if (!scopeAtivo()) return { ok: true, escopo: null, user: null };
 
   try {
-    const user = await getCurrentUser();
-    return {
-      ok: true,
-      escopo: salesScopeFilter(
-        { userId: user.userId, email: user.email, role: user.role },
-        true,
-      ),
+    const atual = await getCurrentUser();
+    const user: SalesScopeUser = {
+      userId: atual.userId,
+      email: atual.email,
+      role: atual.role,
     };
+    return { ok: true, escopo: salesScopeFilter(user, true), user };
   } catch (err) {
     const msg = err instanceof SalesScopeError ? err.message : "Não autenticado";
     return { ok: false, resposta: NextResponse.json({ error: msg }, { status: 401 }) };

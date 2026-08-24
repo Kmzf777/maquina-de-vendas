@@ -83,6 +83,7 @@ e dependeria de `bling_seller_map` estar preenchido. Com um único vendedor real
 | D2 | **Sem fricção e sem chave global**: qualquer vendedor marca a caixa e registra. | Confirmação extra e/ou toggle em `/config` foram recusados. Risco assumido: a escapatória vira o caminho padrão e a integração eroda sem ninguém perceber, já que D1 não pede justificativa. |
 | D3 | Vendedor vê as próprias vendas **mais** as de `origin = 'bling'`. | Escopo estrito esconderia do vendedor as 1.012 importadas — justamente o material que ele precisa para conferir. Resolveria o pedido literal e pioraria o problema real. |
 | D4 | **Nenhuma mudança na barra de filtros.** O seletor de origem foi desenhado e recusado em 24/08. | Conforto de conferência, não necessidade. Cortado para reduzir o tamanho da entrega. |
+| D8 | **(adendo, 24/08, depois do primeiro deploy)** O filtro "Vendedor" que já existia passa a mover também os quatro cards de métrica, incluindo o ciclo de recompra — que ganhou parâmetro na RPC. | Antes o filtro movia só a lista, e os quatro números continuavam falando da operação inteira ao lado de uma tabela já filtrada. O período (De/Até) fica de fora do ciclo de recompra de propósito: restringir a janela descartaria o intervalo entre uma venda dentro e outra fora dela. |
 | D5 | Toda venda `origin = 'manual'` passa a ser do joao, **inclusive as que já têm outro vendedor gravado**. | O usuário confirmou duas vezes que foi ele quem vendeu tudo. `Comercial2@cafecanastra.com` é conta antiga do CRM. |
 | D6 | Nada escreve no Bling. | — |
 

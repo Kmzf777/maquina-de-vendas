@@ -66,11 +66,14 @@ function PainelVendasPageInner() {
     const params = new URLSearchParams();
     if (filters.from) params.set("from", filters.from);
     if (filters.to) params.set("to", filters.to);
+    // Sem isto o filtro de vendedor movia a lista e deixava os quatro cards
+    // falando da operacao inteira — que era a queixa.
+    if (filters.soldBy) params.set("sold_by", filters.soldBy);
     fetch(`/api/sales/metrics?${params}`)
       .then((r) => r.json())
       .then((data) => { setMetrics(data); setMetricsLoading(false); })
       .catch(() => setMetricsLoading(false));
-  }, [filters.from, filters.to]);
+  }, [filters.from, filters.to, filters.soldBy]);
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#faf9f6]">

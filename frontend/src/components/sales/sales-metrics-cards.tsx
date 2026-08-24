@@ -46,13 +46,13 @@ export function SalesMetricsCards({ metrics, loading }: SalesMetricsCardsProps) 
         value={metrics ? `R$ ${fmt(metrics.avg_value)}` : "R$ 0,00"}
         loading={loading}
       />
-      {/* "(geral)" nao e enfeite: os tres cards acima respeitam o escopo por
-          vendedor, este nao. A RPC `get_avg_repurchase_cycle_days` agrega a
-          tabela inteira no banco e nao aceita filtro sem mudar a assinatura da
-          funcao. Sem o rotulo, o vendedor leria quatro numeros lado a lado
-          supondo que os quatro sao dele. */}
+      {/* Este card responde ao vendedor, mas NAO as datas: o ciclo e calculado
+          sobre todo o historico dele. Restringir a janela descartaria o
+          intervalo entre uma venda dentro e outra fora dela, e o numero
+          encolheria conforme o usuario mexesse nos filtros de periodo. Ver a
+          migration 20260824_repurchase_por_vendedor.sql. */}
       <MetricCard
-        label="Ciclo médio de recompra (geral)"
+        label="Ciclo médio de recompra"
         value={
           metrics?.avg_repurchase_cycle_days != null
             ? `${metrics.avg_repurchase_cycle_days} dias`
