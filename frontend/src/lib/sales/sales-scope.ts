@@ -40,11 +40,27 @@ export class SalesScopeError extends Error {
 //     exatamente ali. O custo de recusar supera o risco de aceitar.
 const RESERVADOS_POSTGREST = /[,()*:%]/;
 
-function emailValido(email: string | undefined): string {
+/**
+ * E-mail utilizavel como VALOR dentro de um filtro `or=(col.op.valor,...)`, ou
+ * excecao.
+ *
+ * Exportada — e nao privada, como nasceu — porque o escopo de /orcamento
+ * (`lib/quotes/quotes-scope.ts`) monta o mesmo tipo de filtro por concatenacao e
+ * corre exatamente o mesmo risco. Copiar as sete linhas para la seria o pior
+ * arranjo possivel: a proxima correcao de seguranca (um caractere novo na lista
+ * de reservados, uma mudanca de comportamento do PostgREST) entraria num dos
+ * dois arquivos e o outro continuaria vulneravel, sem nada no codigo indicando
+ * que ha um segundo lugar para mexer.
+ *
+ * O nome e neutro de proposito: a funcao nao sabe nem precisa saber se o filtro
+ * e de venda ou de orcamento. Mesmo motivo das mensagens de erro serem sobre
+ * "filtro" e nao sobre "vendas".
+ */
+export function emailSeguroParaFiltro(email: string | undefined): string {
   const limpo = (email ?? "").trim();
-  if (!limpo) throw new SalesScopeError("usuario sem e-mail: escopo de vendas indeterminado");
+  if (!limpo) throw new SalesScopeError("usuario sem e-mail: escopo indeterminado");
   if (RESERVADOS_POSTGREST.test(limpo)) {
-    throw new SalesScopeError("e-mail invalido para escopo de vendas");
+    throw new SalesScopeError("e-mail invalido para escopo");
   }
   return limpo;
 }
@@ -60,7 +76,7 @@ function semEscopo(user: SalesScopeUser, enabled: boolean): boolean {
  */
 export function salesScopeFilter(user: SalesScopeUser, enabled: boolean): string | null {
   if (semEscopo(user, enabled)) return null;
-  return `sold_by.ilike.${emailValido(user.email)},origin.eq.bling`;
+  return `sold_by.ilike.${emailSeguroParaFiltro(user.email)},origin.eq.bling`;
 }
 
 /** Mesma regra, aplicada a uma linha ja carregada (rota /api/sales/[id]). */
@@ -70,7 +86,7 @@ export function podeVerVenda(
   enabled: boolean,
 ): boolean {
   if (semEscopo(user, enabled)) return true;
-  const email = emailValido(user.email).toLowerCase();
+  const email = emailSeguroParaFiltro(user.email).toLowerCase();
   if (sale.origin === "bling") return true;
   return (sale.sold_by ?? "").toLowerCase() === email;
 }
@@ -94,7 +110,7 @@ export function vendedorDaRecompra(
   soldByDaUrl: string | null,
 ): string | null {
   if (!user || user.role === "admin") return soldByDaUrl || null;
-  return emailValido(user.email);
+  return emailSeguroParaFiltro(user.email);
 }
 
 /** Le a chave de rollback. Ligada por padrao: so "0"/"false" desligam. */
