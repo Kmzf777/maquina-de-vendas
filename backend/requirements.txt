@@ -11,5 +11,8 @@ google-genai>=1.0.0
 google-generativeai>=0.8.0  # DEPRECATED — usado só por scripts/rehearsal/gemini_actor.py (harness local)
 PyJWT>=2.8.0,<3.0
 sentry-sdk[fastapi]>=2.0,<3.0  # fail-open: sem SENTRY_DSN o init é no-op (app/observability.py)
+# PDF do orçamento (app/quotes/pdf.py). Wheel puro + pillow, sem biblioteca de
+# sistema — não exige nada novo no Dockerfile.
+reportlab>=4.2,<5
 # Windows nao possui a base IANA de fusos; zoneinfo (stdlib) precisa do pacote tzdata.
 tzdata; sys_platform == 'win32'
