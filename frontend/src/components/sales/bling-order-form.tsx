@@ -52,6 +52,23 @@ interface BlingOrderFormProps {
    * que estiver no formulário, então nascer vazio apaga os itens que não vieram.
    */
   initialLines?: OrderLine[];
+  /**
+   * Forma de pagamento com que o formulário nasce. Omitir é o normal ao criar
+   * (cai na forma marcada como padrão no Bling); ao EDITAR algo que já tem uma
+   * forma gravada é obrigatório informá-la, senão reabrir e salvar trocaria a
+   * forma do documento pela padrão sem ninguém pedir.
+   */
+  initialPaymentMethodId?: number | null;
+  /**
+   * Mostra a previsão das parcelas dentro deste bloco. Padrão `true` — é o
+   * comportamento do registro de venda desde sempre.
+   *
+   * O orçamento passa `false` porque lá o total ainda ganha desconto de
+   * cabeçalho e frete depois dos itens: a previsão daqui (que só conhece os
+   * itens) apareceria ao lado do resumo do orçamento com valores diferentes, e
+   * o vendedor não teria como saber qual das duas é a que vai para o Bling.
+   */
+  showInstallments?: boolean;
   onChange: (result: OrderPayloadResult) => void;
 }
 
@@ -86,6 +103,8 @@ export function BlingOrderForm({
   meta,
   condicaoPagamento,
   initialLines,
+  initialPaymentMethodId,
+  showInstallments = true,
   onChange,
 }: BlingOrderFormProps) {
   const { leadId, dealId, soldAt, soldBy, notes } = meta;
@@ -93,7 +112,11 @@ export function BlingOrderForm({
   const [linhas, setLinhas] = useState<OrderLine[]>(
     () => initialLines ?? [blankLine()],
   );
-  const [paymentMethodId, setPaymentMethodId] = useState<number | null>(null);
+  // Semeado uma vez: o efeito que carrega as formas só preenche quando ainda é
+  // `null` (`atual ?? padrão`), então a forma que veio do documento sobrevive.
+  const [paymentMethodId, setPaymentMethodId] = useState<number | null>(
+    initialPaymentMethodId ?? null,
+  );
   // Enquanto o vendedor não digita nada, os prazos são os do contato no Bling —
   // derivado, não copiado, para que a condição valha mesmo se chegar depois do
   // primeiro render (o modal pode buscá-la em paralelo).
@@ -433,38 +456,41 @@ export function BlingOrderForm({
         </div>
       </div>
 
-      {/* Parcelas */}
-      <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-3 py-2.5">
-        <span className={label}>
-          {result.installments.length === 1
-            ? "Parcela"
-            : `${result.installments.length || ""} Parcelas`.trim()}
-        </span>
-        {semParcela ? (
-          <p className="mt-1 text-[12px] text-[#c41c1c]">
-            Não é possível dividir R$ {brl(result.total)} em{" "}
-            {parseTerms(termsRaw).length} parcelas — alguma ficaria sem valor.
-          </p>
-        ) : result.installments.length === 0 ? (
-          <p className="mt-1 text-[12px] text-[#7b7b78]">
-            Escolha os itens para ver a previsão das parcelas.
-          </p>
-        ) : (
-          <ul className="mt-1.5 space-y-1">
-            {result.installments.map((p, i) => (
-              <li
-                key={i}
-                className="flex items-center justify-between text-[13px] text-[#111111] tabular-nums"
-              >
-                <span className="text-[#7b7b78]">
-                  {i + 1}ª · {diaMesAno(p.dataVencimento)}
-                </span>
-                <span>R$ {brl(p.valor)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* Parcelas — escondidas quando quem monta o documento ainda vai somar
+          desconto de cabeçalho e frete ao total (ver `showInstallments`). */}
+      {showInstallments && (
+        <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-3 py-2.5">
+          <span className={label}>
+            {result.installments.length === 1
+              ? "Parcela"
+              : `${result.installments.length || ""} Parcelas`.trim()}
+          </span>
+          {semParcela ? (
+            <p className="mt-1 text-[12px] text-[#c41c1c]">
+              Não é possível dividir R$ {brl(result.total)} em{" "}
+              {parseTerms(termsRaw).length} parcelas — alguma ficaria sem valor.
+            </p>
+          ) : result.installments.length === 0 ? (
+            <p className="mt-1 text-[12px] text-[#7b7b78]">
+              Escolha os itens para ver a previsão das parcelas.
+            </p>
+          ) : (
+            <ul className="mt-1.5 space-y-1">
+              {result.installments.map((p, i) => (
+                <li
+                  key={i}
+                  className="flex items-center justify-between text-[13px] text-[#111111] tabular-nums"
+                >
+                  <span className="text-[#7b7b78]">
+                    {i + 1}ª · {diaMesAno(p.dataVencimento)}
+                  </span>
+                  <span>R$ {brl(p.valor)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

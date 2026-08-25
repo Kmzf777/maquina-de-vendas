@@ -1,11 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { FileTextIcon, Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
-import type { Lead, Tag, Pipeline, PipelineStage, Sale } from "@/lib/types";
+import type { Lead, Tag, Pipeline, PipelineStage, Quote, Sale } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { CadenceTimeline } from "@/components/conversas/cadence-timeline";
+import {
+  formatQuoteDate,
+  quoteNumberLabel,
+  quotePdfHref,
+  quoteStatusView,
+} from "@/lib/quote-modal-state";
 
 interface LeadDeal {
   id: string;
@@ -33,6 +39,8 @@ interface CrmPerfilTabProps {
   onCreateSale: () => void;
   onEditSale: (sale: Sale) => void;
   onDeleteSale: (saleId: string) => void;
+  quotes: Quote[];
+  onCreateQuote: () => void;
 }
 
 const CLOSED_KEYS = ["fechado_ganho", "fechado_perdido"];
@@ -51,6 +59,8 @@ export function CrmPerfilTab({
   onCreateSale,
   onEditSale,
   onDeleteSale,
+  quotes,
+  onCreateQuote,
 }: CrmPerfilTabProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const activeDeal = deals.find((d) => !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")) ?? null;
@@ -153,6 +163,72 @@ export function CrmPerfilTab({
             ))}
             {sales.length > 3 && (
               <p className="text-[11px] text-[#7b7b78]">+{sales.length - 3} mais vendas</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Orçamentos — logo abaixo de Vendas, no mesmo padrão, mas com o botão
+          em contorno: a venda é a ação principal desta coluna, e dois botões
+          verdes empilhados fariam as duas disputarem o mesmo olhar. */}
+      <div className="border-t border-[#dedbd6] pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Orçamentos</span>
+          <button
+            type="button"
+            onClick={onCreateQuote}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] border border-[#dedbd6] text-[#111111] text-[12px] font-medium hover:border-[#111111] hover:bg-[#faf9f6] transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
+            </svg>
+            Fazer Orçamento
+          </button>
+        </div>
+        {quotes.length === 0 ? (
+          <p className="text-[12px] text-[#7b7b78]">Nenhum orçamento</p>
+        ) : (
+          <div className="space-y-2">
+            {quotes.slice(0, 3).map((quote) => {
+              const situacao = quoteStatusView(quote.status);
+              return (
+                <div key={quote.id} className="flex items-start gap-2 p-2 rounded-[6px] border border-[#dedbd6] bg-white">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] text-[#111111] truncate">
+                      Orçamento {quoteNumberLabel(quote)}
+                    </p>
+                    <p className="flex items-center gap-1.5 text-[11px] text-[#7b7b78]">
+                      <span
+                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: situacao.dot }}
+                        aria-hidden
+                      />
+                      <span className="truncate">
+                        {situacao.label} · {formatQuoteDate(quote.quoted_at)}
+                      </span>
+                    </p>
+                    <p className="text-[12px] text-[#111111]">
+                      R$ {Number(quote.total).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  {/* Aba nova, não download direto: a rota devolve o PDF com
+                      Content-Disposition attachment, e o navegador resolve se
+                      abre ou salva — sem tirar o vendedor da conversa. */}
+                  <a
+                    href={quotePdfHref(quote.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Baixar PDF do orçamento"
+                    aria-label="Baixar PDF do orçamento"
+                    className="w-6 h-6 flex items-center justify-center rounded-[3px] text-[#7b7b78] hover:text-[#111111] hover:bg-[#f0ede8] transition-colors flex-shrink-0"
+                  >
+                    <FileTextIcon size={14} />
+                  </a>
+                </div>
+              );
+            })}
+            {quotes.length > 3 && (
+              <p className="text-[11px] text-[#7b7b78]">+{quotes.length - 3} mais orçamentos</p>
             )}
           </div>
         )}

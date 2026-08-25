@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
+import { QuoteCreateModal } from "@/components/quotes/quote-create-modal";
 import { useLeadSales } from "@/hooks/use-lead-sales";
+import { useLeadQuotes } from "@/hooks/use-lead-quotes";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
@@ -67,9 +69,11 @@ export function ContactDetail({
   const [showCreateDeal, setShowCreateDeal] = useState(false);
   const [showCreateSale, setShowCreateSale] = useState(false);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  const [showCreateQuote, setShowCreateQuote] = useState(false);
   const currentUserEmail = useCurrentUserEmail();
   const lead = conversation.leads as Lead | undefined | null;
   const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
+  const { quotes, refetch: refetchQuotes } = useLeadQuotes(lead?.id);
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
 
@@ -236,6 +240,8 @@ export function ContactDetail({
                   const res = await fetch(`/api/sales/${saleId}`, { method: "DELETE" });
                   if (res.ok) refetchSales(); else alert("Erro ao excluir venda.");
                 }}
+                quotes={quotes}
+                onCreateQuote={() => setShowCreateQuote(true)}
               />
             )}
             {activeTab === "notas" && (
@@ -275,6 +281,15 @@ export function ContactDetail({
           editingSale={editingSale}
           onClose={() => { setShowCreateSale(false); setEditingSale(null); }}
           onSaved={() => { refetchSales(); setShowCreateSale(false); setEditingSale(null); }}
+        />
+      )}
+      {showCreateQuote && lead && (
+        <QuoteCreateModal
+          leadId={lead.id}
+          conversationId={conversation.id}
+          currentUserEmail={currentUserEmail}
+          onClose={() => setShowCreateQuote(false)}
+          onSaved={() => { refetchQuotes(); setShowCreateQuote(false); }}
         />
       )}
     </div>
