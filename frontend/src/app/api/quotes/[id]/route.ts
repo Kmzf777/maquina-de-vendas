@@ -3,7 +3,14 @@ import { backendUrl } from "@/lib/quotes/backend";
 import { guardaDeOrcamento } from "@/lib/quotes/quotes-scope-route";
 
 /**
- * Leitura e edicao de UM orcamento — proxy puro para o FastAPI.
+ * Edicao de UM orcamento — proxy puro para o FastAPI.
+ *
+ * So PUT. Havia um GET aqui que fazia proxy para `GET /api/quotes/{id}` no
+ * FastAPI — endpoint que nunca existiu. Ninguem o chamava (a lista ja traz
+ * `quote_items` embutido e o modal recebe o orcamento inteiro por prop), entao
+ * ele era uma rota que responderia 404 do backend disfarcado de erro da tela.
+ * Se um deep-link (/orcamento?quote_id=) aparecer, o caminho certo e consultar
+ * o Supabase direto daqui, como /api/sales/[id] faz — nao proxy.
  *
  * Diferente da listagem, que consulta o Supabase direto: aqui o backend e quem
  * tem que responder, porque o PUT nao e um UPDATE de linha — ele reenvia a
@@ -20,25 +27,6 @@ import { guardaDeOrcamento } from "@/lib/quotes/quotes-scope-route";
  *   422 — validacao do Bling; a mensagem e o unico caminho para saber o que ele
  *        recusou.
  */
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  const { id } = await params;
-  // Propriedade antes de qualquer coisa: sem isto o UUID e a unica
-  // credencial necessaria para agir sobre orcamento alheio.
-  const guarda = await guardaDeOrcamento(id);
-  if (!guarda.ok) return guarda.resposta;
-  try {
-    const resp = await fetch(`${backendUrl()}/api/quotes/${encodeURIComponent(id)}`, {
-      cache: "no-store",
-    });
-    return NextResponse.json(await resp.json(), { status: resp.status });
-  } catch {
-    return NextResponse.json({ error: "backend_unreachable" }, { status: 502 });
-  }
-}
-
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

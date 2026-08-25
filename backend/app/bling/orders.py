@@ -122,11 +122,35 @@ def build_installments(total: Decimal, terms: list[int], method_id: int | None,
     return parcelas
 
 
+def order_net_total(itens: list[dict], discount: dict | None,
+                    freight=0) -> Decimal:
+    """Total que o cliente paga: itens - desconto de cabecalho + frete.
+
+    Existe como funcao propria porque TRES lugares precisam do mesmo numero e
+    ja divergiram uma vez: as parcelas do payload, o `sales.value` gravado no
+    CRM, e o total que o orcamento mostrou ao cliente antes de virar pedido.
+
+    A ordem importa e nao e arbitraria: o desconto de cabecalho e negociado
+    sobre a mercadoria, entao ele incide ANTES do frete. Somar o frete primeiro
+    faria o desconto comer parte dele e o cliente pagaria menos frete do que
+    foi combinado — diferenca que so aparece na conferencia do financeiro.
+    """
+    return _money(apply_discount(order_total(itens), discount) + _dec(freight))
+
+
 def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
                         payment: dict, seller_id: int | None,
                         discount: dict | None = None, notes: str = "",
-                        internal_notes: str = "") -> dict:
-    """Monta o corpo do POST /pedidos/vendas."""
+                        internal_notes: str = "", freight=0,
+                        freight_mode: int | None = None) -> dict:
+    """Monta o corpo do POST /pedidos/vendas.
+
+    `freight`/`freight_mode` sao opcionais e o default reproduz byte a byte o
+    pedido que o registro de venda ja emite hoje — a venda avulsa nao tem campo
+    de frete. Quem os usa e a conversao de orcamento em venda: o orcamento fecha
+    com frete no total e o cliente aceita ESSE numero, entao o pedido tem que
+    nascer com ele, ou a nota sai a menor que o combinado.
+    """
     if not itens:
         raise BlingValidationError(
             "o pedido precisa de pelo menos um item",
@@ -145,8 +169,9 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
         )
 
     # As parcelas dividem o LIQUIDO. O desconto de cabecalho e aplicado antes de
-    # parcelar, senao a soma das parcelas fica maior que o total do pedido.
-    total = apply_discount(order_total(itens), discount)
+    # parcelar, senao a soma das parcelas fica maior que o total do pedido; e o
+    # frete entra depois dele, porque tambem e cobrado do cliente.
+    total = order_net_total(itens, discount, freight)
     payload: dict = {
         "contato": {"id": int(contact_id)},
         # O Bling exige as tres datas; sem prazo de entrega definido no CRM,
@@ -184,6 +209,16 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
             "valor": float(_dec(discount["valor"])),
             "unidade": discount.get("unidade") or "REAL",
         }
+    # `fretePorConta` e o nome no pedido de venda. A proposta comercial chama o
+    # MESMO enum de `freteModalidade` — trocar um pelo outro nao da erro, o
+    # Bling so ignora o campo desconhecido e o pedido nasce sem modalidade.
+    # Frete zero nao gera o bloco nem quando a modalidade foi escolhida: um
+    # `transporte` com valor zero polui o pedido e aparece na nota.
+    if _dec(freight) > 0:
+        transporte: dict = {"frete": float(_money(_dec(freight)))}
+        if freight_mode is not None:
+            transporte["fretePorConta"] = int(freight_mode)
+        payload["transporte"] = transporte
     if notes:
         payload["observacoes"] = notes
     if internal_notes:
@@ -310,7 +345,8 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
                        payment: dict, seller_id: int | None,
                        discount: dict | None = None, notes: str = "",
                        idempotency_key: str | None = None,
-                       conversation_id: str | None = None) -> dict:
+                       conversation_id: str | None = None,
+                       freight=0, freight_mode: int | None = None) -> dict:
     """Cria o pedido no Bling e projeta em `sales` + `sale_items`.
 
     `idempotency_key` vai para o campo `numeroLoja` (o "numero do pedido na loja
@@ -335,6 +371,7 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
             contact_id=contact_id, sold_at=sold_at, itens=itens, payment=payment,
             seller_id=seller_id, discount=discount, notes=notes,
             internal_notes=f"CRM lead {lead_id}" + (f" - deal {deal_id}" if deal_id else ""),
+            freight=freight, freight_mode=freight_mode,
         )
         if idempotency_key:
             payload["numeroLoja"] = idempotency_key
@@ -348,7 +385,11 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
     # create_order e faria um SEGUNDO POST: pedido duplicado no Bling, estoque
     # baixado duas vezes. O bling_order_id na `sales` e a chave que amarra o
     # pedido ao CRM, entao ele e o primeiro a ser persistido.
-    total = apply_discount(order_total(itens), discount)
+    # MESMA funcao que montou as parcelas do payload. Calcular o total duas
+    # vezes por caminhos diferentes e como `sales.value` divergiria do pedido no
+    # ERP — foi exatamente assim que o frete se perdeu na primeira versao da
+    # conversao de orcamento.
+    total = order_net_total(itens, discount, freight)
     linha = {
         "lead_id": lead_id,
         "deal_id": deal_id,

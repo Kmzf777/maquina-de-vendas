@@ -1050,3 +1050,76 @@ def test_falha_ao_fechar_o_deal_nao_derruba_a_venda(monkeypatch):
     assert out["bling_order_id"] == 34215992
     assert out["bling_order_number"] == 1234
     assert store["sales_inserts"][0]["deal_id"] == "D1"
+
+
+# ---------------------------------------------------------------------------
+# Frete no pedido de venda
+# ---------------------------------------------------------------------------
+# O orcamento fecha com `subtotal - desconto + frete` e o cliente aceita ESSE
+# numero. Ate a conversao aprender frete, o pedido nascia com o total sem ele:
+# nota emitida a menos, `sales.value` a menos, e a diferenca so apareceria na
+# conferencia do financeiro. Por isso os testes cobrem os tres lugares onde o
+# frete tem que aparecer — transporte, total e parcelas — e nao so o payload.
+
+def test_frete_entra_no_transporte_do_pedido():
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-25",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe", "quantidade": 1,
+                "valor_unitario": 100.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        freight=45.0, freight_mode=1,
+    )
+    # `fretePorConta` e o nome no pedido de venda; a proposta comercial usa
+    # `freteModalidade` para o mesmo enum. Trocar um pelo outro faz o Bling
+    # ignorar o campo em silencio.
+    assert payload["transporte"] == {"frete": 45.0, "fretePorConta": 1}
+
+
+def test_frete_soma_ao_total_e_e_parcelado_junto():
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-25",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe", "quantidade": 1,
+                "valor_unitario": 100.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [30, 60]}, seller_id=None,
+        freight=50.0,
+    )
+    # 100 + 50 = 150, em 2x = 75 + 75. Sem o frete seriam duas de 50.
+    assert [p["valor"] for p in payload["parcelas"]] == [75.0, 75.0]
+
+
+def test_frete_entra_depois_do_desconto_de_cabecalho():
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-25",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe", "quantidade": 1,
+                "valor_unitario": 100.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        discount={"valor": 10, "unidade": "PERCENTUAL"}, freight=30.0,
+    )
+    # 100 - 10% = 90, + 30 de frete = 120. Se o frete entrasse ANTES, o desconto
+    # incidiria sobre ele (117) e o cliente pagaria menos frete do que combinado.
+    assert payload["parcelas"][0]["valor"] == 120.0
+
+
+def test_sem_frete_o_payload_nao_ganha_transporte():
+    """Default preserva byte a byte o pedido que a venda ja emite hoje."""
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-25",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe", "quantidade": 1,
+                "valor_unitario": 100.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+    )
+    assert "transporte" not in payload
+    assert payload["parcelas"][0]["valor"] == 100.0
+
+
+def test_frete_zerado_nao_gera_bloco_de_transporte():
+    """Frete 0 com modalidade escolhida continua sendo ausencia de frete: um
+    bloco `transporte` com valor zero polui o pedido e aparece na nota."""
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-25",
+        itens=[{"bling_product_id": 1, "descricao": "Cafe", "quantidade": 1,
+                "valor_unitario": 100.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        freight=0, freight_mode=0,
+    )
+    assert "transporte" not in payload
