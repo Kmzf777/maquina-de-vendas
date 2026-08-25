@@ -530,3 +530,77 @@ export interface ConversationSearchResult {
   sent_by: string | null;
   total_count: number;
 }
+
+/**
+ * Linha de `quote_items` (20260825_quotes.sql) — item de uma proposta comercial
+ * do Bling, gravado no CRM junto com o orçamento.
+ *
+ * Difere de `SaleItem` em `unidade`: a proposta comercial exige o campo no item,
+ * então ele é guardado aqui e volta preenchido na edição (`linesFromQuoteItems`).
+ */
+export interface QuoteItem {
+  id: string;
+  quote_id: string;
+  bling_product_id: number | null;
+  codigo: string | null;
+  descricao: string;
+  unidade: string | null;
+  quantidade: number;
+  valor_unitario: number;
+  desconto_percentual: number;
+  total: number;
+  ordem: number;
+}
+
+/**
+ * Orçamento (`quotes`, 20260825_quotes.sql) — a proposta comercial do Bling
+ * projetada no CRM.
+ */
+export interface Quote {
+  id: string;
+  lead_id: string;
+  deal_id: string | null;
+  conversation_id: string | null;
+  /** E-mail do vendedor. É a base do escopo por vendedor — sem a exceção de
+   *  `origin='bling'` que `sales` tem, porque não existe orçamento importado. */
+  created_by: string | null;
+  quoted_at: string;
+  /** Situação nossa, não a do Bling — o mapeamento para `bling_situacao` está
+   *  na §3 da spec do orçamento. */
+  status: "rascunho" | "enviado" | "aprovado" | "nao_aprovado" | "convertido" | "cancelado";
+  /** O POST da proposta devolve só o `id`; o `numero` (que vai no PDF) exige um
+   *  GET seguinte, que é best-effort — daí os dois serem nulos. */
+  bling_proposal_id: number | null;
+  bling_proposal_number: number | null;
+  bling_contact_id: number | null;
+  /** Espelho da última situação enviada ao Bling. */
+  bling_situacao: string | null;
+  subtotal: number;
+  /** SEMPRE em reais — é o que entrou no total e foi para o ERP. */
+  discount_value: number;
+  /** Unidade e número que o vendedor digitou, guardados para a edição reexibir
+   *  "10%" no campo onde ele digitou 10, em vez do valor já convertido. */
+  discount_unit: "REAL" | "PERCENTUAL";
+  discount_input: number;
+  freight: number;
+  /** 0 CIF · 1 FOB · 2 Terceiros · 3 Próprio remetente · 4 Próprio destinatário · 9 Sem transporte. */
+  freight_mode: number | null;
+  total: number;
+  payment_method_id: number | null;
+  /** "30/60/90" — o mesmo formato que `parseTerms` lê. */
+  payment_terms: string | null;
+  /** Sai no PDF e no Bling. */
+  notes: string | null;
+  /** Só no Bling — nunca entra no PDF que o cliente recebe. */
+  internal_notes: string | null;
+  /** Preenchidos na conversão em venda; depois disso o orçamento não é editável. */
+  sale_id: string | null;
+  converted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  leads?: { id: string; name: string | null; phone: string; company: string | null } | null;
+  deals?: { id: string; title: string } | null;
+  /** Itens, quando a rota que devolveu o orçamento os embute. Ausente (não `[]`)
+   *  em rotas que não fazem esse select — ver `linesFromQuoteItems`. */
+  quote_items?: QuoteItem[];
+}
