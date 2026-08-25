@@ -6,13 +6,20 @@ import {
   getAllowedPipelineIds,
 } from "@/lib/supabase/pipeline-access";
 
+// "Proposta Enviada" carrega key própria, ao contrário das etapas comuns (key
+// null): criar um orçamento move o card para cá, e a busca é por key, nunca por
+// posição ou rótulo — funis são por usuário e ambos variam entre funis.
+// Fica logo antes de "Fechado Ganho" para espelhar o que a migration
+// 20260825_quotes.sql fez nos funis que já existem; alterar a posição aqui sem
+// alterar lá faria funis novos e antigos divergirem.
 const DEFAULT_STAGES = [
-  { label: "Novo",         key: null,              dot_color: "#e07a7a", order_index: 0, is_protected: false },
-  { label: "Contato",      key: null,              dot_color: "#d4a04a", order_index: 1, is_protected: false },
-  { label: "Proposta",     key: null,              dot_color: "#9b7abf", order_index: 2, is_protected: false },
-  { label: "Negociação",   key: null,              dot_color: "#5b8aad", order_index: 3, is_protected: false },
-  { label: "Fechado Ganho",key: "fechado_ganho",   dot_color: "#5aad65", order_index: 4, is_protected: false },
-  { label: "Perdido",      key: "fechado_perdido", dot_color: "#9ca3af", order_index: 5, is_protected: false },
+  { label: "Novo",            key: null,                dot_color: "#e07a7a", order_index: 0, is_protected: false },
+  { label: "Contato",         key: null,                dot_color: "#d4a04a", order_index: 1, is_protected: false },
+  { label: "Proposta",        key: null,                dot_color: "#9b7abf", order_index: 2, is_protected: false },
+  { label: "Negociação",      key: null,                dot_color: "#5b8aad", order_index: 3, is_protected: false },
+  { label: "Proposta Enviada",key: "proposta_enviada",  dot_color: "#9b7abf", order_index: 4, is_protected: false },
+  { label: "Fechado Ganho",   key: "fechado_ganho",     dot_color: "#5aad65", order_index: 5, is_protected: false },
+  { label: "Perdido",         key: "fechado_perdido",   dot_color: "#9ca3af", order_index: 6, is_protected: false },
 ];
 
 export async function GET() {

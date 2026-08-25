@@ -11,6 +11,10 @@ export const DEAL_STAGES = [
   { key: "contato", label: "Contato", color: "bg-[#f0e4d0]", dotColor: "#d4a04a", tintColor: "#f4f0ea", avatarColor: "#d4a04a" },
   { key: "proposta", label: "Proposta", color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
   { key: "negociacao", label: "Negociacao", color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5b8aad" },
+  // Etapa criada junto com o orçamento (migration 20260825_quotes.sql). A ordem
+  // deste array é a ordem exibida — mantê-la colada em fechado_ganho é o que faz
+  // o rótulo do funil bater com a posição real gravada em pipeline_stages.
+  { key: "proposta_enviada", label: "Proposta Enviada", color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
   { key: "fechado_ganho", label: "Fechado Ganho", color: "bg-[#d8f0dc]", dotColor: "#5aad65", tintColor: "#edf4ef", avatarColor: "#5aad65" },
   { key: "fechado_perdido", label: "Perdido", color: "bg-[#f4f4f0]", dotColor: "#9ca3af", tintColor: "#f2f2f0", avatarColor: "#9ca3af" },
 ] as const;
