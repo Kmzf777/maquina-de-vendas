@@ -135,6 +135,7 @@ export function BlingContactResolver({
 
   const erroNome = tocado ? montado.errors.nome : undefined;
   const erroDoc = tocado ? montado.errors.documento : undefined;
+  const erroEmail = tocado ? montado.errors.email : undefined;
 
   return (
     <div className="space-y-4">
@@ -230,13 +231,19 @@ export function BlingContactResolver({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={label}>E-mail</label>
+                <label className={label}>E-mail *</label>
+                {/* Exemplo no lugar de explicação: cabe na coluna estreita e já
+                    mostra o formato que a validação espera. */}
                 <input
                   value={form.email}
                   onChange={campo("email")}
                   type="email"
+                  placeholder="cliente@empresa.com"
                   className={input}
                 />
+                {erroEmail && (
+                  <p className="mt-1 text-[11px] text-[#c41c1c]">{erroEmail}</p>
+                )}
               </div>
               <div>
                 <label className={label}>Telefone</label>

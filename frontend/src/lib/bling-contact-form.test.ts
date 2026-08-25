@@ -66,37 +66,118 @@ describe("buildContactPayload", () => {
 
   it("CPF vira pessoa fisica", () => {
     const out = buildContactPayload(
-      blankContactForm({ nome: "Fulano", documento: "123.456.789-09" }), "L1");
+      blankContactForm({
+        nome: "Fulano",
+        documento: "123.456.789-09",
+        email: "fulano@empresa.com.br",
+      }), "L1");
     expect(out.valid).toBe(true);
     expect(out.payload.tipo).toBe("F");
     expect(out.payload.numeroDocumento).toBe("12345678909");
   });
 
-  it("sem endereco nenhum o bloco nao viaja", () => {
+  it("sem endereco nem telefone os blocos opcionais nao viajam", () => {
     const out = buildContactPayload(
-      blankContactForm({ nome: "Fulano", documento: "12345678909" }), "L1");
+      blankContactForm({
+        nome: "Fulano",
+        documento: "12345678909",
+        email: "fulano@empresa.com.br",
+      }), "L1");
+    expect(out.valid).toBe(true);
     expect(out.payload.endereco).toBeUndefined();
-    expect(out.payload.email).toBeUndefined();
     expect(out.payload.telefone).toBeUndefined();
   });
 
   it("sem nome e invalido", () => {
     const out = buildContactPayload(
-      blankContactForm({ documento: "12345678909" }), "L1");
+      blankContactForm({ documento: "12345678909", email: "fulano@empresa.com.br" }),
+      "L1");
     expect(out.valid).toBe(false);
     expect(out.errors.nome).toBeTruthy();
   });
 
   it("documento e obrigatorio — sem ele o contato duplicaria no ERP", () => {
-    const out = buildContactPayload(blankContactForm({ nome: "Fulano" }), "L1");
+    const out = buildContactPayload(
+      blankContactForm({ nome: "Fulano", email: "fulano@empresa.com.br" }), "L1");
     expect(out.valid).toBe(false);
     expect(out.errors.documento).toBeTruthy();
   });
 
   it("documento com DV errado e recusado antes de sair do navegador", () => {
     const out = buildContactPayload(
-      blankContactForm({ nome: "Fulano", documento: "11111111111" }), "L1");
+      blankContactForm({
+        nome: "Fulano",
+        documento: "11111111111",
+        email: "fulano@empresa.com.br",
+      }), "L1");
     expect(out.valid).toBe(false);
     expect(out.errors.documento).toBe("CPF/CNPJ inválido");
+  });
+
+  // E-mail obrigatório: a proposta comercial é entregue por e-mail, então um
+  // contato sem endereço eletrônico no ERP é um orçamento que não chega.
+  it("e-mail vazio e recusado e nao vira campo em branco no payload", () => {
+    const out = buildContactPayload(
+      blankContactForm({ nome: "Fulano", documento: "12345678909" }), "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors.email).toBe("O e-mail é obrigatório");
+    expect(out.payload.email).toBeUndefined();
+  });
+
+  it("so espaco em branco conta como e-mail vazio", () => {
+    const out = buildContactPayload(
+      blankContactForm({ nome: "Fulano", documento: "12345678909", email: "   " }),
+      "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors.email).toBe("O e-mail é obrigatório");
+  });
+
+  it.each([
+    "fulano",
+    "fulano@",
+    "@empresa.com",
+    "fulano@empresa",
+    "fulano@empresa.",
+    "fulano@.com",
+    "fulano@empresa..com",
+    "fulano @empresa.com",
+    "fulano@empre sa.com",
+    "fulano@@empresa.com",
+    "fulano@empresa.com@x.com",
+  ])("e-mail malformado e recusado: %s", (email) => {
+    const out = buildContactPayload(
+      blankContactForm({ nome: "Fulano", documento: "12345678909", email }), "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors.email).toBe("E-mail inválido");
+  });
+
+  // A validação é deliberadamente frouxa: o que não pode acontecer é recusar
+  // e-mail real de cliente. Estes são os formatos que aparecem no cadastro.
+  it.each([
+    "compras@cafeteria.com",
+    "fulano@empresa.com.br",
+    "fulano.silva@empresa.com.br",
+    "fulano+crm@empresa.com",
+    "fulano_silva@sub.dominio.empresa.com.br",
+    "FULANO@EMPRESA.COM.BR",
+    "financeiro-2@empresa.co",
+    "joão@empresa.com.br",
+  ])("e-mail valido passa: %s", (email) => {
+    const out = buildContactPayload(
+      blankContactForm({ nome: "Fulano", documento: "12345678909", email }), "L1");
+    expect(out.valid).toBe(true);
+    expect(out.errors.email).toBeUndefined();
+    expect(out.payload.email).toBe(email);
+  });
+
+  it("e-mail digitado com espaco em volta e aparado", () => {
+    const out = buildContactPayload(
+      blankContactForm({
+        nome: "Fulano",
+        documento: "12345678909",
+        email: "  compras@cafeteria.com  ",
+      }), "L1");
+    expect(out.valid).toBe(true);
+    expect(out.payload.email).toBe("compras@cafeteria.com");
   });
 });
