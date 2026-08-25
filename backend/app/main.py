@@ -129,6 +129,7 @@ from app.lp_webhook.router import router as lp_webhook_router
 from app.fx.router import router as fx_router
 from app.bling.webhook_router import router as bling_webhook_router
 from app.bling.router import router as bling_router
+from app.quotes.router import router as quotes_router
 
 app.include_router(webhook_router)
 app.include_router(meta_webhook_router)
@@ -150,6 +151,7 @@ app.include_router(lp_webhook_router)
 app.include_router(fx_router)
 app.include_router(bling_webhook_router)
 app.include_router(bling_router)
+app.include_router(quotes_router)
 
 
 @app.get("/health")

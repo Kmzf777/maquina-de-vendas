@@ -26,10 +26,11 @@ Contrato de PUT /api/bling/orders/{order_id}:
 """
 import asyncio
 import logging
+import re
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.bling import auth, config, contacts, jobs
 from app.bling.errors import TRANSIENT, BlingError, BlingValidationError
@@ -70,15 +71,53 @@ class OrderIn(BaseModel):
     notes: str = ""
 
 
+# Formato de e-mail: ESPELHO EXATO do `EMAIL_RE` de
+# `frontend/src/lib/bling-contact-form.ts` — algo antes de um unico `@`, e
+# depois dele um dominio com pelo menos um ponto separando rotulos nao vazios.
+#
+# A escolha por uma checagem sobria (e nao uma regex de RFC 5322) esta explicada
+# la, e vale igual aqui: o custo dos dois erros e assimetrico. Deixar passar um
+# endereco sintaticamente exotico nao quebra nada — quem valida de verdade e o
+# Bling no 422, e depois disso o proprio servidor de e-mail. Ja um falso
+# negativo recusa o e-mail real de um cliente e trava a venda na frente do
+# vendedor, que nao tem como contornar. Por isso `[^\s@]` e permissivo com
+# acento, `+`, `_` e o que mais o cliente tiver no endereco.
+#
+# As duas regras PRECISAM continuar iguais: divergir faria o formulario aceitar
+# o que a API recusa (ou o contrario), e o vendedor veria um erro que a tela nao
+# sabe explicar.
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$")
+
+
 class ContactIn(BaseModel):
     lead_id: str
     nome: str
     numeroDocumento: str
     tipo: str | None = None
-    email: str | None = None
+    # OBRIGATORIO desde a entrega do orcamento (decisao 6 do design da proposta
+    # comercial). O formulario ja exige desde o commit `1d973c30`, mas isso e
+    # barreira de NAVEGADOR: um POST direto em /api/bling/contacts passaria reto
+    # e criaria no ERP exatamente o contato incompleto que a decisao quer
+    # impedir. O orcamento e um documento que se entrega ao cliente, e contato
+    # sem e-mail no Bling e proposta que nao tem para onde ir.
+    #
+    # `validate_default=True` existe para que o campo AUSENTE tambem caia no
+    # validador: sem isso o default None passaria sem ser validado e a exigencia
+    # so valeria para quem mandasse a chave.
+    email: str | None = Field(default=None, validate_default=True)
     telefone: str | None = None
     celular: str | None = None
     endereco: dict | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _email_obrigatorio(cls, valor: str | None) -> str:
+        email = (valor or "").strip()
+        if not email:
+            raise ValueError("o e-mail do cliente e obrigatorio")
+        if not _EMAIL_RE.match(email):
+            raise ValueError("e-mail invalido")
+        return email
 
 
 # --------------------------------------------------------------------------
