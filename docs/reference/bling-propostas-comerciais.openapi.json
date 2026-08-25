@@ -1,0 +1,2338 @@
+{
+ "servers": [
+  {
+   "url": "https://api.bling.com.br/Api/v3",
+   "description": "Ambiente de produção"
+  },
+  {
+   "url": "https://developer.bling.com.br/api/bling",
+   "description": "Ambiente de teste da documentação"
+  }
+ ],
+ "paths": {
+  "/propostas-comerciais": {
+   "get": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Obtém propostas comerciais",
+    "description": "Obtém propostas comerciais paginadas.",
+    "parameters": [
+     {
+      "name": "situacao",
+      "in": "query",
+      "description": "O valor referente a situação da proposta: Pendente, Aguardando, Não aprovado, Aprovado, Concluido, Rascunho. Para mais situações, pesquisar pelo número separado por vírgula.",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "idContato",
+      "in": "query",
+      "description": "ID do contato",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "format": "int64"
+      }
+     },
+     {
+      "name": "dataInicial",
+      "in": "query",
+      "description": "Data inicial",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "format": "date",
+       "example": "2020-08-24"
+      }
+     },
+     {
+      "name": "dataFinal",
+      "in": "query",
+      "description": "Data final",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "format": "date",
+       "example": "2020-08-24"
+      }
+     },
+     {
+      "name": "pagina",
+      "in": "query",
+      "description": "N° da página da listagem",
+      "schema": {
+       "type": "integer",
+       "default": 1,
+       "minimum": 1
+      }
+     },
+     {
+      "name": "limite",
+      "in": "query",
+      "description": "Quantidade de registros que devem ser exibidos por página",
+      "schema": {
+       "type": "integer",
+       "default": 100,
+       "minimum": 1
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "type": "array",
+           "items": {
+            "properties": {
+             "id": {
+              "type": "integer",
+              "readOnly": true,
+              "example": 123456789
+             },
+             "data": {
+              "type": "string",
+              "format": "date",
+              "example": "2024-04-29"
+             },
+             "situacao": {
+              "type": "string",
+              "example": "Concluído"
+             },
+             "total": {
+              "type": "number",
+              "format": "float",
+              "readOnly": true,
+              "example": 251
+             },
+             "totalProdutos": {
+              "type": "number",
+              "format": "float",
+              "readOnly": true,
+              "example": 500
+             },
+             "numero": {
+              "type": "integer",
+              "example": 13
+             },
+             "contato": {
+              "properties": {
+               "id": {
+                "type": "integer",
+                "example": 12345678
+               }
+              },
+              "type": "object"
+             },
+             "loja": {
+              "required": [
+               "id"
+              ],
+              "properties": {
+               "id": {
+                "type": "integer",
+                "example": 12345678
+               },
+               "unidadeNegocio": {
+                "required": [
+                 "id"
+                ],
+                "properties": {
+                 "id": {
+                  "type": "integer",
+                  "example": 12345678
+                 }
+                },
+                "type": "object"
+               }
+              },
+              "type": "object"
+             }
+            },
+            "type": "object"
+           }
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "ObterMultiplos"
+   },
+   "post": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Cria uma proposta comercial",
+    "description": "Cria uma proposta comercial.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "allOf": [
+         {
+          "properties": {
+           "id": {
+            "type": "integer",
+            "readOnly": true,
+            "example": 123456789
+           },
+           "data": {
+            "type": "string",
+            "format": "date",
+            "example": "2024-04-29"
+           },
+           "situacao": {
+            "type": "string",
+            "example": "Concluído"
+           },
+           "total": {
+            "type": "number",
+            "format": "float",
+            "readOnly": true,
+            "example": 251
+           },
+           "totalProdutos": {
+            "type": "number",
+            "format": "float",
+            "readOnly": true,
+            "example": 500
+           },
+           "numero": {
+            "type": "integer",
+            "example": 13
+           },
+           "contato": {
+            "properties": {
+             "id": {
+              "type": "integer",
+              "example": 12345678
+             }
+            },
+            "type": "object"
+           },
+           "loja": {
+            "required": [
+             "id"
+            ],
+            "properties": {
+             "id": {
+              "type": "integer",
+              "example": 12345678
+             },
+             "unidadeNegocio": {
+              "required": [
+               "id"
+              ],
+              "properties": {
+               "id": {
+                "type": "integer",
+                "example": 12345678
+               }
+              },
+              "type": "object"
+             }
+            },
+            "type": "object"
+           }
+          },
+          "type": "object"
+         },
+         {
+          "required": [
+           "itens",
+           "parcelas"
+          ],
+          "properties": {
+           "desconto": {
+            "type": "number",
+            "format": "float",
+            "example": 10
+           },
+           "outrasDespesas": {
+            "type": "number",
+            "format": "float",
+            "example": 11
+           },
+           "garantia": {
+            "type": "integer",
+            "example": 3
+           },
+           "dataProximoContato": {
+            "type": "string",
+            "example": "2024-05-01"
+           },
+           "observacoes": {
+            "type": "string",
+            "example": "Observações da proposta comercial"
+           },
+           "observacaoInterna": {
+            "type": "string",
+            "example": "Observações internas da proposta comercial"
+           },
+           "totalOutrosItens": {
+            "type": "integer",
+            "example": 1
+           },
+           "aosCuidadosDe": {
+            "type": "string",
+            "example": "Nome do Contato"
+           },
+           "introducao": {
+            "type": "string",
+            "example": "Introdução da proposta comercial"
+           },
+           "prazoEntrega": {
+            "type": "string",
+            "example": "Prazo de entrega proposta comercial"
+           },
+           "itens": {
+            "type": "array",
+            "items": {
+             "properties": {
+              "produto": {
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "example": 12345678
+                },
+                "descricao": {
+                 "type": "string",
+                 "example": "Bolo"
+                }
+               },
+               "type": "object"
+              },
+              "codigo": {
+               "type": "string",
+               "example": "BLG-5"
+              },
+              "unidade": {
+               "type": "string",
+               "example": "UN"
+              },
+              "quantidade": {
+               "type": "number",
+               "format": "float",
+               "example": 1.1
+              },
+              "desconto": {
+               "type": "number",
+               "format": "float",
+               "example": 1.2
+              },
+              "valor": {
+               "type": "number",
+               "format": "float",
+               "example": 3.1
+              },
+              "descricaoDetalhada": {
+               "type": "string",
+               "example": "Descrição detalhada do produto"
+              }
+             },
+             "type": "object"
+            }
+           },
+           "parcelas": {
+            "type": "array",
+            "items": {
+             "properties": {
+              "numeroDias": {
+               "type": "integer",
+               "example": 10
+              },
+              "dataVencimento": {
+               "type": "string",
+               "format": "date",
+               "example": "2024-04-29"
+              },
+              "valor": {
+               "type": "number",
+               "format": "float",
+               "example": 10.55
+              },
+              "observacoes": {
+               "type": "string",
+               "example": "Observacao da forma de pagamento"
+              },
+              "formaPagamento": {
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "example": 12345678
+                }
+               },
+               "type": "object"
+              }
+             },
+             "type": "object"
+            }
+           },
+           "vendedor": {
+            "properties": {
+             "id": {
+              "type": "integer",
+              "example": 12345678
+             }
+            },
+            "type": "object"
+           },
+           "transporte": {
+            "properties": {
+             "freteModalidade": {
+              "description": "`0` Contratação do Frete por conta do Remetente (CIF)<br> `1` Contratação do Frete por conta do Destinatário (FOB)<br> `2` Contratação do Frete por conta de Terceiros<br> `3` Transporte Próprio por conta do Remetente<br> `4` Transporte Próprio por conta do Destinatário<br> `9` Sem Ocorrência de Transporte.",
+              "type": "integer",
+              "enum": [
+               0,
+               1,
+               2,
+               3,
+               4,
+               9
+              ],
+              "example": 0
+             },
+             "frete": {
+              "type": "number",
+              "format": "float",
+              "example": 2.34
+             },
+             "quantidadeVolumes": {
+              "type": "number",
+              "format": "float",
+              "example": 2.33
+             },
+             "prazoEntrega": {
+              "type": "integer",
+              "example": 2
+             },
+             "pesoBruto": {
+              "type": "number",
+              "format": "float",
+              "example": 2.4
+             },
+             "contato": {
+              "properties": {
+               "id": {
+                "type": "integer",
+                "example": 12345678
+               },
+               "nome": {
+                "type": "string",
+                "example": "Nome do transportador"
+               }
+              },
+              "type": "object"
+             },
+             "volumes": {
+              "required": [
+               "id"
+              ],
+              "properties": {
+               "id": {
+                "type": "integer",
+                "readOnly": true,
+                "example": 12345678
+               },
+               "servico": {
+                "type": "string",
+                "readOnly": true,
+                "example": "Correios PAC"
+               },
+               "codigoRastreamento": {
+                "type": "string",
+                "readOnly": true,
+                "example": "R56563A"
+               }
+              },
+              "type": "object"
+             }
+            },
+            "type": "object"
+           }
+          },
+          "type": "object"
+         }
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "required": [
+            "id"
+           ],
+           "properties": {
+            "id": {
+             "type": "integer",
+             "example": 12345678
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "Criar"
+   },
+   "delete": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Remove múltiplas propostas comerciais",
+    "description": "Remove múltiplas propostas comerciais pelos IDs.",
+    "parameters": [
+     {
+      "name": "idsPropostasComerciais[]",
+      "in": "query",
+      "description": "IDs das propostas comerciais",
+      "required": true,
+      "schema": {
+       "type": "array",
+       "items": {
+        "type": "integer"
+       },
+       "example": [
+        12345678,
+        87654321
+       ]
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "No content."
+     },
+     "200": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "data": {
+           "properties": {
+            "alertas": {
+             "type": "array",
+             "items": {
+              "required": [
+               "error.type",
+               "message",
+               "description"
+              ],
+              "properties": {
+               "error": {
+                "required": [
+                 "type",
+                 "message",
+                 "description"
+                ],
+                "properties": {
+                 "type": {
+                  "type": "string",
+                  "enum": [
+                   "BAD_REQUEST",
+                   "VALIDATION_ERROR",
+                   "MISSING_REQUIRED_FIELD_ERROR",
+                   "EMPTY_REQUEST_BODY",
+                   "INVALID_REQUEST_BODY",
+                   "INVALID_APIKEY_ERROR",
+                   "UNAUTHORIZED",
+                   "UNAUTHENTICATED",
+                   "FORBIDDEN",
+                   "RESOURCE_NOT_FOUND",
+                   "METHOD_NOT_ALLOWED",
+                   "TOO_MANY_REQUESTS",
+                   "UNKNOWN_ERROR",
+                   "SERVER_ERROR",
+                   "NOT_IMPLEMENTED"
+                  ],
+                  "example": "VALIDATION_ERROR"
+                 },
+                 "message": {
+                  "type": "string",
+                  "example": "Não foi possível salvar a venda"
+                 },
+                 "description": {
+                  "type": "string",
+                  "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+                 },
+                 "fields": {
+                  "type": "array",
+                  "items": {
+                   "required": [
+                    "code",
+                    "msg"
+                   ],
+                   "properties": {
+                    "code": {
+                     "type": "integer",
+                     "example": 49
+                    },
+                    "msg": {
+                     "type": "string",
+                     "example": "Uma ou mais parcelas da venda possuem erros de validação"
+                    },
+                    "element": {
+                     "type": "string",
+                     "example": "parcelas"
+                    },
+                    "namespace": {
+                     "description": "Referência ao objeto com erro.",
+                     "type": "string",
+                     "example": "VENDAS"
+                    },
+                    "collection": {
+                     "type": "array",
+                     "items": {
+                      "required": [
+                       "index",
+                       "code",
+                       "msg"
+                      ],
+                      "properties": {
+                       "index": {
+                        "type": "integer",
+                        "example": 1
+                       },
+                       "code": {
+                        "type": "integer",
+                        "example": 12
+                       },
+                       "msg": {
+                        "type": "string",
+                        "example": "Id da forma de pagamento inválido."
+                       },
+                       "element": {
+                        "type": "string",
+                        "example": "formaPagamento"
+                       },
+                       "namespace": {
+                        "description": "Referência ao objeto com erro.",
+                        "type": "string",
+                        "example": "VENDAS"
+                       }
+                      },
+                      "type": "object"
+                     }
+                    }
+                   },
+                   "type": "object"
+                  }
+                 }
+                },
+                "type": "object"
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "RemoverMultiplos"
+   }
+  },
+  "/propostas-comerciais/{idPropostaComercial}": {
+   "get": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Obtém uma proposta comercial",
+    "description": "Obtém uma proposta comercial pelo ID.",
+    "parameters": [
+     {
+      "name": "idPropostaComercial",
+      "in": "path",
+      "description": "ID da proposta comercial",
+      "required": true,
+      "schema": {
+       "type": "integer",
+       "format": "int64"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "allOf": [
+          {
+           "properties": {
+            "id": {
+             "type": "integer",
+             "readOnly": true,
+             "example": 123456789
+            },
+            "data": {
+             "type": "string",
+             "format": "date",
+             "example": "2024-04-29"
+            },
+            "situacao": {
+             "type": "string",
+             "example": "Concluído"
+            },
+            "total": {
+             "type": "number",
+             "format": "float",
+             "readOnly": true,
+             "example": 251
+            },
+            "totalProdutos": {
+             "type": "number",
+             "format": "float",
+             "readOnly": true,
+             "example": 500
+            },
+            "numero": {
+             "type": "integer",
+             "example": 13
+            },
+            "contato": {
+             "properties": {
+              "id": {
+               "type": "integer",
+               "example": 12345678
+              }
+             },
+             "type": "object"
+            },
+            "loja": {
+             "required": [
+              "id"
+             ],
+             "properties": {
+              "id": {
+               "type": "integer",
+               "example": 12345678
+              },
+              "unidadeNegocio": {
+               "required": [
+                "id"
+               ],
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "example": 12345678
+                }
+               },
+               "type": "object"
+              }
+             },
+             "type": "object"
+            }
+           },
+           "type": "object"
+          },
+          {
+           "required": [
+            "itens",
+            "parcelas"
+           ],
+           "properties": {
+            "desconto": {
+             "type": "number",
+             "format": "float",
+             "example": 10
+            },
+            "outrasDespesas": {
+             "type": "number",
+             "format": "float",
+             "example": 11
+            },
+            "garantia": {
+             "type": "integer",
+             "example": 3
+            },
+            "dataProximoContato": {
+             "type": "string",
+             "example": "2024-05-01"
+            },
+            "observacoes": {
+             "type": "string",
+             "example": "Observações da proposta comercial"
+            },
+            "observacaoInterna": {
+             "type": "string",
+             "example": "Observações internas da proposta comercial"
+            },
+            "totalOutrosItens": {
+             "type": "integer",
+             "example": 1
+            },
+            "aosCuidadosDe": {
+             "type": "string",
+             "example": "Nome do Contato"
+            },
+            "introducao": {
+             "type": "string",
+             "example": "Introdução da proposta comercial"
+            },
+            "prazoEntrega": {
+             "type": "string",
+             "example": "Prazo de entrega proposta comercial"
+            },
+            "itens": {
+             "type": "array",
+             "items": {
+              "properties": {
+               "produto": {
+                "properties": {
+                 "id": {
+                  "type": "integer",
+                  "example": 12345678
+                 },
+                 "descricao": {
+                  "type": "string",
+                  "example": "Bolo"
+                 }
+                },
+                "type": "object"
+               },
+               "codigo": {
+                "type": "string",
+                "example": "BLG-5"
+               },
+               "unidade": {
+                "type": "string",
+                "example": "UN"
+               },
+               "quantidade": {
+                "type": "number",
+                "format": "float",
+                "example": 1.1
+               },
+               "desconto": {
+                "type": "number",
+                "format": "float",
+                "example": 1.2
+               },
+               "valor": {
+                "type": "number",
+                "format": "float",
+                "example": 3.1
+               },
+               "descricaoDetalhada": {
+                "type": "string",
+                "example": "Descrição detalhada do produto"
+               }
+              },
+              "type": "object"
+             }
+            },
+            "parcelas": {
+             "type": "array",
+             "items": {
+              "properties": {
+               "numeroDias": {
+                "type": "integer",
+                "example": 10
+               },
+               "dataVencimento": {
+                "type": "string",
+                "format": "date",
+                "example": "2024-04-29"
+               },
+               "valor": {
+                "type": "number",
+                "format": "float",
+                "example": 10.55
+               },
+               "observacoes": {
+                "type": "string",
+                "example": "Observacao da forma de pagamento"
+               },
+               "formaPagamento": {
+                "properties": {
+                 "id": {
+                  "type": "integer",
+                  "example": 12345678
+                 }
+                },
+                "type": "object"
+               }
+              },
+              "type": "object"
+             }
+            },
+            "vendedor": {
+             "properties": {
+              "id": {
+               "type": "integer",
+               "example": 12345678
+              }
+             },
+             "type": "object"
+            },
+            "transporte": {
+             "properties": {
+              "freteModalidade": {
+               "description": "`0` Contratação do Frete por conta do Remetente (CIF)<br> `1` Contratação do Frete por conta do Destinatário (FOB)<br> `2` Contratação do Frete por conta de Terceiros<br> `3` Transporte Próprio por conta do Remetente<br> `4` Transporte Próprio por conta do Destinatário<br> `9` Sem Ocorrência de Transporte.",
+               "type": "integer",
+               "enum": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                9
+               ],
+               "example": 0
+              },
+              "frete": {
+               "type": "number",
+               "format": "float",
+               "example": 2.34
+              },
+              "quantidadeVolumes": {
+               "type": "number",
+               "format": "float",
+               "example": 2.33
+              },
+              "prazoEntrega": {
+               "type": "integer",
+               "example": 2
+              },
+              "pesoBruto": {
+               "type": "number",
+               "format": "float",
+               "example": 2.4
+              },
+              "contato": {
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "example": 12345678
+                },
+                "nome": {
+                 "type": "string",
+                 "example": "Nome do transportador"
+                }
+               },
+               "type": "object"
+              },
+              "volumes": {
+               "required": [
+                "id"
+               ],
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "readOnly": true,
+                 "example": 12345678
+                },
+                "servico": {
+                 "type": "string",
+                 "readOnly": true,
+                 "example": "Correios PAC"
+                },
+                "codigoRastreamento": {
+                 "type": "string",
+                 "readOnly": true,
+                 "example": "R56563A"
+                }
+               },
+               "type": "object"
+              }
+             },
+             "type": "object"
+            }
+           },
+           "type": "object"
+          }
+         ]
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "Obter"
+   },
+   "put": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Altera uma proposta comercial",
+    "description": "Altera uma proposta comercial pelo ID.",
+    "parameters": [
+     {
+      "name": "idPropostaComercial",
+      "in": "path",
+      "description": "ID da proposta comercial",
+      "required": true,
+      "schema": {
+       "type": "integer",
+       "format": "int64"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "allOf": [
+         {
+          "properties": {
+           "id": {
+            "type": "integer",
+            "readOnly": true,
+            "example": 123456789
+           },
+           "data": {
+            "type": "string",
+            "format": "date",
+            "example": "2024-04-29"
+           },
+           "situacao": {
+            "type": "string",
+            "example": "Concluído"
+           },
+           "total": {
+            "type": "number",
+            "format": "float",
+            "readOnly": true,
+            "example": 251
+           },
+           "totalProdutos": {
+            "type": "number",
+            "format": "float",
+            "readOnly": true,
+            "example": 500
+           },
+           "numero": {
+            "type": "integer",
+            "example": 13
+           },
+           "contato": {
+            "properties": {
+             "id": {
+              "type": "integer",
+              "example": 12345678
+             }
+            },
+            "type": "object"
+           },
+           "loja": {
+            "required": [
+             "id"
+            ],
+            "properties": {
+             "id": {
+              "type": "integer",
+              "example": 12345678
+             },
+             "unidadeNegocio": {
+              "required": [
+               "id"
+              ],
+              "properties": {
+               "id": {
+                "type": "integer",
+                "example": 12345678
+               }
+              },
+              "type": "object"
+             }
+            },
+            "type": "object"
+           }
+          },
+          "type": "object"
+         },
+         {
+          "required": [
+           "itens",
+           "parcelas"
+          ],
+          "properties": {
+           "desconto": {
+            "type": "number",
+            "format": "float",
+            "example": 10
+           },
+           "outrasDespesas": {
+            "type": "number",
+            "format": "float",
+            "example": 11
+           },
+           "garantia": {
+            "type": "integer",
+            "example": 3
+           },
+           "dataProximoContato": {
+            "type": "string",
+            "example": "2024-05-01"
+           },
+           "observacoes": {
+            "type": "string",
+            "example": "Observações da proposta comercial"
+           },
+           "observacaoInterna": {
+            "type": "string",
+            "example": "Observações internas da proposta comercial"
+           },
+           "totalOutrosItens": {
+            "type": "integer",
+            "example": 1
+           },
+           "aosCuidadosDe": {
+            "type": "string",
+            "example": "Nome do Contato"
+           },
+           "introducao": {
+            "type": "string",
+            "example": "Introdução da proposta comercial"
+           },
+           "prazoEntrega": {
+            "type": "string",
+            "example": "Prazo de entrega proposta comercial"
+           },
+           "itens": {
+            "type": "array",
+            "items": {
+             "properties": {
+              "produto": {
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "example": 12345678
+                },
+                "descricao": {
+                 "type": "string",
+                 "example": "Bolo"
+                }
+               },
+               "type": "object"
+              },
+              "codigo": {
+               "type": "string",
+               "example": "BLG-5"
+              },
+              "unidade": {
+               "type": "string",
+               "example": "UN"
+              },
+              "quantidade": {
+               "type": "number",
+               "format": "float",
+               "example": 1.1
+              },
+              "desconto": {
+               "type": "number",
+               "format": "float",
+               "example": 1.2
+              },
+              "valor": {
+               "type": "number",
+               "format": "float",
+               "example": 3.1
+              },
+              "descricaoDetalhada": {
+               "type": "string",
+               "example": "Descrição detalhada do produto"
+              }
+             },
+             "type": "object"
+            }
+           },
+           "parcelas": {
+            "type": "array",
+            "items": {
+             "properties": {
+              "numeroDias": {
+               "type": "integer",
+               "example": 10
+              },
+              "dataVencimento": {
+               "type": "string",
+               "format": "date",
+               "example": "2024-04-29"
+              },
+              "valor": {
+               "type": "number",
+               "format": "float",
+               "example": 10.55
+              },
+              "observacoes": {
+               "type": "string",
+               "example": "Observacao da forma de pagamento"
+              },
+              "formaPagamento": {
+               "properties": {
+                "id": {
+                 "type": "integer",
+                 "example": 12345678
+                }
+               },
+               "type": "object"
+              }
+             },
+             "type": "object"
+            }
+           },
+           "vendedor": {
+            "properties": {
+             "id": {
+              "type": "integer",
+              "example": 12345678
+             }
+            },
+            "type": "object"
+           },
+           "transporte": {
+            "properties": {
+             "freteModalidade": {
+              "description": "`0` Contratação do Frete por conta do Remetente (CIF)<br> `1` Contratação do Frete por conta do Destinatário (FOB)<br> `2` Contratação do Frete por conta de Terceiros<br> `3` Transporte Próprio por conta do Remetente<br> `4` Transporte Próprio por conta do Destinatário<br> `9` Sem Ocorrência de Transporte.",
+              "type": "integer",
+              "enum": [
+               0,
+               1,
+               2,
+               3,
+               4,
+               9
+              ],
+              "example": 0
+             },
+             "frete": {
+              "type": "number",
+              "format": "float",
+              "example": 2.34
+             },
+             "quantidadeVolumes": {
+              "type": "number",
+              "format": "float",
+              "example": 2.33
+             },
+             "prazoEntrega": {
+              "type": "integer",
+              "example": 2
+             },
+             "pesoBruto": {
+              "type": "number",
+              "format": "float",
+              "example": 2.4
+             },
+             "contato": {
+              "properties": {
+               "id": {
+                "type": "integer",
+                "example": 12345678
+               },
+               "nome": {
+                "type": "string",
+                "example": "Nome do transportador"
+               }
+              },
+              "type": "object"
+             },
+             "volumes": {
+              "required": [
+               "id"
+              ],
+              "properties": {
+               "id": {
+                "type": "integer",
+                "readOnly": true,
+                "example": 12345678
+               },
+               "servico": {
+                "type": "string",
+                "readOnly": true,
+                "example": "Correios PAC"
+               },
+               "codigoRastreamento": {
+                "type": "string",
+                "readOnly": true,
+                "example": "R56563A"
+               }
+              },
+              "type": "object"
+             }
+            },
+            "type": "object"
+           }
+          },
+          "type": "object"
+         }
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "204": {
+      "description": "No content."
+     },
+     "400": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "Alterar"
+   },
+   "delete": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Remove uma proposta comercial",
+    "description": "Remove uma proposta comercial pelo ID.",
+    "parameters": [
+     {
+      "name": "idPropostaComercial",
+      "in": "path",
+      "description": "ID da proposta comercial",
+      "required": true,
+      "schema": {
+       "type": "integer",
+       "format": "int64"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "No content."
+     },
+     "400": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "Remover"
+   }
+  },
+  "/propostas-comerciais/{idPropostaComercial}/situacoes": {
+   "patch": {
+    "tags": [
+     "Propostas Comerciais"
+    ],
+    "summary": "Altera a situação de uma proposta comercial",
+    "description": "Altera a situação de uma proposta comercial pelo ID.",
+    "parameters": [
+     {
+      "name": "idPropostaComercial",
+      "in": "path",
+      "description": "ID da proposta comercial",
+      "required": true,
+      "schema": {
+       "type": "integer",
+       "format": "int64"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "properties": {
+         "situacao": {
+          "type": "string",
+          "enum": [
+           "Pendente",
+           "Aguardando",
+           "Não aprovado",
+           "Aprovado",
+           "Concluído",
+           "Rascunho"
+          ],
+          "example": "Aguardando"
+         }
+        },
+        "type": "object"
+       }
+      }
+     }
+    },
+    "responses": {
+     "204": {
+      "description": "No content."
+     },
+     "400": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "",
+      "content": {
+       "application/json": {
+        "schema": {
+         "required": [
+          "error.type",
+          "message",
+          "description"
+         ],
+         "properties": {
+          "error": {
+           "required": [
+            "type",
+            "message",
+            "description"
+           ],
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "BAD_REQUEST",
+              "VALIDATION_ERROR",
+              "MISSING_REQUIRED_FIELD_ERROR",
+              "EMPTY_REQUEST_BODY",
+              "INVALID_REQUEST_BODY",
+              "INVALID_APIKEY_ERROR",
+              "UNAUTHORIZED",
+              "UNAUTHENTICATED",
+              "FORBIDDEN",
+              "RESOURCE_NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "TOO_MANY_REQUESTS",
+              "UNKNOWN_ERROR",
+              "SERVER_ERROR",
+              "NOT_IMPLEMENTED"
+             ],
+             "example": "VALIDATION_ERROR"
+            },
+            "message": {
+             "type": "string",
+             "example": "Não foi possível salvar a venda"
+            },
+            "description": {
+             "type": "string",
+             "example": "A venda não pode ser salva, pois ocorreram problemas em sua validação."
+            },
+            "fields": {
+             "type": "array",
+             "items": {
+              "required": [
+               "code",
+               "msg"
+              ],
+              "properties": {
+               "code": {
+                "type": "integer",
+                "example": 49
+               },
+               "msg": {
+                "type": "string",
+                "example": "Uma ou mais parcelas da venda possuem erros de validação"
+               },
+               "element": {
+                "type": "string",
+                "example": "parcelas"
+               },
+               "namespace": {
+                "description": "Referência ao objeto com erro.",
+                "type": "string",
+                "example": "VENDAS"
+               },
+               "collection": {
+                "type": "array",
+                "items": {
+                 "required": [
+                  "index",
+                  "code",
+                  "msg"
+                 ],
+                 "properties": {
+                  "index": {
+                   "type": "integer",
+                   "example": 1
+                  },
+                  "code": {
+                   "type": "integer",
+                   "example": 12
+                  },
+                  "msg": {
+                   "type": "string",
+                   "example": "Id da forma de pagamento inválido."
+                  },
+                  "element": {
+                   "type": "string",
+                   "example": "formaPagamento"
+                  },
+                  "namespace": {
+                   "description": "Referência ao objeto com erro.",
+                   "type": "string",
+                   "example": "VENDAS"
+                  }
+                 },
+                 "type": "object"
+                }
+               }
+              },
+              "type": "object"
+             }
+            }
+           },
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "x-api-resource": "PropostasComerciais",
+    "x-api-action": "AlterarSituacao"
+   }
+  }
+ }
+}
