@@ -613,16 +613,21 @@ export function SaleCreateModal({
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) fecharModal(); }}>
+      {/* Coluna flex com teto de altura: o corpo é o único trecho que rola, e
+          header/ações ficam presos nas bordas. Sem o teto, o modal cresce com
+          os campos que aparecem (novo deal, itens do Bling, avisos) e, por ser
+          centralizado com `-translate-y-1/2`, sobra para fora da viewport em
+          cima e embaixo — sem barra de rolagem para alcançar o que sumiu.
+          `dvh` em vez de `vh` porque no mobile a barra do navegador entra na
+          conta de `vh` e o modal continuaria estourando. */}
       <DialogContent
         showCloseButton={false}
-        className={`bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full shadow-lg gap-0 ${
-          blingLayout
-            ? "max-w-2xl max-h-[88vh] overflow-y-auto"
-            : "max-w-md"
+        className={`bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full shadow-lg gap-0 flex flex-col max-h-[88dvh] ${
+          blingLayout ? "max-w-2xl" : "max-w-md"
         }`}
       >
         {/* Header */}
-        <DialogHeader className="flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
+        <DialogHeader className="shrink-0 flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
           <DialogTitle className="text-[15px] font-medium text-[#111111]">
             {isEditing ? "Editar Venda" : "Registrar Venda"}
           </DialogTitle>
@@ -652,327 +657,347 @@ export function SaleCreateModal({
             aparece, senão o vendedor perderia o pedido inteiro que já digitou. */}
         <form
           onSubmit={handleSubmit}
-          className={`p-5 space-y-4 ${resolution || sucesso || pendingBlingUpdate ? "hidden" : ""}`}
+          className={
+            resolution || sucesso || pendingBlingUpdate
+              ? "hidden"
+              : "flex min-h-0 flex-col"
+          }
         >
+          {/* Corpo rolável. `min-h-0` é obrigatório: item de flex nasce com
+              `min-height: auto`, que se recusa a encolher abaixo do conteúdo e
+              anularia o `overflow-y-auto` — o teto do modal vazaria de novo. */}
+          <div className="min-h-0 overflow-y-auto p-5 space-y-4">
 
-          {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
-          {pickLead && !isEditing && (
+            {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
+            {pickLead && !isEditing && (
+              <div>
+                <label className={fieldLabel}>Lead *</label>
+                <Popover open={leadPickerOpen} onOpenChange={setLeadPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex w-full h-[37px] items-center justify-between bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                    >
+                      <span className={resolvedLeadId ? "" : "text-[#8a8a8a]"}>
+                        {resolvedLeadId
+                          ? (leads.find((l) => l.id === resolvedLeadId)?.name ??
+                             leads.find((l) => l.id === resolvedLeadId)?.phone ??
+                             "Lead selecionado")
+                          : "Selecione o lead"}
+                      </span>
+                      <ChevronDownIcon className="size-4 text-[#8a8a8a]" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-0" portal={false}>
+                    <div className="p-2 border-b border-[#eee]">
+                      <Input
+                        autoFocus
+                        value={leadQuery}
+                        onChange={(e) => setLeadQuery(e.target.value)}
+                        placeholder="Buscar lead por nome ou telefone..."
+                        className="h-8 text-[14px]"
+                      />
+                    </div>
+                    <div className="max-h-64 overflow-y-auto p-1">
+                      {leads.filter((l) => leadMatchesSearch(leadQuery, l)).length === 0 && (
+                        <div className="px-2 py-3 text-[13px] text-[#8a8a8a]">Nenhum lead encontrado.</div>
+                      )}
+                      {leads
+                        .filter((l) => leadMatchesSearch(leadQuery, l))
+                        .slice(0, 100)
+                        .map((l) => (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedLeadId(l.id);
+                              setDealId("");
+                              setCreatingDeal(false);
+                              setNewDealTitle("");
+                              setNewDealPipeline("");
+                              setLeadPickerOpen(false);
+                              setLeadQuery("");
+                            }}
+                            className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-[#f4f2ee]"
+                          >
+                            <span className="truncate">{l.name ?? l.phone}</span>
+                            {resolvedLeadId === l.id && <CheckIcon className="size-4 shrink-0" />}
+                          </button>
+                        ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )}
+
+            {/* Itens do Bling — substituem produto em texto livre e valor único.
+                Sem `blingEditable` (edição de venda sem pedido no ERP) nem vale
+                esperar o status carregar: o resultado nunca muda essa venda para
+                modo Bling, então mostrar o formulário legado direto evita um
+                "verificando conexão" que não leva a lugar nenhum. */}
+            {podeEscaparDoBling && (
+              <label className="flex items-start gap-2 px-1 py-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={skipBling}
+                  onChange={(e) => setSkipBling(e.target.checked)}
+                  className="mt-[3px] h-[14px] w-[14px] accent-[#111111]"
+                />
+                <span className="text-[13px] leading-[1.4] text-[#111111]">
+                  Registrar sem enviar ao Bling
+                  <span className="block text-[12px] text-[#7b7b78]">
+                    Use para pedidos que já foram lançados na outra empresa. A venda
+                    entra no CRM e nenhum pedido é criado no Bling.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {gate.mode === "loading" && blingEditable ? (
+              <div className="px-5 py-8 text-center text-[13px] text-[#7b7b78]">
+                Verificando conexão com o Bling…
+              </div>
+            ) : blingMode ? (
+              <BlingOrderForm
+                meta={{
+                  leadId: resolvedLeadId,
+                  dealId: lockedDealId ?? (dealId || null),
+                  soldAt,
+                  soldBy: soldBy && soldBy !== "__none__" ? soldBy : null,
+                  notes: notes.trim(),
+                }}
+                condicaoPagamento={blingCondicaoPagamento}
+                initialLines={
+                  isEditing ? linesFromSaleItems(editingSale?.sale_items) : undefined
+                }
+                onChange={setOrderResult}
+              />
+            ) : (
+              <>
+                {/* Product */}
+                <div>
+                  <label className={fieldLabel}>Produto / Serviço *</label>
+                  <Input
+                    type="text"
+                    value={product}
+                    onChange={(e) => setProduct(e.target.value)}
+                    placeholder="Ex: Café especial 5kg"
+                    className={fieldInput}
+                    required
+                  />
+                </div>
+
+                {/* Value */}
+                <div>
+                  <label className={fieldLabel}>Valor (R$) *</label>
+                  <Input
+                    type="number"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder="0,00"
+                    min="0"
+                    step="0.01"
+                    className={fieldInput}
+                    required
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Sale date */}
             <div>
-              <label className={fieldLabel}>Lead *</label>
-              <Popover open={leadPickerOpen} onOpenChange={setLeadPickerOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex w-full h-[37px] items-center justify-between bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-                  >
-                    <span className={resolvedLeadId ? "" : "text-[#8a8a8a]"}>
-                      {resolvedLeadId
-                        ? (leads.find((l) => l.id === resolvedLeadId)?.name ??
-                           leads.find((l) => l.id === resolvedLeadId)?.phone ??
-                           "Lead selecionado")
-                        : "Selecione o lead"}
-                    </span>
-                    <ChevronDownIcon className="size-4 text-[#8a8a8a]" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent className="p-0" portal={false}>
-                  <div className="p-2 border-b border-[#eee]">
-                    <Input
-                      autoFocus
-                      value={leadQuery}
-                      onChange={(e) => setLeadQuery(e.target.value)}
-                      placeholder="Buscar lead por nome ou telefone..."
-                      className="h-8 text-[14px]"
-                    />
+              <label className={fieldLabel}>Data da Venda</label>
+              <Input
+                type="date"
+                value={soldAt}
+                onChange={(e) => setSoldAt(e.target.value)}
+                className={fieldInput}
+              />
+            </div>
+
+            {/* Sold by */}
+            <div>
+              <label className={fieldLabel}>Vendedor</label>
+              <Select value={soldBy || undefined} onValueChange={setSoldBy}>
+                <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                  <SelectValue placeholder="Nenhum" />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.email}>
+                      {u.name || u.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Deal block — hidden in edit mode */}
+            {!isEditing && (
+              <div>
+                <label className={fieldLabel}>Deal{!lockedDealId ? " *" : ""}</label>
+
+                {/* Locked deal — read-only */}
+                {lockedDealId ? (
+                  <div className="w-full bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111]">
+                    {lockedDealTitle ?? lockedDealId}
                   </div>
-                  <div className="max-h-64 overflow-y-auto p-1">
-                    {leads.filter((l) => leadMatchesSearch(leadQuery, l)).length === 0 && (
-                      <div className="px-2 py-3 text-[13px] text-[#8a8a8a]">Nenhum lead encontrado.</div>
+                ) : (
+                  <>
+                    {/* Existing deal selector (when not creating a new one) */}
+                    {!creatingDeal && (
+                      <>
+                        <Select
+                          value={dealId || undefined}
+                          onValueChange={(v) => {
+                            if (v === "__new__") {
+                              setDealId("");
+                              setCreatingDeal(true);
+                            } else {
+                              setDealId(v);
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                            <SelectValue placeholder="Selecione ou crie um deal" />
+                          </SelectTrigger>
+                          <SelectContent position="popper">
+                            {deals.map((d) => (
+                              <SelectItem key={d.id} value={d.id}>
+                                {d.title}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="__new__">
+                              + Criar novo deal
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {dealId && dealId !== "__new__" && (
+                          <p className="text-[11px] text-[#7b7b78] mt-1">
+                            O deal será movido para Fechado Ganho automaticamente.
+                          </p>
+                        )}
+                      </>
                     )}
-                    {leads
-                      .filter((l) => leadMatchesSearch(leadQuery, l))
-                      .slice(0, 100)
-                      .map((l) => (
+
+                    {/* Inline new deal form */}
+                    {creatingDeal && (
+                      <div className="space-y-3 mt-1 p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[4px]">
+                        <div>
+                          <label className={fieldLabel}>Título do Deal *</label>
+                          <Input
+                            type="text"
+                            value={newDealTitle}
+                            onChange={(e) => setNewDealTitle(e.target.value)}
+                            placeholder="Ex: Proposta Café 5kg"
+                            className={fieldInput}
+                          />
+                        </div>
+                        <div>
+                          <label className={fieldLabel}>Funil *</label>
+                          <Select
+                            value={newDealPipeline || undefined}
+                            onValueChange={setNewDealPipeline}
+                          >
+                            <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                              <SelectValue placeholder="Selecione o funil" />
+                            </SelectTrigger>
+                            <SelectContent position="popper">
+                              {pipelines.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                         <button
-                          key={l.id}
                           type="button"
                           onClick={() => {
-                            setSelectedLeadId(l.id);
-                            setDealId("");
                             setCreatingDeal(false);
                             setNewDealTitle("");
                             setNewDealPipeline("");
-                            setLeadPickerOpen(false);
-                            setLeadQuery("");
                           }}
-                          className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-[#f4f2ee]"
+                          className="text-[12px] text-[#7b7b78] hover:text-[#111111] transition-colors underline underline-offset-2"
                         >
-                          <span className="truncate">{l.name ?? l.phone}</span>
-                          {resolvedLeadId === l.id && <CheckIcon className="size-4 shrink-0" />}
+                          Cancelar novo deal
                         </button>
-                      ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-          )}
-
-          {/* Itens do Bling — substituem produto em texto livre e valor único.
-              Sem `blingEditable` (edição de venda sem pedido no ERP) nem vale
-              esperar o status carregar: o resultado nunca muda essa venda para
-              modo Bling, então mostrar o formulário legado direto evita um
-              "verificando conexão" que não leva a lugar nenhum. */}
-          {podeEscaparDoBling && (
-            <label className="flex items-start gap-2 px-1 py-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={skipBling}
-                onChange={(e) => setSkipBling(e.target.checked)}
-                className="mt-[3px] h-[14px] w-[14px] accent-[#111111]"
-              />
-              <span className="text-[13px] leading-[1.4] text-[#111111]">
-                Registrar sem enviar ao Bling
-                <span className="block text-[12px] text-[#7b7b78]">
-                  Use para pedidos que já foram lançados na outra empresa. A venda
-                  entra no CRM e nenhum pedido é criado no Bling.
-                </span>
-              </span>
-            </label>
-          )}
-
-          {gate.mode === "loading" && blingEditable ? (
-            <div className="px-5 py-8 text-center text-[13px] text-[#7b7b78]">
-              Verificando conexão com o Bling…
-            </div>
-          ) : blingMode ? (
-            <BlingOrderForm
-              meta={{
-                leadId: resolvedLeadId,
-                dealId: lockedDealId ?? (dealId || null),
-                soldAt,
-                soldBy: soldBy && soldBy !== "__none__" ? soldBy : null,
-                notes: notes.trim(),
-              }}
-              condicaoPagamento={blingCondicaoPagamento}
-              initialLines={
-                isEditing ? linesFromSaleItems(editingSale?.sale_items) : undefined
-              }
-              onChange={setOrderResult}
-            />
-          ) : (
-            <>
-              {/* Product */}
-              <div>
-                <label className={fieldLabel}>Produto / Serviço *</label>
-                <Input
-                  type="text"
-                  value={product}
-                  onChange={(e) => setProduct(e.target.value)}
-                  placeholder="Ex: Café especial 5kg"
-                  className={fieldInput}
-                  required
-                />
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
+            )}
 
-              {/* Value */}
-              <div>
-                <label className={fieldLabel}>Valor (R$) *</label>
-                <Input
-                  type="number"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="0,00"
-                  min="0"
-                  step="0.01"
-                  className={fieldInput}
-                  required
-                />
-              </div>
-            </>
-          )}
-
-          {/* Sale date */}
-          <div>
-            <label className={fieldLabel}>Data da Venda</label>
-            <Input
-              type="date"
-              value={soldAt}
-              onChange={(e) => setSoldAt(e.target.value)}
-              className={fieldInput}
-            />
-          </div>
-
-          {/* Sold by */}
-          <div>
-            <label className={fieldLabel}>Vendedor</label>
-            <Select value={soldBy || undefined} onValueChange={setSoldBy}>
-              <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
-                <SelectValue placeholder="Nenhum" />
-              </SelectTrigger>
-              <SelectContent position="popper">
-                {users.map((u) => (
-                  <SelectItem key={u.id} value={u.email}>
-                    {u.name || u.email}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Deal block — hidden in edit mode */}
-          {!isEditing && (
+            {/* Notes */}
             <div>
-              <label className={fieldLabel}>Deal{!lockedDealId ? " *" : ""}</label>
-
-              {/* Locked deal — read-only */}
-              {lockedDealId ? (
-                <div className="w-full bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111]">
-                  {lockedDealTitle ?? lockedDealId}
-                </div>
-              ) : (
-                <>
-                  {/* Existing deal selector (when not creating a new one) */}
-                  {!creatingDeal && (
-                    <>
-                      <Select
-                        value={dealId || undefined}
-                        onValueChange={(v) => {
-                          if (v === "__new__") {
-                            setDealId("");
-                            setCreatingDeal(true);
-                          } else {
-                            setDealId(v);
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
-                          <SelectValue placeholder="Selecione ou crie um deal" />
-                        </SelectTrigger>
-                        <SelectContent position="popper">
-                          {deals.map((d) => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.title}
-                            </SelectItem>
-                          ))}
-                          <SelectItem value="__new__">
-                            + Criar novo deal
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {dealId && dealId !== "__new__" && (
-                        <p className="text-[11px] text-[#7b7b78] mt-1">
-                          O deal será movido para Fechado Ganho automaticamente.
-                        </p>
-                      )}
-                    </>
-                  )}
-
-                  {/* Inline new deal form */}
-                  {creatingDeal && (
-                    <div className="space-y-3 mt-1 p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[4px]">
-                      <div>
-                        <label className={fieldLabel}>Título do Deal *</label>
-                        <Input
-                          type="text"
-                          value={newDealTitle}
-                          onChange={(e) => setNewDealTitle(e.target.value)}
-                          placeholder="Ex: Proposta Café 5kg"
-                          className={fieldInput}
-                        />
-                      </div>
-                      <div>
-                        <label className={fieldLabel}>Funil *</label>
-                        <Select
-                          value={newDealPipeline || undefined}
-                          onValueChange={setNewDealPipeline}
-                        >
-                          <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
-                            <SelectValue placeholder="Selecione o funil" />
-                          </SelectTrigger>
-                          <SelectContent position="popper">
-                            {pipelines.map((p) => (
-                              <SelectItem key={p.id} value={p.id}>
-                                {p.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCreatingDeal(false);
-                          setNewDealTitle("");
-                          setNewDealPipeline("");
-                        }}
-                        className="text-[12px] text-[#7b7b78] hover:text-[#111111] transition-colors underline underline-offset-2"
-                      >
-                        Cancelar novo deal
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
+              <label className={fieldLabel}>Observação</label>
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                placeholder="Observações opcionais"
+                className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none focus:ring-0 resize-none min-h-0"
+              />
             </div>
-          )}
 
-          {/* Notes */}
-          <div>
-            <label className={fieldLabel}>Observação</label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Observações opcionais"
-              className="w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none focus:ring-0 resize-none min-h-0"
-            />
           </div>
 
-          {/* Error */}
-          {error && (
-            <p className="text-[12px] text-red-600">{error}</p>
-          )}
+          {/* Ações fixas, fora do scroll: com o corpo rolando, deixar o botão no
+              fim da lista obrigaria a rolar até embaixo para salvar. Os avisos
+              vêm junto porque erro de submit precisa aparecer onde o vendedor
+              está olhando — no botão — e não no ponto do formulário onde ele
+              tiver parado a rolagem. */}
+          <div className="shrink-0 border-t border-[#dedbd6] px-5 py-4 space-y-2">
+            {/* Error */}
+            {error && (
+              <p className="text-[12px] text-red-600">{error}</p>
+            )}
 
-          {/* Por que o botão está desabilitado */}
-          {blingMode && !error && !orderResult?.valid && (
-            <p className="text-[11px] text-[#7b7b78]">
-              Escolha ao menos um produto com quantidade e a forma de pagamento
-              para lançar o pedido.
-            </p>
-          )}
+            {/* Por que o botão está desabilitado */}
+            {blingMode && !error && !orderResult?.valid && (
+              <p className="text-[11px] text-[#7b7b78]">
+                Escolha ao menos um produto com quantidade e a forma de pagamento
+                para lançar o pedido.
+              </p>
+            )}
 
-          {gate.message && (
-            <p className="text-[12px] text-red-600">{gate.message}</p>
-          )}
+            {gate.message && (
+              <p className="text-[12px] text-red-600">{gate.message}</p>
+            )}
 
-          {/* Actions */}
-          <div className="flex gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2 text-[13px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] hover:bg-[#faf9f6] transition-colors"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !gate.canSubmit || (blingMode && !orderResult?.valid)}
-              className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
-            >
-              {saving
-                ? "Salvando..."
-                : isEditing
-                  ? "Salvar"
-                  : blingMode
-                    ? "Lançar pedido no Bling"
-                    : "Registrar Venda"}
-            </button>
+            {/* Actions */}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2 text-[13px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] hover:bg-[#faf9f6] transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={saving || !gate.canSubmit || (blingMode && !orderResult?.valid)}
+                className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
+              >
+                {saving
+                  ? "Salvando..."
+                  : isEditing
+                    ? "Salvar"
+                    : blingMode
+                      ? "Lançar pedido no Bling"
+                      : "Registrar Venda"}
+              </button>
+            </div>
           </div>
         </form>
 
-        {/* 409 — o vendedor decide qual é o cliente no Bling */}
+        {/* 409 — o vendedor decide qual é o cliente no Bling.
+            Este painel e os dois abaixo substituem o formulário dentro da mesma
+            coluna com teto de altura, então cada um precisa rolar por si: a
+            lista de candidatos do resolvedor passa fácil da altura do modal. */}
         {resolution && (
-          <div className="p-5">
+          <div className="min-h-0 overflow-y-auto p-5">
             <BlingContactResolver
               leadId={resolvedLeadId}
               status={resolution.status}
@@ -990,7 +1015,7 @@ export function SaleCreateModal({
 
         {/* 201/202 — o número do pedido é a informação que o vendedor procura */}
         {sucesso && (
-          <div className="p-5 text-center space-y-3">
+          <div className="min-h-0 overflow-y-auto p-5 text-center space-y-3">
             <div className="mx-auto w-10 h-10 rounded-full bg-[#1f9d57]/10 flex items-center justify-center">
               <CheckIcon className="size-5 text-[#1f9d57]" />
             </div>
@@ -1009,7 +1034,7 @@ export function SaleCreateModal({
         {/* 422 na edição — o Bling recusou a alteração (pedido já faturado,
             tipicamente); o vendedor decide se a mudança vale só no CRM. */}
         {pendingBlingUpdate && (
-          <div className="p-5 space-y-3">
+          <div className="min-h-0 overflow-y-auto p-5 space-y-3">
             <p className="text-[13px] text-[#111111]">
               O Bling recusou a alteração:
             </p>
