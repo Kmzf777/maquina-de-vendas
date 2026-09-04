@@ -17,9 +17,9 @@ CONTRATO — e o que o frontend consome; mudar qualquer linha abaixo quebra a te
               toques: [ {ordem, dias, template_name} ], stage_id_perdido }
        200 { "ok": true, "aviso": null|str, "stage_id_perdido": null|str }
             `aviso` e texto para mostrar na tela: gravou, mas com uma ressalva.
-       400 corpo invalido, ligar sem etapa de gatilho (regra 1) ou sem canal (regra 2),
-           etapa que nao pertence ao funil escolhido, ou primeiro toque com menos de
-           1 dia (regra 6) — a mensagem vai em `detail`
+       400 corpo invalido, ligar sem etapa de gatilho (1), sem canal (1b) ou com
+           template nao aprovado (1c), etapa que nao pertence ao funil escolhido, ou
+           primeiro toque com menos de 1 dia (regra 6) — a mensagem vai em `detail`
        404 key desconhecida
        409 a campanha ainda nao existe no banco (o seed do startup nao rodou)
 
@@ -53,6 +53,19 @@ nunca na topologia. Quem quiser mudar a FORMA do fluxo usa o builder de Cadencia
 
    Como a da etapa, roda sobre o valor JA COM o corpo aplicado (escolher canal e ligar
    no mesmo PUT passa) e antes de qualquer escrita.
+
+1c. **Ligar exige template aprovado em todos os toques.** Esta e a falha mais cara que
+   este arquivo previne, porque e silenciosa: template nao aprovado **nao impede a
+   inscricao, so o envio**. A esteira inscreve o lead, nao manda nada e mesmo assim
+   caminha ate a acao final — na reposicao isso marca o card como Perdido sem uma unica
+   mensagem ter saido, ou seja, o sistema registra "nao teve resposta" para um lead que
+   nunca foi contatado. Dado comercial destruido sem um erro no log.
+
+   E o estado inicial do projeto: os 5 templates da spec §7 nem foram submetidos.
+
+   **Fail-open** quando a consulta a `message_templates` falha: a tela ja filtra o select
+   por aprovados, e travar a configuracao inteira por um timeout do Supabase e pior do
+   que o risco que a guarda cobre.
 
 2. **A etapa de Perdido da reposicao e resolvida aqui, nao digitada.** O seed nasce com
    `stage_id: None` no `mark_deal_lost` e `engine._execute_action` retorna cedo sem ele:
@@ -106,6 +119,9 @@ _MAX_DIAS = 365
 # Regra 6: o toque 1 grava no gatilho, e gatilho com relogio zerado nao filtra tempo
 # nenhum. As esperas entre toques nao mexem no gatilho — ali 0 e legitimo.
 _MIN_DIAS_PRIMEIRO_TOQUE = 1
+# `message_templates.status`: o sync local grava minusculo, o payload cru da Meta vem
+# 'APPROVED'. Comparamos normalizado, como `templates/preflight.py::_normalize_variants`.
+_STATUS_APROVADO = "approved"
 
 
 # ── Traducao grafo → tela ────────────────────────────────────────────────────────
@@ -274,6 +290,53 @@ def _etapa_pertence_ao_funil(sb, stage_id: str, pipeline_id: str) -> bool | None
     return linhas[0].get("pipeline_id") == pipeline_id if linhas else None
 
 
+def _template_por_toque(envios: list[dict], toques: list) -> list[tuple[int, str | None]]:
+    """[(ordem, template que VAI valer)] por no de envio, com o corpo ja aplicado.
+
+    O corpo e parcial: toque sem `template_name` preserva o que esta no banco. A guarda
+    tem de olhar o resultado, nao a intencao — ligar trocando por um template nao
+    aprovado e o mesmo problema que ligar com o antigo nao aprovado.
+    """
+    fora: list[tuple[int, str | None]] = []
+    for i, envio in enumerate(envios):
+        toque = toques[i] if i < len(toques) else None
+        do_corpo = toque.get("template_name") if isinstance(toque, dict) else None
+        fora.append((i + 1, do_corpo or (envio.get("config") or {}).get("template_name")))
+    return fora
+
+
+def _nao_aprovados(sb, nomes: set[str]) -> set[str] | None:
+    """Quais desses templates NAO estao aprovados. None quando nao da para saber.
+
+    Nome ausente da tabela conta como nao aprovado — e exatamente o estado inicial deste
+    projeto, em que os 5 templates da spec §7 ainda nem foram submetidos.
+
+    Nao filtra por canal de proposito: os canais compartilham a mesma WABA e cada
+    template tem uma linha-espelho POR CANAL, entao um espelho faltando (o sync tem
+    buracos) reprovaria um template que a Meta aprovou. E o mesmo criterio que a tela
+    usa no select, o que evita o pior dos mundos — tela oferecendo o clique e PUT
+    recusando, ou vice-versa.
+
+    Fail-open igual a `_etapa_pertence_ao_funil`: a guarda existe para pegar o template
+    que a Meta ainda nao aprovou, nao para virar mais um jeito de o PUT falhar quando o
+    Supabase oscila.
+    """
+    if not nomes:
+        return set()
+    try:
+        linhas = (sb.table("message_templates").select("name, status")
+                  .in_("name", sorted(nomes)).execute().data or [])
+    except Exception as exc:
+        logger.warning("[ESTEIRAS] nao deu para conferir os templates %s: %s",
+                       sorted(nomes), exc)
+        return None
+    aprovados = {
+        linha.get("name") for linha in linhas
+        if str(linha.get("status") or "").lower() == _STATUS_APROVADO
+    }
+    return nomes - aprovados
+
+
 def _resolver_perdido(sb, body: dict, tcfg: dict, acao: dict | None,
                       funil_mudou: bool) -> tuple[str | None, bool, str | None]:
     """(stage_id de Perdido, limpar o que estava la, aviso) para a acao `mark_deal_lost`.
@@ -391,6 +454,38 @@ async def gravar_esteira(key: str, body: dict = Body(...)) -> dict[str, Any]:
             "ignora as conversas que o vendedor ja finalizou a mao em /conversas.",
         )
 
+    # ── 3c. Regra 1c: ligar exige template aprovado em TODOS os toques ───────────
+    # Template nao aprovado nao impede a INSCRICAO, so o envio. A esteira inscreve o
+    # lead, nao manda nada e mesmo assim caminha ate a acao final — na reposicao isso
+    # marca o card como Perdido sem uma unica mensagem ter saido, registrando "nao teve
+    # resposta" para quem nunca foi contatado. Silenciosa e irreversivel.
+    envios = [n for n in nos if n["type"] == "send"]
+    esperas = [n for n in nos if n["type"] == "wait"]
+    if body.get("ativa"):
+        por_toque = _template_por_toque(envios, toques)
+        sem_template = [ordem for ordem, nome in por_toque if not nome]
+        pendentes = _nao_aprovados(sb, {nome for _o, nome in por_toque if nome})
+        if pendentes is None:
+            pendentes = set()  # fail-open: Supabase oscilando nao trava a configuracao
+        travados = sorted(
+            [(ordem, nome) for ordem, nome in por_toque if nome and nome in pendentes]
+            + [(ordem, None) for ordem in sem_template]
+        )
+        if travados:
+            lista = ", ".join(
+                f"toque {ordem} ({nome})" if nome else f"toque {ordem} (sem template)"
+                for ordem, nome in travados
+            )
+            raise HTTPException(
+                400,
+                f"nao da para ligar a esteira '{esteira['name']}' com template nao "
+                f"aprovado na Meta: {lista}. Template nao aprovado nao impede a "
+                "inscricao, so o envio — a esteira inscreveria o lead, nao mandaria nada "
+                "e mesmo assim seguiria ate a acao final (na reposicao, isso marca o card "
+                "como Perdido sem uma unica mensagem ter saido). Submeta o template "
+                "(scripts/create_esteira_templates.py), espere a aprovacao e ligue depois.",
+            )
+
     # ── 4. Regra 2: etapa de Perdido resolvida pela API ──────────────────────────
     acao_perdido = next(
         (n for n in nos if n["type"] == "action"
@@ -412,8 +507,8 @@ async def gravar_esteira(key: str, body: dict = Body(...)) -> dict[str, Any]:
     if tcfg != cfg_atual:
         _grava_config(sb, gatilho["id"], tcfg)
 
-    envios = [n for n in nos if n["type"] == "send"]
-    esperas = [n for n in nos if n["type"] == "wait"]
+    # `envios`/`esperas` ja foram montados na secao 3c — a guarda de template precisa
+    # deles antes de qualquer escrita.
     for i, toque in enumerate(toques):
         # Toque a mais do que a esteira tem e IGNORADO: a tela nao cria no.
         if i < len(envios) and isinstance(toque, dict) and toque.get("template_name"):

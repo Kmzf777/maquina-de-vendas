@@ -69,14 +69,25 @@ const PROPOSTA = {
 
 const RESPOSTA = { esteiras: [NOVO, REPOSICAO] };
 
+/**
+ * Mundo em que os templates das fixtures ESTÃO aprovados. É o default porque a maioria
+ * dos testes exercita outra regra, e desde que ligar exige template aprovado um
+ * `/api/templates` vazio deixaria todos os interruptores travados por outro motivo.
+ */
+const TEMPLATES_APROVADOS = [
+  "esteira_novo_sem_resposta_v1",
+  "esteira_reposicao_v1",
+  "esteira_proposta_d3_v1",
+].map((name, i) => ({ id: String(i + 1), name, language: "pt_BR", status: "approved" }));
+
 type Corpo = Record<string, unknown> | unknown[];
 const resposta = (corpo: Corpo, status = 200) =>
   ({ ok: status < 400, status, json: async () => corpo }) as Response;
 
 /**
  * Monta o `fetch` global. `rotas` casa por substring da URL; `aoGravar` responde ao PUT.
- * Sem entrada específica, a rota devolve lista vazia — o formato que as APIs de canais,
- * funis e templates usam.
+ * Sem entrada específica, a rota devolve lista vazia — o formato que as APIs de canais
+ * e funis usam. `/api/templates` é a exceção: ver TEMPLATES_APROVADOS.
  */
 function mockarFetch(opts: {
   esteiras?: Corpo;
@@ -90,6 +101,7 @@ function mockarFetch(opts: {
       if (u.includes(trecho)) return resposta(corpo);
     }
     if (u.includes("/api/automation/esteiras")) return resposta(opts.esteiras ?? RESPOSTA);
+    if (u.includes("/api/templates")) return resposta(TEMPLATES_APROVADOS);
     return resposta([]);
   }) as unknown as typeof fetch;
 }
@@ -175,6 +187,47 @@ describe("EsteirasTab", () => {
     expect(chamadas.some((c) => (c[1] as RequestInit | undefined)?.method === "PUT")).toBe(false);
   });
 
+  it("não deixa ligar com template não aprovado, e diz por quê", async () => {
+    // A pior falha possível deste projeto, e é silenciosa: template não aprovado não
+    // impede a INSCRIÇÃO, só o envio. A esteira inscreve o lead, não manda nada e mesmo
+    // assim caminha até a ação final — na reposição isso marca o card como Perdido sem
+    // uma única mensagem ter saído.
+    mockarFetch({
+      esteiras: { esteiras: [{ ...PROPOSTA, canal_id: "ch" }, REPOSICAO] },
+      rotas: {
+        "/api/templates": [
+          { id: "1", name: "esteira_reposicao_v1", language: "pt_BR", status: "approved" },
+          { id: "2", name: "esteira_proposta_d3_v1", language: "pt_BR", status: "pending" },
+        ],
+      },
+    });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    const bloqueada = () =>
+      screen.getByRole("switch", { name: /Ligar Esteira Proposta/i }) as HTMLButtonElement;
+    await waitFor(() => expect(bloqueada().disabled).toBe(true));
+    expect(screen.getByText(/aprovação dos templates na Meta/i)).toBeTruthy();
+    // Canal e etapa estão resolvidos: o motivo tem de ser só o template.
+    expect(screen.queryByText(/Escolha o canal antes de ligar/i)).toBeNull();
+  });
+
+  it("não sabendo os templates, o interruptor fica livre (fail-open)", async () => {
+    // Fail-open igual ao do backend. `/api/templates` que devolve qualquer coisa que não
+    // seja lista significa "não deu para saber" — e não "nenhum aprovado". Tratar os dois
+    // igual travaria a tela inteira sem saída quando o Supabase oscilasse. Lista vazia de
+    // verdade continua travando: aí não há mesmo template para enviar.
+    mockarFetch({
+      esteiras: { esteiras: [{ ...PROPOSTA, canal_id: "ch" }, REPOSICAO] },
+      rotas: { "/api/templates": { erro: "500" } },
+    });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    const proposta = screen.getByRole("switch", {
+      name: /Ligar Esteira Proposta/i,
+    }) as HTMLButtonElement;
+    expect(proposta.disabled).toBe(false);
+  });
+
   it("o primeiro toque não aceita zero dias; as esperas seguintes aceitam", async () => {
     // O toque 1 grava no GATILHO. Com ele em 0 (e a proposta já nasce com o outro
     // relógio em 0), a RPC para de aplicar filtro temporal e todo card da etapa entra
@@ -208,6 +261,56 @@ describe("EsteirasTab", () => {
     fireEvent.click(switches()[1]); // liga → confirmação
     await waitFor(() => expect(screen.getByText(/137/)).toBeTruthy());
     expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Ligar esteira/i })).toBeTruthy();
+  });
+
+  it("a prévia manda o campaign_id — é o que aplica o cooldown na contagem", async () => {
+    mockarFetch({ rotas: { "/api/automation/esteiras/preview": { elegiveis: 5 } } });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    fireEvent.click(switches()[1]);
+    await waitFor(() => expect(switches()[1].getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(switches()[1]);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    const chamadas = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const previa = chamadas.find((c) => String(c[0]).includes("/esteiras/preview"));
+    expect(JSON.parse(String((previa?.[1] as RequestInit).body)).campaign_id).toBe("camp-repo");
+  });
+
+  it("prévia indisponível NÃO deixa confirmar — e diz qual migration falta", async () => {
+    // Sem a RPC, gravar `active` deixa a esteira ligada e muda: nada nunca dispara e a
+    // tela mostra "Ligada". O clique tem de ser retirado, não só desencorajado.
+    mockarFetch({
+      rotas: {
+        "/api/automation/esteiras/preview": { elegiveis: null, motivo: "rpc_indisponivel" },
+      },
+    });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    fireEvent.click(switches()[1]);
+    await waitFor(() => expect(switches()[1].getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(switches()[1]);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText(/20260904_esteiras_vendedor\.sql/i)).toBeTruthy()
+    );
+    expect(screen.queryByRole("button", { name: /Ligar esteira/i })).toBeNull();
+    // E a esteira continua desligada.
+    expect(switches()[1].getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("prévia com zero cards deixa ligar, mas avisa que ninguém se qualifica agora", async () => {
+    mockarFetch({ rotas: { "/api/automation/esteiras/preview": { elegiveis: 0 } } });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    fireEvent.click(switches()[1]);
+    await waitFor(() => expect(switches()[1].getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(switches()[1]);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Nenhum card se qualifica agora/i)).toBeTruthy());
+    expect(screen.getByRole("button", { name: /Ligar esteira/i })).toBeTruthy();
+    // O aviso de avalanche não faz sentido com zero e não pode aparecer junto.
+    expect(screen.queryByText(/o volume acumulado sai inteiro/i)).toBeNull();
   });
 
   it("só oferece template aprovado no select", async () => {

@@ -50,6 +50,10 @@ export async function POST(request: NextRequest) {
       funil_id: body.funil_id ?? null,
       etapa_id: body.etapa_id ?? null,
       dias: body.dias ?? null,
+      // Sem ele a RPC não aplica o cooldown e a prévia SUPERESTIMA: conta cards que já
+      // passaram por esta campanha nos últimos 90 dias e que o gatilho vai descartar.
+      // O `if (!body?.campaign_id)` acima garante que ele existe neste ponto.
+      campaign_id: body.campaign_id,
     },
     (campanha?.audience as string | undefined) ?? null,
     // `relogio` vem do GET do backend (derivado do seed). A tela o repassa porque o valor

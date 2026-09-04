@@ -18,6 +18,12 @@ Contrato que este arquivo fixa (a aba /campanhas > Esteiras escreve contra ele):
    ativa mais recente — pode ser o da Valeria. Um template assinado "Aqui e o Joao"
    sairia do numero da IA. A esteira de proposta e o caso vivo: ela nasce com
    `stage_key='proposta_enviada'`, entao a regra 3 sozinha ja a deixaria ligavel.
+4b. LIGAR EXIGE TEMPLATE APROVADO EM TODOS OS TOQUES. Template nao aprovado nao
+   impede a INSCRICAO, so o envio: a esteira inscreve o lead, nao manda nada e mesmo
+   assim caminha ate a acao final. Na reposicao isso marca o card como Perdido sem uma
+   unica mensagem ter saido — o sistema registra "nao teve resposta" para quem nunca
+   foi contatado. E a falha mais cara possivel aqui porque e silenciosa. Fail-open
+   quando a consulta falha: travar a configuracao por um timeout e pior que o risco.
 5. A ETAPA DE PERDIDO DA REPOSICAO E RESOLVIDA PELA API. O seed nasce com
    `stage_id: None` no `mark_deal_lost` e `engine._execute_action` retorna cedo sem
    ele: a esteira rodaria os tres toques e terminaria sem mover o card.
@@ -98,6 +104,8 @@ class _Query:
             self.sb.escritas.append((self.tabela, self._modo, self._payload,
                                      list(self._filtros)))
             return SimpleNamespace(data=[])
+        if self.tabela in self.sb.falhar:
+            raise RuntimeError(f"[fake] leitura de '{self.tabela}' indisponivel")
         linhas = [copy.deepcopy(r) for r in self.sb.dados.get(self.tabela, []) if self._casa(r)]
         if self._ordem and all(self._ordem[0] in r for r in linhas):
             linhas.sort(key=lambda r: r[self._ordem[0]], reverse=self._ordem[1])
@@ -107,8 +115,12 @@ class _Query:
 
 
 class _FakeSB:
-    def __init__(self, dados: dict[str, list[dict]]):
+    def __init__(self, dados: dict[str, list[dict]], falhar: set[str] | None = None):
         self.dados = dados
+        # Tabelas cuja LEITURA levanta — para exercitar os caminhos fail-open, que so
+        # existem porque o Supabase oscila e travar a configuracao inteira por causa de
+        # um timeout e pior do que o risco que a guarda cobre.
+        self.falhar = falhar or set()
         self.escritas: list[tuple] = []
 
     def table(self, nome: str) -> _Query:
@@ -150,12 +162,36 @@ def _linhas_nos() -> list[dict]:
     return linhas
 
 
-def _banco(status=None, channel_id=None, stages=None) -> _FakeSB:
+def _nomes_de_template_do_seed() -> set[str]:
+    return {
+        (n.get("config") or {}).get("template_name")
+        for e in seed.ESTEIRAS for n in e["nodes"] if n["type"] == "send"
+    } - {None}
+
+
+# Nomes genericos que os corpos dos testes usam no lugar de um template real. Sem eles
+# aprovados, a guarda de template reprovaria PUTs que estao exercitando OUTRA regra.
+_TEMPLATES_DE_TESTE = {"t", "t1", "t2", "t3", "t4", "tpl", "tpl_um", "tpl_dois",
+                       "tpl_tres", "tpl_editado", "outro_template"}
+
+
+def _linhas_templates(nomes=None, status: str = "approved") -> list[dict]:
+    """`message_templates` como o sync da Meta as grava (status em minusculas)."""
+    nomes = _nomes_de_template_do_seed() | _TEMPLATES_DE_TESTE if nomes is None else set(nomes)
+    return [{"id": f"tpl-{n}", "name": n, "language": "pt_BR", "status": status}
+            for n in sorted(nomes)]
+
+
+def _banco(status=None, channel_id=None, stages=None, templates=None,
+           falhar=None) -> _FakeSB:
     return _FakeSB({
         "campaigns": _linhas_campanhas(status, channel_id),
         "campaign_nodes": _linhas_nos(),
         "pipeline_stages": stages or [],
-    })
+        # Default: tudo aprovado. Os testes da guarda de template passam a sua propria
+        # lista; os outros nao deviam ter de saber que a guarda existe.
+        "message_templates": _linhas_templates() if templates is None else templates,
+    }, falhar=falhar)
 
 
 def _com(sb):
@@ -464,6 +500,127 @@ async def test_put_sem_ligar_nao_exige_canal():
         out = await esteiras_router.gravar_esteira("proposta", {
             "toques": [{"ordem": 1, "dias": 4, "template_name": "tpl"}]})
     assert out["ok"] is True
+
+
+# ── PUT: regra 1c — ligar exige template aprovado em TODOS os toques ─────────────
+# A falha mais cara do projeto e silenciosa: template nao aprovado nao impede a
+# INSCRICAO, so o envio. A esteira inscreve o lead, nao manda nada, e mesmo assim
+# caminha ate a acao final — na reposicao isso marca o card como Perdido sem uma unica
+# mensagem ter saido. O sistema registraria "nao teve resposta" para quem nunca foi
+# contatado, e destruiria dado comercial sem levantar um erro.
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_ligar_com_template_inexistente_no_banco():
+    """Estado inicial do projeto: os 5 templates da spec §7 nem foram submetidos."""
+    from fastapi import HTTPException
+    sb = _banco(channel_id="ch-joao", templates=[])
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert exc.value.status_code == 400
+    assert "aprovad" in str(exc.value.detail).lower()
+    assert sb.escritas == [], "PUT recusado nao pode gravar nada pela metade"
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_ligar_com_template_ainda_em_analise():
+    from fastapi import HTTPException
+    sb = _banco(channel_id="ch-joao", templates=_linhas_templates(status="pending"))
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert exc.value.status_code == 400
+    assert sb.escritas == []
+
+
+@pytest.mark.asyncio
+async def test_put_nomeia_o_toque_e_o_template_que_travaram():
+    """A mensagem tem de dizer QUAL template — a proposta tem dois, e so um pode faltar."""
+    from fastapi import HTTPException
+    aprovados = _nomes_de_template_do_seed() - {"esteira_proposta_d8_v1"}
+    sb = _banco(channel_id="ch-joao", templates=_linhas_templates(aprovados))
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    detalhe = str(exc.value.detail)
+    assert "esteira_proposta_d8_v1" in detalhe
+    assert "esteira_proposta_d3_v1" not in detalhe, "o toque 1 esta aprovado"
+    assert "toque 2" in detalhe
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_ligar_quando_o_corpo_troca_por_template_nao_aprovado():
+    """A checagem roda sobre o template do CORPO, nao sobre o que esta no banco."""
+    from fastapi import HTTPException
+    sb = _banco(channel_id="ch-joao")
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {
+            "ativa": True,
+            "toques": [{"ordem": 1, "dias": 3, "template_name": "inventado_v9"}]})
+    assert exc.value.status_code == 400
+    assert "inventado_v9" in str(exc.value.detail)
+    assert sb.escritas == []
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_ligar_com_toque_sem_template_nenhum():
+    from fastapi import HTTPException
+    sb = _banco(channel_id="ch-joao")
+    envio = next(n for n in _esteira("proposta")["nodes"] if n["type"] == "send")
+    _no_do_banco(sb, envio["id"])["config"]["template_name"] = None
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert exc.value.status_code == 400
+    assert sb.escritas == []
+
+
+@pytest.mark.asyncio
+async def test_put_aceita_status_aprovado_em_caixa_alta():
+    """O sync local grava 'approved'; o payload da Meta vem 'APPROVED'. Vale os dois —
+    mesma normalizacao de `templates/preflight.py::_normalize_variants`."""
+    sb = _banco(channel_id="ch-joao", templates=_linhas_templates(status="APPROVED"))
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert out["ok"] is True
+    assert any(p.get("status") == "active" for p, _ in sb.updates("campaigns"))
+
+
+@pytest.mark.asyncio
+async def test_put_liga_quando_todos_os_toques_tem_template_aprovado():
+    sb = _banco(channel_id="ch-joao")
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_put_fail_open_quando_a_consulta_de_templates_falha():
+    """Bloquear a configuracao inteira por um timeout do Supabase e pior do que o risco:
+    a tela ja filtra o select por aprovados. Mesma decisao de `_etapa_pertence_ao_funil`."""
+    sb = _banco(channel_id="ch-joao", falhar={"message_templates"})
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert out["ok"] is True
+    assert any(p.get("status") == "active" for p, _ in sb.updates("campaigns"))
+
+
+@pytest.mark.asyncio
+async def test_put_sem_ligar_nao_exige_template_aprovado():
+    """Configurar a esteira ENQUANTO o template esta em analise e o fluxo normal — o
+    bloqueio e do `ativa`, nao da gravacao."""
+    sb = _banco(templates=[])
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {
+            "canal_id": "ch-joao",
+            "toques": [{"ordem": 1, "dias": 4, "template_name": "esteira_proposta_d3_v1"}]})
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_put_desligar_com_template_nao_aprovado_e_permitido():
+    """Desligar e a saida de emergencia de quem ligou antes da aprovacao."""
+    sb = _banco(status={"proposta": "active"}, channel_id="ch-joao", templates=[])
+    with _com(sb):
+        await esteiras_router.gravar_esteira("proposta", {"ativa": False})
+    assert any(p.get("status") == "draft" for p, _ in sb.updates("campaigns"))
 
 
 # ── PUT: regra 2 — etapa de Perdido resolvida pela API ───────────────────────────

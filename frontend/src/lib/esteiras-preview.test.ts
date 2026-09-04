@@ -87,6 +87,35 @@ describe("buildPreviewArgs", () => {
   it("aplica o teto de contagem", () => {
     expect(buildPreviewArgs(REPOSICAO, {}, "humano").p_limit).toBe(PREVIEW_LIMIT);
   });
+
+  it("manda o p_campaign_id — sem ele a prévia SUPERESTIMA", () => {
+    // A RPC usa `p_campaign_id` para excluir o card que já passou por ESTA campanha
+    // dentro do cooldown (DEFAULT 90 dias, 20260904_esteiras_vendedor.sql). Omitir o
+    // argumento não quebra nada — ele tem DEFAULT NULL — mas desliga a exclusão, e a
+    // prévia passa a contar cards que o gatilho vai descartar na hora da verdade.
+    // Esse número é o anteparo contra a avalanche do primeiro dia: inflado, ele mina a
+    // confiança na tela exatamente no clique em que ela mais precisa dela.
+    const args = buildPreviewArgs(
+      REPOSICAO,
+      { etapa_id: "s1", campaign_id: "camp-repo" },
+      "humano"
+    );
+    expect(args.p_campaign_id).toBe("camp-repo");
+  });
+
+  it("campaign_id ausente ou vazio vira null (a RPC tem DEFAULT NULL)", () => {
+    expect(buildPreviewArgs(REPOSICAO, { etapa_id: "s1" }, "humano").p_campaign_id).toBeNull();
+    expect(
+      buildPreviewArgs(REPOSICAO, { etapa_id: "s1", campaign_id: "" }, "humano").p_campaign_id
+    ).toBeNull();
+  });
+
+  it("não manda p_cooldown_days — herda o mesmo DEFAULT que o gatilho usa", () => {
+    // `triggers.py` também não passa o parâmetro. Fixar um número aqui faria a prévia
+    // divergir do gatilho no dia em que o default do SQL mudar.
+    expect("p_cooldown_days" in buildPreviewArgs(REPOSICAO, { etapa_id: "s1" }, "humano"))
+      .toBe(false);
+  });
 });
 
 describe("faltaEtapa", () => {

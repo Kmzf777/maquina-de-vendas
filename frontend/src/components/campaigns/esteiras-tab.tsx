@@ -144,6 +144,23 @@ function comoLista<T>(payload: unknown, chave: string): T[] {
 }
 
 /**
+ * O payload realmente veio como lista?
+ *
+ * `comoLista` achata erro e vazio no mesmo `[]`, e para os templates essa diferença
+ * decide se o interruptor trava: "nenhum template aprovado" tem de travar, "não deu para
+ * saber" não pode. Sem esta distinção, um 500 do Supabase deixaria a tela inteira sem
+ * saída — o mesmo fail-open que o PUT aplica em `_nao_aprovados`.
+ */
+function ehLista(payload: unknown, chave: string): boolean {
+  if (Array.isArray(payload)) return true;
+  return Boolean(
+    payload &&
+      typeof payload === "object" &&
+      Array.isArray((payload as Record<string, unknown>)[chave])
+  );
+}
+
+/**
  * Só template APROVADO pela Meta entra no select.
  * Template em análise não dispara: configurar a esteira com ele é montar uma automação
  * que falha em silêncio, e o silêncio aqui custa o lead. Dedupe por nome porque os canais
@@ -176,7 +193,7 @@ const temEtapa = (e: Esteira): boolean => Boolean(e.etapa_id || e.etapa_key);
 /**
  * O que ainda falta para a esteira poder ser LIGADA. Lista vazia = pode ligar.
  *
- * As duas condições são as mesmas que o PUT recusa com 400 — a tela existe para o clique
+ * As três condições são as mesmas que o PUT recusa com 400 — a tela existe para o clique
  * nem ser oferecido. Cada texto diz o que fazer primeiro e só depois por quê: "escolha o
  * canal" é acionável; "canal ausente" faz o vendedor adivinhar.
  *
@@ -186,9 +203,22 @@ const temEtapa = (e: Esteira): boolean => Boolean(e.etapa_id || e.etapa_key);
  * cai em `get_channel_for_lead`, que escolhe a conversa ativa mais recente: um template
  * assinado "Aqui é o João" sairia do número da Valéria.
  *
+ * O TEMPLATE é a mais cara das três, porque falha em silêncio: template não aprovado não
+ * impede a INSCRIÇÃO, só o envio. A esteira inscreve o lead, não manda nada e mesmo assim
+ * caminha até a ação final — na reposição isso marca o card como Perdido sem uma única
+ * mensagem ter saído, registrando "não teve resposta" para quem nunca foi contatado.
+ *
+ * `aprovados = null` significa "ainda não sei" (carregando, ou a API não devolveu lista):
+ * aí a checagem de template não roda. Mesmo fail-open do backend — travar tudo por um
+ * Supabase oscilando é pior do que o risco.
+ *
  * `curto` é a mesma exigência dita numa frase de rodapé, onde já há contexto.
  */
-const PENDENCIAS: { falta: (e: Esteira) => boolean; curto: string; texto: string }[] = [
+const PENDENCIAS: {
+  falta: (e: Esteira, aprovados: string[] | null) => boolean;
+  curto: string;
+  texto: string;
+}[] = [
   {
     falta: (e) => !temEtapa(e),
     curto: "a etapa do novo funil",
@@ -204,9 +234,25 @@ const PENDENCIAS: { falta: (e: Esteira) => boolean; curto: string; texto: string
       "esteira envia pelo número da conversa mais recente do cliente, que pode ser o da " +
       "Valéria, e passa por cima das conversas que você já finalizou à mão.",
   },
+  {
+    falta: (e, aprovados) =>
+      aprovados !== null &&
+      e.toques.some((t) => !t.template_name || !aprovados.includes(t.template_name)),
+    curto: "um template aprovado para cada toque",
+    texto:
+      "Espere a aprovação dos templates na Meta antes de ligar — template em análise não " +
+      "impede a inscrição, só o envio. A esteira inscreveria o cliente, não mandaria nada " +
+      "e mesmo assim seguiria até o fim, marcando como sem resposta quem nunca foi " +
+      "contatado.",
+  },
 ];
 
-const pendenciasDe = (e: Esteira) => PENDENCIAS.filter((p) => p.falta(e));
+const pendenciasDe = (e: Esteira, aprovados: string[] | null) =>
+  PENDENCIAS.filter((p) => p.falta(e, aprovados));
+
+/** "a" | "a e b" | "a, b e c" — as três pendências podem faltar ao mesmo tempo. */
+const emLista = (itens: string[]): string =>
+  itens.length < 2 ? itens.join("") : `${itens.slice(0, -1).join(", ")} e ${itens.at(-1)}`;
 
 // ─── Peças ─────────────────────────────────────────────────────────────────────
 
@@ -332,7 +378,8 @@ function CartaoEsteira({
   funis: Pipeline[];
   etapas: PipelineStage[];
   etapasCarregadas: boolean;
-  aprovados: string[];
+  /** `null` = ainda não sei quais estão aprovados; ver PENDENCIAS. */
+  aprovados: string[] | null;
   corpos: Record<string, string>;
   sujo: boolean;
   salvando: boolean;
@@ -342,8 +389,11 @@ function CartaoEsteira({
   onSalvar: () => void;
   onAlternar: () => void;
 }) {
-  const faltando = pendenciasDe(esteira);
+  const faltando = pendenciasDe(esteira, aprovados);
   const pronta = faltando.length === 0;
+  // Os selects não distinguem "não sei" de "nenhum": ali as duas situações mostram a
+  // mesma lista vazia. Só a decisão de TRAVAR o interruptor precisa da diferença.
+  const listaAprovados = aprovados ?? [];
   const presaPorKey = Boolean(esteira.etapa_key);
   const gatilho = esteira.gatilho ?? null;
   // O relógio é do backend (derivado do seed). Cair em `stage_days > 0` só quando ele
@@ -532,7 +582,7 @@ function CartaoEsteira({
                 <div className="flex-1 min-w-[200px]">
                   <SelectTemplate
                     valor={t.template_name}
-                    aprovados={aprovados}
+                    aprovados={listaAprovados}
                     corpos={corpos}
                     onChange={(v) => onToque(i, { template_name: v })}
                   />
@@ -583,7 +633,7 @@ function CartaoEsteira({
         <div className="text-[12px] min-h-[18px]">
           {faltaParaSalvar ? (
             <span className="text-[#c2590a]">
-              Esta esteira está ligada: escolha {faltando.map((p) => p.curto).join(" e ")} para
+              Esta esteira está ligada: escolha {emLista(faltando.map((p) => p.curto))} para
               poder salvar.
             </span>
           ) : sujo ? (
@@ -647,6 +697,15 @@ function DialogoLigar({
 }) {
   const { elegiveis, truncado, motivo, carregando, nome } = confirmacao;
 
+  // Prévia que não respondeu é BLOQUEIO, não ressalva. As causas possíveis (migration não
+  // aplicada, campanha sem seed, gatilho ausente) têm todas o mesmo efeito se a esteira
+  // for ligada assim: `campaigns.status` vira 'active', nada nunca dispara, e a tela
+  // passa a mostrar "Ligada" para algo que não roda. Ligada e muda é o pior estado
+  // possível aqui, porque parece o estado bom. Sem número, tiramos o clique — não basta
+  // desencorajá-lo.
+  const naoDeuParaContar = !carregando && elegiveis === null;
+  const nenhumElegivel = !carregando && elegiveis === 0;
+
   // Esc fecha. Este diálogo é o último ponto em que dá para desistir sem consequência —
   // fechá-lo tem de ser mais fácil do que confirmá-lo.
   useEffect(() => {
@@ -694,29 +753,54 @@ function DialogoLigar({
           )}
         </div>
 
-        {/* O aviso da §5.1 da spec: entered_stage_at foi preenchida com a última
-            movimentação de cada card, então o primeiro dia carrega todo o histórico. */}
-        <p className="text-[13px] text-[#626260] mt-3 leading-relaxed">
-          Ao ligar, todos os cards que já estão parados há esse tempo ficam elegíveis de uma
-          vez. A esteira processa no máximo 20 por ciclo e nunca manda mais de uma mensagem
-          por dia para o mesmo lead — mas o volume acumulado sai inteiro, aos poucos.
-        </p>
+        {naoDeuParaContar ? (
+          <p className="text-[13px] text-[#626260] mt-3 leading-relaxed">
+            Sem essa contagem não dá para ligar. Ligar agora gravaria a esteira como ativa
+            contra uma automação que não roda — ela apareceria como &quot;Ligada&quot; na
+            tela e não mandaria nada, para sempre. Resolva o item acima e tente de novo.
+          </p>
+        ) : nenhumElegivel ? (
+          // Zero não é defeito e não pode PARECER defeito: quem liga e vê o funil parado
+          // no dia seguinte precisa saber que já era assim antes do clique.
+          <p className="text-[13px] text-[#626260] mt-3 leading-relaxed">
+            Nenhum card se qualifica agora — a esteira não vai mandar nada hoje. Isso não é
+            erro: ela fica ligada, esperando, e pega o primeiro card que atingir o prazo.
+          </p>
+        ) : (
+          /* O aviso da §5.1 da spec: entered_stage_at foi preenchida com a última
+             movimentação de cada card, então o primeiro dia carrega todo o histórico. */
+          <p className="text-[13px] text-[#626260] mt-3 leading-relaxed">
+            Ao ligar, todos os cards que já estão parados há esse tempo ficam elegíveis de
+            uma vez. A esteira processa no máximo 20 por ciclo e nunca manda mais de uma
+            mensagem por dia para o mesmo lead — mas o volume acumulado sai inteiro, aos
+            poucos.
+          </p>
+        )}
 
         <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-[#dedbd6]">
+          {/* Sem contagem o diálogo vira um beco: uma saída só, e ela é fechar. Deixar
+              "Cancelar" ao lado de nada sugeriria que havia uma alternativa. */}
           <button
             type="button"
             onClick={onCancelar}
-            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9]"
+            className={
+              naoDeuParaContar
+                ? "bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9]"
+                : "bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9]"
+            }
           >
-            Cancelar
+            {naoDeuParaContar ? "Fechar" : "Cancelar"}
           </button>
-          <button
-            type="button"
-            onClick={onConfirmar}
-            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9]"
-          >
-            Ligar esteira
-          </button>
+          {!naoDeuParaContar && (
+            <button
+              type="button"
+              onClick={onConfirmar}
+              disabled={carregando}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9] disabled:opacity-30 disabled:hover:scale-100 disabled:cursor-not-allowed"
+            >
+              Ligar esteira
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -733,6 +817,9 @@ export function EsteirasTab() {
   const [canais, setCanais] = useState<Channel[]>([]);
   const [funis, setFunis] = useState<Pipeline[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  // Se já sabemos QUAIS templates existem. Distinto de `templates.length === 0`: enquanto
+  // isto for false, a guarda de template não roda e o interruptor fica livre.
+  const [templatesConhecidos, setTemplatesConhecidos] = useState(false);
   const [etapasPorFunil, setEtapasPorFunil] = useState<Record<string, PipelineStage[]>>({});
 
   const [sujas, setSujas] = useState<Record<string, boolean>>({});
@@ -770,12 +857,18 @@ export function EsteirasTab() {
       const [c, p, t] = await Promise.all([
         fetch("/api/channels").then((r) => r.json()).catch(() => []),
         fetch("/api/pipelines").then((r) => r.json()).catch(() => []),
-        fetch("/api/templates").then((r) => r.json()).catch(() => []),
+        // `null` (e não `[]`) de propósito: falha de rede é "não sei quais existem".
+        // `[]` significaria "nenhum aprovado" e travaria todos os interruptores.
+        fetch("/api/templates").then((r) => r.json()).catch(() => null),
       ]);
       if (!vivo) return;
       setCanais(comoLista<Channel>(c, "channels").filter((x) => x.is_active !== false));
       setFunis(comoLista<Pipeline>(p, "pipelines"));
       setTemplates(comoLista<MessageTemplate>(t, "templates"));
+      // Só marca como conhecido se a resposta REALMENTE veio como lista. Um 500 devolve
+      // `{error}` e `comoLista` o achata em `[]` — tratar isso como "nenhum aprovado"
+      // travaria todos os interruptores sem que ninguém pudesse destravá-los.
+      setTemplatesConhecidos(ehLista(t, "templates"));
     })();
     return () => {
       vivo = false;
@@ -808,7 +901,12 @@ export function EsteirasTab() {
     };
   }, [chaveFunis]);
 
-  const aprovados = useMemo(() => templatesAprovados(templates), [templates]);
+  // `null` enquanto não se sabe: antes de `/api/templates` responder, e quando ela não
+  // devolve lista. Ver PENDENCIAS — é a diferença entre travar e não travar o interruptor.
+  const aprovados = useMemo(
+    () => (templatesConhecidos ? templatesAprovados(templates) : null),
+    [templates, templatesConhecidos]
+  );
   const corpos = useMemo(() => corposDeTemplate(templates), [templates]);
 
   // ── Edição local ─────────────────────────────────────────────────────────────
@@ -936,7 +1034,7 @@ export function EsteirasTab() {
       }
       // Mesma lista que trava o interruptor. Repetida aqui porque o clique pode chegar por
       // teclado antes do re-render, e ligar sem canal/etapa é justamente o que não pode.
-      if (pendenciasDe(e).length > 0) return;
+      if (pendenciasDe(e, aprovados).length > 0) return;
 
       setConfirmacao({
         key: e.key,
@@ -981,7 +1079,7 @@ export function EsteirasTab() {
         );
       }
     },
-    [gravar]
+    [gravar, aprovados]
   );
 
   const confirmarLigar = useCallback(async () => {

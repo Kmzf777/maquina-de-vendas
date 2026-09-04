@@ -11,6 +11,10 @@
  * mesmos parâmetros, trocando só o que o usuário mudou na tela e ainda não salvou. Uma
  * consulta paralela em PostgREST daria um número parecido e errado — silêncio de conversa
  * depende de um MAX(created_at) por lead que só a RPC resolve.
+ *
+ * "Os mesmos parâmetros" inclui `p_campaign_id`. Ele é opcional no SQL, então esquecê-lo
+ * não levanta erro nenhum — só desliga o cooldown e faz a prévia contar cards que o
+ * gatilho vai descartar. Qualquer parâmetro novo da RPC tem de chegar aqui junto.
  */
 
 /** Config do nó de gatilho, como gravada em `campaign_nodes.config`. */
@@ -29,6 +33,12 @@ export interface PreviewOverrides {
   funil_id?: string | null;
   etapa_id?: string | null;
   dias?: number | null;
+  /**
+   * Qual campanha está perguntando. Não é um override de configuração — é identidade —
+   * mas viaja junto porque a tela já o tem no payload do GET e a RPC precisa dele para
+   * aplicar o COOLDOWN. Ver `p_campaign_id` em RpcArgs.
+   */
+  campaign_id?: string | null;
 }
 
 export interface RpcArgs {
@@ -41,6 +51,20 @@ export interface RpcArgs {
   p_last_speaker: string;
   p_audience: string;
   p_limit: number;
+  /**
+   * Campanha que está perguntando. A RPC a usa para excluir o card que já passou por
+   * ESTA campanha dentro do cooldown (`p_cooldown_days`, DEFAULT 90 —
+   * 20260904_esteiras_vendedor.sql).
+   *
+   * Tem `DEFAULT NULL` no SQL, então omiti-lo não quebra nada: só desliga a exclusão em
+   * silêncio, e a prévia passa a contar cards que o gatilho vai descartar. Um número
+   * inflado aqui é pior do que parece — é o anteparo contra a avalanche do primeiro dia
+   * e é o que o dono olha antes de confirmar "Ligar".
+   *
+   * `p_cooldown_days` fica de fora de propósito: `triggers.py` também não o passa, então
+   * os dois herdam o mesmo default e não podem divergir.
+   */
+  p_campaign_id: string | null;
 }
 
 /** Teto da prévia. Acima disso o número vira "mais de 500" — contar tudo não muda a decisão. */
@@ -87,6 +111,7 @@ export function buildPreviewArgs(
     // faltando. Espelha `engine._audience_allows`.
     p_audience: str(audience) ?? "ia",
     p_limit: PREVIEW_LIMIT,
+    p_campaign_id: str(overrides.campaign_id),
   };
 }
 
