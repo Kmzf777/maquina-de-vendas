@@ -191,6 +191,41 @@ def pause_enrollment(enrollment_id: str) -> None:
     }).eq("id", enrollment_id).execute()
 
 
+def cancel_enrollments_for_lead(lead_id: str) -> int:
+    """Cancela TODOS os enrollments vivos do lead. Devolve quantos foram cancelados.
+
+    Chamada por `leads/service.py::apply_optout_side_effects`, o ponto onde os três
+    caminhos de opt-out convergem (botão de saída do template, tool `registrar_optout`,
+    `POST /api/leads/{id}/optout`). Sem isto o opt-out desarmava só o motor de follow-up
+    e deixava o de campanhas armado: o próximo toque da cadência saía para quem tinha
+    acabado de pedir para parar.
+
+    Alcança `paused` além de `active` por dois motivos: um enrollment pausado pode ser
+    retomado à mão, e `is_already_enrolled` conta os dois estados como "já inscrito" —
+    deixá-lo pendurado tornaria o lead INELEGÍVEL PARA SEMPRE para qualquer campanha
+    futura, mesmo que ele volte a comprar daqui a um ano.
+
+    Uma consulta só (`UPDATE ... WHERE lead_id AND status IN (...)`), não N leituras
+    seguidas de N `cancel_enrollment`. Idempotente pelo próprio filtro: a segunda chamada
+    não encontra linha nenhuma.
+
+    Sem filtro de `env_tag` de propósito, ao contrário do resto do módulo: dev e produção
+    dividem o mesmo Supabase, e do outro lado há UMA pessoa. Um opt-out que deixasse viva
+    a inscrição do outro ambiente ainda mandaria mensagem para ela.
+    """
+    if not lead_id:
+        return 0
+    sb = get_supabase()
+    result = (
+        sb.table("campaign_enrollments")
+        .update({"status": "cancelled"})
+        .eq("lead_id", lead_id)
+        .in_("status", ["active", "paused"])
+        .execute()
+    )
+    return len(result.data or [])
+
+
 def get_active_enrollment_for_lead(lead_id: str) -> dict[str, Any] | None:
     """UM enrollment ativo do lead — o primeiro que o PostgREST devolver.
 

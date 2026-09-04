@@ -1592,17 +1592,42 @@ def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
 
 
 def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
-    """Shared opt-out side-effects: move the lead's deals to Blacklist and cancel follow-ups.
+    """Shared opt-out side-effects: Blacklist + cancela campanhas + cancela follow-ups.
 
-    Both the `registrar_optout` tool and the manual POST /api/leads/{id}/optout endpoint
-    call this so the sequence lives in ONE place — a future change (e.g. also removing from
-    active campaigns) is made once. Callers keep their own ai_enabled disabling and system
-    message (which legitimately differ). Fail-soft: never raises.
+    Os TRÊS caminhos de opt-out convergem aqui — a tool `registrar_optout`, o botão de
+    saída dos templates (`campaigns/worker.py::handle_optout_reply`) e o
+    POST /api/leads/{id}/optout manual — então a sequência vive em UM lugar só. Os
+    chamadores mantêm o seu próprio `ai_enabled=False` e a sua mensagem de sistema (que
+    legitimamente diferem). Fail-soft: nunca levanta.
 
-    `cancel_followups_by_phone` is imported lazily to avoid a circular import
-    (app.follow_up.service imports from app.leads.service).
+    O sistema tem DOIS motores de mensagem automática e este helper desarmava só um.
+    `cancel_enrollments_for_lead` fecha o outro: opt-out no meio de uma cadência deixava
+    o enrollment `active`, e o toque seguinte saía para quem tinha pedido para parar.
+    Cancelar (em vez de deixar pendurado) também devolve o lead ao mundo —
+    `is_already_enrolled` conta `active`/`paused` como inscrito, e um enrollment órfão
+    tornaria o lead invisível para qualquer campanha futura, para sempre.
+
+    Vem ANTES do bloco de follow-ups porque não depende de `phone`: lead sem telefone
+    gravado também tem direito a sair da esteira.
+
+    Os dois cancelamentos são importados de forma preguiçosa para evitar import circular
+    (app.follow_up.service importa de app.leads.service) e para não acoplar este módulo
+    ao de campanhas.
     """
     move_lead_deals_to_blacklist(lead_id)  # already fail-soft internally
+    try:
+        from app.campaigns.service import cancel_enrollments_for_lead
+        cancelados = cancel_enrollments_for_lead(lead_id)
+        if cancelados:
+            logger.info(
+                "apply_optout_side_effects: %d enrollment(s) de campanha cancelados para o lead %s",
+                cancelados, lead_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "apply_optout_side_effects: falha ao cancelar enrollments do lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
     if phone:
         try:
             from app.follow_up.service import cancel_followups_by_phone

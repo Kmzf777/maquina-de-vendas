@@ -179,6 +179,7 @@ def test_apply_optout_side_effects_moves_and_cancels():
     from app.leads.service import apply_optout_side_effects
 
     with patch("app.leads.service.move_lead_deals_to_blacklist") as mock_move, \
+         patch("app.campaigns.service.cancel_enrollments_for_lead"), \
          patch("app.follow_up.service.cancel_followups_by_phone") as mock_cancel:
         apply_optout_side_effects("lead-h1", "5511999990000", reason="optout")
 
@@ -195,6 +196,7 @@ def test_apply_optout_side_effects_skips_cancel_without_phone():
     from app.leads.service import apply_optout_side_effects
 
     with patch("app.leads.service.move_lead_deals_to_blacklist") as mock_move, \
+         patch("app.campaigns.service.cancel_enrollments_for_lead"), \
          patch("app.follow_up.service.cancel_followups_by_phone") as mock_cancel:
         apply_optout_side_effects("lead-h2", "", reason="optout")
 
@@ -207,6 +209,7 @@ def test_apply_optout_side_effects_cancel_fail_soft(caplog):
     from app.leads.service import apply_optout_side_effects
 
     with patch("app.leads.service.move_lead_deals_to_blacklist"), \
+         patch("app.campaigns.service.cancel_enrollments_for_lead"), \
          patch("app.follow_up.service.cancel_followups_by_phone", side_effect=RuntimeError("redis down")):
         caplog.set_level(logging.ERROR, logger="app.leads.service")
         apply_optout_side_effects("lead-h3", "5511333330003", reason="optout")  # must not raise
