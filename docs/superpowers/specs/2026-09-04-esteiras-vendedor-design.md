@@ -399,6 +399,31 @@ quiser mudar a forma do fluxo usa o builder.
    (`fechado_perdido`, `perdido`, `encerrado`, e o fallback que aquela função já
    aplica).
 
+### 6.9 Estado terminal — o cooldown
+
+**Esta seção não existia no design original, e a ausência dela era um bloqueador.**
+
+`is_already_enrolled` conta apenas enrollment `active`/`paused`. Ao chegar no nó
+`end`, o enrollment vira `completed` — e nada impedia o gatilho de reinscrever o
+mesmo card no tick seguinte.
+
+Na E3 isso é permanente por construção: o relógio é `entered_stage_at`, que só anda
+quando o card muda de coluna, e a E3 **nunca move o card** (decisão 6). Terminados
+os dois toques, o card continua em `proposta_enviada` com dez dias de idade, o
+filtro de silêncio está desligado, e o último falante somos nós — porque o nosso
+próprio template acabou de sair. Reinscrição a cada dez dias, indefinidamente.
+
+Na E1b é pior: o relógio é silêncio de três dias, e é a **nossa** mensagem que o
+zera. Um template a cada três dias, para sempre, para um lead que não responde.
+
+A RPC passou a excluir card que já teve enrollment daquela campanha nos últimos
+**90 dias**. Cooldown em vez de exclusão permanente porque um card que sai da etapa
+e volta meses depois é oportunidade legítima; o que não pode é a esteira recomeçar
+sozinha na semana seguinte.
+
+Vale registrar por que nenhum teste pegaria isso: as suítes são mockadas na
+fronteira do Supabase, então elas verificam "a consulta devolve o que devolve e o
+laço pula", nunca o que acontece quando o gatilho roda de novo dez dias depois.
 ---
 
 ## 7. Templates Meta
@@ -416,8 +441,21 @@ que é o número do João). Nada de infra nova: é submissão na conta que já e
 | `esteira_proposta_d8_v1` | E3 toque 2 | nome do lead, nome do vendedor |
 
 Todos categoria **UTILITY**, com os mesmos três `QUICK_REPLY` do corpus atual
-("Continuar atendimento", "Tirar dúvidas", "Não tenho interesse") — o terceiro já
-alimenta a blacklist e é a saída digna que protege o rating do número.
+("Continuar atendimento", "Tirar dúvidas", "Não tenho interesse").
+
+**Correção (achado da revisão final):** a versão anterior desta seção afirmava que
+o terceiro botão "já alimenta a blacklist". **Era falso para o público das
+esteiras.** `opt_out` só era gravado pela tool `registrar_optout`, que apenas o
+agente LLM chama — e lead de esteira tem `ai_enabled=False` por definição, então o
+agente nunca roda. O botão gerava um inbound que cancelava um enrollment e nada
+mais: sem `opt_out`, sem pipeline Blacklist, sem `metadata.blacklisted_at`. Somado
+à reinscrição automática (§6.9), quem dissesse "não tenho interesse" voltaria a
+receber dias depois — o oposto exato da saída digna que a seção prometia.
+
+Passou a existir um caminho de opt-out independente do LLM, no processamento do
+inbound. O casamento é por **igualdade normalizada** com o rótulo, nunca por
+substring: "não tenho interesse em cápsulas, só em grãos" é interesse, e um `in`
+ingênuo baniria um lead quente para sempre.
 
 Script `scripts/create_esteira_templates.py`, modelado no
 `scripts/create_utility_templates.py` existente, com uma diferença obrigatória:
