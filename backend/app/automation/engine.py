@@ -132,6 +132,51 @@ def _conversation_followup_disabled(lead_id: str, channel_id: str | None) -> boo
     return bool(rows) and not rows[0].get("followup_enabled", True)
 
 
+# Público que a campanha pode tocar. 'ia' = só lead com a IA ligada (o comportamento
+# histórico e o DEFAULT da coluna); 'humano' = só lead sob controle humano (pós-handoff,
+# que é onde as esteiras do vendedor vivem); 'ambos' = sem filtro.
+# Valor ausente ou desconhecido cai em 'ia' — nunca em 'ambos': o modo mais permissivo
+# jamais pode ser resultado de dado faltando.
+_AUDIENCES = ("ia", "humano", "ambos")
+
+
+def _audience_allows(audience: str | None, lead: dict) -> bool:
+    """True se a campanha com este `audience` pode agir sobre este lead. Função PURA."""
+    modo = audience if audience in _AUDIENCES else "ia"
+    if modo == "ambos":
+        return True
+    ai_ligada = bool(lead.get("ai_enabled", True))
+    return ai_ligada if modo == "ia" else not ai_ligada
+
+
+def _guard_broken(enrollment: dict) -> bool:
+    """True se o card saiu da etapa que originou este enrollment.
+
+    É o critério de saída das esteiras do vendedor: "roda até entrar em proposta" (E2)
+    e "roda até fechado/perdido" (E3) são, os dois, "roda até o card mudar de coluna".
+
+    A guarda vem de `enrollment.metadata.guard` — gravada na criação, não relida do nó
+    de gatilho — para que editar a campanha depois não mude a regra de quem já está
+    dentro. FAIL-OPEN: erro de leitura devolve False; matar esteira legítima por causa
+    de um timeout de banco seria pior que um toque a mais.
+    """
+    guard = (enrollment.get("metadata") or {}).get("guard") or {}
+    deal_id, stage_id = guard.get("deal_id"), guard.get("stage_id")
+    if not deal_id or not stage_id:
+        return False
+    try:
+        rows = (
+            get_supabase().table("deals").select("id, stage_id")
+            .eq("id", deal_id).limit(1).execute().data
+        )
+    except Exception as exc:
+        logger.warning("[AUTOMATION] guarda de etapa: falha ao reler deal %s: %s", deal_id, exc)
+        return False
+    if not rows:
+        return True  # card apagado — não há mais o que trabalhar
+    return rows[0].get("stage_id") != stage_id
+
+
 def _conversation_window(lead_id: str, channel_id: str | None) -> str | None:
     """Última mensagem do cliente NESTE canal (conversations.last_customer_message_at).
 
@@ -173,7 +218,7 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
             "*, "
             "leads!inner(id, phone, name, company, stage, ai_enabled, last_customer_message_at, assigned_to), "
             "campaign_nodes!campaign_enrollments_current_node_id_fkey(*), "
-            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, channel_id)"
+            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, channel_id, audience)"
         )
         .eq("status", "active")
         .eq("env_tag", env_tag)
@@ -219,7 +264,19 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
 
     if not node or campaign.get("status") != "active":
         return
-    if not lead.get("ai_enabled", True):
+    # Público da campanha (audience). Antes desta linha o motor recusava TODO lead com
+    # ai_enabled=False, o que tornava impossível automatizar o funil do vendedor humano.
+    if not _audience_allows(campaign.get("audience"), lead):
+        return
+
+    # Guarda de etapa: o card saiu da coluna que originou a esteira → encerra.
+    if _guard_broken(enrollment):
+        logger.info(
+            "[AUTOMATION] enrollment=%s — card saiu da etapa de gatilho, encerrando",
+            enrollment["id"],
+        )
+        _update(enrollment["id"], status="cancelled", last_error="deal_left_stage", claimed_at=None)
+        _log_exec(enrollment, node, "cancelled", "card saiu da etapa de gatilho")
         return
 
     # Gate: respect "Finalizar Conversa" toggle set by the seller in /conversas.
@@ -494,18 +551,28 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
         stage_id = cfg.get("stage_id")
         if not stage_id:
             return
-        rows = (
-            sb.table("deals")
-            .select("id")
-            .eq("lead_id", enrollment["lead_id"])
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
-        if rows:
-            deal_id = rows[0]["id"]
-            sb.table("deals").update({"stage_id": stage_id}).eq("id", deal_id).execute()
+        # O deal do ENROLLMENT tem precedência sobre "o mais recente do lead".
+        # Um lead pode ter vários cards abertos (reposição + oportunidade nova);
+        # a esteira que disparou esta ação sabe qual é o dela.
+        deal_id = enrollment.get("deal_id")
+        if not deal_id:
+            rows = (
+                sb.table("deals")
+                .select("id")
+                .eq("lead_id", enrollment["lead_id"])
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+                .data
+            )
+            deal_id = rows[0]["id"] if rows else None
+        if deal_id:
+            update: dict = {"stage_id": stage_id}
+            # lost_reason só faz sentido na perda; o campo existe na tabela e nunca
+            # era preenchido por automação.
+            if action_type == "mark_deal_lost" and cfg.get("lost_reason"):
+                update["lost_reason"] = cfg["lost_reason"]
+            sb.table("deals").update(update).eq("id", deal_id).execute()
             # F9: dispara a conversão associada à etapa de destino (move_deal_stage /
             # mark_deal_won). Usa helper compartilhado com triggers._maybe_fire_stage_conversion.
             # Fail-soft — qualquer erro loga warning e NÃO interrompe o tick.
@@ -524,6 +591,37 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
                 "lead_id": enrollment["lead_id"],
                 "content": content,
             }).execute()
+
+    elif action_type == "alert_seller":
+        # Avisa o dono do card que a esteira terminou sem resposta. O watchdog já
+        # detecta silêncio pós-handoff em 20min (check handoff_sla_breach), mas só
+        # em alerta interno; aqui o alerta nasce colado no card, com o histórico.
+        # Fail-soft absoluto: alerta que falha não pode derrubar o tick da esteira.
+        from app.alerts.service import create_system_alert
+        titulo = substitute_variables(cfg.get("title") or "Esteira encerrada", lead, enrollment)
+        corpo = substitute_variables(cfg.get("message_template") or "", lead, enrollment)
+        try:
+            create_system_alert(
+                type="esteira_vendedor",
+                title=titulo,
+                message=corpo,
+                severity=cfg.get("severity") or "warning",
+                metadata={
+                    "lead_id": enrollment.get("lead_id"),
+                    "deal_id": enrollment.get("deal_id"),
+                    "campaign_id": enrollment.get("campaign_id"),
+                    "phone": lead.get("phone"),
+                },
+            )
+        except Exception as exc:
+            logger.warning("[AUTOMATION] alert_seller: falha ao criar alerta: %s", exc)
+        try:
+            sb.table("lead_notes").insert({
+                "lead_id": enrollment["lead_id"],
+                "content": f"[esteira] {titulo} — {corpo}",
+            }).execute()
+        except Exception as exc:
+            logger.warning("[AUTOMATION] alert_seller: falha ao gravar nota: %s", exc)
 
     elif action_type == "assign_round_robin":
         user_ids = cfg.get("user_ids") or []

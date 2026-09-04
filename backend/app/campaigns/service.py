@@ -85,7 +85,7 @@ def _is_unique_violation(exc: Exception) -> bool:
     return "23505" in s or "duplicate key" in s or "uq_campaign_enrollments_active" in s
 
 
-def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next_execute_at: datetime, deal_id: str | None = None) -> dict[str, Any]:
+def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next_execute_at: datetime, deal_id: str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     sb = get_supabase()
     try:
         row = sb.table("campaign_enrollments").insert({
@@ -95,6 +95,7 @@ def create_enrollment(campaign_id: str, lead_id: str, current_node_id: str, next
             "current_node_id": current_node_id,
             "next_execute_at": next_execute_at.isoformat(),
             "env_tag": _ENV_TAG,
+            "metadata": metadata or {},
         }).execute().data[0]
     except Exception as exc:
         if not _is_unique_violation(exc):
@@ -214,7 +215,7 @@ def get_campaigns_with_trigger_type(trigger_type: str) -> list[dict[str, Any]]:
     campaign_ids = [c["id"] for c in campaigns]
     nodes = (
         sb.table("campaign_nodes")
-        .select("*, campaigns!inner(id, status, channel_id)")
+        .select("*, campaigns!inner(id, status, channel_id, audience)")
         .eq("type", "trigger")
         .in_("campaign_id", campaign_ids)
         .execute()
@@ -226,6 +227,9 @@ def get_campaigns_with_trigger_type(trigger_type: str) -> list[dict[str, Any]]:
     for n in nodes:
         if n["config"].get("trigger_type") == trigger_type:
             n["channel_id"] = (n.get("campaigns") or {}).get("channel_id")
+            # Público da campanha (ver engine._audience_allows). Ausente → 'ia',
+            # o comportamento histórico — nunca o modo mais permissivo.
+            n["audience"] = (n.get("campaigns") or {}).get("audience") or "ia"
             out.append(n)
     return out
 

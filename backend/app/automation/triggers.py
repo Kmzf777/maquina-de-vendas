@@ -32,6 +32,18 @@ def _get_env_tag() -> str:
         return "production"
 
 
+def _apply_audience(query, audience: str | None):
+    """Aplica o filtro de ai_enabled correspondente ao publico da campanha.
+
+    Espelha engine._audience_allows no lado da CONSULTA. Valor ausente/desconhecido
+    cai em 'ia' — o comportamento historico — nunca em 'ambos'.
+    """
+    modo = audience if audience in ("ia", "humano", "ambos") else "ia"
+    if modo == "ambos":
+        return query
+    return query.eq("ai_enabled", modo == "ia")
+
+
 def _maybe_fire_stage_conversion(lead_id: str, data: dict) -> None:
     """Se a etapa que o deal entrou estiver marcada com conversion_event, dispara a conversão.
 
@@ -137,7 +149,8 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         cfg = tn.get("config") or {}
         days, stage_filter = cfg.get("days", 30), cfg.get("stage_filter")
         cutoff = (now - timedelta(days=days)).isoformat()
-        q = sb.table("leads").select("id, phone").eq("ai_enabled", True).lte("last_msg_at", cutoff)
+        q = sb.table("leads").select("id, phone").lte("last_msg_at", cutoff)
+        q = _apply_audience(q, tn.get("audience"))
         if stage_filter:
             q = q.eq("stage", stage_filter)
         for lead in q.limit(20).execute().data:
@@ -151,9 +164,10 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         if not stage:
             continue
         cutoff = (now - timedelta(days=days)).isoformat()
+        q = sb.table("leads").select("id, phone")
+        q = _apply_audience(q, tn.get("audience"))
         leads = (
-            sb.table("leads").select("id, phone")
-            .eq("ai_enabled", True).eq("stage", stage)
+            q.eq("stage", stage)
             .not_.is_("entered_stage_at", "null").lte("entered_stage_at", cutoff)
             .limit(20).execute().data
         )
@@ -166,7 +180,9 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         cfg = tn.get("config") or {}
         days = cfg.get("days", 30)
         cutoff = (now - timedelta(days=days)).isoformat()
-        results = sb.rpc("get_leads_for_repurchase", {"cutoff_date": cutoff, "p_env_tag": env_tag}).execute().data or []
+        results = sb.rpc("get_leads_for_repurchase", {
+            "cutoff_date": cutoff, "p_env_tag": env_tag, "p_audience": tn.get("audience") or "ia",
+        }).execute().data or []
         for lead in results:
             if not is_already_enrolled(tn["campaign_id"], lead["id"]) and tn.get("next_node_id"):
                 _safe_enroll(tn, lead["id"], now)
@@ -178,7 +194,10 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         if not stage:
             continue
         cutoff = (now - timedelta(days=days)).isoformat()
-        results = sb.rpc("get_leads_no_sale_in_stage", {"p_stage": stage, "cutoff_date": cutoff, "p_env_tag": env_tag}).execute().data or []
+        results = sb.rpc("get_leads_no_sale_in_stage", {
+            "p_stage": stage, "cutoff_date": cutoff, "p_env_tag": env_tag,
+            "p_audience": tn.get("audience") or "ia",
+        }).execute().data or []
         for lead in results:
             if not is_already_enrolled(tn["campaign_id"], lead["id"]) and tn.get("next_node_id"):
                 _safe_enroll(tn, lead["id"], now)
