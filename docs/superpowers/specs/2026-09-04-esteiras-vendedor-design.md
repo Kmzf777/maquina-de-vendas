@@ -308,8 +308,20 @@ exatamente o evento que encerra a esteira.
 conta como ativo em `is_already_enrolled` e nunca mais é retomado — o lead que
 responde ficaria permanentemente inelegível para reentrar na esteira depois.
 
-As três esteiras nascem com `on_reply='cancel'` nos nós de envio. Lead que responde
-sai limpo e pode voltar meses depois, se o card estagnar de novo.
+As três esteiras querem `on_reply='cancel'`: lead que responde sai limpo e pode
+voltar meses depois, se o card estagnar de novo.
+
+**Correção (achado da execução das Tasks 2–5):** pôr `on_reply='cancel'` só nos nós
+de envio **não resolve**. `campaigns/worker.py::handle_campaign_reply` só honra esse
+valor quando o enrollment está parado num nó `type == "send"` — e uma esteira passa
+a maior parte da vida parada num nó `wait`, entre um toque e o seguinte. Resposta
+que chega nessa janela cai no `pause_enrollment`, exatamente o estado que esta seção
+existe para evitar.
+
+Então `on_reply` passa a viver também na config do **nó de gatilho**, que é o lugar
+que descreve a esteira inteira em vez de um toque isolado, e `handle_campaign_reply`
+consulta esse valor quando o nó atual não define o seu. Um nó `send` com `on_reply`
+explícito continua vencendo — nenhuma campanha existente muda de comportamento.
 
 ### 6.5 Ação `alert_seller`
 
