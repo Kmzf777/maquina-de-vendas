@@ -232,15 +232,21 @@ CREATE OR REPLACE FUNCTION get_deals_stage_stagnant(
   p_last_speaker  text,     -- 'lead' | 'nos' | 'qualquer'
   p_audience      text,     -- 'ia' | 'humano' | 'ambos'
   p_limit         int DEFAULT 20
-) RETURNS TABLE(lead_id uuid, deal_id uuid, last_speaker text, last_message_at timestamptz)
+) RETURNS TABLE(lead_id uuid, deal_id uuid, stage_id uuid, last_speaker text, last_message_at timestamptz)
 ```
+
+`stage_id` volta no retorno porque é ele que o gatilho grava na guarda de etapa
+(§5.3) — a guarda precisa saber de qual coluna o card saiu, e reler isso depois
+seria uma corrida com o próprio movimento que ela quer detectar.
 
 Regras dentro da função:
 
 - O card tem de estar **aberto**: a etapa atual não pode ter key em
-  (`fechado_ganho`, `fechado_perdido`, `perdido`). As três keys porque
-  `20260626_valeria_unify_stage_keys.sql` deixou alguns funis com `perdido` em vez
-  de `fechado_perdido`.
+  (`fechado_ganho`, `fechado_perdido`, `perdido`, `encerrado`). As quatro keys, e não
+  duas, porque `20260626_valeria_unify_stage_keys.sql` deixou alguns funis com
+  `perdido` em vez de `fechado_perdido`, e o funil "Importação Leads Frios" fecha em
+  `encerrado`. A fonte dessa lista é `leads/service.py::_perdido_stage_id`, que já
+  trata as quatro.
 - `p_stage_days > 0` ⇒ `entered_stage_at <= now() - p_stage_days`.
 - `p_silence_days > 0` ⇒ a última mensagem da conversa (lead + canal) é mais velha
   que isso. Conversa **sem nenhuma mensagem** conta como silêncio (a data cai para
@@ -276,7 +282,14 @@ dos existentes. Lê a config do nó de gatilho, chama a RPC, e para cada linha:
 filtro de `ai_enabled` a partir dele, em vez do `TRUE` fixo. As RPCs
 `get_leads_for_repurchase` e `get_leads_no_sale_in_stage` ganham um parâmetro
 `p_audience text DEFAULT 'ia'` com a mesma semântica — o default preserva a
-assinatura para qualquer chamador que não passe o argumento.
+compatibilidade para quem chamar sem o argumento, inclusive o código que fica em
+produção entre o SQL rodar e a imagem subir.
+
+**A migration precisa dropar a assinatura antiga antes de recriar essas duas.**
+No Postgres a identidade de uma função inclui a lista de tipos de parâmetros, então
+`CREATE OR REPLACE` com um parâmetro a mais **não substitui**: cria uma segunda função, com aridade diferente. Com as duas no catálogo, uma chamada de 2 argumentos
+casa com os dois candidatos e o Postgres levanta `function ... is not unique` — o
+que derrubaria **todas** as cadências, não só as esteiras novas.
 
 ### 6.3 Guarda de etapa
 
