@@ -90,6 +90,34 @@ async def _execute_send_node(enrollment: dict, node: dict, lead: dict, now: date
     return wamid
 
 
+def _trigger_on_reply(campaign_id: str | None) -> str | None:
+    """`on_reply` do nó de GATILHO — a política de resposta da cadeia INTEIRA.
+
+    O nó de envio descreve um toque; o gatilho descreve a esteira. A distinção importa
+    porque um enrollment passa a maior parte da vida parado num nó `wait` — e é ali que
+    a maioria das respostas chega. Sem esta consulta, `on_reply='cancel'` configurado
+    nos envios nunca era alcançado: o enrollment ia para `paused`, estado que
+    `is_already_enrolled` conta como ativo e que ninguém retoma, deixando o lead
+    inelegível para reentrar na esteira para sempre.
+
+    FAIL-SAFE: campanha sem gatilho, sem o campo, ou erro de leitura → None, e o
+    chamador pausa. Pausar por engano é recuperável; cancelar por engano perde a esteira.
+    """
+    if not campaign_id:
+        return None
+    try:
+        from app.campaigns.service import list_nodes
+        for n in list_nodes(campaign_id) or []:
+            if n.get("type") == "trigger":
+                return (n.get("config") or {}).get("on_reply") or None
+    except Exception as exc:
+        logger.warning(
+            "[CAMPAIGNS] on_reply do gatilho: falha ao ler campanha %s: %s — pausando",
+            campaign_id, exc,
+        )
+    return None
+
+
 def handle_campaign_reply(lead_id: str) -> None:
     """Called by webhook when a lead sends a message. Pauses (or cancels) the
     active enrollment regardless of which node it is currently parked on.
@@ -98,19 +126,31 @@ def handle_campaign_reply(lead_id: str) -> None:
     sitting in `wait` / `condition` / `action` ignored the reply and would
     advance to the next `send`, mailing the lead despite engagement. We now
     treat any inbound message as a signal to pause; the seller can resume
-    manually if needed. on_reply='cancel' is still honored on `send` nodes.
+    manually if needed.
+
+    Precedência de `on_reply`: o nó atual, quando define o seu, vence — inclusive para
+    forçar `pause` contra um gatilho que pede `cancel`. Sem valor no nó, vale o do nó de
+    gatilho (a política da esteira inteira). `cancel` vindo do NÓ segue restrito a nós
+    `send`, como sempre foi: `system_cadence` grava `on_reply='cancel'` em nós
+    `send_text` que hoje pausam, e honrá-lo agora mudaria campanha existente.
     """
     from app.campaigns.service import get_active_enrollment_for_lead
     enrollment = get_active_enrollment_for_lead(lead_id)
     if not enrollment:
         return
     node = enrollment.get("campaign_nodes") or {}
-    on_reply = (node.get("config") or {}).get("on_reply", "pause")
-    if node.get("type") == "send" and on_reply == "cancel":
+    node_on_reply = (node.get("config") or {}).get("on_reply") or None
+    if node_on_reply is not None:
+        cancelar = node_on_reply == "cancel" and node.get("type") == "send"
+        origem = "nó"
+    else:
+        cancelar = _trigger_on_reply(enrollment.get("campaign_id")) == "cancel"
+        origem = "gatilho"
+    if cancelar:
         cancel_enrollment(enrollment["id"])
         logger.info(
-            "[CAMPAIGNS] Cancelled enrollment %s — lead replied (on_reply=cancel)",
-            enrollment["id"],
+            "[CAMPAIGNS] Cancelled enrollment %s — lead replied (on_reply=cancel via %s)",
+            enrollment["id"], origem,
         )
         return
     pause_enrollment(enrollment["id"])
