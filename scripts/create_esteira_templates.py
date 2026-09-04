@@ -13,6 +13,15 @@ template automacao_valeria_to_joao foi aprovado so em `en` (corpo em portugues) 
 default pt_BR causava 404 #132001 com o job cancelado sem entregar. Depois da
 aprovacao, confira em message_templates e ajuste `template_language` na config do
 no de envio.
+
+ACENTUACAO: os corpos e os botoes vao em portugues correto, com acento. Isto e
+deliberado e nada aqui exige ASCII — o payload sai com `ensure_ascii=False` e o
+Content-Type declara `charset=utf-8`. Sao mensagens para o cliente de uma marca de
+cafe especial, saindo do numero PESSOAL do vendedor: "Aqui e o Joao" le como
+portugues quebrado. E, uma vez submetido e aprovado, mudar o texto exige criar uma
+nova versao do template na Meta — nao da para corrigir depois sem refazer o ciclo.
+(Os comentarios e docstrings deste arquivo seguem em ASCII, como o resto do repo; a
+regra vale para o que o CLIENTE le.)
 """
 import json
 import os
@@ -28,11 +37,13 @@ if not WABA_ID or not TOKEN:
 URL = f"https://graph.facebook.com/v21.0/{WABA_ID}/message_templates"
 
 # O terceiro botao ("Nao tenho interesse") ja alimenta a blacklist no fluxo atual —
-# e a saida digna que protege o rating do numero de bloqueio em massa.
+# e a saida digna que protege o rating do numero de bloqueio em massa. O acento nao
+# quebra esse caminho: `agent/tools.py::_looks_like_soft_rejection` normaliza em NFD e
+# descarta os diacriticos antes de comparar.
 BUTTONS = [
     {"type": "QUICK_REPLY", "text": "Continuar atendimento"},
-    {"type": "QUICK_REPLY", "text": "Tirar duvidas"},
-    {"type": "QUICK_REPLY", "text": "Nao tenho interesse"},
+    {"type": "QUICK_REPLY", "text": "Tirar dúvidas"},
+    {"type": "QUICK_REPLY", "text": "Não tenho interesse"},
 ]
 
 
@@ -46,10 +57,10 @@ TEMPLATES = [
         "language": "pt_BR",
         "components": [
             body(
-                "Ola, {{1}}! Aqui e o {{2}}, do Cafe Canastra. Vi que sua mensagem ficou "
-                "sem retorno e a responsabilidade e nossa. Sigo a disposicao para te "
-                "passar valores e condicoes. Posso continuar por aqui?",
-                ["Marcella", "Joao"],
+                "Olá, {{1}}! Aqui é o {{2}}, do Café Canastra. Vi que sua mensagem ficou "
+                "sem retorno e a responsabilidade é nossa. Sigo à disposição para te "
+                "passar valores e condições. Posso continuar por aqui?",
+                ["Marcella", "João"],
             ),
             {"type": "BUTTONS", "buttons": BUTTONS},
         ],
@@ -59,10 +70,10 @@ TEMPLATES = [
         "language": "pt_BR",
         "components": [
             body(
-                "Ola, {{1}}! Aqui e o {{2}}, do Cafe Canastra. Nosso atendimento ficou "
-                "em aberto e queria saber se voce ainda tem interesse. Basta responder "
+                "Olá, {{1}}! Aqui é o {{2}}, do Café Canastra. Nosso atendimento ficou "
+                "em aberto e queria saber se você ainda tem interesse. Basta responder "
                 "esta mensagem que sigo de onde paramos.",
-                ["Marcella", "Joao"],
+                ["Marcella", "João"],
             ),
             {"type": "BUTTONS", "buttons": BUTTONS},
         ],
@@ -72,10 +83,10 @@ TEMPLATES = [
         "language": "pt_BR",
         "components": [
             body(
-                "Ola, {{1}}! Aqui e o {{2}}, do Cafe Canastra. Faz um tempo desde o "
-                "nosso ultimo contato e queria saber como esta seu estoque. Se quiser, "
-                "te mando as condicoes atuais.",
-                ["Marcella", "Joao"],
+                "Olá, {{1}}! Aqui é o {{2}}, do Café Canastra. Faz um tempo desde o "
+                "nosso último contato e queria saber como está seu estoque. Se quiser, "
+                "te mando as condições atuais.",
+                ["Marcella", "João"],
             ),
             {"type": "BUTTONS", "buttons": BUTTONS},
         ],
@@ -85,10 +96,10 @@ TEMPLATES = [
         "language": "pt_BR",
         "components": [
             body(
-                "Ola, {{1}}! Aqui e o {{2}}, do Cafe Canastra. Passando para saber se "
-                "voce conseguiu ver a proposta que te enviei. Qualquer duvida sobre "
-                "valores, prazo ou personalizacao, e so responder aqui.",
-                ["Marcella", "Joao"],
+                "Olá, {{1}}! Aqui é o {{2}}, do Café Canastra. Passando para saber se "
+                "você conseguiu ver a proposta que te enviei. Qualquer dúvida sobre "
+                "valores, prazo ou personalização, é só responder aqui.",
+                ["Marcella", "João"],
             ),
             {"type": "BUTTONS", "buttons": BUTTONS},
         ],
@@ -98,10 +109,10 @@ TEMPLATES = [
         "language": "pt_BR",
         "components": [
             body(
-                "Ola, {{1}}! Aqui e o {{2}}, do Cafe Canastra. Sua proposta continua "
-                "valendo e nao quero que voce perca o prazo. Me diz se faz sentido "
+                "Olá, {{1}}! Aqui é o {{2}}, do Café Canastra. Sua proposta continua "
+                "valendo e não quero que você perca o prazo. Me diz se faz sentido "
                 "seguir ou se prefere que eu ajuste alguma coisa.",
-                ["Marcella", "Joao"],
+                ["Marcella", "João"],
             ),
             {"type": "BUTTONS", "buttons": BUTTONS},
         ],

@@ -11,9 +11,20 @@ Contrato que este arquivo fixa (a aba /campanhas > Esteiras escreve contra ele):
    `p_stage_key IS NULL` significam "sem filtro de etapa" — fail-open. Uma esteira
    ligada antes de configurada ficaria elegivel a todo card aberto de todo funil,
    20 por tick.
-4. A ETAPA DE PERDIDO DA REPOSICAO E RESOLVIDA PELA API. O seed nasce com
+4. LIGAR EXIGE CANAL. Sem `campaigns.channel_id` duas protecoes caem juntas:
+   `_conversation_followup_disabled(lead, None)` devolve False de cara (a flag
+   "Finalizar Conversa" que o vendedor marca em /conversas passa a ser ignorada) e
+   `_execute_send_node` cai em `get_channel_for_lead`, que devolve o canal da conversa
+   ativa mais recente — pode ser o da Valeria. Um template assinado "Aqui e o Joao"
+   sairia do numero da IA. A esteira de proposta e o caso vivo: ela nasce com
+   `stage_key='proposta_enviada'`, entao a regra 3 sozinha ja a deixaria ligavel.
+5. A ETAPA DE PERDIDO DA REPOSICAO E RESOLVIDA PELA API. O seed nasce com
    `stage_id: None` no `mark_deal_lost` e `engine._execute_action` retorna cedo sem
    ele: a esteira rodaria os tres toques e terminaria sem mover o card.
+6. O PRIMEIRO TOQUE ESPERA NO MINIMO 1 DIA. Ele grava no gatilho (`silence_days` ou
+   `stage_days`); com os dois em 0 a RPC nao aplica filtro temporal nenhum e todo card
+   na etapa fica elegivel no proximo tick — inclusive a proposta enviada ha cinco
+   minutos. As esperas seguintes continuam aceitando 0.
 """
 import copy
 from types import SimpleNamespace
@@ -332,7 +343,7 @@ async def test_put_campanha_ausente_no_banco_nao_finge_sucesso():
 @pytest.mark.asyncio
 async def test_put_recusa_ligar_sem_etapa_configurada():
     from fastapi import HTTPException
-    sb = _banco()
+    sb = _banco(channel_id="ch-joao")
     with _com(sb), pytest.raises(HTTPException) as exc:
         await esteiras_router.gravar_esteira("reposicao", {"ativa": True})
     assert exc.value.status_code == 400
@@ -346,7 +357,8 @@ async def test_put_aceita_configurar_e_ligar_no_mesmo_corpo():
     sb = _banco()
     with _com(sb):
         await esteiras_router.gravar_esteira("reposicao", {
-            "ativa": True, "funil_id": "pipe-joao", "etapa_id": "stage-x"})
+            "ativa": True, "canal_id": "ch-joao", "funil_id": "pipe-joao",
+            "etapa_id": "stage-x"})
     assert any(p.get("status") == "active" for p, _ in sb.updates("campaigns"))
     gatilho = _esteira("reposicao")["nodes"][0]["id"]
     cfg = next(p["config"] for p, f in sb.updates("campaign_nodes") if f.get("id") == gatilho)
@@ -355,7 +367,7 @@ async def test_put_aceita_configurar_e_ligar_no_mesmo_corpo():
 
 @pytest.mark.asyncio
 async def test_put_liga_com_etapa_ja_gravada_no_banco():
-    sb = _banco()
+    sb = _banco(channel_id="ch-joao")
     _no_do_banco(sb, _esteira("reposicao")["nodes"][0]["id"])["config"]["stage_id"] = "stage-x"
     with _com(sb):
         await esteiras_router.gravar_esteira("reposicao", {"ativa": True})
@@ -366,7 +378,7 @@ async def test_put_liga_com_etapa_ja_gravada_no_banco():
 async def test_put_liga_proposta_sem_stage_id_porque_o_stage_key_ja_filtra():
     """A regra e 'sem stage_id NEM stage_key'. A proposta nasce com
     stage_key='proposta_enviada', que ja e filtro suficiente na RPC."""
-    sb = _banco()
+    sb = _banco(channel_id="ch-joao")
     with _com(sb):
         out = await esteiras_router.gravar_esteira("proposta", {"ativa": True})
     assert out["ok"] is True
@@ -376,7 +388,7 @@ async def test_put_liga_proposta_sem_stage_id_porque_o_stage_key_ja_filtra():
 @pytest.mark.asyncio
 async def test_put_recusa_ligar_quando_o_corpo_limpa_a_etapa():
     from fastapi import HTTPException
-    sb = _banco()
+    sb = _banco(channel_id="ch-joao")
     _no_do_banco(sb, _esteira("reposicao")["nodes"][0]["id"])["config"]["stage_id"] = "stage-x"
     with _com(sb), pytest.raises(HTTPException) as exc:
         await esteiras_router.gravar_esteira("reposicao", {"ativa": True, "etapa_id": ""})
@@ -390,6 +402,68 @@ async def test_put_desligar_sem_etapa_e_permitido():
     with _com(sb):
         await esteiras_router.gravar_esteira("reposicao", {"ativa": False, "funil_id": "pipe-joao"})
     assert any(p.get("status") == "draft" for p, _ in sb.updates("campaigns"))
+
+
+# ── PUT: regra 1b — ligar exige canal ────────────────────────────────────────────
+# Sem canal a esteira nao fica muda como no caso da etapa: ela fica FALANTE no lugar
+# errado. `_conversation_followup_disabled(lead, None)` devolve False sem consultar
+# nada (a flag "Finalizar Conversa" do vendedor deixa de valer) e o envio cai em
+# `get_channel_for_lead`, que escolhe a conversa ativa mais recente — o numero da
+# Valeria, assinando "Aqui e o Joao".
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_ligar_sem_canal():
+    """A proposta e o caso vivo: nasce com stage_key, entao a regra da etapa ja passa."""
+    from fastapi import HTTPException
+    sb = _banco()
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {"ativa": True})
+    assert exc.value.status_code == 400
+    assert "canal" in str(exc.value.detail).lower()
+    assert sb.escritas == [], "PUT recusado nao pode gravar nada pela metade"
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_ligar_quando_o_corpo_limpa_o_canal():
+    from fastapi import HTTPException
+    sb = _banco(channel_id="ch-joao")
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {"ativa": True, "canal_id": ""})
+    assert exc.value.status_code == 400
+    assert "canal" in str(exc.value.detail).lower()
+    assert sb.escritas == []
+
+
+@pytest.mark.asyncio
+async def test_put_aceita_escolher_canal_e_ligar_no_mesmo_corpo():
+    """Mesma logica da etapa: o canal do corpo vale ANTES da checagem."""
+    sb = _banco()
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {
+            "ativa": True, "canal_id": "ch-joao"})
+    assert out["ok"] is True
+    assert any(p.get("channel_id") == "ch-joao" for p, _ in sb.updates("campaigns"))
+    assert any(p.get("status") == "active" for p, _ in sb.updates("campaigns"))
+
+
+@pytest.mark.asyncio
+async def test_put_desligar_sem_canal_e_permitido():
+    """Desligar e sempre a direcao segura — nenhuma das duas guardas vale para ela."""
+    sb = _banco(status={"proposta": "active"})
+    with _com(sb):
+        await esteiras_router.gravar_esteira("proposta", {"ativa": False})
+    assert any(p.get("status") == "draft" for p, _ in sb.updates("campaigns"))
+
+
+@pytest.mark.asyncio
+async def test_put_sem_ligar_nao_exige_canal():
+    """Gravar parametro numa esteira desligada continua livre: a guarda e do `ativa`."""
+    sb = _banco()
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {
+            "toques": [{"ordem": 1, "dias": 4, "template_name": "tpl"}]})
+    assert out["ok"] is True
 
 
 # ── PUT: regra 2 — etapa de Perdido resolvida pela API ───────────────────────────
@@ -481,7 +555,8 @@ async def test_put_aceita_etapa_do_proprio_funil():
                          "order_index": 9}])
     with _com(sb):
         out = await esteiras_router.gravar_esteira("reposicao", {
-            "ativa": True, "funil_id": "pipe-joao", "etapa_id": "stage-x"})
+            "ativa": True, "canal_id": "ch-joao", "funil_id": "pipe-joao",
+            "etapa_id": "stage-x"})
     assert out["ok"] is True
     assert _cfg_da_acao_lost(sb)["stage_id"] == "st-perdido"
 
@@ -613,3 +688,62 @@ async def test_put_recusa_dias_invalido():
             "toques": [{"ordem": 1, "dias": -3, "template_name": "t"}]})
     assert exc.value.status_code == 400
     assert sb.escritas == []
+
+
+# ── PUT: o primeiro toque nao pode esperar zero dias ─────────────────────────────
+# O toque 1 grava no GATILHO, e o gatilho tem dois relogios. Na proposta o campo
+# escreve `stage_days` e `silence_days` ja e 0 no seed: gravar 0 zera os dois e a RPC
+# passa a nao aplicar filtro temporal nenhum — todo card na etapa fica elegivel no
+# proximo tick, inclusive a proposta enviada ha cinco minutos.
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_zero_dias_no_primeiro_toque():
+    from fastapi import HTTPException
+    sb = _banco()
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("proposta", {
+            "toques": [{"ordem": 1, "dias": 0, "template_name": "t"}]})
+    assert exc.value.status_code == 400
+    assert "1 dia" in str(exc.value.detail)
+    assert sb.escritas == [], "PUT recusado nao pode gravar nada pela metade"
+
+
+@pytest.mark.asyncio
+async def test_put_recusa_zero_dias_no_primeiro_toque_das_esteiras_de_silencio():
+    from fastapi import HTTPException
+    sb = _banco()
+    with _com(sb), pytest.raises(HTTPException) as exc:
+        await esteiras_router.gravar_esteira("reposicao", {
+            "toques": [{"ordem": 1, "dias": 0, "template_name": "t"}]})
+    assert exc.value.status_code == 400
+    assert sb.escritas == []
+
+
+@pytest.mark.asyncio
+async def test_put_aceita_um_dia_no_primeiro_toque():
+    sb = _banco()
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("proposta", {
+            "toques": [{"ordem": 1, "dias": 1, "template_name": "t"}]})
+    assert out["ok"] is True
+    gatilho = _esteira("proposta")["nodes"][0]["id"]
+    cfg = next(p["config"] for p, f in sb.updates("campaign_nodes") if f.get("id") == gatilho)
+    assert cfg["stage_days"] == 1
+
+
+@pytest.mark.asyncio
+async def test_put_aceita_zero_dias_nas_esperas_seguintes():
+    """A espera entre toques nao mexe no filtro do gatilho — 0 ali e 'no mesmo tick'."""
+    sb = _banco()
+    e = _esteira("reposicao")
+    with _com(sb):
+        out = await esteiras_router.gravar_esteira("reposicao", {
+            "toques": [
+                {"ordem": 1, "dias": 15, "template_name": "t1"},
+                {"ordem": 2, "dias": 0, "template_name": "t2"},
+            ],
+        })
+    assert out["ok"] is True
+    por_id = {f["id"]: p["config"] for p, f in sb.updates("campaign_nodes")}
+    assert por_id[e["nodes"][2]["id"]]["days"] == 0

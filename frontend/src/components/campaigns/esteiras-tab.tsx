@@ -173,6 +173,41 @@ function corposDeTemplate(templates: MessageTemplate[]): Record<string, string> 
 /** Uma esteira sem etapa vale para QUALQUER etapa de QUALQUER funil — ver §6.8 da spec. */
 const temEtapa = (e: Esteira): boolean => Boolean(e.etapa_id || e.etapa_key);
 
+/**
+ * O que ainda falta para a esteira poder ser LIGADA. Lista vazia = pode ligar.
+ *
+ * As duas condições são as mesmas que o PUT recusa com 400 — a tela existe para o clique
+ * nem ser oferecido. Cada texto diz o que fazer primeiro e só depois por quê: "escolha o
+ * canal" é acionável; "canal ausente" faz o vendedor adivinhar.
+ *
+ * O CANAL não pode ser deduzido em silêncio. Sem ele duas proteções caem juntas:
+ * `_conversation_followup_disabled(lead, None)` devolve `false` de cara — a marcação
+ * "Finalizar Conversa" que o vendedor faz em /conversas passa a ser ignorada — e o envio
+ * cai em `get_channel_for_lead`, que escolhe a conversa ativa mais recente: um template
+ * assinado "Aqui é o João" sairia do número da Valéria.
+ *
+ * `curto` é a mesma exigência dita numa frase de rodapé, onde já há contexto.
+ */
+const PENDENCIAS: { falta: (e: Esteira) => boolean; curto: string; texto: string }[] = [
+  {
+    falta: (e) => !temEtapa(e),
+    curto: "a etapa do novo funil",
+    texto:
+      "Escolha o funil e a etapa antes de ligar — sem etapa, a esteira valeria para todo " +
+      "card aberto de todos os funis.",
+  },
+  {
+    falta: (e) => !e.canal_id,
+    curto: "o canal",
+    texto:
+      "Escolha o canal antes de ligar — é o número de onde a mensagem sai. Sem ele a " +
+      "esteira envia pelo número da conversa mais recente do cliente, que pode ser o da " +
+      "Valéria, e passa por cima das conversas que você já finalizou à mão.",
+  },
+];
+
+const pendenciasDe = (e: Esteira) => PENDENCIAS.filter((p) => p.falta(e));
+
 // ─── Peças ─────────────────────────────────────────────────────────────────────
 
 function Interruptor({
@@ -307,7 +342,8 @@ function CartaoEsteira({
   onSalvar: () => void;
   onAlternar: () => void;
 }) {
-  const pronta = temEtapa(esteira);
+  const faltando = pendenciasDe(esteira);
+  const pronta = faltando.length === 0;
   const presaPorKey = Boolean(esteira.etapa_key);
   const gatilho = esteira.gatilho ?? null;
   // O relógio é do backend (derivado do seed). Cair em `stage_days > 0` só quando ele
@@ -321,8 +357,9 @@ function CartaoEsteira({
   const semEtapaDePerda =
     esteira.acao_final === "mark_deal_lost" && !esteira.stage_id_perdido;
   // Salvar manda `ativa` junto. Numa esteira LIGADA cuja etapa acabou de ser limpa (troca
-  // de funil), o backend recusa com 400 — corretamente. A tela não deve chegar lá.
-  const faltaEtapaParaSalvar = esteira.ativa && !pronta;
+  // de funil) ou cujo canal foi apagado, o backend recusa com 400 — corretamente. A tela
+  // não deve chegar lá.
+  const faltaParaSalvar = esteira.ativa && !pronta;
 
   return (
     <article
@@ -369,11 +406,17 @@ function CartaoEsteira({
               Entra {falante}.
             </p>
           )}
-          {!esteira.ativa && !pronta && (
-            <p className="text-[12px] text-[#c2590a] mt-1.5 leading-snug">
-              Escolha o funil e a etapa antes de ligar — sem etapa, a esteira valeria para
-              todo card aberto de todos os funis.
-            </p>
+          {/* O interruptor está travado; aqui fica o motivo, um por linha. Ele é o único
+              controle desabilitado do cartão, então a explicação mora ao lado dele — não
+              num tooltip que só aparece se o vendedor souber procurar. */}
+          {!esteira.ativa && faltando.length > 0 && (
+            <ul className="mt-1.5 space-y-1">
+              {faltando.map((p) => (
+                <li key={p.curto} className="text-[12px] text-[#c2590a] leading-snug">
+                  {p.texto}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </header>
@@ -468,7 +511,11 @@ function CartaoEsteira({
                 <span className="text-[13px] text-[#111111]">{i === 0 ? "Após" : "Mais"}</span>
                 <input
                   type="number"
-                  min={0}
+                  // O toque 1 grava no GATILHO, não numa espera: com 0 ali o gatilho fica
+                  // sem filtro de tempo nenhum e a esteira pega todo card que estiver na
+                  // etapa — inclusive a proposta enviada há cinco minutos. Da espera 2 em
+                  // diante, 0 só quer dizer "no mesmo ciclo" e é legítimo.
+                  min={i === 0 ? 1 : 0}
                   max={365}
                   aria-label={`Dias do toque ${i + 1}`}
                   value={String(t.dias ?? 0)}
@@ -534,9 +581,10 @@ function CartaoEsteira({
 
       <footer className="flex items-center justify-between gap-3 px-5 py-3 border-t border-[#f0ede8]">
         <div className="text-[12px] min-h-[18px]">
-          {faltaEtapaParaSalvar ? (
+          {faltaParaSalvar ? (
             <span className="text-[#c2590a]">
-              Esta esteira está ligada: escolha a etapa do novo funil para poder salvar.
+              Esta esteira está ligada: escolha {faltando.map((p) => p.curto).join(" e ")} para
+              poder salvar.
             </span>
           ) : sujo ? (
             <span className="text-[#7b7b78]">Alterações não salvas</span>
@@ -554,7 +602,7 @@ function CartaoEsteira({
         <button
           type="button"
           onClick={onSalvar}
-          disabled={!sujo || salvando || faltaEtapaParaSalvar}
+          disabled={!sujo || salvando || faltaParaSalvar}
           className="bg-[#111111] text-white px-[14px] py-1.5 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9] disabled:opacity-30 disabled:hover:scale-100 disabled:cursor-not-allowed"
         >
           {salvando ? "Salvando..." : "Salvar"}
@@ -886,7 +934,9 @@ export function EsteirasTab() {
         await gravar(e.key, false);
         return;
       }
-      if (!temEtapa(e)) return;
+      // Mesma lista que trava o interruptor. Repetida aqui porque o clique pode chegar por
+      // teclado antes do re-render, e ligar sem canal/etapa é justamente o que não pode.
+      if (pendenciasDe(e).length > 0) return;
 
       setConfirmacao({
         key: e.key,

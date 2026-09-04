@@ -44,6 +44,29 @@ const REPOSICAO = {
   stage_id_perdido: "stage-perdido",
 };
 
+/**
+ * A esteira de proposta é o caso que expõe a guarda do canal: ela nasce do seed com
+ * `etapa_key = 'proposta_enviada'`, então a checagem de etapa já a considera pronta —
+ * mas sem canal ela envia pelo número da conversa mais recente (pode ser o da Valéria)
+ * e passa por cima da flag "Finalizar Conversa" marcada em /conversas.
+ */
+const PROPOSTA = {
+  key: "proposta",
+  campaign_id: "camp-prop",
+  nome: "Esteira Proposta",
+  descricao: "d",
+  ativa: false,
+  canal_id: null,
+  funil_id: null,
+  etapa_id: null,
+  etapa_key: "proposta_enviada",
+  relogio: "stage_days",
+  gatilho: { silence_days: 0, stage_days: 3, last_speaker: "nos", stage_key: "proposta_enviada" },
+  toques: [{ ordem: 1, dias: 3, template_name: "esteira_proposta_d3_v1" }],
+  acao_final: "alert_seller",
+  stage_id_perdido: null,
+};
+
 const RESPOSTA = { esteiras: [NOVO, REPOSICAO] };
 
 type Corpo = Record<string, unknown> | unknown[];
@@ -117,6 +140,62 @@ describe("EsteirasTab", () => {
     expect((semEtapa as HTMLButtonElement).disabled).toBe(true);
     expect((comEtapa as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByText(/Escolha o funil e a etapa/i)).toBeTruthy();
+  });
+
+  it("não deixa ligar esteira sem canal, e diz por quê", async () => {
+    // A etapa da proposta vem presa por `key`, então a guarda de etapa passa sozinha.
+    // Sem canal, `_conversation_followup_disabled(lead, None)` devolve False (a flag
+    // "Finalizar Conversa" do vendedor deixa de valer) e o envio cai em
+    // `get_channel_for_lead` — a conversa ativa mais recente, que pode ser a da Valéria.
+    mockarFetch({ esteiras: { esteiras: [PROPOSTA, REPOSICAO] } });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    const semCanal = screen.getByRole("switch", { name: /Ligar Esteira Proposta/i });
+    expect((semCanal as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Escolha o canal/i)).toBeTruthy();
+    // E não é a mensagem da etapa: essa esteira TEM etapa.
+    expect(screen.queryByText(/Escolha o funil e a etapa/i)).toBeNull();
+  });
+
+  it("limpar o canal de uma esteira ligada trava o Salvar", async () => {
+    // Salvar manda `ativa` junto; com a esteira ligada e sem canal o PUT devolve 400.
+    mockarFetch({
+      rotas: { "/api/channels": [{ id: "ch", name: "Número do João", is_active: true }] },
+    });
+    render(<EsteirasTab />);
+    await aparecemOsCartoes();
+    await waitFor(() => expect(screen.getAllByText("Número do João").length).toBe(2));
+
+    const salvar = () => screen.getAllByRole("button", { name: "Salvar" })[1] as HTMLButtonElement;
+    fireEvent.change(screen.getAllByLabelText("Canal")[1], { target: { value: "" } });
+
+    await waitFor(() => expect(salvar().disabled).toBe(true));
+    expect(screen.getByText(/escolha o canal para poder salvar/i)).toBeTruthy();
+    const chamadas = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(chamadas.some((c) => (c[1] as RequestInit | undefined)?.method === "PUT")).toBe(false);
+  });
+
+  it("o primeiro toque não aceita zero dias; as esperas seguintes aceitam", async () => {
+    // O toque 1 grava no GATILHO. Com ele em 0 (e a proposta já nasce com o outro
+    // relógio em 0), a RPC para de aplicar filtro temporal e todo card da etapa entra
+    // no próximo tick — inclusive a proposta enviada há cinco minutos.
+    mockarFetch({
+      esteiras: {
+        esteiras: [
+          {
+            ...REPOSICAO,
+            toques: [
+              { ordem: 1, dias: 15, template_name: "esteira_reposicao_v1" },
+              { ordem: 2, dias: 7, template_name: "esteira_reposicao_v1" },
+            ],
+          },
+        ],
+      },
+    });
+    render(<EsteirasTab />);
+    await waitFor(() => expect(screen.getByLabelText("Dias do toque 2")).toBeTruthy());
+    expect(screen.getByLabelText("Dias do toque 1").getAttribute("min")).toBe("1");
+    expect(screen.getByLabelText("Dias do toque 2").getAttribute("min")).toBe("0");
   });
 
   it("pede confirmação antes de ligar, mostrando quantos cards ficam elegíveis", async () => {

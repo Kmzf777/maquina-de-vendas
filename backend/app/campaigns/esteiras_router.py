@@ -17,8 +17,9 @@ CONTRATO — e o que o frontend consome; mudar qualquer linha abaixo quebra a te
               toques: [ {ordem, dias, template_name} ], stage_id_perdido }
        200 { "ok": true, "aviso": null|str, "stage_id_perdido": null|str }
             `aviso` e texto para mostrar na tela: gravou, mas com uma ressalva.
-       400 corpo invalido, ligar sem etapa de gatilho (regra 1) ou etapa que nao
-           pertence ao funil escolhido — a mensagem vai em `detail`
+       400 corpo invalido, ligar sem etapa de gatilho (regra 1) ou sem canal (regra 2),
+           etapa que nao pertence ao funil escolhido, ou primeiro toque com menos de
+           1 dia (regra 6) — a mensagem vai em `detail`
        404 key desconhecida
        409 a campanha ainda nao existe no banco (o seed do startup nao rodou)
 
@@ -26,7 +27,7 @@ O frontend NAO conhece o formato do grafo de `campaign_nodes`. Este modulo tradu
 dois sentidos, e a escrita so mexe em PARAMETRO (dias, template, canal, funil, etapa) —
 nunca na topologia. Quem quiser mudar a FORMA do fluxo usa o builder de Cadencias.
 
-## Cinco regras que este arquivo existe para garantir
+## Seis regras que este arquivo existe para garantir
 
 1. **Ligar exige etapa de gatilho.** Na RPC `get_deals_stage_stagnant`,
    `p_stage_id IS NULL` **e** `p_stage_key IS NULL` significam "sem filtro de etapa" —
@@ -36,6 +37,22 @@ nunca na topologia. Quem quiser mudar a FORMA do fluxo usa o builder de Cadencia
    um PUT que traz etapa e `ativa: true` junto passa — o usuario configura e liga numa
    tacada so. E, como a validacao acontece antes de qualquer escrita, PUT recusado nao
    grava nada pela metade.
+
+1b. **Ligar exige canal.** A regra 1 sozinha nao basta: a esteira de proposta nasce do
+   seed com `stage_key='proposta_enviada'`, entao ela ja passaria na checagem de etapa
+   antes de o dono escolher canal nenhum. E sem `campaigns.channel_id` caem DUAS
+   protecoes de uma vez:
+
+   - `_conversation_followup_disabled(lead, None)` devolve `False` sem consultar nada —
+     a flag "Finalizar Conversa" que o vendedor marca em /conversas passa a ser
+     ignorada, tanto na inscricao quanto na execucao. A esteira escreve por cima de
+     conversa que ele fechou a mao.
+   - `_execute_send_node` cai em `get_channel_for_lead`, que devolve o canal da conversa
+     ATIVA MAIS RECENTE — pode ser o numero da Valeria. Um template assinado "Aqui e o
+     Joao" sairia do numero da IA, numa conversa que o vendedor nao acompanha.
+
+   Como a da etapa, roda sobre o valor JA COM o corpo aplicado (escolher canal e ligar
+   no mesmo PUT passa) e antes de qualquer escrita.
 
 2. **A etapa de Perdido da reposicao e resolvida aqui, nao digitada.** O seed nasce com
    `stage_id: None` no `mark_deal_lost` e `engine._execute_action` retorna cedo sem ele:
@@ -59,6 +76,13 @@ nunca na topologia. Quem quiser mudar a FORMA do fluxo usa o builder de Cadencia
 5. **Etapa e funil tem de casar.** A RPC filtra pelos dois; a combinacao errada nao
    levanta erro nenhum, so para de achar card. Uma esteira ligada e muda e pior do que
    um 400 na hora de salvar.
+
+6. **O primeiro toque espera no minimo 1 dia.** Ele nao grava numa espera: grava no
+   GATILHO, no relogio que `_relogio()` escolheu. Na esteira de proposta o campo escreve
+   `stage_days` e `silence_days` ja e 0 no seed — gravar 0 zera os dois, e a RPC entao
+   nao aplica filtro temporal nenhum: todo card em "Proposta Enviada" fica elegivel no
+   proximo tick, inclusive a proposta enviada ha cinco minutos. As esperas ENTRE toques
+   continuam aceitando 0 (ali 0 so quer dizer "no mesmo ciclo").
 """
 from __future__ import annotations
 
@@ -79,6 +103,9 @@ _POR_KEY = {e["key"]: e for e in ESTEIRAS}
 _ACAO_PERDIDO = "mark_deal_lost"
 _COLUNAS_NO = "id, campaign_id, type, config, next_node_id"
 _MAX_DIAS = 365
+# Regra 6: o toque 1 grava no gatilho, e gatilho com relogio zerado nao filtra tempo
+# nenhum. As esperas entre toques nao mexem no gatilho — ali 0 e legitimo.
+_MIN_DIAS_PRIMEIRO_TOQUE = 1
 
 
 # ── Traducao grafo → tela ────────────────────────────────────────────────────────
@@ -202,7 +229,12 @@ async def listar_esteiras() -> dict[str, Any]:
 
 
 def _prazo(toque: dict, ordem: int) -> int | None:
-    """Prazo do toque em dias. None quando o corpo nao trouxe o campo (preserva o atual)."""
+    """Prazo do toque em dias. None quando o corpo nao trouxe o campo (preserva o atual).
+
+    O piso muda com a posicao (regra 6): o toque 1 escreve no GATILHO e zero ali desliga
+    o filtro temporal da RPC inteira; do toque 2 em diante o numero vira uma espera entre
+    envios, onde 0 so quer dizer "no mesmo ciclo".
+    """
     if not isinstance(toque, dict) or "dias" not in toque:
         return None
     valor = toque["dias"]
@@ -210,7 +242,15 @@ def _prazo(toque: dict, ordem: int) -> int | None:
         dias = int(valor)
     except (TypeError, ValueError):
         raise HTTPException(400, f"prazo invalido no toque {ordem}: {valor!r}")
-    if dias < 0 or dias > _MAX_DIAS:
+    minimo = _MIN_DIAS_PRIMEIRO_TOQUE if ordem == 1 else 0
+    if dias < minimo or dias > _MAX_DIAS:
+        if ordem == 1:
+            raise HTTPException(
+                400,
+                "o primeiro toque tem de esperar pelo menos 1 dia (e no maximo "
+                f"{_MAX_DIAS}): com 0 o gatilho fica sem filtro de tempo e a esteira "
+                "pega todo card que estiver na etapa, inclusive o que acabou de chegar.",
+            )
         raise HTTPException(400, f"prazo do toque {ordem} tem de estar entre 0 e {_MAX_DIAS} dias")
     return dias
 
@@ -334,6 +374,21 @@ async def gravar_esteira(key: str, body: dict = Body(...)) -> dict[str, Any]:
             f"escolha a etapa de gatilho antes de ligar a esteira '{esteira['name']}': "
             "sem etapa o gatilho fica valendo para todo card aberto de todo funil "
             "(a RPC trata etapa vazia como 'sem filtro').",
+        )
+
+    # ── 3b. Regra 1b: ligar exige canal ──────────────────────────────────────────
+    # Sem canal a esteira nao fica muda (como no caso da etapa) — fica falante no lugar
+    # errado, e por dois caminhos independentes. Ver a regra 1b da docstring do modulo.
+    # Como a etapa, o valor do CORPO vale antes da checagem: escolher canal e ligar no
+    # mesmo PUT passa, e nada foi gravado ate aqui.
+    canal = body["canal_id"] or None if "canal_id" in body else campanha[0].get("channel_id")
+    if body.get("ativa") and not canal:
+        raise HTTPException(
+            400,
+            f"escolha o canal antes de ligar a esteira '{esteira['name']}': e o numero de "
+            "onde a mensagem sai. Sem ele a esteira envia pelo canal da conversa mais "
+            "recente do lead — que pode ser o da Valeria, assinando como o vendedor — e "
+            "ignora as conversas que o vendedor ja finalizou a mao em /conversas.",
         )
 
     # ── 4. Regra 2: etapa de Perdido resolvida pela API ──────────────────────────
