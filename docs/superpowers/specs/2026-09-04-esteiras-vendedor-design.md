@@ -379,6 +379,26 @@ que o frontend não precise conhecer o formato do grafo.
 Escrita **não** aceita reescrever a topologia do grafo — só os parâmetros. Quem
 quiser mudar a forma do fluxo usa o builder.
 
+**Duas regras que a execução do seed obrigou a acrescentar:**
+
+1. **Ligar exige etapa configurada.** Na RPC, `p_stage_id IS NULL` e
+   `p_stage_key IS NULL` significam "sem filtro de etapa" — fail-open. Uma esteira
+   ativada antes de ser configurada ficaria elegível a **todo card aberto de todo
+   funil**, 20 por tick, repetindo. O `status='draft'` do seed protege só até o
+   primeiro clique. Então o `PUT` recusa `ativa: true` enquanto o gatilho não tiver
+   `stage_id`. O aviso de "quantos cards ficam elegíveis" (§8) é o segundo anteparo,
+   não o primeiro.
+
+2. **O `stage_id` de Perdido da E2 é resolvido pela API, não digitado.** O seed
+   nasce com `stage_id: None` na ação `mark_deal_lost`, e `_execute_action` retorna
+   cedo quando ele falta: a esteira rodaria os três toques e terminaria **sem mover
+   o card**, que é justamente a decisão 5 da ata. Como a tela mostra a ação final
+   como texto fixo, ninguém preencheria esse campo. Então, ao gravar `funil_id` da
+   esteira de reposição, a API resolve sozinha a etapa de perda daquele funil,
+   usando o mesmo vocabulário de quatro keys de `leads/service.py::_perdido_stage_id`
+   (`fechado_perdido`, `perdido`, `encerrado`, e o fallback que aquela função já
+   aplica).
+
 ---
 
 ## 7. Templates Meta
