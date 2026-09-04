@@ -192,7 +192,14 @@ def pause_enrollment(enrollment_id: str) -> None:
 
 
 def get_active_enrollment_for_lead(lead_id: str) -> dict[str, Any] | None:
-    """Used by webhook to check if incoming reply should affect a campaign."""
+    """UM enrollment ativo do lead — o primeiro que o PostgREST devolver.
+
+    ATENÇÃO: "um" é arbitrário. Sem `ORDER BY`, o `.limit(1)` devolve a linha que o
+    planner entregar primeiro. Quem precisa AGIR sobre a resposta do lead deve usar
+    `get_active_enrollments_for_lead` (plural): `is_already_enrolled` é por CAMPANHA,
+    então o mesmo lead pode estar em várias esteiras ao mesmo tempo e tratar só uma
+    deixa as outras armadas.
+    """
     sb = get_supabase()
     result = (
         sb.table("campaign_enrollments")
@@ -204,6 +211,35 @@ def get_active_enrollment_for_lead(lead_id: str) -> dict[str, Any] | None:
         .execute()
     )
     return result.data[0] if result.data else None
+
+
+def get_active_enrollments_for_lead(lead_id: str) -> list[dict[str, Any]]:
+    """TODOS os enrollments ativos do lead, cada um com o nó em que está parado.
+
+    Existe porque `is_already_enrolled` é por CAMPANHA: nada impede — e no desenho das
+    esteiras é o caso NORMAL — que o mesmo lead esteja em duas ao mesmo tempo (card de
+    recompra em "Já chamado" na esteira de reposição + card em "Proposta Enviada" na
+    esteira de proposta; `ensure_reposicao_deal` cria cards de recompra e a base tem
+    leads com vários deals).
+
+    Com o `.limit(1)` da irmã singular, a resposta do lead encerrava a linha sorteada
+    pelo banco: ou a esteira de proposta mandava o toque de D+8 para quem já tinha
+    respondido, ou a de reposição rodava até o fim e marcava como PERDIDO o card de um
+    lead que engajou.
+
+    Sem `limit`: um lead tem unidades de esteira na casa das unidades, e devolver de
+    menos aqui é exatamente o bug que esta função corrige.
+    """
+    sb = get_supabase()
+    result = (
+        sb.table("campaign_enrollments")
+        .select("*, campaign_nodes!campaign_enrollments_current_node_id_fkey(type, config)")
+        .eq("lead_id", lead_id)
+        .eq("status", "active")
+        .eq("env_tag", _ENV_TAG)
+        .execute()
+    )
+    return result.data or []
 
 
 def get_campaigns_with_trigger_type(trigger_type: str) -> list[dict[str, Any]]:

@@ -23,7 +23,7 @@ def _roda(node, trigger_nodes=None, list_nodes_side_effect=None):
     else:
         list_kwargs["return_value"] = trigger_nodes if trigger_nodes is not None else []
     with (
-        patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=enrollment),
+        patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[enrollment]),
         patch("app.campaigns.service.list_nodes", **list_kwargs) as mock_list,
         patch("app.campaigns.worker.cancel_enrollment") as mock_cancel,
         patch("app.campaigns.worker.pause_enrollment") as mock_pause,
@@ -89,7 +89,7 @@ class TestFailSafe:
         """Enrollments antigos/parciais nao podem cancelar por acidente."""
         enrollment = {"id": "e1", "campaign_nodes": {"type": "wait", "config": {}}}
         with (
-            patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=enrollment),
+            patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[enrollment]),
             patch("app.campaigns.service.list_nodes") as mock_list,
             patch("app.campaigns.worker.cancel_enrollment") as mock_cancel,
             patch("app.campaigns.worker.pause_enrollment") as mock_pause,

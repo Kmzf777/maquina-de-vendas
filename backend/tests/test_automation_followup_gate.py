@@ -143,7 +143,7 @@ class TestKeywordReceivedRespectsFollowupGate:
 class TestHandleCampaignReplyUniversal:
     def test_pauses_enrollment_when_current_node_is_wait(self):
         enrollment = {"id": "e1", "campaign_nodes": {"type": "wait", "config": {"days": 5}}}
-        with patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=enrollment), \
+        with patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[enrollment]), \
              patch("app.campaigns.worker.pause_enrollment") as mock_pause, \
              patch("app.campaigns.worker.cancel_enrollment") as mock_cancel:
             handle_campaign_reply("lead-1")
@@ -152,14 +152,14 @@ class TestHandleCampaignReplyUniversal:
 
     def test_pauses_enrollment_when_current_node_is_condition(self):
         enrollment = {"id": "e1", "campaign_nodes": {"type": "condition", "config": {}}}
-        with patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=enrollment), \
+        with patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[enrollment]), \
              patch("app.campaigns.worker.pause_enrollment") as mock_pause:
             handle_campaign_reply("lead-1")
         mock_pause.assert_called_once_with("e1")
 
     def test_cancels_when_send_with_on_reply_cancel(self):
         enrollment = {"id": "e1", "campaign_nodes": {"type": "send", "config": {"on_reply": "cancel"}}}
-        with patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=enrollment), \
+        with patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[enrollment]), \
              patch("app.campaigns.worker.cancel_enrollment") as mock_cancel, \
              patch("app.campaigns.worker.pause_enrollment") as mock_pause:
             handle_campaign_reply("lead-1")
@@ -168,13 +168,13 @@ class TestHandleCampaignReplyUniversal:
 
     def test_pauses_when_send_with_on_reply_pause(self):
         enrollment = {"id": "e1", "campaign_nodes": {"type": "send", "config": {"on_reply": "pause"}}}
-        with patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=enrollment), \
+        with patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[enrollment]), \
              patch("app.campaigns.worker.pause_enrollment") as mock_pause:
             handle_campaign_reply("lead-1")
         mock_pause.assert_called_once_with("e1")
 
     def test_noop_when_no_active_enrollment(self):
-        with patch("app.campaigns.service.get_active_enrollment_for_lead", return_value=None), \
+        with patch("app.campaigns.service.get_active_enrollments_for_lead", return_value=[]), \
              patch("app.campaigns.worker.pause_enrollment") as mock_pause:
             handle_campaign_reply("lead-1")
         mock_pause.assert_not_called()

@@ -1350,6 +1350,33 @@ async def process_buffered_messages(
     except Exception as e:
         logger.warning("[REFLEX] advance_deal_on_reply falhou p/ %s: %s", phone, e)
 
+    # OPT-OUT DETERMINÍSTICO (sem LLM) — a saída digna dos templates.
+    #
+    # Os templates de esteira/disparo trazem um QUICK_REPLY de saída ("Nao tenho interesse",
+    # "Parar mensagens"). Só que `leads.opt_out` era gravado exclusivamente pela tool
+    # `registrar_optout`, e só o agente LLM a chama. O público das esteiras tem
+    # `ai_enabled=False` por definição (o handoff desliga a IA) num número de vendedor que
+    # roda `mode='human'` — nos dois casos ESTE fluxo retorna antes do agente. Resultado:
+    # apertar o botão cancelava um enrollment e nada mais; como as esteiras reinscrevem o
+    # lead depois de terminarem, quem disse "não tenho interesse" voltava a receber.
+    #
+    # POSIÇÃO: aqui, e não dentro do ramo de `ai_enabled=False`. O gate de canal humano
+    # (`mode == 'human'`) retorna ANTES daquele ramo, e é justamente o número do vendedor —
+    # gravar lá em baixo não pegaria o público principal da esteira. Também precisa ficar
+    # DEPOIS de `advance_deal_on_reply`: aquele reflexo move o card para 'Respondeu' e
+    # desfaria a ida para a Blacklist.
+    #
+    # ESCOPO: só quando o LLM não vai arbitrar este turno. Para o público da IA continuam
+    # valendo a escada do prompt (Anchor-Disrupt-Ask antes de descartar) e o guardrail
+    # anti-falso-positivo de Blacklist de 22/06 — o parser achata clique de botão em texto
+    # comum, então blacklistar aqui transformaria negativa reflexa digitada em banimento.
+    if channel.get("mode", "ai") == "human" or not VALERIA_ENABLED or lead.get("ai_enabled") is False:
+        try:
+            from app.campaigns.worker import handle_optout_reply
+            handle_optout_reply(lead, resolved_text, conversation["id"])
+        except Exception as oe:
+            logger.warning("[OPT-OUT] caminho determinístico falhou p/ %s: %s", phone, oe)
+
     # Notify campaign worker of reply
     try:
         from app.campaigns.worker import handle_campaign_reply
