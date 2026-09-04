@@ -72,6 +72,30 @@ describe("describeNode — linguagem de operador por tipo de nó", () => {
     ).toContain("total gasto pelo lead é ≥ R$ 500");
   });
 
+  it("deal_stage_stagnation descreve os dois relógios e o falante", () => {
+    const s = describeNode("trigger", {
+      trigger_type: "deal_stage_stagnation",
+      stage_id: "uuid-ja-chamado", stage_days: 0, silence_days: 15, last_speaker: "nos",
+    });
+    expect(s).toContain("CARD");
+    expect(s).toContain("15 dias sem nenhuma mensagem");
+    expect(s).not.toContain("parado na mesma coluna");
+    expect(s).toContain("por último fomos nós");
+  });
+
+  it("deal_stage_stagnation combina os dois relógios por E", () => {
+    const s = describeNode("trigger", {
+      trigger_type: "deal_stage_stagnation",
+      stage_days: 3, silence_days: 3, last_speaker: "qualquer",
+    });
+    expect(s).toContain("3 dias parado na mesma coluna E 3 dias sem nenhuma mensagem");
+  });
+
+  it("deal_stage_stagnation avisa quando nenhum prazo foi configurado", () => {
+    const s = describeNode("trigger", { trigger_type: "deal_stage_stagnation" });
+    expect(s).toContain("não vai disparar");
+  });
+
   it("action usa o rótulo humano e o alvo", () => {
     expect(describeNode("action", { action_type: "add_tag", tag_name: "VIP" })).toContain('Adicionar tag — "VIP"');
   });

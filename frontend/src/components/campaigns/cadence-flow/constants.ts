@@ -42,7 +42,7 @@ export const TRIGGER_LABELS: Record<string, string> = {
   no_message: "Sem mensagem", stage_stagnation: "Estagnação", stage_enter: "Entrada em stage", post_broadcast: "Pós-disparo",
   sale_created: "Venda criada", repurchase_window: "Janela de recompra", no_sale_in_stage: "Sem venda no stage",
   tag_added: "Tag adicionada", deal_stage_enter: "Entrou em stage (deal)", deal_closed_lost: "Deal perdido",
-  keyword_received: "Palavra-chave recebida",
+  keyword_received: "Palavra-chave recebida", deal_stage_stagnation: "Card parado no funil",
 };
 export const ACTION_LABELS: Record<string, string> = {
   move_stage: "Mover stage do lead",
@@ -57,6 +57,7 @@ export const ACTION_LABELS: Record<string, string> = {
   assign_round_robin: "Atribuir (round-robin)",
   create_deal: "Criar deal",
   assign_to: "Atribuir a vendedor",
+  alert_seller: "Avisar vendedor",
 };
 
 // Ícones por subtype — os nós no canvas mostram o ícone do subtipo, não o genérico
@@ -64,7 +65,7 @@ export const TRIGGER_ICONS: Record<string, string> = {
   stage_enter: "⚡", stage_stagnation: "🕐", no_message: "💤", post_broadcast: "📡",
   sale_created: "💰", repurchase_window: "🔄", no_sale_in_stage: "📉",
   tag_added: "🏷️", deal_stage_enter: "🤝", deal_closed_lost: "❌",
-  keyword_received: "🔍",
+  keyword_received: "🔍", deal_stage_stagnation: "📋",
 };
 export const ACTION_ICONS: Record<string, string> = {
   move_stage: "📋",
@@ -79,6 +80,7 @@ export const ACTION_ICONS: Record<string, string> = {
   assign_round_robin: "🎯",
   create_deal: "💼",
   assign_to: "👤",
+  alert_seller: "🔔",
 };
 
 export const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: string; label: string }[] = [
@@ -98,6 +100,7 @@ export const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: s
   { type: "action",    subtype: "deactivate_agent",  icon: "🤖", label: "Desativar agente" },
   { type: "action",    subtype: "assign_to",         icon: "👤", label: "Atribuir vendedor" },
   { type: "action",    subtype: "assign_round_robin", icon: "🎯", label: "Atribuir round-robin" },
+  { type: "action",    subtype: "alert_seller",      icon: "🔔", label: "Avisar vendedor" },
   { type: "end",       subtype: "",                   icon: "🏁", label: "Encerrar" },
 ];
 
@@ -113,6 +116,7 @@ export const PALETTE_TRIGGERS: PaletteItem[] = [
   { type: "trigger", subtype: "deal_stage_enter",  icon: "🤝", label: "Entrou em stage (deal)",  desc: "Deal mudou de stage" },
   { type: "trigger", subtype: "deal_closed_lost",  icon: "❌", label: "Deal perdido",             desc: "Deal marcado como perdido" },
   { type: "trigger", subtype: "keyword_received",  icon: "🔍", label: "Palavra-chave",            desc: "Lead enviou palavra-chave" },
+  { type: "trigger", subtype: "deal_stage_stagnation", icon: "📋", label: "Card parado no funil", desc: "Parado X dias numa coluna" },
 ];
 export const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "send",      subtype: "",                  icon: "📨", label: "Enviar template",       desc: "Mensagem HSM Meta" },
@@ -131,5 +135,6 @@ export const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "action",    subtype: "deactivate_agent",  icon: "🤖", label: "Desativar agente",      desc: "Desliga ValerIA" },
   { type: "action",    subtype: "assign_to",         icon: "👤", label: "Atribuir vendedor",     desc: "Lead → vendedor fixo" },
   { type: "action",    subtype: "assign_round_robin", icon: "🎯", label: "Round-robin",          desc: "Rodízio entre vendedores" },
+  { type: "action",    subtype: "alert_seller",      icon: "🔔", label: "Avisar vendedor",       desc: "Alerta + nota no card" },
   { type: "end",       subtype: "",                  icon: "🏁", label: "Encerrar",              desc: "Fim da campanha" },
 ];

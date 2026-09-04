@@ -121,8 +121,40 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
                 <option value="deal_stage_enter">Entrou em stage (deal)</option>
                 <option value="deal_closed_lost">Deal perdido</option>
                 <option value="keyword_received">Palavra-chave recebida</option>
+                <option value="deal_stage_stagnation">Card parado no funil</option>
               </select>
             </div>
+            {(c.trigger_type as string) === "deal_stage_stagnation" && (
+              <>
+                <div style={field}>
+                  <label style={label}>Coluna do funil (deal)</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.stage_id as string) ?? ""} onChange={e => set("stage_id", e.target.value)}>
+                    <option value="">— Qualquer coluna —</option>
+                    {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
+                  </select>
+                </div>
+                <div style={field}>
+                  <label style={label}>Dias parado na coluna (0 = ignora)</label>
+                  <input type="number" style={input} value={(c.stage_days as number) ?? 0} onChange={e => set("stage_days", Number(e.target.value))} min={0} />
+                </div>
+                <div style={field}>
+                  <label style={label}>Dias sem mensagem (0 = ignora)</label>
+                  <input type="number" style={input} value={(c.silence_days as number) ?? 0} onChange={e => set("silence_days", Number(e.target.value))} min={0} />
+                </div>
+                <div style={field}>
+                  <label style={label}>Quem falou por último</label>
+                  <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.last_speaker as string) ?? "qualquer"} onChange={e => set("last_speaker", e.target.value)}>
+                    <option value="qualquer">Tanto faz</option>
+                    <option value="lead">O lead</option>
+                    <option value="nos">Nós</option>
+                  </select>
+                </div>
+                <p style={{ fontSize: 11, color: "#9b9590", marginTop: -8, marginBottom: 14 }}>
+                  Olha o card no Kanban (deals), não o segmento do lead. Os dois relógios
+                  combinam por E — deixe em 0 o que não quiser usar.
+                </p>
+              </>
+            )}
             {(c.trigger_type === "no_message" || c.trigger_type === "stage_stagnation") && (
               <div style={field}><label style={label}>Dias</label><input type="number" style={input} value={(c.days as number) ?? 0} onChange={e => set("days", Number(e.target.value))} min={1} /></div>
             )}
@@ -440,6 +472,51 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
                     {allStages.map(s => <option key={s.id} value={s.id}>{s.pipeline_name} › {s.label}</option>)}
                   </select>
                 </div>
+              )}
+
+              {at === "mark_deal_lost" && (
+                <div style={field}>
+                  <label style={label}>Motivo da perda (opcional)</label>
+                  <input
+                    type="text"
+                    style={input}
+                    value={(c.lost_reason as string) ?? ""}
+                    onChange={e => set("lost_reason", e.target.value)}
+                    placeholder="Ex: sem resposta após a esteira"
+                  />
+                  <p style={{ fontSize: 11, color: "#9b9590", marginTop: 4 }}>
+                    Gravado em <code>deals.lost_reason</code> — aparece no card e nos relatórios de perda.
+                  </p>
+                </div>
+              )}
+
+              {at === "alert_seller" && (
+                <>
+                  <div style={field}>
+                    <label style={label}>Gravidade</label>
+                    <select style={{ ...input, appearance: "none" } as React.CSSProperties} value={(c.severity as string) ?? "warning"} onChange={e => set("severity", e.target.value)}>
+                      <option value="info">Informativo</option>
+                      <option value="warning">Atenção</option>
+                      <option value="critical">Crítico</option>
+                    </select>
+                  </div>
+                  <div style={field}>
+                    <label style={label}>Título do alerta (suporta {`{{nome}}`}, {`{{empresa}}`})</label>
+                    <input type="text" style={input} value={(c.title as string) ?? ""} onChange={e => set("title", e.target.value)} placeholder="Ex: Esteira encerrada — {{nome}}" />
+                  </div>
+                  <div style={field}>
+                    <label style={label}>Mensagem do alerta</label>
+                    <textarea
+                      style={{ ...input, minHeight: 70, resize: "vertical" } as React.CSSProperties}
+                      value={(c.message_template as string) ?? ""}
+                      onChange={e => set("message_template", e.target.value)}
+                      placeholder="Ex: {{nome}} não respondeu a nenhuma mensagem da esteira. Vale uma ligação."
+                    />
+                    <p style={{ fontSize: 11, color: "#9b9590", marginTop: 4 }}>
+                      Cria um alerta no sistema e uma nota na timeline do lead. Não envia nada ao lead.
+                    </p>
+                  </div>
+                </>
               )}
 
               {(at === "add_tag" || at === "remove_tag") && (

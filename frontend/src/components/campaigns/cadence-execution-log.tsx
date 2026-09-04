@@ -11,7 +11,7 @@ interface ExecutionLogRow {
   lead_id: string | null;
   node_id: string | null;
   node_type: string | null;
-  status: "done" | "failed" | "skipped";
+  status: "done" | "failed" | "skipped" | "cancelled";
   log: string | null;
   created_at: string;
 }
@@ -21,10 +21,18 @@ interface Props {
 }
 
 // ─── Design constants — mirrors cadence-flow-builder palette ──────────────────
-const STATUS_CONFIG: Record<string, { label: string; dot: string; bg: string; border: string; text: string }> = {
-  done:    { label: "OK",      dot: "#1A9B6C", bg: "#edfaf5", border: "#a7f0d4", text: "#14633d" },
-  failed:  { label: "FALHOU",  dot: "#ef4444", bg: "#fff5f5", border: "#fecaca", text: "#dc2626" },
-  skipped: { label: "PULADO",  dot: "#C4920C", bg: "#fff9ed", border: "#fde68a", text: "#92400e" },
+// `cancelled` NÃO é sucesso nem falha: é encerramento deliberado (a guarda de etapa
+// tira o lead da esteira quando o card muda de coluna, e a janela de 24h fechada
+// cancela o envio). Sem entrada própria ele caía no `?? STATUS_CONFIG.done` do
+// LogEntry e um encerramento aparecia como "OK" verde — pior do que não aparecer.
+// Exportado para o teste: é o mapa, não a renderização, que carrega a regra.
+// `label` = crachá da linha ("FALHOU"); `short` = pílula do resumo, onde o texto vem
+// depois de um número ("3 FALHA").
+export const STATUS_CONFIG: Record<string, { label: string; short: string; dot: string; bg: string; border: string; text: string }> = {
+  done:      { label: "OK",        short: "OK",        dot: "#1A9B6C", bg: "#edfaf5", border: "#a7f0d4", text: "#14633d" },
+  failed:    { label: "FALHOU",    short: "FALHA",     dot: "#ef4444", bg: "#fff5f5", border: "#fecaca", text: "#dc2626" },
+  skipped:   { label: "PULADO",    short: "PULADO",    dot: "#C4920C", bg: "#fff9ed", border: "#fde68a", text: "#92400e" },
+  cancelled: { label: "ENCERRADO", short: "ENCERRADO", dot: "#7C4DB8", bg: "#f7f3fd", border: "#ddcdf5", text: "#5b3590" },
 };
 
 const NODE_TYPE_ICONS: Record<string, string> = {
@@ -197,9 +205,11 @@ export function CadenceExecutionLog({ campaignId }: Props) {
   }, [campaignId, fetchRows, markNew]);
 
   // ── Counts for summary badge ───────────────────────────────────────────────
-  const countDone    = rows.filter(r => r.status === "done").length;
-  const countFailed  = rows.filter(r => r.status === "failed").length;
-  const countSkipped = rows.filter(r => r.status === "skipped").length;
+  // Derivado de STATUS_CONFIG (e não de três filtros escritos à mão) para que um
+  // status novo apareça no resumo pela mesma edição que lhe dá cor no log.
+  const counts = Object.keys(STATUS_CONFIG)
+    .map(status => ({ status, cfg: STATUS_CONFIG[status], n: rows.filter(r => r.status === status).length }))
+    .filter(x => x.n > 0);
 
   return (
     <div style={{
@@ -234,35 +244,17 @@ export function CadenceExecutionLog({ campaignId }: Props) {
         </span>
 
         {/* Summary pills */}
-        {rows.length > 0 && (
+        {counts.length > 0 && (
           <div style={{ display: "flex", gap: 5, marginLeft: 4 }}>
-            {countDone > 0 && (
-              <span style={{
+            {counts.map(({ status, cfg, n }) => (
+              <span key={status} style={{
                 padding: "1px 7px", borderRadius: 4,
-                background: "#edfaf5", border: "1px solid #a7f0d4",
-                fontSize: 9, fontWeight: 700, color: "#14633d", letterSpacing: ".4px",
+                background: cfg.bg, border: `1px solid ${cfg.border}`,
+                fontSize: 9, fontWeight: 700, color: cfg.text, letterSpacing: ".4px",
               }}>
-                {countDone} OK
+                {n} {cfg.short}
               </span>
-            )}
-            {countFailed > 0 && (
-              <span style={{
-                padding: "1px 7px", borderRadius: 4,
-                background: "#fff5f5", border: "1px solid #fecaca",
-                fontSize: 9, fontWeight: 700, color: "#dc2626", letterSpacing: ".4px",
-              }}>
-                {countFailed} FALHA
-              </span>
-            )}
-            {countSkipped > 0 && (
-              <span style={{
-                padding: "1px 7px", borderRadius: 4,
-                background: "#fff9ed", border: "1px solid #fde68a",
-                fontSize: 9, fontWeight: 700, color: "#92400e", letterSpacing: ".4px",
-              }}>
-                {countSkipped} PULADO
-              </span>
-            )}
+            ))}
           </div>
         )}
 

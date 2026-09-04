@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { CampaignNode } from "@/lib/types";
-import { getDefaultConfig, nodeDetail, toRFNode, toRFEdges } from "./helpers";
+import { getDefaultConfig, nodeDetail, resolveNodeIcon, toRFNode, toRFEdges } from "./helpers";
+import {
+  ACTION_ICONS, ACTION_LABELS, PALETTE_ACTIONS, PALETTE_TRIGGERS,
+  TRIGGER_ICONS, TRIGGER_LABELS,
+} from "./constants";
 
 function makeNode(overrides: Partial<CampaignNode>): CampaignNode {
   return {
@@ -110,6 +114,46 @@ describe("getDefaultConfig", () => {
 
   it("action move_stage inclui campo stage vazio", () => {
     expect(getDefaultConfig("action", "move_stage")).toEqual({ action_type: "move_stage", stage: "" });
+  });
+
+  it("trigger deal_stage_stagnation usa os dois relógios, não `days`", () => {
+    expect(getDefaultConfig("trigger", "deal_stage_stagnation")).toEqual({
+      trigger_type: "deal_stage_stagnation",
+      stage_id: "",
+      stage_days: 0,
+      silence_days: 15,
+      last_speaker: "qualquer",
+    });
+  });
+
+  it("action alert_seller traz severity, title e message_template", () => {
+    expect(getDefaultConfig("action", "alert_seller")).toEqual({
+      action_type: "alert_seller",
+      severity: "warning",
+      title: "",
+      message_template: "",
+    });
+  });
+});
+
+describe("cobertura dos mapas do builder", () => {
+  // Um subtype presente na paleta mas ausente de TRIGGER_LABELS/ACTION_LABELS é
+  // exatamente o bug que motivou esta rodada: o <select> do inspector não tem a
+  // opção, exibe a primeira, e salvar troca silenciosamente o tipo do nó.
+  it("todo subtype da paleta tem rótulo e ícone", () => {
+    for (const item of PALETTE_TRIGGERS) {
+      expect(TRIGGER_LABELS[item.subtype], `label do trigger ${item.subtype}`).toBeTruthy();
+      expect(TRIGGER_ICONS[item.subtype], `ícone do trigger ${item.subtype}`).toBeTruthy();
+    }
+    for (const item of PALETTE_ACTIONS.filter(i => i.type === "action")) {
+      expect(ACTION_LABELS[item.subtype], `label da ação ${item.subtype}`).toBeTruthy();
+      expect(ACTION_ICONS[item.subtype], `ícone da ação ${item.subtype}`).toBeTruthy();
+    }
+  });
+
+  it("resolveNodeIcon usa o ícone do subtipo novo", () => {
+    expect(resolveNodeIcon("trigger", { trigger_type: "deal_stage_stagnation" })).toBe("📋");
+    expect(resolveNodeIcon("action", { action_type: "alert_seller" })).toBe("🔔");
   });
 });
 

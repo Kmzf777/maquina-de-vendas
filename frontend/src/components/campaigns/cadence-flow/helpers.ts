@@ -7,6 +7,15 @@ export function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<s
   switch (type) {
     case "trigger":
       if (subtype === "keyword_received") return { trigger_type: "keyword_received", keywords: [] };
+      // Card parado numa COLUNA do Kanban — não usa `days` (o gatilho tem dois
+      // relógios: tempo na etapa e tempo de silêncio). stage_id vazio = qualquer
+      // etapa; o backend converte "" em null antes de chamar a RPC.
+      if (subtype === "deal_stage_stagnation") {
+        return {
+          trigger_type: "deal_stage_stagnation",
+          stage_id: "", stage_days: 0, silence_days: 15, last_speaker: "qualquer",
+        };
+      }
       return { trigger_type: subtype || "no_message", days: 30 };
     case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
     case "send_text": return { message_text: "", on_reply: "pause" };
@@ -22,6 +31,11 @@ export function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<s
       if (at === "create_deal") base.title_template = "";
       if (at === "assign_to") base.user_id = "";
       if (at === "assign_round_robin") base.user_ids = [];
+      if (at === "alert_seller") {
+        base.severity = "warning";
+        base.title = "";
+        base.message_template = "";
+      }
       return base;
     }
     case "end":       return { label: "Concluído", final_actions: [] };

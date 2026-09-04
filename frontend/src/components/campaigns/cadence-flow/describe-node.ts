@@ -31,6 +31,21 @@ function describeTrigger(c: Config): string {
       return `Inicia quando o lead fica ${dias(c.days)} parado${c.stage_filter ? ` no stage "${c.stage_filter}"` : " no mesmo stage"}.`;
     case "stage_enter":
       return `Inicia quando o lead entra${c.stage_filter ? ` no stage "${c.stage_filter}"` : " em qualquer stage"}.`;
+    case "deal_stage_stagnation": {
+      // Dois relógios independentes que combinam por E; 0 desliga o respectivo filtro.
+      const naEtapa = Number(c.stage_days ?? 0);
+      const emSilencio = Number(c.silence_days ?? 0);
+      const relogios = [
+        naEtapa > 0 ? `${dias(naEtapa)} parado na mesma coluna` : "",
+        emSilencio > 0 ? `${dias(emSilencio)} sem nenhuma mensagem` : "",
+      ].filter(Boolean);
+      const quando = relogios.length ? relogios.join(" E ") : "sem nenhum prazo configurado (não vai disparar)";
+      const falante =
+        c.last_speaker === "lead" ? " Só entra se quem falou por último foi o lead."
+        : c.last_speaker === "nos" ? " Só entra se quem falou por último fomos nós."
+        : "";
+      return `Inicia quando o CARD do lead (Kanban de deals${c.stage_id ? ", numa coluna específica" : ", qualquer coluna aberta"}) fica ${quando}.${falante}`;
+    }
     case "post_broadcast":
       return c.replied_only
         ? "Inicia após um disparo, SÓ para quem respondeu."
@@ -107,7 +122,8 @@ export function describeNode(type: CampaignNodeType, config: Config): string {
       const tipo = (config.action_type as string) ?? "";
       const nome = ACTION_LABELS[tipo] ?? tipo ?? "…";
       const alvo =
-        (config.stage as string) || (config.tag_name as string) || (config.title_template as string) || "";
+        (config.stage as string) || (config.tag_name as string) || (config.title_template as string)
+        || (config.title as string) || (config.lost_reason as string) || "";
       return `Executa: ${nome}${alvo ? ` — "${alvo}"` : ""}. Não envia mensagem ao lead.`;
     }
     case "end": {

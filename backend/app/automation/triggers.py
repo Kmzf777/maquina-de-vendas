@@ -11,6 +11,9 @@ from app.campaigns.service import (
 from app.automation import engine as _engine
 from app.campaigns.conversions import fire_conversion_for_deal_stage
 from app.leads.reposicao import ensure_reposicao_deal, deal_is_won
+# Direto da origem (app.leads.service). app.broadcast.worker so re-exporta, e
+# importa-lo aqui puxaria a cadeia inteira do broadcast por uma funcao de uma linha.
+from app.leads.service import is_lead_blacklisted
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +204,62 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         for lead in results:
             if not is_already_enrolled(tn["campaign_id"], lead["id"]) and tn.get("next_node_id"):
                 _safe_enroll(tn, lead["id"], now)
+
+    # ── deal_stage_stagnation ─────────────────────────────────────────────────
+    # Card parado numa COLUNA DO KANBAN (deals.stage_id), nao no segmento do lead.
+    # E o gatilho das tres esteiras do vendedor; a RPC resolve etapa, silencio,
+    # falante e publico numa consulta so (ver 20260904_esteiras_vendedor.sql).
+    for tn in get_campaigns_with_trigger_type("deal_stage_stagnation"):
+        cfg = tn.get("config") or {}
+        if not tn.get("next_node_id"):
+            continue
+        # `or None` nos tres primeiros: o <select> do builder usa value="" para
+        # "— qualquer —", e "" mandado num parametro uuid da RPC e erro de sintaxe
+        # no Postgres, nao "sem filtro". Sem isso, gatilho salvo sem etapa explicita
+        # morreria todo tick no except abaixo.
+        args = {
+            "p_stage_id": cfg.get("stage_id") or None,
+            "p_stage_key": cfg.get("stage_key") or None,
+            "p_pipeline_id": cfg.get("pipeline_id") or None,
+            "p_channel_id": tn.get("channel_id"),
+            "p_stage_days": int(cfg.get("stage_days") or 0),
+            "p_silence_days": int(cfg.get("silence_days") or 0),
+            "p_last_speaker": cfg.get("last_speaker") or "qualquer",
+            "p_audience": tn.get("audience") or "ia",
+            "p_limit": int(cfg.get("limit") or 20),
+        }
+        try:
+            linhas = sb.rpc("get_deals_stage_stagnant", args).execute().data or []
+        except Exception as exc:
+            logger.error("[AUTOMATION] deal_stage_stagnation: RPC falhou: %s", exc)
+            continue
+        for linha in linhas:
+            lead_id = linha["lead_id"]
+            if is_already_enrolled(tn["campaign_id"], lead_id):
+                continue
+            if _engine._conversation_followup_disabled(lead_id, tn.get("channel_id")):
+                continue
+            # Guarda que os gatilhos antigos nao tem: a esteira de reposicao varre a
+            # base inteira e e exatamente onde esta quem ja pediu para nao receber mais.
+            if is_lead_blacklisted(lead_id):
+                logger.info("[AUTOMATION] deal_stage_stagnation: lead %s na blacklist — skip", lead_id)
+                continue
+            try:
+                create_enrollment(
+                    campaign_id=tn["campaign_id"],
+                    lead_id=lead_id,
+                    current_node_id=tn["next_node_id"],
+                    next_execute_at=now,
+                    deal_id=linha.get("deal_id"),
+                    metadata={"guard": {
+                        "deal_id": linha.get("deal_id"),
+                        "stage_id": linha.get("stage_id"),
+                        "stage_key": cfg.get("stage_key") or None,
+                    }},
+                )
+                logger.info("[AUTOMATION] Enrolled %s via deal_stage_stagnation", lead_id)
+            except Exception as exc:
+                logger.warning("[AUTOMATION] deal_stage_stagnation enroll falhou p/ %s: %s", lead_id, exc)
 
 
 def _safe_enroll(trigger_node: dict, lead_id: str, now: datetime) -> None:
