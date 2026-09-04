@@ -74,6 +74,16 @@ async def lifespan(app: FastAPI):
     from app.campaigns.system_cadence import sync_valeria_cadence_campaign
     await asyncio.to_thread(sync_valeria_cadence_campaign)
 
+    # Esteiras do vendedor: cria as 4 campanhas que ainda não existem, em `draft`.
+    # Ao contrário do espelho acima, o seed NÃO re-sincroniza — campanha já criada é
+    # território do dono (prazo, template e etapa saem da tela `/campanhas > Esteiras`).
+    # Mesmo fail-soft: a API nunca deixa de subir por causa do seed.
+    try:
+        from app.campaigns.esteiras import seed_esteiras
+        await asyncio.to_thread(seed_esteiras)
+    except Exception as exc:
+        logger.error("[STARTUP] seed das esteiras falhou: %s", exc)
+
     flusher_task = asyncio.create_task(run_flusher(app))
     watchdog_task = asyncio.create_task(run_watchdog(app))
 
