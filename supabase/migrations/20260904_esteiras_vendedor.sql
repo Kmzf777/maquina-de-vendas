@@ -88,6 +88,22 @@ ALTER TABLE campaign_enrollments ADD COLUMN IF NOT EXISTS metadata jsonb NOT NUL
 -- p_stage_days  = dias parado na ETAPA   (relogio do item 8: "proposta enviada conta 3 dias")
 -- p_silence_days= dias sem MENSAGEM      (relogio dos itens 6 e 7: "sem conversa")
 -- Os dois combinam por AND; 0 desliga o respectivo filtro.
+--
+-- A funcao NAO devolve so "quem esta parado": ela ja devolve "quem esta parado E pode
+-- receber". Os motivos PERMANENTES de pulo (cooldown, opt-out, conversa finalizada,
+-- numero errado) moram aqui, e nao so no laco Python, por uma razao operacional:
+-- o gatilho processa no maximo `p_limit` linhas por tick, ORDENADAS pelo silencio mais
+-- antigo. Lead que o Python pula nunca recebe mensagem, entao o `last_message_at` dele
+-- nunca muda e ele fica no TOPO da ordenacao para sempre, ocupando um slot. Bastam
+-- `p_limit` leads assim para a esteira devolver 20 linhas, pular as 20 e parar de
+-- funcionar em silencio — sem erro, sem alerta. As guardas Python continuam existindo
+-- como defesa em profundidade; o que elas nao podem e ser a UNICA linha.
+--
+-- DROP antes do CREATE: `p_campaign_id`/`p_cooldown_days` mudam a lista de tipos, e
+-- CREATE OR REPLACE nesse caso cria um OVERLOAD em vez de substituir. Com as duas
+-- assinaturas no catalogo, uma chamada de 9 argumentos casa com as duas e o Postgres
+-- levanta "function ... is not unique" — a esteira para de rodar. Mesmo motivo do bloco 5.
+DROP FUNCTION IF EXISTS get_deals_stage_stagnant(uuid, text, uuid, uuid, int, int, text, text, int);
 CREATE OR REPLACE FUNCTION get_deals_stage_stagnant(
   p_stage_id      uuid,
   p_stage_key     text,
@@ -97,7 +113,11 @@ CREATE OR REPLACE FUNCTION get_deals_stage_stagnant(
   p_silence_days  int,
   p_last_speaker  text,
   p_audience      text,
-  p_limit         int DEFAULT 20
+  p_limit         int  DEFAULT 20,
+  -- Campanha que esta perguntando. Opcional (DEFAULT NULL) para nao quebrar quem
+  -- chame a RPC sem ela — a previa da tela, por exemplo.
+  p_campaign_id   uuid DEFAULT NULL,
+  p_cooldown_days int  DEFAULT 90
 )
 RETURNS TABLE(lead_id uuid, deal_id uuid, stage_id uuid, last_speaker text, last_message_at timestamptz)
 AS $$
@@ -130,8 +150,16 @@ AS $$
       JOIN leads l          ON l.id = d.lead_id
       JOIN pipeline_stages s ON s.id = d.stage_id
      WHERE
+       -- FAIL-CLOSED sem etapa. Os dois nulos significavam "qualquer etapa", e a
+       -- funcao varria TODO card aberto de TODO funil: uma esteira ligada antes de ser
+       -- configurada dispararia template para a base inteira, 20 por tick, repetindo.
+       -- A API das esteiras (`esteiras_router`) ja recusa ativar sem etapa, mas o
+       -- builder de cadencias monta o mesmo gatilho e liga sem passar por ela. Fechar
+       -- no lugar mais profundo protege TODOS os chamadores; a regra da API vira
+       -- defesa em profundidade em vez de unico anteparo.
+       (p_stage_id IS NOT NULL OR p_stage_key IS NOT NULL)
        -- etapa alvo: por id exato OU por key (vale em todo funil)
-       (p_stage_id IS NULL OR d.stage_id = p_stage_id)
+       AND (p_stage_id IS NULL OR d.stage_id = p_stage_id)
        AND (p_stage_key IS NULL OR s.key = p_stage_key)
        AND (p_pipeline_id IS NULL OR s.pipeline_id = p_pipeline_id)
        -- card tem de estar ABERTO. 'fechado_perdido'/'perdido' porque
@@ -147,6 +175,70 @@ AS $$
          p_audience = 'ambos'
          OR (p_audience = 'ia'     AND l.ai_enabled = TRUE)
          OR (p_audience = 'humano' AND l.ai_enabled = FALSE)
+       )
+       -- COOLDOWN: card que ja passou por ESTA campanha nos ultimos p_cooldown_days
+       -- nao volta. Sem isto a esteira NUNCA PARA.
+       --
+       -- O gatilho pulava reinscricao com `is_already_enrolled`, que so conta
+       -- enrollment 'active'/'paused'. Ao chegar no no `end` o enrollment vira
+       -- 'completed' e sai daquele filtro — e nada impede a reinscricao do mesmo card
+       -- no tick seguinte. Dois casos reais das esteiras seed:
+       --   • `novo_reengajamento` (silence_days=3, last_speaker='nos', um toque so):
+       --     a NOSSA propria mensagem zera o relogio de silencio. Tres dias depois o
+       --     lead esta elegivel de novo, com o ultimo falante sendo nos. Um template a
+       --     cada 3 dias, para sempre.
+       --   • `proposta` (stage_days=3, silence_days=0, nunca move o card): o
+       --     entered_stage_at so muda quando o card troca de coluna, entao continua
+       --     satisfazendo o corte; o filtro de silencio esta desligado; e o ultimo
+       --     falante somos nos, porque o nosso template acabou de sair. Reinscricao a
+       --     cada ~10 dias, indefinidamente.
+       --
+       -- Por que COOLDOWN e nao exclusao permanente: card que sai da etapa e volta
+       -- meses depois e uma oportunidade legitima e deve poder entrar na esteira de
+       -- novo. O que nao pode e a esteira recomecar sozinha na semana seguinte.
+       --
+       -- Deliberadamente SEM filtro de status no subselect: e justamente o enrollment
+       -- 'completed' — o que terminou a esteira — que precisa segurar a reentrada.
+       AND (
+         p_campaign_id IS NULL
+         OR NOT EXISTS (
+           SELECT 1 FROM campaign_enrollments ce
+            WHERE ce.campaign_id = p_campaign_id
+              AND ce.deal_id = d.id
+              AND ce.enrolled_at > now() - make_interval(days => p_cooldown_days)
+         )
+       )
+       -- OPT-OUT. Espelha `backend/app/leads/service.py::is_lead_blacklisted`, que e a
+       -- fonte de verdade: `leads.opt_out` (canonico, setado por registrar_optout) OU
+       -- qualquer deal no pipeline Blacklist (lead movido a mao sem o flag).
+       -- NAO inclui stage='perdido' — aquilo e rejeicao SOFT e o lead e reativavel.
+       AND l.opt_out IS NOT TRUE
+       AND NOT EXISTS (
+         SELECT 1 FROM deals bd
+          WHERE bd.lead_id = d.lead_id
+            -- Mesmo UUID de leads/service.py::BLACKLIST_PIPELINE_ID, ja hardcoded em
+            -- 20260618_pipelines_owner_user.sql. O funil Blacklist e universal
+            -- (is_universal=true) e unico na instalacao.
+            AND bd.pipeline_id = '8988e852-2836-4add-b023-4db4d6cd0e6e'
+       )
+       -- As DUAS marcas que `follow_up/scheduler.py::_lead_stop_reason` trata como
+       -- parada definitiva. Numero errado e o pior caso possivel para uma esteira:
+       -- o card fica aberto, o lead esta em silencio POR DEFINICAO e tem
+       -- ai_enabled=False — ou seja, e o candidato perfeito do gatilho. Cada toque
+       -- iria para um desconhecido, que e quem mais tende a apertar "Bloquear" e
+       -- derrubar a reputacao do numero na Meta.
+       AND (l.metadata->>'wrong_number_at') IS NULL
+       AND (l.metadata->>'blacklisted_at') IS NULL
+       -- CONVERSA FINALIZADA pelo vendedor em /conversas. Espelha
+       -- `automation/engine.py::_conversation_followup_disabled`. Aqui a versao SQL e
+       -- de proposito mais conservadora: quando p_channel_id e NULL ela olha QUALQUER
+       -- conversa do lead, enquanto o Python pega uma linha arbitraria (`.limit(1)`).
+       -- Na duvida, nao toca.
+       AND NOT EXISTS (
+         SELECT 1 FROM conversations cf
+          WHERE cf.lead_id = d.lead_id
+            AND (p_channel_id IS NULL OR cf.channel_id = p_channel_id)
+            AND cf.followup_enabled = FALSE
        )
   )
   SELECT
@@ -168,6 +260,13 @@ AS $$
    ORDER BY COALESCE(c.ultima_msg_at, c.deal_created_at) ASC
    LIMIT p_limit;
 $$ LANGUAGE sql STABLE;
+
+-- O NOT EXISTS do cooldown e correlacionado: roda uma vez por card candidato, a cada
+-- tick, para cada esteira ligada. Sem este indice ele vira um scan de
+-- campaign_enrollments por card. O indice existente (idx_campaign_enrollments_campaign)
+-- nao cobre deal_id.
+CREATE INDEX IF NOT EXISTS idx_campaign_enrollments_campaign_deal
+    ON campaign_enrollments(campaign_id, deal_id, enrolled_at);
 
 -- ===========================================================================
 -- 5. audience nas RPCs existentes

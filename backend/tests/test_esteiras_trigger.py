@@ -164,3 +164,118 @@ async def test_rpc_falha_nao_derruba_o_tick():
     ):
         await check_polling_triggers(NOW)
     mock_enroll.assert_not_called()
+
+
+# ===========================================================================
+# Cooldown por campanha — a esteira precisa PARAR sozinha
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_manda_o_campaign_id_para_a_rpc():
+    """Sem `p_campaign_id` a RPC nao tem como excluir quem ja passou pela esteira.
+
+    `is_already_enrolled` so conta enrollment 'active'/'paused'; ao chegar no no
+    `end` ele vira 'completed' e nada impede a reinscricao no tick seguinte. Na
+    esteira `novo_reengajamento` (silence_days=3, last_speaker='nos', um toque so)
+    a nossa propria mensagem zera o relogio de silencio: tres dias depois o lead
+    esta elegivel de novo, com o ultimo falante sendo nos. Um template a cada 3
+    dias, para sempre.
+    """
+    ps, sb = _patches([])
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         patch("app.automation.triggers.create_enrollment"):
+        await check_polling_triggers(NOW)
+    args = sb.rpc.call_args[0][1]
+    assert args["p_campaign_id"] == "camp-e2"
+
+
+# ===========================================================================
+# Numero errado / blacklisted_at — as duas marcas de parada do follow-up
+# ===========================================================================
+def _sb_com_lead(metadata, rpc_rows=None):
+    """Stub em que a consulta de `leads` devolve um lead com este `metadata`."""
+    sb = MagicMock()
+    sb.rpc.return_value.execute.return_value.data = rpc_rows or [LINHA]
+    (sb.table.return_value.select.return_value.eq.return_value
+       .limit.return_value.execute.return_value.data) = [{"id": "lead1", "metadata": metadata}]
+    return sb
+
+
+def _patches_com_sb(sb):
+    return (
+        patch("app.automation.triggers.get_supabase", return_value=sb),
+        patch("app.automation.triggers.get_campaigns_with_trigger_type",
+              side_effect=lambda t: [TRIGGER_NODE] if t == "deal_stage_stagnation" else []),
+        patch("app.automation.triggers.is_already_enrolled", return_value=False),
+        patch("app.automation.triggers._engine._conversation_followup_disabled", return_value=False),
+        patch("app.automation.triggers.is_lead_blacklisted", return_value=False),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", [
+    {"wrong_number_at": "2026-08-20T10:00:00+00:00"},
+    {"blacklisted_at": "2026-08-20T10:00:00+00:00"},
+])
+async def test_pula_marca_de_parada_do_follow_up(metadata):
+    """`follow_up/scheduler.py::_lead_stop_reason` para nas duas marcas; a esteira nao.
+
+    Lead marcado como numero errado tem card aberto, esta em silencio por definicao
+    e tem ai_enabled=False — o candidato PERFEITO para uma esteira de audience
+    'humano'. Cada toque vai para um desconhecido, que e quem tem mais chance de
+    apertar "Bloquear" e derrubar a reputacao do numero na Meta.
+    """
+    sb = _sb_com_lead(metadata)
+    ps = _patches_com_sb(sb)
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         patch("app.automation.triggers.create_enrollment") as mock_enroll:
+        await check_polling_triggers(NOW)
+    mock_enroll.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lead_sem_marca_de_parada_continua_enrolando():
+    """Controle positivo: a guarda nova nao pode zerar as quatro esteiras."""
+    sb = _sb_com_lead({})
+    ps = _patches_com_sb(sb)
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         patch("app.automation.triggers.create_enrollment") as mock_enroll:
+        await check_polling_triggers(NOW)
+    mock_enroll.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reusa_lead_marked_wrong_number_do_follow_up():
+    """Reuso, nao reimplementacao.
+
+    A marca `wrong_number_at` nasce em `registrar_numero_errado` e e REMOVIDA por
+    `broadcast/worker.process_wrong_number_deadends` quando o dono real responde.
+    Uma copia da regra aqui sairia de sincronia com esse ciclo de vida na primeira
+    mudanca.
+    """
+    sb = _sb_com_lead({})
+    ps = _patches_com_sb(sb)
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         patch("app.automation.triggers.lead_marked_wrong_number", return_value=True) as mock_wrong, \
+         patch("app.automation.triggers.create_enrollment") as mock_enroll:
+        await check_polling_triggers(NOW)
+    mock_wrong.assert_called()
+    mock_enroll.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_erro_ao_ler_o_lead_nao_derruba_o_tick():
+    """A checagem e defesa em profundidade — a exclusao dura ja esta na RPC.
+
+    Espelha `is_lead_blacklisted`, que tambem nao bloqueia o disparo por causa de
+    uma falha da PROPRIA checagem.
+    """
+    sb = MagicMock()
+    sb.rpc.return_value.execute.return_value.data = [LINHA]
+    sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = (
+        Exception("timeout")
+    )
+    ps = _patches_com_sb(sb)
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         patch("app.automation.triggers.create_enrollment") as mock_enroll:
+        await check_polling_triggers(NOW)
+    mock_enroll.assert_called_once()

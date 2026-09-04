@@ -14,6 +14,11 @@ from app.leads.reposicao import ensure_reposicao_deal, deal_is_won
 # Direto da origem (app.leads.service). app.broadcast.worker so re-exporta, e
 # importa-lo aqui puxaria a cadeia inteira do broadcast por uma funcao de uma linha.
 from app.leads.service import is_lead_blacklisted
+# A marca `metadata.wrong_number_at` nasce em `registrar_numero_errado` e e REMOVIDA
+# por `broadcast.worker.process_wrong_number_deadends` quando o dono real responde.
+# Reusar a funcao do follow_up (em vez de reimplementar o `metadata.get(...)` aqui)
+# mantem a esteira acoplada a esse ciclo de vida.
+from app.follow_up.service import lead_marked_wrong_number
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,42 @@ def _apply_audience(query, audience: str | None):
     if modo == "ambos":
         return query
     return query.eq("ai_enabled", modo == "ia")
+
+
+def _lead_hard_stop_reason(lead_id: str) -> str | None:
+    """Motivo de PARADA DEFINITIVA do lead, ou None se a esteira pode toca-lo.
+
+    Cobre as duas marcas de `metadata` que `follow_up/scheduler.py::_lead_stop_reason`
+    trata como parada — as mesmas que fazem o motor de follow-up cancelar um job:
+    `wrong_number_at` e `blacklisted_at`.
+
+    NAO reusa `_lead_stop_reason` inteira de proposito: ela tambem para em
+    `ai_enabled is False`, que e EXATAMENTE a populacao pos-handoff para a qual as
+    esteiras existem (`audience='humano'`). Reusa-la aqui zeraria as quatro esteiras.
+
+    Numero errado e o pior caso possivel para este gatilho: o card fica aberto, o lead
+    esta em silencio por definicao e tem `ai_enabled=False` — o candidato perfeito. Cada
+    toque iria para um desconhecido, que e quem mais tende a apertar "Bloquear".
+
+    Fail-open em erro de consulta, espelhando `is_lead_blacklisted`: a checagem que
+    falha nao bloqueia o tick. A exclusao dura ja acontece na RPC (a mesma condicao
+    esta no WHERE de `get_deals_stage_stagnant`); esta aqui e defesa em profundidade.
+    """
+    try:
+        rows = (
+            get_supabase().table("leads").select("metadata")
+            .eq("id", lead_id).limit(1).execute().data
+        )
+    except Exception as exc:
+        logger.warning("[AUTOMATION] leitura de metadata do lead %s falhou: %s", lead_id, exc)
+        return None
+    lead = rows[0] if isinstance(rows, list) and rows else None
+    if lead_marked_wrong_number(lead):
+        return "wrong_number"
+    meta = (lead or {}).get("metadata") or {}
+    if isinstance(meta, dict) and meta.get("blacklisted_at"):
+        return "blacklisted"
+    return None
 
 
 def _maybe_fire_stage_conversion(lead_id: str, data: dict) -> None:
@@ -217,6 +258,9 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
         # "— qualquer —", e "" mandado num parametro uuid da RPC e erro de sintaxe
         # no Postgres, nao "sem filtro". Sem isso, gatilho salvo sem etapa explicita
         # morreria todo tick no except abaixo.
+        # Gatilho sem etapa NENHUMA (stage_id e stage_key nulos) nao varre mais a base:
+        # a RPC devolve conjunto vazio nesse caso — fail-closed no lugar mais profundo,
+        # que vale tambem para gatilho montado a mao na aba Cadencias.
         args = {
             "p_stage_id": cfg.get("stage_id") or None,
             "p_stage_key": cfg.get("stage_key") or None,
@@ -227,6 +271,13 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
             "p_last_speaker": cfg.get("last_speaker") or "qualquer",
             "p_audience": tn.get("audience") or "ia",
             "p_limit": int(cfg.get("limit") or 20),
+            # Sem isto a esteira NUNCA PARA. `is_already_enrolled` (abaixo) so conta
+            # enrollment 'active'/'paused'; ao chegar no no `end` ele vira 'completed'
+            # e nada impede a reinscricao do MESMO card no tick seguinte — em
+            # `novo_reengajamento` isso e um template a cada 3 dias, para sempre. Com o
+            # campaign_id a RPC exclui quem ja passou por esta campanha dentro do
+            # cooldown (default 90 dias, ver 20260904_esteiras_vendedor.sql).
+            "p_campaign_id": tn["campaign_id"],
         }
         try:
             linhas = sb.rpc("get_deals_stage_stagnant", args).execute().data or []
@@ -243,6 +294,12 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
             # base inteira e e exatamente onde esta quem ja pediu para nao receber mais.
             if is_lead_blacklisted(lead_id):
                 logger.info("[AUTOMATION] deal_stage_stagnation: lead %s na blacklist — skip", lead_id)
+                continue
+            # Numero errado / blacklisted_at: o motor de follow-up para nos dois e o
+            # gatilho nao parava em nenhum. Ver _lead_hard_stop_reason.
+            motivo = _lead_hard_stop_reason(lead_id)
+            if motivo:
+                logger.info("[AUTOMATION] deal_stage_stagnation: lead %s com %s — skip", lead_id, motivo)
                 continue
             try:
                 create_enrollment(
