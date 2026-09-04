@@ -34,6 +34,7 @@ interface Gatilho {
 
 interface Esteira {
   key: string;
+  campaign_id: string | null;
   nome: string;
   descricao: string;
   ativa: boolean;
@@ -41,11 +42,36 @@ interface Esteira {
   funil_id: string | null;
   etapa_id: string | null;
   etapa_key: string | null;
+  /**
+   * Qual campo do gatilho é o prazo do primeiro toque. Vem do backend porque lá ele é
+   * derivado do SEED — o mesmo número significa "3 dias parado na etapa Proposta Enviada"
+   * numa esteira e "3 dias sem conversa" em outra, e a tela não pode chutar qual.
+   */
+  relogio: "stage_days" | "silence_days" | string | null;
+  gatilho: Gatilho | null;
   toques: Toque[];
   acao_final: string | null;
-  campaign_id?: string | null;
-  gatilho?: Gatilho | null;
+  /**
+   * Etapa de Perdido resolvida pela API a partir do funil (só na esteira de reposição).
+   * `null` com `acao_final = mark_deal_lost` significa que a esteira vai rodar os três
+   * toques e terminar SEM mover o card — precisa aparecer na tela.
+   */
+  stage_id_perdido: string | null;
 }
+
+/** Feedback de uma gravação. Três naturezas diferentes, três tratamentos. */
+type Retorno =
+  /** 400 e falha de rede: não gravou. */
+  | { tipo: "erro"; texto: string }
+  /** 200 com ressalva: gravou, mas a esteira vai rodar capenga. */
+  | { tipo: "aviso"; texto: string }
+  /** 409: a esteira nem existe no banco — problema de instalação, não de configuração. */
+  | { tipo: "bloqueio"; texto: string };
+
+/** Usado só se o backend não mandar `detail` — a mensagem dele é melhor que esta. */
+const BLOQUEIO_PADRAO =
+  "Esta esteira ainda não existe no banco. O seed roda quando a API sobe: confira se a " +
+  "migration 20260904_esteiras_vendedor.sql foi aplicada no Supabase e reinicie a API.";
 
 // ─── Vocabulário fixo ──────────────────────────────────────────────────────────
 
@@ -260,7 +286,7 @@ function CartaoEsteira({
   corpos,
   sujo,
   salvando,
-  erro,
+  retorno,
   onCampo,
   onToque,
   onSalvar,
@@ -275,7 +301,7 @@ function CartaoEsteira({
   corpos: Record<string, string>;
   sujo: boolean;
   salvando: boolean;
-  erro: string | null;
+  retorno: Retorno | null;
   onCampo: (campo: "canal_id" | "funil_id" | "etapa_id", valor: string) => void;
   onToque: (indice: number, patch: Partial<Toque>) => void;
   onSalvar: () => void;
@@ -284,8 +310,19 @@ function CartaoEsteira({
   const pronta = temEtapa(esteira);
   const presaPorKey = Boolean(esteira.etapa_key);
   const gatilho = esteira.gatilho ?? null;
-  const relogioDeEtapa = (gatilho?.stage_days ?? 0) > 0;
+  // O relógio é do backend (derivado do seed). Cair em `stage_days > 0` só quando ele
+  // não vier: gravar `dias: 0` zeraria o campo e trocaria o rótulo em silêncio.
+  const relogioDeEtapa =
+    esteira.relogio === "stage_days" ||
+    (esteira.relogio !== "silence_days" && (gatilho?.stage_days ?? 0) > 0);
   const falante = gatilho?.last_speaker ? FALANTE[gatilho.last_speaker] : null;
+  // A reposição termina em "move para Perdido", mas o motor vira no-op sem `stage_id`:
+  // faria os três toques e deixaria o card exatamente onde estava.
+  const semEtapaDePerda =
+    esteira.acao_final === "mark_deal_lost" && !esteira.stage_id_perdido;
+  // Salvar manda `ativa` junto. Numa esteira LIGADA cuja etapa acabou de ser limpa (troca
+  // de funil), o backend recusa com 400 — corretamente. A tela não deve chegar lá.
+  const faltaEtapaParaSalvar = esteira.ativa && !pronta;
 
   return (
     <article
@@ -441,8 +478,8 @@ function CartaoEsteira({
                 <span className="text-[13px] text-[#111111]">
                   {i === 0
                     ? relogioDeEtapa
-                      ? "dias parado na etapa, envia"
-                      : "dias sem conversa, envia"
+                      ? "dias parado nesta etapa, envia"
+                      : "dias sem nenhuma conversa, envia"
                     : "dias sem resposta, envia"}
                 </span>
                 <div className="flex-1 min-w-[200px]">
@@ -455,7 +492,7 @@ function CartaoEsteira({
                 </div>
               </li>
             ))}
-            <li className="relative flex items-center gap-2">
+            <li className="relative flex flex-col gap-0.5">
               <span
                 aria-hidden
                 className="absolute -left-6 top-0.5 h-[18px] w-[18px] rounded-[4px] bg-[#f0ede8] border border-[#dedbd6]"
@@ -463,15 +500,44 @@ function CartaoEsteira({
               <span className="text-[13px] text-[#626260]">
                 No fim, {acaoFinalTexto(esteira.acao_final)}.
               </span>
+              {semEtapaDePerda && (
+                <span className="text-[11px] text-[#c2590a] leading-snug">
+                  O funil escolhido não tem coluna de Perdido, então ela vai enviar os
+                  toques e deixar o card onde está.
+                </span>
+              )}
             </li>
           </ol>
         </div>
       </div>
 
+      {/* Retorno da última gravação. `aviso` NÃO é erro: gravou, e a esteira funciona —
+          só não inteira. Vermelho aqui treinaria o vendedor a ignorar vermelho. */}
+      {retorno && (
+        <div
+          className={`px-5 py-2.5 text-[12px] leading-snug border-t ${
+            retorno.tipo === "erro"
+              ? "bg-[#fef0f0] border-[#f3d0d0] text-[#c41c1c]"
+              : "bg-[#fff8e0] border-[#eadfb4] text-[#7a5a00]"
+          }`}
+        >
+          <strong className="font-medium">
+            {retorno.tipo === "erro"
+              ? "Não salvou. "
+              : retorno.tipo === "bloqueio"
+                ? "Esteira indisponível. "
+                : "Salvo, com uma ressalva. "}
+          </strong>
+          {retorno.texto}
+        </div>
+      )}
+
       <footer className="flex items-center justify-between gap-3 px-5 py-3 border-t border-[#f0ede8]">
         <div className="text-[12px] min-h-[18px]">
-          {erro ? (
-            <span className="text-[#c41c1c]">{erro}</span>
+          {faltaEtapaParaSalvar ? (
+            <span className="text-[#c2590a]">
+              Esta esteira está ligada: escolha a etapa do novo funil para poder salvar.
+            </span>
           ) : sujo ? (
             <span className="text-[#7b7b78]">Alterações não salvas</span>
           ) : (
@@ -488,7 +554,7 @@ function CartaoEsteira({
         <button
           type="button"
           onClick={onSalvar}
-          disabled={!sujo || salvando}
+          disabled={!sujo || salvando || faltaEtapaParaSalvar}
           className="bg-[#111111] text-white px-[14px] py-1.5 rounded-[4px] text-[13px] transition-transform hover:scale-105 active:scale-[0.9] disabled:opacity-30 disabled:hover:scale-100 disabled:cursor-not-allowed"
         >
           {salvando ? "Salvando..." : "Salvar"}
@@ -509,9 +575,14 @@ interface Confirmacao {
   carregando: boolean;
 }
 
+// Mesmo diagnóstico do 409 do PUT (BLOQUEIO_PADRAO), dito onde o usuário está: prévia e
+// gravação falham pela mesma causa, e duas explicações diferentes para um problema só
+// mandariam ele procurar em dois lugares.
 const MOTIVO_TEXTO: Record<string, string> = {
-  sem_campanha: "A campanha ainda não existe no banco (o seed roda quando o backend sobe).",
-  sem_gatilho: "A campanha existe, mas está sem nó de gatilho.",
+  sem_campanha:
+    "A esteira ainda não existe no banco — o seed roda quando a API sobe. Confira se a " +
+    "migration 20260904_esteiras_vendedor.sql foi aplicada e reinicie a API.",
+  sem_gatilho: "A campanha existe, mas está sem nó de gatilho. Abra no builder para ver.",
   sem_etapa: "Sem etapa configurada não dá para contar — e nem para ligar.",
   rpc_indisponivel:
     "A função get_deals_stage_stagnant ainda não existe no banco. Aplique a migration 20260904_esteiras_vendedor.sql.",
@@ -618,7 +689,7 @@ export function EsteirasTab() {
 
   const [sujas, setSujas] = useState<Record<string, boolean>>({});
   const [salvando, setSalvando] = useState<Record<string, boolean>>({});
-  const [erros, setErros] = useState<Record<string, string | null>>({});
+  const [retornos, setRetornos] = useState<Record<string, Retorno | null>>({});
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null);
 
   // ── Carga inicial ────────────────────────────────────────────────────────────
@@ -696,7 +767,7 @@ export function EsteirasTab() {
   const alterar = useCallback((key: string, patch: Partial<Esteira>) => {
     setEsteiras((prev) => prev.map((e) => (e.key === key ? { ...e, ...patch } : e)));
     setSujas((prev) => ({ ...prev, [key]: true }));
-    setErros((prev) => ({ ...prev, [key]: null }));
+    setRetornos((prev) => ({ ...prev, [key]: null }));
   }, []);
 
   const alterarCampo = useCallback(
@@ -722,7 +793,7 @@ export function EsteirasTab() {
         )
       );
       setSujas((prev) => ({ ...prev, [key]: true }));
-      setErros((prev) => ({ ...prev, [key]: null }));
+      setRetornos((prev) => ({ ...prev, [key]: null }));
     },
     []
   );
@@ -738,7 +809,7 @@ export function EsteirasTab() {
       const e = esteiras.find((x) => x.key === key);
       if (!e) return false;
       setSalvando((prev) => ({ ...prev, [key]: true }));
-      setErros((prev) => ({ ...prev, [key]: null }));
+      setRetornos((prev) => ({ ...prev, [key]: null }));
       try {
         const res = await fetch(`/api/automation/esteiras/${key}`, {
           method: "PUT",
@@ -757,17 +828,48 @@ export function EsteirasTab() {
         });
         const corpo = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setErros((prev) => ({
+          // 409 nao e erro de configuracao: a esteira nao existe no banco. Mandar o
+          // usuario "tentar de novo" o faria repetir para sempre — a saida e aplicar a
+          // migration e reiniciar a API, e o backend ja escreve isso em `detail`.
+          const bloqueio = res.status === 409;
+          setRetornos((prev) => ({
             ...prev,
-            [key]: corpo?.detail || corpo?.error || "Não foi possível salvar.",
+            [key]: {
+              tipo: bloqueio ? "bloqueio" : "erro",
+              texto:
+                corpo?.detail ||
+                corpo?.error ||
+                (bloqueio ? BLOQUEIO_PADRAO : "Não foi possível salvar."),
+            },
           }));
           return false;
         }
-        setEsteiras((prev) => prev.map((x) => (x.key === key ? { ...x, ativa } : x)));
+        setEsteiras((prev) =>
+          prev.map((x) =>
+            x.key === key
+              ? {
+                  ...x,
+                  ativa,
+                  // Tres retornos possiveis do backend, tres leituras: id resolvido vence
+                  // sempre; null COM aviso quer dizer "nao ha etapa de perda neste funil";
+                  // null SEM aviso quer dizer "nao havia o que decidir" — mantem o atual.
+                  stage_id_perdido:
+                    corpo?.stage_id_perdido ?? (corpo?.aviso ? null : x.stage_id_perdido),
+                }
+              : x
+          )
+        );
+        setRetornos((prev) => ({
+          ...prev,
+          [key]: corpo?.aviso ? { tipo: "aviso", texto: String(corpo.aviso) } : null,
+        }));
         setSujas((prev) => ({ ...prev, [key]: false }));
         return true;
       } catch {
-        setErros((prev) => ({ ...prev, [key]: "Erro de rede ao salvar." }));
+        setRetornos((prev) => ({
+          ...prev,
+          [key]: { tipo: "erro", texto: "Erro de rede ao salvar." },
+        }));
         return false;
       } finally {
         setSalvando((prev) => ({ ...prev, [key]: false }));
@@ -804,6 +906,9 @@ export function EsteirasTab() {
             funil_id: e.funil_id,
             etapa_id: e.etapa_id,
             dias: e.toques[0]?.dias ?? null,
+            // Sem isto a prévia contaria o relógio errado na esteira de proposta: 3 dias
+            // parado na etapa e 3 dias de silêncio dão conjuntos de cards diferentes.
+            relogio: e.relogio ?? null,
           }),
         });
         const data = await res.json().catch(() => ({}));
@@ -908,7 +1013,7 @@ export function EsteirasTab() {
                 corpos={corpos}
                 sujo={Boolean(sujas[e.key])}
                 salvando={Boolean(salvando[e.key])}
-                erro={erros[e.key] ?? null}
+                retorno={retornos[e.key] ?? null}
                 onCampo={(campo, valor) => alterarCampo(e.key, campo, valor)}
                 onToque={(i, patch) => alterarToque(e.key, i, patch)}
                 onSalvar={() => gravar(e.key, e.ativa)}

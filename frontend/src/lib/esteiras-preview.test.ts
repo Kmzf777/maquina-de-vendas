@@ -24,6 +24,28 @@ describe("buildPreviewArgs", () => {
     expect(args.p_silence_days).toBe(0);
   });
 
+  it("o `relogio` do backend manda mais que o valor atual do gatilho", () => {
+    // O caso que a inferência erra: alguém gravou `dias: 0` na esteira de proposta, então
+    // stage_days ficou 0 e "stage_days > 0" passaria a dizer silêncio. O backend deriva
+    // `relogio` do seed, não do valor — e é ele que vale.
+    const zerada = { ...PROPOSTA, stage_days: 0 };
+    const args = buildPreviewArgs(zerada, { dias: 7 }, "humano", "stage_days");
+    expect(args.p_stage_days).toBe(7);
+    expect(args.p_silence_days).toBe(0);
+  });
+
+  it("relogio explícito de silêncio não vira etapa mesmo com stage_days preenchido", () => {
+    const args = buildPreviewArgs(PROPOSTA, { dias: 9 }, "humano", "silence_days");
+    expect(args.p_silence_days).toBe(9);
+    expect(args.p_stage_days).toBe(3);
+  });
+
+  it("relogio ausente ou desconhecido cai na inferência antiga", () => {
+    expect(buildPreviewArgs(PROPOSTA, { dias: 4 }, "humano", null).p_stage_days).toBe(4);
+    expect(buildPreviewArgs(PROPOSTA, { dias: 4 }, "humano", "banana").p_stage_days).toBe(4);
+    expect(buildPreviewArgs(REPOSICAO, { dias: 4 }, "humano", "banana").p_silence_days).toBe(4);
+  });
+
   it("o que está na tela vence o que está salvo", () => {
     const args = buildPreviewArgs(
       { ...REPOSICAO, stage_id: "salvo", pipeline_id: "funil-salvo" },

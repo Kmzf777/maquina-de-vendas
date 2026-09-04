@@ -52,15 +52,27 @@ const num = (v: unknown, fallback = 0): number =>
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() !== "" ? v : null;
 
+/** Os dois relógios possíveis do primeiro toque, como `esteiras_router._relogio` os nomeia. */
+export type Relogio = "stage_days" | "silence_days";
+
 export function buildPreviewArgs(
   gatilho: GatilhoConfig,
   overrides: PreviewOverrides,
-  audience: string | null | undefined
+  audience: string | null | undefined,
+  relogio?: string | null
 ): RpcArgs {
   // Qual relógio o primeiro toque usa depende da esteira: a de proposta conta dias na
-  // ETAPA, as outras contam dias de SILÊNCIO. Mesma regra do PUT em esteiras_router.py —
-  // preserva o que o seed definiu em vez de adivinhar pelo valor da tela.
-  const usaRelogioDeEtapa = num(gatilho.stage_days) > 0;
+  // ETAPA, as outras contam dias de SILÊNCIO.
+  //
+  // O valor autoritativo é o `relogio` que o backend devolve — ele sai do SEED, não do
+  // estado atual do gatilho. Inferir de `stage_days > 0`, como esta função fazia antes,
+  // tem um modo de falha real: gravar `dias: 0` uma vez zera `stage_days` e a inferência
+  // passa a dizer "silêncio", trocando o relógio da esteira de proposta em silêncio.
+  // A inferência sobrou só como rede para chamador que não informe o campo.
+  const usaRelogioDeEtapa =
+    relogio === "stage_days" || relogio === "silence_days"
+      ? relogio === "stage_days"
+      : num(gatilho.stage_days) > 0;
   const dias = overrides.dias == null ? null : num(overrides.dias);
 
   return {

@@ -51,7 +51,10 @@ export async function POST(request: NextRequest) {
       etapa_id: body.etapa_id ?? null,
       dias: body.dias ?? null,
     },
-    (campanha?.audience as string | undefined) ?? null
+    (campanha?.audience as string | undefined) ?? null,
+    // `relogio` vem do GET do backend (derivado do seed). A tela o repassa porque o valor
+    // atual do gatilho não é confiável para essa decisão — ver esteiras-preview.ts.
+    typeof body.relogio === "string" ? body.relogio : null
   );
 
   if (faltaEtapa(args)) {
