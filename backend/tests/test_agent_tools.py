@@ -32,9 +32,11 @@ def test_consumo_tools():
 def test_photo_captions_exist_for_atacado():
     assert "atacado" in PHOTO_CAPTIONS
     captions = PHOTO_CAPTIONS["atacado"]
-    assert len(captions) == 5
-    assert "foto_1" in captions
-    assert "Classico" in captions["foto_1"]
+    # 6 fotos desde 08/09: o Microlote ganhou foto própria (antes a legenda dele saía
+    # colada na foto das cápsulas) e cápsulas deixou de dividir a foto com o Drip.
+    assert len(captions) == 6
+    assert "foto_1_classico" in captions
+    assert "Classico" in captions["foto_1_classico"]
 
 
 def test_photo_captions_exist_for_private_label():

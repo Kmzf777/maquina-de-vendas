@@ -381,7 +381,10 @@ def test_atacado_nada_de_existente_foi_removido():
         "## Pergunta direta tem prioridade absoluta",
         "## Circuit breaker",
         "## Stage lock — nao retornar para consumo apos PJ confirmado",
-        "## Frete — nunca assuma regiao sem CEP",
+        # Renomeada em 08/09: era "## Frete — nunca assuma regiao sem CEP". A seção
+        # continua existindo e cobrindo frete, mas o gating deixou de ser por CEP
+        # (ver test_valeria_determinismo_catalogo_2026_07_15).
+        "## Voce NAO monta pedido e NAO pede CEP — isso e do vendedor",
         "## Apresentacao de precos — qualificadores obrigatorios",
         "## Kit Amostra — regra de preco fixo",
         "## Enviar fotos antes de encaminhar",

@@ -140,41 +140,64 @@ SENSORY_CAPTIONS_ATACADO: dict[str, str] = {
     "suave": "Suave — torra media, notas achocolatadas",
     "canela": "Canela — torra escura, caramelizado com canela natural",
     "microlote": "Microlote — 86 SCA, notas de cacau, melaco e citrico",
-    "drip": "Drip Coffee e Capsulas Nespresso",
+    "capsulas": "Capsulas compativeis com Nespresso — Classico e Canela",
+    "drip": "Drip Coffee — sache individual, praticidade sem maquina",
 }
 
+CAPTIONS_PRIVATE_LABEL: dict[str, str] = {
+    "embalagem": "Embalagem personalizada com sua marca",
+    "standup": "Modelo de embalagem standup",
+    "silk": "Exemplo de silk com logo do cliente",
+    "final": "Produto final pronto para comercializacao",
+}
+
+_CAPTIONS_POR_CATEGORIA: dict[str, dict[str, str]] = {
+    "atacado": SENSORY_CAPTIONS_ATACADO,
+    "private_label": CAPTIONS_PRIVATE_LABEL,
+}
+
+# Vínculo ARQUIVO↔PRODUTO — o nome do arquivo carrega o slug do produto.
+# A auditoria QA de 08/09 (conversa 5534988861441) pegou a legenda do Microlote colada
+# na foto das CÁPSULAS e Clássico/Suave trocados entre si. A causa raiz era o vínculo
+# POSICIONAL: as legendas eram indexadas por `foto_1`..`foto_5`, nomes opacos que não
+# dizem que produto está no JPEG — então a divergência era invisível na revisão de
+# código e os testes de 15/07 só garantiam que a PROSA das legendas era consistente,
+# nunca que a legenda casava com a imagem. Com o slug no nome do arquivo, trocar duas
+# fotos vira erro legível a olho nu (e testável — ver test_captions_*).
+# A ORDEM desta tupla é a ordem de envio do catálogo em enviar_fotos.
+CATALOGO_FOTOS: dict[str, tuple[tuple[str, str], ...]] = {
+    "atacado": (
+        ("classico", "foto_1_classico.jpg"),
+        ("suave", "foto_2_suave.jpg"),
+        ("canela", "foto_3_canela.png"),
+        ("microlote", "foto_4_microlote.png"),
+        ("capsulas", "foto_5_capsulas.jpg"),
+        ("drip", "foto_6_drip.jpg"),
+    ),
+    "private_label": (
+        ("embalagem", "foto_1.jpg"),
+        ("standup", "foto_2.jpg"),
+        ("silk", "foto_3.jpg"),
+        ("final", "foto_4.jpg"),
+    ),
+}
+
+# Ambos os mapas são DERIVADOS de CATALOGO_FOTOS: um arquivo só pode carregar a legenda
+# do produto cujo slug está no seu próprio nome. Não edite os dicts abaixo à mão.
 PHOTO_CAPTIONS: dict[str, dict[str, str]] = {
-    "atacado": {
-        "foto_1": SENSORY_CAPTIONS_ATACADO["classico"],
-        "foto_2": SENSORY_CAPTIONS_ATACADO["suave"],
-        "foto_3": SENSORY_CAPTIONS_ATACADO["canela"],
-        "foto_4": SENSORY_CAPTIONS_ATACADO["microlote"],
-        "foto_5": SENSORY_CAPTIONS_ATACADO["drip"],
-    },
-    "private_label": {
-        "foto_1": "Embalagem personalizada com sua marca",
-        "foto_2": "Modelo de embalagem standup",
-        "foto_3": "Exemplo de silk com logo do cliente",
-        "foto_4": "Produto final pronto para comercializacao",
-    },
+    categoria: {
+        Path(arquivo).stem: _CAPTIONS_POR_CATEGORIA[categoria][slug]
+        for slug, arquivo in entradas
+    }
+    for categoria, entradas in CATALOGO_FOTOS.items()
 }
 
 PRODUTO_PHOTO_MAP: dict[str, dict[str, dict[str, str]]] = {
-    "atacado": {
-        "classico": {"file": "foto_1.jpg", "caption": SENSORY_CAPTIONS_ATACADO["classico"]},
-        "suave": {"file": "foto_2.jpg", "caption": SENSORY_CAPTIONS_ATACADO["suave"]},
-        "canela": {"file": "foto_3.png", "caption": SENSORY_CAPTIONS_ATACADO["canela"]},
-        "microlote": {"file": "foto_4.jpg", "caption": SENSORY_CAPTIONS_ATACADO["microlote"]},
-        "drip": {"file": "foto_5.jpg", "caption": SENSORY_CAPTIONS_ATACADO["drip"]},
-        # capsulas compartilha foto_5 e legenda com drip (produto real do Atacado).
-        "capsulas": {"file": "foto_5.jpg", "caption": SENSORY_CAPTIONS_ATACADO["drip"]},
-    },
-    "private_label": {
-        "embalagem": {"file": "foto_1.jpg", "caption": "Embalagem personalizada com sua marca"},
-        "standup": {"file": "foto_2.jpg", "caption": "Modelo de embalagem standup"},
-        "silk": {"file": "foto_3.jpg", "caption": "Exemplo de silk com logo do cliente"},
-        "final": {"file": "foto_4.jpg", "caption": "Produto final pronto para comercializacao"},
-    },
+    categoria: {
+        slug: {"file": arquivo, "caption": _CAPTIONS_POR_CATEGORIA[categoria][slug]}
+        for slug, arquivo in entradas
+    }
+    for categoria, entradas in CATALOGO_FOTOS.items()
 }
 
 # Voz da persona também no fallback (auditoria 08/07: no outage do LLM, leads
