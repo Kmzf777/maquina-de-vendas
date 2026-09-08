@@ -50,15 +50,9 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-export function autoSuggestToken(example: string): string {
-  if (!example) return "";
-  if (/^[\d\s\-\(\)\+]+$/.test(example) && example.replace(/\D/g, "").length >= 8) {
-    return "{{telefone}}";
-  }
-  if (!example.includes(" ")) return "{{primeiro_nome}}";
-  if (example.trim().split(/\s+/).length <= 3) return "{{nome_completo}}";
-  return "";
-}
+// Implementacao vive em @/lib/template-vars (modulo puro, coberto por teste).
+// Reexportado aqui porque os modais de disparo ja importam deste arquivo.
+export { autoSuggestToken } from "@/lib/template-vars";
 
 function resolvePreview(value: string): string {
   const token = LEAD_TOKENS.find((t) => t.value === value);

@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import type { Channel } from "@/lib/types";
-import { type MetaTemplate, autoSuggestToken } from "@/components/campaigns/template-preview-card";
+import { type MetaTemplate } from "@/components/campaigns/template-preview-card";
+import { buildTemplateVarDefaults } from "@/lib/template-vars";
 
 interface SavedPhone {
   id: string;
@@ -137,10 +138,10 @@ export function QuickSendModal({ open, onClose, onSuccess, prefillPhone }: Quick
       );
       const paramNames = tpl.params.map((p) => p.paramName);
       const allVars = [...new Set([...paramNames, ...bodyVars])];
-      const defaults: Record<string, string> = {};
-      tpl.params.forEach((p) => {
-        defaults[p.paramName] = autoSuggestToken(p.example);
-      });
+      // Inclui as chaves reservadas (__params_type__, __header_type__). Sem elas o
+      // worker assume "named" e monta parameter_name="1" para template posicional,
+      // payload que a Meta rejeita — o disparo nunca chega no cliente.
+      const defaults: Record<string, string> = buildTemplateVarDefaults(tpl);
       // Fill any body-only vars not covered by params
       bodyVars.forEach((v) => {
         if (!(v in defaults)) defaults[v] = "";
