@@ -1,15 +1,16 @@
 """Motor de decisão do bot de botões. Núcleo puro: sem banco, sem rede, sem relógio.
 
-Recebe o estado do fluxo e um evento (clique ou texto) e devolve uma Decisao —
-o que responder, o que mudar no CRM e para qual nó ir. Todo I/O fica no runner.
+Recebe o estado do fluxo e um evento (clique, texto ou classe já apurada) e devolve
+uma Decisao — o que responder, o que mudar no CRM e para qual nó ir. Todo I/O fica
+no runner.
 
-Mesmo contrato de app/agent/persona.py: função pura em cima de dicts, testável
-com a matriz completa de casos sem nenhum mock.
+Mesmo contrato de app/agent/persona.py e app/agent/handoff.py: função pura em cima
+de dicts, testável com a matriz completa de casos sem nenhum mock.
 """
 from __future__ import annotations
 
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from app.button_flow import flows
 from app.button_flow.flows import Botao, Prazo
@@ -28,7 +29,48 @@ class Texto:
     conteudo: str
 
 
-Evento = Clique | Texto
+@dataclass(frozen=True)
+class Classificado:
+    """Texto livre já classificado pela camada 2. `classe` é uma das CLASSES.
+
+    Existe como evento separado — em vez de o runner traduzir classe em Decisao —
+    para que a matriz classe x nó fique testável sem mock de LLM, no mesmo lugar
+    onde a matriz botão x nó já vive.
+    """
+    classe: str
+
+
+Evento = Clique | Texto | Classificado
+
+# Classes da camada 2. O classificador nunca escreve para o cliente: ele devolve
+# uma destas, e o efeito é o mesmo de um botão.
+CLASSE_SAIR = "SAIR"
+CLASSE_QUENTE = "QUENTE"
+CLASSE_ADIAR = "ADIAR"
+CLASSE_PERGUNTA = "PERGUNTA"
+CLASSE_ENGANO = "ENGANO"
+CLASSE_RUIDO = "RUIDO"
+
+CLASSES: tuple[str, ...] = (
+    CLASSE_SAIR, CLASSE_QUENTE, CLASSE_ADIAR,
+    CLASSE_PERGUNTA, CLASSE_ENGANO, CLASSE_RUIDO,
+)
+
+
+# ── Contexto do lead (o que o motor precisa saber para montar a entrega) ────
+@dataclass(frozen=True)
+class Contexto:
+    """Dados do lead usados nos textos. Tudo opcional: a coorte é irregular.
+
+    `preco` só vem preenchido quando `produto` casou com um SKU ATIVO do catálogo.
+    141 leads da coorte compravam outras marcas, 123 cápsula e 47 drip — nada disso
+    existe nos 32 SKUs que o agente conhece, e cotar de memória foi exatamente o
+    que perdeu as 500 unidades da Ritz (cotou drip a R$27,70 quando o real era
+    R$2,49/sachê). Sem SKU, o motor reconhece o item pelo nome e NÃO cota.
+    """
+    primeiro_nome: str = ""
+    produto: str = ""
+    preco: str = ""
 
 
 # ── Saída ───────────────────────────────────────────────────────────────────
@@ -44,11 +86,15 @@ class Efeitos:
     tags: tuple[str, ...] = ()
     optout: bool = False
     handoff: bool = False
-    recontato_meses: int | None = None
+    recontato_dias: int | None = None
     # Desliga lead.ai_enabled sem carimbar handoff. Necessário porque "encerrado"
     # só tira o bot do caminho: no número da ValerIA o LLM assumiria a conversa
     # logo em seguida, que é o contrário de entregar ao vendedor.
     silenciar_ia: bool = False
+    # Registra que o lead contestou o pretexto do template. Lido pelo operador
+    # antes de qualquer nova onda — mandar de novo para quem já disse "não fiz
+    # pedido nenhum" é o caminho mais curto para um report na Meta.
+    pretexto_contestado: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,6 +104,10 @@ class Decisao:
     efeitos: Efeitos = field(default_factory=Efeitos)
     marcar_nudge: bool = False
     ignorar: bool = False
+    # Trilha inferida do clique, quando o clique revela qual template o lead
+    # recebeu. O runner grava no estado para que o nudge seguinte use os rótulos
+    # certos mesmo que o disparo não tenha semeado a trilha.
+    trilha_inferida: str | None = None
 
 
 def normalizar(texto: str | None) -> str:
@@ -65,6 +115,8 @@ def normalizar(texto: str | None) -> str:
 
     Necessário porque quick reply de template devolve o payload igual ao TEXTO do
     botão, e o teclado do lead (ou o próprio WhatsApp) pode devolver sem acento.
+    Prova de produção: há 64 cliques gravados em "Nao tenho interesse" e ZERO em
+    "Não tenho interesse".
 
     Aceita None porque o payload do webhook é opcional em vários formatos da Meta;
     o chamador não deve precisar tratar isso antes de comparar.
@@ -74,31 +126,67 @@ def normalizar(texto: str | None) -> str:
     return sem_acento.strip().lower()
 
 
-# Índices de casamento, montados uma vez no import.
-_POR_ID: dict[str, tuple[str, Botao]] = {
-    b.id: (no, b) for no, botoes in flows.BOTOES_POR_NO.items() for b in botoes
-}
-# Todos os rótulos aceitos de cada botão entram no índice: um clique vindo do
-# template traz o rótulo longo, um vindo do nudge traz o curto — os dois são o
-# mesmo botão (ver Botao.titulos_aceitos).
-_POR_TITULO: dict[str, tuple[str, Botao]] = {
-    normalizar(titulo): (no, b)
-    for no, botoes in flows.BOTOES_POR_NO.items()
-    for b in botoes
+# ── Índices de casamento, montados uma vez no import ────────────────────────
+# O casamento de nível 1 é GLOBAL (todas as trilhas), não por trilha: um clique
+# precisa resolver mesmo que o estado não tenha trilha gravada — e ele próprio
+# revela qual template o lead recebeu.
+_NIVEL1_POR_ID: dict[str, Botao] = {b.id: b for b in flows.TODOS_BOTOES_NIVEL1}
+_NIVEL1_POR_TITULO: dict[str, Botao] = {
+    normalizar(titulo): b
+    for b in flows.TODOS_BOTOES_NIVEL1
     for titulo in b.titulos_aceitos
 }
 _PRAZO_POR_ID: dict[str, Prazo] = {p.id: p for p in flows.PRAZOS}
+_PRAZO_POR_TITULO: dict[str, Prazo] = {normalizar(p.titulo): p for p in flows.PRAZOS}
+
+# Rótulo -> trilha, para inferir qual template o lead recebeu a partir do clique.
+# "Parar mensagens" é comum às três e por isso não infere nada.
+#
+# Só o rótulo CANÔNICO de cada trilha entra aqui, nunca os `rotulos_extras`: eles
+# existem para o casamento global (o mesmo id atendido por rótulos de trilhas
+# diferentes) e, se entrassem, a última trilha iterada sobrescreveria as anteriores
+# — "Retomar o pedido" passava a inferir `estoque` em vez de `pedido`, e o nudge
+# seguinte oferecia os rótulos do template errado.
+_TRILHA_POR_TITULO: dict[str, str] = {
+    normalizar(_b.titulo): _trilha
+    for _trilha, _botoes in flows.BOTOES_POR_TRILHA.items()
+    for _b in _botoes
+    if _b.id != flows.ID_OPTOUT
+}
 
 
-def _casar(clique: Clique) -> tuple[str, Botao] | None:
-    """Resolve (nó dono, botão) de um clique. None = botão não é deste fluxo."""
-    achado = _POR_ID.get(clique.payload)
+def _casar_nivel1(clique: Clique) -> Botao | None:
+    achado = _NIVEL1_POR_ID.get(clique.payload)
     if achado:
         return achado
-    achado = _POR_TITULO.get(normalizar(clique.payload))
+    achado = _NIVEL1_POR_TITULO.get(normalizar(clique.payload))
     if achado:
         return achado
-    return _POR_TITULO.get(normalizar(clique.titulo))
+    return _NIVEL1_POR_TITULO.get(normalizar(clique.titulo))
+
+
+def _casar_prazo(clique: Clique) -> Prazo | None:
+    achado = _PRAZO_POR_ID.get(clique.payload)
+    if achado:
+        return achado
+    achado = _PRAZO_POR_TITULO.get(normalizar(clique.payload))
+    if achado:
+        return achado
+    return _PRAZO_POR_TITULO.get(normalizar(clique.titulo))
+
+
+def _trilha_do_clique(clique: Clique) -> str | None:
+    for candidato in (clique.payload, clique.titulo):
+        trilha = _TRILHA_POR_TITULO.get(normalizar(candidato))
+        if trilha:
+            return trilha
+    return None
+
+
+def trilha_de(estado: dict | None) -> str:
+    """Trilha gravada no estado, ou o padrão. Usada para escolher os rótulos."""
+    trilha = (estado or {}).get("trilha") if isinstance(estado, dict) else None
+    return trilha if trilha in flows.BOTOES_POR_TRILHA else flows.TRILHA_PADRAO
 
 
 def _estado_valido(estado: dict | None) -> str | None:
@@ -125,12 +213,18 @@ def _estado_valido(estado: dict | None) -> str | None:
     return no
 
 
-def _nudge(no: str) -> Decisao:
+def _botoes_do_no(no: str, trilha: str) -> tuple[Botao, ...]:
+    if no == flows.NO_PRAZO:
+        return flows.BOTOES_PRAZO
+    return flows.BOTOES_POR_TRILHA[trilha]
+
+
+def _nudge(no: str, trilha: str) -> Decisao:
     return Decisao(
         proximo_no=no,
         mensagem=Mensagem(
             corpo=flows.CORPO_NUDGE_POR_NO[no],
-            botoes=flows.BOTOES_POR_NO[no],
+            botoes=_botoes_do_no(no, trilha),
         ),
         marcar_nudge=True,
     )
@@ -142,67 +236,193 @@ _ENTREGAR_AO_HUMANO = Decisao(
 )
 
 
-def decidir(estado: dict | None, evento: Evento, *, canal_do_vendedor: bool) -> Decisao:
+def _decidir_quente(contexto: Contexto, *, canal_do_vendedor: bool) -> Decisao:
+    """A entrega concreta + handoff. Zero perguntas depois disso."""
+    dados = {
+        "primeiro_nome": contexto.primeiro_nome,
+        "produto": contexto.produto,
+        "preco": contexto.preco,
+    }
+    if contexto.produto and contexto.preco:
+        corpo = flows.MSG_QUENTE_COM_PRODUTO
+    elif contexto.produto:
+        corpo = flows.MSG_QUENTE_SEM_PRECO
+    else:
+        corpo = flows.MSG_QUENTE_SEM_PRODUTO
+    return Decisao(
+        proximo_no=flows.NO_ENCERRADO,
+        mensagem=Mensagem(
+            corpo=flows.render(corpo, dados),
+            # No número do próprio João, mandar o cartão de contato dele seria
+            # absurdo — e é justamente o degrau que custa 26% dos leads.
+            enviar_cartao_vendedor=not canal_do_vendedor,
+        ),
+        efeitos=Efeitos(tags=(flows.TAG_QUENTE,), handoff=True),
+    )
+
+
+def _decidir_optout() -> Decisao:
+    return Decisao(
+        proximo_no=flows.NO_ENCERRADO,
+        mensagem=Mensagem(corpo=flows.MSG_OPTOUT),
+        efeitos=Efeitos(tags=(flows.TAG_RECUSOU,), optout=True),
+    )
+
+
+def _decidir_adiar() -> Decisao:
+    """Adiamento: sobe para o nó de prazo e pergunta QUANDO, nunca SE.
+
+    Este é o slot mais valioso do menu. "Ainda tenho estoque" não é um não: em 9
+    casos históricos no canal do João, 4 voltaram sozinhos e compraram (Roner, 12
+    dias depois, R$ 5.500). E não existe um único "posso te chamar em X dias?" no
+    dataset inteiro — o vendedor nunca agenda.
+    """
+    return Decisao(
+        proximo_no=flows.NO_PRAZO,
+        mensagem=Mensagem(corpo=flows.CORPO_PRAZO, botoes=flows.BOTOES_PRAZO),
+    )
+
+
+def decidir(
+    estado: dict | None,
+    evento: Evento,
+    *,
+    canal_do_vendedor: bool,
+    contexto: Contexto | None = None,
+) -> Decisao:
     """Decide o próximo passo do fluxo. Pura: mesma entrada, mesma saída, sempre.
 
     `canal_do_vendedor` distingue o número do João do número da ValerIA: no número
     do próprio vendedor não faz sentido mandar o cartão de contato dele.
     """
+    contexto = contexto or Contexto()
     no = _estado_valido(estado)
     if no is None:
         return _ENTREGAR_AO_HUMANO
     if no == flows.NO_ENCERRADO:
         return Decisao(proximo_no=flows.NO_ENCERRADO, ignorar=True)
 
+    trilha = trilha_de(estado)
+
     if isinstance(evento, Clique):
-        casado = _casar(evento)
-        if casado:
-            no_dono, botao = casado
-            if no_dono != no:
-                # Botão do fluxo, mas de outro nó — lead tocou duas vezes ou rolou a
-                # conversa e clicou no template de novo. Ignorar é o certo: não é
-                # recusa a usar botões, e reprocessar o efeito seria duplicar CRM.
-                return Decisao(proximo_no=no, ignorar=True)
-            return _decidir_botao(no, botao, canal_do_vendedor=canal_do_vendedor)
-        # Botão que não é deste fluxo: trata como texto livre.
+        decisao = _decidir_clique(no, trilha, evento, canal_do_vendedor=canal_do_vendedor,
+                                  contexto=contexto)
+        if decisao is not None:
+            return decisao
+        # Botão que não é deste fluxo: cai na regra de texto livre.
+
+    if isinstance(evento, Classificado):
+        decisao = _decidir_classe(no, trilha, evento.classe,
+                                  canal_do_vendedor=canal_do_vendedor, contexto=contexto)
+        if decisao is not None:
+            return decisao
 
     nudge_ja_dado = bool((estado or {}).get("nudged"))
-    return _ENTREGAR_AO_HUMANO if nudge_ja_dado else _nudge(no)
+    return _ENTREGAR_AO_HUMANO if nudge_ja_dado else _nudge(no, trilha)
 
 
-def _decidir_botao(no: str, botao: Botao, *, canal_do_vendedor: bool) -> Decisao:
+def _decidir_clique(
+    no: str, trilha: str, clique: Clique, *, canal_do_vendedor: bool, contexto: Contexto,
+) -> Decisao | None:
+    """Decisao para um clique, ou None se o botão não é deste fluxo."""
     if no == flows.NO_INTERESSE:
-        if botao.id == flows.BTN_QUENTE.id:
-            corpo = flows.MSG_QUENTE_VENDEDOR if canal_do_vendedor else flows.MSG_QUENTE_VALERIA
-            return Decisao(
-                proximo_no=flows.NO_ENCERRADO,
-                mensagem=Mensagem(corpo=corpo, enviar_cartao_vendedor=not canal_do_vendedor),
-                efeitos=Efeitos(tags=(flows.TAG_QUENTE,), handoff=True),
-            )
-        if botao.id == flows.BTN_TALVEZ.id:
-            return Decisao(
-                proximo_no=flows.NO_PRAZO,
-                mensagem=Mensagem(corpo=flows.CORPO_PRAZO, botoes=flows.BOTOES_PRAZO),
-            )
-        if botao.id == flows.BTN_SAIR.id:
-            return Decisao(
-                proximo_no=flows.NO_ENCERRADO,
-                mensagem=Mensagem(corpo=flows.MSG_OPTOUT),
-                efeitos=Efeitos(tags=(flows.TAG_RECUSOU,), optout=True),
-            )
-        # Um botão novo no nível 1 cai no retorno inerte do fim. Isso é deliberado:
-        # antes o opt-out era o fall-through, e um botão novo desligaria o lead da
-        # base sem ninguém pedir — o pior default possível.
-    elif no == flows.NO_PRAZO:
-        prazo = _PRAZO_POR_ID.get(botao.id)
+        botao = _casar_nivel1(clique)
+        if botao is None:
+            # Pode ser um clique de nível 2 chegando fora de hora: o lead tocou duas
+            # vezes ou rolou a conversa. Ignorar é o certo — não é recusa a usar
+            # botões, e reprocessar o efeito duplicaria CRM.
+            if _casar_prazo(clique):
+                return Decisao(proximo_no=no, ignorar=True)
+            return None
+        inferida = _trilha_do_clique(clique)
+        decisao = _efeito_nivel1(botao, trilha, canal_do_vendedor=canal_do_vendedor,
+                                 contexto=contexto)
+        if decisao is None:
+            return None
+        # Um botão novo/desconhecido cai no retorno inerte de _efeito_nivel1, nunca
+        # no opt-out. Antes o opt-out era o fall-through, e um botão novo desligaria
+        # o lead da base sem ninguém pedir — o pior default possível.
+        return replace(decisao, trilha_inferida=inferida) if inferida else decisao
+
+    if no == flows.NO_PRAZO:
+        prazo = _casar_prazo(clique)
         if prazo is not None:
             return Decisao(
                 proximo_no=flows.NO_ENCERRADO,
-                mensagem=Mensagem(corpo=flows.MSG_PRAZO_FECHAMENTO.format(prazo=prazo.rotulo_humano)),
-                efeitos=Efeitos(tags=(prazo.tag,), recontato_meses=prazo.meses),
+                mensagem=Mensagem(
+                    corpo=flows.render(flows.MSG_PRAZO_FECHAMENTO,
+                                       {"prazo": prazo.rotulo_humano}),
+                ),
+                efeitos=Efeitos(tags=(prazo.tag,), recontato_dias=prazo.dias),
             )
+        if _casar_nivel1(clique):
+            # Clique do nível 1 chegando no nível 2 (o lead rolou e clicou no
+            # template de novo). Mesmo raciocínio: ignorar, sem consumir o nudge.
+            return Decisao(proximo_no=no, ignorar=True)
+        return None
 
-    # Nó ou botão sem tratamento aqui: inerte, nunca destrutivo. Hoje inalcançável,
-    # mas um nó novo no fluxo não pode produzir efeito de CRM por acidente — nem
-    # estourar StopIteration, que o runner engoliria como silêncio permanente.
-    return Decisao(proximo_no=no, ignorar=True)
+    return None
+
+
+def _efeito_nivel1(
+    botao: Botao, trilha: str, *, canal_do_vendedor: bool, contexto: Contexto,
+) -> Decisao | None:
+    if botao.id == flows.ID_REPOR:
+        return _decidir_quente(contexto, canal_do_vendedor=canal_do_vendedor)
+    if botao.id == flows.ID_ADIAR:
+        return _decidir_adiar()
+    if botao.id == flows.ID_OPTOUT:
+        return _decidir_optout()
+    if botao.id == flows.ID_MANTER:
+        # Trilha C não vende: "Manter cadastro" é opt-in prospectivo registrado, e a
+        # abordagem comercial fica para uma SEGUNDA campanha, com consentimento na
+        # mão. Encerrar aqui é o desfecho correto, não um beco.
+        return Decisao(
+            proximo_no=flows.NO_ENCERRADO,
+            mensagem=Mensagem(
+                corpo=flows.render(flows.MSG_CADASTRO_MANTIDO,
+                                   {"primeiro_nome": contexto.primeiro_nome}),
+            ),
+            efeitos=Efeitos(tags=(flows.TAG_CADASTRO_MANTIDO,)),
+        )
+    if botao.id == flows.ID_ATUALIZAR:
+        return Decisao(
+            proximo_no=flows.NO_ENCERRADO,
+            mensagem=Mensagem(corpo=flows.MSG_ATUALIZAR_DADOS),
+            efeitos=Efeitos(tags=(flows.TAG_HUMANO,), handoff=True),
+        )
+    # Nó ou botão sem tratamento: inerte, nunca destrutivo.
+    return Decisao(proximo_no=flows.NO_INTERESSE, ignorar=True)
+
+
+def _decidir_classe(
+    no: str, trilha: str, classe: str, *, canal_do_vendedor: bool, contexto: Contexto,
+) -> Decisao | None:
+    """Traduz uma classe da camada 2 no MESMO efeito que o botão equivalente.
+
+    Nenhuma classe gera texto novo: toda mensagem continua vindo de flows.py.
+    """
+    if classe == CLASSE_SAIR:
+        # Vale em qualquer nó, inclusive no de prazo: quem pede para parar, para.
+        # Hoje há 52 pessoas em produção que clicaram opt-out e seguem elegíveis —
+        # é essa dívida que esta linha existe para não repetir.
+        return _decidir_optout()
+    if classe == CLASSE_ENGANO:
+        return Decisao(
+            proximo_no=flows.NO_ENCERRADO,
+            mensagem=Mensagem(corpo=flows.MSG_ENGANO, botoes=(flows.BTN_OPTOUT,)),
+            efeitos=Efeitos(tags=(flows.TAG_ENGANO,), silenciar_ia=True,
+                            pretexto_contestado=True),
+        )
+    if classe == CLASSE_QUENTE:
+        return _decidir_quente(contexto, canal_do_vendedor=canal_do_vendedor)
+    if classe == CLASSE_ADIAR:
+        # No nó de prazo o lead já está sendo perguntado — repetir a pergunta seria
+        # loop. Cai no nudge normal, que já é a pergunta de prazo.
+        return None if no == flows.NO_PRAZO else _decidir_adiar()
+    if classe == CLASSE_PERGUNTA:
+        # Pergunta comercial de verdade: o bot não responde preço nem frete (há três
+        # versões incompatíveis de política de frete em circulação). Vai para o João.
+        return _ENTREGAR_AO_HUMANO
+    # RUIDO e qualquer classe desconhecida caem na regra de nudge do chamador.
+    return None
