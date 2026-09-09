@@ -43,13 +43,16 @@ def test_semeia_o_agente_com_prompt_key_estavel(sql: str):
     assert "WHERE NOT EXISTS" in sql
 
 
-@pytest.mark.parametrize("tag", [
-    "Reativação: Quente",
-    "Reativação: 1 mês",
-    "Reativação: 3 meses",
-    "Reativação: 6 meses",
-    "Reativação: Recusou",
-    "Reativação: Atendimento humano",
-])
-def test_semeia_todas_as_seis_tags(sql: str, tag: str):
-    assert tag in sql, f"tag {tag!r} não semeada — add_tags_to_lead a ignoraria em silêncio"
+def test_semeia_alguma_tag_de_desfecho(sql: str):
+    """Sanidade mínima: o bloco de seed não pode simplesmente sumir do arquivo.
+
+    Os NOMES das tags foram renomeados em 09/09/2026 ("Reativação: ..." →
+    "Recuperação: ...", prazos de meses → dias) e agora são conferidos um a um
+    contra `app.button_flow.flows` em
+    tests/test_recuperacao_migration_2026_09_09.py::TestTagsDoDesfecho — lá o teste
+    DERIVA a lista do módulo em vez de copiá-la, então uma renomeação futura quebra
+    o teste em vez de passar despercebida. Repetir os literais aqui reintroduziria
+    a terceira cópia que causou a divergência original.
+    """
+    assert "INSERT INTO tags (name, color)" in sql
+    assert "WHERE NOT EXISTS (SELECT 1 FROM tags t WHERE t.name = v.name);" in sql

@@ -38,6 +38,11 @@ from app.agent.tools import (
     record_deferred_media_delivery, apply_stage_transition,
 )
 from app.buffer.prefill import match_prefill_stage
+from app.button_flow.runner import (
+    e_clique_de_botao,
+    is_button_flow_conversation,
+    run_button_flow,
+)
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -1424,6 +1429,81 @@ async def process_buffered_messages(
             conversation["id"], phone,
         )
         _update_last_msg(conversation["id"])
+        return
+
+    # Gate do agente de RECUPERAÇÃO (fluxo fechado de botões, sem LLM).
+    #
+    # A POSIÇÃO desta chamada é o desenho inteiro do projeto, não uma conveniência:
+    #
+    # 1) ANTES do gate de canal humano (logo abaixo) ⇒ o bot funciona no número do
+    #    JOÃO (mode='human'). A troca de número no handoff é o maior vazamento medido
+    #    do funil: 131 de 500 leads (26%) não fazem o esforço de migrar de conversa
+    #    (Diagnóstico 01/09, p.5). Rodar na thread do próprio vendedor elimina o
+    #    degrau inteiro — o caminho mais curto do dataset até a venda foi exatamente
+    #    esse (clique 16:58:19 → João responde na mesma thread 74s depois → R$ 470).
+    #    A justificativa para furar o gate de mode='human' é substantiva: um fluxo
+    #    fechado de botões NÃO é IA generativa. Todo texto que sai está declarado em
+    #    button_flow/flows.py, revisado uma vez e versionado em código.
+    #
+    # 2) ANTES de VALERIA_ENABLED e de lead.ai_enabled ⇒ dispensa ligar `ai_enabled`
+    #    nos 1.208 leads da coorte do Bling. Eles seguem `false`, e a ValerIA continua
+    #    sem nenhum acesso ao número do João — que é o ponto.
+    #
+    # 3) DEPOIS do gate de reação isolada ⇒ um 👍 do lead não é um turno do fluxo.
+    #
+    # Fail-open: is_button_flow_conversation devolve False em qualquer erro (e já sai
+    # em False com o kill switch RECUPERACAO_ENABLED desligado, sem tocar no banco).
+    if is_button_flow_conversation(conversation, channel):
+        # O LOCK É ADQUIRIDO AQUI, e não movendo o gate para dentro do lock da IA
+        # (linha ~1690): o lock da IA vive DEPOIS do gate de canal humano, do
+        # VALERIA_ENABLED e do lead.ai_enabled — os três matam este caminho antes de
+        # chegar lá (o bot roda no número do João, mode='human', com os 1.208 leads
+        # em ai_enabled=false). Mover o gate destruiria as duas razões de ele existir
+        # nesta posição. Então o caminho do bot adquire a MESMA trava, aqui.
+        #
+        # A race é a mesma do lead 5544991611703 (app/buffer/lead_lock.py): dois
+        # flushes do mesmo lead em paralelo. Sem trava, dois toques rodam o fluxo
+        # duas vezes e duplicam efeito de CRM (dois handoffs, duas tags, duas
+        # mensagens). Com trava + releitura do flow_state dentro dela
+        # (button_flow/runner.py:_reler_estado), o segundo turno vê o nó já
+        # 'encerrado' e o motor devolve `ignorar`.
+        #
+        # RE-COALESCING COM UMA EXCEÇÃO DELIBERADA: só descartamos turno de TEXTO
+        # LIVRE. Um clique nunca é descartado. O turno da IA pode abortar porque o
+        # worker posterior relê o histórico inteiro e responde tudo de uma vez; aqui
+        # não existe esse resgate — o worker posterior traz o texto DELE, e a
+        # identidade do botão (o payload) morre com o turno abortado. O clique é o
+        # sinal que o projeto inteiro existe para capturar (35,7% dos cliques
+        # positivos viraram venda), e ele é serializado pelo lock de qualquer forma.
+        async with lead_run_lock(lead["id"]):
+            _e_clique = e_clique_de_botao(_message_type, _metadata)
+            if not _e_clique and (
+                _has_newer_inbound(conversation["id"], turn_watermark)
+                or await _has_pending_buffered_inbound(phone, channel["id"])
+            ):
+                logger.info(
+                    "[BUTTON FLOW] texto mais novo do lead ao adquirir o lock "
+                    "(conv=%s, phone=%s) — turno stale abortado; o worker posterior "
+                    "classifica o texto completo.",
+                    conversation["id"], phone,
+                )
+            else:
+                await run_button_flow(
+                    lead=lead, conversation=conversation, channel=channel,
+                    provider=provider, texto=resolved_text,
+                    message_type=_message_type, metadata=_metadata, wamid=wamid,
+                )
+        _update_last_msg(conversation["id"])
+        # RETURN INCONDICIONAL, inclusive quando o motor apenas IGNORA o evento.
+        # Seguir o fluxo normal significaria, na configuração real desta feature
+        # (número do João, mode='human'), morrer duas linhas abaixo no gate de canal
+        # humano — nada mudaria. E na configuração hipotética de rodar no número da
+        # ValerIA significaria entregar a conversa à IA GENERATIVA no meio de um
+        # fluxo fechado, que é precisamente o que a Decisão 2 do dossiê proíbe: os
+        # 1.208 leads seguem ai_enabled=false para que a ValerIA nunca fale por eles.
+        # "Ignorado" aqui quer dizer "este evento não move o fluxo" (clique repetido,
+        # clique de nível 2 fora de hora, conversa encerrada) — silêncio é a resposta
+        # certa, não uma escalada para outro agente.
         return
 
     # Channel-level gate: human channels never run AI or schedule follow-ups

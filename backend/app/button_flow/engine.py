@@ -212,6 +212,24 @@ def _casar_prazo(clique: Clique) -> Prazo | None:
     return _PRAZO_POR_TITULO.get(normalizar(clique.titulo))
 
 
+def _vocativo(primeiro_nome: str) -> str:
+    """", Fulano" quando há nome; string vazia quando não há.
+
+    O nome é opcional de propósito (`Contexto` documenta: "a coorte é irregular"),
+    mas os textos traziam a vírgula colada no placeholder e um cadastro sem nome
+    produzia "obrigado, ! deixei seu cadastro ativo" e "perfeito,\\n" — a primeira
+    coisa que o cliente lê depois de até 7 anos sem contato. Na base do Bling o
+    `leads.name` vem da razão social e às vezes é handle ou CPF ("RD Recepção",
+    "@neimaraoliveirapsicotera", "ANA PAULA GAMA PEZZOT 40250877821"), então o campo
+    vazio ou impróprio não é exceção rara.
+
+    Manter a pontuação AQUI, e não no texto, é o que garante que nenhum texto novo
+    de flows.py reintroduza o problema: quem escreve copy só escreve "{vocativo}".
+    """
+    nome = (primeiro_nome or "").strip()
+    return f", {nome}" if nome else ""
+
+
 def _e_optout(clique: Clique) -> bool:
     """True se este clique é o botão de saída, em qualquer trilha e qualquer nó."""
     botao = _casar_nivel1(clique)
@@ -285,7 +303,7 @@ _ENTREGAR_AO_HUMANO = Decisao(
 def _decidir_quente(contexto: Contexto, *, canal_do_vendedor: bool) -> Decisao:
     """A entrega concreta + handoff. Zero perguntas depois disso."""
     dados = {
-        "primeiro_nome": contexto.primeiro_nome,
+        "vocativo": _vocativo(contexto.primeiro_nome),
         "produto": contexto.produto,
         "preco": contexto.preco,
     }
@@ -453,7 +471,7 @@ def _efeito_nivel1(
             proximo_no=flows.NO_ENCERRADO,
             mensagem=Mensagem(
                 corpo=flows.render(flows.MSG_CADASTRO_MANTIDO,
-                                   {"primeiro_nome": contexto.primeiro_nome}),
+                                   {"vocativo": _vocativo(contexto.primeiro_nome)}),
             ),
             efeitos=Efeitos(tags=(flows.TAG_CADASTRO_MANTIDO,)),
         )

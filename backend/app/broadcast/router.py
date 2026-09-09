@@ -230,11 +230,25 @@ async def start_broadcast(broadcast_id: str):
             channel = get_channel_by_id(channel_id)
         except Exception:
             channel = None  # sem canal → preflight segue só com o lookup local
+    # `agent_profile_id` é o que LIGA a checagem 5 (rótulos do template × flows.py).
+    # Ele sempre esteve aqui — `broadcast` vem de select("*") — mas a chamada passava
+    # só 4 posicionais, então _agent_profile_kind(None) nunca batia 'button_flow' e a
+    # checagem NUNCA rodou em produção (achado da revisão de 09/09/2026; os testes não
+    # pegavam porque chamavam a função direto, já com agent_profile_id).
+    #
+    # FURO CONHECIDO, NÃO COBERTO AQUI: o botão "Iniciar" da UI não chama esta rota. Ele
+    # chama /api/broadcasts/[id]/start do Next (frontend/src/app/api/broadcasts/[id]/
+    # start/route.ts), que faz update({status:'running'}) direto no Supabase e nunca
+    # encosta no FastAPI. Ou seja, este pre-flight só protege quem dispara pelo backend.
+    # Enquanto a UI não for migrada para cá, o worker é a única defesa em profundidade
+    # (ver _resolve_plano_de_botoes em app/broadcast/worker.py, que se recusa a emitir
+    # payload quando os rótulos aprovados não casam com a trilha).
     preflight_errors = await validate_template_for_broadcast(
         broadcast.get("template_name"),
         broadcast.get("template_language_code", "pt_BR"),
         broadcast.get("template_variables") or {},
         channel,
+        agent_profile_id=broadcast.get("agent_profile_id"),
     )
     if preflight_errors:
         raise HTTPException(

@@ -13,6 +13,7 @@ import { QuickReplyMenu } from "@/components/conversas/quick-reply-menu";
 import { QuickRepliesModal } from "@/components/config/quick-replies-modal";
 import { getSlashQuery, applyQuickReply, filterQuickReplies } from "@/lib/quick-replies";
 import { resolveLeadVariables } from "@/lib/lead-variables";
+import { previewText } from "@/lib/message-preview";
 
 export interface SiblingConversationSummary {
   id: string;
@@ -728,16 +729,14 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
                 <p className="text-xs font-medium text-[#25d366] mb-0.5">
                   {replyingTo.role === "user" ? "Lead" : "Você"}
                 </p>
+                {/* Terceiro call-site da regra de preview (revisão de 09/09/2026): aqui
+                    ficou um mapa inline que tratava tudo != 'text' como mídia, então
+                    responder a um CLIQUE em botão (`message_type='button'`, rótulo em
+                    `content`) mostrava o rótulo genérico de mídia e o vendedor perdia
+                    exatamente o que o lead tocou.
+                    A regra agora mora em @/lib/message-preview. */}
                 <p className="text-xs text-[#666] truncate">
-                  {replyingTo.message_type && replyingTo.message_type !== "text"
-                    ? ({
-                        image: "📷 Imagem",
-                        audio: "🎵 Áudio",
-                        video: "🎬 Vídeo",
-                        document: "📄 Documento",
-                        sticker: "😀 Figurinha",
-                      } as Record<string, string>)[replyingTo.message_type] ?? "📎 Mídia"
-                    : replyingTo.content}
+                  {previewText(replyingTo)}
                 </p>
               </div>
               <button

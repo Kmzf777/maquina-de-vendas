@@ -254,9 +254,19 @@ export interface Channel {
   created_at: string;
 }
 
+/**
+ * Eixo ORTOGONAL ao `prompt_key`: diz QUEM atende, não que persona atende.
+ * `llm` = orquestrador Gemini; `button_flow` = fluxo determinístico de botões
+ * (backend/app/button_flow), que roda inclusive em canal `mode='human'`.
+ * Coluna criada por supabase/migrations/20260820_button_flow_agent.sql.
+ */
+export type AgentKind = "llm" | "button_flow";
+
 export interface AgentProfile {
   id: string;
   name: string;
+  /** Opcional: `GET /api/agent-profiles` preenche 'llm' quando o banco ainda não tem a coluna. */
+  kind?: AgentKind;
   model: string;
   stages: Record<string, {
     prompt: string;

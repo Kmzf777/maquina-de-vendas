@@ -31,7 +31,12 @@ NO_INTERESSE = "aguardando_interesse"
 NO_PRAZO = "aguardando_prazo"
 NO_ENCERRADO = "encerrado"
 
-# ── Tags de desfecho (semeadas em 20260909_recuperacao_stages_optout.sql) ───
+# ── Tags de desfecho (semeadas em 20260820_button_flow_agent.sql §4) ────────
+# O ponteiro dizia 20260909_recuperacao_stages_optout.sql até 09/09/2026 e estava
+# errado: aquela migração cria as ETAPAS do funil e as colunas de opt-out, e a §3
+# dela é só uma nota dizendo que as tags NÃO moram lá. Quem fosse conferir um nome
+# de tag pelo comentário abriria o arquivo errado — e um nome divergente aqui não
+# levanta nada: add_tags_to_lead resolve por nome exato e devolve em silêncio.
 TAG_QUENTE = "Recuperação: Quente"
 TAG_RECUSOU = "Recuperação: Recusou"
 TAG_HUMANO = "Recuperação: Atendimento humano"
@@ -142,7 +147,7 @@ CORPO_PRAZO = "Beleza! Quando faz sentido eu te chamar de novo?"
 # viram preço nem foto — quem recebeu algo concreto chegou ao vendedor em 73-75%,
 # contra 56,5% de quem não recebeu nada.
 MSG_QUENTE_COM_PRODUTO = (
-    "perfeito, {primeiro_nome}\n"
+    "perfeito{vocativo}\n"
     "você levava {produto} — hoje ele está {preco} a unidade\n"
     "já chamei o João aqui, ele te responde em instantes"
 )
@@ -150,13 +155,13 @@ MSG_QUENTE_COM_PRODUTO = (
 # leads compravam outras marcas, 123 cápsula, 47 drip — o Bling tem 444 produtos).
 # Cotar de memória foi o que perdeu as 500 unidades da Ritz.
 MSG_QUENTE_SEM_PRECO = (
-    "perfeito, {primeiro_nome}\n"
+    "perfeito{vocativo}\n"
     "você levava {produto} — já chamei o João aqui pra te passar a condição de hoje\n"
     "ele te responde em instantes"
 )
 # Sem produto conhecido no cadastro.
 MSG_QUENTE_SEM_PRODUTO = (
-    "perfeito, {primeiro_nome}\n"
+    "perfeito{vocativo}\n"
     "já chamei o João aqui, ele te responde em instantes"
 )
 
@@ -168,7 +173,7 @@ MSG_PRAZO_FECHAMENTO = (
 MSG_OPTOUT = "entendido, não te mando mais nada por aqui. obrigado pelo tempo!"
 
 MSG_CADASTRO_MANTIDO = (
-    "obrigado, {primeiro_nome}! deixei seu cadastro ativo por aqui.\n"
+    "obrigado{vocativo}! deixei seu cadastro ativo por aqui.\n"
     "quando precisar de café, é só me chamar neste mesmo número."
 )
 

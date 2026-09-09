@@ -44,16 +44,32 @@ WHERE NOT EXISTS (
 );
 
 -- 4) Tags do desfecho -------------------------------------------------------
--- add_tags_to_lead resolve por NOME EXATO e nunca cria tags. Sem este seed, as
--- tags do bot seriam ignoradas sem nenhum erro visível.
+-- add_tags_to_lead (leads/service.py) resolve tag por NOME EXATO e NUNCA cria tag
+-- que não exista. Sem este seed o bot chamaria add_tags_to_lead com um nome órfão,
+-- a função devolveria sem erro, sem log e sem vínculo — e o desfecho de 1.208 leads
+-- ficaria invisível no CRM. É o modo de falha mais silencioso do projeto inteiro.
+--
+-- ⚠️ RENOMEADAS EM 09/09/2026. O seed original usava "Reativação: ..." e prazos em
+-- meses ("1 mês" / "3 meses" / "6 meses"). O agente virou "Recuperação" e os prazos
+-- viraram DIAS (30/60/90), porque o intervalo médio entre compras desta coorte é
+-- 78-122 dias — "3 meses" era um rótulo pior para o mesmo número. Como esta migração
+-- ainda NÃO foi aplicada em produção (verificado em 09/09/2026: agent_profiles.kind
+-- não existe, conversations.flow_state não existe, nenhuma tag "Reativação: ..."
+-- de desfecho no banco), corrigir aqui basta — não há nada a renomear.
+--
+-- A LISTA ABAIXO É O ESPELHO DE backend/app/button_flow/flows.py (TAG_* e PRAZOS).
+-- Divergir de um caractere reproduz exatamente o bug acima; o teste
+-- test_recuperacao_migration_2026_09_09.py lê os dois lados e trava a igualdade.
 INSERT INTO tags (name, color)
 SELECT v.name, v.color
 FROM (VALUES
-  ('Reativação: Quente',              '#ef4444'),
-  ('Reativação: 1 mês',               '#f59e0b'),
-  ('Reativação: 3 meses',             '#eab308'),
-  ('Reativação: 6 meses',             '#84cc16'),
-  ('Reativação: Recusou',             '#6b7280'),
-  ('Reativação: Atendimento humano',  '#3b82f6')
+  ('Recuperação: Quente',               '#ef4444'),
+  ('Recuperação: Recusou',              '#6b7280'),
+  ('Recuperação: Atendimento humano',   '#3b82f6'),
+  ('Recuperação: Cadastro mantido',     '#14b8a6'),
+  ('Recuperação: Pretexto contestado',  '#a855f7'),
+  ('Recuperação: 30 dias',              '#f59e0b'),
+  ('Recuperação: 60 dias',              '#eab308'),
+  ('Recuperação: 90 dias',              '#84cc16')
 ) AS v(name, color)
 WHERE NOT EXISTS (SELECT 1 FROM tags t WHERE t.name = v.name);
