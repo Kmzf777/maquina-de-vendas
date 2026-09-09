@@ -155,7 +155,39 @@ _TRILHA_POR_TITULO: dict[str, str] = {
 }
 
 
+# Payload custom montado pelo disparo: `<flow>|<botao_id>|<trilha>|t<toque>`
+# (broadcast/worker.py:montar_payload_botao). Ele carrega o que o clique sozinho
+# não conta — a versão do fluxo e a TRILHA — e existe justamente para o casamento
+# não depender do texto do rótulo. Sem esta função o payload seria emitido e nunca
+# lido, e um rótulo reaprovado com uma vírgula a mais ("Preciso repor!") já bastaria
+# para o clique virar texto livre.
+_PAYLOAD_SEP = "|"
+
+
+def _desmontar_payload(payload: str | None) -> tuple[str | None, str | None]:
+    """(botao_id, trilha) de um payload custom, ou (None, None) se não for um.
+
+    Só aceita payload da versão CORRENTE do fluxo: um payload de outra versão
+    significa que o lead clicou num template disparado por um fluxo antigo, e
+    ignorá-lo aqui faz o clique cair no caminho de estado incompatível, que devolve
+    ao humano — o desfecho seguro. Função pura.
+    """
+    if not payload or _PAYLOAD_SEP not in payload:
+        return None, None
+    partes = payload.split(_PAYLOAD_SEP)
+    if len(partes) < 3 or partes[0] != flows.FLOW_ID:
+        return None, None
+    botao_id = partes[1] or None
+    trilha = partes[2] if partes[2] in flows.BOTOES_POR_TRILHA else None
+    return botao_id, trilha
+
+
 def _casar_nivel1(clique: Clique) -> Botao | None:
+    botao_id, _ = _desmontar_payload(clique.payload)
+    if botao_id:
+        achado = _NIVEL1_POR_ID.get(botao_id)
+        if achado:
+            return achado
     achado = _NIVEL1_POR_ID.get(clique.payload)
     if achado:
         return achado
@@ -166,6 +198,11 @@ def _casar_nivel1(clique: Clique) -> Botao | None:
 
 
 def _casar_prazo(clique: Clique) -> Prazo | None:
+    botao_id, _ = _desmontar_payload(clique.payload)
+    if botao_id:
+        achado = _PRAZO_POR_ID.get(botao_id)
+        if achado:
+            return achado
     achado = _PRAZO_POR_ID.get(clique.payload)
     if achado:
         return achado
@@ -175,7 +212,16 @@ def _casar_prazo(clique: Clique) -> Prazo | None:
     return _PRAZO_POR_TITULO.get(normalizar(clique.titulo))
 
 
+def _e_optout(clique: Clique) -> bool:
+    """True se este clique é o botão de saída, em qualquer trilha e qualquer nó."""
+    botao = _casar_nivel1(clique)
+    return botao is not None and botao.id == flows.ID_OPTOUT
+
+
 def _trilha_do_clique(clique: Clique) -> str | None:
+    _, trilha = _desmontar_payload(clique.payload)
+    if trilha:
+        return trilha
     for candidato in (clique.payload, clique.titulo):
         trilha = _TRILHA_POR_TITULO.get(normalizar(candidato))
         if trilha:
@@ -296,6 +342,22 @@ def decidir(
     do próprio vendedor não faz sentido mandar o cartão de contato dele.
     """
     contexto = contexto or Contexto()
+
+    # O opt-out vence TUDO: nó, versão de estado e estado corrompido.
+    #
+    # Antes ele era só mais um botão do nível 1, e isso abria três buracos reais —
+    # o lead que rola a conversa de volta até o template e toca "Parar mensagens"
+    # estando no nó de prazo, o que toca depois do fluxo encerrado (pós-handoff), e
+    # o que tem flow_state de outra versão. Nos três casos a resposta era silêncio,
+    # e o lead seguia com opt_out=false, elegível ao toque D+4 e à próxima campanha.
+    # É exatamente a dívida que já existe em produção: 52 pessoas clicaram opt-out e
+    # continuam elegíveis. Reaplicar opt-out é idempotente e barato; perdê-lo é o
+    # risco #1 da spec (LGPD + queda de qualidade do número).
+    if isinstance(evento, Clique) and _e_optout(evento):
+        return _decidir_optout()
+    if isinstance(evento, Classificado) and evento.classe == CLASSE_SAIR:
+        return _decidir_optout()
+
     no = _estado_valido(estado)
     if no is None:
         return _ENTREGAR_AO_HUMANO
@@ -355,9 +417,19 @@ def _decidir_clique(
                 ),
                 efeitos=Efeitos(tags=(prazo.tag,), recontato_dias=prazo.dias),
             )
-        if _casar_nivel1(clique):
-            # Clique do nível 1 chegando no nível 2 (o lead rolou e clicou no
-            # template de novo). Mesmo raciocínio: ignorar, sem consumir o nudge.
+        botao = _casar_nivel1(clique)
+        if botao is not None:
+            # Clique do nível 1 chegando no nível 2: o lead rolou a conversa e tocou
+            # no template de novo. Em geral ignorar é o certo — não é recusa a usar
+            # botões e reprocessar duplicaria efeito de CRM.
+            #
+            # Menos quando ele MUDA DE IDEIA PARA CIMA. "Ainda tenho estoque" seguido
+            # de "Preciso repor" é o lead conferindo o estoque e voltando: engolir
+            # isso perde a única intenção de compra explícita que o fluxo consegue
+            # capturar — o clique positivo converteu 35,7% em venda, o melhor sinal do
+            # CRM inteiro. (O opt-out já foi tratado antes, no topo de decidir.)
+            if botao.id == flows.ID_REPOR:
+                return _decidir_quente(contexto, canal_do_vendedor=canal_do_vendedor)
             return Decisao(proximo_no=no, ignorar=True)
         return None
 
