@@ -29,7 +29,9 @@ async def push_to_buffer(r: aioredis.Redis, msg: IncomingMessage):
 
     # Determine text content (will be resolved later for media)
     _MEDIA_TYPES = ("image", "video", "audio", "document", "sticker")
-    _META_TYPES = ("location", "contact", "reaction")
+    # "button" entra aqui para o payload do clique sobreviver ao achatamento do
+    # buffer — o bot de botões precisa distinguir clique de texto digitado.
+    _META_TYPES = ("location", "contact", "reaction", "button")
     if msg.media_url and msg.type in _MEDIA_TYPES:
         if msg.type == "document" and msg.document_name:
             fname_b64 = base64.b64encode(msg.document_name.encode()).decode()

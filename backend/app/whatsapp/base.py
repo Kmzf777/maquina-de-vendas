@@ -37,6 +37,19 @@ class WhatsAppProvider(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} não suporta send_reaction")
 
+    async def send_interactive_buttons(
+        self, to: str, body: str, buttons: list[tuple[str, str]]
+    ) -> dict:
+        """Envia uma mensagem interativa com até 3 botões de resposta.
+
+        `buttons` é uma lista de (id, título). Como send_contact/send_reaction:
+        método concreto com default não-suportado — só os provedores ativos (Meta)
+        e o mock o sobrescrevem; o Evolution (descontinuado) herda este default.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} não suporta send_interactive_buttons"
+        )
+
     @abstractmethod
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict: ...
 
