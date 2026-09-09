@@ -205,6 +205,14 @@ def _stop_typing_pulse(task) -> None:
 # detecção de insistência (escalonamento). Mantido como constante para evitar drift.
 _AUDIO_FAIL_MARKER = "[audio: nao foi possivel transcrever]"
 
+# Áudio em canal humano: NÃO é falha — a transcrição não foi sequer tentada, porque
+# ninguém lê o texto lá (o prompt da Valéria não roda e o chat só mostra o player).
+# Marcador próprio, distinto do _AUDIO_FAIL_MARKER de propósito: aquele alimenta o
+# _count_recent_failed_audio e escalaria o lead para humano por um problema inexistente.
+# O texto casa com _MEDIA_PLACEHOLDERS["audio"] (app/conversations/service.py), que é o
+# que a camada de leitura já renderiza para áudio sem conteúdo.
+_AUDIO_NO_TRANSCRIPTION_MARKER = "[áudio]"
+
 # B3 (graceful degradation de mídia): mídia visual sem texto vira um marcador legível para
 # o agente (a persona reconhece "[imagem]"/"[documento]" via base.py e não diz "chegou cortada").
 # Os rótulos devem casar com os marcadores citados na seção "TRATAMENTO DE MÍDIA" do base.py.
@@ -2117,11 +2125,14 @@ def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: s
 
 async def _resolve_media(
     text: str, provider, lead_id: str | None = None, stage: str = "",
+    transcribe: bool = True,
 ) -> tuple[str, str | None, str | None, str | None, dict | None]:
     """Replace media placeholders with type/url metadata.
 
     Returns (resolved_text, media_url, message_type, document_name, metadata).
-    Audio: downloaded, transcribed, uploaded to Supabase Storage.
+    Audio: downloaded, uploaded to Supabase Storage e — se `transcribe` — transcrito.
+    `transcribe=False` (canal humano) pula SÓ a chamada ao Gemini: o download e o
+    upload continuam, então `media_url` segue preenchido e o player do CRM não quebra.
     Image/video/document/sticker: media_id extracted only, no download.
     Location/contact/reaction: metadata dict extracted from base64 JSON.
     `lead_id`/`stage`: atribuição da contabilidade da transcrição (token_usage).
@@ -2163,6 +2174,17 @@ async def _resolve_media(
             uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
             if uploaded_url:
                 storage_url = uploaded_url
+
+            # Canal humano (número do João): o texto não tem consumidor — o prompt da
+            # Valéria não roda aqui e o chat do CRM só exibe o player. Pagar
+            # generateContent por ele é desperdício integral. O áudio já subiu pro
+            # Storage acima, então o player continua funcionando normalmente.
+            if not transcribe:
+                logger.info(
+                    "[AUDIO] transcrição pulada (canal humano) para %s", media_ref,
+                )
+                text = text.replace(match.group(0), _AUDIO_NO_TRANSCRIPTION_MARKER)
+                continue
 
             # ETAPA 2 — TRANSCRIÇÃO (Gemini generateContent). Log granular do erro real.
             try:
