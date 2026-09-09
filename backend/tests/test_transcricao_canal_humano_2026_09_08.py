@@ -80,3 +80,62 @@ async def test_canal_de_ia_continua_transcrevendo_por_default(monkeypatch):
     transcribe.assert_awaited_once()
     assert text == "[audio transcrito: quero 5 quilos do microlote]"
     assert message_type == "audio"
+
+
+def _patch_pipeline(stack: ExitStack, *, channel: dict) -> AsyncMock:
+    """Mocka process_buffered_messages até logo depois do _resolve_media.
+
+    VALERIA_ENABLED=False faz a função retornar no gate seguinte ao de canal humano,
+    então tanto o canal 'human' quanto o 'ai' param cedo — o que basta: o objeto sob
+    teste é o kwarg `transcribe` com que _resolve_media foi chamado.
+    """
+    lead = {"id": "L1", "phone": "5534988861441", "wa_id": "5534988861441",
+            "ai_enabled": True, "stage": "atacado", "metadata": {}}
+    conv = {"id": "conv1", "status": "active", "stage": "atacado", "followup_enabled": False}
+
+    p = lambda name, *args, **kw: stack.enter_context(patch.object(processor, name, *args, **kw))
+
+    p("get_or_create_lead", return_value=lead)
+    p("get_channel_by_id", return_value=channel)
+    p("get_or_create_conversation", return_value=conv)
+    p("get_provider", return_value=MagicMock())
+    p("update_conversation", MagicMock())
+    p("get_supabase", MagicMock())
+    p("run_with_retry", MagicMock(return_value=MagicMock(data={"unread_count": 0})))
+    p("_wamid_already_processed", return_value=False)
+    p("_is_recent_duplicate", return_value=False)
+    p("save_message", MagicMock(return_value={"created_at": "2026-09-08T12:00:00Z"}))
+    p("_update_last_msg", MagicMock())
+    p("VALERIA_ENABLED", False)
+
+    resolve = p("_resolve_media", new=AsyncMock(return_value=("[audio]", "u", "audio", None, None)))
+
+    # Efeitos colaterais best-effort (lazy imports) — neutralizados p/ não tocar rede.
+    stack.enter_context(patch("app.broadcast.service.record_broadcast_reply", MagicMock()))
+    stack.enter_context(patch("app.campaigns.worker.handle_campaign_reply", MagicMock()))
+    stack.enter_context(patch("app.automation.triggers.fire_trigger", new=AsyncMock()))
+    # get_open_deal é lazy import e fail-soft (loga ERROR e segue), mas sem mock ele
+    # tenta resolver DNS — deixaria o teste lento e dependente de rede no CI.
+    stack.enter_context(patch("app.leads.service.get_open_deal", MagicMock(return_value=None)))
+
+    return resolve
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel, esperado",
+    [
+        ({"id": "ch1", "mode": "human", "provider_config": {}}, False),
+        ({"id": "ch1", "mode": "ai", "provider_config": {}}, True),
+        ({"id": "ch1", "provider_config": {}}, True),
+    ],
+    ids=["canal-humano-nao-transcreve", "canal-ia-transcreve", "sem-mode-default-ai"],
+)
+async def test_flag_de_transcricao_vem_do_mode_do_canal(channel, esperado):
+    with ExitStack() as stack:
+        resolve = _patch_pipeline(stack, channel=channel)
+        await processor.process_buffered_messages(
+            "5534988861441", "[audio: media_id=mid1]", "ch1", wamid="wamid-1",
+        )
+
+    assert resolve.await_args.kwargs["transcribe"] is esperado

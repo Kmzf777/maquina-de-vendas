@@ -1274,8 +1274,12 @@ async def process_buffered_messages(
     _document_name: str | None = None
     _metadata: dict | None = None
     try:
+        # Transcrição só no canal da IA: em canal humano (número do João) ninguém lê o
+        # texto — a Valéria não responde ali e o chat do CRM mostra apenas o player.
+        # Mesmo gate de `mode` já usado em follow-up, broadcast e watchdog.
         resolved_text, _media_url, _message_type, _document_name, _metadata = await _resolve_media(
             combined_text, provider, lead_id=lead.get("id"), stage=lead.get("stage") or "",
+            transcribe=channel.get("mode", "ai") != "human",
         )
     except Exception as e:
         logger.warning(f"Failed to resolve media for {phone}: {e}")
