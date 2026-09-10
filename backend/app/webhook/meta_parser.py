@@ -136,17 +136,33 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     }
 
                 elif msg_type == "button":
-                    # Quick reply clicked on a template message
-                    text = msg.get("button", {}).get("text", "")
-                    parsed_type = "text"
+                    # Quick reply de TEMPLATE. Hoje não enviamos parâmetro `payload` no
+                    # componente de botão do template, então a Meta devolve o payload igual
+                    # ao TEXTO do botão, e o casamento do nível 1 é por texto normalizado.
+                    # O que prova que foi clique (e não digitação) é o próprio
+                    # msg_type == "button".
+                    btn = msg.get("button", {})
+                    text = btn.get("text", "")
+                    parsed_type = "button"
+                    metadata_dict = {
+                        "payload": btn.get("payload") or text,
+                        "title": text,
+                    }
 
                 elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     interactive_type = interactive.get("type", "")
                     if interactive_type == "button_reply":
-                        text = interactive.get("button_reply", {}).get("title", "")
-                        parsed_type = "text"
+                        # Mensagem interativa nossa: aqui o `id` é controlado por nós.
+                        reply = interactive.get("button_reply", {})
+                        text = reply.get("title", "")
+                        parsed_type = "button"
+                        metadata_dict = {
+                            "payload": reply.get("id") or text,
+                            "title": text,
+                        }
                     elif interactive_type == "list_reply":
+                        # Listas estão fora do escopo do bot de botões — segue como texto.
                         text = interactive.get("list_reply", {}).get("title", "")
                         parsed_type = "text"
                     else:

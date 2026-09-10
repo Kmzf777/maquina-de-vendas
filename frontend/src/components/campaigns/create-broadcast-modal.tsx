@@ -3,6 +3,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import type { Channel, AgentProfile } from "@/lib/types";
+import {
+  agentModeOptions,
+  agentSelectionError,
+  isButtonFlowProfile,
+  reconcileAgentSelection,
+  selectableAgentProfiles,
+  type AgentMode,
+} from "@/lib/agent-profile-choices";
 import { TemplatePreviewCard, autoSuggestToken, type MetaTemplate } from "@/components/campaigns/template-preview-card";
 import { LeadFilterPanel, type LeadFilters } from "@/components/campaigns/lead-filter-panel";
 import { InadimplentesWarning } from "@/components/campaigns/inadimplentes-warning";
@@ -61,10 +69,6 @@ interface CreateBroadcastModalProps {
   onCreated: () => void;
   prefill?: BroadcastPrefill;
 }
-
-// ─── Agent mode ───────────────────────────────────────────────────────────────
-
-type AgentMode = "none" | "channel_default" | "specific";
 
 // =============================================================================
 // Component
@@ -143,6 +147,15 @@ export function CreateBroadcastModal({
   };
 
   const selectedChannel = channels.find((c) => c.id === channelId);
+
+  // Declarado AQUI, e não junto do bloco do agente (:608), porque `canGoToStep2` (:576)
+  // é avaliado durante o render: um const declarado depois dele cairia em TDZ.
+  // Regra e histórico do beco em @/lib/agent-profile-choices::agentSelectionError.
+  const agentError = agentSelectionError(
+    { mode: agentMode, profileId: specificAgentId },
+    agentProfiles,
+    selectedChannel?.mode
+  );
 
   // ─── Reset ────────────────────────────────────────────────────────────────
   const resetForm = useCallback(() => {
@@ -258,13 +271,20 @@ export function CreateBroadcastModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, onClose, resetForm]);
 
-  // Resetar agente quando canal muda para human
+  // Trocar de canal pode invalidar o agente já escolhido. Em canal `mode='human'` só
+  // sobrevive um perfil `kind='button_flow'`: o `handleCreate` grava `agent_profile_id`
+  // sem reconferir o canal, então um id de ValerIA pendurado sairia fixando IA generativa
+  // no número do vendedor. Antes daqui saía um reset cego para "sem agente" — o que
+  // impedia justamente o agente de botões, que existe para rodar no número do João.
   useEffect(() => {
-    if (selectedChannel?.mode === "human") {
-      setAgentMode("none");
-      setSpecificAgentId("");
-    }
-  }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+    const conciliado = reconcileAgentSelection(
+      { mode: agentMode, profileId: specificAgentId },
+      agentProfiles,
+      selectedChannel?.mode
+    );
+    if (conciliado.mode !== agentMode) setAgentMode(conciliado.mode);
+    if (conciliado.profileId !== specificAgentId) setSpecificAgentId(conciliado.profileId);
+  }, [channelId, agentProfiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Reload templates after creating a new one ───────────────────────────
   const handleTemplateCreated = useCallback(() => {
@@ -462,6 +482,14 @@ export function CreateBroadcastModal({
   // ─── Create broadcast ─────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!selectedTemplate) return;
+    // Backstop do agente: o passo 1 já trava, mas o estado pode ter virado depois (troca de
+    // canal, /api/agent-profiles recarregando). E o servidor não segura — preflight.py:308
+    // faz `if not agent_profile_id: return None`, fail-open de propósito. Sem esta linha
+    // nasce campanha de botões com agent_profile_id nulo, que não responde a clique nenhum.
+    if (agentError) {
+      setStep(1);
+      return;
+    }
     // Guard: se agendado, verificar que ainda está no futuro
     if (scheduleMode === "scheduled" && !scheduleIsValid()) {
       setStep(5);
@@ -545,7 +573,7 @@ export function CreateBroadcastModal({
   };
 
   // ─── Step advancement guards ──────────────────────────────────────────────
-  const canGoToStep2 = name.trim() !== "" && channelId !== "";
+  const canGoToStep2 = name.trim() !== "" && channelId !== "" && agentError === null;
   const canGoToStep3 =
     selectedTemplate !== null &&
     selectedTemplate.params.every(
@@ -575,12 +603,23 @@ export function CreateBroadcastModal({
     t.name.toLowerCase().includes(templateSearch.toLowerCase())
   );
 
+  // ─── Agente: o que este canal aceita ──────────────────────────────────────
+  // Canal humano só aceita fluxo de botões (roteiro fechado); canal de IA aceita todos.
+  const isHumanChannel = selectedChannel?.mode === "human";
+  const agentOptions = agentModeOptions(selectedChannel?.mode);
+  const availableAgentProfiles = selectableAgentProfiles(agentProfiles, selectedChannel?.mode);
+
   // ─── Resolved agent profile id for review summary ─────────────────────────
+  const selectedAgentProfile = agentProfiles.find((a) => a.id === specificAgentId);
   const resolvedAgentName =
     agentMode === "none" ? "Sem agente" :
     agentMode === "channel_default"
       ? (channels.find((c) => c.id === channelId)?.agent_profiles?.name ?? "Agente padrão do canal")
-      : (agentProfiles.find((a) => a.id === specificAgentId)?.name ?? "—");
+      : selectedAgentProfile
+      // Sufixo explícito: no canal do João "ValerIA - Outbound / Recuperacao" e
+      // "Bot Reativação" são dois nomes indistinguíveis para quem só lê a revisão.
+      ? `${selectedAgentProfile.name}${isButtonFlowProfile(selectedAgentProfile) ? " (fluxo de botões)" : ""}`
+      : "—";
 
   if (!open) return null;
 
@@ -689,20 +728,24 @@ export function CreateBroadcastModal({
                   </select>
                 </div>
 
-                {/* Agent */}
-                {selectedChannel?.mode !== "human" && (
+                {/* Agent — depende do canal: o que é oferecido muda com o `mode`. */}
+                {selectedChannel && (
                   <div>
                     <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-2">
                       Agente
                     </label>
+
+                    {/* Canal humano é o número do vendedor: só entra roteiro fechado de botões. */}
+                    {isHumanChannel && (
+                      <p className="text-[12px] text-[#7b7b78] mb-2 leading-relaxed">
+                        Canal humano (número do vendedor). Aqui só rodam agentes de{" "}
+                        <strong className="font-medium text-[#111111]">fluxo de botões</strong> —
+                        roteiro fechado, sem IA generativa. A ValerIA continua fora deste número.
+                      </p>
+                    )}
+
                     <div className="space-y-2">
-                      {(
-                        [
-                          { value: "none", label: "Sem agente" },
-                          { value: "channel_default", label: "Agente padrão do canal" },
-                          { value: "specific", label: "Escolher agente específico" },
-                        ] as { value: AgentMode; label: string }[]
-                      ).map(({ value, label }) => (
+                      {agentOptions.map(({ value, label }) => (
                         <label key={value} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="radio"
@@ -717,19 +760,26 @@ export function CreateBroadcastModal({
                       ))}
                     </div>
 
-                    {agentMode === "specific" && (
+                    {agentMode === "specific" && availableAgentProfiles.length > 0 && (
                       <select
                         value={specificAgentId}
                         onChange={(e) => setSpecificAgentId(e.target.value)}
                         className="mt-2 w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
                       >
                         <option value="">Selecionar agente...</option>
-                        {agentProfiles.map((a) => (
+                        {availableAgentProfiles.map((a) => (
                           <option key={a.id} value={a.id}>
-                            {a.name}
+                            {`${a.name}${isButtonFlowProfile(a) ? " · fluxo de botões" : ""}`}
                           </option>
                         ))}
                       </select>
+                    )}
+
+                    {/* Mesma fonte que trava o "Próximo" (`canGoToStep2`), para o operador ler
+                        por que o botão está apagado — antes o empty-state vermelho aparecia e
+                        o disparo saía assim mesmo, com agent_profile_id nulo. */}
+                    {agentError && (
+                      <p className="mt-2 text-[12px] text-[#c41c1c]">{agentError}</p>
                     )}
                   </div>
                 )}

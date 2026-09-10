@@ -12,10 +12,14 @@ Ricardo" persiste "Ricardo"; saudação pura ("boa tarde") é ignorada sem sobre
 nome bom.
 """
 
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch
 
+from app.agent import tools
 from app.agent.tools import (
+    CATALOGO_FOTOS,
     PHOTO_CAPTIONS,
     PRODUTO_PHOTO_MAP,
     SENSORY_CAPTIONS_ATACADO,
@@ -37,22 +41,22 @@ def test_melaco_aparece_somente_no_microlote():
     com_melaco = [c for c in _atacado_captions() if "melaco" in c]
     assert com_melaco == [SENSORY_CAPTIONS_ATACADO["microlote"]]
     # Explicitamente: Suave NÃO carrega melaco.
-    assert "melaco" not in PHOTO_CAPTIONS["atacado"]["foto_2"]
+    assert "melaco" not in PHOTO_CAPTIONS["atacado"]["foto_2_suave"]
 
 
 def test_suave_e_achocolatadas():
-    assert "achocolatadas" in PHOTO_CAPTIONS["atacado"]["foto_2"]
-    assert "frutas amarelas" not in PHOTO_CAPTIONS["atacado"]["foto_2"]
+    assert "achocolatadas" in PHOTO_CAPTIONS["atacado"]["foto_2_suave"]
+    assert "frutas amarelas" not in PHOTO_CAPTIONS["atacado"]["foto_2_suave"]
 
 
 def test_classico_caramelizadas_e_achocolatadas():
-    assert "caramelizadas e achocolatadas" in PHOTO_CAPTIONS["atacado"]["foto_1"]
+    assert "caramelizadas e achocolatadas" in PHOTO_CAPTIONS["atacado"]["foto_1_classico"]
 
 
 def test_suave_fonte_unica_byte_identica():
     """A legenda de foto e a do mapa produto→foto vêm do MESMO string."""
     assert (
-        PHOTO_CAPTIONS["atacado"]["foto_2"]
+        PHOTO_CAPTIONS["atacado"]["foto_2_suave"]
         == PRODUTO_PHOTO_MAP["atacado"]["suave"]["caption"]
         == SENSORY_CAPTIONS_ATACADO["suave"]
     )
@@ -60,35 +64,75 @@ def test_suave_fonte_unica_byte_identica():
 
 
 def test_todas_atacado_derivam_da_fonte_canonica():
-    """foto_1..foto_5 e as entradas do PRODUTO_PHOTO_MAP são idênticas à fonte."""
-    ordem = ["classico", "suave", "canela", "microlote", "drip"]
-    for i, chave in enumerate(ordem, start=1):
-        canonico = SENSORY_CAPTIONS_ATACADO[chave]
-        assert PHOTO_CAPTIONS["atacado"][f"foto_{i}"] == canonico
-        # microlote/drip têm chaves próprias no mapa de produto
-        prod = chave if chave != "capsulas" else "capsulas"
-        assert PRODUTO_PHOTO_MAP["atacado"][prod]["caption"] == canonico
-    # capsulas compartilha a legenda (e a foto) do drip
+    """Toda legenda de foto e do PRODUTO_PHOTO_MAP é idêntica à fonte canônica."""
+    for slug, arquivo in CATALOGO_FOTOS["atacado"]:
+        canonico = SENSORY_CAPTIONS_ATACADO[slug]
+        assert PHOTO_CAPTIONS["atacado"][Path(arquivo).stem] == canonico
+        assert PRODUTO_PHOTO_MAP["atacado"][slug]["caption"] == canonico
+
+
+def test_capsulas_e_drip_tem_fotos_distintas():
+    """Regressão 08/09: cápsulas dividia foto (e legenda) com o Drip Coffee."""
     assert (
-        PRODUTO_PHOTO_MAP["atacado"]["capsulas"]["caption"]
-        == SENSORY_CAPTIONS_ATACADO["drip"]
+        PRODUTO_PHOTO_MAP["atacado"]["capsulas"]["file"]
+        != PRODUTO_PHOTO_MAP["atacado"]["drip"]["file"]
     )
+    assert "Nespresso" not in SENSORY_CAPTIONS_ATACADO["drip"]
 
 
-def test_drip_caption_inalterada():
-    assert PHOTO_CAPTIONS["atacado"]["foto_5"] == "Drip Coffee e Capsulas Nespresso"
-    assert PRODUTO_PHOTO_MAP["atacado"]["drip"]["caption"] == "Drip Coffee e Capsulas Nespresso"
+# ---------------------------------------------------------------------------
+# 1b. Vínculo arquivo↔produto (regressão da auditoria QA 08/09, conv 5534988861441)
+# ---------------------------------------------------------------------------
+# A legenda "Microlote — 86 SCA…" saiu na foto das CÁPSULAS e Clássico/Suave estavam
+# trocados entre si. O bug sobreviveu às guardas de 15/07 porque elas só comparavam
+# strings de legenda entre si — nada amarrava a legenda ao ARQUIVO que ia junto. Agora
+# o slug do produto vive no nome do arquivo, e estas guardas exigem que ele bata.
+
+def test_nome_do_arquivo_carrega_o_slug_do_produto():
+    """Se alguém trocar duas fotos de lugar, o nome do arquivo denuncia."""
+    for categoria, entradas in CATALOGO_FOTOS.items():
+        for slug, arquivo in entradas:
+            if categoria != "atacado":
+                continue  # private_label usa nomes genéricos (foto_N), sem slug
+            assert slug in Path(arquivo).stem, (
+                f"{arquivo} deveria conter o slug '{slug}' no nome"
+            )
+
+
+def test_arquivos_do_catalogo_existem_em_disco():
+    """O mapa não pode apontar para arquivo inexistente (envio falharia calado)."""
+    base = Path(tools.__file__).parent.parent / "photos"
+    for categoria, entradas in CATALOGO_FOTOS.items():
+        for _slug, arquivo in entradas:
+            assert (base / categoria / arquivo).is_file(), f"faltando {categoria}/{arquivo}"
+
+
+def test_microlote_tem_foto_propria():
+    """Regressão direta: o Microlote não pode reusar a foto de outro produto."""
+    microlote = PRODUTO_PHOTO_MAP["atacado"]["microlote"]["file"]
+    outros = [
+        e["file"] for s, e in PRODUTO_PHOTO_MAP["atacado"].items() if s != "microlote"
+    ]
+    assert microlote not in outros
+    assert "microlote" in microlote
 
 
 def test_files_do_mapa_preservados():
-    """Os nomes de arquivo (inclusive foto_3.png) não mudam com a derivação."""
+    """Vínculo arquivo↔produto do Atacado, conferido foto a foto contra a embalagem.
+
+    Esta era a guarda que congelava o bug: até 08/09 ela exigia classico=foto_1.jpg e
+    suave=foto_2.jpg, mas o JPEG kraft (foto_1) é o SUAVE e o preto (foto_2) é o
+    CLÁSSICO — o rótulo na própria embalagem prova. Os valores abaixo foram conferidos
+    contra o catálogo oficial (tabela.cafecanastra.com, mesma fonte de
+    products.image_urls). A extensão .png do Canela e do Microlote é intencional.
+    """
     m = PRODUTO_PHOTO_MAP["atacado"]
-    assert m["classico"]["file"] == "foto_1.jpg"
-    assert m["suave"]["file"] == "foto_2.jpg"
-    assert m["canela"]["file"] == "foto_3.png"
-    assert m["microlote"]["file"] == "foto_4.jpg"
-    assert m["drip"]["file"] == "foto_5.jpg"
-    assert m["capsulas"]["file"] == "foto_5.jpg"
+    assert m["classico"]["file"] == "foto_1_classico.jpg"   # embalagem PRETA
+    assert m["suave"]["file"] == "foto_2_suave.jpg"         # embalagem KRAFT
+    assert m["canela"]["file"] == "foto_3_canela.png"       # embalagem VERMELHA
+    assert m["microlote"]["file"] == "foto_4_microlote.png"
+    assert m["capsulas"]["file"] == "foto_5_capsulas.jpg"
+    assert m["drip"]["file"] == "foto_6_drip.jpg"
 
 
 # ---------------------------------------------------------------------------

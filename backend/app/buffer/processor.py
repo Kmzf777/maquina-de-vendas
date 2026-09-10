@@ -38,6 +38,11 @@ from app.agent.tools import (
     record_deferred_media_delivery, apply_stage_transition,
 )
 from app.buffer.prefill import match_prefill_stage
+from app.button_flow.runner import (
+    e_clique_de_botao,
+    is_button_flow_conversation,
+    run_button_flow,
+)
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -204,6 +209,14 @@ def _stop_typing_pulse(task) -> None:
 # Marcador único de falha de áudio — usado tanto no replace do texto quanto na
 # detecção de insistência (escalonamento). Mantido como constante para evitar drift.
 _AUDIO_FAIL_MARKER = "[audio: nao foi possivel transcrever]"
+
+# Áudio em canal humano: NÃO é falha — a transcrição não foi sequer tentada, porque
+# ninguém lê o texto lá (o prompt da Valéria não roda e o chat só mostra o player).
+# Marcador próprio, distinto do _AUDIO_FAIL_MARKER de propósito: aquele alimenta o
+# _count_recent_failed_audio e escalaria o lead para humano por um problema inexistente.
+# O texto casa com _MEDIA_PLACEHOLDERS["audio"] (app/conversations/service.py), que é o
+# que a camada de leitura já renderiza para áudio sem conteúdo.
+_AUDIO_NO_TRANSCRIPTION_MARKER = "[áudio]"
 
 # B3 (graceful degradation de mídia): mídia visual sem texto vira um marcador legível para
 # o agente (a persona reconhece "[imagem]"/"[documento]" via base.py e não diz "chegou cortada").
@@ -1266,8 +1279,12 @@ async def process_buffered_messages(
     _document_name: str | None = None
     _metadata: dict | None = None
     try:
+        # Transcrição só no canal da IA: em canal humano (número do João) ninguém lê o
+        # texto — a Valéria não responde ali e o chat do CRM mostra apenas o player.
+        # Mesmo gate de `mode` já usado em follow-up, broadcast e watchdog.
         resolved_text, _media_url, _message_type, _document_name, _metadata = await _resolve_media(
             combined_text, provider, lead_id=lead.get("id"), stage=lead.get("stage") or "",
+            transcribe=channel.get("mode", "ai") != "human",
         )
     except Exception as e:
         logger.warning(f"Failed to resolve media for {phone}: {e}")
@@ -1439,6 +1456,81 @@ async def process_buffered_messages(
             conversation["id"], phone,
         )
         _update_last_msg(conversation["id"])
+        return
+
+    # Gate do agente de RECUPERAÇÃO (fluxo fechado de botões, sem LLM).
+    #
+    # A POSIÇÃO desta chamada é o desenho inteiro do projeto, não uma conveniência:
+    #
+    # 1) ANTES do gate de canal humano (logo abaixo) ⇒ o bot funciona no número do
+    #    JOÃO (mode='human'). A troca de número no handoff é o maior vazamento medido
+    #    do funil: 131 de 500 leads (26%) não fazem o esforço de migrar de conversa
+    #    (Diagnóstico 01/09, p.5). Rodar na thread do próprio vendedor elimina o
+    #    degrau inteiro — o caminho mais curto do dataset até a venda foi exatamente
+    #    esse (clique 16:58:19 → João responde na mesma thread 74s depois → R$ 470).
+    #    A justificativa para furar o gate de mode='human' é substantiva: um fluxo
+    #    fechado de botões NÃO é IA generativa. Todo texto que sai está declarado em
+    #    button_flow/flows.py, revisado uma vez e versionado em código.
+    #
+    # 2) ANTES de VALERIA_ENABLED e de lead.ai_enabled ⇒ dispensa ligar `ai_enabled`
+    #    nos 1.208 leads da coorte do Bling. Eles seguem `false`, e a ValerIA continua
+    #    sem nenhum acesso ao número do João — que é o ponto.
+    #
+    # 3) DEPOIS do gate de reação isolada ⇒ um 👍 do lead não é um turno do fluxo.
+    #
+    # Fail-open: is_button_flow_conversation devolve False em qualquer erro (e já sai
+    # em False com o kill switch RECUPERACAO_ENABLED desligado, sem tocar no banco).
+    if is_button_flow_conversation(conversation, channel):
+        # O LOCK É ADQUIRIDO AQUI, e não movendo o gate para dentro do lock da IA
+        # (linha ~1690): o lock da IA vive DEPOIS do gate de canal humano, do
+        # VALERIA_ENABLED e do lead.ai_enabled — os três matam este caminho antes de
+        # chegar lá (o bot roda no número do João, mode='human', com os 1.208 leads
+        # em ai_enabled=false). Mover o gate destruiria as duas razões de ele existir
+        # nesta posição. Então o caminho do bot adquire a MESMA trava, aqui.
+        #
+        # A race é a mesma do lead 5544991611703 (app/buffer/lead_lock.py): dois
+        # flushes do mesmo lead em paralelo. Sem trava, dois toques rodam o fluxo
+        # duas vezes e duplicam efeito de CRM (dois handoffs, duas tags, duas
+        # mensagens). Com trava + releitura do flow_state dentro dela
+        # (button_flow/runner.py:_reler_estado), o segundo turno vê o nó já
+        # 'encerrado' e o motor devolve `ignorar`.
+        #
+        # RE-COALESCING COM UMA EXCEÇÃO DELIBERADA: só descartamos turno de TEXTO
+        # LIVRE. Um clique nunca é descartado. O turno da IA pode abortar porque o
+        # worker posterior relê o histórico inteiro e responde tudo de uma vez; aqui
+        # não existe esse resgate — o worker posterior traz o texto DELE, e a
+        # identidade do botão (o payload) morre com o turno abortado. O clique é o
+        # sinal que o projeto inteiro existe para capturar (35,7% dos cliques
+        # positivos viraram venda), e ele é serializado pelo lock de qualquer forma.
+        async with lead_run_lock(lead["id"]):
+            _e_clique = e_clique_de_botao(_message_type, _metadata)
+            if not _e_clique and (
+                _has_newer_inbound(conversation["id"], turn_watermark)
+                or await _has_pending_buffered_inbound(phone, channel["id"])
+            ):
+                logger.info(
+                    "[BUTTON FLOW] texto mais novo do lead ao adquirir o lock "
+                    "(conv=%s, phone=%s) — turno stale abortado; o worker posterior "
+                    "classifica o texto completo.",
+                    conversation["id"], phone,
+                )
+            else:
+                await run_button_flow(
+                    lead=lead, conversation=conversation, channel=channel,
+                    provider=provider, texto=resolved_text,
+                    message_type=_message_type, metadata=_metadata, wamid=wamid,
+                )
+        _update_last_msg(conversation["id"])
+        # RETURN INCONDICIONAL, inclusive quando o motor apenas IGNORA o evento.
+        # Seguir o fluxo normal significaria, na configuração real desta feature
+        # (número do João, mode='human'), morrer duas linhas abaixo no gate de canal
+        # humano — nada mudaria. E na configuração hipotética de rodar no número da
+        # ValerIA significaria entregar a conversa à IA GENERATIVA no meio de um
+        # fluxo fechado, que é precisamente o que a Decisão 2 do dossiê proíbe: os
+        # 1.208 leads seguem ai_enabled=false para que a ValerIA nunca fale por eles.
+        # "Ignorado" aqui quer dizer "este evento não move o fluxo" (clique repetido,
+        # clique de nível 2 fora de hora, conversa encerrada) — silêncio é a resposta
+        # certa, não uma escalada para outro agente.
         return
 
     # Channel-level gate: human channels never run AI or schedule follow-ups
@@ -2144,13 +2236,16 @@ def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: s
 
 async def _resolve_media(
     text: str, provider, lead_id: str | None = None, stage: str = "",
+    transcribe: bool = True,
 ) -> tuple[str, str | None, str | None, str | None, dict | None]:
     """Replace media placeholders with type/url metadata.
 
     Returns (resolved_text, media_url, message_type, document_name, metadata).
-    Audio: downloaded, transcribed, uploaded to Supabase Storage.
+    Audio: downloaded, uploaded to Supabase Storage e — se `transcribe` — transcrito.
+    `transcribe=False` (canal humano) pula SÓ a chamada ao Gemini: o download e o
+    upload continuam, então `media_url` segue preenchido e o player do CRM não quebra.
     Image/video/document/sticker: media_id extracted only, no download.
-    Location/contact/reaction: metadata dict extracted from base64 JSON.
+    Location/contact/reaction/button: metadata dict extracted from base64 JSON.
     `lead_id`/`stage`: atribuição da contabilidade da transcrição (token_usage).
     """
     audio_id_pattern = r"\[audio: media_id=(\S+)\]"
@@ -2190,6 +2285,17 @@ async def _resolve_media(
             uploaded_url = _upload_audio_to_storage(audio_bytes, content_type, media_ref, ext)
             if uploaded_url:
                 storage_url = uploaded_url
+
+            # Canal humano (número do João): o texto não tem consumidor — o prompt da
+            # Valéria não roda aqui e o chat do CRM só exibe o player. Pagar
+            # generateContent por ele é desperdício integral. O áudio já subiu pro
+            # Storage acima, então o player continua funcionando normalmente.
+            if not transcribe:
+                logger.info(
+                    "[AUDIO] transcrição pulada (canal humano) para %s", media_ref,
+                )
+                text = text.replace(match.group(0), _AUDIO_NO_TRANSCRIPTION_MARKER)
+                continue
 
             # ETAPA 2 — TRANSCRIÇÃO (Gemini generateContent). Log granular do erro real.
             try:
@@ -2249,7 +2355,24 @@ async def _resolve_media(
     for match in re.finditer(meta_b64_pattern, text):
         meta_type = match.group(1)
         replacement = ""
-        if meta_type in ("location", "contact", "reaction") and message_type is None:
+        if meta_type == "button" and metadata is None:
+            # Decodifica mesmo que outro tipo já tenha reivindicado message_type: o lead
+            # pode ter tocado no botão E mandado uma foto na mesma janela. O clique é a
+            # intenção determinística do turno e não pode ser engolido pela mídia — quem
+            # prova o clique é a presença de `payload` no metadata, não o message_type.
+            try:
+                metadata = json.loads(base64.b64decode(match.group(2)).decode())
+                # message_type só é reivindicado quando está livre: a mídia da mesma janela
+                # mantém o seu próprio tipo (e a sua storage_url), que o CRM usa p/ renderizar.
+                if message_type is None:
+                    message_type = "button"
+                # O título vira o texto visível, para o vendedor ver no histórico em qual
+                # botão o lead tocou. Sem título, "[botão]" — nunca mensagem em branco, que
+                # no CRM vira "mensagem fantasma" (mesmo motivo da reação, logo abaixo).
+                replacement = (metadata or {}).get("title") or "[botão]"
+            except Exception as e:
+                logger.warning(f"Failed to decode metadata for {meta_type}: {e}")
+        elif meta_type in ("location", "contact", "reaction") and message_type is None:
             try:
                 metadata = json.loads(base64.b64decode(match.group(2)).decode())
                 message_type = meta_type
@@ -2261,6 +2384,14 @@ async def _resolve_media(
                     replacement = f"[reagiu com {_emoji}]"
             except Exception as e:
                 logger.warning(f"Failed to decode metadata for {meta_type}: {e}")
+        elif meta_type in ("location", "contact", "reaction", "button"):
+            # Segundo marcador de metadado na mesma janela: só um cabe no turno (há um único
+            # slot de message_type/metadata). Antes ele sumia sem rastro — agora fica o log,
+            # senão o suporte não tem como explicar a mensagem que o lead jura ter mandado.
+            logger.info(
+                "[BUFFER] 2º marcador %s na mesma janela descartado (turno já resolvido como %s)",
+                meta_type, message_type,
+            )
         text = text.replace(match.group(0), replacement)
 
     return text.strip(), storage_url, message_type, document_name, metadata

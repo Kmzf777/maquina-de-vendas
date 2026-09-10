@@ -38,11 +38,21 @@ def test_atacado_inbound_frete_via_calcular_orcamento():
             or "proibido citar valor de frete" in prompt_lower)
 
 
-def test_atacado_inbound_mantem_cep_gating():
-    """A regra de pedir o CEP antes de mencionar frete permanece."""
-    assert "CEP" in ATACADO_PROMPT
-    assert "nunca assuma regiao sem CEP" in ATACADO_PROMPT.lower() or \
-           "qual o CEP de entrega?" in ATACADO_PROMPT
+def test_atacado_inbound_mantem_gating_de_regiao_no_frete():
+    """Frete nunca sai sem região conhecida — o gating permanece, o mecanismo mudou.
+
+    Até 08/09 o gating era por CEP ("qual o CEP de entrega?"). A auditoria QA da conversa
+    5534988861441 mostrou que pedir CEP era duplamente errado: prendia o lead num fluxo de
+    montar pedido em vez de transbordar pro vendedor, e `calcular_orcamento` sequer aceita
+    `cep` (só `itens`/`estado`/`cidade`) — o dado era coletado e descartado. O gating agora
+    é por ESTADO/CIDADE, e a saída preferencial para pergunta de frete é o handoff.
+    A INTENÇÃO protegida é a mesma de 15/07: nunca citar frete de cabeça.
+    """
+    assert "PROIBIDO pedir CEP" in ATACADO_PROMPT
+    # O gating continua: ou pergunta a região certa, ou transborda — nunca inventa valor.
+    assert "pergunte o ESTADO (UF) ou a CIDADE" in ATACADO_PROMPT
+    assert "nao invente valor" in ATACADO_PROMPT
+    assert "o frete o Joao fecha junto com o pedido" in ATACADO_PROMPT
 
 
 def test_atacado_inbound_mantem_kit_amostra_frete_incluso():

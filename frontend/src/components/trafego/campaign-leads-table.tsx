@@ -2,6 +2,8 @@
 import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { CampaignLeadPanel, type CampaignLeadPanelTarget } from "@/components/trafego/campaign-lead-panel";
+import { stageLabel } from "@/lib/lead-overview";
 
 export type CampaignLead = {
   lead_id: string; name: string | null; phone: string | null; created_at: string | null;
@@ -33,6 +35,7 @@ function OriginBadge({ trafficType }: { trafficType: string | null }) {
 
 export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<CampaignLeadPanelTarget | null>(null);
   const norm = (s: string) => s.toLowerCase();
   const filtered = q
     ? leads.filter(l => norm(`${l.name ?? ""} ${l.phone ?? ""}`).includes(norm(q)))
@@ -77,16 +80,32 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
                 </TableCell>
               </TableRow>
             ) : filtered.map(l => (
-              <TableRow key={l.lead_id} className="border-[#dedbd6] hover:bg-[#faf9f6]">
-                <TableCell className="text-[14px] text-[#111111] font-medium max-w-[200px] truncate">
-                  {l.name || l.phone || l.lead_id}
+              <TableRow
+                key={l.lead_id}
+                // A linha inteira abre o painel para quem usa mouse; o botão na
+                // primeira célula é o alvo real de teclado e leitor de tela.
+                // Trocar o <tr> por role="button" resolveria o clique e quebraria
+                // a semântica da tabela — que é o que faz a leitura por coluna
+                // funcionar.
+                onClick={() => setSelected(l)}
+                data-state={selected?.lead_id === l.lead_id ? "selected" : undefined}
+                className="border-[#dedbd6] hover:bg-[#faf9f6] data-[state=selected]:bg-[#f0ede8] cursor-pointer"
+              >
+                <TableCell className="text-[14px] text-[#111111] font-medium max-w-[200px]">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setSelected(l); }}
+                    className="block w-full truncate text-left hover:underline underline-offset-2 focus:outline-none focus-visible:ring-1 focus-visible:ring-[#111111] rounded-[2px]"
+                  >
+                    {l.name || l.phone || l.lead_id}
+                  </button>
                 </TableCell>
                 <TableCell>
                   <OriginBadge trafficType={l.traffic_type} />
                 </TableCell>
                 <TableCell className="text-[13px] text-[#7b7b78]">{l.utm_source || "—"}</TableCell>
                 <TableCell className="text-[13px] text-[#7b7b78]">{l.utm_medium || "—"}</TableCell>
-                <TableCell className="text-[13px] text-[#7b7b78]">{l.stage || "—"}</TableCell>
+                <TableCell className="text-[13px] text-[#7b7b78]">{stageLabel(l.stage)}</TableCell>
                 <TableCell className="text-[13px] text-[#7b7b78]">{l.conversou ? "Sim" : "Não"}</TableCell>
                 <TableCell className="text-[13px] tabular-nums text-[#7b7b78]">{fmtDate(l.created_at)}</TableCell>
                 <TableCell className={`text-[13px] tabular-nums ${l.comprou ? "text-[#111111] font-medium" : "text-[#7b7b78]"}`}>
@@ -99,6 +118,8 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
           </TableBody>
         </Table>
       </div>
+
+      <CampaignLeadPanel target={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }

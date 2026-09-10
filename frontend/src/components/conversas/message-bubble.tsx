@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
+import { readButtonClick } from "@/lib/button-click";
 
 function DeliveryTick({
   status,
@@ -74,6 +75,13 @@ function getMediaLabel(messageType: string | null | undefined): string {
   }
 }
 
+// Preview de citação / alvo de reação: um clique em botão guarda o rótulo em `content`,
+// então para efeito de preview ele é texto. Sem isto cairia em getMediaLabel e a citação
+// de um clique apareceria como "📎 Mídia".
+function isTextualPreview(messageType: string | null | undefined): boolean {
+  return !messageType || messageType === "text" || messageType === "button";
+}
+
 function QuotedBlock({
   quoted,
   isFromMe,
@@ -83,7 +91,7 @@ function QuotedBlock({
   isFromMe: boolean;
   onClick: () => void;
 }) {
-  const isText = !quoted?.message_type || quoted.message_type === "text";
+  const isText = isTextualPreview(quoted?.message_type);
 
   return (
     <button
@@ -126,7 +134,7 @@ function ReactionTargetBlock({
   emoji: string;
   isFromMe: boolean;
 }) {
-  const isText = !target?.message_type || target.message_type === "text";
+  const isText = isTextualPreview(target?.message_type);
   return (
     <div className="flex flex-col gap-1">
       {target ? (
@@ -169,6 +177,8 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
   const isLocation = message.message_type === "location";
   const isContact = message.message_type === "contact";
   const isReaction = message.message_type === "reaction";
+  // Clique em botão (fluxo de botões / quick reply de template): não é texto digitado.
+  const buttonClick = readButtonClick(message);
 
   // Contexto de qualificação: card especial, não bolha de chat
   if (message.sent_by === "handoff_context") {
@@ -520,6 +530,42 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
               />
             );
           })()
+        ) : buttonClick ? (
+          // Chip "Clicou" + rótulo: sem ele, um toque no menu e uma frase digitada com o
+          // mesmo texto ficam idênticos na tela — e é a diferença entre intenção capturada
+          // em um toque e conversa livre. Mesmo vocabulário de estilo do card de
+          // handoff_context (label micro, uppercase, tracking) e do QuotedBlock (fundo
+          // translúcido que funciona nas duas bolhas).
+          <div className="flex flex-col gap-1">
+            <span
+              className={`inline-flex items-center gap-1 self-start rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                isFromMe ? "bg-white/20 text-white/80" : "bg-black/5 text-[#7b7b78]"
+              }`}
+            >
+              <svg
+                className="flex-shrink-0"
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="9 17 4 12 9 7" />
+                <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+              </svg>
+              Clicou
+            </span>
+            <p className="whitespace-pre-wrap break-words font-medium">{buttonClick.title}</p>
+            {buttonClick.payload && (
+              <span className={`text-[11px] ${isFromMe ? "text-white/50" : "text-[#7b7b78]"}`}>
+                {buttonClick.payload}
+              </span>
+            )}
+          </div>
         ) : (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}

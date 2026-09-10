@@ -26,6 +26,8 @@ from typing import Any
 
 import httpx
 
+from app.button_flow import flows
+from app.button_flow.engine import normalizar
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,9 @@ _PLACEHOLDER_RE = re.compile(r"\{\{\s*([^{}\s]+)\s*\}\}")
 # Formatos de header que exigem __header_url__ no builder do broadcast
 # (ver _build_template_components em app/broadcast/worker.py).
 _MEDIA_HEADER_FORMATS = ("IMAGE", "VIDEO", "DOCUMENT")
+
+# agent_profiles.kind do agente determinístico de botões (migration 20260820).
+_KIND_BUTTON_FLOW = "button_flow"
 
 
 def _preflight_disabled() -> bool:
@@ -247,11 +252,158 @@ def _check_header(components: list, template_variables: dict) -> list[str]:
     return errors
 
 
+# ── Fluxo de botões: o contrato entre o template aprovado e flows.py ─────────
+# Os rótulos vivem em DOIS lugares — na Meta (imutável depois de aprovado) e em
+# app/button_flow/flows.py, que é quem casa o clique de volta. Divergir é silencioso:
+# o webhook do quick reply devolve o RÓTULO como payload (nenhum código deste repo
+# mandava payload custom até 09/09/2026), então um rótulo diferente por um acento
+# vira "texto livre" e o lead cai no nudge em vez de no efeito. Estas duas funções
+# são a fonte única dessa tradução: o preflight usa para BLOQUEAR o disparo, e o
+# worker usa para descobrir de qual trilha é o template e emitir o payload custom
+# no índice certo de cada botão.
+
+
+def botoes_do_template(components: list | None) -> list[dict]:
+    """Todos os botões do componente BUTTONS aprovado, na ordem aprovada.
+
+    "Todos" é literal: URL/PHONE_NUMBER/COPY_CODE inclusive. Quem precisa da posição
+    real de um botão (o `index` do componente de payload) tem que contar a partir
+    DESTA lista, não da lista filtrada.
+    """
+    return next(
+        (c.get("buttons") or [] for c in components or [] if _component_type(c) == "BUTTONS"),
+        [],
+    )
+
+
+def _e_quick_reply(botao: dict) -> bool:
+    return str(botao.get("type") or "").upper() == "QUICK_REPLY"
+
+
+def rotulos_quick_reply(components: list | None) -> list[str]:
+    """Rótulos dos botões QUICK_REPLY do template aprovado, na ORDEM aprovada.
+
+    A ordem é carga útil, não estética: o componente de payload do envio endereça o
+    botão por `index`, então o 2º rótulo aprovado é o 2º botão da trilha.
+    Botões que não são QUICK_REPLY (URL/PHONE/COPY_CODE) são ignorados aqui e
+    reprovados pela comparação — eles não geram webhook, logo não existem para o fluxo.
+
+    CUIDADO (defeito de 09/09/2026): esta lista é FILTRADA, então a posição de um
+    rótulo aqui NÃO é o `index` do botão no template. Use `indices_quick_reply` para
+    endereçar o botão — ver o comentário lá.
+    """
+    return [str(b.get("text") or "") for b in botoes_do_template(components) if _e_quick_reply(b)]
+
+
+def indices_quick_reply(components: list | None) -> list[int]:
+    """Posição REAL de cada botão QUICK_REPLY dentro do array BUTTONS aprovado.
+
+    Existe por causa de um desalinhamento achado em revisão (09/09/2026): o worker
+    emitia o `index` do payload como a posição no array `flows.BOTOES_POR_TRILHA`
+    (0,1,2), enquanto `rotulos_quick_reply` já tinha JOGADO FORA os botões que não são
+    quick reply. Um template aprovado como [URL, "Preciso repor", "Ainda tenho
+    estoque", "Parar mensagens"] casa a trilha pelos rótulos e recebe os payloads em
+    0,1,2 — ou seja, o payload de `optout` cai no botão "Ainda tenho estoque" e o
+    lead que diz "ainda tenho" é dado como opt-out. Pior desfecho possível.
+
+    Emparelha 1:1 com `rotulos_quick_reply` (mesma ordem, mesmo tamanho).
+    """
+    return [i for i, b in enumerate(botoes_do_template(components)) if _e_quick_reply(b)]
+
+
+def resolver_trilha_por_rotulos(rotulos: list[str] | None) -> str | None:
+    """Trilha do fluxo cujos rótulos batem EXATAMENTE com os do template, ou None.
+
+    Comparação normalizada (casefold + sem acento) pela MESMA função que o motor usa
+    para casar o clique (engine.normalizar) — se a comparação daqui fosse mais frouxa
+    que a de lá, o preflight aprovaria um template que o clique não casa.
+    """
+    alvo = tuple(normalizar(r) for r in rotulos or [])
+    if not alvo:
+        return None
+    for trilha, esperados in flows.ROTULOS_TEMPLATE_POR_TRILHA.items():
+        if alvo == tuple(normalizar(r) for r in esperados):
+            return trilha
+    return None
+
+
+def _agent_profile_kind(agent_profile_id: str | None) -> str | None:
+    """`kind` do agent_profile do disparo. None = desconhecido (fail-open).
+
+    Fail-open de propósito: a coluna `kind` só existe depois da migration
+    20260820_button_flow_agent.sql, e um preflight que bloqueasse todo disparo por
+    causa disso derrubaria as campanhas normais — que não têm nada com este fluxo.
+    """
+    if not agent_profile_id:
+        return None
+    try:
+        res = (
+            get_supabase()
+            .table("agent_profiles")
+            .select("kind")
+            .eq("id", agent_profile_id)
+            .limit(1)
+            .execute()
+        )
+        if isinstance(res.data, list) and res.data:
+            return res.data[0].get("kind")
+    except Exception as exc:
+        logger.warning(
+            "[PREFLIGHT] kind do agent_profile %s não resolvido: %s (fail-open)",
+            agent_profile_id, exc,
+        )
+    return None
+
+
+def _check_button_flow(components: list, template_name: str) -> list[str]:
+    """Checagem 5: template de perfil `button_flow` × rótulos de flows.py.
+
+    Único caso em que o preflight olha os BOTÕES: num disparo de fluxo de botões o
+    template É a interface do agente. Sem os rótulos exatos, o clique não casa com
+    nenhum nó e 1.208 leads recebem uma mensagem que não responde a nada.
+    """
+    rotulos = rotulos_quick_reply(components)
+    if not rotulos:
+        return [
+            f"o disparo usa um perfil de fluxo de botões (kind='button_flow'), mas o "
+            f"template '{template_name}' não tem componente BUTTONS com QUICK_REPLY — "
+            f"sem botão o lead não tem como responder ao fluxo"
+        ]
+    # Botão misturado (URL/PHONE_NUMBER/COPY_CODE) é bloqueio, não filtro silencioso:
+    # o `index` do componente de payload conta TODOS os botões do template, então um
+    # botão de outro tipo desloca os payloads e o efeito de dois botões troca de lugar
+    # (revisão de 09/09/2026 — ver indices_quick_reply, acima). O worker se defende
+    # sozinho derivando o índice real, mas aqui a resposta certa é reprovar o template:
+    # num disparo de fluxo de botões, os três slots são a interface do agente.
+    outros = [b for b in botoes_do_template(components) if not _e_quick_reply(b)]
+    if outros:
+        tipos = ", ".join(sorted({str(b.get("type") or "?").upper() for b in outros}))
+        return [
+            f"o template '{template_name}' mistura botão(ões) {tipos} com os QUICK_REPLY — "
+            f"num disparo de fluxo de botões o template só pode ter QUICK_REPLY: o índice "
+            f"do payload conta todos os botões, e um botão de outro tipo desloca os "
+            f"payloads (o clique em um botão passa a valer como outro)"
+        ]
+    if resolver_trilha_por_rotulos(rotulos) is not None:
+        return []
+    esperado = "; ".join(
+        f"{trilha}: [{' | '.join(labels)}]"
+        for trilha, labels in flows.ROTULOS_TEMPLATE_POR_TRILHA.items()
+    )
+    return [
+        f"os botões aprovados do template '{template_name}' ([{' | '.join(rotulos)}]) não "
+        f"casam com nenhuma trilha do fluxo de botões — esperado, por trilha: {esperado}. "
+        f"Rótulo (ou ordem) divergente quebra o casamento do clique em silêncio: o lead "
+        f"clica e o fluxo trata como texto livre"
+    ]
+
+
 async def validate_template_for_broadcast(
     template_name: str,
     template_language_code: str,
     template_variables: dict | None,
     channel: dict | None,
+    agent_profile_id: str | None = None,
 ) -> list[str]:
     """Valida o template de um broadcast ANTES do primeiro envio.
 
@@ -259,7 +411,12 @@ async def validate_template_for_broadcast(
       1. existência/aprovação (message_templates local, fallback Meta API + auto-sync);
       2. locale do broadcast == language de uma variante aprovada;
       3. params do BODY (posicional/nomeado/__params_type__) × template_variables;
-      4. header de mídia × __header_url__/__header_type__.
+      4. header de mídia × __header_url__/__header_type__;
+      5. só quando `agent_profile_id` é de um perfil `kind='button_flow'`: os rótulos
+         dos QUICK_REPLY aprovados × flows.ROTULOS_TEMPLATE_POR_TRILHA.
+
+    `agent_profile_id` é opcional para não quebrar chamador antigo — sem ele a
+    checagem 5 não roda e o comportamento é exatamente o de antes.
 
     Fail-closed: sem conseguir verificar (banco E Meta fora) → erro bloqueante.
     Kill-switch: PREFLIGHT_TEMPLATE=off → retorna [] (gate desligado, sem deploy).
@@ -342,5 +499,14 @@ async def validate_template_for_broadcast(
 
     # ── Checagem 4: header ───────────────────────────────────────────────────
     errors.extend(_check_header(components, template_variables))
+
+    # ── Checagem 5: fluxo de botões ─────────────────────────────────────────
+    # Depende INTEIRAMENTE de o chamador passar `agent_profile_id`: sem ele
+    # _agent_profile_kind(None) devolve None, nunca bate 'button_flow' e esta checagem
+    # é pulada em silêncio. Foi exatamente o que aconteceu até 09/09/2026 — o único
+    # chamador de produção (app/broadcast/router.py, /start) passava 4 posicionais e
+    # omitia o quinto, apesar de ter o valor na mão. Se acrescentar chamador, passe.
+    if _agent_profile_kind(agent_profile_id) == _KIND_BUTTON_FLOW:
+        errors.extend(_check_button_flow(components, template_name))
 
     return errors

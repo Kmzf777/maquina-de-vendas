@@ -4,6 +4,7 @@ import os
 import random
 import re
 from datetime import datetime, timezone, timedelta
+from typing import NamedTuple
 
 import httpx
 
@@ -22,6 +23,12 @@ from app.broadcast.service import (
 )
 from app.conversations.service import get_or_create_conversation, update_conversation, save_message
 from app.templates.intent import dispatch_metadata, classify_template_intent, COLD_REACTIVATION
+from app.templates.preflight import (
+    indices_quick_reply,
+    resolver_trilha_por_rotulos,
+    rotulos_quick_reply,
+)
+from app.button_flow import flows
 from app.leads.service import (
     update_lead, record_dispatch_note, is_lead_blacklisted, resolve_send_target,
     lead_is_customer, lead_recently_engaged, apply_optout_side_effects,
@@ -32,6 +39,28 @@ from app.follow_up.scheduler import process_due_followups, check_meta_channel_he
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 _META_API_BASE = "https://graph.facebook.com/v21.0"
 _BILLING_ERROR_CODE = 131042
+
+# ── 131049: cap de marketing POR USUÁRIO (não é falha nossa, nem permanente) ──
+# A Meta limita quantos templates de MARKETING um usuário recebe por dia somando
+# TODAS as marcas — o limite é dinâmico, não publicado, e o Brasil não está na lista
+# de exclusão (só EEA/UK/Japão/Coreia). Se o lead já recebeu marketing de outra
+# empresa hoje, o nosso é segurado mesmo estando dentro da nossa cota.
+# A doc manda esperar >=24h antes de reenviar: retentar antes disso pode render
+# MAIS 24h de suspensão. Por isso este código nunca vira `failed` (queimaria o lead
+# e o dedup de 14 dias impediria a 2ª onda) nem retenta na hora: vira um estado
+# próprio, `marketing_capped`, com `retry_after` no futuro.
+_MARKETING_CAP_ERROR_CODE = 131049
+MARKETING_CAPPED_STATUS = "marketing_capped"
+_MARKETING_CAP_DEFER_HOURS = int(os.environ.get("BROADCAST_MARKETING_CAP_DEFER_HOURS", "24"))
+# Trecho do title que a Meta manda no webhook de status para o 131049 ("This message
+# was not delivered to maintain healthy ecosystem engagement"). O caminho assíncrono
+# é o provável: a Meta ACEITA o send (HTTP 200 + wamid) e só reporta a retenção
+# depois — exatamente como no 131042. Casar por este trecho + pelo código literal é
+# estreito o bastante para nunca adotar um 131026 ("Message undeliverable").
+_MARKETING_CAP_MESSAGE_HINTS = ("ecosystem", str(_MARKETING_CAP_ERROR_CODE))
+
+# agent_profiles.kind do agente determinístico de botões (migration 20260820).
+_KIND_BUTTON_FLOW = "button_flow"
 
 # Classe de erro de TEMPLATE (wartime T3, defesa em profundidade do pre-flight):
 # template inexistente/locale errado (132001, e o 404 cru que a Meta devolve p/
@@ -63,6 +92,29 @@ def _is_template_error(status_code: int | None, meta_err: dict) -> bool:
     if status_code == 404 and "template" in str(meta_err.get("message", "")).lower():
         return True
     return False
+
+
+def _is_marketing_cap_error(meta_err: dict) -> bool:
+    """True se a Meta segurou a mensagem pelo cap de marketing do USUÁRIO (131049)."""
+    code = meta_err.get("code")
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        code = None
+    if code == _MARKETING_CAP_ERROR_CODE:
+        return True
+    return _looks_like_marketing_cap(meta_err.get("message") or meta_err.get("title") or "")
+
+
+def _looks_like_marketing_cap(error_message: str | None) -> bool:
+    """True se o texto da falha é a retenção por cap de marketing.
+
+    Existe porque o 131049 chega majoritariamente pelo webhook de status, e lá o que
+    sobra em broadcast_leads.error_message é o `title` da Meta — o código numérico se
+    perde (meta_router grava `title` e só cai no code quando não há title).
+    """
+    texto = (error_message or "").lower()
+    return any(hint in texto for hint in _MARKETING_CAP_MESSAGE_HINTS)
 
 # A cadência/orquestração dos ticks vive em app/worker/main.py (uma task
 # asyncio isolada por domínio, acordada por eventos com fallback) — este módulo
@@ -262,17 +314,90 @@ async def _render_template_body(template_name: str, template_variables: dict, le
     return f"[Template: {template_name}]"
 
 
-def _build_template_components(template_variables: dict, lead: dict) -> list | None:
+# ── Payload custom por botão (fluxo de botões) ───────────────────────────────
+# Até 09/09/2026 este repo NUNCA enviou `sub_type` (grep por sub_type em backend/app
+# devolvia zero). Sem payload custom, o webhook do quick reply devolve o PRÓPRIO
+# RÓTULO como `button.payload`, e o casamento do clique vira comparação de string —
+# frágil a acento, a rótulo editado e a dois templates com o mesmo texto.
+# A Meta deixa definir o payload em TEMPO DE ENVIO, um componente por botão,
+# endereçado por `index` (0-based, na ordem aprovada do template).
+_PAYLOAD_SEP = "|"
+
+
+def montar_payload_botao(botao_id: str, trilha: str, toque: int) -> str:
+    """Payload custom de um botão: `<flow>|<botao_id>|<trilha>|t<toque>`.
+
+    Carrega o que o clique sozinho não conta: a VERSÃO do fluxo (um estado gravado
+    por outra versão é devolvido ao humano, ver engine._estado_valido), a TRILHA (o
+    mesmo id `repor` chega rotulado "Preciso repor" na trilha B e "Retomar o pedido"
+    na A) e o TOQUE (D0 vs. o lembrete D+4, que é um template de nome diferente por
+    causa do dedup de 14 dias).
+    """
+    return _PAYLOAD_SEP.join((flows.FLOW_ID, botao_id, trilha, f"t{toque}"))
+
+
+def _build_button_flow_components(
+    trilha: str, toque: int, indices: tuple[int, ...] | None = None,
+) -> list[dict]:
+    """Um componente de payload por botão da trilha, na ORDEM dos rótulos aprovados.
+
+    `index` vai como STRING porque é a forma dos exemplos da própria Meta; o campo é
+    posicional e um deslocamento aqui trocaria o efeito de dois botões entre si —
+    "Parar mensagens" respondendo como "Preciso repor" seria o pior desfecho possível.
+
+    `indices` é a posição REAL de cada botão no array BUTTONS do template aprovado
+    (preflight.indices_quick_reply). Até 09/09/2026 o índice era a posição no array
+    `flows.BOTOES_POR_TRILHA` — igual só enquanto o template tem exclusivamente
+    QUICK_REPLY. Com um botão URL/PHONE no meio (a Meta permite), os rótulos ainda
+    casam a trilha mas as posições andam, e o payload de `optout` vai parar no botão
+    "Ainda tenho estoque". Sem `indices` (chamada legada/teste unitário) mantém a
+    numeração sequencial, que é o caso correto do template só-QUICK_REPLY.
+    """
+    botoes = flows.BOTOES_POR_TRILHA[trilha]
+    posicoes = tuple(indices) if indices is not None else tuple(range(len(botoes)))
+    if len(posicoes) != len(botoes):
+        # zip() truncaria em silêncio e o disparo sairia com payload em parte dos
+        # botões — pior que nenhum. O resolvedor já barra isso; aqui é o cinto.
+        logger.warning(
+            "[BUTTON FLOW] %d índice(s) para %d botão(ões) da trilha '%s' — payload NÃO emitido",
+            len(posicoes), len(botoes), trilha,
+        )
+        return []
+    return [
+        {
+            "type": "button",
+            "sub_type": "quick_reply",
+            "index": str(posicao),
+            "parameters": [
+                {"type": "payload", "payload": montar_payload_botao(botao.id, trilha, toque)},
+            ],
+        }
+        for posicao, botao in zip(posicoes, botoes)
+    ]
+
+
+def _build_template_components(
+    template_variables: dict,
+    lead: dict,
+    *,
+    button_flow_trilha: str | None = None,
+    button_flow_toque: int = 1,
+    button_flow_indices: tuple[int, ...] | None = None,
+) -> list | None:
     """Build Meta template components from stored variable mappings.
 
     Supports:
     - Named params: {param_name: token_or_text, ...}
     - Positional params: {"1": token, "2": token, ...} with __params_type__="positional"
     - Media headers: __header_type__ = IMAGE|VIDEO|DOCUMENT, __header_url__ = url
+    - Fluxo de botões: `button_flow_trilha` preenchida ⇒ um componente de payload
+      custom por botão (só para broadcasts de perfil kind='button_flow');
+      `button_flow_indices` carrega a posição real de cada botão no template aprovado.
     Reserved keys starting with __ control behaviour and are excluded from body params.
     Old broadcasts without __params_type__ default to named (backward compat).
     """
-    if not template_variables:
+    template_variables = template_variables or {}
+    if not template_variables and not button_flow_trilha:
         return None
 
     params_type = template_variables.get("__params_type__", "named")
@@ -319,6 +444,14 @@ def _build_template_components(template_variables: dict, lead: dict) -> list | N
 
     if parameters:
         components.append({"type": "body", "parameters": parameters})
+
+    # Payload custom só para o fluxo de botões. Nos demais disparos o componente não
+    # é emitido — e o casamento por rótulo normalizado do motor segue valendo, que é
+    # o que mantém vivos os templates já disparados (nenhum deles tem payload).
+    if button_flow_trilha in flows.BOTOES_POR_TRILHA:
+        components.extend(_build_button_flow_components(
+            button_flow_trilha, button_flow_toque, button_flow_indices,
+        ))
 
     return components if components else None
 
@@ -648,7 +781,8 @@ def _toggle_br_ninth_digit(number: str | None) -> str | None:
 _BL_RETRY_SELECT = (
     "id, broadcast_id, lead_id, wamid, "
     "leads!inner(id, phone, wa_id), "
-    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables)"
+    "broadcasts!inner(channel_id, template_name, template_language_code, template_variables, "
+    "agent_profile_id)"
 )
 
 # Título que a Meta envia no webhook de status para o erro 131026 (registration do
@@ -764,7 +898,18 @@ async def _retry_single_undelivered(sb, bl: dict) -> None:
 
     try:
         provider = get_provider(channel)
-        components = _build_template_components(broadcast.get("template_variables") or {}, lead)
+        # A retentativa do 9º dígito é o MESMO disparo em outro endereço: sem o payload
+        # custom aqui, um lead alcançado só na segunda forma do número voltaria a casar
+        # por rótulo, e o clique dele valeria menos que o dos demais.
+        plano_retry = None
+        if _broadcast_agent_kind(sb, broadcast.get("agent_profile_id")) == _KIND_BUTTON_FLOW:
+            plano_retry = _resolve_plano_de_botoes(sb, broadcast)
+        components = _build_template_components(
+            broadcast.get("template_variables") or {}, lead,
+            button_flow_trilha=plano_retry.trilha if plano_retry else None,
+            button_flow_toque=_toque_do_disparo(broadcast),
+            button_flow_indices=plano_retry.indices if plano_retry else None,
+        )
         logger.warning(
             "[DELIVERY][RETRY] reenviando '%s' p/ forma alternada %s (bl=%s, lead=%s)",
             broadcast.get("template_name"), alt_target, bl["id"], lead.get("id"),
@@ -956,6 +1101,200 @@ def _resolve_broadcast_prompt_key(sb, agent_profile_id: str | None) -> str | Non
     return None
 
 
+def _broadcast_agent_kind(sb, agent_profile_id: str | None) -> str | None:
+    """`kind` do agent_profile do disparo — resolvido 1x por batch. None = não é fluxo.
+
+    Fail-open: a coluna `kind` só existe depois da migration 20260820_button_flow_agent
+    e um erro aqui não pode travar disparo nenhum — sem `kind`, o disparo é o de sempre
+    (sem payload custom, sem flow_state), que é exatamente o comportamento de hoje.
+    """
+    if not agent_profile_id:
+        return None
+    try:
+        res = (
+            sb.table("agent_profiles")
+            .select("kind")
+            .eq("id", agent_profile_id)
+            .limit(1)
+            .execute()
+        )
+        if isinstance(res.data, list) and res.data:
+            return res.data[0].get("kind")
+    except Exception as exc:
+        logger.warning(
+            "[BUTTON FLOW] kind do agent_profile %s não resolvido: %s (fail-open)",
+            agent_profile_id, exc,
+        )
+    return None
+
+
+class PlanoDeBotoes(NamedTuple):
+    """Trilha do disparo + a posição REAL de cada botão no template aprovado.
+
+    Os dois andam juntos porque decidem a mesma coisa: qual payload vai em qual botão.
+    Separá-los foi o que permitiu o desalinhamento de índice achado em 09/09/2026.
+    """
+    trilha: str
+    indices: tuple[int, ...]
+
+
+def _componentes_aprovados(sb, broadcast: dict) -> list | None:
+    """`components` do template aprovado deste disparo. None = não deu para ler.
+
+    None é ambíguo de propósito (banco fora OU template ausente do cadastro local):
+    nos dois casos a resposta do chamador é a mesma — não dá para conferir a ordem
+    dos botões, então não dá para emitir payload endereçado por índice.
+    """
+    template_name = broadcast.get("template_name")
+    if not template_name:
+        return None
+    try:
+        res = (
+            sb.table("message_templates")
+            .select("components")
+            .eq("name", template_name)
+            .eq("language", broadcast.get("template_language_code") or "pt_BR")
+            .limit(1)
+            .execute()
+        )
+        rows = res.data if isinstance(res.data, list) else []
+    except Exception as exc:
+        logger.warning(
+            "[BUTTON FLOW] components de '%s' não lidos: %s (segue sem payload custom)",
+            template_name, exc,
+        )
+        return None
+    if not rows:
+        logger.warning(
+            "[BUTTON FLOW] template '%s' não está em message_templates — disparo sai "
+            "SEM payload custom (casamento por rótulo)", template_name,
+        )
+        return None
+    return rows[0].get("components") or []
+
+
+def _resolve_plano_de_botoes(sb, broadcast: dict) -> PlanoDeBotoes | None:
+    """Trilha + índices do disparo, lidos do template APROVADO. None = não emitir payload.
+
+    A trilha decide QUAL payload vai em cada botão e o índice decide ONDE ele cai, então
+    os dois são lidos de onde a ordem realmente está: o componente BUTTONS aprovado.
+    Deduzir do NOME do template seria adivinhação — o lembrete D+4 tem nome próprio
+    (obrigatório, por causa do dedup de 14 dias) e ainda assim usa os rótulos da trilha
+    de estoque.
+
+    Sem casar nenhuma trilha, devolve None e o disparo sai SEM payload custom: o motor
+    continua casando pelo rótulo. Emitir payload com índice adivinhado seria pior que
+    não emitir — trocaria o efeito de dois botões entre si.
+
+    `__flow_trilha__` em template_variables força a trilha (escape hatch para um template
+    aprovado fora do padrão de rótulos); é chave reservada `__`, logo já não vira param.
+    Até 09/09/2026 a trilha forçada devolvia ANTES de consultar o banco, sem cruzar com
+    os rótulos aprovados — contrariando esta docstring e, pior, deixando o índice sem
+    conferência. Agora o banco é consultado sempre, e a trilha forçada:
+      - vence quando os rótulos aprovados não casam com nenhuma trilha (o caso do
+        escape hatch), desde que a CONTAGEM de quick replies bata;
+      - é RECUSADA quando os rótulos casam com outra trilha (conflito = alguém se
+        enganou; sem payload é seguro, com payload trocado não é);
+      - vale sozinha, com índices sequenciais, só quando não deu para ler o template.
+    """
+    template_variables = broadcast.get("template_variables") or {}
+    forcada = template_variables.get("__flow_trilha__")
+    if forcada not in flows.BOTOES_POR_TRILHA:
+        forcada = None
+
+    components = _componentes_aprovados(sb, broadcast)
+    if components is None:
+        if forcada is None:
+            return None
+        logger.warning(
+            "[BUTTON FLOW] trilha '%s' forçada por __flow_trilha__ SEM conferência dos "
+            "rótulos aprovados (template '%s' ilegível) — índices sequenciais",
+            forcada, broadcast.get("template_name"),
+        )
+        return PlanoDeBotoes(forcada, tuple(range(len(flows.BOTOES_POR_TRILHA[forcada]))))
+
+    template_name = broadcast.get("template_name")
+    indices = tuple(indices_quick_reply(components))
+    trilha_aprovada = resolver_trilha_por_rotulos(rotulos_quick_reply(components))
+
+    if forcada and trilha_aprovada and forcada != trilha_aprovada:
+        logger.warning(
+            "[BUTTON FLOW] __flow_trilha__='%s' conflita com os rótulos aprovados de "
+            "'%s' (que são da trilha '%s') — disparo SEM payload custom",
+            forcada, template_name, trilha_aprovada,
+        )
+        return None
+
+    trilha = forcada or trilha_aprovada
+    if trilha is None:
+        logger.warning(
+            "[BUTTON FLOW] rótulos do template '%s' não casam com nenhuma trilha — "
+            "disparo SEM payload custom (o preflight deveria ter bloqueado)", template_name,
+        )
+        return None
+
+    esperados = len(flows.BOTOES_POR_TRILHA[trilha])
+    if len(indices) != esperados:
+        logger.warning(
+            "[BUTTON FLOW] template '%s' tem %d botão(ões) QUICK_REPLY e a trilha '%s' "
+            "tem %d — disparo SEM payload custom", template_name, len(indices), trilha, esperados,
+        )
+        return None
+    if indices != tuple(range(esperados)):
+        # Acontece quando o template aprovado mistura um botão URL/PHONE com os quick
+        # replies: os rótulos casam, mas as posições andam. Emitimos no índice REAL —
+        # e o preflight (C16) reprova esse template no /start, quando ele roda.
+        logger.warning(
+            "[BUTTON FLOW] template '%s' tem botão não-QUICK_REPLY misturado; payloads "
+            "endereçados nos índices reais %s", template_name, indices,
+        )
+    return PlanoDeBotoes(trilha, indices)
+
+
+def _toque_do_disparo(broadcast: dict) -> int:
+    """Nº do toque desta onda (1 = D0, 2 = lembrete D+4), gravado no payload e no estado."""
+    bruto = (broadcast.get("template_variables") or {}).get("__flow_toque__", 1)
+    try:
+        return max(1, int(bruto))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _seed_flow_state(
+    conversation_id: str, trilha: str | None, toque: int, template_name: str | None,
+) -> None:
+    """Semeia conversations.flow_state no ENVIO, não na resposta.
+
+    Sem isso, o lead que responde em TEXTO (60% dos respondentes do broadcast mais
+    limpo que temos: 36 digitaram, 24 clicaram) chegaria ao motor sem trilha, e o
+    reoferecimento sairia com os rótulos da trilha padrão — "Preciso repor" para quem
+    recebeu "Retomar o pedido". Quem clica traz a trilha no próprio clique.
+
+    Sobrescreve estado anterior de propósito: um template novo reabre a pergunta (é o
+    caso do lembrete D+4). Quem já deu opt-out nunca chega aqui — o _blacklist_guardrail
+    aborta o envio antes.
+
+    Fail-soft: a coluna só existe depois da migration 20260820.
+    """
+    estado = {
+        "flow": flows.FLOW_ID,
+        "node": flows.NO_INTERESSE,
+        "nudged": False,
+        "toque": toque,
+        "template": template_name,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if trilha:
+        estado["trilha"] = trilha
+    try:
+        update_conversation(conversation_id, flow_state=estado)
+    except Exception as exc:
+        logger.warning(
+            "[BUTTON FLOW] flow_state não semeado na conversa %s: %s "
+            "(migration 20260820 aplicada?)", conversation_id, exc,
+        )
+
+
 def _has_open_billing_alert(sb) -> bool:
     """True se há um alerta de billing (131042) aberto — mesmo sinal do guard de /start."""
     try:
@@ -1062,6 +1401,149 @@ def _template_dedup_guardrail(
     return None
 
 
+def _defer_marketing_capped_lead(
+    sb, bl_id: str, broadcast_id: str, error_msg: str, *, from_status: str,
+    limpar_envio: bool = False,
+) -> bool:
+    """Tira o lead da fila por `_MARKETING_CAP_DEFER_HOURS` em vez de queimá-lo.
+
+    Guardado por `status = from_status` (idempotente): nunca rouba um lead que outro
+    tick já mandou, nem ressuscita um `sent`. Devolve False quando o UPDATE não pegou
+    — inclusive se a coluna `retry_after` ainda não existir (migration
+    20260909_broadcast_marketing_capped) — para o chamador cair no tratamento antigo
+    em vez de deixar o lead preso em `processing`.
+
+    `limpar_envio` apaga `sent_at`/`wamid` do lead adotado pelo caminho ASSÍNCRONO (a
+    Meta aceitou o send, devolveu wamid, e só depois reteve a mensagem pelo webhook).
+    Sem isso o lead ficaria com a marca de um envio que ninguém recebeu, e um webhook
+    de status atrasado com o MESMO wamid reencontraria a linha adiada e a marcaria
+    failed de novo — repetindo a contabilidade que este varredor acabou de desfazer.
+    """
+    retry_after = datetime.now(timezone.utc) + timedelta(hours=_MARKETING_CAP_DEFER_HOURS)
+    payload: dict = {
+        "status": MARKETING_CAPPED_STATUS,
+        "claimed_at": None,
+        "retry_after": retry_after.isoformat(),
+        "error_message": (error_msg or "")[:500],
+    }
+    if limpar_envio:
+        payload["sent_at"] = None
+        payload["wamid"] = None
+    try:
+        res = (
+            sb.table("broadcast_leads")
+            .update(payload)
+            .eq("id", bl_id)
+            .eq("status", from_status)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning(
+            "[BROADCAST][CAP] não foi possível adiar o lead %s do broadcast %s: %s "
+            "(migration 20260909_broadcast_marketing_capped aplicada?)",
+            bl_id, broadcast_id, exc,
+        )
+        return False
+    if isinstance(res.data, list) and not res.data:
+        return False
+    logger.warning(
+        "[BROADCAST][CAP] 131049 no lead %s (broadcast %s) — reagendado para %s "
+        "(cap de marketing do usuário; retry antes de 24h pode render mais 24h de suspensão)",
+        bl_id, broadcast_id, retry_after.isoformat(),
+    )
+    return True
+
+
+def _desfazer_contador(sb, broadcast_id: str, rpc: str) -> None:
+    """Chama um decrement_broadcast_* fail-soft (a RPC pode não estar aplicada ainda).
+
+    Contador errado é ruído de painel; derrubar a varredura do cap prenderia leads.
+    """
+    try:
+        sb.rpc(rpc, {"broadcast_id_param": broadcast_id}).execute()
+    except Exception as exc:
+        logger.warning(
+            "[BROADCAST][CAP] %s não aplicado p/ %s: %s "
+            "(migration 20260909_broadcast_marketing_capped aplicada?)",
+            rpc, broadcast_id, exc,
+        )
+
+
+def _sweep_marketing_capped(sb, broadcast_id: str) -> None:
+    """Adota as falhas 131049 do webhook e devolve à fila as que já cumpriram as 24h.
+
+    Duas metades, porque o 131049 tem dois caminhos de chegada:
+      1. ADOÇÃO — o caminho comum. A Meta aceita o send (HTTP 200 + wamid) e só reporta
+         a retenção pelo webhook de status, que já marcou o lead `failed` com o title
+         dela. Sem isto, "tente amanhã" viraria falha permanente e o dedup de 14 dias
+         (_template_dedup_guardrail) ainda impediria a 2ª onda de alcançar esse lead.
+         Nesse caminho o lead JÁ FOI CONTADO nos dois contadores — `sent` no envio e
+         `failed` no webhook — então a adoção desfaz os dois (ver `contado_como_enviado`).
+      2. MATURAÇÃO — devolve para `pending` quem já passou de `retry_after`.
+
+    O filtro de adoção é deliberadamente estreito (title com "ecosystem" ou o código
+    literal): ressuscitar um lead que falhou por OUTRO motivo significaria mandar a
+    mesma mensagem duas vezes. Fail-soft ponta a ponta — este varredor nunca pode
+    derrubar o lote.
+    """
+    try:
+        res = (
+            sb.table("broadcast_leads")
+            # `sent_at`/`wamid` decidem QUAIS contadores desfazer: só o caminho
+            # assíncrono (Meta aceitou o send) chegou a contar como enviado.
+            .select("id, error_message, sent_at, wamid")
+            .eq("broadcast_id", broadcast_id)
+            .eq("status", "failed")
+            .is_("delivered_at", "null")
+            .or_(",".join(f"error_message.ilike.%{hint}%" for hint in _MARKETING_CAP_MESSAGE_HINTS))
+            .limit(50)
+            .execute()
+        )
+        candidatos = res.data if isinstance(res.data, list) else []
+    except Exception as exc:
+        logger.warning("[BROADCAST][CAP] varredura de falhas 131049 falhou (%s): %s", broadcast_id, exc)
+        candidatos = []
+
+    for row in candidatos:
+        # Segunda peneira em Python: o ilike é do banco, a decisão é nossa.
+        if not _looks_like_marketing_cap(row.get("error_message")):
+            continue
+        # No caminho ASSÍNCRONO — o provável — a Meta devolveu HTTP 200 + wamid e o
+        # worker já contou `sent` ANTES de o webhook reportar a retenção. Reclassificar
+        # como adiado tem que desfazer os DOIS contadores: desfazer só a falha (o que
+        # este varredor fazia até 09/09/2026) deixa a pessoa contada como enviada hoje e
+        # contada de novo quando o reenvio de amanhã der certo — os números do broadcast
+        # param de fechar e o gate de entrega >=85% lê um denominador inflado.
+        contado_como_enviado = bool(row.get("sent_at") or row.get("wamid"))
+        if _defer_marketing_capped_lead(
+            sb, row["id"], broadcast_id, row.get("error_message") or "", from_status="failed",
+            limpar_envio=contado_como_enviado,
+        ):
+            # Desfaz o incremento que o webhook já fez: o lead não falhou, foi adiado.
+            _desfazer_contador(sb, broadcast_id, "decrement_broadcast_failed")
+            if contado_como_enviado:
+                _desfazer_contador(sb, broadcast_id, "decrement_broadcast_sent")
+
+    try:
+        maturados = (
+            sb.table("broadcast_leads")
+            .update({"status": "pending", "claimed_at": None, "retry_after": None})
+            .eq("broadcast_id", broadcast_id)
+            .eq("status", MARKETING_CAPPED_STATUS)
+            .lte("retry_after", datetime.now(timezone.utc).isoformat())
+            .execute()
+        )
+        devolvidos = len(maturados.data) if isinstance(maturados.data, list) else 0
+    except Exception as exc:
+        logger.warning("[BROADCAST][CAP] requeue dos adiados falhou (%s): %s", broadcast_id, exc)
+        devolvidos = 0
+    if devolvidos:
+        logger.warning(
+            "[BROADCAST][CAP] %d lead(s) do broadcast %s cumpriram as %dh do cap de "
+            "marketing e voltaram para a fila", devolvidos, broadcast_id, _MARKETING_CAP_DEFER_HOURS,
+        )
+
+
 async def process_single_broadcast(broadcast: dict):
     sb = get_supabase()
     broadcast_id = broadcast["id"]
@@ -1109,6 +1591,12 @@ async def process_single_broadcast(broadcast: dict):
         "broadcast_id", broadcast_id
     ).eq("status", "processing").lt("claimed_at", cutoff).filter("wamid", "is", "null").execute()
 
+    # Cap de marketing por usuário (131049): adota as falhas que o webhook marcou e
+    # devolve à fila quem já cumpriu as 24h. Roda no início do lote, junto da recuperação
+    # de 'processing' órfão, porque é a mesma classe de trabalho — consertar a fila antes
+    # de tirar leads dela.
+    _sweep_marketing_capped(sb, broadcast_id)
+
     # Pre-fetch pipeline_id for stage move once per batch — move_to_stage_id is the same for
     # every lead, so querying pipeline_stages inside the per-lead loop is wasteful.
     move_to_stage_id: str | None = broadcast.get("move_to_stage_id")
@@ -1147,16 +1635,34 @@ async def process_single_broadcast(broadcast: dict):
         broadcast.get("template_name"), broadcast_prompt_key,
     )
 
+    # Fluxo de botões (kind='button_flow') — resolvido 1x por batch. Decide duas coisas
+    # que não existem em disparo comum: o payload custom de cada botão e o flow_state
+    # semeado na conversa. Perfil normal ⇒ tudo isto fica None/False e nada muda.
+    is_button_flow = _broadcast_agent_kind(sb, broadcast.get("agent_profile_id")) == _KIND_BUTTON_FLOW
+    plano_de_botoes = _resolve_plano_de_botoes(sb, broadcast) if is_button_flow else None
+    button_flow_trilha = plano_de_botoes.trilha if plano_de_botoes else None
+    button_flow_indices = plano_de_botoes.indices if plano_de_botoes else None
+    button_flow_toque = _toque_do_disparo(broadcast)
+    if is_button_flow:
+        logger.info(
+            "[BUTTON FLOW] broadcast %s ('%s') — trilha=%s toque=%s índices=%s",
+            broadcast_id, broadcast.get("template_name"), button_flow_trilha,
+            button_flow_toque, button_flow_indices,
+        )
+
     pending_leads = get_pending_broadcast_leads(broadcast_id, limit=10)
     logger.info(f"[DEBUG-BROADCAST] broadcast={broadcast_id} pending_leads={len(pending_leads)}")
 
     if not pending_leads:
         # Count both pending and processing — don't mark complete while another worker holds claims
+        # `marketing_capped` conta como pendente: são leads ADIADOS, não concluídos.
+        # Sem eles nesta contagem o broadcast viraria 'completed' com a fila cheia, e
+        # process_broadcasts só varre broadcasts 'running' — os adiados nunca sairiam.
         remaining = (
             sb.table("broadcast_leads")
             .select("id", count="exact")
             .eq("broadcast_id", broadcast_id)
-            .in_("status", ["pending", "processing"])
+            .in_("status", ["pending", "processing", MARKETING_CAPPED_STATUS])
             .execute()
             .count
         )
@@ -1241,6 +1747,9 @@ async def process_single_broadcast(broadcast: dict):
             components = _build_template_components(
                 broadcast.get("template_variables") or {},
                 lead,
+                button_flow_trilha=button_flow_trilha,
+                button_flow_toque=button_flow_toque,
+                button_flow_indices=button_flow_indices,
             )
             # Endereço ENTREGÁVEL do DISPARO FRIO. Modo estrito: só confia no wa_id se ele
             # tiver procedência (from real de inbound / captura pós-envio). Lead frio sem
@@ -1350,6 +1859,15 @@ async def process_single_broadcast(broadcast: dict):
                 logger.info(f"[DEBUG-BROADCAST] step=update_conversation id={conversation['id']} updates={conv_updates}")
                 update_conversation(conversation["id"], **conv_updates)
                 logger.info(f"[DEBUG-BROADCAST] update_conversation OK")
+                # Estado do fluxo em write SEPARADO: `flow_state` depende da migration
+                # 20260820 e, no mesmo update, um erro dela derrubaria junto o status e
+                # o agent_profile_id da conversa — que são o que faz o gate do fluxo
+                # reconhecer a conversa quando o lead responder.
+                if is_button_flow:
+                    _seed_flow_state(
+                        conversation["id"], button_flow_trilha, button_flow_toque,
+                        broadcast.get("template_name"),
+                    )
             except Exception as ce:
                 logger.error(
                     f"[BROADCAST] Could not update conversation for {lead['phone']}: {ce}",
@@ -1432,69 +1950,79 @@ async def process_single_broadcast(broadcast: dict):
                     error_msg += f" (código {code})"
             except Exception:
                 error_msg = str(http_err)
-            logger.error(f"[BROADCAST] Meta API error para {lead['phone']}: {error_msg}")
-            mark_broadcast_lead_failed(bl["id"], error_msg)
-            increment_broadcast_failed(broadcast_id)
-            # Billing error detected in real-time: pause broadcast immediately so
-            # remaining leads are not attempted (they would all fail the same way).
-            if meta_err.get("code") == _BILLING_ERROR_CODE:
-                logger.critical(
-                    "[BROADCAST] Billing error %d — pausando broadcast %s imediatamente",
-                    _BILLING_ERROR_CODE, broadcast_id,
-                )
-                sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
-                try:
-                    from app.alerts.service import fire_billing_alert
-                    asyncio.create_task(fire_billing_alert([meta_err]))
-                except Exception:
-                    pass
-                return
-            # Erro da classe TEMPLATE (wartime T3, send-side): o lead já foi marcado
-            # failed acima SEM requeue — retentar um template quebrado é loop infinito.
-            # Circuit breaker: N erros de template consecutivos = o template está
-            # quebrado p/ TODOS os leads → pausa o broadcast e alerta critical (chega
-            # no WhatsApp/Sentry via T2) em vez de queimar a lista inteira.
-            if _is_template_error(http_err.response.status_code, meta_err):
-                streak = _template_error_streaks.get(broadcast_id, 0) + 1
-                _template_error_streaks[broadcast_id] = streak
-                logger.error(
-                    "[BROADCAST][TEMPLATE] erro de template no broadcast %s (%d consecutivo(s)): %s",
-                    broadcast_id, streak, error_msg,
-                )
-                if streak >= _TEMPLATE_ERROR_PAUSE_THRESHOLD:
+            # 131049 — cap de marketing POR USUÁRIO. Único erro Meta que NÃO é falha:
+            # a mensagem não saiu porque o lead já recebeu marketing demais hoje (de
+            # qualquer marca), e a própria Meta manda esperar 24h. Marcar `failed` aqui
+            # custaria duas vezes: perderia o lead nesta onda e, como o dedup de 14 dias
+            # só olha envios BEM-SUCEDIDOS, ele voltaria à fila sem nunca ter sido tocado.
+            # Se o adiamento não pegar (migration ausente), cai no tratamento de sempre.
+            adiado_por_cap = _is_marketing_cap_error(meta_err) and _defer_marketing_capped_lead(
+                sb, bl["id"], broadcast_id, error_msg, from_status="processing",
+            )
+            if not adiado_por_cap:
+                logger.error(f"[BROADCAST] Meta API error para {lead['phone']}: {error_msg}")
+                mark_broadcast_lead_failed(bl["id"], error_msg)
+                increment_broadcast_failed(broadcast_id)
+                # Billing error detected in real-time: pause broadcast immediately so
+                # remaining leads are not attempted (they would all fail the same way).
+                if meta_err.get("code") == _BILLING_ERROR_CODE:
                     logger.critical(
-                        "[BROADCAST][TEMPLATE] %d erros de template consecutivos — "
-                        "pausando broadcast %s (template '%s' quebrado)",
-                        streak, broadcast_id, broadcast.get("template_name"),
+                        "[BROADCAST] Billing error %d — pausando broadcast %s imediatamente",
+                        _BILLING_ERROR_CODE, broadcast_id,
                     )
                     sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
-                    _template_error_streaks.pop(broadcast_id, None)
                     try:
-                        from app.alerts.service import create_system_alert
-                        create_system_alert(
-                            "broadcast_template_error",
-                            f"Disparo pausado — erro de template '{broadcast.get('template_name')}'",
-                            (
-                                f"O broadcast '{broadcast.get('name') or broadcast_id}' foi pausado "
-                                f"automaticamente após {streak} erros de template consecutivos. "
-                                f"Último erro da Meta: {error_msg}. Template: "
-                                f"'{broadcast.get('template_name')}' "
-                                f"({broadcast.get('template_language_code', 'pt_BR')}). Corrija o "
-                                f"template/variáveis e retome o disparo manualmente."
-                            ),
-                            severity="critical",
-                            metadata={
-                                "broadcast_id": str(broadcast_id),
-                                "template_name": broadcast.get("template_name"),
-                                "meta_error_code": meta_err.get("code"),
-                            },
-                        )
-                    except Exception as alert_err:
-                        logger.warning(
-                            "[BROADCAST][TEMPLATE] alerta não criado p/ %s: %s",
-                            broadcast_id, alert_err,
-                        )
+                        from app.alerts.service import fire_billing_alert
+                        asyncio.create_task(fire_billing_alert([meta_err]))
+                    except Exception:
+                        pass
                     return
+                # Erro da classe TEMPLATE (wartime T3, send-side): o lead já foi marcado
+                # failed acima SEM requeue — retentar um template quebrado é loop infinito.
+                # Circuit breaker: N erros de template consecutivos = o template está
+                # quebrado p/ TODOS os leads → pausa o broadcast e alerta critical (chega
+                # no WhatsApp/Sentry via T2) em vez de queimar a lista inteira.
+                if _is_template_error(http_err.response.status_code, meta_err):
+                    streak = _template_error_streaks.get(broadcast_id, 0) + 1
+                    _template_error_streaks[broadcast_id] = streak
+                    logger.error(
+                        "[BROADCAST][TEMPLATE] erro de template no broadcast %s (%d consecutivo(s)): %s",
+                        broadcast_id, streak, error_msg,
+                    )
+                    if streak >= _TEMPLATE_ERROR_PAUSE_THRESHOLD:
+                        logger.critical(
+                            "[BROADCAST][TEMPLATE] %d erros de template consecutivos — "
+                            "pausando broadcast %s (template '%s' quebrado)",
+                            streak, broadcast_id, broadcast.get("template_name"),
+                        )
+                        sb.table("broadcasts").update({"status": "paused"}).eq("id", broadcast_id).execute()
+                        _template_error_streaks.pop(broadcast_id, None)
+                        try:
+                            from app.alerts.service import create_system_alert
+                            create_system_alert(
+                                "broadcast_template_error",
+                                f"Disparo pausado — erro de template '{broadcast.get('template_name')}'",
+                                (
+                                    f"O broadcast '{broadcast.get('name') or broadcast_id}' foi pausado "
+                                    f"automaticamente após {streak} erros de template consecutivos. "
+                                    f"Último erro da Meta: {error_msg}. Template: "
+                                    f"'{broadcast.get('template_name')}' "
+                                    f"({broadcast.get('template_language_code', 'pt_BR')}). Corrija o "
+                                    f"template/variáveis e retome o disparo manualmente."
+                                ),
+                                severity="critical",
+                                metadata={
+                                    "broadcast_id": str(broadcast_id),
+                                    "template_name": broadcast.get("template_name"),
+                                    "meta_error_code": meta_err.get("code"),
+                                },
+                            )
+                        except Exception as alert_err:
+                            logger.warning(
+                                "[BROADCAST][TEMPLATE] alerta não criado p/ %s: %s",
+                                broadcast_id, alert_err,
+                            )
+                        return
         except httpx.TransportError as transport_err:
             # Queda TRANSITÓRIA de conexão (GOAWAY/RemoteProtocolError/ConnectError) que
             # esgotou os retries HTTP do _request_with_retry. NÃO é uma rejeição da Meta —
