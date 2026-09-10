@@ -20,10 +20,19 @@ produção feitas em 10/09/2026 e citadas ao longo deste documento.
 3. **A reestruturação dos funis foi começada à mão durante a reunião e está pela
    metade — e quebrou o contrato interno de etapas.** Três coisas estão quebradas em
    produção agora (§2). Nenhuma delas dá erro visível.
-4. **O trabalho vira 5 blocos** (§4). O bloco 0 é pré-requisito de todos os outros e
+4. **363 dos 578 cards em "Novo" estão na coluna errada** — o lead já falou com o João.
+   Sem reclassificar antes de ligar, eles recebem uma mensagem dizendo "você não me
+   respondeu".
+5. **O orçamento nunca foi usado — `quotes` tem zero linhas.** A reunião elegeu o
+   orçamento como o **único** marco de "Proposta Enviada" (D3), mas os 9 cards que estão
+   lá chegaram por arrasto. **É problema de adoção, não de código** — e é a conversa mais
+   importante a ter com o João.
+6. **O trabalho vira 5 blocos** (§4). O bloco 0 é pré-requisito de todos os outros e
    não manda nenhuma mensagem — dá para fechar e validar sozinho.
-5. **Ao ligar, só o fluxo novo entra** (~15 cards/dia). O passivo de 1.488 cards não é
+7. **Ao ligar, só o fluxo novo entra** (~15 cards/dia). O passivo de 1.488 cards não é
    varrido por essa via; ele é assunto do funil de Recuperação.
+8. **Boa notícia medida:** nenhum lead com `opt_out=true` tem card aberto nos funis do
+   João. Os 48 opt-outs pendentes conhecidos são da coorte do Bling, não daqui.
 
 ---
 
@@ -147,6 +156,19 @@ João - Recuperação                    João - Reposição Private Label (novo
    resolução da etapa de entrada. Em produção **nenhuma etapa tem `is_protected=true`**,
    e `_first_unprotected_stage_id` elege como "etapa de entrada" a de menor
    `order_index` — um arrasta-e-solta infeliz faz todo card novo nascer em "Perdido".
+
+6. **363 dos 578 cards em "Novo" estão na etapa errada.** D2 define "Novo" como *o João
+   mandou algo e o lead não respondeu*. Medindo quem já falou **no número do João**
+   (não "já mandou mensagem alguma vez" — quase todo lead falou com a ValerIA antes do
+   handoff): **363 cards (63%) deveriam estar em "Em conversa"** — 240 no Private Label,
+   123 no Atacado. Só 215 estão corretamente em "Novo".
+   **Consequência direta:** sem reclassificar, 363 leads que *estão* conversando com o
+   João receberiam a mensagem da esteira "Novo" — que diz, em essência, "você não me
+   respondeu". Errado e constrangedor.
+
+7. **38 cards fechados moram em etapas sem `key`** e por isso contam como **abertos**
+   para a RPC das esteiras (que trata `key` NULL como etapa aberta). São 1.540 cards
+   abertos por `closed_at IS NULL` contra 1.578 pela regra da RPC.
 
 ### 2.4 O que a reestruturação NÃO quebrou (verificado, porque parecia que sim)
 
@@ -289,7 +311,17 @@ Trabalho do bloco:
 5. Fazer o `POST /api/pipelines/[id]/stages` aceitar `key`, e o `DELETE` recusar apagar
    etapa que tenha `key` não nula. Trocar o template de funil novo
    (`api/pipelines/route.ts:15-23`) para o esquema da reunião.
-6. Terminar a migration com `NOTIFY pgrst, 'reload schema'` — sem isso o CRM responde
+6. **Reclassificar os 363 cards** de "Novo" cujo lead já falou no número do João
+   (§2.3 item 6). O critério é `EXISTS (mensagem role='user' em conversa de canal
+   `mode='human'`)` — **não** "quem falou por último", que classificaria errado todo lead
+   que o João respondeu por último.
+7. **Fechar os 38 cards fechados parados em etapas sem `key`** (§2.3 item 7), senão a
+   esteira os trata como abertos.
+8. Trocar a constante `DEAL_STAGES` do frontend (`lib/constants.ts:9-20`), que ainda
+   lista `contato`/`proposta`/`negociacao` e **alimenta o dropdown que grava a key alvo
+   das cadências** (`cadence-trigger-config.tsx:14-16`) — hoje ela oferece para
+   configuração etapas que vão deixar de existir.
+9. Terminar a migration com `NOTIFY pgrst, 'reload schema'` — sem isso o CRM responde
    PGRST204 com a coluna já existindo.
 
 **`conversion_event` fica NULL em todas as etapas novas.** Preencher esse campo despacha
@@ -402,11 +434,26 @@ Quem **já comprou** e quem **nunca comprou** têm esteiras diferentes (D10).
    `fire_trigger` (`triggers.py:103-162`), e `_move_deal_to_proposal` **nunca troca de
    pipeline** — lê o `pipeline_id` do próprio deal e só faz UPDATE de `stage_id`. Mover
    de Recuperação para Reposição é **impossível hoje**; é código novo.
-4. ⚠ **O marco do orçamento é opt-in e quase nunca acontece.** `_move_deal_to_proposal` só
-   é chamada `if body.deal_id:` (`quotes/router.py:493`), e o seletor "Oportunidade" do
-   modal **nasce em "Não vincular"** (`quote-create-modal.tsx:154`). O caminho normal do
-   João é criar orçamento sem deal — e o card não anda. **D3 não funciona hoje mesmo
-   onde a `key` existe.** Tornar o vínculo obrigatório é pré-requisito de D3 e D11.
+4. ⚠ **O marco do orçamento nunca foi exercido — nem uma vez.**
+   **Medido: a tabela `quotes` tem ZERO linhas em produção.** Os 9 cards em "Proposta
+   Enviada" nos funis do João chegaram lá **por arrasto**. O gancho técnico existe e
+   funciona (`quotes/router.py:249-287`), mas:
+   - `_move_deal_to_proposal` só roda `if body.deal_id:` (`quotes/router.py:493`);
+   - o seletor "Oportunidade" do modal **nasce em "Não vincular"**
+     (`quote-create-modal.tsx:154`) e nenhum call site passa `lockedDealId`;
+   - o `PUT` grava `deal_id` mas **não move o card** (`:562-579`).
+
+   **Isto é o achado mais consequente do documento para a reunião:** D3 elegeu como
+   *único* marco válido um mecanismo que **nunca foi usado**. O problema é **adoção, não
+   código** — e sem resolvê-lo, D3 é letra morta e a esteira de proposta nunca dispara
+   pelo motivo certo.
+
+   **Proposta:** tornar o vínculo obrigatório **com resolução automática do deal** —
+   preencher `deal_id` com o card aberto do funil do vendedor (não com `get_open_deal`,
+   que pega o mais recente de qualquer funil), exibir o nome do funil no dropdown (hoje
+   ele lista deals de todos os funis sem filtro de `closed_at`, mostrando só `d.title` —
+   duas linhas visualmente idênticas), e combinar com o João um plano de adoção. Sem
+   plano de adoção, nenhuma mudança de código resolve.
 
 ---
 
@@ -521,8 +568,8 @@ Nenhum dos dois foi introduzido pela branch — ambos estão em `origin/master` 
 5. **Submeter e aguardar aprovação dos templates.** Consultei a WABA: **zero** templates
    `esteira_*` existem. Conferir o **locale aprovado** de cada um — `automacao_valeria_to_joao`
    foi aprovado só em `en` e o `pt_BR` causou 404 #132001 com job cancelado sem entregar.
-6. **Tornar obrigatório o vínculo orçamento↔oportunidade** (§4/SP4 item 4) — sem isso D3
-   não funciona.
+6. **Combinar com o João o uso do `/orcamento`** — `quotes` tem **zero** linhas
+   (§4/SP4 item 4). Sem adoção, D3 é letra morta e nenhuma mudança de código a salva.
 7. **Ligar uma esteira de cada vez**, observando o volume do primeiro dia.
 
 ---
