@@ -20,7 +20,7 @@ export interface LeadDeal {
 /** Stage como vem de GET /api/pipelines/[id]/stages. */
 export type StageOption = Pick<
   PipelineStage,
-  "id" | "label" | "dot_color" | "order_index" | "is_protected"
+  "id" | "label" | "dot_color" | "order_index" | "is_protected" | "key"
 >;
 
 export type StagesByPipeline = Record<string, StageOption[]>;
@@ -39,11 +39,22 @@ export interface DealRow {
   canEditStage: boolean;
 }
 
+/**
+ * Uma etapa terminal. Checa a key ALÉM da flag porque is_protected é false em
+ * todas as linhas do banco (012_multi_pipeline.sql:21 default false;
+ * api/pipelines/route.ts semeia "Fechado Ganho"/"Perdido" com false). Confiar só
+ * na flag deixaria as etapas de fechamento no dropdown do painel, onde não há
+ * captura de motivo de perda.
+ */
+export function isClosingStage(stage: { key: string | null; is_protected: boolean }): boolean {
+  return stage.is_protected === true || CLOSED_STAGE_KEYS.includes(stage.key ?? "");
+}
+
 /** Um deal está fechado se caiu numa coluna protegida — por key ou pela flag. */
 export function isDealClosed(deal: LeadDeal): boolean {
   const stage = deal.pipeline_stages;
   if (!stage) return false;
-  return stage.is_protected === true || CLOSED_STAGE_KEYS.includes(stage.key ?? "");
+  return isClosingStage(stage);
 }
 
 /** Funis distintos presentes nos deals — o que o painel precisa buscar. */
@@ -58,7 +69,7 @@ export function distinctPipelineIds(deals: LeadDeal[]): string[] {
 function firstOpenStageId(stages: StageOption[]): string | null {
   // order_index manda: a API já ordena, mas um cache remontado pode não estar
   // ordenado e reabrir no stage errado é um erro silencioso e caro.
-  const open = stages.filter((s) => !s.is_protected);
+  const open = stages.filter((s) => !isClosingStage(s));
   if (open.length === 0) return null;
   return open.reduce((a, b) => (a.order_index <= b.order_index ? a : b)).id;
 }
@@ -71,7 +82,7 @@ function firstOpenStageId(stages: StageOption[]): string | null {
 export function buildDealRows(deals: LeadDeal[], stagesByPipeline: StagesByPipeline): DealRow[] {
   const rows = deals.map((deal) => {
     const stages = stagesByPipeline[deal.pipeline_id ?? ""] ?? [];
-    const stageOptions = stages.filter((s) => !s.is_protected);
+    const stageOptions = stages.filter((s) => !isClosingStage(s));
     const isClosed = isDealClosed(deal);
     return {
       deal,
@@ -87,7 +98,8 @@ export function buildDealRows(deals: LeadDeal[], stagesByPipeline: StagesByPipel
 
   return rows.sort((a, b) => {
     if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1;
-    return b.deal.updated_at.localeCompare(a.deal.updated_at);
+    if (a.deal.updated_at === b.deal.updated_at) return 0;
+    return a.deal.updated_at < b.deal.updated_at ? 1 : -1;
   });
 }
 

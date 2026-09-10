@@ -9,16 +9,16 @@ import {
 } from "@/lib/deal-rows";
 
 const ATACADO: StageOption[] = [
-  { id: "a-entrada", label: "Entrada", dot_color: "#aaaaaa", order_index: 0, is_protected: false },
-  { id: "a-qualif", label: "Qualificação", dot_color: "#bbbbbb", order_index: 1, is_protected: false },
-  { id: "a-ganho", label: "Fechado/Ganho", dot_color: "#00aa00", order_index: 2, is_protected: true },
-  { id: "a-perdido", label: "Fechado/Perdido", dot_color: "#aa0000", order_index: 3, is_protected: true },
+  { id: "a-entrada", label: "Entrada", dot_color: "#aaaaaa", order_index: 0, is_protected: false, key: null },
+  { id: "a-qualif", label: "Qualificação", dot_color: "#bbbbbb", order_index: 1, is_protected: false, key: null },
+  { id: "a-ganho", label: "Fechado/Ganho", dot_color: "#00aa00", order_index: 2, is_protected: true, key: "fechado_ganho" },
+  { id: "a-perdido", label: "Fechado/Perdido", dot_color: "#aa0000", order_index: 3, is_protected: true, key: "fechado_perdido" },
 ];
 
 const REPOSICAO: StageOption[] = [
-  { id: "r-contato", label: "Contato", dot_color: "#cccccc", order_index: 0, is_protected: false },
-  { id: "r-negoc", label: "Negociação", dot_color: "#dddddd", order_index: 1, is_protected: false },
-  { id: "r-ganho", label: "Fechado/Ganho", dot_color: "#00aa00", order_index: 2, is_protected: true },
+  { id: "r-contato", label: "Contato", dot_color: "#cccccc", order_index: 0, is_protected: false, key: null },
+  { id: "r-negoc", label: "Negociação", dot_color: "#dddddd", order_index: 1, is_protected: false, key: null },
+  { id: "r-ganho", label: "Fechado/Ganho", dot_color: "#00aa00", order_index: 2, is_protected: true, key: "fechado_ganho" },
 ];
 
 const STAGES = { "p-atacado": ATACADO, "p-reposicao": REPOSICAO };
@@ -150,9 +150,9 @@ describe("buildDealRows", () => {
   it("escolhe o stage de reabertura por order_index, não pela ordem do array", () => {
     const embaralhado = {
       "p-atacado": [
-        { id: "a-qualif", label: "Qualificação", dot_color: "#bbbbbb", order_index: 1, is_protected: false },
-        { id: "a-perdido", label: "Fechado/Perdido", dot_color: "#aa0000", order_index: 3, is_protected: true },
-        { id: "a-entrada", label: "Entrada", dot_color: "#aaaaaa", order_index: 0, is_protected: false },
+        { id: "a-qualif", label: "Qualificação", dot_color: "#bbbbbb", order_index: 1, is_protected: false, key: null },
+        { id: "a-perdido", label: "Fechado/Perdido", dot_color: "#aa0000", order_index: 3, is_protected: true, key: "fechado_perdido" },
+        { id: "a-entrada", label: "Entrada", dot_color: "#aaaaaa", order_index: 0, is_protected: false, key: null },
       ],
     };
     const rows = buildDealRows([deal({ pipeline_stages: CLOSED_STAGE })], embaralhado);
@@ -174,6 +174,55 @@ describe("buildDealRows", () => {
     const rows = buildDealRows([deal()], {});
     expect(rows[0].canEditStage).toBe(false);
     expect(rows[0].stageOptions).toEqual([]);
+  });
+
+  it("devolve lista vazia sem deals", () => {
+    expect(buildDealRows([], {})).toEqual([]);
+  });
+
+  it("exclui etapas de fechamento do dropdown mesmo com is_protected: false (formato real do banco)", () => {
+    // Formato de produção: is_protected é false em TODA linha do banco
+    // (012_multi_pipeline.sql:21 default false; api/pipelines/route.ts semeia
+    // "Fechado Ganho"/"Perdido" com false). Só a key marca o fechamento.
+    const stagesReais = {
+      "p-atacado": [
+        { id: "a-entrada", label: "Entrada", dot_color: "#aaaaaa", order_index: 0, is_protected: false, key: null },
+        { id: "a-ganho", label: "Fechado Ganho", dot_color: "#5aad65", order_index: 1, is_protected: false, key: "fechado_ganho" },
+        { id: "a-perdido", label: "Perdido", dot_color: "#9ca3af", order_index: 2, is_protected: false, key: "fechado_perdido" },
+      ],
+    };
+    const rows = buildDealRows([deal({ pipeline_id: "p-atacado" })], stagesReais);
+
+    expect(rows[0].stageOptions.map((s) => s.id)).toEqual(["a-entrada"]);
+  });
+
+  it("nunca escolhe uma etapa de fechamento como reopenStageId, mesmo com is_protected: false", () => {
+    const stagesReais = {
+      "p-atacado": [
+        { id: "a-ganho", label: "Fechado Ganho", dot_color: "#5aad65", order_index: 0, is_protected: false, key: "fechado_ganho" },
+        { id: "a-perdido", label: "Perdido", dot_color: "#9ca3af", order_index: 1, is_protected: false, key: "fechado_perdido" },
+        { id: "a-entrada", label: "Entrada", dot_color: "#aaaaaa", order_index: 2, is_protected: false, key: null },
+      ],
+    };
+    const dealFechado = deal({
+      pipeline_id: "p-atacado",
+      pipeline_stages: { id: "a-perdido", label: "Perdido", dot_color: "#9ca3af", key: "fechado_perdido", is_protected: false },
+    });
+    const rows = buildDealRows([dealFechado], stagesReais);
+
+    expect(rows[0].isClosed).toBe(true);
+    expect(rows[0].reopenStageId).toBe("a-entrada");
+  });
+
+  it("em empate de order_index, reabre na primeira etapa do array", () => {
+    const empatado = {
+      "p-atacado": [
+        { id: "a-primeira", label: "Primeira", dot_color: "#aaaaaa", order_index: 0, is_protected: false, key: null },
+        { id: "a-segunda", label: "Segunda", dot_color: "#bbbbbb", order_index: 0, is_protected: false, key: null },
+      ],
+    };
+    const rows = buildDealRows([deal({ pipeline_stages: CLOSED_STAGE, pipeline_id: "p-atacado" })], empatado);
+    expect(rows[0].reopenStageId).toBe("a-primeira");
   });
 });
 
