@@ -572,6 +572,60 @@ async def _t_mudar_stage(ctx: ToolContext) -> str:
     return f"Lead já está no stage {new_stage} — nenhuma alteração necessária"
 
 
+# Marcadores de volume DESCONHECIDO. O modelo preenche `volume` com o melhor esforço
+# honesto ("a definir") porque a descrição da tool manda registrar cedo — e antes de
+# 09/09 isso bastava para abrir o portão do handoff proativo. Medição em produção:
+# "a definir" sozinho apareceu 20x nas 71 chamadas com volume preenchido.
+_VOLUME_VAGO = (
+    "a definir", "a ser definido", "a combinar", "a decidir", "indefinid",
+    "nao definid", "não definid", "pesquisando", "sem referencia", "sem referência",
+    "ainda no planejamento", "para testar", "pra testar",
+)
+
+
+def _volume_concreto(volume: str | None) -> bool:
+    """True só quando o volume traz uma QUANTIDADE real (número), não uma intenção.
+
+    O portão do handoff proativo antes só olhava se a string era truthy — então
+    "a definir", "pouco", "vender muito" e "atacado" transbordavam o lead igual a
+    "100 unidades". Regra: precisa de dígito E não pode conter marcador de indefinição
+    (o dígito de "a definir a partir de 10" não salva a frase).
+    """
+    v = (volume or "").strip().lower()
+    if not v:
+        return False
+    if any(t in v for t in _VOLUME_VAGO):
+        return False
+    return any(ch.isdigit() for ch in v)
+
+
+def _preco_ja_mostrado(conversation_id: str) -> bool:
+    """True se a VALERIA já apresentou algum preço nesta conversa.
+
+    Segundo trinco do handoff proativo (decisão 09/09): 28 dos 30 handoffs proativos do
+    histórico saíram com zero preço na conversa — o lead chegava no João sem nunca ter
+    visto um valor. Só conta mensagem `assistant`: "meu fornecedor faz por R$12" dito
+    pelo LEAD não é preço apresentado.
+
+    Fail-OPEN: erro de banco devolve True. Travar o funil por indisponibilidade de
+    leitura seria pior que um handoff a mais — o portão é uma trava de qualidade, não
+    de segurança.
+    """
+    try:
+        history = get_conversation_history(conversation_id, limit=200) or []
+    except Exception as exc:  # noqa: BLE001 — fail-open deliberado
+        logger.warning(
+            "qualificar_lead: nao foi possivel ler o historico p/ checar preco (conv=%s): %s",
+            conversation_id, exc,
+        )
+        return True
+    return any(
+        "R$" in (m.get("content") or "")
+        for m in history
+        if m.get("role") == "assistant"
+    )
+
+
 async def _t_qualificar_lead(ctx: ToolContext) -> str:
     args = ctx.args
     lead_id = ctx.lead_id
@@ -602,21 +656,56 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
         f"volume={_anchors.get('volume')} urgencia={_anchors.get('urgencia')}",
         conversation_id=conversation_id,
     )
-    if _anchors.get("finalidade") and _anchors.get("volume"):
-        logger.info("qualificar_lead: âncoras completas → handoff proativo (lead %s)", lead_id)
-        # Cascata DECLARADA em ToolEffects.may_cascade_to (fix S1): ctx.invoke re-entra em
-        # execute_tool com o mesmo sink, então os efeitos do handoff pertencem a este turno.
-        return await ctx.invoke(
-            "encaminhar_humano",
-            {
-                "vendedor": "João Brás",
-                "motivo": (
-                    f"handoff proativo — âncoras: finalidade={_anchors.get('finalidade')} / "
-                    f"volume={_anchors.get('volume')}"
-                ),
-            },
+    # PORTÃO DO HANDOFF PROATIVO — três trincos (auditoria 09/09, ver
+    # test_qualificar_lead_portao_2026_09_09). Até aqui bastava que as duas strings
+    # fossem truthy, e o resultado medido em produção foi: 28 dos 30 handoffs proativos
+    # sem preço nenhum na conversa e 38 volumes sem qualquer quantidade.
+    _finalidade = _anchors.get("finalidade")
+    _volume = _anchors.get("volume")
+    if not (_finalidade and _volume):
+        return "Âncoras de qualificação registradas."
+
+    # Trinco 1: o volume precisa ser uma quantidade, não uma intenção.
+    if not _volume_concreto(_volume):
+        logger.info(
+            "qualificar_lead: volume vago (%r) — âncoras registradas, sem handoff (lead %s)",
+            _volume, lead_id,
         )
-    return "Âncoras de qualificação registradas."
+        return (
+            "Âncoras registradas, mas o volume ainda não é uma quantidade concreta "
+            f"({_volume!r}). Continue a descoberta e pergunte quanto ele pretende levar "
+            "(kg, pacotes ou pedido mensal). Não encaminhe ainda."
+        )
+
+    # Trinco 2: o lead não pode chegar no vendedor sem nunca ter visto um preço.
+    # Não transbordamos agora — devolvemos a próxima ação: apresentar o preço NESTE
+    # turno. Na volta (o modelo chama qualificar_lead de novo, ou o handoff sai pelo
+    # fluxo normal do prompt) o trinco já estará aberto.
+    if not _preco_ja_mostrado(conversation_id):
+        logger.info(
+            "qualificar_lead: âncoras completas mas sem preço na conversa — "
+            "pedindo apresentação de preço antes do handoff (lead %s)", lead_id,
+        )
+        return (
+            "Âncoras completas, mas este lead ainda NÃO viu nenhum preço. Antes de "
+            "encaminhar, apresente agora o preço do produto pertinente ao que ele pediu "
+            "(use o <catalogo_de_produtos> e os qualificadores aprovados) e termine com "
+            "uma pergunta de fechamento. O transbordo pro vendedor acontece no próximo "
+            "turno, depois que ele reagir ao preço."
+        )
+
+    logger.info("qualificar_lead: âncoras completas → handoff proativo (lead %s)", lead_id)
+    # Cascata DECLARADA em ToolEffects.may_cascade_to (fix S1): ctx.invoke re-entra em
+    # execute_tool com o mesmo sink, então os efeitos do handoff pertencem a este turno.
+    return await ctx.invoke(
+        "encaminhar_humano",
+        {
+            "vendedor": "João Brás",
+            "motivo": (
+                f"handoff proativo — âncoras: finalidade={_finalidade} / volume={_volume}"
+            ),
+        },
+    )
 
 
 async def _t_encaminhar_humano(ctx: ToolContext) -> str:
@@ -1872,15 +1961,18 @@ REGISTRY.register(Tool(
         "Âncoras: finalidade (para que o lead quer o cafe: revenda, cafeteria, restaurante, "
         "marca propria, etc.), volume (quanto pretende: kg, pacotes, fardos, pedido mensal), "
         "urgencia (quando pretende comprar/decidir). Passe apenas as que ja souber; pode "
-        "chamar de novo depois pra completar. Quando finalidade E volume ja estiverem "
-        "definidos, o sistema transfere o lead pro vendedor automaticamente — voce NAO "
-        "precisa chamar encaminhar_humano nesse caso."
+        "chamar de novo depois pra completar. "
+        "O sistema transfere o lead pro vendedor automaticamente — sem voce chamar "
+        "encaminhar_humano — SOMENTE quando as tres condicoes valerem juntas: finalidade "
+        "definida, volume com QUANTIDADE REAL (numero: '100 unidades', '5kg/mes') e um "
+        "preco ja apresentado por voce nesta conversa. Registrar ancora nunca e um risco: "
+        "se faltar alguma condicao a tool apenas registra e te diz qual e o proximo passo."
     ),
     parameters={
         "type": "object",
         "properties": {
             "finalidade": {"type": "string", "description": "Para que o lead quer o cafe (revenda, cafeteria, restaurante, marca propria, etc.)"},
-            "volume": {"type": "string", "description": "Volume/quantidade pretendida (kg, pacotes, fardos, pedido mensal)"},
+            "volume": {"type": "string", "description": "Volume/quantidade pretendida, com NUMERO (ex: '100 unidades', '5kg/mes', '10 pacotes'). Se o lead ainda nao disse quanto, OMITA este campo — nao preencha com 'a definir', 'pouco' ou 'a combinar', que nao sao quantidades."},
             "urgencia": {"type": "string", "description": "Prazo/urgencia da compra ou decisao (opcional)"},
         },
         "required": [],
