@@ -33,6 +33,13 @@
 - tipos: `npm run type-check`
 - lint: `npm run lint`
 
+**Baseline de lint (importante):** `origin/master` já tem **33 errors / 36 warnings** de lint em
+arquivos não relacionados (`use-sales.ts`, `use-sla-stats.ts`, `business-hours.ts`,
+`cadence-display.test.ts`, `debounce.ts`). `npm run lint` **não** sai limpo e não é esperado que
+saia. O critério em toda task é: **nenhum erro novo nos arquivos que você tocou**. Confira com
+`npm run lint 2>&1 | grep -E "<arquivo-que-voce-tocou>"` — sem saída = ok. Não saia corrigindo os
+erros pré-existentes: isso é escopo de outra entrega e sujaria o diff.
+
 ---
 
 ## Task 1: Lógica pura de movimentação
@@ -389,7 +396,7 @@ export function StageTargetPicker({
 - [ ] **Step 2: Verificar tipos e lint**
 
 Run: `cd frontend && npm run type-check && npm run lint`
-Expected: ambos sem erro. (O componente ainda não é usado — é esperado que nada mude visualmente.)
+Expected: type-check sem erro; lint sem erro novo em `stage-target-picker.tsx`. (O componente ainda não é usado — é esperado que nada mude visualmente.)
 
 - [ ] **Step 3: Commit**
 
@@ -553,7 +560,7 @@ Substituir `handleUpdateDeal` inteiro por:
 - [ ] **Step 5: Verificar tipos, lint e testes**
 
 Run: `cd frontend && npm run type-check && npm run lint && npm test`
-Expected: type-check e lint sem erro; `npm test` com 805 testes passando (792 da baseline + 13 da Task 1).
+Expected: type-check sem erro; lint sem **erro novo** nos arquivos tocados (os 33 pre-existentes seguem la); `npm test` com 805 testes passando (792 da baseline + 13 da Task 1).
 
 - [ ] **Step 6: Commit**
 
@@ -629,7 +636,7 @@ e o clique se perderia. O `<span>` + `aria-pressed` no botão resolve visual e s
 - [ ] **Step 2: Verificar tipos e lint**
 
 Run: `cd frontend && npm run type-check && npm run lint`
-Expected: sem erro. As props novas são opcionais, então `vendas/page.tsx` e o `DragOverlay`
+Expected: type-check sem erro; lint sem erro novo em `deal-card.tsx`. As props novas são opcionais, então `vendas/page.tsx` e o `DragOverlay`
 continuam compilando sem mudança.
 
 - [ ] **Step 3: Commit**
@@ -780,7 +787,7 @@ export function BulkMoveModal({
 - [ ] **Step 2: Verificar tipos e lint**
 
 Run: `cd frontend && npm run type-check && npm run lint`
-Expected: sem erro.
+Expected: type-check sem erro; lint sem erro novo em `bulk-move-modal.tsx`.
 
 - [ ] **Step 3: Commit**
 
@@ -1138,7 +1145,7 @@ git rm frontend/src/components/deals/bulk-move-deals-modal.tsx
 - [ ] **Step 5: Verificar tipos, lint e testes**
 
 Run: `cd frontend && npm run type-check && npm run lint && npm test`
-Expected: type-check e lint sem erro (nenhum símbolo órfão sobrando); `npm test` com 805 testes
+Expected: type-check sem erro; lint sem erro novo nos arquivos tocados (nenhum símbolo órfão sobrando); `npm test` com 805 testes
 passando.
 
 - [ ] **Step 6: Confirmar que nada mais referencia o modal removido**
