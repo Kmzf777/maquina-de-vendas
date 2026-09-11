@@ -67,6 +67,7 @@ DECLARE
 
   movidos  integer;
   orfaos   integer;
+  sem_key  integer;
 BEGIN
   -- ────────────────────────────────────────────────────────────────────────
   -- GUARDA 0. O estado do board mudou desde a medicao?
@@ -155,6 +156,27 @@ BEGIN
    );
 
   -- ────────────────────────────────────────────────────────────────────────
+  -- GUARDA DE CONTRATO. Depois dos passos 3 e 5, NENHUMA etapa destes 5 funis
+  -- pode estar sem `key` — esse era o defeito que a migration veio consertar.
+  --
+  -- Ela tambem cobre o ponto cego do UPDATE mudo: `UPDATE ... WHERE id = <uuid>`
+  -- que nao acha a linha NAO levanta erro no Postgres, so afeta zero linhas. Sem
+  -- esta guarda, um UUID que tivesse mudado desde a medicao de 10/09/2026 faria o
+  -- passo 3 nao fazer nada, o passo 7 virar no-op, e a migration terminar
+  -- "com sucesso" tendo feito metade do trabalho.
+  --
+  -- E tambem impede que etapa sem key caia no `ELSE 5` da CTE do passo 6 e seja
+  -- reposicionada no meio do funil sem ninguem decidir isso.
+  -- ────────────────────────────────────────────────────────────────────────
+  SELECT count(*) INTO sem_key
+    FROM pipeline_stages
+   WHERE pipeline_id IN (atacado_id, plabel_id, reposicao_id, recuperacao_id, repos_pl_id)
+     AND key IS NULL;
+  IF sem_key > 0 THEN
+    RAISE EXCEPTION 'ficaram % etapas sem key nos funis do Joao — o estado do board mudou desde 10/09/2026; reveja os UUIDs antes de aplicar', sem_key;
+  END IF;
+
+  -- ────────────────────────────────────────────────────────────────────────
   -- 6. REORDENAR SEM BURACOS E PROTEGER AS TERMINAIS
   -- order_index e a definicao de fato de "etapa de entrada": _first_unprotected_stage_id
   -- pega o MENOR order_index entre is_protected=false. Hoje NENHUMA etapa e protegida,
@@ -192,6 +214,19 @@ BEGIN
   UPDATE pipeline_stages SET is_protected = true
    WHERE pipeline_id IN (atacado_id, plabel_id, reposicao_id, recuperacao_id, repos_pl_id)
      AND key IN ('fechado_ganho', 'fechado_perdido');
+
+  -- A etapa de destino precisa existir nos DOIS funis de 1a compra antes de tentar
+  -- reclassificar. Checar o destino, e nao a contagem de cards movidos, e o que
+  -- mantem a guarda segura para re-execucao: na segunda rodada o certo e mover zero.
+  IF NOT EXISTS (
+    SELECT 1 FROM pipeline_stages
+     WHERE pipeline_id = atacado_id AND key = 'respondeu'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pipeline_stages
+     WHERE pipeline_id = plabel_id AND key = 'respondeu'
+  ) THEN
+    RAISE EXCEPTION 'etapa "Em conversa" (key=respondeu) nao existe em Atacado e/ou Private Label — a reclassificacao dos 363 cards seria um no-op silencioso';
+  END IF;
 
   -- ────────────────────────────────────────────────────────────────────────
   -- 7. RECLASSIFICAR OS CARDS DE "Novo" CUJO LEAD JA FALOU COM O JOAO

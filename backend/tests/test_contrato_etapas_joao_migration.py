@@ -203,3 +203,22 @@ def test_reclassifica_os_cards_de_novo_por_mensagem_e_nao_por_ultimo_falante():
     assert "last_customer_message_at" not in sql, (
         "a reclassificacao parece usar 'quem falou por ultimo', que da 792 de 810 leads"
     )
+
+
+def test_guarda_de_contrato_recusa_etapa_sem_key():
+    """UPDATE que nao acha a linha nao e erro no Postgres — so afeta zero linhas.
+    Sem esta guarda, um UUID mudado desde a medicao faria o passo 3 nao fazer nada,
+    o passo 7 virar no-op, e a migration terminar 'com sucesso' pela metade."""
+    sql = _sem_comentario()
+    assert re.search(r"key IS NULL", sql), "nao ha guarda contra etapa sem key"
+    assert re.search(r"sem_key\s*>\s*0", sql), "a contagem de etapas sem key nao aborta"
+
+
+def test_guarda_o_destino_da_reclassificacao_antes_de_tentar():
+    """Checar o destino, e nao a contagem movida, mantem a guarda segura para
+    re-execucao: na segunda rodada o certo e mover zero cards."""
+    sql = _sem_comentario()
+    ini = sql.index("RECLASSIFICAR") if "RECLASSIFICAR" in sql else 0
+    assert sql.count("key = 'respondeu'") >= 3, (
+        "faltam as checagens de existencia de 'respondeu' nos dois funis de 1a compra"
+    )
