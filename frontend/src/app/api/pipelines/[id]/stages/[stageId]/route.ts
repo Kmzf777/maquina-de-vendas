@@ -14,17 +14,26 @@ export async function PATCH(
   const guard = await assertCanManagePipeline(supabase, id);
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
-  const { error: fetchError } = await supabase
+  const { data: existing, error: fetchError } = await supabase
     .from("pipeline_stages")
     .select("id")
     .eq("id", stageId)
-    .single();
+    .maybeSingle();
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
+  if (!existing) return NextResponse.json({ error: "Etapa não encontrada." }, { status: 404 });
 
   const updates: Record<string, unknown> = {};
   if (body.label !== undefined) {
     if (!body.label?.trim()) return NextResponse.json({ error: "Label não pode ser vazio." }, { status: 400 });
     updates.label = body.label.trim();
+  }
+  // `key` precisa ser corrigível por aqui: sem isso, uma key digitada errada no POST
+  // (ex. "proposta_enviad" sob pressão numa correção de produção) cria uma etapa
+  // indelével pelo DELETE (que recusa apagar etapa com key) e ao mesmo tempo invisível
+  // para o motor (que procura a key certa e não encontra). `null` é um valor válido e
+  // desejado aqui — é como se limpa a key errada e destrava a etapa para exclusão.
+  if (body.key !== undefined) {
+    updates.key = typeof body.key === "string" && body.key.trim() ? body.key.trim() : null;
   }
   if (body.dot_color !== undefined) updates.dot_color = body.dot_color;
   if (body.order_index !== undefined) updates.order_index = body.order_index;
