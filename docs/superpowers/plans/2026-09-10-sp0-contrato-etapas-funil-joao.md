@@ -277,56 +277,166 @@ git commit -m "feat(etapas): POST aceita key e DELETE recusa apagar etapa-contra
 
 ---
 
-## Task 3: `DEAL_STAGES` deixa de oferecer etapas que vão sumir
+## Task 3: `DEAL_STAGES` para de oferecer etapas abolidas — sem quebrar a tradução do histórico
 
-`frontend/src/lib/constants.ts:9-20` ainda lista `contato`/`proposta`/`negociacao`, e alimenta o dropdown de `cadence-trigger-config.tsx:14-16` — o campo que **grava a key alvo de uma cadência**. Deixar como está faria alguém configurar uma esteira apontando para uma key que não existe mais.
+> **Esta task foi reescrita em 10/09/2026.** A versão original mandava trocar a forma do
+> array para `{value, label}`. Estava errada em dois níveis, e o implementador bloqueou
+> corretamente antes de commitar:
+>
+> 1. A forma real é `{key, label, color, dotColor, tintColor, avatarColor}`, e **três
+>    consumidores** dependem dela: `cadence-trigger-config.tsx:16`,
+>    `lead-detail-modal.tsx:424,431` e `lead-overview.ts:173`.
+> 2. Mais grave: `DEAL_STAGES` serve a **dois usos conflitantes**. Alimenta o dropdown
+>    que *oferece* etapas, e é o mapa que *traduz* key→rótulo em `STAGE_LABELS`
+>    (`lead-overview.ts:172-175`). Simplesmente remover `contato`/`proposta`/`negociacao`
+>    conserta o primeiro uso e quebra o segundo: todo deal histórico com essas keys
+>    passaria a exibir a key crua na UI.
+>
+> A correção separa os dois usos: o array continua sendo o vocabulário **completo** (para
+> traduzir), e ganha uma marca `legacy` que o dropdown filtra.
 
 **Files:**
-- Modify: `frontend/src/lib/constants.ts:9-20`
+- Modify: `frontend/src/lib/constants.ts` (a constante `DEAL_STAGES`)
+- Modify: `frontend/src/components/campaigns/cadence-trigger-config.tsx` (linhas 3 e 16)
+- Test: `frontend/src/lib/constants.test.ts` (criar)
 
-- [ ] **Step 1: Ler o estado atual**
-
-Run: `sed -n '1,25p' frontend/src/lib/constants.ts`
-Expected: o array `DEAL_STAGES` com entradas para `contato`, `proposta`, `negociacao`
-
-- [ ] **Step 2: Substituir o array**
-
-Trocar o array `DEAL_STAGES` por:
+- [ ] **Step 1: Escrever o teste que falha**
 
 ```ts
-// Vocabulário de etapas oferecido na configuração de cadências. Precisa casar com as
-// keys reais de `pipeline_stages` — este dropdown GRAVA a key alvo do gatilho
-// (components/campaigns/cadence-trigger-config.tsx). Reunião de 10/09/2026: "Contato",
-// "Proposta" e "Negociação" saíram; "Em conversa" usa a key `respondeu`, que é a que
-// `advance_deal_on_reply` já procura.
-export const DEAL_STAGES = [
-  { value: "entrada", label: "Entrada" },
-  { value: "novo", label: "Novo" },
-  { value: "respondeu", label: "Em conversa" },
-  { value: "qualificado", label: "Qualificado" },
-  { value: "em_atencao", label: "Em atenção" },
-  { value: "chamado_reposicao", label: "Já chamado (reposição)" },
-  { value: "proposta_enviada", label: "Proposta Enviada" },
-  { value: "fechado_ganho", label: "Fechado Ganho" },
-  { value: "fechado_perdido", label: "Perdido" },
-] as const;
+// frontend/src/lib/constants.test.ts
+import { describe, it, expect } from "vitest";
+import { DEAL_STAGES, OFFERABLE_DEAL_STAGES } from "./constants";
+
+const keys = (xs: readonly { key: string }[]) => xs.map((s) => s.key);
+
+describe("DEAL_STAGES", () => {
+  it("mantém as keys abolidas, porque ainda traduz deal histórico", () => {
+    expect(keys(DEAL_STAGES)).toEqual(
+      expect.arrayContaining(["contato", "proposta", "negociacao"])
+    );
+  });
+
+  it("conhece o vocabulário novo da reunião de 10/09", () => {
+    expect(keys(DEAL_STAGES)).toEqual(
+      expect.arrayContaining(["respondeu", "em_atencao", "chamado_reposicao"])
+    );
+  });
+
+  it("toda entrada declara legacy explicitamente", () => {
+    for (const s of DEAL_STAGES) {
+      expect(typeof s.legacy, `etapa ${s.key} sem legacy`).toBe("boolean");
+    }
+  });
+
+  it("toda entrada tem rótulo e cor, que lead-detail-modal usa no badge", () => {
+    for (const s of DEAL_STAGES) {
+      expect(s.dotColor, `etapa ${s.key} sem dotColor`).toBeTruthy();
+      expect(s.label, `etapa ${s.key} sem label`).toBeTruthy();
+    }
+  });
+});
+
+describe("OFFERABLE_DEAL_STAGES", () => {
+  it("não oferece nenhuma etapa abolida — é o bug que esta task existe para fechar", () => {
+    const oferecidas = keys(OFFERABLE_DEAL_STAGES);
+    expect(oferecidas).not.toContain("contato");
+    expect(oferecidas).not.toContain("proposta");
+    expect(oferecidas).not.toContain("negociacao");
+  });
+
+  it("oferece o vocabulário novo", () => {
+    const oferecidas = keys(OFFERABLE_DEAL_STAGES);
+    expect(oferecidas).toContain("respondeu");
+    expect(oferecidas).toContain("em_atencao");
+    expect(oferecidas).toContain("chamado_reposicao");
+  });
+
+  it("é exatamente DEAL_STAGES sem as legacy", () => {
+    expect(OFFERABLE_DEAL_STAGES).toHaveLength(
+      DEAL_STAGES.filter((s) => !s.legacy).length
+    );
+  });
+});
 ```
 
-- [ ] **Step 3: Verificar que nada mais dependia das keys removidas**
+- [ ] **Step 2: Rodar o teste e confirmar que falha**
 
-Run: `grep -rn "\"contato\"\|'contato'\|\"negociacao\"\|'negociacao'" frontend/src backend/app --include=*.ts --include=*.tsx --include=*.py`
-Expected: nenhuma ocorrência que seja leitura de etapa. Se aparecer alguma, **pare e reporte** — não invente substituição.
+Run: `cd frontend && npx vitest run src/lib/constants.test.ts`
+Expected: FAIL — `OFFERABLE_DEAL_STAGES` não existe
 
-- [ ] **Step 4: Rodar type-check e testes**
+- [ ] **Step 3: Reescrever `DEAL_STAGES` em `frontend/src/lib/constants.ts`**
+
+Substituir o bloco inteiro de `DEAL_STAGES` (incluindo o comentário sobre "Etapa criada
+junto com o orçamento") por:
+
+```ts
+// Vocabulário COMPLETO de etapas de funil. Ele tem dois usos, e é por isso que as
+// keys abolidas continuam aqui:
+//
+//  1. TRADUZIR key -> rótulo (`STAGE_LABELS` em lib/lead-overview.ts, e o badge
+//     colorido de lead-detail-modal.tsx). Isto precisa conhecer TODA key que já
+//     existiu, senão deal histórico passa a exibir a key crua na tela.
+//  2. OFERECER etapas na configuração de cadência. Este uso NÃO pode listar etapa
+//     abolida — o dropdown grava a key alvo do gatilho, e uma key que não existe
+//     mais em pipeline_stages nunca casa, sem erro visível.
+//
+// `legacy: true` separa os dois: entra na tradução, fica fora do que se oferece.
+// Reunião de 10/09/2026: "Contato", "Proposta" e "Negociação" saíram dos funis;
+// "Em conversa" usa a key `respondeu`, que é a que advance_deal_on_reply já procura.
+//
+// A ordem deste array é a ordem exibida — as legacy ficam no fim, fora do caminho.
+export const DEAL_STAGES = [
+  { key: "novo", label: "Novo", legacy: false, color: "bg-[#f0d8d8]", dotColor: "#e07a7a", tintColor: "#f6eeee", avatarColor: "#e07a7a" },
+  { key: "respondeu", label: "Em conversa", legacy: false, color: "bg-[#f0e4d0]", dotColor: "#d4a04a", tintColor: "#f4f0ea", avatarColor: "#d4a04a" },
+  { key: "chamado_reposicao", label: "Já chamado (reposição)", legacy: false, color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5b8aad" },
+  { key: "em_atencao", label: "Em atenção", legacy: false, color: "bg-[#f7d9e4]", dotColor: "#c9457b", tintColor: "#f9eef3", avatarColor: "#c9457b" },
+  { key: "proposta_enviada", label: "Proposta Enviada", legacy: false, color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
+  { key: "fechado_ganho", label: "Fechado Ganho", legacy: false, color: "bg-[#d8f0dc]", dotColor: "#5aad65", tintColor: "#edf4ef", avatarColor: "#5aad65" },
+  { key: "fechado_perdido", label: "Perdido", legacy: false, color: "bg-[#f4f4f0]", dotColor: "#9ca3af", tintColor: "#f2f2f0", avatarColor: "#9ca3af" },
+  // Abolidas na reunião de 10/09/2026. Mantidas SÓ para traduzir dado histórico.
+  { key: "contato", label: "Contato", legacy: true, color: "bg-[#f0e4d0]", dotColor: "#d4a04a", tintColor: "#f4f0ea", avatarColor: "#d4a04a" },
+  { key: "proposta", label: "Proposta", legacy: true, color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
+  { key: "negociacao", label: "Negociacao", legacy: true, color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5b8aad" },
+] as const;
+
+// O que a tela de cadência pode oferecer. Ver o comentário acima: oferecer etapa
+// abolida cria gatilho que nunca casa, e falha em silêncio.
+export const OFFERABLE_DEAL_STAGES = DEAL_STAGES.filter((s) => !s.legacy);
+```
+
+- [ ] **Step 4: Fazer o dropdown de cadência usar a lista filtrada**
+
+Em `frontend/src/components/campaigns/cadence-trigger-config.tsx`, trocar a linha 16:
+
+```ts
+    ? DEAL_STAGES.map((s) => ({ key: s.key, label: s.label }))
+```
+
+por:
+
+```ts
+    ? OFFERABLE_DEAL_STAGES.map((s) => ({ key: s.key, label: s.label }))
+```
+
+e ajustar o import da linha 3 para trazer `OFFERABLE_DEAL_STAGES` em vez de `DEAL_STAGES`:
+
+```ts
+import { AGENT_STAGES, OFFERABLE_DEAL_STAGES } from "@/lib/constants";
+```
+
+- [ ] **Step 5: Rodar type-check e a suíte inteira**
 
 Run: `cd frontend && npm run type-check && npx vitest run`
-Expected: `tsc` sem saída; vitest **762 passed**
+Expected: `tsc` sem saída; vitest **772 passed** (762 + 10 novos de `constants.test.ts`).
 
-- [ ] **Step 5: Commit**
+Em especial, os dois testes de `lead-overview.test.ts` que dependem da tradução de
+`proposta` e `negociacao` **continuam passando** — é exatamente o ponto desta task.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/lib/constants.ts
-git commit -m "fix(cadencias): dropdown de etapa deixa de oferecer keys abolidas"
+git add frontend/src/lib/constants.ts frontend/src/lib/constants.test.ts frontend/src/components/campaigns/cadence-trigger-config.tsx
+git commit -m "fix(cadencias): dropdown para de oferecer etapa abolida, traducao preservada"
 ```
 
 ---
