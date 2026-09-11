@@ -122,7 +122,8 @@ def test_recuperacao_so_recebe_as_tres_keys_decididas():
     ela nao ganha `proposta_enviada` nem `fechado_ganho` — e tambem nao entra no INSERT
     de "Em atencao", que e estado terminal de esteira de 1a compra e de reposicao.
 
-    Checa por UUID, nao por nome de funil: o rotulo e editavel pelo operador.
+    A checagem do INSERT e por NOME DE VARIAVEL, nao por UUID: o INSERT usa variaveis
+    PL/pgSQL, entao procurar o UUID literal ali nunca casa e o assert vira decorativo.
     """
     sql = _sem_comentario()
     for uuid_etapa, key in (
@@ -136,9 +137,14 @@ def test_recuperacao_so_recebe_as_tres_keys_decididas():
 
     inicio = sql.index("INSERT INTO pipeline_stages")
     bloco_insert = sql[inicio:sql.index(";", inicio)]
-    assert RECUPERACAO not in bloco_insert, (
+    assert "recuperacao_id" not in bloco_insert, (
         "o funil de Recuperacao nao deve ganhar a etapa 'Em atencao'"
     )
+    assert "reposicao_id" not in bloco_insert, (
+        "Reposicao ja tem 'Em atencao' (499ab4a7); inserir criaria duplicata"
+    )
+    for var in ("atacado_id", "plabel_id", "repos_pl_id"):
+        assert var in bloco_insert, f"o INSERT de 'Em atencao' nao cobre {var}"
 
 
 def test_protege_as_terminais_no_mesmo_statement():
@@ -215,10 +221,23 @@ def test_guarda_de_contrato_recusa_etapa_sem_key():
 
 
 def test_guarda_o_destino_da_reclassificacao_antes_de_tentar():
-    """Checar o destino, e nao a contagem movida, mantem a guarda segura para
-    re-execucao: na segunda rodada o certo e mover zero cards."""
+    """Checar o DESTINO, e nao a contagem de cards movidos, e o que mantem a guarda
+    segura para re-execucao: na segunda rodada o certo e mover zero.
+
+    Este teste ja nasceu vazio uma vez — a versao anterior so contava ocorrencias de
+    "key = 'respondeu'" e continuava verde com a guarda inteira apagada. Agora ele
+    isola o bloco IF...THEN que precede o RAISE e confere os dois funis dentro dele.
+    """
     sql = _sem_comentario()
-    ini = sql.index("RECLASSIFICAR") if "RECLASSIFICAR" in sql else 0
-    assert sql.count("key = 'respondeu'") >= 3, (
-        "faltam as checagens de existencia de 'respondeu' nos dois funis de 1a compra"
+    marcador = "THEN RAISE EXCEPTION 'etapa \"Em conversa\""
+    assert marcador in sql, (
+        "nao existe RAISE EXCEPTION guardando o destino da reclassificacao"
+    )
+    fim = sql.index(marcador)
+    bloco = sql[sql.rindex("IF NOT EXISTS", 0, fim):fim]
+    assert "atacado_id" in bloco and "plabel_id" in bloco, (
+        "a guarda nao confere os DOIS funis de 1a compra"
+    )
+    assert bloco.count("key = 'respondeu'") == 2, (
+        "a guarda nao confere key='respondeu' em cada um dos dois funis"
     )
