@@ -67,12 +67,22 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
   const stageInfo = deal.pipeline_stages ?? stages.find((s) => s.id === deal.stage_id) ?? null;
+  // Trocar de funil sem escolher a etapa do destino gravaria um stage_id que
+  // pertence ao funil antigo: nenhuma coluna do board de destino casa com ele e
+  // o card some da tela. Acontece na janela de carregamento das etapas e tambem
+  // quando o funil de destino nao tem nenhuma etapa ativa.
+  const movingToOtherPipeline = form.pipeline_id !== (deal.pipeline_id || "");
+  const missingTargetStage = movingToOtherPipeline && !form.stage_id;
   const categoryInfo = DEAL_CATEGORIES.find((c) => c.key === deal.category);
   const daysActive = Math.floor(
     (Date.now() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24)
   );
 
   async function handleSave() {
+    if (missingTargetStage) {
+      setSaveError("Escolha a etapa do funil de destino antes de salvar.");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -203,7 +213,12 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
               <input type="date" value={form.expected_close_date} onChange={(e) => setForm({ ...form, expected_close_date: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
             </div>
             {saveError && <p className="text-[12px] text-red-600">{saveError}</p>}
-            <button onClick={handleSave} disabled={saving} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full disabled:opacity-50">
+            <button
+              onClick={handleSave}
+              disabled={saving || missingTargetStage}
+              title={missingTargetStage ? "Escolha a etapa do funil de destino" : undefined}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+            >
               {saving ? "Salvando..." : "Salvar"}
             </button>
           </div>
