@@ -56,7 +56,7 @@ function DroppableColumn({
               }`}
             >
               {allSelected && (
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 6L9 17l-5-5" />
                 </svg>
               )}
@@ -142,6 +142,19 @@ function VendasPageInner() {
   const [showBulkMove, setShowBulkMove] = useState(false);
   const [moveProgress, setMoveProgress] = useState<{ done: number; total: number } | null>(null);
 
+  // Trocar de funil zera a selecao: os ids marcados sao de outro board e mover as
+  // cegas seria surpresa. Ajuste no corpo do render — padrao oficial do React para
+  // "resetar estado quando algo muda" — e nao useEffect: com o efeito, a tela
+  // renderizava uma vez com a selecao antiga ainda valendo, e nessa janela o botao
+  // "Mover (N)" mostrava a contagem do funil anterior.
+  const [selectionPipelineId, setSelectionPipelineId] = useState(selectedPipelineId);
+  if (selectionPipelineId !== selectedPipelineId) {
+    setSelectionPipelineId(selectedPipelineId);
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setShowBulkMove(false);
+  }
+
   function exitSelection() {
     setSelectionMode(false);
     setSelectedIds(new Set());
@@ -216,14 +229,6 @@ function VendasPageInner() {
       setSelectedPipelineId(pipelines[0].id);
     }
   }, [pipelines, selectedPipelineId]);
-
-  // Troca de funil: os ids selecionados pertencem a outro board — mover
-  // "as cegas" seria uma surpresa desagradavel, entao limpa a selecao.
-  useEffect(() => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
-    setShowBulkMove(false);
-  }, [selectedPipelineId]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
