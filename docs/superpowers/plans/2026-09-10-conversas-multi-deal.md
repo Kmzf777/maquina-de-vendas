@@ -20,7 +20,7 @@
 |---|---|---|
 | `src/lib/deal-rows.ts` *(criar)* | Puro: tipos, ordenação, classificação aberto/fechado, opções de stage por funil, stage de reabertura, patch de reabertura. | 1 |
 | `src/lib/deal-rows.test.ts` *(criar)* | Cobre o acima. Teste-chave: dois deals abertos no mesmo funil. | 1 |
-| `src/hooks/use-pipeline-stages.ts` *(criar)* | Busca stages de N funis em paralelo, cache por `pipeline_id`, abort no unmount. | 2 |
+| `src/hooks/use-stages-by-pipeline.ts` *(criar)* | Busca stages de N funis em paralelo, cache por `pipeline_id`, abort no unmount. | 2 |
 | `src/components/conversas/deal-stage-row.tsx` *(criar)* | Uma linha = um deal. Estado `pending`/`erro` local à linha. | 3 |
 | `src/components/conversas/tabs/crm-perfil-tab.tsx` *(modificar)* | Funde Estágio + Oportunidades numa seção no topo; move "Atribuído a". | 4 |
 | `src/components/conversas/contact-detail.tsx` *(modificar)* | `handleDealStageChange` → `handleDealUpdate`, que **lança** em falha. | 4 |
@@ -367,7 +367,7 @@ export function reopenPatch(stageId: string): Record<string, unknown> {
 cd frontend && npx vitest run src/lib/deal-rows.test.ts
 ```
 
-Expected: PASS — 13 testes.
+Expected: PASS — 14 testes.
 
 - [ ] **Step 5: Commit**
 
@@ -378,16 +378,16 @@ git commit -m "feat(conversas): logica de linhas de oportunidade do painel do le
 
 ---
 
-## Task 2: `use-pipeline-stages.ts` — stages de N funis
+## Task 2: `use-stages-by-pipeline.ts` — stages de N funis
 
 **Files:**
-- Create: `frontend/src/hooks/use-pipeline-stages.ts`
+- Create: `frontend/src/hooks/use-stages-by-pipeline.ts`
 
 Sem teste automatizado: é um hook React e o repo não tem infra para testá-los (ver nota no topo). Verificação = `type-check` + `lint` + critério de aceite 2 da Task 5.
 
 - [ ] **Step 1: Criar o hook**
 
-Criar `frontend/src/hooks/use-pipeline-stages.ts`:
+Criar `frontend/src/hooks/use-stages-by-pipeline.ts`:
 
 ```ts
 "use client";
@@ -402,7 +402,7 @@ import type { StageOption, StagesByPipeline } from "@/lib/deal-rows";
  * de cada um. O cache por pipeline_id sobrevive à troca de conversa: dois leads
  * do mesmo funil não refazem o fetch.
  */
-export function usePipelineStages(pipelineIds: string[]): {
+export function useStagesByPipeline(pipelineIds: string[]): {
   stagesByPipeline: StagesByPipeline;
   loading: boolean;
 } {
@@ -463,7 +463,7 @@ Expected: sem erros.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add frontend/src/hooks/use-pipeline-stages.ts
+git add frontend/src/hooks/use-stages-by-pipeline.ts
 git commit -m "feat(conversas): hook de stages de multiplos funis"
 ```
 
@@ -701,7 +701,7 @@ import { Badge } from "@/components/ui/badge";
 import { CadenceTimeline } from "@/components/conversas/cadence-timeline";
 import { DealStageRow } from "@/components/conversas/deal-stage-row";
 import { buildDealRows, distinctPipelineIds, type LeadDeal } from "@/lib/deal-rows";
-import { usePipelineStages } from "@/hooks/use-pipeline-stages";
+import { useStagesByPipeline } from "@/hooks/use-stages-by-pipeline";
 import {
   formatQuoteDate,
   quoteNumberLabel,
@@ -744,7 +744,7 @@ Fica, logo abaixo de `const [showTagDropdown, setShowTagDropdown] = useState(fal
 
 ```tsx
   const pipelineIds = useMemo(() => distinctPipelineIds(deals), [deals]);
-  const { stagesByPipeline } = usePipelineStages(pipelineIds);
+  const { stagesByPipeline } = useStagesByPipeline(pipelineIds);
   const dealRows = useMemo(() => buildDealRows(deals, stagesByPipeline), [deals, stagesByPipeline]);
 ```
 
