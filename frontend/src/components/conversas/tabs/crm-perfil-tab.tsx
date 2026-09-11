@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { FileTextIcon, Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
-import type { Lead, Tag, Pipeline, PipelineStage, Quote, Sale } from "@/lib/types";
+import type { Lead, Tag, Quote, Sale } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { CadenceTimeline } from "@/components/conversas/cadence-timeline";
+import { DealStageRow } from "@/components/conversas/deal-stage-row";
+import { buildDealRows, distinctPipelineIds, type LeadDeal } from "@/lib/deal-rows";
+import { useStagesByPipeline } from "@/hooks/use-stages-by-pipeline";
 import {
   formatQuoteDate,
   quoteNumberLabel,
@@ -13,28 +16,15 @@ import {
   quoteStatusView,
 } from "@/lib/quote-modal-state";
 
-interface LeadDeal {
-  id: string;
-  title: string;
-  value: number;
-  category: string | null;
-  stage_id: string | null;
-  pipeline_id: string | null;
-  updated_at: string;
-  pipeline_stages: Pick<PipelineStage, "id" | "label" | "dot_color" | "key" | "is_protected"> | null;
-  pipelines: Pick<Pipeline, "id" | "name"> | null;
-}
-
 interface CrmPerfilTabProps {
   lead: Lead;
   onSaveField: (field: string, value: string) => Promise<void>;
   deals: LeadDeal[];
-  pipelines: Pipeline[];
   tags: Tag[];
   leadTags: Tag[];
   onTagToggle: (tagId: string, add: boolean) => void;
   onCreateDeal: () => void;
-  onDealStageChange?: (dealId: string, stageId: string) => Promise<void>;
+  onDealUpdate: (dealId: string, patch: Record<string, unknown>) => Promise<void>;
   sales: Sale[];
   onCreateSale: () => void;
   onEditSale: (sale: Sale) => void;
@@ -43,18 +33,15 @@ interface CrmPerfilTabProps {
   onCreateQuote: () => void;
 }
 
-const CLOSED_KEYS = ["fechado_ganho", "fechado_perdido"];
-
 export function CrmPerfilTab({
   lead,
   onSaveField,
   deals,
-  pipelines,
   tags,
   leadTags,
   onTagToggle,
   onCreateDeal,
-  onDealStageChange,
+  onDealUpdate,
   sales,
   onCreateSale,
   onEditSale,
@@ -63,55 +50,44 @@ export function CrmPerfilTab({
   onCreateQuote,
 }: CrmPerfilTabProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
-  const activeDeal = deals.find((d) => !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")) ?? null;
-
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string>(activeDeal?.pipeline_id ?? "");
-  const [selectedStageId, setSelectedStageId] = useState<string>(activeDeal?.stage_id ?? "");
-  const [stageOptions, setStageOptions] = useState<Array<{ id: string; label: string; dot_color: string }>>([]);
-  const [stageLoading, setStageLoading] = useState(false);
-
-  const dealForSelectedPipeline = deals.find(
-    (d) => d.pipeline_id === selectedPipelineId && !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")
-  ) ?? null;
-
-  useEffect(() => {
-    setSelectedPipelineId(activeDeal?.pipeline_id ?? "");
-    setSelectedStageId(activeDeal?.stage_id ?? "");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDeal?.id]);
-
-  useEffect(() => {
-    if (!selectedPipelineId) { setStageOptions([]); return; }
-    const controller = new AbortController();
-    setStageLoading(true);
-    fetch(`/api/pipelines/${selectedPipelineId}/stages`, { signal: controller.signal })
-      .then((r) => r.json())
-      .then((data) => {
-        const active = Array.isArray(data) ? data.filter((s: { is_protected: boolean }) => !s.is_protected) : [];
-        setStageOptions(active);
-        const dealStage = deals.find(
-          (d) => d.pipeline_id === selectedPipelineId && !CLOSED_KEYS.includes(d.pipeline_stages?.key ?? "")
-        )?.stage_id;
-        setSelectedStageId(dealStage ?? active[0]?.id ?? "");
-      })
-      .catch((e) => { if (e?.name !== "AbortError") setStageOptions([]); })
-      .finally(() => setStageLoading(false));
-    return () => controller.abort();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPipelineId]);
-
-  async function handleStageChange(newStageId: string) {
-    setSelectedStageId(newStageId);
-    if (!dealForSelectedPipeline) return;
-    await onDealStageChange?.(dealForSelectedPipeline.id, newStageId);
-  }
+  const pipelineIds = useMemo(() => distinctPipelineIds(deals), [deals]);
+  const { stagesByPipeline } = useStagesByPipeline(pipelineIds);
+  const dealRows = useMemo(() => buildDealRows(deals, stagesByPipeline), [deals, stagesByPipeline]);
 
   const leadTagIds = new Set(leadTags.map((t) => t.id));
   const availableTags = tags.filter((t) => !leadTagIds.has(t.id));
 
   return (
     <div className="p-4 space-y-4 text-sm">
+      {/* Oportunidades primeiro: é onde o vendedor decide o que fazer com o
+          lead. Uma linha por deal, cada uma com o dropdown do seu próprio
+          funil — o painel antigo listava N cards e deixava editar um. */}
       <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Oportunidades</span>
+          <button
+            onClick={onCreateDeal}
+            className="w-6 h-6 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors"
+            title="Nova oportunidade"
+            aria-label="Nova oportunidade"
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
+            </svg>
+          </button>
+        </div>
+        {dealRows.length === 0 ? (
+          <p className="text-[12px] text-[#7b7b78]">Nenhuma oportunidade</p>
+        ) : (
+          <div className="space-y-2">
+            {dealRows.map((row) => (
+              <DealStageRow key={row.deal.id} row={row} onDealUpdate={onDealUpdate} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-[#dedbd6] pt-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</span>
           <button
@@ -281,6 +257,7 @@ export function CrmPerfilTab({
           onSave={(v) => onSaveField("instagram", v)}
           placeholder="@usuario"
         />
+        <EditableField label="Atribuido a" value={lead.assigned_to} onSave={(v) => onSaveField("assigned_to", v)} placeholder="Ninguem" />
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-3">
@@ -291,118 +268,6 @@ export function CrmPerfilTab({
         <EditableField label="Inscricao Estadual" value={lead.inscricao_estadual} onSave={(v) => onSaveField("inscricao_estadual", v)} />
         <EditableField label="Endereco" value={lead.endereco} onSave={(v) => onSaveField("endereco", v)} />
         <EditableField label="Tel. Comercial" value={lead.telefone_comercial} onSave={(v) => onSaveField("telefone_comercial", v)} />
-      </div>
-
-      <div className="border-t border-[#dedbd6] pt-4 space-y-3">
-        <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Estágio</h4>
-
-        {pipelines.length === 0 ? (
-          <p className="text-[12px] text-[#7b7b78]">Nenhum funil configurado.</p>
-        ) : activeDeal === null && selectedPipelineId === "" ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-[12px] text-[#7b7b78]">Sem oportunidade ativa.</p>
-            <button
-              onClick={onCreateDeal}
-              className="text-[12px] text-[#111111] border border-[#dedbd6] rounded-[4px] px-2.5 py-1 hover:border-[#111111] transition-colors w-fit"
-            >
-              + Criar Card
-            </button>
-          </div>
-        ) : (
-          <>
-            <div>
-              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Funil</span>
-              <select
-                value={selectedPipelineId}
-                onChange={(e) => setSelectedPipelineId(e.target.value)}
-                className="bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
-              >
-                <option value="">Selecionar funil...</option>
-                {pipelines.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Stage</span>
-              {stageLoading ? (
-                <p className="text-[12px] text-[#7b7b78] py-1">Carregando...</p>
-              ) : stageOptions.length === 0 ? (
-                <p className="text-[12px] text-[#7b7b78] py-1">Nenhum stage disponível.</p>
-              ) : dealForSelectedPipeline ? (
-                <select
-                  value={selectedStageId}
-                  onChange={(e) => handleStageChange(e.target.value)}
-                  className="bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
-                >
-                  {stageOptions.map((s) => (
-                    <option key={s.id} value={s.id}>{s.label}</option>
-                  ))}
-                </select>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <p className="text-[12px] text-[#7b7b78]">Sem deal neste funil.</p>
-                  <button
-                    onClick={onCreateDeal}
-                    className="text-[12px] text-[#111111] border border-[#dedbd6] rounded-[4px] px-2.5 py-1 hover:border-[#111111] transition-colors w-fit"
-                  >
-                    + Criar Card
-                  </button>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        <EditableField label="Atribuido a" value={lead.assigned_to} onSave={(v) => onSaveField("assigned_to", v)} placeholder="Ninguem" />
-      </div>
-
-      <div className="border-t border-[#dedbd6] pt-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Oportunidades</span>
-          <button
-            onClick={onCreateDeal}
-            className="w-6 h-6 flex items-center justify-center rounded-[4px] border border-[#dedbd6] text-[#7b7b78] hover:border-[#111111] hover:text-[#111111] transition-colors"
-            title="Nova oportunidade"
-          >
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
-            </svg>
-          </button>
-        </div>
-        {deals.length === 0 ? (
-          <p className="text-[12px] text-[#7b7b78]">Nenhuma oportunidade</p>
-        ) : (
-          <div className="space-y-2">
-            {deals.map((deal) => {
-              const stage = deal.pipeline_stages;
-              const isProtected = stage?.is_protected ?? false;
-              return (
-                <div
-                  key={deal.id}
-                  className={`flex items-start gap-2 p-2 rounded-[6px] border border-[#dedbd6] bg-white ${isProtected ? "opacity-50" : ""}`}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0 mt-1"
-                    style={{ backgroundColor: stage?.dot_color || "#dedbd6" }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13px] text-[#111111] truncate">{deal.title}</p>
-                    <p className="text-[11px] text-[#7b7b78]">
-                      {deal.pipelines?.name || "—"} · {stage?.label || "—"}
-                    </p>
-                    {deal.value > 0 && (
-                      <p className="text-[12px] text-[#111111]">
-                        R$ {deal.value.toLocaleString("pt-BR")}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4">

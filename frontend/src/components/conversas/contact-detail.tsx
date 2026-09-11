@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { QuoteCreateModal } from "@/components/quotes/quote-create-modal";
@@ -12,19 +12,8 @@ import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
 import { CrmCampanhasTab } from "./tabs/crm-campanhas-tab";
 import { CrmMetricasTab } from "./tabs/crm-metricas-tab";
-import type { Lead, Tag, Conversation, Pipeline, PipelineStage, Sale } from "@/lib/types";
-
-interface LeadDeal {
-  id: string;
-  title: string;
-  value: number;
-  category: string | null;
-  stage_id: string | null;
-  pipeline_id: string | null;
-  updated_at: string;
-  pipeline_stages: Pick<PipelineStage, "id" | "label" | "dot_color" | "key" | "is_protected"> | null;
-  pipelines: Pick<Pipeline, "id" | "name"> | null;
-}
+import type { Lead, Tag, Conversation, Pipeline, Sale } from "@/lib/types";
+import type { LeadDeal } from "@/lib/deal-rows";
 
 type TabKey = "perfil" | "notas" | "campanhas" | "metricas";
 
@@ -48,7 +37,7 @@ interface ContactDetailProps {
   togglingFollowup?: boolean;
   onToggleFollowup?: () => void | Promise<void>;
   onLeadUpdate?: (leadId: string, patch: Partial<Lead>) => void;
-  onDealStageChange?: (dealId: string, stageId: string) => Promise<void>;
+  onDealUpdate?: (dealId: string, patch: Record<string, unknown>) => Promise<void>;
 }
 
 export function ContactDetail({
@@ -61,7 +50,7 @@ export function ContactDetail({
   togglingAi,
   onToggleAi,
   onLeadUpdate,
-  onDealStageChange,
+  onDealUpdate,
 }: ContactDetailProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("perfil");
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -77,17 +66,28 @@ export function ContactDetail({
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
 
+  const dealsReqRef = useRef(0);
+
   const fetchDeals = useCallback(async () => {
     if (!lead) return;
+    const reqId = ++dealsReqRef.current;
     const res = await fetch(`/api/leads/${lead.id}/deals`);
-    if (res.ok) {
-      const data = await res.json();
-      setDeals(Array.isArray(data) ? data : []);
-    }
+    // Lança em vez de sair calado: se o PATCH deu certo e só o refetch falhou,
+    // o select voltaria ao valor antigo sem erro — dizendo ao vendedor que a
+    // mudança não pegou quando ela pegou.
+    if (!res.ok) throw new Error("Não foi possível recarregar as oportunidades.");
+    const data = await res.json();
+    // Descarta resposta obsoleta: com N linhas editáveis, dois PATCH quase
+    // simultâneos disparam dois refetch, e o mais antigo chegando por último
+    // reverteria a linha mais nova sem erro nenhum.
+    if (reqId !== dealsReqRef.current) return;
+    setDeals(Array.isArray(data) ? data : []);
   }, [lead?.id]);
 
   useEffect(() => {
-    fetchDeals();
+    // Carga inicial não tem ação a reverter nem linha onde mostrar o erro; o
+    // painel só fica sem oportunidades. Quem precisa do erro é o PATCH.
+    fetchDeals().catch(() => {});
   }, [fetchDeals]);
 
   useEffect(() => {
@@ -126,17 +126,26 @@ export function ContactDetail({
       body: JSON.stringify(data),
     });
     if (res.ok) {
-      await fetchDeals();
+      // O card já foi criado. Deixar o refetch estourar aqui faria o modal
+      // exibir "Erro ao criar card" para uma criação que deu certo.
+      await fetchDeals().catch(() => {});
     }
   }
 
-  async function handleDealStageChange(dealId: string, stageId: string) {
+  // Lança de propósito: o `if (res.ok)` anterior engolia 403 do guard de funil e
+  // 500 em silêncio — o select voltava sozinho e o vendedor não sabia por quê.
+  // Quem chama (DealStageRow) captura e mostra o erro na própria linha.
+  async function handleDealUpdate(dealId: string, patch: Record<string, unknown>) {
     const res = await fetch(`/api/deals/${dealId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stage_id: stageId }),
+      body: JSON.stringify(patch),
     });
-    if (res.ok) await fetchDeals();
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Erro ao atualizar oportunidade (${res.status}).`);
+    }
+    await fetchDeals();
   }
 
   return (
@@ -226,12 +235,11 @@ export function ContactDetail({
                 lead={lead}
                 onSaveField={updateLeadField}
                 deals={deals}
-                pipelines={pipelines}
                 tags={tags}
                 leadTags={leadTags}
                 onTagToggle={onTagToggle}
                 onCreateDeal={() => setShowCreateDeal(true)}
-                onDealStageChange={onDealStageChange ?? handleDealStageChange}
+                onDealUpdate={onDealUpdate ?? handleDealUpdate}
                 sales={sales}
                 onCreateSale={() => setShowCreateSale(true)}
                 onEditSale={(s) => setEditingSale(s)}
