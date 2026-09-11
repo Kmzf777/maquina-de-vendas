@@ -427,7 +427,7 @@ import { AGENT_STAGES, OFFERABLE_DEAL_STAGES } from "@/lib/constants";
 - [ ] **Step 5: Rodar type-check e a suíte inteira**
 
 Run: `cd frontend && npm run type-check && npx vitest run`
-Expected: `tsc` sem saída; vitest **772 passed** (762 + 10 novos de `constants.test.ts`).
+Expected: `tsc` sem saída; vitest **769 passed** (762 + 7 novos de `constants.test.ts`).
 
 Em especial, os dois testes de `lead-overview.test.ts` que dependem da tradução de
 `proposta` e `negociacao` **continuam passando** — é exatamente o ponto desta task.
@@ -971,7 +971,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder-anon-key \
 NEXT_PUBLIC_FASTAPI_URL=http://placeholder.api.local \
 npm run build
 ```
-Expected: `tsc` sem saída; vitest **762 passed**; build sem erro
+Expected: `tsc` sem saída; vitest **769 passed**; build sem erro
 
 - [ ] **Step 3: Conferir que a migration não foi aplicada por engano**
 
