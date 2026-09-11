@@ -176,6 +176,38 @@ describe("buildDealRows", () => {
     expect(rows[0].stageOptions).toEqual([]);
   });
 
+  it("marca stagesUnknown enquanto o funil não foi carregado", () => {
+    expect(buildDealRows([deal()], {})[0].stagesUnknown).toBe(true);
+  });
+
+  it("não marca stagesUnknown depois que o funil chegou", () => {
+    expect(buildDealRows([deal()], STAGES)[0].stagesUnknown).toBe(false);
+  });
+
+  it("não marca stagesUnknown para deal sem funil — não há o que carregar", () => {
+    const semFunil = deal({ pipeline_id: null, pipelines: null, pipeline_stages: null });
+    expect(buildDealRows([semFunil], {})[0].stagesUnknown).toBe(false);
+  });
+
+  it("sinaliza stage que não pertence ao funil do deal", () => {
+    // Cadência com move_deal_stage grava stage_id de OUTRO funil sem mexer no
+    // pipeline_id (automation/engine.py). Sem o flag, o <select> não acha o
+    // value e renderiza em branco num deal aberto.
+    const cruzado = deal({
+      pipeline_id: "p-atacado",
+      stage_id: "r-negoc",
+      pipeline_stages: { id: "r-negoc", label: "Negociação", dot_color: "#dddddd", key: null, is_protected: false },
+    });
+    const row = buildDealRows([cruzado], STAGES)[0];
+    expect(row.canEditStage).toBe(true);
+    expect(row.stageOutsidePipeline).toBe(true);
+    expect(row.stageOptions.map((s) => s.id)).toEqual(["a-entrada", "a-qualif"]);
+  });
+
+  it("não sinaliza stageOutsidePipeline quando o stage é do próprio funil", () => {
+    expect(buildDealRows([deal()], STAGES)[0].stageOutsidePipeline).toBe(false);
+  });
+
   it("devolve lista vazia sem deals", () => {
     expect(buildDealRows([], {})).toEqual([]);
   });

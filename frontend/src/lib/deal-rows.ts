@@ -37,6 +37,19 @@ export interface DealRow {
   /** Para onde "Reabrir" leva. null => não dá para reabrir. */
   reopenStageId: string | null;
   canEditStage: boolean;
+  /**
+   * O stage atual não pertence ao funil do deal. Acontece de verdade: a ação
+   * `move_deal_stage` de cadência escolhe a etapa entre TODOS os funis e grava
+   * só o stage_id (automation/engine.py). Sem sinalizar, o <select> não acha o
+   * value e renderiza em branco num deal aberto.
+   */
+  stageOutsidePipeline: boolean;
+  /**
+   * Os stages deste funil ainda não chegaram (ou o fetch falhou). Diferente de
+   * "funil sem etapas abertas": aqui não dá para afirmar nada ainda, e tratar
+   * como read-only faria toda linha aberta piscar de texto para dropdown.
+   */
+  stagesUnknown: boolean;
 }
 
 /**
@@ -81,9 +94,11 @@ function firstOpenStageId(stages: StageOption[]): string | null {
  */
 export function buildDealRows(deals: LeadDeal[], stagesByPipeline: StagesByPipeline): DealRow[] {
   const rows = deals.map((deal) => {
-    const stages = stagesByPipeline[deal.pipeline_id ?? ""] ?? [];
+    const pipelineId = deal.pipeline_id ?? "";
+    const stages = stagesByPipeline[pipelineId] ?? [];
     const stageOptions = stages.filter((s) => !isClosingStage(s));
     const isClosed = isDealClosed(deal);
+    const canEditStage = !isClosed && stageOptions.length > 0;
     return {
       deal,
       isClosed,
@@ -92,7 +107,12 @@ export function buildDealRows(deals: LeadDeal[], stagesByPipeline: StagesByPipel
       dotColor: deal.pipeline_stages?.dot_color || "#dedbd6",
       pipelineName: deal.pipelines?.name ?? "Sem funil",
       reopenStageId: isClosed ? firstOpenStageId(stages) : null,
-      canEditStage: !isClosed && stageOptions.length > 0,
+      canEditStage,
+      stageOutsidePipeline:
+        canEditStage && !stageOptions.some((s) => s.id === deal.stage_id),
+      // Só é "desconhecido" se o deal tem funil: sem pipeline_id não há o que
+      // carregar, e a linha é read-only de forma definitiva.
+      stagesUnknown: pipelineId !== "" && !(pipelineId in stagesByPipeline),
     };
   });
 

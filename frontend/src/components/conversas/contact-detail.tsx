@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { QuoteCreateModal } from "@/components/quotes/quote-create-modal";
@@ -66,17 +66,28 @@ export function ContactDetail({
   const channel = conversation.channels;
   const displayName = lead?.name || lead?.phone || "Desconhecido";
 
+  const dealsReqRef = useRef(0);
+
   const fetchDeals = useCallback(async () => {
     if (!lead) return;
+    const reqId = ++dealsReqRef.current;
     const res = await fetch(`/api/leads/${lead.id}/deals`);
-    if (res.ok) {
-      const data = await res.json();
-      setDeals(Array.isArray(data) ? data : []);
-    }
+    // Lança em vez de sair calado: se o PATCH deu certo e só o refetch falhou,
+    // o select voltaria ao valor antigo sem erro — dizendo ao vendedor que a
+    // mudança não pegou quando ela pegou.
+    if (!res.ok) throw new Error("Não foi possível recarregar as oportunidades.");
+    const data = await res.json();
+    // Descarta resposta obsoleta: com N linhas editáveis, dois PATCH quase
+    // simultâneos disparam dois refetch, e o mais antigo chegando por último
+    // reverteria a linha mais nova sem erro nenhum.
+    if (reqId !== dealsReqRef.current) return;
+    setDeals(Array.isArray(data) ? data : []);
   }, [lead?.id]);
 
   useEffect(() => {
-    fetchDeals();
+    // Carga inicial não tem ação a reverter nem linha onde mostrar o erro; o
+    // painel só fica sem oportunidades. Quem precisa do erro é o PATCH.
+    fetchDeals().catch(() => {});
   }, [fetchDeals]);
 
   useEffect(() => {
@@ -115,7 +126,9 @@ export function ContactDetail({
       body: JSON.stringify(data),
     });
     if (res.ok) {
-      await fetchDeals();
+      // O card já foi criado. Deixar o refetch estourar aqui faria o modal
+      // exibir "Erro ao criar card" para uma criação que deu certo.
+      await fetchDeals().catch(() => {});
     }
   }
 

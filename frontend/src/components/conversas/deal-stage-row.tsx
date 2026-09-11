@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { reopenPatch, type DealRow } from "@/lib/deal-rows";
 
 interface DealStageRowProps {
@@ -10,7 +10,19 @@ interface DealStageRowProps {
 }
 
 export function DealStageRow({ row, onDealUpdate }: DealStageRowProps) {
-  const { deal, isClosed, stageOptions, stageLabel, dotColor, pipelineName, reopenStageId, canEditStage } = row;
+  const {
+    deal,
+    isClosed,
+    stageOptions,
+    stageLabel,
+    dotColor,
+    pipelineName,
+    reopenStageId,
+    canEditStage,
+    stageOutsidePipeline,
+    stagesUnknown,
+  } = row;
+  const errorId = useId();
 
   // `pending` é o stage escolhido enquanto o PATCH está no ar. Em sucesso, o pai
   // refaz o fetch e deal.stage_id já vem novo; em falha, limpar `pending` reverte
@@ -61,14 +73,37 @@ export function DealStageRow({ row, onDealUpdate }: DealStageRowProps) {
             value={selectedStageId}
             disabled={busy}
             aria-label={`Estágio de ${deal.title}`}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
             onChange={(e) => apply({ stage_id: e.target.value }, e.target.value)}
             className="mt-1.5 bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[13px] text-[#111111] focus:border-[#111111] focus:outline-none w-full disabled:opacity-60"
           >
+            {/* Cadência pode ter movido o card para etapa de outro funil. Sem
+                esta opção o <select> não acha o value e abre em branco; ela é
+                desabilitada para que a única saída seja escolher uma etapa
+                válida deste funil. */}
+            {stageOutsidePipeline && (
+              <option value={selectedStageId} disabled>
+                {stageLabel} (fora deste funil)
+              </option>
+            )}
             {stageOptions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
             ))}
+          </select>
+        ) : stagesUnknown && !isClosed ? (
+          // Placeholder do mesmo tamanho do <select> real: sem ele, toda linha
+          // aberta renderiza como texto e salta para dropdown quando os stages
+          // chegam, empurrando o painel inteiro para baixo.
+          <select
+            disabled
+            aria-label={`Estágio de ${deal.title}`}
+            value="atual"
+            className="mt-1.5 bg-white border border-[#dedbd6] rounded-[6px] px-2 py-1 text-[13px] text-[#111111] w-full opacity-60"
+          >
+            <option value="atual">{stageLabel}</option>
           </select>
         ) : (
           <div className="mt-1 flex items-center justify-between gap-2">
@@ -77,6 +112,8 @@ export function DealStageRow({ row, onDealUpdate }: DealStageRowProps) {
               <button
                 type="button"
                 disabled={busy}
+                aria-label={`Reabrir ${deal.title}`}
+                aria-busy={busy}
                 onClick={() => apply(reopenPatch(reopenStageId), reopenStageId)}
                 className="text-[12px] text-[#111111] border border-[#dedbd6] rounded-[4px] px-2 py-0.5 hover:border-[#111111] transition-colors flex-shrink-0 disabled:opacity-60"
               >
@@ -91,8 +128,14 @@ export function DealStageRow({ row, onDealUpdate }: DealStageRowProps) {
         )}
 
         {/* Erro por linha, nunca global: com N deals de funis diferentes, um 403
-            de permissão num funil não pode borrar o painel inteiro. */}
-        {error && <p className="text-[11px] text-[#e53e3e] mt-1">{error}</p>}
+            de permissão num funil não pode borrar o painel inteiro. role=alert
+            porque o ponto do erro é o vendedor FICAR SABENDO — um <p> mudo
+            abaixo do select não existe para leitor de tela. */}
+        {error && (
+          <p id={errorId} role="alert" className="text-[11px] text-[#e53e3e] mt-1">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );
