@@ -8,8 +8,9 @@
  * TODA etapa nasce com `key`. A ausência de key nas quatro primeiras etapas do
  * template antigo é a causa raiz de §2.1 do spec: o código de negócio resolve etapa
  * por key, e etapa sem key é invisível para ele. "Em conversa" usa `respondeu`
- * porque é a key que `advance_deal_on_reply` (backend/app/leads/service.py:1192)
- * procura como destino — adotá-la faz o movimento automático funcionar sem código
+ * porque é a key que `advance_deal_on_reply` procura como destino
+ * (COLD_RESPONDEU_KEY, backend/app/leads/service.py:1192; a função em si em :1243)
+ * — adotá-la faz o movimento automático funcionar sem código
  * novo. O rótulo visível e a key são coisas diferentes, e é para isso que servem.
  *
  * `conversion_event` fica AUSENTE de propósito: preenchê-lo despacha o card para a
@@ -31,7 +32,7 @@ export const DEFAULT_STAGES = [
  * O DELETE só checava se havia cards dentro. Uma etapa-contrato VAZIA passava na
  * guarda e sumia — foi exatamente assim que a `proposta_enviada` do funil
  * "João - Reposição" desapareceu, e com ela o movimento do orçamento naquele funil
- * (quotes/router.py:272 procura por key, não acha, devolve False com log info).
+ * (quotes/router.py:270 procura por key, não acha, devolve False com log info).
  */
 export function stageIsProtectedByKey(key: string | null | undefined): boolean {
   return Boolean(key);

@@ -176,7 +176,7 @@ export function stageIsProtectedByKey(key: string | null | undefined): boolean {
 - [ ] **Step 4: Rodar o teste e confirmar que passa**
 
 Run: `cd frontend && npx vitest run src/lib/pipeline-stages.test.ts`
-Expected: PASS — 8 testes
+Expected: PASS — 9 testes
 
 - [ ] **Step 5: Commit**
 
@@ -266,7 +266,7 @@ import { stageIsProtectedByKey } from "@/lib/pipeline-stages";
 - [ ] **Step 4: Verificar que compila e que nada quebrou**
 
 Run: `cd frontend && npm run type-check && npx vitest run`
-Expected: `tsc` sem saída; vitest com **761 passed** (753 de antes + 8 da Task 1)
+Expected: `tsc` sem saída; vitest com **762 passed** (753 de antes + 9 da Task 1)
 
 - [ ] **Step 5: Commit**
 
@@ -320,7 +320,7 @@ Expected: nenhuma ocorrência que seja leitura de etapa. Se aparecer alguma, **p
 - [ ] **Step 4: Rodar type-check e testes**
 
 Run: `cd frontend && npm run type-check && npx vitest run`
-Expected: `tsc` sem saída; vitest **761 passed**
+Expected: `tsc` sem saída; vitest **762 passed**
 
 - [ ] **Step 5: Commit**
 
@@ -861,7 +861,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder-anon-key \
 NEXT_PUBLIC_FASTAPI_URL=http://placeholder.api.local \
 npm run build
 ```
-Expected: `tsc` sem saída; vitest **761 passed**; build sem erro
+Expected: `tsc` sem saída; vitest **762 passed**; build sem erro
 
 - [ ] **Step 3: Conferir que a migration não foi aplicada por engano**
 
