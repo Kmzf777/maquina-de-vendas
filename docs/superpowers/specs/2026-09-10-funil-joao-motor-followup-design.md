@@ -313,12 +313,31 @@ Keys a fixar (uma migration SQL, revisada à mão, aplicada pelo dono):
 D2 funcionar **sem escrever uma linha de backend**. O rótulo visível continua sendo
 "Em conversa" — `label` e `key` são coisas diferentes, e é exatamente para isso.
 
-² ⚠ **`ja_chamado` tem efeito colateral.** `move_deal_to_stage_key` grava
-`deals.stage = key` (`leads/service.py:1309`), e `deals.stage='ja_chamado'` é lido por
-`lead_has_active_relationship` e `_lead_had_prior_handoff` como "tratativa humana em
-aberto" — o que bloqueia disparo frio e muda a escolha entre `retomar_contato_vendedor`
-e `encaminhar_humano`. **Verificar se isso é desejado antes de aplicar**; se não for,
-usar uma key nova (`chamado_reposicao`) que ninguém mais lê.
+² **`ja_chamado` — analisado consumidor a consumidor; a conclusão inverteu.**
+`move_deal_to_stage_key` grava `deals.stage = key` (`leads/service.py:1309`), e
+`deals.stage='ja_chamado'` tem quatro leitores. Examinando cada um, **a semântica bate**:
+um card no funil de reposição *é* um cliente ativo.
+
+| leitor | o que faz | é desejável p/ reposição? |
+|---|---|---|
+| `broadcast/router.py:134,174` | não enfileira disparo frio de prospecção | **sim** — não se faz pitch frio a cliente ativo |
+| `tools.py:968` | impede `registrar_sem_interesse_atual` de marcar Perdido (guardrail do caso Kadi Guth) | **sim** — "não quero agora" de cliente não é lead perdido |
+| `processor.py:1692` | passa `lead_is_customer: True` ao prompt da ValerIA | **sim** — não roda funil de lead novo com quem já compra |
+| `tools.py:1682` via `_lead_had_prior_handoff` | faz a ValerIA usar `retomar_contato_vendedor` em vez de `encaminhar_humano` | **sim** — é literalmente uma retomada |
+
+⚠ **O problema real é outro, e é sério: o sinal nunca se apaga.** O `PATCH` do Kanban
+(`api/deals/[id]/route.ts`) escreve `stage_id` e `closed_at` — **nunca `deals.stage`**.
+Então, uma vez gravado `ja_chamado`, arrastar o card para Perdido **não limpa nada**: o
+lead fica marcado como "relacionamento ativo" para sempre — nunca mais recebe disparo
+frio, nunca mais pode ser marcado perdido pela ValerIA. O código já reconhece a
+podridão: *"estágio real 'Perdido' carregam stage='novo'/'ja_chamado'"*
+(`leads/service.py:273`). Adotar a key para 694 cards aprofunda isso.
+
+**Recomendação: usar `chamado_reposicao`**, uma key que nenhum outro consumidor lê. Os
+quatro comportamentos desejáveis acima podem ser obtidos depois, de propósito e com
+critério de saída, em vez de herdados por acidente de uma coluna legada que ninguém
+limpa. Adotar `ja_chamado` só faz sentido junto com sincronizar `deals.stage` no PATCH do
+Kanban — e isso é escopo de outro trabalho.
 
 **Renomeações que faltam** (rótulo, não movimento de card — barato e sem risco de FK):
 
@@ -599,7 +618,8 @@ Nenhum dos dois foi introduzido pela branch — ambos estão em `origin/master` 
 ## 8. Pendências do dono (nada disso é código)
 
 1. **Decidir a cadência da Recuperação** — a contradição de §3.4.
-2. **Decidir a key `ja_chamado`** — §4/SP0 nota ².
+2. ~~Decidir a key `ja_chamado`~~ — **resolvido por análise** (§4/SP0 nota ²):
+   usar `chamado_reposicao`. Só confirmar que concorda.
 3. **Revisar e aplicar à mão** a migration do SP0 (mexe no funil de trabalho do vendedor).
 4. **Aplicar `20260904_esteiras_vendedor.sql`** — hoje `deals.entered_stage_at` e
    `campaigns.audience` não existem no banco, e sem elas o motor de cadências inteiro
@@ -616,8 +636,19 @@ Nenhum dos dois foi introduzido pela branch — ambos estão em `origin/master` 
 ## 9. Estado da base
 
 Branch de trabalho: `feat/followup-vendedor` (= `feat/esteiras-vendedor` + `origin/master`
-mergeada), em worktree isolado. Merge **sem conflitos**; baseline **4186 passed, 4
-skipped**. `origin/master` = `cb88be30`.
+mergeada), em worktree isolado. Merge **sem conflitos**. `origin/master` = `cb88be30`.
+
+Portões do `deploy.yml` reproduzidos localmente:
+
+| portão | resultado |
+|---|---|
+| backend — `pytest -m "not integration"` | **4186 passed, 4 skipped** (rodei a suíte inteira, que é superconjunto) |
+| frontend — `npm ci` | 870 pacotes, limpo |
+| frontend — `npm run type-check` (`tsc --noEmit`) | **sem erros** |
+| frontend — `npm run test` | **753 passed em 57 arquivos**, incluindo `esteiras-tab.test.tsx` (19) |
+| frontend — `npm run build` | **compila limpo** (mesmos placeholders do CI), 0 erros |
+
+A base está sã. O que falta não é código existente quebrado — é o que ainda não existe.
 
 O que se reaproveita da branch de 04/09, sem reescrever: `deals.entered_stage_at` e o
 trigger que o mantém · `campaigns.audience` (`ia|humano|ambos`), que remove o veto
