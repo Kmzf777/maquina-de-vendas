@@ -177,3 +177,24 @@ def test_parametros_com_default_ficam_no_fim():
         tem_default = "DEFAULT" in p.upper()
         assert not (viu_default and not tem_default), f"'{p}' sem DEFAULT depois de um com DEFAULT"
         viu_default = viu_default or tem_default
+
+
+def test_rpc_ignora_card_com_closed_at_preenchido():
+    """38 cards em producao (10/09/2026) tem closed_at preenchido e estao parados em
+    etapa NAO-terminal — 37 em "Ja chamado" da Reposicao. A RPC decide "aberto" pela
+    key da etapa, entao sem esta guarda ela manda template para quem ja fechou.
+    O inverso (etapa terminal com closed_at nulo) e zero, entao a guarda nao exclui
+    ninguem legitimo.
+    """
+    assert "d.closed_at IS NULL" in _fn_code(), (
+        "a RPC nao filtra por closed_at — card fechado em etapa sem key entra na esteira"
+    )
+
+
+def test_rpc_trata_em_atencao_como_etapa_fechada():
+    """"Em atencao" e o estado terminal da esteira: o lead saiu do automatico e espera
+    decisao do vendedor. Se a RPC continuar achando que e etapa aberta, ela reenrola o
+    card e a decisao humana nunca acontece."""
+    assert "'em_atencao'" in _fn_code(), (
+        "'em_atencao' nao esta na lista de etapas fechadas da RPC"
+    )

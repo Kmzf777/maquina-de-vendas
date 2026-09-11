@@ -169,7 +169,15 @@ AS $$
        -- quatro keys que backend/app/leads/service.py::_perdido_stage_id ja trata
        -- como fechamento. Omitir 'encerrado' aqui deixaria a esteira de reposicao
        -- cobrando lead cujo card ja foi encerrado.
-       AND (s.key IS NULL OR s.key NOT IN ('fechado_ganho', 'fechado_perdido', 'perdido', 'encerrado'))
+       -- "Em atencao" e estado TERMINAL da esteira: o card saiu do automatico e espera
+       -- decisao do vendedor. Trata-lo como aberto reenrolaria o card e a decisao
+       -- humana nunca aconteceria.
+       AND (s.key IS NULL OR s.key NOT IN ('fechado_ganho', 'fechado_perdido', 'perdido', 'encerrado', 'em_atencao'))
+       -- A etapa nem sempre conta a verdade sobre o card estar fechado: medidos 38
+       -- deals com closed_at preenchido parados em etapa nao-terminal (10/09/2026).
+       -- Como `s.key IS NULL` conta como ABERTO, sem esta linha eles entrariam na
+       -- esteira. O caso inverso (etapa terminal, closed_at nulo) e zero.
+       AND d.closed_at IS NULL
        -- publico
        AND (
          p_audience = 'ambos'
