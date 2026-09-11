@@ -68,6 +68,16 @@ export function StageTargetPicker({
   function handlePipelineChange(nextPipelineId: string) {
     if (nextPipelineId === localPipelineId) {
       const opts = selectableStages(localStages, currentStageId);
+      // Voltar para o funil do proprio deal restaura a etapa dele, nao a primeira
+      // da lista: senao "mudei de ideia" move o card de coluna sem ninguém pedir —
+      // e ainda dispara a automação de deal_stage_enter da etapa nova.
+      const restored = currentStageId && opts.some((s) => s.id === currentStageId)
+        ? currentStageId
+        : "";
+      if (restored) {
+        onChange(nextPipelineId, restored);
+        return;
+      }
       onChange(nextPipelineId, autoSelectFirstStage ? opts[0]?.id ?? "" : "");
     } else {
       // As etapas do novo funil ainda não chegaram; zera e deixa o efeito abaixo

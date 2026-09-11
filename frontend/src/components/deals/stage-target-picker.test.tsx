@@ -307,4 +307,68 @@ describe("StageTargetPicker", () => {
     await waitFor(() => expect((selects()[1] as HTMLSelectElement).disabled).toBe(false));
     expect(selects()[1].querySelector("option")?.textContent).toBe("Selecionar etapa...");
   });
+
+  // ── Caso 6 — voltar ao funil do próprio deal restaura a etapa dele ──────────
+  it("voltar ao funil do próprio deal restaura a etapa atual, não a primeira da lista", async () => {
+    const onChangeSpy = vi.fn();
+
+    global.fetch = vi.fn((url: string) => {
+      const u = String(url);
+      if (u.includes("/api/pipelines/A/stages")) return Promise.resolve(resposta(STAGES_A));
+      return Promise.resolve(resposta([]));
+    }) as unknown as typeof fetch;
+
+    const { container } = render(
+      <Harness
+        pipelines={[PIPE_L, PIPE_A]}
+        initialPipelineId="L"
+        localPipelineId="L"
+        localStages={LOCAL_STAGES}
+        // l2 ("Em contato") não é a primeira etapa de L (l1, "Novo") — é o que
+        // expõe o bug: reverter para o funil local caía sempre em opts[0].
+        currentStageId="l2"
+        autoSelectFirstStage
+        onChangeSpy={onChangeSpy}
+      />
+    );
+    const funilSelect = () => container.querySelectorAll("select")[0];
+
+    // L → A: o fetch resolve e o auto-select preenche com a primeira etapa de A.
+    fireEvent.change(funilSelect(), { target: { value: "A" } });
+    await waitFor(() => expect(onChangeSpy).toHaveBeenCalledWith("A", "a1"));
+
+    // "Mudei de ideia": A → L de volta. Precisa restaurar a etapa ATUAL do deal
+    // (l2), nunca a primeira da lista (l1) — senão o card muda de coluna sem
+    // ninguém pedir e ainda dispara a automação de deal_stage_enter da etapa nova.
+    fireEvent.change(funilSelect(), { target: { value: "L" } });
+
+    const ultimaChamada = onChangeSpy.mock.calls[onChangeSpy.mock.calls.length - 1];
+    expect(ultimaChamada).toEqual(["L", "l2"]);
+  });
+
+  // ── Caso 7 — modo em massa não é afetado pela restauração ───────────────────
+  it("no modo em massa (currentStageId=null), voltar ao funil local mantém a etapa vazia", () => {
+    const onChangeSpy = vi.fn();
+
+    global.fetch = vi.fn(() => Promise.resolve(resposta(STAGES_A))) as unknown as typeof fetch;
+
+    const { container } = render(
+      <Harness
+        pipelines={[PIPE_L, PIPE_A]}
+        initialPipelineId="L"
+        localPipelineId="L"
+        localStages={LOCAL_STAGES}
+        currentStageId={null}
+        autoSelectFirstStage={false}
+        onChangeSpy={onChangeSpy}
+      />
+    );
+    const funilSelect = () => container.querySelectorAll("select")[0];
+
+    fireEvent.change(funilSelect(), { target: { value: "A" } });
+    fireEvent.change(funilSelect(), { target: { value: "L" } });
+
+    const ultimaChamada = onChangeSpy.mock.calls[onChangeSpy.mock.calls.length - 1];
+    expect(ultimaChamada).toEqual(["L", ""]);
+  });
 });
