@@ -338,10 +338,32 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             _log_exec(enrollment, node, "done", _send_summary)
 
         elif node_type == "wait":
+            # O `wait` AGENDA O PROXIMO no para depois — nao estaciona em si mesmo.
+            #
+            # Ate 11/09/2026 este ramo reagendava o PROPRIO no e dava `return` antes do
+            # avanco de `:367`, o unico ponto do codigo que muda `current_node_id`. A
+            # matricula voltava ao mesmo `wait` a cada tick, indefinidamente: nenhuma
+            # cadencia de dois ou mais toques podia funcionar. Como o motor nunca rodou
+            # em producao (0 matriculas na historia), o defeito nunca apareceu.
+            #
+            # `last_sent_node_id=None` importa: ele e a idempotencia do envio, e carregado
+            # para o proximo no faria o toque seguinte ser pulado como se ja tivesse saido.
             target = _wait_target(cfg, now)
-            _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
+            proximo = node.get("next_node_id")
             _log_exec(enrollment, node, "done",
                       f"aguardando (d={cfg.get('days', 1)}, h={cfg.get('hours', 0)})")
+            if not proximo:
+                # Wait como ultimo no do grafo: o fluxo acabou. Estacionar criaria zumbi.
+                _complete(enrollment["id"])
+                return
+            _update(enrollment["id"],
+                    current_node_id=proximo,
+                    next_execute_at=target.isoformat(),
+                    retry_count=0,
+                    last_error=None,
+                    claimed_at=None,
+                    last_sent_node_id=None,
+                    step_count=(enrollment.get("step_count") or 0) + 1)
             return
 
         elif node_type == "condition":
