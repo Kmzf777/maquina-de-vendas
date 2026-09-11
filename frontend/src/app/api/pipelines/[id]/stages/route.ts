@@ -22,7 +22,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { label, dot_color } = await request.json();
+  const { label, dot_color, key } = await request.json();
   if (!label?.trim()) return NextResponse.json({ error: "Label é obrigatório" }, { status: 400 });
   const supabase = await getServiceSupabase();
 
@@ -54,6 +54,10 @@ export async function POST(
     .insert({
       pipeline_id: id,
       label: label.trim(),
+      // `key` é o contrato estável que o código de negócio usa para achar a etapa;
+      // `label` é editável pelo operador. Até 10/09/2026 este POST não escrevia key
+      // nenhuma, então toda etapa criada pela tela nascia invisível para o motor.
+      key: typeof key === "string" && key.trim() ? key.trim() : null,
       dot_color: dot_color || "#5b8aad",
       order_index: insertAt,
       is_protected: false,

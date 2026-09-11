@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { assertCanManagePipeline } from "@/lib/supabase/pipeline-access";
+import { stageIsProtectedByKey } from "@/lib/pipeline-stages";
 
 export async function PATCH(
   request: NextRequest,
@@ -59,6 +60,23 @@ export async function DELETE(
 
   const guard = await assertCanManagePipeline(supabase, id);
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+
+  // Etapa que carrega `key` é contrato, não decoração: apagá-la desliga em silêncio o
+  // código que a procura por key. A guarda de contagem abaixo não pega esse caso — uma
+  // etapa-contrato VAZIA passava direto. Foi assim que a `proposta_enviada` do funil
+  // "João - Reposição" sumiu e o orçamento parou de mover o card ali.
+  const { data: alvo, error: alvoError } = await supabase
+    .from("pipeline_stages")
+    .select("key")
+    .eq("id", stageId)
+    .single();
+  if (alvoError) return NextResponse.json({ error: alvoError.message }, { status: 500 });
+  if (stageIsProtectedByKey(alvo?.key)) {
+    return NextResponse.json(
+      { error: `Esta etapa tem a chave "${alvo.key}" e é usada pelo sistema. Renomeie em vez de remover.` },
+      { status: 409 }
+    );
+  }
 
   const { count, error: countError } = await supabase
     .from("deals")
