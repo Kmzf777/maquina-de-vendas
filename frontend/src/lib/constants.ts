@@ -6,18 +6,38 @@ export const AGENT_STAGES = [
   { key: "consumo", label: "Consumo", color: "bg-[#f0ecd0]", dotColor: "#d4b84a", tintColor: "#f4f2ea", avatarColor: "#d4b84a" },
 ] as const;
 
+// Vocabulário COMPLETO de etapas de funil. Ele tem dois usos, e é por isso que as
+// keys abolidas continuam aqui:
+//
+//  1. TRADUZIR key -> rótulo (`STAGE_LABELS` em lib/lead-overview.ts, e o badge
+//     colorido de lead-detail-modal.tsx). Isto precisa conhecer TODA key que já
+//     existiu, senão deal histórico passa a exibir a key crua na tela.
+//  2. OFERECER etapas na configuração de cadência. Este uso NÃO pode listar etapa
+//     abolida — o dropdown grava a key alvo do gatilho, e uma key que não existe
+//     mais em pipeline_stages nunca casa, sem erro visível.
+//
+// `legacy: true` separa os dois: entra na tradução, fica fora do que se oferece.
+// Reunião de 10/09/2026: "Contato", "Proposta" e "Negociação" saíram dos funis;
+// "Em conversa" usa a key `respondeu`, que é a que advance_deal_on_reply já procura.
+//
+// A ordem deste array é a ordem exibida — as legacy ficam no fim, fora do caminho.
 export const DEAL_STAGES = [
-  { key: "novo", label: "Novo", color: "bg-[#f0d8d8]", dotColor: "#e07a7a", tintColor: "#f6eeee", avatarColor: "#e07a7a" },
-  { key: "contato", label: "Contato", color: "bg-[#f0e4d0]", dotColor: "#d4a04a", tintColor: "#f4f0ea", avatarColor: "#d4a04a" },
-  { key: "proposta", label: "Proposta", color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
-  { key: "negociacao", label: "Negociacao", color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5b8aad" },
-  // Etapa criada junto com o orçamento (migration 20260825_quotes.sql). A ordem
-  // deste array é a ordem exibida — mantê-la colada em fechado_ganho é o que faz
-  // o rótulo do funil bater com a posição real gravada em pipeline_stages.
-  { key: "proposta_enviada", label: "Proposta Enviada", color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
-  { key: "fechado_ganho", label: "Fechado Ganho", color: "bg-[#d8f0dc]", dotColor: "#5aad65", tintColor: "#edf4ef", avatarColor: "#5aad65" },
-  { key: "fechado_perdido", label: "Perdido", color: "bg-[#f4f4f0]", dotColor: "#9ca3af", tintColor: "#f2f2f0", avatarColor: "#9ca3af" },
+  { key: "novo", label: "Novo", legacy: false, color: "bg-[#f0d8d8]", dotColor: "#e07a7a", tintColor: "#f6eeee", avatarColor: "#e07a7a" },
+  { key: "respondeu", label: "Em conversa", legacy: false, color: "bg-[#f0e4d0]", dotColor: "#d4a04a", tintColor: "#f4f0ea", avatarColor: "#d4a04a" },
+  { key: "chamado_reposicao", label: "Já chamado (reposição)", legacy: false, color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5b8aad" },
+  { key: "em_atencao", label: "Em atenção", legacy: false, color: "bg-[#f7d9e4]", dotColor: "#c9457b", tintColor: "#f9eef3", avatarColor: "#c9457b" },
+  { key: "proposta_enviada", label: "Proposta Enviada", legacy: false, color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
+  { key: "fechado_ganho", label: "Fechado Ganho", legacy: false, color: "bg-[#d8f0dc]", dotColor: "#5aad65", tintColor: "#edf4ef", avatarColor: "#5aad65" },
+  { key: "fechado_perdido", label: "Perdido", legacy: false, color: "bg-[#f4f4f0]", dotColor: "#9ca3af", tintColor: "#f2f2f0", avatarColor: "#9ca3af" },
+  // Abolidas na reunião de 10/09/2026. Mantidas SÓ para traduzir dado histórico.
+  { key: "contato", label: "Contato", legacy: true, color: "bg-[#f0e4d0]", dotColor: "#d4a04a", tintColor: "#f4f0ea", avatarColor: "#d4a04a" },
+  { key: "proposta", label: "Proposta", legacy: true, color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
+  { key: "negociacao", label: "Negociacao", legacy: true, color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5b8aad" },
 ] as const;
+
+// O que a tela de cadência pode oferecer. Ver o comentário acima: oferecer etapa
+// abolida cria gatilho que nunca casa, e falha em silêncio.
+export const OFFERABLE_DEAL_STAGES = DEAL_STAGES.filter((s) => !s.legacy);
 
 export const DEAL_CATEGORIES = [
   { key: "atacado", label: "Atacado", color: "#5b8aad" },

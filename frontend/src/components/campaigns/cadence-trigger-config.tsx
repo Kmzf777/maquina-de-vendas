@@ -1,6 +1,6 @@
 "use client";
 
-import { AGENT_STAGES, DEAL_STAGES } from "@/lib/constants";
+import { AGENT_STAGES, OFFERABLE_DEAL_STAGES } from "@/lib/constants";
 
 interface CadenceTriggerConfigProps {
   targetType: string;
@@ -13,7 +13,7 @@ export function CadenceTriggerConfig({ targetType, targetStage, stagnationDays, 
   const stages = targetType === "lead_stage"
     ? AGENT_STAGES.map((s) => ({ key: s.key, label: s.label }))
     : targetType === "deal_stage"
-    ? DEAL_STAGES.map((s) => ({ key: s.key, label: s.label }))
+    ? OFFERABLE_DEAL_STAGES.map((s) => ({ key: s.key, label: s.label }))
     : [];
 
   return (
