@@ -191,6 +191,37 @@ def pause_enrollment(enrollment_id: str) -> None:
     }).eq("id", enrollment_id).execute()
 
 
+def reset_enrollment(enrollment_id: str, first_node_id: str) -> None:
+    """Rebobina a matricula para o primeiro no, mantendo-a ATIVA.
+
+    Terceira politica de `on_reply`, ao lado de `cancel` e `pause`. Existe para a esteira
+    "Em conversa" da reuniao de 10/09/2026: 7 toques em 30 dias, e qualquer resposta do
+    lead devolve o relogio para D+0.
+
+    MANTER `status='active'` e o ponto do desenho, nao um detalhe. Cancelar e reinscrever
+    pareceria equivalente, mas o cooldown de 90 dias da RPC `get_deals_stage_stagnant`
+    conta QUALQUER matricula por `enrolled_at`, sem filtrar status — o card ficaria
+    inelegivel por tres meses. Como o reset nao passa pelo caminho de reinscricao, o
+    cooldown nunca e consultado.
+
+    `last_sent_node_id=None` porque ele e a idempotencia do envio: carregado para o no
+    rebobinado, faria o primeiro toque do novo ciclo ser pulado como se ja tivesse saido.
+    `paused_at=None` limpa residuo de uma pausa anterior.
+    """
+    sb = get_supabase()
+    sb.table("campaign_enrollments").update({
+        "status": "active",
+        "current_node_id": first_node_id,
+        "next_execute_at": datetime.now(timezone.utc).isoformat(),
+        "step_count": 0,
+        "last_sent_node_id": None,
+        "retry_count": 0,
+        "last_error": None,
+        "paused_at": None,
+        "claimed_at": None,
+    }).eq("id", enrollment_id).execute()
+
+
 def cancel_enrollments_for_lead(lead_id: str) -> int:
     """Cancela TODOS os enrollments vivos do lead. Devolve quantos foram cancelados.
 
