@@ -96,14 +96,31 @@ ligar juntos sem dobrar automação em ninguém.
 > *"A key é o contrato estável do estágio; o label é editável pelo operador e o
 > `deals.stage` legado está morto."* — `backend/app/leads/service.py:237`
 
-**A tela nunca escreve `key`.** `POST /api/pipelines/[id]/stages` aceita apenas `label` e
-`dot_color`; `PATCH` aceita `label`, `dot_color`, `order_index`, `conversion_event`,
-`conversion_value`. Nenhum dos dois toca em `key`. Toda etapa criada pelo CRM nasce
-**`key = NULL`** — invisível para o motor.
+**A tela escreve `key` em um caminho só, e é o que menos se usa.** Há três operações, e
+elas se comportam de forma diferente:
+
+| operação | escreve `key`? |
+|---|---|
+| **Criar um funil** (`POST /api/pipelines`) | **sim, parcialmente** — `DEFAULT_STAGES` traz `proposta_enviada`, `fechado_ganho` e `fechado_perdido`; Novo/Contato/Proposta/Negociação nascem `key: null` |
+| **Criar uma etapa avulsa** (`POST /api/pipelines/[id]/stages`) | **não** — aceita só `label` e `dot_color` |
+| **Renomear/editar** (`PATCH …/[stageId]`) | **não** — aceita `label`, `dot_color`, `order_index`, `conversion_*` |
+
+Ou seja: **toda etapa que alguém cria à mão no Kanban nasce `key = NULL`, e renomear
+nunca cria uma `key`.** Foi exatamente o que aconteceu — as etapas renomeadas
+("Já chamado"→"Em Conversa", "Novo"→"Cliente Ativo") continuaram sem key, e as criadas
+do zero ("Em ATENÇÃO", "Entrada de Inativos", "Em Follow-UP", "Recuperado") nasceram sem
+key. O funil novo "João - Reposição Private Label" ganhou as três keys finais só porque
+veio de `DEFAULT_STAGES`.
 
 E o `DELETE` só recusa quando a etapa tem cards
 (`api/pipelines/[id]/stages/[stageId]/route.ts:68-73`). **Ele não protege uma etapa que
-carrega uma `key`.** Uma etapa-contrato vazia pode ser apagada sem aviso.
+carrega uma `key`.** Uma etapa-contrato vazia pode ser apagada sem aviso — foi assim que
+a `proposta_enviada` da Reposição sumiu.
+
+**Evidência de que a migration `20260825_quotes.sql` foi aplicada:** `proposta_enviada`
+existe hoje em **7 funis** — os 4 da ValerIA, o Atacado, o Private Label e o funil novo.
+Falta exatamente onde foi apagada à mão (Reposição) e onde a reunião decidiu que não deve
+existir (Recuperação).
 
 ### 2.2 O estado real dos funis agora (medido 10/09/2026)
 
@@ -170,7 +187,29 @@ João - Recuperação                    João - Reposição Private Label (novo
    para a RPC das esteiras (que trata `key` NULL como etapa aberta). São 1.540 cards
    abertos por `closed_at IS NULL` contra 1.578 pela regra da RPC.
 
-### 2.4 O que a reestruturação NÃO quebrou (verificado, porque parecia que sim)
+### 2.4 Três campanhas para este fim já existem — e nunca saíram do rascunho
+
+O banco tem **6 campanhas no total**, e três delas foram criadas exatamente para o que
+esta reunião pediu:
+
+| campanha | status |
+|---|---|
+| `39d0acbd` — "Reposição Inteligente — João" | `draft` |
+| `ecb97097` — "Follow-up Cotação — João" | `draft` |
+| `d4a7ffa3` — "Valéria — Follow-up (motor)" | `draft` |
+
+Nenhuma é uma das 4 do seed das esteiras (que usa UUID determinístico), então **o seed
+ainda não rodou**. Decidir no SP1 se essas três são reaproveitadas ou apagadas — deixá-las
+paradas ao lado das novas é receita para alguém ligar a errada.
+
+### 2.5 O ativo que tudo isto protege
+
+**Quality rating do número do João (+55 34 9146-1669): `GREEN`.** Os três números da
+conta estão GREEN, com throughput `STANDARD`. É o melhor estado possível, e é exatamente
+o que a decisão de arranque (D15) e o teto de 1 msg/lead/dia existem para preservar — o
+número que fecha venda é o mesmo que mandaria os templates.
+
+### 2.6 O que a reestruturação NÃO quebrou (verificado, porque parecia que sim)
 
 `scripts/recuperacao/corrigir_deals_reposicao.sql` — o script que move os 19 deals de
 reposição criados no funil errado — tem uma guarda que aborta a transação se a etapa de
