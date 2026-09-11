@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildMovePayload,
   chunk,
   summarizeMoveResults,
   selectableStages,
@@ -19,23 +18,6 @@ function stage(over: Partial<PipelineStage> & { id: string }): PipelineStage {
     ...over,
   };
 }
-
-describe("buildMovePayload", () => {
-  it("omite pipeline_id quando o funil nao muda", () => {
-    const payload = buildMovePayload({ pipeline_id: "p1" }, "p1", "s9");
-    expect(payload).toEqual({ stage_id: "s9" });
-  });
-
-  it("inclui pipeline_id quando o funil muda", () => {
-    const payload = buildMovePayload({ pipeline_id: "p1" }, "p2", "s9");
-    expect(payload).toEqual({ stage_id: "s9", pipeline_id: "p2" });
-  });
-
-  it("inclui pipeline_id quando o deal nao tem funil", () => {
-    const payload = buildMovePayload({ pipeline_id: null }, "p2", "s9");
-    expect(payload).toEqual({ stage_id: "s9", pipeline_id: "p2" });
-  });
-});
 
 describe("chunk", () => {
   it("quebra 12 itens em lotes de 5", () => {

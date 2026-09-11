@@ -19,20 +19,6 @@ export interface MoveSummary {
 }
 
 /**
- * Corpo do PATCH para mover um deal. `pipeline_id` só entra quando o funil muda:
- * mandar o mesmo valor de volta faria a rota rodar a guarda de destino à toa.
- */
-export function buildMovePayload(
-  deal: { pipeline_id: string | null },
-  targetPipelineId: string,
-  targetStageId: string
-): Record<string, string> {
-  const payload: Record<string, string> = { stage_id: targetStageId };
-  if (deal.pipeline_id !== targetPipelineId) payload.pipeline_id = targetPipelineId;
-  return payload;
-}
-
-/**
  * Quebra `items` em lotes de `size`. Lanca se `size` nao for positivo: com 0 ou
  * negativo o laco nunca avanca e trava a aba. E utilitario exportado, entao a
  * pre-condicao precisa ser explicita em vez de confiar em quem chama.

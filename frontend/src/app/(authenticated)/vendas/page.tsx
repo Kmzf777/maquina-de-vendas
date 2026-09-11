@@ -21,7 +21,7 @@ import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
 import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
 import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
 import { BulkMoveModal } from "@/components/deals/bulk-move-modal";
-import { buildMovePayload, chunk, summarizeMoveResults, MOVE_BATCH_SIZE, type MoveResult } from "@/lib/bulk-move-deals";
+import { chunk, summarizeMoveResults, MOVE_BATCH_SIZE, type MoveResult } from "@/lib/bulk-move-deals";
 import { useCurrentRole } from "@/hooks/use-current-role";
 import type { Deal, Pipeline } from "@/lib/types";
 import { dealMatchesSearch } from "@/lib/search";
@@ -50,6 +50,8 @@ function DroppableColumn({
           {selectionMode && deals.length > 0 && (
             <button
               onClick={() => onToggleAll(deals.map((d) => d.id), !allSelected)}
+              role="checkbox"
+              aria-checked={allSelected ? true : someSelected ? "mixed" : false}
               title={allSelected ? "Desmarcar coluna" : "Selecionar coluna"}
               className={`w-4 h-4 rounded-[3px] border flex items-center justify-center flex-shrink-0 ${
                 allSelected || someSelected ? "bg-[#111111] border-[#111111]" : "bg-white border-[#dedbd6]"
@@ -325,36 +327,46 @@ function VendasPageInner() {
 
   async function handleBulkMove(targetPipelineId: string, targetStageId: string) {
     const ids = [...selectedIds];
-    const byId = new Map(deals.map((d) => [d.id, d]));
     setMoveProgress({ done: 0, total: ids.length });
+    let done = 0;
 
     const results: MoveResult[] = [];
-    // Em lotes: cada PATCH faz 3 round-trips no Supabase e dispara um webhook de
-    // automacao. Mandar tudo de uma vez martela o backend sem ganho nenhum.
-    for (const batch of chunk(ids, MOVE_BATCH_SIZE)) {
-      const batchResults = await Promise.all(
-        batch.map(async (id): Promise<MoveResult> => {
-          const deal = byId.get(id);
-          if (!deal) return { id, ok: false, error: "Deal não encontrado na tela" };
-          try {
-            const res = await fetch(`/api/deals/${id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(buildMovePayload(deal, targetPipelineId, targetStageId)),
-            });
-            if (res.ok) return { id, ok: true };
-            const body = await res.json().catch(() => ({}));
-            return { id, ok: false, error: body.error || `HTTP ${res.status}` };
-          } catch {
-            return { id, ok: false, error: "Falha de rede" };
-          }
-        })
-      );
-      results.push(...batchResults);
-      setMoveProgress({ done: results.length, total: ids.length });
+    try {
+      // Em lotes: cada PATCH faz 3 round-trips no Supabase e dispara um webhook de
+      // automacao. Mandar tudo de uma vez martela o backend sem ganho nenhum.
+      for (const batch of chunk(ids, MOVE_BATCH_SIZE)) {
+        const batchResults = await Promise.all(
+          batch.map(async (id): Promise<MoveResult> => {
+            try {
+              const res = await fetch(`/api/deals/${id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                // Manda sempre os dois campos. Os lotes levam segundos, e decidir
+                // "o funil nao mudou" pelo estado que a tela tinha no inicio grava
+                // stage_id novo com pipeline_id velho se outra pessoa mover o mesmo
+                // deal no meio — e o card some do board. A rota compara com a linha
+                // fresca do banco, entao mandar valor igual nao custa guarda extra.
+                body: JSON.stringify({ pipeline_id: targetPipelineId, stage_id: targetStageId }),
+              });
+              if (res.ok) return { id, ok: true };
+              const body = await res.json().catch(() => ({}));
+              return { id, ok: false, error: body.error || `HTTP ${res.status}` };
+            } catch {
+              return { id, ok: false, error: "Falha de rede" };
+            } finally {
+              done += 1;
+              setMoveProgress({ done, total: ids.length });
+            }
+          })
+        );
+        results.push(...batchResults);
+      }
+    } finally {
+      // Sem isto, um throw inesperado deixaria progress != null para sempre — e o
+      // dialogo trava o X e o backdrop nesse estado, exigindo reload da pagina.
+      setMoveProgress(null);
     }
 
-    setMoveProgress(null);
     const summary = summarizeMoveResults(results);
     setShowBulkMove(false);
 
