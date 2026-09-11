@@ -373,9 +373,10 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             return
 
         elif node_type == "action":
-            _execute_action(enrollment, node, lead)
-            _log_exec(enrollment, node, "done",
-                      f"ação {(cfg.get('action_type') or 'desconhecida')} executada")
+            agiu = _execute_action(enrollment, node, lead)
+            _log_exec(enrollment, node, "done" if agiu else "skipped",
+                      f"ação {(cfg.get('action_type') or 'desconhecida')} "
+                      + ("executada" if agiu else "sem alvo — nada foi feito"))
 
         elif node_type == "end":
             _execute_end(enrollment, node, lead)
@@ -428,7 +429,18 @@ async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime,
 
 async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
     from app.whatsapp.registry import get_provider
-    from app.leads.service import save_message
+    from app.leads.service import save_message, is_lead_blacklisted
+
+    # Mesma guarda que o nó `send` (template) tem desde 25/06/2026 — camada 2, no
+    # instante do envio (app/campaigns/worker.py::_execute_send_node). O `send_text`
+    # (texto livre) nunca teve: sem isso, um lead que já tinha pedido para sair
+    # continuava recebendo texto livre da cadência.
+    if is_lead_blacklisted(enrollment.get("lead_id")):
+        logger.info(
+            "[AUTOMATION] send_text abortado — lead %s está na blacklist (opt-out / pipeline Blacklist)",
+            enrollment.get("lead_id"),
+        )
+        return None
 
     cfg = node.get("config") or {}
     campaign = campaign or {}
@@ -521,10 +533,16 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
     logger.info("[AUTOMATION] condition '%s' → %s for %s", cond, "YES" if result else "NO", lead["phone"])
 
 
-def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
+def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
+    """Executa a ação do nó. Devolve True se algo foi de fato efetivado, False quando o
+    alvo da ação não existia (deal inexistente, tag não encontrada, round-robin sem
+    usuários...) — o dispatch em `_process_one` usa este retorno para decidir entre os
+    status "done" e "skipped" no log de execução. Nenhum caminho deve devolver `None`
+    implicitamente: `None` é falsy e logaria "skipped" numa ação que na verdade rodou."""
     sb = get_supabase()
     cfg = node.get("config") or {}
     action_type = cfg.get("action_type")
+    agiu = False
 
     if action_type == "move_stage":
         # Move the LEAD in the lead-Kanban (leads.stage is a TEXT name, not a UUID).
@@ -532,14 +550,17 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
         if stage_name:
             from app.leads.service import update_lead
             update_lead(enrollment["lead_id"], stage=stage_name)
+            agiu = True
 
     elif action_type == "activate_agent":
         from app.leads.service import update_lead
         update_lead(enrollment["lead_id"], ai_enabled=True, human_control=False)
+        agiu = True
 
     elif action_type == "deactivate_agent":
         from app.leads.service import update_lead
         update_lead(enrollment["lead_id"], ai_enabled=False)
+        agiu = True
 
     elif action_type == "add_tag":
         tag_name = (cfg.get("tag_name") or "").strip()
@@ -548,6 +569,7 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             if tag_row:
                 try:
                     sb.table("lead_tags").insert({"lead_id": enrollment["lead_id"], "tag_id": tag_row[0]["id"]}).execute()
+                    agiu = True
                 except Exception:
                     pass
 
@@ -557,22 +579,25 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             tag_row = sb.table("tags").select("id").eq("name", tag_name).limit(1).execute().data
             if tag_row:
                 sb.table("lead_tags").delete().eq("lead_id", enrollment["lead_id"]).eq("tag_id", tag_row[0]["id"]).execute()
+                agiu = True
 
     elif action_type == "create_deal":
         from app.leads.service import create_deal
         title = substitute_variables(cfg.get("title_template", "Deal automático"), lead, enrollment)
         create_deal(enrollment["lead_id"], title, cfg.get("category"))
+        agiu = True
 
     elif action_type == "assign_to":
         user_id = cfg.get("user_id")
         if user_id:
             from app.leads.service import update_lead
             update_lead(enrollment["lead_id"], assigned_to=user_id)
+            agiu = True
 
     elif action_type in ("mark_deal_won", "mark_deal_lost", "move_deal_stage"):
         stage_id = cfg.get("stage_id")
         if not stage_id:
-            return
+            return False
         # O deal do ENROLLMENT tem precedência sobre "o mais recente do lead".
         # Um lead pode ter vários cards abertos (reposição + oportunidade nova);
         # a esteira que disparou esta ação sabe qual é o dela.
@@ -595,6 +620,7 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             if action_type == "mark_deal_lost" and cfg.get("lost_reason"):
                 update["lost_reason"] = cfg["lost_reason"]
             sb.table("deals").update(update).eq("id", deal_id).execute()
+            agiu = True
             # F9: dispara a conversão associada à etapa de destino (move_deal_stage /
             # mark_deal_won). Usa helper compartilhado com triggers._maybe_fire_stage_conversion.
             # Fail-soft — qualquer erro loga warning e NÃO interrompe o tick.
@@ -604,6 +630,8 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
                     fire_conversion_for_deal_stage(enrollment["lead_id"], deal_id)
                 except Exception as exc:
                     logger.warning("[AUTOMATION] %s: falha ao disparar conversão: %s", action_type, exc)
+        # deal_id continua None (nenhum deal do enrollment nem do lead): sem alvo,
+        # `agiu` permanece False.
 
     elif action_type == "add_note":
         template = cfg.get("note_template") or ""
@@ -613,12 +641,15 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
                 "lead_id": enrollment["lead_id"],
                 "content": content,
             }).execute()
+            agiu = True
 
     elif action_type == "alert_seller":
         # Avisa o dono do card que a esteira terminou sem resposta. O watchdog já
         # detecta silêncio pós-handoff em 20min (check handoff_sla_breach), mas só
         # em alerta interno; aqui o alerta nasce colado no card, com o histórico.
         # Fail-soft absoluto: alerta que falha não pode derrubar o tick da esteira.
+        # Não há "alvo" que possa faltar aqui (diferente de deal/tag) — a ação sempre
+        # se aplica ao lead do enrollment, então conta como efetivada.
         from app.alerts.service import create_system_alert
         titulo = substitute_variables(cfg.get("title") or "Esteira encerrada", lead, enrollment)
         corpo = substitute_variables(cfg.get("message_template") or "", lead, enrollment)
@@ -644,12 +675,13 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             }).execute()
         except Exception as exc:
             logger.warning("[AUTOMATION] alert_seller: falha ao gravar nota: %s", exc)
+        agiu = True
 
     elif action_type == "assign_round_robin":
         user_ids = cfg.get("user_ids") or []
         campaign_id = enrollment.get("campaign_id")
         if not user_ids or not campaign_id:
-            return
+            return False
         camp = (
             sb.table("campaigns")
             .select("last_assigned_index")
@@ -664,8 +696,10 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
         from app.leads.service import update_lead
         update_lead(enrollment["lead_id"], assigned_to=next_user)
         sb.table("campaigns").update({"last_assigned_index": next_idx}).eq("id", campaign_id).execute()
+        agiu = True
 
     logger.info("[AUTOMATION] action '%s' for %s", action_type, lead.get("phone"))
+    return agiu
 
 
 def _execute_end(enrollment: dict, node: dict, lead: dict) -> None:
