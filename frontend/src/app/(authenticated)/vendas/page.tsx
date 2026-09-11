@@ -538,6 +538,7 @@ function VendasPageInner() {
       {showBulkMove && selectedPipelineId && (
         <BulkMoveModal
           count={selectedIds.size}
+          deals={deals.filter((d) => selectedIds.has(d.id))}
           pipelines={pipelines}
           currentPipelineId={selectedPipelineId}
           currentStages={stages}

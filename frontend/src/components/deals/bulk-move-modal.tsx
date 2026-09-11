@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import type { Pipeline, PipelineStage } from "@/lib/types";
+import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 import { StageTargetPicker } from "@/components/deals/stage-target-picker";
 
 interface BulkMoveModalProps {
   count: number;
+  /** Os deals selecionados, para conferencia antes de confirmar. */
+  deals: Deal[];
   pipelines: Pipeline[];
   currentPipelineId: string;
   currentStages: PipelineStage[];
@@ -15,8 +17,13 @@ interface BulkMoveModalProps {
   onMove: (pipelineId: string, stageId: string) => Promise<void>;
 }
 
+function formatCurrency(value: number): string {
+  return `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
+}
+
 export function BulkMoveModal({
   count,
+  deals,
   pipelines,
   currentPipelineId,
   currentStages,
@@ -69,6 +76,37 @@ export function BulkMoveModal({
         </div>
 
         <div className="px-6 py-4 space-y-4">
+          {/* Lista o que vai ser movido. A selecao nao e podada quando os filtros
+              mudam — de proposito, senao digitar na busca apagaria a selecao — entao
+              um card marcado pode estar fora da tela na hora de confirmar. Sem esta
+              lista, o usuario so via um numero e movia deal que nao lembrava ter
+              marcado, disparando automacao (WhatsApp) pro lead. */}
+          <div>
+            <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1.5">
+              Deals que serão movidos
+            </span>
+            <div className="border border-[#dedbd6] rounded-[6px] max-h-[160px] overflow-y-auto bg-[#faf9f6]">
+              {deals.map((deal) => (
+                <div
+                  key={deal.id}
+                  className="flex items-center gap-2 px-3 py-1.5 border-b border-[#dedbd6]/50 last:border-0"
+                >
+                  <span className="text-[12px] text-[#111111] flex-1 truncate">{deal.title}</span>
+                  {deal.leads?.name && (
+                    <span className="text-[11px] text-[#7b7b78] truncate max-w-[110px]">
+                      {deal.leads.name}
+                    </span>
+                  )}
+                  {deal.value > 0 && (
+                    <span className="text-[11px] text-[#7b7b78] flex-shrink-0">
+                      {formatCurrency(deal.value)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
           <StageTargetPicker
             pipelines={pipelines}
             pipelineId={targetPipelineId}
