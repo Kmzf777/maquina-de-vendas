@@ -9,8 +9,11 @@ import type { StageOption, StagesByPipeline } from "@/lib/deal-rows";
  * O painel do lead pode ter deals em funis diferentes, então precisa dos stages
  * de cada um. O cache por pipeline_id sobrevive à troca de conversa: dois leads
  * do mesmo funil não refazem o fetch.
+ *
+ * Não confundir com usePipelineStages (use-pipelines.ts), que serve UM funil
+ * com realtime do Supabase. Este serve N funis por fetch, sem realtime.
  */
-export function usePipelineStages(pipelineIds: string[]): {
+export function useStagesByPipeline(pipelineIds: string[]): {
   stagesByPipeline: StagesByPipeline;
   loading: boolean;
 } {
