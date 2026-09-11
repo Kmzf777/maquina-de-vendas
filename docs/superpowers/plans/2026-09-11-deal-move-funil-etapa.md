@@ -560,7 +560,7 @@ Substituir `handleUpdateDeal` inteiro por:
 - [ ] **Step 5: Verificar tipos, lint e testes**
 
 Run: `cd frontend && npm run type-check && npm run lint && npm test`
-Expected: type-check sem erro; lint sem **erro novo** nos arquivos tocados (os 33 pre-existentes seguem la); `npm test` com 805 testes passando (792 da baseline + 13 da Task 1).
+Expected: type-check sem erro; lint sem **erro novo** nos arquivos tocados (os 33 pre-existentes seguem la); `npm test` com **808** testes passando em 61 arquivos (792 da baseline + 16 da Task 1).
 
 - [ ] **Step 6: Commit**
 
@@ -1145,8 +1145,7 @@ git rm frontend/src/components/deals/bulk-move-deals-modal.tsx
 - [ ] **Step 5: Verificar tipos, lint e testes**
 
 Run: `cd frontend && npm run type-check && npm run lint && npm test`
-Expected: type-check sem erro; lint sem erro novo nos arquivos tocados (nenhum símbolo órfão sobrando); `npm test` com 805 testes
-passando.
+Expected: type-check sem erro; lint sem erro novo nos arquivos tocados (nenhum símbolo órfão sobrando); `npm test` com **808** testes passando em 61 arquivos.
 
 - [ ] **Step 6: Confirmar que nada mais referencia o modal removido**
 
