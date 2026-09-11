@@ -469,51 +469,37 @@ git commit -m "feat(cadencias): on_reply=reset rebobina a esteira mantendo a mat
 
 ---
 
-## Task 3: O filtro de etapa passa a gravar `key`, não rótulo
+## Task 3: ~~O filtro de etapa passa a gravar `key`~~ — DESCARTADA em 11/09/2026
 
-O `<select>` de etapa grava `s.label` e o motor compara com `pipeline_stages.key` ou `leads.stage`. Interseção medida: **vazia**. Há prova salva em produção — a campanha "Reposição Inteligente — João" tem `{"stage_filter": "Novo (Frio)"}`, um rótulo onde o motor espera uma key. A `key` **já está carregada** no objeto e nunca é usada.
+**Esta task foi removida do plano depois de ler os `<select>` afetados.** Ela teria
+feito trabalho errado, em código fora de escopo. Registro do porquê, para ninguém
+tentar de novo:
 
-**Files:**
-- Modify: `frontend/src/components/campaigns/cadence-flow/inspector.tsx` (3 ocorrências de `value={s.label}`)
+**1. O gatilho que as esteiras do João usam já está correto.** O `<select>` de
+`deal_stage_stagnation` (`inspector.tsx:130-134`) grava `value={s.id}` — o **UUID** da
+etapa — em `config.stage_id`. A RPC recebe `p_stage_id uuid`. UUID não é ambíguo e não
+depende de `key` nem de rótulo. Nada a consertar aqui.
 
-- [ ] **Step 1: Localizar as três ocorrências**
+**2. Nos três `<select>` que eu ia mexer, `key` não é o conserto certo.** Eles são
+populados de `allStages` (que vem de `pipeline_stages`), mas os gatilhos que configuram
+comparam, em sua maioria, com **`leads.stage`** — que neste sistema é o *segmento* do
+lead (`atacado`, `private_label`, `consumo`, `pending`), vocabulário completamente
+diferente do das colunas de Kanban:
 
-Run: `cd frontend && grep -n "value={s.label}" src/components/campaigns/cadence-flow/inspector.tsx`
-Expected: 3 linhas (aproximadamente 166, 187, 413)
+| linha | configura | compara com | conserto certo |
+|---|---|---|---|
+| 166 | `stage_enter`, `stage_stagnation` | `leads.stage` (`triggers.py:168`, `:214`) | trocar a FONTE para `AGENT_STAGES`, não o valor |
+| 187 | `no_sale_in_stage` **e** `deal_stage_enter` | `leads.stage` **e** `pipeline_stages.key` — vocabulários diferentes no mesmo `<select>` | separar em dois campos |
+| 413 | condição `in_stage` | `leads.stage` (`engine.py:452-454`) | trocar a FONTE para `AGENT_STAGES` |
 
-**Se o número for diferente de 3, pare e reporte** — o arquivo mudou desde a auditoria.
+O `<select>` de `move_stage` (`:462`) já faz certo: usa `AGENT_STAGES` com `value={s.key}`.
 
-- [ ] **Step 2: Trocar as três por `value={s.key ?? ""}`**
+**3. Todos esses gatilhos estão fora de escopo pelo próprio spec** (§4: *"Os outros
+gatilhos quebrados... Nenhum é usado pelas esteiras"*). As esteiras do João usam
+`deal_stage_stagnation`, e só.
 
-Em cada uma das três linhas, trocar `value={s.label}` por `value={s.key ?? ""}`. O texto visível da `<option>` continua sendo `{s.label}` — muda só o valor gravado.
-
-Acrescentar, acima do primeiro `<select>` afetado, o comentário:
-
-```tsx
-{/* O VALOR gravado e a `key`, nunca o rotulo: o motor compara com
-    pipeline_stages.key (triggers.py) e o rotulo e editavel pelo operador.
-    Ate 11/09/2026 gravava-se `s.label`, e a intersecao medida entre os dois
-    conjuntos era vazia — o gatilho nunca casava com card nenhum. */}
-```
-
-- [ ] **Step 3: Verificar que nenhuma etapa fica sem valor**
-
-Run: `cd frontend && grep -n "value={s.key ?? \"\"}" src/components/campaigns/cadence-flow/inspector.tsx`
-Expected: 3 linhas
-
-Desde a migration do SP0 toda etapa dos funis do João tem `key`. Etapa sem key vira valor vazio, e a RPC é fail-closed (exige `stage_id` ou `stage_key`), então o gatilho não dispara em vez de disparar errado.
-
-- [ ] **Step 4: type-check e testes**
-
-Run: `cd frontend && npm run type-check && npx vitest run`
-Expected: `tsc` sem saída; **792 passed**
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add frontend/src/components/campaigns/cadence-flow/inspector.tsx
-git commit -m "fix(cadencias): filtro de etapa grava key em vez de rotulo"
-```
+**Fica como follow-up**, em plano próprio: o conserto real é trocar a fonte de dados de
+três `<select>` e separar o de `:187` em dois — não é uma troca de `label` por `key`.
 
 ---
 
