@@ -319,6 +319,39 @@ clique rápido abriria o diálogo com ids do funil anterior.
 **Regra:** o reset acontece no corpo do render, com um latch do funil anterior — padrão do React
 para "resetar estado quando algo muda". Fecha a janela e evita a segunda renderização.
 
+### 5. O PATCH em massa não depende do que a tela tinha no início
+
+O `handleBulkMove` fotografava os deals uma vez e reusava a foto em todos os lotes, e o payload
+omitia `pipeline_id` quando **essa foto** dizia que o funil não tinha mudado. Como os lotes levam
+segundos, bastava outra pessoa mover um dos deals selecionados no meio para o PATCH sair só com
+`stage_id` — terceira variante do mesmo estrago: `pipeline_id` de um funil, `stage_id` de outro,
+card sumido.
+
+A condicional existia só para poupar a guarda de permissão do destino. A economia era ilusória: a
+rota compara com a linha **fresca** do banco (`body.pipeline_id !== currentDeal.pipeline_id`),
+então mandar o valor igual não custa guarda nenhuma.
+
+**Regra:** o PATCH em massa manda sempre `pipeline_id` **e** `stage_id`. A operação fica
+idempotente e independente do estado da tela. Com isso o `buildMovePayload` perdeu a razão de
+existir e foi removido junto com seus testes.
+
+No mesmo passo: `moveProgress` passou a ser zerado em `finally` (sem isso, uma exceção deixaria o
+diálogo travado, com X e backdrop desabilitados, exigindo reload), e o progresso conta por deal em
+vez de por lote — numa seleção de 3 o contador ficava parado em 0/3 até acabar.
+
+### Dívida conhecida: uma regra de lint deixou de cobrir `VendasPageInner`
+
+O `eslint-plugin-react-hooks` v7 tem duas famílias de regra: `rules-of-hooks` é análise clássica de
+AST, e `set-state-in-effect` / `set-state-in-render` vêm do React Compiler. O `try/finally` do
+`handleBulkMove` faz o compiler desistir do componente, e as regras dele ficam mudas ali — inclusive
+um erro pré-existente que antes aparecia.
+
+Medido, não suposto: injetando um hook condicional no componente, o `rules-of-hooks` acusa
+normalmente. A análise que protege contra o que é de fato perigoso continua de pé. E o React
+Compiler não está habilitado no `next.config`, então não há efeito em runtime.
+
+Aceito de propósito: o `finally` fecha um diálogo que travaria a tela. Vale mais que a regra.
+
 ### Não aceitos
 
 Duas sugestões de revisão foram recusadas, para o registro:
