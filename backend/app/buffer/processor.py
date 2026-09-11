@@ -1247,6 +1247,44 @@ async def _maybe_send_handoff_bridge(
         return False
 
 
+def _optout_deterministico_cabe(channel: dict, lead: dict, conversation: dict) -> bool:
+    """True quando o caminho DETERMINISTICO de opt-out deve arbitrar este turno.
+
+    Duas condicoes, e a segunda e a que conserta a colisao com o agente de botoes:
+
+    1. O LLM nao vai arbitrar o turno — canal humano, ValerIA desligada, ou
+       `ai_enabled=False`. Para o publico da IA continuam valendo a escada do prompt
+       (Anchor-Disrupt-Ask antes de descartar) e o guardrail anti-falso-positivo de
+       Blacklist de 22/06: o parser achata clique de botao em texto comum, entao
+       blacklistar ali transformaria negativa reflexa digitada em banimento.
+
+    2. A conversa NAO pertence ao fluxo de botoes. O bot tem opt-out proprio e mais
+       rico (`button_flow/effects.py::_aplicar_optout`): move o card para
+       "Descadastrado" e grava `opt_out_evidence`.
+
+       Sem esta condicao os dois caminhos rodam no MESMO turno, porque o rotulo do
+       botao de saida do bot e exatamente "Parar mensagens" (`button_flow/flows.py:95`)
+       e `is_optout_reply` casa com ele. O primeiro caminho joga TODOS os deals do lead
+       na Blacklist (`leads/service.py::move_lead_deals_to_blacklist`, que troca o
+       `pipeline_id` sem fechar o card); ai a guarda de funil de `effects._mover_deal`
+       (`if pipeline_id != PIPELINE_RECUPERACAO: return False`) recusa mover para
+       "Descadastrado", e a etapa nunca recebe ninguem — ressuscitando exatamente o
+       defeito que `effects.py:147-158` declara ter consertado.
+
+    `is_button_flow_conversation` e fail-open False (devolve False em qualquer erro e
+    ja sai em False com o kill switch RECUPERACAO_ENABLED desligado, sem tocar no
+    banco), entao com o bot off este caminho continua valendo para todo mundo.
+    """
+    sem_llm_no_turno = (
+        channel.get("mode", "ai") == "human"
+        or not VALERIA_ENABLED
+        or lead.get("ai_enabled") is False
+    )
+    if not sem_llm_no_turno:
+        return False
+    return not is_button_flow_conversation(conversation, channel)
+
+
 async def process_buffered_messages(
     phone: str, combined_text: str, channel_id: str = "",
     wamid: str | None = None, quoted_wamid: str | None = None,
@@ -1387,7 +1425,7 @@ async def process_buffered_messages(
     # valendo a escada do prompt (Anchor-Disrupt-Ask antes de descartar) e o guardrail
     # anti-falso-positivo de Blacklist de 22/06 — o parser achata clique de botão em texto
     # comum, então blacklistar aqui transformaria negativa reflexa digitada em banimento.
-    if channel.get("mode", "ai") == "human" or not VALERIA_ENABLED or lead.get("ai_enabled") is False:
+    if _optout_deterministico_cabe(channel, lead, conversation):
         try:
             from app.campaigns.worker import handle_optout_reply
             handle_optout_reply(lead, resolved_text, conversation["id"])
