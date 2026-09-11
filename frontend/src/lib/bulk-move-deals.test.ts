@@ -54,6 +54,15 @@ describe("chunk", () => {
   it("devolve um unico lote quando cabe tudo", () => {
     expect(chunk([1, 2], 5)).toEqual([[1, 2]]);
   });
+
+  it("lanca quando size nao e positivo", () => {
+    expect(() => chunk([1, 2, 3], 0)).toThrow(RangeError);
+    expect(() => chunk([1, 2, 3], -1)).toThrow(RangeError);
+  });
+
+  it("lanca quando size nao e inteiro", () => {
+    expect(() => chunk([1, 2, 3], 2.5)).toThrow(RangeError);
+  });
 });
 
 describe("summarizeMoveResults", () => {
@@ -91,6 +100,10 @@ describe("summarizeMoveResults", () => {
   it("usa mensagem generica quando a API nao devolve erro", () => {
     const summary = summarizeMoveResults([{ id: "d1", ok: false }]);
     expect(summary.message).toBe("0 de 1 deals movidos. 1 falharam: Erro desconhecido");
+  });
+
+  it("trata lista vazia como nada a reportar", () => {
+    expect(summarizeMoveResults([])).toEqual({ moved: 0, failed: 0, failedIds: [], message: "" });
   });
 });
 

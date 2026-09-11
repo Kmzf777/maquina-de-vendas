@@ -32,7 +32,15 @@ export function buildMovePayload(
   return payload;
 }
 
+/**
+ * Quebra `items` em lotes de `size`. Lanca se `size` nao for positivo: com 0 ou
+ * negativo o laco nunca avanca e trava a aba. E utilitario exportado, entao a
+ * pre-condicao precisa ser explicita em vez de confiar em quem chama.
+ */
 export function chunk<T>(items: T[], size: number): T[][] {
+  if (!Number.isInteger(size) || size <= 0) {
+    throw new RangeError(`chunk: size deve ser um inteiro positivo, recebeu ${size}`);
+  }
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
