@@ -233,6 +233,10 @@ Suíte é `vitest` (`npm test` em `frontend/`), 792 testes verdes na baseline. O
 são de lógica pura em `src/lib/*.test.ts`, com exceção de `esteiras-tab.test.tsx`.
 
 **Arquivo novo:** `frontend/src/lib/bulk-move-deals.ts` + `bulk-move-deals.test.ts`
+**Arquivo novo:** `frontend/src/components/deals/stage-target-picker.test.tsx` (teste de componente,
+jsdom pelo docblock `@vitest-environment`, como o `esteiras-tab.test.tsx` já faz) — trava os
+defeitos 2 e 3 da seção "Correções descobertas em review". Cada um foi visto falhando com o bug
+reintroduzido antes de ser dado como coberto.
 
 Extrair a lógica que dá para testar sem DOM:
 
@@ -258,6 +262,72 @@ Verificação manual no navegador (`npm run dev`), porque nada disso é coberto 
 - "Mover" com 0 selecionados → desabilitado;
 - botão de mover travado até marcar o checkbox de confirmação;
 - em modo seleção, arrastar um card **não** move nada.
+
+## Correções descobertas em review
+
+O desenho acima estava incompleto. Quatro defeitos apareceram nas revisões de código durante a
+implementação — três deles corrompiam a posição do deal. Ficam registrados aqui porque as regras
+que os fecham fazem parte do contrato, não são detalhe de implementação.
+
+### 1. Não se troca de funil sem escolher a etapa do destino
+
+Ao trocar o funil no picker, a etapa é zerada até as etapas do destino chegarem. Se o usuário
+salvasse nessa janela — ou se o funil de destino não tivesse nenhuma etapa ativa, caso em que a
+etapa nunca é preenchida — o PATCH ia com `pipeline_id` novo e **sem** `stage_id`. O deal caía no
+funil novo carregando a etapa do funil antigo: nenhuma coluna casa com ela e o card sumia do
+board.
+
+**Regra:** no modal de detalhes, Salvar fica bloqueado enquanto houver troca de funil sem etapa
+escolhida, com a dica "Escolha a etapa do funil de destino". O caminho em massa já era imune —
+lá o botão só destrava com etapa escolhida *e* checkbox marcado.
+
+### 2. Etapas carregadas carregam junto o funil de origem
+
+Dois `useEffect` no mesmo commit leem o mesmo snapshot de render, então o `setLoading(true)` do
+efeito de fetch não era visível para o efeito de auto-seleção na mesma passada. Como as etapas
+carregadas só eram limpas na transição para o funil local, ir do funil remoto A para o remoto B
+deixava as etapas de A no estado — e o auto-select gravava `pipeline_id = B` com uma etapa de A.
+Quando B carregava, a etapa já estava preenchida e o guard bloqueava a correção: nunca se
+recuperava sozinho. `PATCH /api/deals/[id]` não valida que a etapa pertence ao funil, então o par
+errado chegava ao banco.
+
+**Regra:** as etapas carregadas ficam no estado junto com o id do funil que as originou
+(`{ pipelineId, stages }`), e só são legíveis quando esse id bate com o funil escolhido. `loading`
+passa a ser derivado disso em vez de estado próprio — assim não tem como dessincronizar do fetch
+que está realmente em curso.
+
+Travado por `stage-target-picker.test.tsx`, que foi visto falhando com o bug reintroduzido.
+
+### 3. Voltar ao funil do deal restaura a etapa dele
+
+O picker sempre auto-selecionava a **primeira** etapa do funil escolhido. Então trocar de funil e
+se arrepender ("mudei de ideia, volta pro P1") punha o card na primeira coluna do próprio funil em
+vez da etapa onde ele estava. A guarda do item 1 não pega — o funil voltou a ser o mesmo — e o
+`handleSave` inclui `stage_id` porque ele difere do original. Além de mover o card sem ninguém
+pedir, dispara a automação `deal_stage_enter` da etapa nova, que pode enfileirar WhatsApp.
+
+**Regra:** voltar para o funil do próprio deal restaura a etapa dele, quando ela ainda existe na
+lista. Só cai na primeira etapa se a original não estiver mais disponível. O modo em massa passa
+`currentStageId = null`, então continua sem pré-seleção.
+
+### 4. A seleção é zerada no render, não em efeito
+
+Zerar a seleção em `useEffect` ao trocar de funil renderizava uma vez com o board novo e a seleção
+antiga ainda valendo: o header mostrava "Mover (7)" num funil onde nada está selecionado, e um
+clique rápido abriria o diálogo com ids do funil anterior.
+
+**Regra:** o reset acontece no corpo do render, com um latch do funil anterior — padrão do React
+para "resetar estado quando algo muda". Fecha a janela e evita a segunda renderização.
+
+### Não aceitos
+
+Duas sugestões de revisão foram recusadas, para o registro:
+
+- Trocar o retorno `Record<string, string>` de `buildMovePayload` por um tipo nomeado. É a
+  assinatura que as tasks seguintes já consomem, e o ganho é cosmético.
+- Reescrever o comentário de `selectableStages` porque "ativas" não mapearia para nenhum campo.
+  Mapeia sim: `deal-kanban-filters.tsx` renderiza um toggle **"Deals ativos"** implementado
+  exatamente como `is_protected === false`. É o vocabulário da própria casa.
 
 ## Fora de escopo
 
