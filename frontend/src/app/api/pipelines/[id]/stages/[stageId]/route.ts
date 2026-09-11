@@ -69,11 +69,11 @@ export async function DELETE(
     .from("pipeline_stages")
     .select("key")
     .eq("id", stageId)
-    .single();
+    .maybeSingle();
   if (alvoError) return NextResponse.json({ error: alvoError.message }, { status: 500 });
   if (stageIsProtectedByKey(alvo?.key)) {
     return NextResponse.json(
-      { error: `Esta etapa tem a chave "${alvo.key}" e é usada pelo sistema. Renomeie em vez de remover.` },
+      { error: `Esta etapa tem a chave "${alvo?.key}" e é usada pelo sistema. Renomeie em vez de remover.` },
       { status: 409 }
     );
   }
