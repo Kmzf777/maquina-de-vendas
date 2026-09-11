@@ -735,8 +735,9 @@ export function BulkMoveModal({
             }}
           />
 
-          <div className="bg-[#fef6e7] border border-[#e8d5a8] rounded-[6px] px-3 py-2.5">
-            <p className="text-[12px] text-[#7a5c1e] leading-[1.5]">
+          {/* Trio de aviso já estabelecido no projeto (esteiras-tab, templates-tab). */}
+          <div className="bg-[#fff8e0] border border-[#eadfb4] rounded-[6px] px-3 py-2.5">
+            <p className="text-[12px] text-[#7a5a00] leading-[1.5]">
               Esta ação move {count} deal{count !== 1 ? "s" : ""} e não pode ser desfeita.
               As automações da etapa de destino serão disparadas para cada lead.
             </p>
