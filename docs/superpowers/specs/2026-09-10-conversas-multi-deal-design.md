@@ -191,3 +191,23 @@ externo passa essa prop hoje (`conversas/page.tsx` usa as duas instâncias sem i
 3. **`dedupe_open` não é escopado por funil** (`leads/service.py:1117`) — reaproveita
    qualquer deal aberto do lead, o que já colocou cards de reposição no funil errado.
    Problema de backend, independente deste trabalho.
+
+4. **Cadência move o card para etapa de outro funil.** A ação `move_deal_stage`
+   (`automation/engine.py:508`) grava `stage_id` no deal mais recente **de qualquer
+   funil**, sem tocar no `pipeline_id`, e o seletor de etapa da cadência
+   (`cadence-flow/inspector.tsx:439`) lista etapas de todos os funis. O painel agora
+   rotula essa linha como *"(fora deste funil)"* numa opção desabilitada, em vez de
+   abrir o dropdown em branco — mas a causa raiz é do backend e segue de pé.
+
+5. **`CLOSED_STAGE_KEYS` está duplicado** em `lib/deal-rows.ts` e `lib/lead-overview.ts`.
+   Unificar exigiria tocar um arquivo fora do escopo desta entrega.
+
+6. **`onDealUpdate` é prop morta em `ContactDetail`.** Nenhum dos dois call sites em
+   `conversas/page.tsx` a informa, então `handleDealUpdate` é sempre a implementação.
+   Herdada do `onDealStageChange` anterior; mantida para não alargar o diff.
+
+7. **Com zero funis cadastrados**, o painel mostra "Nenhuma oportunidade" e o botão de
+   criar abre um modal que não submete (`deal-create-modal.tsx:74` retorna calado). O
+   estado *"Nenhum funil configurado."* da seção Estágio antiga se perdeu. É estado de
+   instalação nova — `/api/pipelines` semeia os funis padrão — e o conserto pertence ao
+   modal, não a este painel.

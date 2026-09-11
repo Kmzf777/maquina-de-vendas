@@ -866,6 +866,23 @@ cd frontend && npm run build
 
 Expected: build completa sem erro.
 
+**Em worktree, o build precisa de `.env.local`.** Worktrees não herdam arquivos
+git-ignored, então `frontend/.env.local` não existe lá e o prerender de `/login`
+quebra com *"@supabase/ssr: Your project's URL and API key are required"* — falha
+ambiental, não do código. Copie o `.env.local` do checkout principal, rode o
+build, e **apague a cópia depois**: são credenciais de produção e não devem ficar
+espalhadas por diretórios extras. `.env.build` não serve — o Next não lê esse
+nome.
+
+E capture o exit code do **npm**, não o do pipe:
+
+```bash
+npm run build > /tmp/build.log 2>&1; echo "EXIT = $?"
+```
+
+`npm run build | tail -20` devolve o status do `tail` (sempre 0) e faz um build
+quebrado parecer verde.
+
 - [ ] **Step 4: Conferir os critérios de aceite contra o código**
 
 Ler `crm-perfil-tab.tsx` de ponta a ponta e confirmar:
