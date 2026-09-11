@@ -31,6 +31,9 @@ export function useStagesByPipeline(pipelineIds: string[]): {
 
     if (missing.length === 0) {
       setStagesByPipeline({ ...cacheRef.current });
+      // Também zera aqui: um batch abortado pula o .finally abaixo, e sem este
+      // reset o loading ficaria preso em true pelo resto da montagem.
+      setLoading(false);
       return;
     }
 
@@ -40,16 +43,22 @@ export function useStagesByPipeline(pipelineIds: string[]): {
     Promise.all(
       missing.map((id) =>
         fetch(`/api/pipelines/${id}/stages`, { signal: controller.signal })
-          .then((r) => (r.ok ? r.json() : []))
-          .then((data) => [id, (Array.isArray(data) ? data : []) as StageOption[]] as const)
-          .catch(() => [id, [] as StageOption[]] as const)
+          // null (e não []) distingue falha de funil legitimamente vazio. Como
+          // `missing` filtra por ausência no cache e [] é truthy, cachear a
+          // falha deixaria o funil sem stages para sempre — e stageOptions
+          // vazio desliga o dropdown de todos os deals dele, em silêncio.
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => [id, Array.isArray(data) ? (data as StageOption[]) : null] as const)
+          .catch(() => [id, null] as const)
       )
     )
       .then((entries) => {
-        // Sem este guard, um fetch abortado gravaria [] no cache e o funil
+        // Sem este guard, um fetch abortado gravaria no cache e o funil
         // ficaria permanentemente sem stages até um reload.
         if (controller.signal.aborted) return;
-        for (const [id, stages] of entries) cacheRef.current[id] = stages;
+        for (const [id, stages] of entries) {
+          if (stages !== null) cacheRef.current[id] = stages;
+        }
         setStagesByPipeline({ ...cacheRef.current });
       })
       .finally(() => {
