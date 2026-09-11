@@ -58,10 +58,15 @@ def test_move_os_cards_antes_de_apagar_a_etapa():
     )
 
 
-def test_esvazia_exatamente_proposta_e_negociacao_do_private_label():
+def test_esvazia_proposta_e_negociacao_DENTRO_do_update_que_move_cards():
+    """Nao basta os UUIDs aparecerem no arquivo: eles tem de estar no UPDATE que
+    esvazia as etapas. Citados num WHERE qualquer, os 27 cards ficam onde estao e o
+    DELETE seguinte levanta FK 23503."""
     sql = _sem_comentario()
-    assert PROPOSTA_PL in sql, "etapa 'Proposta' do Private Label nao e esvaziada"
-    assert NEGOCIACAO_PL in sql, "etapa 'Negociacao' do Private Label nao e esvaziada"
+    ini = sql.index("UPDATE deals SET stage_id")
+    update = sql[ini:sql.index(";", ini)]
+    assert PROPOSTA_PL in update, "'Proposta' do PL nao esta no UPDATE que move cards"
+    assert NEGOCIACAO_PL in update, "'Negociacao' do PL nao esta no UPDATE que move cards"
 
 
 def test_recupera_a_key_proposta_enviada_do_funil_reposicao():
@@ -74,14 +79,34 @@ def test_recupera_a_key_proposta_enviada_do_funil_reposicao():
     ), "a key 'proposta_enviada' nao e restaurada na etapa da Reposicao"
 
 
-def test_toda_etapa_dos_funis_do_joao_recebe_key():
-    """Etapa sem key e invisivel para o codigo de negocio, que resolve por key."""
+# (etapa, key) medidos em producao em 10/09/2026. Ancorar a key ao UUID e o que
+# separa "a migration faz a coisa certa" de "o arquivo contem as palavras certas".
+KEYS_POR_ETAPA = (
+    ("26103dba-b371-47a5-b990-70da776ccce5", "novo"),               # Atacado / Novo
+    ("6027a761-ed7e-4d34-b388-5ec2debbeaae", "respondeu"),          # Atacado / Em conversa
+    ("05b52405-806d-4f1f-89e8-f96c9fd86ba5", "novo"),               # PL / Novo
+    ("c778fe72-ed7c-49cc-b5c8-8d50b00dd84a", "respondeu"),          # PL / Contato -> Em conversa
+    ("07b4a308-c2ad-4896-99ee-caee30f926b8", "novo"),               # Reposicao / Cliente Ativo
+    ("58b9fbe0-c138-4dcb-8318-ed2409c61a9a", "chamado_reposicao"),  # Reposicao / Ja chamado
+    ("499ab4a7-ce6a-4362-b7a5-63b2c65fd9d0", "em_atencao"),         # Reposicao / Em atencao
+    ("d1a0a022-71fe-4ff9-bc7d-3ff813a4d9ec", "proposta_enviada"),   # Reposicao / a key perdida
+    ("699e0b61-ee7f-480e-827e-fd970379c7da", "entrada"),            # Recuperacao
+    ("d8d39be3-97ea-4a43-9cfe-bc95d0fb52b1", "em_followup"),        # Recuperacao
+    ("d5bad206-280a-461d-b122-d2c4f0f3a088", "recuperado"),         # Recuperacao
+)
+
+
+def test_cada_etapa_recebe_a_key_que_lhe_cabe():
+    """Etapa sem key e invisivel para o codigo de negocio, que resolve por key.
+
+    Checa o PAR (etapa, key) no mesmo statement: oito UPDATEs soltos com as keys
+    certas em etapas erradas passariam num assert de presenca.
+    """
     sql = _sem_comentario()
-    for key in (
-        "'novo'", "'respondeu'", "'em_atencao'", "'proposta_enviada'",
-        "'chamado_reposicao'", "'entrada'", "'em_followup'", "'recuperado'",
-    ):
-        assert f"SET key = {key}" in sql, f"nenhuma etapa recebe key {key}"
+    for uuid_etapa, key in KEYS_POR_ETAPA:
+        assert re.search(rf"SET key = '{key}'[^;]*{uuid_etapa}", sql), (
+            f"etapa {uuid_etapa} nao recebe a key '{key}'"
+        )
 
 
 def test_nao_usa_ja_chamado():
@@ -116,13 +141,16 @@ def test_recuperacao_so_recebe_as_tres_keys_decididas():
     )
 
 
-def test_protege_fechado_ganho_e_perdido():
+def test_protege_as_terminais_no_mesmo_statement():
     """Hoje NENHUMA etapa e protegida, e `_first_unprotected_stage_id` elege a etapa de
     entrada pelo menor order_index: um arrasta-e-solta infeliz faz todo card novo
-    nascer em 'Perdido'."""
+    nascer em 'Perdido'. A protecao tem de mirar as duas keys terminais."""
     sql = _sem_comentario()
-    assert "is_protected = true" in sql
-    assert "'fechado_ganho'" in sql and "'fechado_perdido'" in sql
+    ini = sql.index("is_protected = true")
+    stmt = sql[sql.rindex("UPDATE", 0, ini):sql.index(";", ini)]
+    assert "'fechado_ganho'" in stmt and "'fechado_perdido'" in stmt, (
+        "o UPDATE de is_protected nao mira fechado_ganho e fechado_perdido"
+    )
 
 
 def test_nao_preenche_conversion_event():
@@ -131,17 +159,33 @@ def test_nao_preenche_conversion_event():
     assert "conversion_event" not in _sem_comentario()
 
 
-def test_tem_guarda_que_aborta_se_o_estado_mudou():
-    """A migration foi escrita contra uma medicao de 10/09/2026. Se alguem mexer no
-    board antes de aplica-la, e melhor abortar do que espalhar card na coluna errada."""
+def test_guardas_abortam_nos_tres_casos_que_importam():
+    """A migration foi escrita contra uma medicao de 10/09/2026 e roda a mao, dias
+    depois, no funil de trabalho do vendedor. Tres coisas tem de abortar a transacao:
+    a etapa de origem sumiu, a de destino sumiu, ou o volume movido nao bate com o
+    esperado (sinal de WHERE errado)."""
     sql = _sem_comentario()
-    assert "RAISE EXCEPTION" in sql
+    assert sql.count("RAISE EXCEPTION") >= 3, (
+        f"so {sql.count('RAISE EXCEPTION')} guardas — esperado ao menos 3"
+    )
+    assert "GET DIAGNOSTICS" in sql, "a migration nao confere quantas linhas moveu"
+    assert re.search(r"NOT EXISTS\s*\(\s*SELECT[^)]*pipeline_stages", sql), (
+        "nenhuma guarda confere se as etapas esperadas ainda existem"
+    )
 
 
-def test_termina_com_notify_pgrst():
+def test_notify_pgrst_e_a_ULTIMA_instrucao():
     """Sem isso o PostgREST serve o schema em cache e o CRM responde PGRST204/205 com a
-    coluna ja existindo no banco. Precedente: 20260825:195 e 20260909:162."""
-    assert "NOTIFY pgrst" in _sql()
+    coluna ja existindo. E precisa vir DEPOIS do COMMIT: notificar dentro da transacao
+    avisa sobre um schema que ainda pode ser desfeito."""
+    txt = _sql().rstrip()
+    resto = txt[txt.rindex("NOTIFY pgrst"):]
+    assert ";" in resto and resto.split(";", 1)[1].strip() == "", (
+        "existe instrucao depois do NOTIFY pgrst"
+    )
+    assert txt.rindex("COMMIT") < txt.rindex("NOTIFY pgrst"), (
+        "o NOTIFY vem antes do COMMIT"
+    )
 
 
 def test_reclassifica_os_cards_de_novo_por_mensagem_e_nao_por_ultimo_falante():
