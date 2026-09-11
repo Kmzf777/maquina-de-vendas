@@ -234,7 +234,12 @@ function VendasPageInner() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error("Erro ao atualizar deal");
+    if (!res.ok) {
+      // A rota devolve mensagens úteis (ex.: "Permissão insuficiente para este funil.")
+      // ao mover para um funil de outro vendedor — jogar fora vira erro genérico na tela.
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Erro ao atualizar deal");
+    }
     setSelectedDealId(null);
   }
 
@@ -381,7 +386,7 @@ function VendasPageInner() {
       </div>
 
       {selectedDeal && (
-        <DealDetailSidebar deal={selectedDeal} stages={stages} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} onDelete={handleDeleteDeal} />
+        <DealDetailSidebar deal={selectedDeal} stages={stages} pipelines={pipelines} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} onDelete={handleDeleteDeal} />
       )}
       {showCreate && selectedPipelineId && (
         <DealCreateModal leads={leads} pipelines={pipelines} onClose={() => setShowCreate(false)} onCreate={handleCreateDeal} />
