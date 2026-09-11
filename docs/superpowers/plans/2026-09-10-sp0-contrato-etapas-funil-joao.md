@@ -545,13 +545,28 @@ def test_nao_usa_ja_chamado():
     assert "'ja_chamado'" not in _sem_comentario()
 
 
-def test_recuperacao_nao_ganha_proposta_enviada_nem_fechado_ganho():
-    """Decisao da reuniao (55:20, 54:39): a saida da Recuperacao e mudar de funil."""
+def test_recuperacao_so_recebe_as_tres_keys_decididas():
+    """Decisao da reuniao (55:20, 54:39): a saida da Recuperacao e MUDAR DE FUNIL, entao
+    ela nao ganha `proposta_enviada` nem `fechado_ganho` — e tambem nao entra no INSERT
+    de "Em atencao", que e estado terminal de esteira de 1a compra e de reposicao.
+
+    Checa por UUID, nao por nome de funil: o rotulo e editavel pelo operador.
+    """
     sql = _sem_comentario()
-    trecho = sql[sql.index(RECUPERACAO):]
-    fim = trecho.index("END $$") if "END $$" in trecho else len(trecho)
-    bloco = trecho[:fim]
-    assert "'fechado_ganho'" not in bloco or RECUPERACAO not in bloco.split("'fechado_ganho'")[0][-200:]
+    for uuid_etapa, key in (
+        ("699e0b61-ee7f-480e-827e-fd970379c7da", "'entrada'"),
+        ("d8d39be3-97ea-4a43-9cfe-bc95d0fb52b1", "'em_followup'"),
+        ("d5bad206-280a-461d-b122-d2c4f0f3a088", "'recuperado'"),
+    ):
+        assert re.search(rf"SET key = {key}[^;]*{uuid_etapa}", sql), (
+            f"etapa {uuid_etapa} da Recuperacao nao recebe {key}"
+        )
+
+    inicio = sql.index("INSERT INTO pipeline_stages")
+    bloco_insert = sql[inicio:sql.index(";", inicio)]
+    assert RECUPERACAO not in bloco_insert, (
+        "o funil de Recuperacao nao deve ganhar a etapa 'Em atencao'"
+    )
 
 
 def test_protege_fechado_ganho_e_perdido():
@@ -592,7 +607,11 @@ def test_reclassifica_os_cards_de_novo_por_mensagem_e_nao_por_ultimo_falante():
     sql = _sem_comentario()
     assert "role = 'user'" in sql, "a reclassificacao nao olha mensagem do lead"
     assert "mode = 'human'" in sql, "a reclassificacao nao restringe ao canal do vendedor"
-    assert "last_customer_message_at" not in sql or "role = 'user'" in sql
+    # O criterio errado seria classificar por quem falou por ultimo. Se a migration usar
+    # `last_customer_message_at` para decidir a etapa, e sinal de que foi por esse caminho.
+    assert "last_customer_message_at" not in sql, (
+        "a reclassificacao parece usar 'quem falou por ultimo', que da 792 de 810 leads"
+    )
 ```
 
 - [ ] **Step 2: Rodar e confirmar que falha**
