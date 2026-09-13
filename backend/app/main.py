@@ -84,6 +84,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("[STARTUP] seed das esteiras falhou: %s", exc)
 
+    # Esteiras do Joao (reuniao de 10/09/2026): 6 campanhas (3 esteiras x 2 funis,
+    # Atacado/Private Label) ja com pipeline_id e channel_id conhecidos. Mesma
+    # doutrina do seed acima — cria uma vez, nunca sobrescreve, fail-soft.
+    try:
+        from app.campaigns.esteiras_joao import seed_esteiras_joao
+        await asyncio.to_thread(seed_esteiras_joao)
+    except Exception as exc:
+        logger.error("[STARTUP] seed das esteiras do Joao falhou: %s", exc)
+
     flusher_task = asyncio.create_task(run_flusher(app))
     watchdog_task = asyncio.create_task(run_watchdog(app))
 
