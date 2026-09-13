@@ -4,9 +4,10 @@
 DIFERENCA para `esteiras.py` (o seed generico das 4 esteiras antigas): aquele nao sabe
 o canal/funil da instalacao e deixa `channel_id`/`pipeline_id` em None, "preenchido na
 tela". Este AQUI e amarrado a um vendedor especifico de proposito — a reuniao decidiu o
-desenho para o Joao, com os funis e o canal dele ja conhecidos (tabela abaixo) — entao o
-seed ja nasce com pipeline_id e channel_id corretos. So o TEMPLATE fica para a tela: os
-5 textos da reuniao ainda nao foram submetidos a aprovacao da Meta.
+desenho para o Joao, com os funis, o canal e as etapas de destino dele ja conhecidos
+(tabela abaixo) — entao o seed ja nasce com `pipeline_id`, `channel_id` e o `stage_id`
+de destino (`em_atencao`) corretos, um por funil. So o TEMPLATE fica para a tela: os 5
+textos da reuniao ainda nao foram submetidos a aprovacao da Meta.
 
 Mesmo padrao do `esteiras.py`: UUID determinístico por `uuid5` incluindo o `env_tag` no
 namespace (dev e producao apontam para o MESMO Supabase; sem o env_tag, o primeiro
@@ -53,6 +54,14 @@ PIPELINE_PRIVATE_LABEL = "24fb6ce8-6b7b-4612-970d-8debb8c041b7"
 PIPELINE_REPOSICAO_ATACADO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"
 PIPELINE_REPOSICAO_PRIVATE_LABEL = "9c027143-72f6-42d6-861f-a494ba5bbb4f"
 CANAL_JOAO = "a3a607b1-6bff-4370-8609-b275eef270dd"
+
+# stage_id (nao key) da etapa "Em atencao" de CADA funil — medido em producao. Ver
+# `_mover_para_em_atencao` para o porque de ser stage_id e nao stage_key: o motor
+# (`automation/engine.py::_execute_action`) so le `stage_id`, sem fallback por key.
+STAGE_EM_ATENCAO_ATACADO = "db9c9955-df87-4e0f-99ce-8e97039063a6"
+STAGE_EM_ATENCAO_PRIVATE_LABEL = "e7f4a1ee-0785-4f43-b6db-c1b846255b03"
+STAGE_EM_ATENCAO_REPOSICAO_ATACADO = "499ab4a7-ce6a-4362-b7a5-63b2c65fd9d0"
+STAGE_EM_ATENCAO_REPOSICAO_PRIVATE_LABEL = "6a232838-221a-4e10-b2e1-100581e63601"
 
 # Janela de envio, mesmo racional do esteiras.py: o default da coluna (7h-18h) e cedo
 # demais para retomada comercial.
@@ -131,20 +140,22 @@ def _wait(key: str, no: str, dias: int) -> dict[str, Any]:
     return {"id": _nid(key, no), "type": "wait", "config": {"days": dias}}
 
 
-def _mover_para_em_atencao(key: str, no: str) -> dict[str, Any]:
+def _mover_para_em_atencao(key: str, no: str, stage_id: str) -> dict[str, Any]:
     return {
         "id": _nid(key, no), "type": "action",
         "config": {
             "action_type": "move_deal_stage",
-            # `stage_id: None` — assim como o `mark_deal_lost` do esteiras.py generico,
-            # `engine._execute_action` retorna cedo (no-op) sem ele. A tabela de UUIDs
-            # da reuniao nao inclui a etapa "em_atencao" de cada um dos 4 funis (so os
-            # 4 funis + o canal), entao o seed nao pode adivinhar o id.
-            "stage_id": None,
-            # Sinalizacao de INTENCAO para quem for resolver `stage_id` (tela ou
-            # router futuro, mesmo espirito do `_perdido_stage_id` que o
-            # esteiras_router.py usa para a esteira de reposicao antiga). O engine
-            # (`_execute_action`) NAO le esta chave hoje — só `stage_id`.
+            # HARDCODED (medido em producao — ver STAGE_EM_ATENCAO_* acima), nao None.
+            # `engine._execute_action` so LE `stage_id`; nao existe fallback por
+            # `stage_key` no motor. Com `stage_id: None` a acao era um no-op
+            # SILENCIOSO: os toques saiam normalmente, mas o card nunca se movia para
+            # "Em atencao" — o estado terminal que a reuniao pediu. Mesmo racional dos
+            # UUIDs de funil/canal acima: hardcode e mais seguro que nome/key aqui,
+            # porque a KEY e editavel pela tela e ja quebrou este sistema duas vezes.
+            "stage_id": stage_id,
+            # `stage_key` fica ao lado so como DOCUMENTACAO da intencao, para quem for
+            # ler o grafo entender qual etapa e essa — o motor le exclusivamente
+            # `stage_id` acima, nunca esta chave.
             "stage_key": "em_atencao",
         },
     }
@@ -200,7 +211,7 @@ _NOVO_PRIVATE_LABEL = _esteira(
 # ── "Em conversa" — 7 toques em 30 dias, on_reply='reset', termina em em_atencao ──
 
 
-def _em_conversa_nodes(key: str, pipeline_id: str) -> list[dict]:
+def _em_conversa_nodes(key: str, pipeline_id: str, em_atencao_stage_id: str) -> list[dict]:
     # D+2, D+4, D+7, D+12, D+18, D+24, D+30 a partir da entrada na etapa 'respondeu'.
     # O toque 1 sai no proprio disparo do gatilho (stage_days=2); os seis toques
     # seguintes usam `wait` com os deltas restantes: 2, 3, 5, 6, 6, 6.
@@ -219,7 +230,11 @@ def _em_conversa_nodes(key: str, pipeline_id: str) -> list[dict]:
         _send(key, "t6"),
         _wait(key, "w6", 6),
         _send(key, "t7"),
-        _mover_para_em_atencao(key, "a1"),
+        # SEMPRE o em_atencao do MESMO funil do gatilho (`pipeline_id` acima) — as
+        # quatro esteiras que terminam em em_atencao tem quatro destinos distintos,
+        # nunca compartilhados entre funis. Trocar os dois moveria o card pro funil
+        # errado.
+        _mover_para_em_atencao(key, "a1", em_atencao_stage_id),
         _end(key, "fim"),
     ]
 
@@ -231,7 +246,7 @@ _EM_CONVERSA_ATACADO = _esteira(
     "Atacado. Qualquer resposta do lead volta o relogio para D+0 (on_reply=reset). "
     "Termina movendo o card para 'em_atencao'.",
     priority=7,
-    nodes=_em_conversa_nodes("em_conversa_atacado", PIPELINE_ATACADO),
+    nodes=_em_conversa_nodes("em_conversa_atacado", PIPELINE_ATACADO, STAGE_EM_ATENCAO_ATACADO),
 )
 
 _EM_CONVERSA_PRIVATE_LABEL = _esteira(
@@ -241,13 +256,15 @@ _EM_CONVERSA_PRIVATE_LABEL = _esteira(
     "Private Label. Qualquer resposta do lead volta o relogio para D+0 "
     "(on_reply=reset). Termina movendo o card para 'em_atencao'.",
     priority=7,
-    nodes=_em_conversa_nodes("em_conversa_private_label", PIPELINE_PRIVATE_LABEL),
+    nodes=_em_conversa_nodes(
+        "em_conversa_private_label", PIPELINE_PRIVATE_LABEL, STAGE_EM_ATENCAO_PRIVATE_LABEL,
+    ),
 )
 
 # ── "Reposicao" — stage_days=45, toques de 3/15/15, termina em em_atencao ───────
 
 
-def _reposicao_nodes(key: str, pipeline_id: str) -> list[dict]:
+def _reposicao_nodes(key: str, pipeline_id: str, em_atencao_stage_id: str) -> list[dict]:
     # Card em "Cliente Ativo" (key 'novo' do funil de reposicao) ha 45 dias -> toque
     # imediato, depois D+3, D+18(+15), D+33(+15).
     return [
@@ -259,7 +276,9 @@ def _reposicao_nodes(key: str, pipeline_id: str) -> list[dict]:
         _send(key, "t3"),
         _wait(key, "w3", 15),
         _send(key, "t4"),
-        _mover_para_em_atencao(key, "a1"),
+        # SEMPRE o em_atencao do MESMO funil de reposicao do gatilho — ver o
+        # comentario equivalente em `_em_conversa_nodes`.
+        _mover_para_em_atencao(key, "a1", em_atencao_stage_id),
         _end(key, "fim"),
     ]
 
@@ -271,7 +290,9 @@ _REPOSICAO_ATACADO = _esteira(
     "dias. Toque imediato, depois D+3, D+18 e D+33. Termina movendo o card para "
     "'em_atencao'.",
     priority=4,
-    nodes=_reposicao_nodes("reposicao_atacado", PIPELINE_REPOSICAO_ATACADO),
+    nodes=_reposicao_nodes(
+        "reposicao_atacado", PIPELINE_REPOSICAO_ATACADO, STAGE_EM_ATENCAO_REPOSICAO_ATACADO,
+    ),
 )
 
 _REPOSICAO_PRIVATE_LABEL = _esteira(
@@ -281,7 +302,10 @@ _REPOSICAO_PRIVATE_LABEL = _esteira(
     "ha 45 dias. Toque imediato, depois D+3, D+18 e D+33. Termina movendo o card "
     "para 'em_atencao'.",
     priority=4,
-    nodes=_reposicao_nodes("reposicao_private_label", PIPELINE_REPOSICAO_PRIVATE_LABEL),
+    nodes=_reposicao_nodes(
+        "reposicao_private_label", PIPELINE_REPOSICAO_PRIVATE_LABEL,
+        STAGE_EM_ATENCAO_REPOSICAO_PRIVATE_LABEL,
+    ),
 )
 
 ESTEIRAS_JOAO: tuple[dict[str, Any], ...] = (

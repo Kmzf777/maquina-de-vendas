@@ -15,6 +15,12 @@ Decisoes da reuniao que este seed materializa (ver `app/campaigns/esteiras_joao.
 
 Cada esteira existe 2x (Atacado / Private Label) porque o gatilho e por funil e as
 mensagens diferem — 6 campanhas ao todo, todas no canal do Joao.
+
+O destino `em_atencao` da acao final vem HARDCODED (stage_id, medido em producao),
+nao None: `automation/engine.py::_execute_action` so le `stage_id` — sem ele, a acao
+`move_deal_stage` e um no-op silencioso (os toques saem, o card nunca se move). Os 4
+funis tem 4 stage_ids de "em atencao" distintos; a esteira tem de apontar para o do
+SEU PROPRIO funil.
 """
 from unittest.mock import MagicMock, patch
 
@@ -193,10 +199,43 @@ def test_em_conversa_e_reposicao_terminam_movendo_para_em_atencao():
         assert len(acoes) == 1
         assert acoes[0]["action_type"] == "move_deal_stage"
         assert acoes[0]["stage_key"] == "em_atencao"
-        # stage_id fica None de proposito: nao temos o uuid de em_atencao por funil
-        # nesta lista (so os 4 funis + o canal foram dados) — fica para a tela/router
-        # resolver, mesmo padrao do `mark_deal_lost` do esteiras.py generico.
-        assert acoes[0]["stage_id"] is None
+        # stage_id vem HARDCODED (medido em producao) — nao None. `_execute_action` so
+        # le `stage_id`, sem fallback por `stage_key`: com None a acao era um no-op
+        # silencioso (os toques saiam, o card nunca se movia). `stage_key` acima fica
+        # so como documentacao da intencao para quem for ler o grafo.
+        assert acoes[0]["stage_id"] is not None
+
+
+# Mapa funil -> stage_id de "em atencao" DAQUELE funil — usado para garantir que cada
+# esteira aponte para o destino do seu PROPRIO funil, nunca do funil irmao.
+_EM_ATENCAO_POR_FUNIL = {
+    esteiras_joao.PIPELINE_ATACADO: esteiras_joao.STAGE_EM_ATENCAO_ATACADO,
+    esteiras_joao.PIPELINE_PRIVATE_LABEL: esteiras_joao.STAGE_EM_ATENCAO_PRIVATE_LABEL,
+    esteiras_joao.PIPELINE_REPOSICAO_ATACADO: esteiras_joao.STAGE_EM_ATENCAO_REPOSICAO_ATACADO,
+    esteiras_joao.PIPELINE_REPOSICAO_PRIVATE_LABEL: esteiras_joao.STAGE_EM_ATENCAO_REPOSICAO_PRIVATE_LABEL,
+}
+
+
+def test_toda_acao_move_deal_stage_tem_stage_id_nao_nulo():
+    """Guarda contra reintroduzir o no-op silencioso: `_execute_action` retorna cedo
+    (sem mover nada, sem erro) quando `stage_id` e None — a esteira rodaria todos os
+    toques e nunca chegaria no estado terminal que a reuniao pediu."""
+    acoes = [
+        n["config"] for e in esteiras_joao.ESTEIRAS_JOAO for n in e["nodes"]
+        if n["type"] == "action" and n["config"].get("action_type") == "move_deal_stage"
+    ]
+    assert len(acoes) == 4  # "Em conversa" x2 + "Reposicao" x2; "Novo" nao tem acao
+    for acao in acoes:
+        assert acao["stage_id"] is not None
+
+
+def test_stage_id_de_destino_pertence_ao_funil_da_propria_esteira():
+    """Trocar dois UUIDs de lugar moveria o card para o funil ERRADO, sem erro
+    nenhum (a coluna existe, so nao e a do funil do card) — o bug mais facil aqui."""
+    for e in _por_prefixo("em_conversa_") + _por_prefixo("reposicao_"):
+        pipeline_id = _trigger(e)["config"]["pipeline_id"]
+        acao = next(n["config"] for n in e["nodes"] if n["type"] == "action")
+        assert acao["stage_id"] == _EM_ATENCAO_POR_FUNIL[pipeline_id]
 
 
 # ── Grafo ligado: todo no aponta para um id que existe no proprio grafo ─────────
