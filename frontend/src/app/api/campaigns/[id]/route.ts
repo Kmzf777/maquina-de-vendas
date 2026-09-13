@@ -4,6 +4,11 @@ import { isSystemCampaign } from "@/lib/system-campaign";
 
 type Params = { params: Promise<{ id: string }> };
 
+// Mesma lista fechada do POST (src/app/api/campaigns/route.ts) — sem ela, dava pra
+// criar uma cadência com o público certo mas não dava pra corrigir depois (PATCH
+// fazia spread cego de `body` sem validar nada).
+const AUDIENCIAS = ["ia", "humano", "ambos"];
+
 function systemCampaignBlock() {
   return NextResponse.json(
     { error: "Cadência de sistema (espelho do motor da Valéria) — somente leitura" },
@@ -24,6 +29,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
   if (isSystemCampaign(id)) return systemCampaignBlock();
   const body = await request.json();
+  if (body.audience !== undefined && !AUDIENCIAS.includes(body.audience)) {
+    return NextResponse.json({ error: "audience inválido — use ia, humano ou ambos" }, { status: 400 });
+  }
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("campaigns")

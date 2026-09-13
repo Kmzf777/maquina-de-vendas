@@ -7,6 +7,7 @@ import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
+import { CampaignEnrollmentsTable } from "@/components/campaigns/cadence-enrollments-table";
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
@@ -60,6 +61,10 @@ function CampanhasPageInner() {
   const [channels, setChannels] = useState<{ id: string; name: string; is_active: boolean; provider: string }[]>([]);
   const [priority, setPriority] = useState(5);
   const [frequencyCap, setFrequencyCap] = useState(1);
+  // Sem esse campo toda cadência nasce com audience='ia' (default do banco) e fica
+  // cega para os leads do vendedor — eles têm ai_enabled=False por definição (o
+  // handoff desliga a IA), então uma automação 'ia' nunca os alcança.
+  const [audience, setAudience] = useState("ia");
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
   // Estado do espelho do motor (regra Redis /api/cadence/mirror-visibility). O
@@ -115,7 +120,7 @@ function CampanhasPageInner() {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap, channel_id: channelId || null }),
+        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap, channel_id: channelId || null, audience }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -125,6 +130,7 @@ function CampanhasPageInner() {
       const camp = await res.json();
       setCadenceName("");
       setChannelId("");
+      setAudience("ia");
       setShowCadenceModal(false);
       router.push(`/campanhas/cadencias/${camp.id}`);
     } catch (e) {
@@ -274,6 +280,15 @@ function CampanhasPageInner() {
                 )}
               </div>
             </div>
+
+            {/* Leads em cadência — visão cruzada de todas as campanhas (item pedido
+                pelo dono: quais leads estão em jobs de disparo agora e em qual cadência). */}
+            <section className="mt-8">
+              <h2 className="text-[13px] font-medium uppercase tracking-[0.6px] text-[#7b7b78] mb-3">
+                Leads em cadência
+              </h2>
+              <CampaignEnrollmentsTable />
+            </section>
           </div>
         )}
 
@@ -321,7 +336,7 @@ function CampanhasPageInner() {
           <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[14px] font-normal text-[#111111]">Nova Cadencia</h2>
-              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); setAudience("ia"); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
             </div>
             <div className="space-y-4">
               <div>
@@ -385,13 +400,33 @@ function CampanhasPageInner() {
                 />
               </div>
 
+              {/* Público (campaigns.audience) — sem este campo toda cadência nasce
+                  'ia' (default do banco) e é cega para os leads do vendedor: eles
+                  têm ai_enabled=False por definição (o handoff desliga a IA), então
+                  uma automação 'ia' nunca os alcança. Fallback continua 'ia' na API
+                  de propósito — é o comportamento histórico, não o mais permissivo. */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Público
+                </label>
+                <select
+                  value={audience}
+                  onChange={(e) => setAudience(e.target.value)}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                >
+                  <option value="ia">Leads da ValerIA (IA ligada)</option>
+                  <option value="humano">Leads do vendedor (IA desligada)</option>
+                  <option value="ambos">Ambos</option>
+                </select>
+              </div>
+
               <p className="text-[12px] text-[#7b7b78]">
                 Apos criar, voce podera configurar steps, triggers e demais opcoes na pagina de detalhe.
               </p>
             </div>
             <div className="pt-4 border-t border-[#dedbd6] mt-4 flex justify-end gap-2">
               <button
-                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); }}
+                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); setAudience("ia"); }}
                 className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar

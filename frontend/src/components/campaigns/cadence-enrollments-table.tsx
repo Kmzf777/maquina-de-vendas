@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import type { CampaignEnrollment } from "@/lib/types";
 
 interface CampaignEnrollmentsTableProps {
-  campaignId: string;
+  /** Ausente = todas as campanhas (visão cruzada da home de /campanhas). */
+  campaignId?: string;
 }
 
 const STATUS_LABELS: Record<string, { style: string; label: string }> = {
@@ -32,14 +33,20 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
 
+  // Sem campaignId (visão cruzada da home) não há rota /api/campaigns/:id/enrollments
+  // para bater — a query vai direto ao Supabase (RLS de campaign_enrollments já
+  // escopa por campanha->canal, ver 20260703_rls_fase3_all_tables.sql), e ganha o
+  // embed campaigns(id, name) para a coluna "Cadência" da visão cruzada.
   const fetchEnrollments = useCallback(async () => {
-    const res = await fetch(`/api/campaigns/${campaignId}/enrollments`);
-    if (res.ok) {
-      const json = await res.json();
-      // Route returns either flat array or { data: [...] }
-      const arr = Array.isArray(json) ? json : (json.data ?? []);
-      setEnrollments(arr);
-    }
+    const supabase = createClient();
+    let query = supabase
+      .from("campaign_enrollments")
+      .select("*, leads(id, name, phone, company, stage), campaigns(id, name)")
+      .order("next_execute_at", { ascending: true })
+      .limit(200);
+    if (campaignId) query = query.eq("campaign_id", campaignId);
+    const { data, error } = await query;
+    if (!error) setEnrollments(data ?? []);
     setLoading(false);
   }, [campaignId]);
 
@@ -48,15 +55,12 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
 
     const supabase = createClient();
     const channel = supabase
-      .channel(`campaign-enrollments-${campaignId}`)
+      .channel(campaignId ? `campaign-enrollments-${campaignId}` : "campaign-enrollments-all")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "campaign_enrollments",
-          filter: `campaign_id=eq.${campaignId}`,
-        },
+        campaignId
+          ? { event: "*", schema: "public", table: "campaign_enrollments", filter: `campaign_id=eq.${campaignId}` }
+          : { event: "*", schema: "public", table: "campaign_enrollments" },
         () => fetchEnrollments()
       )
       .subscribe();
@@ -67,15 +71,18 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
   }, [campaignId, fetchEnrollments]);
 
   const handleAction = async (
-    enrollId: string,
+    enrollment: CampaignEnrollment,
     action: "pause" | "resume" | "remove"
   ) => {
+    // Usa o campaign_id da própria linha (não o prop) — na visão cruzada não há
+    // campaignId, e cada linha pode pertencer a uma cadência diferente.
+    const cid = enrollment.campaign_id;
     if (action === "remove") {
-      await fetch(`/api/campaigns/${campaignId}/enrollments/${enrollId}`, {
+      await fetch(`/api/campaigns/${cid}/enrollments/${enrollment.id}`, {
         method: "DELETE",
       });
     } else {
-      await fetch(`/api/campaigns/${campaignId}/enrollments/${enrollId}`, {
+      await fetch(`/api/campaigns/${cid}/enrollments/${enrollment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
@@ -97,6 +104,7 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
   });
 
   const filters = ["all", "active", "paused", "completed", "failed"];
+  const showCampaignColumn = !campaignId;
 
   if (loading)
     return (
@@ -135,7 +143,7 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
 
         {filtered.length === 0 ? (
           <p className="text-[14px] text-[#7b7b78] text-center py-8">
-            Nenhum lead nesta cadência
+            {campaignId ? "Nenhum lead nesta cadência" : "Nenhum lead em cadência no momento"}
           </p>
         ) : (
           <table className="w-full">
@@ -144,6 +152,11 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
                 <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">
                   Lead
                 </th>
+                {showCampaignColumn && (
+                  <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">
+                    Cadência
+                  </th>
+                )}
                 <th className="px-4 py-3 text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] text-left font-normal">
                   Status
                 </th>
@@ -170,6 +183,13 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
                     </p>
                     <p className="text-[12px] text-[#7b7b78]">{e.leads?.phone}</p>
                   </td>
+                  {showCampaignColumn && (
+                    <td className="px-4 py-3">
+                      <span className="text-[13px] text-[#111111]">
+                        {e.campaigns?.name ?? "—"}
+                      </span>
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <StatusBadge status={e.status} />
                   </td>
@@ -194,7 +214,7 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
                     <div className="flex gap-2">
                       {e.status === "active" && (
                         <button
-                          onClick={() => handleAction(e.id, "pause")}
+                          onClick={() => handleAction(e, "pause")}
                           className="text-[13px] text-[#7b7b78] hover:text-[#111111] transition-colors"
                         >
                           Pausar
@@ -202,14 +222,14 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
                       )}
                       {e.status === "paused" && (
                         <button
-                          onClick={() => handleAction(e.id, "resume")}
+                          onClick={() => handleAction(e, "resume")}
                           className="text-[13px] text-[#0bdf50] hover:text-[#0bdf50]/70 transition-colors"
                         >
                           Retomar
                         </button>
                       )}
                       <button
-                        onClick={() => handleAction(e.id, "remove")}
+                        onClick={() => handleAction(e, "remove")}
                         className="text-[13px] text-[#c41c1c] hover:text-[#c41c1c]/70 transition-colors"
                       >
                         Remover

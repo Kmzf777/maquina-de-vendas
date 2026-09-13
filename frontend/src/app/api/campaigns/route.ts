@@ -20,6 +20,13 @@ export async function GET() {
   return NextResponse.json({ data: rows });
 }
 
+// campaigns.audience ('ia' | 'humano' | 'ambos', default 'ia' no banco) escolhe quem a
+// cadência alcança. Sem validar contra lista fechada, um valor solto no body vazaria
+// pro banco; sem o fallback "ia", o builder poderia criar campanha invisível para
+// TODOS os leads (nem ia, nem humano) por um typo. "ia" é o comportamento histórico,
+// nunca o mais permissivo.
+const AUDIENCIAS = ["ia", "humano", "ambos"];
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const supabase = await getServiceSupabase();
@@ -32,6 +39,7 @@ export async function POST(request: NextRequest) {
       channel_id: body.channel_id ?? null,
       priority: body.priority ?? null,
       frequency_cap: body.frequency_cap ?? null,
+      audience: AUDIENCIAS.includes(body.audience) ? body.audience : "ia",
       env_tag: APP_ENV,
     })
     .select()
