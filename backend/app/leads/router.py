@@ -122,9 +122,11 @@ async def mark_lead_won(lead_id: str, body: WonSalePayload, background_tasks: Ba
     result = mark_deal_won(lead_id, value=body.value, currency=body.currency, deal_id=body.deal_id)
 
     # Ciclo de reposição: deal ganho → garante nova oportunidade aberta (fail-soft).
+    # deal_id vem do próprio resultado de mark_deal_won: o destino do card de
+    # reposição depende do funil de ORIGEM deste deal (não do lead em geral).
     if result.get("deals_updated"):
         from app.leads.reposicao import ensure_reposicao_deal
-        ensure_reposicao_deal(lead_id)
+        ensure_reposicao_deal(lead_id, deal_id=result.get("deal_id"))
 
     # Disparo da conversão fora do caminho crítico (latência da Meta/Google).
     if result.get("deal_id"):

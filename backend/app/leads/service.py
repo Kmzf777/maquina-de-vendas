@@ -1057,7 +1057,7 @@ def get_lead(lead_id: str) -> dict[str, Any] | None:
     return result.data[0] if result.data else None
 
 
-def get_open_deal(lead_id: str) -> dict[str, Any] | None:
+def get_open_deal(lead_id: str, *, pipeline_id: str | None = None) -> dict[str, Any] | None:
     """Retorna o deal ABERTO (closed_at IS NULL) mais recente do lead, ou None.
 
     'Aberto' = ainda não fechado (nem ganho nem perdido). Serve como guard de
@@ -1065,20 +1065,27 @@ def get_open_deal(lead_id: str) -> dict[str, Any] | None:
     de boas-vindas da LP cria o card em 'Valeria - X / Entrada') e depois a IA chama
     encaminhar_humano, queremos reaproveitar esse card em vez de criar um segundo.
 
+    `pipeline_id` opcional escopa a busca a um único funil. Sem ele, mantém o
+    comportamento histórico: qualquer deal aberto do lead, em qualquer funil, é
+    candidato a reaproveitamento — é o que o fluxo LP→inbound→encaminhar_humano
+    precisa. Com ele, só um deal aberto NAQUELE funil conta — necessário para dedupes
+    como o de reposição, onde reaproveitar um card aberto em outro funil (ex.: o
+    handoff da ValerIA) faria o card de reposição nunca nascer.
+
     Fail-soft: em caso de erro de consulta retorna None (o chamador decide criar) —
     nunca levanta para não derrubar o fluxo que a chamou.
     """
     sb = get_supabase()
     try:
-        res = (
+        query = (
             sb.table("deals")
             .select("id, title, pipeline_id, stage_id, category")
             .eq("lead_id", lead_id)
             .is_("closed_at", "null")
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
         )
+        if pipeline_id:
+            query = query.eq("pipeline_id", pipeline_id)
+        res = query.order("created_at", desc=True).limit(1).execute()
     except Exception as exc:
         logger.error(
             "get_open_deal: falha ao buscar deal aberto do lead %s: %s", lead_id, exc, exc_info=True
@@ -1093,29 +1100,40 @@ def create_deal(
     category: str | None = None,
     *,
     pipeline_name: str | None = None,
+    pipeline_id: str | None = None,
     stage_label: str | None = None,
+    stage_key: str | None = None,
     dedupe_open: bool = False,
+    dedupe_pipeline_id: str | None = None,
 ) -> dict[str, Any]:
     """Cria um deal (card de CRM) para o lead.
 
     Resolução do PIPELINE (precedência):
-      1. `pipeline_name` explícito (ex.: 'Valeria - Atacado') — usado pelo roteamento de LP.
-      2. `category` → CATEGORY_PIPELINE_NAMES.
-      3. fallback: primeiro pipeline por order_index.
+      1. `pipeline_id` explícito (UUID) — usado quando o chamador já resolveu o funil
+         de destino ele mesmo (ex.: reposição, cujo destino depende do funil de
+         origem da venda). UUID não é editável pela tela, ao contrário do nome.
+      2. `pipeline_name` explícito (ex.: 'Valeria - Atacado') — usado pelo roteamento de LP.
+      3. `category` → CATEGORY_PIPELINE_NAMES.
+      4. fallback: primeiro pipeline por order_index.
     Se um nome explícito/por categoria não existir naquele ambiente (ex.: pipelines da
     Valeria não existem no homolog), cai no fallback — o código roda em dev e prod sem
     modificação, só muda o dado.
 
-    Resolução do STAGE: se `stage_label` for informado e existir no pipeline resolvido
-    (ex.: 'Entrada'), usa-o; senão a primeira coluna não-protegida por order_index.
+    Resolução do STAGE: se `stage_key` for informado, resolve por key (autoritativo —
+    sobrevive a renome de rótulo na tela) com fallback em `stage_label`; senão usa só
+    `stage_label` se existir no pipeline resolvido; senão a primeira coluna
+    não-protegida por order_index.
 
-    `dedupe_open=True`: se o lead já tiver um deal aberto, reaproveita-o e NÃO insere outro
-    (retorna o existente). Evita cards duplicados no fluxo LP→inbound→encaminhar_humano.
+    `dedupe_open=True`: se o lead já tiver um deal aberto, reaproveita-o e NÃO insere
+    outro (retorna o existente). Evita cards duplicados no fluxo
+    LP→inbound→encaminhar_humano. `dedupe_pipeline_id` escopa essa busca a um único
+    funil — sem ele, qualquer deal aberto do lead (em qualquer funil) é reaproveitado,
+    o comportamento histórico.
     """
     sb = get_supabase()
 
     if dedupe_open:
-        existing = get_open_deal(lead_id)
+        existing = get_open_deal(lead_id, pipeline_id=dedupe_pipeline_id)
         if existing:
             logger.info(
                 "create_deal: lead %s já possui deal aberto %s — reaproveitando (sem duplicar)",
@@ -1123,36 +1141,43 @@ def create_deal(
             )
             return existing
 
-    pipeline_id: str | None = None
+    resolved_pipeline_id: str | None = None
     stage_id: str | None = None
 
-    # (1) pipeline explícito por nome
-    if pipeline_name:
+    # (1) pipeline_id explícito (UUID) — maior precedência, não editável pela tela
+    if pipeline_id:
+        resolved_pipeline_id = pipeline_id
+
+    # (2) pipeline explícito por nome
+    if not resolved_pipeline_id and pipeline_name:
         p = sb.table("pipelines").select("id").eq("name", pipeline_name).limit(1).execute()
         if p.data:
-            pipeline_id = p.data[0]["id"]
+            resolved_pipeline_id = p.data[0]["id"]
 
-    # (2) pipeline derivado da categoria
-    if not pipeline_id:
+    # (3) pipeline derivado da categoria
+    if not resolved_pipeline_id:
         cat_pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
         if cat_pipeline_name:
             p = sb.table("pipelines").select("id").eq("name", cat_pipeline_name).limit(1).execute()
             if p.data:
-                pipeline_id = p.data[0]["id"]
+                resolved_pipeline_id = p.data[0]["id"]
 
-    # (3) fallback: primeiro pipeline
-    if not pipeline_id:
+    # (4) fallback: primeiro pipeline
+    if not resolved_pipeline_id:
         p = sb.table("pipelines").select("id").order("order_index", desc=False).limit(1).execute()
         if p.data:
-            pipeline_id = p.data[0]["id"]
+            resolved_pipeline_id = p.data[0]["id"]
 
-    if pipeline_id:
-        # Stage por label explícito (ex.: 'Entrada'); senão 1ª coluna não-protegida.
-        if stage_label:
+    if resolved_pipeline_id:
+        # Stage por key explícita (autoritativa); senão label explícito (ex.: 'Entrada');
+        # senão 1ª coluna não-protegida.
+        if stage_key:
+            stage_id = stage_id_by_key(sb, resolved_pipeline_id, stage_key, label_fallback=stage_label)
+        if not stage_id and stage_label:
             s = (
                 sb.table("pipeline_stages")
                 .select("id")
-                .eq("pipeline_id", pipeline_id)
+                .eq("pipeline_id", resolved_pipeline_id)
                 .eq("label", stage_label)
                 .limit(1)
                 .execute()
@@ -1163,7 +1188,7 @@ def create_deal(
             s = (
                 sb.table("pipeline_stages")
                 .select("id")
-                .eq("pipeline_id", pipeline_id)
+                .eq("pipeline_id", resolved_pipeline_id)
                 .eq("is_protected", False)
                 .order("order_index", desc=False)
                 .limit(1)
@@ -1177,7 +1202,7 @@ def create_deal(
         "title": title,
         "stage": "novo",
         "category": category,
-        "pipeline_id": pipeline_id,
+        "pipeline_id": resolved_pipeline_id,
         "stage_id": stage_id,
     }
     result = sb.table("deals").insert(deal).execute()

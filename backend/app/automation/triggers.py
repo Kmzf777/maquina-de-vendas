@@ -109,12 +109,14 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
         if event_type == "deal_stage_enter":
             _maybe_fire_stage_conversion(lead_id, data)
             # Ciclo de reposição: se o deal entrou em 'fechado_ganho', garante nova oportunidade.
+            # deal_id repassado: o destino do card de reposição depende do funil de
+            # ORIGEM deste deal (ver reposicao.reposicao_pipeline_para).
             if deal_is_won(data.get("deal_id")):
-                ensure_reposicao_deal(lead_id)
+                ensure_reposicao_deal(lead_id, deal_id=data.get("deal_id"))
 
         if event_type == "sale_created":
             # Registrar venda move o deal p/ fechado_ganho sem emitir deal_stage_enter → hook aqui.
-            ensure_reposicao_deal(lead_id)
+            ensure_reposicao_deal(lead_id, deal_id=data.get("deal_id"))
 
         if event_type == "message_received":
             message_body = (data.get("body") or "").lower()
