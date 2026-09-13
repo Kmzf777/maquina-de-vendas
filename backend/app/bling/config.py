@@ -7,6 +7,7 @@ levantaria AttributeError.
 """
 import logging
 import os
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 API_BASE = "https://api.bling.com.br/Api/v3"
 AUTHORIZE_URL = "https://bling.com.br/Api/v3/oauth/authorize"
 TOKEN_URL = "https://api.bling.com.br/Api/v3/oauth/token"
+
+DEFAULT_ACCOUNT = "default"
 
 # Limites publicados pelo Bling (developer.bling.com.br/limites), por CONTA.
 REQUESTS_PER_SECOND = 3
@@ -81,3 +84,75 @@ def require_credentials() -> tuple[str, str]:
             "BLING_CLIENT_ID e BLING_CLIENT_SECRET precisam estar configurados"
         )
     return client_id(), client_secret()
+
+
+@dataclass(frozen=True)
+class BlingAccount:
+    """Uma conta Bling configurada. `key` e o slug usado como chave em tudo."""
+    key: str
+    label: str
+    client_id: str
+    client_secret: str
+    store_id: int | None
+    situacao_id: int | None
+
+
+def _suffixed(name: str, account: str) -> str:
+    """BLING_<CONTA>_<NAME>. A conta default NUNCA recebe sufixo — e o que
+    mantem todas as variaveis de ambiente de hoje valendo sem alteracao."""
+    if account == DEFAULT_ACCOUNT:
+        return f"BLING_{name}"
+    return f"BLING_{account.upper()}_{name}"
+
+
+def _env_for(name: str, account: str) -> str:
+    """Valor da conta, caindo para a variavel global quando a especifica falta.
+
+    O fallback e o que permite um unico aplicativo Bling autorizado nas duas
+    contas: client_id/secret sao compartilhados e so o label e o store_id
+    entram por conta.
+    """
+    return _env(_suffixed(name, account)) or _env(f"BLING_{name}")
+
+
+def _env_int_for(name: str, account: str) -> int | None:
+    bruto = _env_for(name, account)
+    if not bruto:
+        return None
+    try:
+        return int(bruto)
+    except ValueError:
+        logger.warning("Valor invalido para %s: %r (esperava inteiro)",
+                       _suffixed(name, account), bruto)
+        return None
+
+
+def account_keys() -> list[str]:
+    """Slugs configurados. Ausencia de BLING_ACCOUNTS => so a conta default."""
+    bruto = _env("BLING_ACCOUNTS")
+    if not bruto:
+        return [DEFAULT_ACCOUNT]
+    chaves = [p.strip().lower() for p in bruto.split(",") if p.strip()]
+    return chaves or [DEFAULT_ACCOUNT]
+
+
+def account(key: str = DEFAULT_ACCOUNT) -> BlingAccount:
+    from app.bling.errors import BlingUnknownAccount
+
+    key = (key or DEFAULT_ACCOUNT).strip().lower()
+    if key not in account_keys():
+        raise BlingUnknownAccount(f"conta Bling desconhecida: {key!r}")
+    return BlingAccount(
+        key=key,
+        # LABEL nao usa _env_for de proposito: nao faz sentido a conta 2 herdar
+        # o rotulo da conta 1 — o rotulo existe justamente para distingui-las.
+        label=_env(_suffixed("LABEL", key)) or key,
+        client_id=_env_for("CLIENT_ID", key),
+        client_secret=_env_for("CLIENT_SECRET", key),
+        store_id=_env_int_for("STORE_ID", key),
+        situacao_id=_env_int_for("ORDER_SITUACAO_ID", key),
+    )
+
+
+def accounts() -> list[BlingAccount]:
+    return [account(k) for k in account_keys()]
