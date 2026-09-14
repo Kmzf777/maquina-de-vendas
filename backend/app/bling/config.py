@@ -96,47 +96,78 @@ class BlingAccount:
     store_id: int | None
     situacao_id: int | None
 
+    @property
+    def configured(self) -> bool:
+        """Tem credenciais para falar com o Bling nesta conta.
 
-def _suffixed(name: str, account: str) -> str:
+        Mesma regra de is_configured() (fonte unica para a conta default),
+        agora por conta — evita que cada modulo que precisa checar uma conta
+        especifica reimplemente esta comparacao na mao.
+        """
+        return bool(self.client_id and self.client_secret)
+
+
+def _suffixed(name: str, key: str) -> str:
     """BLING_<CONTA>_<NAME>. A conta default NUNCA recebe sufixo — e o que
     mantem todas as variaveis de ambiente de hoje valendo sem alteracao."""
-    if account == DEFAULT_ACCOUNT:
+    if key == DEFAULT_ACCOUNT:
         return f"BLING_{name}"
-    return f"BLING_{account.upper()}_{name}"
+    return f"BLING_{key.upper()}_{name}"
 
 
-def _env_for(name: str, account: str) -> str:
-    """Valor da conta, caindo para a variavel global quando a especifica falta.
+def _env_source(name: str, key: str) -> tuple[str, str]:
+    """Valor da conta com fallback para a variavel global, junto do NOME da
+    variavel que efetivamente forneceu o valor (sufixada ou global).
 
     O fallback e o que permite um unico aplicativo Bling autorizado nas duas
     contas: client_id/secret sao compartilhados e so o label e o store_id
-    entram por conta.
+    entram por conta. O nome-fonte existe para _env_int_for apontar, no
+    warning de valor invalido, a variavel certa — que pode ser a global
+    quando a sufixada nem esta definida.
     """
-    return _env(_suffixed(name, account)) or _env(f"BLING_{name}")
+    suffixed_name = _suffixed(name, key)
+    valor = _env(suffixed_name)
+    if valor:
+        return valor, suffixed_name
+    global_name = f"BLING_{name}"
+    return _env(global_name), global_name
 
 
-def _env_int_for(name: str, account: str) -> int | None:
-    bruto = _env_for(name, account)
+def _env_for(name: str, key: str) -> str:
+    """Valor da conta, caindo para a variavel global quando a especifica falta."""
+    return _env_source(name, key)[0]
+
+
+def _env_int_for(name: str, key: str) -> int | None:
+    bruto, fonte = _env_source(name, key)
     if not bruto:
         return None
     try:
         return int(bruto)
     except ValueError:
-        logger.warning("Valor invalido para %s: %r (esperava inteiro)",
-                       _suffixed(name, account), bruto)
+        logger.warning("Valor invalido para %s: %r (esperava inteiro)", fonte, bruto)
         return None
 
 
 def account_keys() -> list[str]:
-    """Slugs configurados. Ausencia de BLING_ACCOUNTS => so a conta default."""
+    """Slugs configurados. 'default' esta SEMPRE presente — e prependida
+    quando BLING_ACCOUNTS nao a cita — porque e a conta que ja existia antes
+    deste roster e account() sem argumento (todo call site de hoje) depende
+    dela nunca sumir por causa de um typo no env. Duplicatas sao removidas
+    preservando a ordem.
+    """
     bruto = _env("BLING_ACCOUNTS")
-    if not bruto:
-        return [DEFAULT_ACCOUNT]
     chaves = [p.strip().lower() for p in bruto.split(",") if p.strip()]
-    return chaves or [DEFAULT_ACCOUNT]
+    if DEFAULT_ACCOUNT not in chaves:
+        chaves.insert(0, DEFAULT_ACCOUNT)
+    return list(dict.fromkeys(chaves))
 
 
 def account(key: str = DEFAULT_ACCOUNT) -> BlingAccount:
+    """Resolve o slug (trim + lowercase; vazio ou None cai para 'default')
+    na BlingAccount configurada. Levanta BlingUnknownAccount se o slug
+    normalizado nao estiver em account_keys().
+    """
     from app.bling.errors import BlingUnknownAccount
 
     key = (key or DEFAULT_ACCOUNT).strip().lower()
@@ -155,4 +186,6 @@ def account(key: str = DEFAULT_ACCOUNT) -> BlingAccount:
 
 
 def accounts() -> list[BlingAccount]:
+    """Todas as contas configuradas, na mesma ordem de account_keys()
+    ('default' primeiro quando o env nao a menciona explicitamente)."""
     return [account(k) for k in account_keys()]

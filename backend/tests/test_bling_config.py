@@ -210,3 +210,54 @@ def test_unknown_account_nao_e_transient():
     from app.bling.errors import TRANSIENT
     assert issubclass(BlingUnknownAccount, BlingError)
     assert BlingUnknownAccount not in TRANSIENT
+
+
+def test_account_keys_inclui_default_mesmo_se_omitida_do_env(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "principal,secundaria")
+    assert cfg.account_keys() == ["default", "principal", "secundaria"]
+
+
+def test_account_keys_remove_duplicata_preservando_ordem(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria,default,secundaria")
+    assert cfg.account_keys() == ["default", "secundaria"]
+
+
+def test_conta_default_sobrevive_a_typo_em_bling_accounts(monkeypatch):
+    # Reproduz o bug real: BLING_ACCOUNTS sem "default" nao pode derrubar o
+    # caminho de compatibilidade que account() sem argumento usa hoje.
+    monkeypatch.setenv("BLING_ACCOUNTS", "principal,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    assert cfg.account().key == "default"
+
+
+def test_aviso_de_inteiro_invalido_aponta_variavel_global_quando_fallback_falha(
+    duas_contas, monkeypatch, caplog,
+):
+    monkeypatch.setenv("BLING_STORE_ID", "abc")
+    monkeypatch.delenv("BLING_SECUNDARIA_STORE_ID", raising=False)
+    with caplog.at_level("WARNING"):
+        assert cfg.account("secundaria").store_id is None
+    assert "BLING_STORE_ID" in caplog.text
+    assert "BLING_SECUNDARIA_STORE_ID" not in caplog.text
+
+
+def test_conta_configurada_true_com_credenciais(duas_contas):
+    assert cfg.account("secundaria").configured is True
+
+
+def test_conta_configurada_false_sem_credencial(monkeypatch):
+    monkeypatch.delenv("BLING_ACCOUNTS", raising=False)
+    monkeypatch.delenv("BLING_CLIENT_ID", raising=False)
+    monkeypatch.delenv("BLING_CLIENT_SECRET", raising=False)
+    assert cfg.account("default").configured is False
+
+
+def test_account_normaliza_espaco_e_caixa_do_argumento(duas_contas):
+    assert cfg.account("  SECUNDARIA  ").key == "secundaria"
+
+
+def test_account_com_chave_falsy_cai_para_default(monkeypatch):
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    assert cfg.account("").key == "default"
