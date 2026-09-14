@@ -25,6 +25,33 @@
 -- transacao ABERTA segurando ACCESS EXCLUSIVE em bling_products e sales, e isso
 -- trava a aplicacao inteira ate alguem matar a sessao. As duas migrations Bling
 -- anteriores (20260818, 20260825) tambem nao usam bloco explicito.
+--
+-- DEPOIS DESTE PONTO, A RECUPERACAO E SO PARA FRENTE. Nao existe down-migration.
+-- Voltar a imagem antiga da aplicacao SEM reverter o schema nao conserta nada —
+-- reproduz o mesmo 42P10 da janela de deploy (o on_conflict="id" do sync e o
+-- on_conflict="bling_order_id" do pedido deixam de casar com as chaves
+-- compostas), so que sem prazo para acabar: sync de catalogo e criacao de pedido
+-- simplesmente param. E se a segunda conta ja tiver sido conectada e sincronizada,
+-- o codigo antigo lendo bling_products/bling_contacts por `id` puro pode receber
+-- MAIS DE UMA linha onde espera uma — falha pior e mais silenciosa que o 42P10.
+-- Se precisar reverter de verdade, o schema tem que voltar junto, e esse script
+-- nao existe pronto.
+
+-- ===========================================================================
+-- 0. Teto de espera por lock
+-- ===========================================================================
+-- Sem isto, um ACCESS EXCLUSIVE que encontre QUALQUER sessao segurando lock em
+-- `sales` ou `leads` espera para sempre — e como o Postgres concede locks
+-- conflitantes em ordem de fila, toda query que chegar depois enfileira atras
+-- dele. O resultado nao e "a migration demora": e /vendas e escrita de lead
+-- paradas ate alguem achar e matar a sessao na mao. Conferido em 14/09/2026:
+-- nenhum role relevante (postgres, service_role, supabase_admin) tem
+-- lock_timeout nem statement_timeout configurado.
+--
+-- LOCAL, e nao SET puro, por causa do pool de conexoes do Supabase: um SET de
+-- sessao sobreviveria a esta execucao e imporia o teto de 5s a queries alheias
+-- que reutilizassem a mesma conexao depois.
+SET LOCAL lock_timeout = '5s';
 
 -- ===========================================================================
 -- 1. Espelhos: coluna account + PK composta

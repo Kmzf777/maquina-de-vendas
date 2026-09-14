@@ -1162,8 +1162,17 @@ git commit -m "feat(bling): migration multi-conta — PK composta nos espelhos e
 Depois de aplicar no SQL editor do Supabase, conferir:
 
 ```sql
-select count(*) from lead_bling_contacts;                        -- esperado 1479
-select count(*) from sales where bling_account = 'default';      -- esperado 1024
+-- Compare com a contagem VIVA, nao com um numero fixo: o sistema esta em uso e
+-- os totais andam. (Em 13/09 eram 1479 e 1024; um dia depois bling_webhook_events
+-- ja tinha saido de 136 para 137.) O que importa e que os dois lados batam.
+select (select count(*) from lead_bling_contacts) as migrados,
+       (select count(*) from leads where bling_contact_id is not null) as origem;
+-- migrados == origem
+
+select (select count(*) from sales where bling_account = 'default') as marcadas,
+       (select count(*) from sales where bling_order_id is not null) as com_pedido;
+-- marcadas == com_pedido
+
 select indexdef from pg_indexes where indexname = 'sales_bling_order_key';
 -- deve conter (bling_account, bling_order_id) e NAO conter WHERE
 ```
