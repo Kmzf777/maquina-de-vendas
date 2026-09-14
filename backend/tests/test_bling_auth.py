@@ -485,6 +485,56 @@ async def test_status_devolve_uma_entrada_por_conta_configurada(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# begin_authorization: um unico caminho para iniciar o OAuth. new_state e
+# authorize_url exigem a MESMA conta e, chamados separados, nada garante isso
+# -- com as duas contas podendo compartilhar client_id/secret (config.py), um
+# par trocado NAO daria erro do lado do Bling: gravaria o token exchangeado no
+# CNPJ errado em silencio. E o bug "conta 2 sobrescreve conta 1" que a Task 4
+# fechou no state, so que reaberto se os dois passos puderem divergir.
+# --------------------------------------------------------------------------
+async def test_begin_authorization_usa_a_mesma_conta_em_new_state_e_authorize_url(monkeypatch):
+    chamadas = {}
+
+    async def fake_new_state(account):
+        chamadas["new_state"] = account
+        return "state-abc"
+
+    def fake_authorize_url(state, account):
+        chamadas["authorize_url"] = account
+        assert state == "state-abc", "authorize_url tem que receber o state que new_state gerou"
+        return "https://bling.com.br/Api/v3/oauth/authorize?state=state-abc"
+
+    monkeypatch.setattr(auth, "new_state", fake_new_state)
+    monkeypatch.setattr(auth, "authorize_url", fake_authorize_url)
+
+    url = await auth.begin_authorization("secundaria")
+
+    assert chamadas["new_state"] == "secundaria"
+    assert chamadas["authorize_url"] == "secundaria"
+    assert url == "https://bling.com.br/Api/v3/oauth/authorize?state=state-abc"
+
+
+async def test_begin_authorization_usa_default_quando_omitido(monkeypatch):
+    chamadas = {}
+
+    async def fake_new_state(account):
+        chamadas["new_state"] = account
+        return "st"
+
+    def fake_authorize_url(state, account):
+        chamadas["authorize_url"] = account
+        return "url"
+
+    monkeypatch.setattr(auth, "new_state", fake_new_state)
+    monkeypatch.setattr(auth, "authorize_url", fake_authorize_url)
+
+    await auth.begin_authorization()
+
+    assert chamadas["new_state"] == auth.config.DEFAULT_ACCOUNT
+    assert chamadas["authorize_url"] == auth.config.DEFAULT_ACCOUNT
+
+
+# --------------------------------------------------------------------------
 # Chaves e storage por conta (Task 3) — fecham o bug do token cruzado entre
 # contas: com chave global, autorizar a conta 2 entregaria o access_token da
 # conta 1 para as chamadas da conta 2.

@@ -64,17 +64,28 @@ def _get_redis() -> aioredis.Redis:
     return _redis
 
 
-def _basic_auth_header(account: str) -> str:
+def _require_configured(account: str) -> config.BlingAccount:
+    """Resolve a conta e garante que tem credenciais, ou levanta BlingNotConfigured.
+
+    Fonte unica do erro "conta sem credenciais": _basic_auth_header e
+    authorize_url precisavam exatamente da mesma checagem, cada um com sua
+    propria mensagem -- duas versoes da mesma regra que so por sorte diziam a
+    mesma coisa. `conta.configured` (Task 1) e quem decide "configurado";
+    repetir `client_id and client_secret` aqui criaria uma TERCEIRA versao,
+    que diverge no dia em que a integracao passar a exigir tambem o
+    redirect_uri.
+    """
     conta = config.account(account)
-    # `conta.configured` e a fonte unica da regra "o que conta como configurado"
-    # (Task 1). Repetir `client_id and client_secret` aqui criaria uma segunda
-    # versao da mesma regra, que diverge no dia em que a integracao passar a
-    # exigir tambem o redirect_uri.
     if not conta.configured:
         raise BlingNotConfigured(
             f"conta {account!r}: BLING_CLIENT_ID e BLING_CLIENT_SECRET "
             "precisam estar configurados"
         )
+    return conta
+
+
+def _basic_auth_header(account: str) -> str:
+    conta = _require_configured(account)
     return "Basic " + base64.b64encode(
         f"{conta.client_id}:{conta.client_secret}".encode()).decode()
 
@@ -110,16 +121,30 @@ async def consume_state(state: str) -> str | None:
 
 
 def authorize_url(state: str, account: str = config.DEFAULT_ACCOUNT) -> str:
-    conta = config.account(account)
-    if not conta.configured:
-        raise BlingNotConfigured(
-            f"conta {account!r}: credenciais nao configuradas")
+    conta = _require_configured(account)
     params = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": conta.client_id,
         "state": state,
     })
     return f"{config.AUTHORIZE_URL}?{params}"
+
+
+async def begin_authorization(account: str = config.DEFAULT_ACCOUNT) -> str:
+    """Unico caminho para iniciar o OAuth de uma conta.
+
+    new_state e authorize_url exigem a MESMA conta, e chamados em separado
+    nada garante isso. Como as duas contas podem compartilhar client_id/
+    client_secret (config.py permite de proposito, para um unico app Bling
+    autorizado nas duas), um par trocado NAO produziria erro do lado do
+    Bling -- gravaria o token exchangeado no CNPJ errado, em silencio. E o
+    mesmo bug "conta 2 sobrescreve conta 1" que o state (Task 4) fechou,
+    reaberto se estes dois passos puderem divergir. Mantenha new_state e
+    authorize_url como estao (testados diretamente); so o ponto de entrada
+    publico muda.
+    """
+    state = await new_state(account)
+    return authorize_url(state, account)
 
 
 async def _token_request(data: dict, account: str) -> dict:

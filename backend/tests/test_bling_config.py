@@ -25,16 +25,6 @@ def test_credenciais_lidas_do_env(monkeypatch):
     assert cfg.client_secret() == "csec"
 
 
-def test_require_credentials_levanta_quando_falta(monkeypatch):
-    monkeypatch.delenv("BLING_CLIENT_ID", raising=False)
-    monkeypatch.delenv("BLING_CLIENT_SECRET", raising=False)
-    try:
-        cfg.require_credentials()
-    except BlingNotConfigured:
-        return
-    raise AssertionError("deveria levantar BlingNotConfigured")
-
-
 def test_ids_opcionais_viram_none_quando_vazios(monkeypatch):
     monkeypatch.setenv("BLING_STORE_ID", "")
     monkeypatch.setenv("BLING_ORDER_SITUACAO_ID", "  ")

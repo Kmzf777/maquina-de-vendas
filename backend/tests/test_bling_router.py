@@ -392,13 +392,52 @@ def test_atualizar_pedido_sucesso_devolve_200(monkeypatch):
     assert capturado["itens"][0]["codigo"] == "CAF250"
 
 
+def test_oauth_authorize_delega_para_begin_authorization(monkeypatch):
+    """new_state + authorize_url colapsaram em begin_authorization (um unico
+    caminho, mesma conta para os dois) -- o router so repassa a URL."""
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+
+    async def fake_begin():
+        return "https://bling.com.br/Api/v3/oauth/authorize?state=xyz"
+
+    monkeypatch.setattr(br.auth, "begin_authorization", fake_begin)
+
+    resp = asyncio.run(br.oauth_authorize())
+
+    assert resp == {"url": "https://bling.com.br/Api/v3/oauth/authorize?state=xyz"}
+
+
 def test_oauth_callback_rejeita_state_invalido(monkeypatch):
     async def fake_consume(state):
-        return False
+        return None
 
     monkeypatch.setattr(br.auth, "consume_state", fake_consume)
     resp = asyncio.run(br.oauth_callback(code="c", state="ruim"))
     assert resp.status_code == 400
+
+
+def test_oauth_callback_aceita_conta_vazia_como_valida_default(monkeypatch):
+    """consume_state pode devolver "" (conta vazia, que config.account()
+    normaliza para default) como resultado LEGITIMO de um state consumido --
+    diferente de None (state invalido, inexistente ou ja usado). A checagem
+    tem que ser `is None`, nunca truthiness: `not ""` e True, o que rejeitaria
+    em silencio um state legitimo cuja conta e a string vazia."""
+    async def fake_consume(state):
+        return ""
+
+    codigos_trocados = []
+
+    async def fake_exchange(code):
+        codigos_trocados.append(code)
+
+    monkeypatch.setattr(br.auth, "consume_state", fake_consume)
+    monkeypatch.setattr(br.auth, "exchange_code", fake_exchange)
+
+    resp = asyncio.run(br.oauth_callback(code="c", state="st"))
+
+    assert resp.status_code == 302
+    assert codigos_trocados == ["c"]
 
 
 # --------------------------------------------------------------------------
@@ -428,6 +467,43 @@ def test_status_expoe_enabled_e_connected_no_topo_do_json(monkeypatch):
 
     assert saida["enabled"] is True
     assert saida["connected"] is True
+
+
+def test_status_expoe_configured_e_expiracoes_e_scope_no_topo_do_json(monkeypatch):
+    """CRITICAL: frontend/src/components/config/bling-settings.tsx busca
+    /api/bling/status DIRETO (nao via use-bling-status.ts) e le
+    status.configured, status.access_expires_at, status.refresh_expires_at e
+    status.scope no topo do JSON. Sem estas quatro chaves no topo:
+    - `configured` vira undefined -> o banner "Credenciais do app Bling
+      ausentes no servidor" fica preso ligado PARA SEMPRE, mesmo configurado,
+      e o botao "Conectar ao Bling"/"Reconectar" fica DESABILITADO PARA
+      SEMPRE (disabled={...!status.configured}) -- nenhum admin consegue
+      autorizar conta nenhuma pela tela.
+    - `access_expires_at`/`refresh_expires_at`/`scope` viram undefined -> os
+      detalhes do token mostram "—" para sempre, e o aviso de expiracao do
+      refresh_token (5 dias de antecedencia) NUNCA mais dispara.
+    O envelope aditivo tem que carregar estas quatro chaves ALEM de
+    enabled/connected/accounts -- nao e so um formato, e um contrato com
+    um consumidor especifico."""
+    async def fake_status():
+        return [{
+            "account": "default",
+            "connected": True,
+            "configured": True,
+            "access_expires_at": "2026-09-20T00:00:00+00:00",
+            "refresh_expires_at": "2026-10-10T00:00:00+00:00",
+            "scope": "1 2 3",
+        }]
+
+    monkeypatch.setattr(br.auth, "status", fake_status)
+    monkeypatch.setattr(br.config, "enabled", lambda: True)
+
+    saida = asyncio.run(br.bling_status())
+
+    assert saida["configured"] is True
+    assert saida["access_expires_at"] == "2026-09-20T00:00:00+00:00"
+    assert saida["refresh_expires_at"] == "2026-10-10T00:00:00+00:00"
+    assert saida["scope"] == "1 2 3"
 
 
 def test_status_accounts_carrega_uma_entrada_por_conta(monkeypatch):

@@ -75,17 +75,6 @@ def is_configured() -> bool:
     return bool(client_id() and client_secret())
 
 
-def require_credentials() -> tuple[str, str]:
-    """Devolve (client_id, client_secret) ou levanta BlingNotConfigured."""
-    from app.bling.errors import BlingNotConfigured
-
-    if not is_configured():
-        raise BlingNotConfigured(
-            "BLING_CLIENT_ID e BLING_CLIENT_SECRET precisam estar configurados"
-        )
-    return client_id(), client_secret()
-
-
 @dataclass(frozen=True)
 class BlingAccount:
     """Uma conta Bling configurada. `key` e o slug usado como chave em tudo."""

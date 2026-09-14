@@ -454,19 +454,23 @@ async def unlink_contact_endpoint(lead_id: str):
 # --------------------------------------------------------------------------
 @router.get("/oauth/authorize")
 async def oauth_authorize():
-    # Sem credenciais, authorize_url levanta BlingNotConfigured e o admin veria um
-    # 500 opaco em vez de "falta configurar". is_configured() e a fonte unica da regra.
+    # Sem credenciais, begin_authorization levanta BlingNotConfigured e o admin
+    # veria um 500 opaco em vez de "falta configurar". is_configured() e a
+    # fonte unica da regra.
     if not config.is_configured():
         return JSONResponse({"error": "not_configured"}, status_code=400)
-    state = await auth.new_state()
-    return {"url": auth.authorize_url(state)}
+    return {"url": await auth.begin_authorization()}
 
 
 @router.get("/oauth/callback")
 async def oauth_callback(code: str = "", state: str = ""):
     # O state e a protecao anti-CSRF do fluxo: validado (e queimado) ANTES de o
     # code ser trocado, senao um callback forjado plantaria o token de outra conta.
-    if not await auth.consume_state(state):
+    # Checagem EXPLICITA contra None, nao truthiness: consume_state devolve a
+    # CONTA como string, e uma conta vazia normaliza para default dentro de
+    # config.account() -- "" e um resultado VALIDO do consumo, so None e
+    # invalido (state ausente, inexistente ou ja usado).
+    if (await auth.consume_state(state)) is None:
         return JSONResponse({"error": "invalid_state"}, status_code=400)
     # O authorization_code expira em 1 MINUTO — troca imediata.
     await auth.exchange_code(code)
@@ -483,11 +487,23 @@ async def bling_status():
     # frontend, o hook devolveria enabled:false e blingGate cairia em
     # mode:"legacy", canSubmit:true -- as vendas parariam de ir para o Bling SEM
     # NENHUM ERRO na tela. `accounts` e o dado novo, ao lado, nao no lugar.
+    #
+    # configured/access_expires_at/refresh_expires_at/scope no topo NAO sao
+    # redundancia gratuita: bling-settings.tsx busca este endpoint DIRETO (nao
+    # via use-bling-status.ts) e le estas quatro chaves no topo. Sem elas,
+    # `configured` vira undefined -> o banner de credenciais ausentes fica
+    # preso ligado e o botao Conectar/Reconectar fica desabilitado PARA
+    # SEMPRE; e o aviso de expiracao do refresh_token (5 dias de antecedencia)
+    # nunca mais dispara. Todas as quatro sao da conta DEFAULT, igual `connected`.
     contas = await auth.status()
     padrao = next((c for c in contas if c["account"] == config.DEFAULT_ACCOUNT), {})
     return {
         "enabled": config.enabled(),
         "connected": bool(padrao.get("connected")),
+        "configured": bool(padrao.get("configured")),
+        "access_expires_at": padrao.get("access_expires_at"),
+        "refresh_expires_at": padrao.get("refresh_expires_at"),
+        "scope": padrao.get("scope"),
         "accounts": contas,
     }
 
