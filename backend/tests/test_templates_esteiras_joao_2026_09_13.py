@@ -25,11 +25,22 @@ from app.campaigns.worker import is_optout_reply
 # `scripts/` no repo e o nome do pacote resolve para `backend/scripts/` (onde vive
 # `apply_migrations`). O script dos templates fica na raiz, ao lado do irmao
 # `create_esteira_templates.py`.
-_CAMINHO = (pathlib.Path(__file__).resolve().parents[2]
-            / "scripts" / "create_templates_esteiras_joao.py")
-_spec = importlib.util.spec_from_file_location("create_templates_esteiras_joao", _CAMINHO)
-tpls = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(tpls)
+_SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+
+
+def _carregar(nome):
+    spec = importlib.util.spec_from_file_location(nome, _SCRIPTS / f"{nome}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+tpls = _carregar("create_templates_esteiras_joao")
+# As 5 esteiras GENERICAS (`app/campaigns/esteiras.py`), que valem para qualquer
+# instalacao e nao so para o Joao. Ficaram 9 dias apontando para templates que nunca
+# existiram na Meta — o script estava escrito mas nunca tinha sido executado —, entao
+# qualquer envio delas teria falhado. Submetidos em 13/09/2026.
+gen = _carregar("create_esteira_templates")
 
 
 def _corpo(t):
@@ -155,3 +166,36 @@ def test_rotulos_que_parecem_saida_mas_nao_sao():
     for vivo in ("Nao tenho interesse", "Não tenho interesse", "PARAR MENSAGENS"):
         assert is_optout_reply(vivo), f"'{vivo}' deixou de ser reconhecido"
         assert norm(vivo) in {"nao tenho interesse", "parar mensagens"}
+
+
+# ── As 5 esteiras genericas (`app/campaigns/esteiras.py`) ────────────────────────
+#
+# Mesmo contrato dos 24 do Joao, com UMA diferenca: os nos delas gravam DUAS variaveis
+# (`{"1": "{{primeiro_nome}}", "2": "João"}` — verificado em producao em 13/09/2026),
+# entao os corpos tem de pedir {{1}} e {{2}}. A auditoria e a mesma funcao.
+
+
+def test_os_5_genericos_passam_na_auditoria_com_duas_variaveis():
+    assert tpls._auditar(gen._para_auditar(), vars_esperadas={"1", "2"}) == []
+
+
+def test_os_5_genericos_oferecem_saida_que_o_sistema_reconhece():
+    for t in gen.TEMPLATES:
+        assert is_optout_reply(_botoes(t)[-1]), (
+            f"{t['name']}: saida '{_botoes(t)[-1]}' nao e reconhecida por is_optout_reply")
+
+
+def test_os_5_genericos_cobrem_exatamente_o_seed_generico():
+    """Se o seed e o script divergirem, o envio falha em producao, nao aqui.
+
+    Foi o estado real entre 04/09 e 13/09/2026: o seed referenciava cinco nomes
+    `esteira_*` e nenhum existia na WABA.
+    """
+    from app.campaigns import esteiras
+    no_seed = {no["config"]["template_name"]
+               for e in esteiras.ESTEIRAS for no in e["nodes"]
+               if no["type"] == "send" and no["config"].get("template_name")}
+    no_script = {t["name"] for t in gen.TEMPLATES}
+    assert no_seed == no_script, (
+        f"so no seed: {sorted(no_seed - no_script)}; "
+        f"so no script: {sorted(no_script - no_seed)}")

@@ -14,14 +14,25 @@ default pt_BR causava 404 #132001 com o job cancelado sem entregar. Depois da
 aprovacao, confira em message_templates e ajuste `template_language` na config do
 no de envio.
 
-ACENTUACAO: os corpos e os botoes vao em portugues correto, com acento. Isto e
-deliberado e nada aqui exige ASCII — o payload sai com `ensure_ascii=False` e o
-Content-Type declara `charset=utf-8`. Sao mensagens para o cliente de uma marca de
-cafe especial, saindo do numero PESSOAL do vendedor: "Aqui e o Joao" le como
-portugues quebrado. E, uma vez submetido e aprovado, mudar o texto exige criar uma
-nova versao do template na Meta — nao da para corrigir depois sem refazer o ciclo.
-(Os comentarios e docstrings deste arquivo seguem em ASCII, como o resto do repo; a
-regra vale para o que o CLIENTE le.)
+ACENTUACAO: os corpos e os botoes vao em portugues correto, com acento — sao
+mensagens para o cliente de uma marca de cafe especial, saindo do numero PESSOAL do
+vendedor, e "Aqui e o Joao" le como portugues quebrado.
+
+O QUE MUDOU EM 13/09/2026: a versao anterior deste arquivo submetia com
+`ensure_ascii=False` e defendia a escolha ("nada aqui exige ASCII"). A evidencia
+derrubou o argumento: tres templates do lote de 25/05/2026 chegaram a Meta com os
+acentos ja virados em '?' e a corrupcao ficou GRAVADA — `check_estoque_reposicao`
+vivia em producao como "Ol? {{1}}, aqui ? o Jo?o da Caf? Canastra ?", com zero
+caracteres nao-ASCII no corpo. Agora o payload sai com `ensure_ascii=True`: o JSON
+viaja em ASCII puro com cada acento como escape de 6 caracteres, o cliente recebe o
+acento correto do mesmo jeito, e nao existe mais um caminho no qual a corrupcao possa
+acontecer.
+
+AUDITORIA: a checagem vem de `create_templates_esteiras_joao.py` (mesma pasta) para os
+dois scripts nao divergirem. Ela recusa submeter corpo com acento perdido, botao de
+saida que o sistema nao reconhece, `example` com numero errado de valores e texto
+repetido entre templates.
+
 """
 import json
 import os
@@ -31,8 +42,15 @@ import urllib.request
 
 WABA_ID = os.environ.get("META_WABA_ID")
 TOKEN = os.environ.get("META_ACCESS_TOKEN")
-if not WABA_ID or not TOKEN:
-    sys.exit("Defina META_WABA_ID e META_ACCESS_TOKEN no ambiente.")
+
+# A checagem de credencial e PREGUICOSA de proposito — so barra quem vai submeter de
+# verdade. No nivel do modulo ela derrubava o import inteiro com `sys.exit`, o que
+# impedia os testes de auditar estes textos sem ter um token da Meta a mao. Auditar
+# nao toca a rede; so `submeter` toca.
+def _exigir_credenciais():
+    if not WABA_ID or not TOKEN:
+        raise SystemExit("Defina META_WABA_ID e META_ACCESS_TOKEN no ambiente.")
+
 
 URL = f"https://graph.facebook.com/v21.0/{WABA_ID}/message_templates"
 
@@ -126,12 +144,12 @@ def submeter(tmpl):
         "language": tmpl["language"],
         "category": "UTILITY",
         "components": tmpl["components"],
-    }, ensure_ascii=False).encode("utf-8")
+    }, ensure_ascii=True).encode("ascii")
     req = urllib.request.Request(
         URL, data=payload, method="POST",
         headers={
             "Authorization": f"Bearer {TOKEN}",
-            "Content-Type": "application/json; charset=utf-8",
+            "Content-Type": "application/json",
         },
     )
     try:
@@ -143,8 +161,36 @@ def submeter(tmpl):
         return False, str(exc)
 
 
+def _para_auditar():
+    """Forma que `_auditar` entende — ela le `category` junto com os components."""
+    return [{**t, "category": "UTILITY"} for t in TEMPLATES]
+
+
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+    # Auditoria compartilhada com create_templates_esteiras_joao.py. Duas variaveis
+    # aqui ({{1}} nome, {{2}} vendedor) porque e o que os nos destas 5 campanhas ja
+    # gravam em `template_variables` — verificado em producao em 13/09/2026.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from create_templates_esteiras_joao import _auditar
+
+    problemas = _auditar(_para_auditar(), vars_esperadas={"1", "2"})
+    if problemas:
+        print("AUDITORIA REPROVOU — nada foi submetido:")
+        for p in problemas:
+            print("  -", p)
+        raise SystemExit(1)
+    print(f"Auditoria OK nos {len(TEMPLATES)} templates.\n")
+
+    if "--submeter" not in sys.argv:
+        for t in TEMPLATES:
+            print(" ", t["name"])
+        print("\n(dry-run) Use --submeter para enviar para a Meta.")
+        raise SystemExit(0)
+
+    _exigir_credenciais()
     for tmpl in TEMPLATES:
         ok, resposta = submeter(tmpl)
-        print(f"{'OK ' if ok else 'ERRO'} {tmpl['name']}: {resposta}")
+        print(f"{'OK  ' if ok else 'ERRO'} {tmpl['name']}: {resposta}")
         time.sleep(1.2)

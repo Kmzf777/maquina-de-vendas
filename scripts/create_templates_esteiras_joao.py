@@ -328,8 +328,14 @@ TEMPLATES = (NOVO + EM_CONVERSA_ATACADO + EM_CONVERSA_PRIVATE_LABEL
 _ACENTO_PERDIDO = re.compile(r"[A-Za-z]\?[A-Za-z]|Ol\? ")
 
 
-def _auditar(templates):
-    """Devolve a lista de problemas. Vazia = seguro submeter."""
+def _auditar(templates, vars_esperadas=frozenset({"1"})):
+    """Devolve a lista de problemas. Vazia = seguro submeter.
+
+    `vars_esperadas` existe porque `create_esteira_templates.py` (as 5 esteiras
+    genericas) reusa esta auditoria com DUAS variaveis — la os nos ja gravam
+    `{"1": "{{primeiro_nome}}", "2": "João"}` no `template_variables`, entao o corpo
+    tem de pedir as duas. Aqui o padrao e uma so.
+    """
     problemas = []
     vistos_nome, vistos_corpo = set(), {}
     for t in templates:
@@ -363,8 +369,15 @@ def _auditar(templates):
 
         # Regra 3 — uma variavel so.
         vars_ = set(re.findall(r"\{\{(\d+)\}\}", corpo))
-        if vars_ != {"1"}:
-            problemas.append(f"{nome}: variaveis {sorted(vars_)} — esperado apenas {{1}}")
+        if vars_ != set(vars_esperadas):
+            problemas.append(f"{nome}: variaveis {sorted(vars_)} — "
+                             f"esperado {sorted(vars_esperadas)}")
+        # O `example` tem de ter um valor por variavel ou a Meta recusa a submissao.
+        exemplo = next((c.get("example", {}).get("body_text", [[]])[0]
+                        for c in t["components"] if c["type"] == "BODY"), [])
+        if len(exemplo) != len(vars_):
+            problemas.append(f"{nome}: example com {len(exemplo)} valores para "
+                             f"{len(vars_)} variaveis")
 
         # Limites da Meta.
         if len(corpo) > 1024:
