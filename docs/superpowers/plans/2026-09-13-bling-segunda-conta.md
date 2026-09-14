@@ -2032,6 +2032,12 @@ def _conta_valida(account: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 ```
 
+> **Nunca chame `auth.new_state` e `auth.authorize_url` separadamente.** Use
+> `auth.begin_authorization(account)`, criado na Task 4. As duas exigem a MESMA
+> conta e nada estrutural garante isso — e como as duas contas podem compartilhar
+> o mesmo aplicativo Bling, um par trocado **não daria erro**: gravaria o token
+> no CNPJ errado, em silêncio.
+
 OAuth:
 
 ```python
