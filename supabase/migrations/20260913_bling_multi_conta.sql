@@ -13,6 +13,18 @@
 -- se um refresh cair nessa janela o Bling rotaciona o refresh_token e a linha nova
 -- fica com um token ja invalidado — o cenario de reautorizacao manual que auth.py
 -- marca como critico. O nome legivel vive como label na config, nao como chave.
+--
+-- Reexecutar e seguro: toda alteracao nomeada e precedida de DROP ... IF EXISTS,
+-- tabelas e indices usam IF NOT EXISTS, e o backfill usa ON CONFLICT DO NOTHING.
+--
+-- SEM `BEGIN`/`COMMIT` explicito, de proposito. O editor SQL do Supabase ja manda
+-- o arquivo inteiro como uma transacao implicita, entao uma falha no meio desfaz
+-- tudo em vez de deixar o schema pela metade — e nenhuma instrucao aqui precisa
+-- rodar fora de transacao (nao ha CONCURRENTLY nem VACUUM). Envolver a mao traria
+-- um risco pior que o que resolveria: se o editor tratar mal o bloco, sobra uma
+-- transacao ABERTA segurando ACCESS EXCLUSIVE em bling_products e sales, e isso
+-- trava a aplicacao inteira ate alguem matar a sessao. As duas migrations Bling
+-- anteriores (20260818, 20260825) tambem nao usam bloco explicito.
 
 -- ===========================================================================
 -- 1. Espelhos: coluna account + PK composta
@@ -46,6 +58,12 @@ ALTER TABLE bling_webhook_events  ADD PRIMARY KEY (account, event_id);
 ALTER TABLE bling_seller_map      DROP CONSTRAINT IF EXISTS bling_seller_map_pkey;
 ALTER TABLE bling_seller_map      ADD PRIMARY KEY (user_email, account);
 
+-- O DROP antes do ADD nao e zelo: o Postgres nao tem ADD CONSTRAINT IF NOT
+-- EXISTS, entao sem ele a segunda execucao deste arquivo morre em 42710. Os PKs
+-- acima nao precisam do mesmo cuidado explicito porque o Postgres nomeia um
+-- ADD PRIMARY KEY sem rotulo de <tabela>_pkey — exatamente o nome que o DROP da
+-- linha anterior ja alcanca.
+ALTER TABLE bling_seller_map DROP CONSTRAINT IF EXISTS bling_seller_map_seller_fkey;
 ALTER TABLE bling_seller_map
   ADD CONSTRAINT bling_seller_map_seller_fkey
   FOREIGN KEY (account, bling_seller_id) REFERENCES bling_sellers(account, id);
