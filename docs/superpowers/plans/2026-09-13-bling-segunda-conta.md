@@ -1084,6 +1084,11 @@ ALTER TABLE bling_webhook_events  ADD PRIMARY KEY (account, event_id);
 ALTER TABLE bling_seller_map      DROP CONSTRAINT IF EXISTS bling_seller_map_pkey;
 ALTER TABLE bling_seller_map      ADD PRIMARY KEY (user_email, account);
 
+-- O DROP antes do ADD nao e zelo: o Postgres nao tem ADD CONSTRAINT IF NOT
+-- EXISTS, entao sem ele a segunda execucao do arquivo morre em 42710. Todo o
+-- resto desta migration ja segue o padrao drop-then-add (inclusive os PKs, que
+-- o Postgres nomeia <tabela>_pkey sozinho e por isso o DROP acima alcanca).
+ALTER TABLE bling_seller_map DROP CONSTRAINT IF EXISTS bling_seller_map_seller_fkey;
 ALTER TABLE bling_seller_map
   ADD CONSTRAINT bling_seller_map_seller_fkey
   FOREIGN KEY (account, bling_seller_id) REFERENCES bling_sellers(account, id);
