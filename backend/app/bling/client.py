@@ -47,7 +47,8 @@ class BlingClient:
     """
 
     def __init__(self, http: Any | None = None, timeout: float = 30.0,
-                 max_attempts: int = _MAX_ATTEMPTS):
+                 max_attempts: int = _MAX_ATTEMPTS,
+                 account: str = "default"):
         self._http = http
         self._owns_http = http is None
         self._timeout = timeout
@@ -56,6 +57,10 @@ class BlingClient:
         # ou o do processamento de webhook, que podem esperar mais. O default
         # preserva o comportamento anterior (3 tentativas).
         self._max_attempts = max_attempts
+        # A conta viaja na instancia, nunca num default implicito no meio do
+        # caminho: e o que garante que cada chamada use o token e o orcamento
+        # de rate limit da conta certa.
+        self._account = account
 
     async def _client(self):
         if self._http is None:
@@ -75,7 +80,7 @@ class BlingClient:
         return False
 
     async def _headers(self) -> dict:
-        token = await auth.get_access_token()
+        token = await auth.get_access_token(self._account)
         return {
             "Authorization": f"Bearer {token}",
             # Obrigatorio: sem isso o Bling devolve o token opaco descontinuado.
@@ -92,7 +97,7 @@ class BlingClient:
         for attempt in range(1, self._max_attempts + 1):
             # Consome uma vaga do orcamento a CADA tentativa — a tentativa
             # repetida tambem e uma requisicao real para o Bling.
-            await ratelimit.acquire()
+            await ratelimit.acquire(self._account)
             http = await self._client()
             try:
                 resp = await http.request(

@@ -1,8 +1,10 @@
 """Token-bucket distribuido para a conta Bling (3 req/s, 120.000/dia).
 
 O limite do Bling e por CONTA, entao a contagem precisa ser central — Redis, nao
-memoria de processo. Um contador por segundo (chave `bling:rl:{unix_second}`) se
-auto-particiona: a chave do segundo seguinte comeca do zero sem limpeza.
+memoria de processo — e isolada por conta: a chave leva o slug da conta (ex.:
+`bling:rl:{account}:{unix_second}`), senao duas contas dividiriam um orcamento
+so. Um contador por segundo se auto-particiona: a chave do segundo seguinte
+comeca do zero sem limpeza.
 
 FAIL-CLOSED por design. O `buffer/lead_lock.py` e fail-open porque bloquear o
 atendimento e pior que duplicar um turno; aqui e o oposto — seguir sem contagem
@@ -78,16 +80,17 @@ def _mark_unavailable() -> None:
     _client = None  # forca reconexao limpa na proxima tentativa pos-cooldown
 
 
-def _second_key(now: float) -> str:
-    return f"bling:rl:{int(now)}"
+def _second_key(now: float, account: str) -> str:
+    return f"bling:rl:{account}:{int(now)}"
 
 
-def _day_key() -> str:
-    return "bling:rl:day:" + datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def _day_key(account: str) -> str:
+    return (f"bling:rl:{account}:day:"
+            + datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
 
-async def acquire() -> None:
-    """Reserva uma requisicao. Espera o proximo segundo se preciso.
+async def acquire(account: str = "default") -> None:
+    """Reserva uma requisicao para `account`. Espera o proximo segundo se preciso.
 
     Levanta BlingDailyCapError (teto diario), BlingRateLimitError (Redis fora,
     Redis em cooldown pos-falha, ou espera longa demais). Ambos sao TRANSIENT — o
@@ -103,7 +106,7 @@ async def acquire() -> None:
         try:
             status, value = await _get_client().eval(
                 _RATE_LIMIT_LUA, 2,
-                _second_key(now), _day_key(),
+                _second_key(now, account), _day_key(account),
                 str(_SECOND_TTL), str(_DAY_TTL),
                 str(config.REQUESTS_PER_SECOND), str(config.DAILY_SOFT_CAP),
             )
