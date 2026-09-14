@@ -8,6 +8,10 @@ import app.bling.auth as auth
 from app.bling.errors import BlingNotConfigured, TRANSIENT
 
 
+async def _noop_async(*_a, **_k):
+    return None
+
+
 class FakeTable:
     def __init__(self, store):
         self.store = store
@@ -169,12 +173,12 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
     # duplicado — o mesmo erro de fake-sem-instancia-unica ja visto nesta feature.
     lock_real = asyncio.Lock()
 
-    async def fake_refresh_now(token):
+    async def fake_refresh_now(token, _account=None):
         chamadas.append(token)
         await fake_cache_set("jwt-novo", 60)
         return "jwt-novo"
 
-    async def fake_lock():
+    async def fake_lock(_account=None):
         class _Ctx:
             async def __aenter__(self):
                 await lock_real.acquire()
@@ -185,10 +189,10 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
                 return False
         return _Ctx()
 
-    async def fake_cache_get():
+    async def fake_cache_get(_account=None):
         return estado["token"]
 
-    async def fake_cache_set(token, ttl):
+    async def fake_cache_set(token, ttl, _account=None):
         estado["token"] = token
 
     monkeypatch.setattr(auth, "_refresh_now", fake_refresh_now)
@@ -196,7 +200,9 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
     # Postgres inteiro para poder achar um access_token ja valido; sem
     # "access_token" na linha, ele cai direto no caminho de refresh de qualquer
     # forma, entao esse teste continua exercitando so a serializacao do lock.
-    monkeypatch.setattr(auth, "_stored_row", lambda: {"refresh_token": "ref-x"})
+    # Aceita o `account` posicional que get_access_token agora sempre passa
+    # (Task 3) — este teste continua exercitando so a serializacao do lock.
+    monkeypatch.setattr(auth, "_stored_row", lambda _account: {"refresh_token": "ref-x"})
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
     monkeypatch.setattr(auth, "_cache_get", fake_cache_get)
     monkeypatch.setattr(auth, "_cache_set", fake_cache_set)
@@ -217,11 +223,11 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
     chamadas_token_endpoint = []
     cache = {"token": None}
 
-    async def fake_refresh_now(token):  # nao deveria ser chamado neste teste
+    async def fake_refresh_now(token, _account=None):  # nao deveria ser chamado neste teste
         chamadas_token_endpoint.append(token)
         return "nao-deveria-acontecer"
 
-    async def fake_lock():
+    async def fake_lock(_account=None):
         class _Ctx:
             async def __aenter__(self):
                 return True
@@ -230,10 +236,10 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
                 return False
         return _Ctx()
 
-    async def fake_cache_get():
+    async def fake_cache_get(_account=None):
         return cache["token"]
 
-    async def fake_cache_set(token, ttl):
+    async def fake_cache_set(token, ttl, _account=None):
         cache["token"] = token
 
     expira_em_3h = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
@@ -242,7 +248,8 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
     monkeypatch.setattr(auth, "_cache_get", fake_cache_get)
     monkeypatch.setattr(auth, "_cache_set", fake_cache_set)
-    monkeypatch.setattr(auth, "_stored_row", lambda: {
+    # Aceita o `account` posicional que get_access_token agora sempre passa (Task 3).
+    monkeypatch.setattr(auth, "_stored_row", lambda _account: {
         "access_token": "jwt-do-postgres",
         "access_expires_at": expira_em_3h,
         "refresh_token": "ref-x",
@@ -260,7 +267,7 @@ def test_lock_indisponivel_e_erro_transiente_nao_auth(creds, monkeypatch):
     NAO credencial morta. Se isso virasse um erro fora de TRANSIENT, o modal de
     venda mandaria o vendedor refazer o OAuth em /config em vez de so enfileirar
     e tentar de novo."""
-    async def fake_lock():
+    async def fake_lock(_account=None):
         class _Ctx:
             async def __aenter__(self):
                 return False  # nao conseguiu o lock
@@ -269,7 +276,7 @@ def test_lock_indisponivel_e_erro_transiente_nao_auth(creds, monkeypatch):
                 return False
         return _Ctx()
 
-    async def fake_cache_get():
+    async def fake_cache_get(_account=None):
         return None
 
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
@@ -420,3 +427,53 @@ def test_consume_state_vazio_retorna_false_sem_tocar_redis(monkeypatch):
 
     assert asyncio.run(auth.consume_state("")) is False
     assert fake.delete_calls == 0
+
+
+# --------------------------------------------------------------------------
+# Chaves e storage por conta (Task 3) — fecham o bug do token cruzado entre
+# contas: com chave global, autorizar a conta 2 entregaria o access_token da
+# conta 1 para as chamadas da conta 2.
+# --------------------------------------------------------------------------
+def test_chave_de_cache_inclui_a_conta():
+    assert auth._cache_key("default") == "bling:default:access_token"
+    assert auth._cache_key("secundaria") == "bling:secundaria:access_token"
+
+
+def test_chave_de_lock_inclui_a_conta():
+    assert auth._lock_key("default") == "lock:bling_token_refresh:default"
+    assert auth._lock_key("secundaria") == "lock:bling_token_refresh:secundaria"
+
+
+def test_contas_distintas_nunca_compartilham_cache():
+    """Regressao do bug: com chave global, autorizar a conta 2 entregaria o
+    access_token da conta 1 para as chamadas da conta 2."""
+    assert auth._cache_key("default") != auth._cache_key("secundaria")
+    assert auth._lock_key("default") != auth._lock_key("secundaria")
+
+
+async def test_persist_grava_no_id_da_conta(monkeypatch, creds):
+    store = {}
+    monkeypatch.setattr(auth, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(auth, "_cache_set", _noop_async)
+    await auth._persist({"access_token": "tok", "refresh_token": "ref",
+                         "expires_in": 21600}, "secundaria")
+    assert store["upserted"]["id"] == "secundaria"
+
+
+async def test_persist_default_continua_gravando_em_default(monkeypatch, creds):
+    store = {}
+    monkeypatch.setattr(auth, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(auth, "_cache_set", _noop_async)
+    await auth._persist({"access_token": "tok", "refresh_token": "ref",
+                         "expires_in": 21600}, "default")
+    assert store["upserted"]["id"] == "default"
+
+
+def test_basic_header_usa_credencial_da_conta(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_ID", "cid2")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_SECRET", "csec2")
+    esperado = "Basic " + base64.b64encode(b"cid2:csec2").decode()
+    assert auth._basic_auth_header("secundaria") == esperado

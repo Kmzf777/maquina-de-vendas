@@ -151,7 +151,7 @@ class BlingClient:
                         f"{method} {path}: 401 apos renovar o token — refaca o OAuth"
                     )
                 renovou = True
-                await auth.invalidate_cache()
+                await auth.invalidate_cache(self._account)
                 continue
 
             if status == 429:

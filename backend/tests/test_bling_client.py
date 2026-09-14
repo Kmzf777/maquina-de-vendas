@@ -56,10 +56,12 @@ def _sem_espera(monkeypatch):
 
 @pytest.fixture
 def token(monkeypatch):
-    async def fake_token():
+    # get_access_token/invalidate_cache agora recebem a conta (Task 3) — o
+    # BlingClient sempre chama com 1 posicional, entao os dubles aceitam.
+    async def fake_token(_account):
         return "jwt-aaa"
 
-    async def fake_invalidate():
+    async def fake_invalidate(_account):
         return None
 
     monkeypatch.setattr(bc.auth, "get_access_token", fake_token)
@@ -83,7 +85,7 @@ def test_401_renova_uma_vez_e_repete(token, monkeypatch):
     http = FakeHTTP([FakeResponse(401), FakeResponse(200, {"data": []})])
     invalidado = []
 
-    async def fake_invalidate():
+    async def fake_invalidate(_account):
         invalidado.append(True)
 
     monkeypatch.setattr(bc.auth, "invalidate_cache", fake_invalidate)
@@ -141,7 +143,7 @@ def test_400_de_validacao_nao_repete_e_carrega_a_mensagem(token):
 def test_rate_limiter_e_chamado_antes_de_cada_request(token, monkeypatch):
     chamadas = []
 
-    async def fake_acquire():
+    async def fake_acquire(_account):
         chamadas.append(True)
 
     monkeypatch.setattr(bc.ratelimit, "acquire", fake_acquire)
@@ -228,3 +230,31 @@ def test_account_desconhecida_levanta_na_construcao(monkeypatch):
     monkeypatch.delenv("BLING_ACCOUNTS", raising=False)
     with pytest.raises(BlingUnknownAccount):
         bc.BlingClient(account="naoexiste")
+
+
+def test_client_repassa_a_propria_conta_para_get_access_token_e_ratelimit(monkeypatch):
+    """Contrato introduzido na Task 2 (a conta viaja da instancia do client para
+    auth e ratelimit) e que nenhum teste cobria ainda: a conta usada na
+    CONSTRUCAO do client precisa chegar, exatamente igual, em
+    auth.get_access_token e em ratelimit.acquire — nunca a default implicita."""
+    monkeypatch.setenv("BLING_ACCOUNTS", "secundaria")
+    chamadas_token = []
+    chamadas_acquire = []
+
+    async def fake_token(account):
+        chamadas_token.append(account)
+        return "jwt-aaa"
+
+    async def fake_acquire(account):
+        chamadas_acquire.append(account)
+
+    monkeypatch.setattr(bc.auth, "get_access_token", fake_token)
+    monkeypatch.setattr(bc.ratelimit, "acquire", fake_acquire)
+
+    http = FakeHTTP([FakeResponse(200, {"data": []})])
+    client = bc.BlingClient(http=http, account="secundaria")
+
+    asyncio.run(client.get("/produtos"))
+
+    assert chamadas_token == ["secundaria"]
+    assert chamadas_acquire == ["secundaria"]
