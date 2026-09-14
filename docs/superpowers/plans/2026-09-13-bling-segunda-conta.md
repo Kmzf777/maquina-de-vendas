@@ -1443,13 +1443,20 @@ git commit -m "fix(bling): upsert de venda com chave composta (bling_account, bl
 > `_assinar(corpo, secret="csec")` mantendo o default, para os 6 testes que já
 > existem continuarem passando sem alteração.
 >
-> Atenção também a `test_webhook_router_expoe_a_rota` (linha 133) e a
-> `test_router_registrado_no_app` (linha 123): as duas fazem asserção sobre as
-> rotas registradas e podem precisar de ajuste ao acrescentar a rota nova.
-> Ajustar, nunca apagar.
+> `test_webhook_router_expoe_a_rota` (linha 133) afirma
+> `"/webhook/bling" in {r.path for r in router.routes}` e
+> `test_router_registrado_no_app` (linha 123) verifica o texto-fonte de
+> `main.py`. **Nenhuma das duas precisa mudar** — a rota legada continua
+> existindo e `main.py` não é tocado. Melhor ainda: a primeira vira, de graça, a
+> guarda automática contra alguém remover a rota legada por engano. Se alguma
+> das duas ficar vermelha, é sinal de que algo saiu errado — conserte o código,
+> não o teste.
 
-A fixture `client` precisa passar a definir `BLING_ACCOUNTS=default,secundaria`,
-`BLING_CLIENT_SECRET=csec` e `BLING_SECUNDARIA_CLIENT_SECRET=csec2`.
+A fixture `client` (linha 19) hoje define só `BLING_CLIENT_SECRET` (da constante
+`SECRET` do módulo) e `BLING_ENABLED=true`. Precisa passar a definir também
+`BLING_ACCOUNTS=default,secundaria` e `BLING_SECUNDARIA_CLIENT_SECRET=csec2`,
+mantendo `BLING_CLIENT_SECRET=SECRET` para os 6 testes existentes continuarem
+válidos sem alteração.
 
 ```python
 def test_rota_por_conta_grava_o_slug(client, gravados):
@@ -1487,9 +1494,10 @@ def test_assinatura_validada_com_o_secret_da_conta(client, gravados):
     assert gravados == []
 ```
 
-> Confirme a forma real de `gravados` antes de escrever as asserções — se ela
-> acumula numa lista, use `gravados[0]["account"]`; se guarda um dict único, use
-> `gravados["account"]`. Leia a fixture na linha 28.
+> `gravados` **é uma lista** (conferido, `test_bling_webhook.py:28-38`) e já
+> implementa o dedupe por `event_id` devolvendo `False` na repetição — por isso
+> `gravados[0]["account"]` e `gravados == []` acima estão corretos. Não
+> reescreva a fixture; ela já modela o `ON CONFLICT DO NOTHING` do receiver.
 
 - [ ] **Step 2: Rodar e confirmar que falha**
 
