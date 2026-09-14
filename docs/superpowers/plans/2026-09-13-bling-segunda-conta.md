@@ -49,6 +49,26 @@ Decisão explícita, tomada na revisão da Task 2. O construtor faz:
 normalizada e **não** revalidam — o client é o gargalo, e revalidar em cada
 camada só multiplicaria o custo sem cobrir nenhum caminho novo.
 
+**3. Default de conta só na superfície PÚBLICA. Função privada exige o
+parâmetro.** Convenção já estabelecida por `ratelimit.py`: `_second_key` e
+`_day_key` (privadas) exigem a conta; só `acquire()` (pública) tem default.
+
+O motivo não é estética: um default numa função privada permite que um chamador
+*dentro do próprio módulo* omita a conta em silêncio e opere no CNPJ errado — a
+classe exata de bug que esta entrega existe para eliminar. Com o parâmetro
+obrigatório, o mesmo erro vira `TypeError` na hora.
+
+Vale para todas as tasks. Onde um snippet deste plano mostrar
+`account: str = config.DEFAULT_ACCOUNT` numa função com `_` no início, **o
+snippet está errado** — use `account: str` sem default e ajuste os chamadores.
+
+**4. Dublê de teste também exige o parâmetro.** `def fake_x(_account)`, nunca
+`def fake_x(_account=None)`. Um dublê com default aceita ser chamado com ou sem
+o argumento, então uma regressão em que a produção para de repassar a conta
+passaria despercebida — e o `monkeypatch` substitui a função real inteira, então
+a assinatura do dublê é a **única** coisa que sustenta o contrato durante aquele
+teste. Isto não é redundante com a regra 3: as duas se somam.
+
 Isso importa nas duas entradas onde a string vem de fora e é menos confiável: o
 `?account=` da Task 11 (query param HTTP) e a conta lida da linha do banco na
 Task 10. Nas duas, o erro vira `BlingUnknownAccount` e sobe como 400/404, em vez
@@ -503,7 +523,7 @@ Remover `_CACHE_KEY` e `_LOCK_KEY`. Manter `_STATE_PREFIX` (a Task 4 mexe nele).
 Adicionar `account` a estas funções, propagando para as chamadas internas:
 
 ```python
-def _basic_auth_header(account: str = config.DEFAULT_ACCOUNT) -> str:
+def _basic_auth_header(account: str) -> str:
     conta = config.account(account)
     # `conta.configured` e a fonte unica da regra "o que conta como configurado"
     # (Task 1). Repetir `client_id and client_secret` aqui criaria uma segunda
@@ -519,7 +539,7 @@ def _basic_auth_header(account: str = config.DEFAULT_ACCOUNT) -> str:
         f"{conta.client_id}:{conta.client_secret}".encode()).decode()
 
 
-async def _token_request(data: dict, account: str = config.DEFAULT_ACCOUNT) -> dict:
+async def _token_request(data: dict, account: str) -> dict:
     headers = {
         "Authorization": _basic_auth_header(account),
         "Content-Type": "application/x-www-form-urlencoded",
@@ -536,14 +556,14 @@ async def exchange_code(code: str, account: str = config.DEFAULT_ACCOUNT) -> dic
     return payload
 
 
-async def _refresh_now(refresh_token: str, account: str = config.DEFAULT_ACCOUNT) -> str:
+async def _refresh_now(refresh_token: str, account: str) -> str:
     payload = await _token_request(
         {"grant_type": "refresh_token", "refresh_token": refresh_token}, account)
     await _persist(payload, account)
     return payload["access_token"]
 
 
-async def _persist(payload: dict, account: str = config.DEFAULT_ACCOUNT) -> None:
+async def _persist(payload: dict, account: str) -> None:
     # ... igual, trocando so a linha do id:
     row = {
         "id": account,
@@ -554,20 +574,20 @@ async def _persist(payload: dict, account: str = config.DEFAULT_ACCOUNT) -> None
                      max(60, expires_in - _RENEW_MARGIN_SECONDS), account)
 
 
-def _stored_row(account: str = config.DEFAULT_ACCOUNT) -> dict | None:
+def _stored_row(account: str) -> dict | None:
     res = (get_supabase().table("bling_credentials")
            .select("*").eq("id", account).limit(1).maybe_single().execute())
     return getattr(res, "data", None)
 
 
-async def _cache_get(account: str = config.DEFAULT_ACCOUNT) -> str | None:
+async def _cache_get(account: str) -> str | None:
     try:
         return await _get_redis().get(_cache_key(account))
     except Exception:  # noqa: BLE001 — cache indisponivel cai para o Postgres
         return None
 
 
-async def _cache_set(token: str | None, ttl: int, account: str = config.DEFAULT_ACCOUNT) -> None:
+async def _cache_set(token: str | None, ttl: int, account: str) -> None:
     if not token:
         return
     try:
@@ -577,7 +597,7 @@ async def _cache_set(token: str | None, ttl: int, account: str = config.DEFAULT_
                        "da conta %s", account)
 
 
-async def _refresh_lock(account: str = config.DEFAULT_ACCOUNT):
+async def _refresh_lock(account: str):
     client = _get_redis()
     token = secrets.token_hex(8)
     chave = _lock_key(account)
@@ -1606,7 +1626,7 @@ async def test_processador_usa_a_conta_da_linha_do_evento(monkeypatch):
     usadas = []
 
     class FakeClient:
-        def __init__(self, account="default"):
+        def __init__(self, account):   # duble exige a conta (decisao transversal 4)
             usadas.append(account)
         async def __aenter__(self):
             return self
@@ -1686,7 +1706,7 @@ Em `backend/app/bling/jobs.py`: `BlingClient()` vira
 grava `"account"`.
 
 Em `backend/app/bling/backfill.py`: `_new_client()` recebe a conta;
-`backfill(months, account="default")`. **Não** é executado para a conta 2
+`backfill(months, account=config.DEFAULT_ACCOUNT)`. **Não** é executado para a conta 2
 (decisão 4 da spec).
 
 - [ ] **Step 4: Rodar**
