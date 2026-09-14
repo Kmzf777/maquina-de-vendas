@@ -1029,8 +1029,16 @@ async def sync_all(*, full: bool = False) -> dict:
 `bling_sync_tick()` **não muda**: continua chamando `sync_all()` e logando o
 retorno, que agora vem agrupado por conta.
 
-Em `backend/app/bling/products.py`, `apply_product_event` recebe `account` e o
-inclui no upsert e no `on_conflict`.
+Passo 4 — **`products.py` tem cópias PRÓPRIAS das mesmas funções** e é fácil
+passar batido: ele não reusa as de `sync.py`. Todas as quatro precisam da conta:
+
+| Linha | Hoje | Passa a ser |
+|---|---|---|
+| `products.py:44` | `_load_sync_state(resource)` | recebe `account`, filtra por ele |
+| `products.py:50` | `_save_sync_state(...)` com `on_conflict="resource"` | `on_conflict="account,resource"` |
+| `products.py:58` | `_upsert(rows)` com `on_conflict="id"` | `_upsert(rows, account)`, injeta `account` na linha, `on_conflict="account,id"` |
+| `products.py:67` | `sync_products(client, *, full, batch_size)` | `sync_products(client, account, *, full, batch_size)` |
+| `products.py:103` | `apply_product_event(event, payload)` | `apply_product_event(event, payload, account)` |
 
 - [ ] **Step 4: Rodar**
 
@@ -1380,66 +1388,60 @@ git commit -m "fix(bling): upsert de venda com chave composta (bling_account, bl
 
 - [ ] **Step 1: Escrever os testes que falham**
 
+> **Nomes reais do arquivo de teste** (conferidos, não presumir): a fixture do
+> TestClient chama-se **`client`** (`test_bling_webhook.py:19`), a de captura
+> chama-se **`gravados`** (linha 28), e o helper existente é `_assinar(corpo)`
+> — **com um argumento só**, usando um secret fixo. Estenda-o para
+> `_assinar(corpo, secret="csec")` mantendo o default, para os 6 testes que já
+> existem continuarem passando sem alteração.
+>
+> Atenção também a `test_webhook_router_expoe_a_rota` (linha 133) e a
+> `test_router_registrado_no_app` (linha 123): as duas fazem asserção sobre as
+> rotas registradas e podem precisar de ajuste ao acrescentar a rota nova.
+> Ajustar, nunca apagar.
+
+A fixture `client` precisa passar a definir `BLING_ACCOUNTS=default,secundaria`,
+`BLING_CLIENT_SECRET=csec` e `BLING_SECUNDARIA_CLIENT_SECRET=csec2`.
+
 ```python
-async def test_rota_por_conta_grava_o_slug(monkeypatch, cliente_teste):
+def test_rota_por_conta_grava_o_slug(client, gravados):
     corpo = b'{"eventId":"e1","event":"order.created","data":{"id":7}}'
-    assinatura = _assinar(corpo, "csec2")
-    gravado = _capturar_insert(monkeypatch)
-
-    resp = cliente_teste.post("/webhook/bling/secundaria", content=corpo,
-                              headers={"x-bling-signature-256": assinatura})
+    resp = client.post("/webhook/bling/secundaria", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo, "csec2")})
     assert resp.status_code == 200
-    assert gravado["account"] == "secundaria"
+    assert gravados[0]["account"] == "secundaria"
 
 
-async def test_rota_legada_continua_valendo_como_default(monkeypatch, cliente_teste):
+def test_rota_legada_continua_valendo_como_default(client, gravados):
     """O painel da conta 1 ja aponta para /webhook/bling. Se ela sumir, o Bling
     retenta por 3 dias e DESABILITA a configuracao em silencio."""
     corpo = b'{"eventId":"e2","event":"order.created","data":{"id":8}}'
-    assinatura = _assinar(corpo, "csec")
-    gravado = _capturar_insert(monkeypatch)
-
-    resp = cliente_teste.post("/webhook/bling", content=corpo,
-                              headers={"x-bling-signature-256": assinatura})
+    resp = client.post("/webhook/bling", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo, "csec")})
     assert resp.status_code == 200
-    assert gravado["account"] == "default"
+    assert gravados[0]["account"] == "default"
 
 
-async def test_slug_desconhecido_responde_404(cliente_teste):
+def test_slug_desconhecido_responde_404(client, gravados):
     corpo = b'{"eventId":"e3","event":"order.created","data":{"id":9}}'
-    resp = cliente_teste.post("/webhook/bling/naoexiste", content=corpo,
-                              headers={"x-bling-signature-256": _assinar(corpo, "csec")})
+    resp = client.post("/webhook/bling/naoexiste", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo, "csec")})
     assert resp.status_code == 404
+    assert gravados == []
 
 
-async def test_assinatura_validada_com_o_secret_da_conta(cliente_teste):
+def test_assinatura_validada_com_o_secret_da_conta(client, gravados):
     """Assinar com o secret da conta 1 e entregar na rota da conta 2 = 401."""
     corpo = b'{"eventId":"e4","event":"order.created","data":{"id":10}}'
-    resp = cliente_teste.post("/webhook/bling/secundaria", content=corpo,
-                              headers={"x-bling-signature-256": _assinar(corpo, "csec")})
+    resp = client.post("/webhook/bling/secundaria", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo, "csec")})
     assert resp.status_code == 401
+    assert gravados == []
 ```
 
-Helpers a adicionar no arquivo de teste:
-
-```python
-def _assinar(corpo: bytes, secret: str) -> str:
-    import hashlib, hmac
-    return "sha256=" + hmac.new(secret.encode(), corpo, hashlib.sha256).hexdigest()
-
-
-def _capturar_insert(monkeypatch):
-    from app.bling import webhook_router
-    gravado = {}
-    def fake_insert(row):
-        gravado.update(row)
-        return True
-    monkeypatch.setattr(webhook_router, "_insert_event", fake_insert)
-    return gravado
-```
-
-O fixture `cliente_teste` precisa de `BLING_ACCOUNTS=default,secundaria`,
-`BLING_CLIENT_SECRET=csec` e `BLING_SECUNDARIA_CLIENT_SECRET=csec2`.
+> Confirme a forma real de `gravados` antes de escrever as asserções — se ela
+> acumula numa lista, use `gravados[0]["account"]`; se guarda um dict único, use
+> `gravados["account"]`. Leia a fixture na linha 28.
 
 - [ ] **Step 2: Rodar e confirmar que falha**
 
@@ -1838,9 +1840,17 @@ Em `backend/app/quotes/router.py`:
 - `update_quote_endpoint` **ignora** qualquer `account` do corpo — a conta do
   orçamento é imutável depois de criado. Não levanta erro: simplesmente não
   entra no dicionário de atualização.
-- `convert_quote_endpoint` lê `quote["bling_account"]` e o repassa para
-  `create_order(...)` e para a linha de `sales`. O endpoint **não recebe corpo**,
-  então a invariante sai de graça da assinatura.
+- `convert_quote_endpoint` (`quotes/router.py:653`) lê `quote["bling_account"]` e
+  o repassa para `create_order(...)` e para a linha de `sales`. O endpoint **não
+  recebe corpo**, então a invariante sai de graça da assinatura.
+- Dentro dele há um caminho de fallback (`quotes/router.py:682-687`): quando o
+  orçamento perdeu o `bling_contact_id`, ele chama `contacts.resolve(lead)` para
+  reresolver o contato. Essa chamada **precisa receber a conta do orçamento** —
+  `contacts.resolve(lead, account)`. Sem isso o fallback resolveria o contato na
+  conta errada e o pedido sairia referenciando um ID que não existe naquele CNPJ.
+- A ordem das quatro etapas do `convert` (409 → `create_order` → `set_situacao` →
+  `UPDATE quotes`) **não muda**. O docstring explica por quê: inverter 2 e 3
+  deixaria uma proposta marcada como aprovada sem venda nenhuma.
 - `store_id` do payload da proposta passa a vir de
   `config.account(quote["bling_account"]).store_id`.
 
