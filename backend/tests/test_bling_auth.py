@@ -71,7 +71,7 @@ def test_authorize_url_exige_credenciais(monkeypatch):
 
 
 def test_basic_header_e_base64_de_id_dois_pontos_secret(creds):
-    header = auth._basic_auth_header()
+    header = auth._basic_auth_header(auth.config.DEFAULT_ACCOUNT)
     esperado = base64.b64encode(b"cid:csec").decode()
     assert header == f"Basic {esperado}"
 
@@ -154,7 +154,7 @@ def test_refresh_usa_grant_type_refresh_token(creds, monkeypatch):
     monkeypatch.setattr(auth, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(auth, "_cache_set", noop_cache)
 
-    asyncio.run(auth._refresh_now("ref-antigo"))
+    asyncio.run(auth._refresh_now("ref-antigo", auth.config.DEFAULT_ACCOUNT))
 
     assert capturado["data"]["grant_type"] == "refresh_token"
     assert capturado["data"]["refresh_token"] == "ref-antigo"
@@ -173,12 +173,12 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
     # duplicado — o mesmo erro de fake-sem-instancia-unica ja visto nesta feature.
     lock_real = asyncio.Lock()
 
-    async def fake_refresh_now(token, _account=None):
+    async def fake_refresh_now(token, _account):
         chamadas.append(token)
-        await fake_cache_set("jwt-novo", 60)
+        await fake_cache_set("jwt-novo", 60, _account)
         return "jwt-novo"
 
-    async def fake_lock(_account=None):
+    async def fake_lock(_account):
         class _Ctx:
             async def __aenter__(self):
                 await lock_real.acquire()
@@ -189,10 +189,10 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
                 return False
         return _Ctx()
 
-    async def fake_cache_get(_account=None):
+    async def fake_cache_get(_account):
         return estado["token"]
 
-    async def fake_cache_set(token, ttl, _account=None):
+    async def fake_cache_set(token, ttl, _account):
         estado["token"] = token
 
     monkeypatch.setattr(auth, "_refresh_now", fake_refresh_now)
@@ -223,11 +223,11 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
     chamadas_token_endpoint = []
     cache = {"token": None}
 
-    async def fake_refresh_now(token, _account=None):  # nao deveria ser chamado neste teste
+    async def fake_refresh_now(token, _account):  # nao deveria ser chamado neste teste
         chamadas_token_endpoint.append(token)
         return "nao-deveria-acontecer"
 
-    async def fake_lock(_account=None):
+    async def fake_lock(_account):
         class _Ctx:
             async def __aenter__(self):
                 return True
@@ -236,10 +236,10 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
                 return False
         return _Ctx()
 
-    async def fake_cache_get(_account=None):
+    async def fake_cache_get(_account):
         return cache["token"]
 
-    async def fake_cache_set(token, ttl, _account=None):
+    async def fake_cache_set(token, ttl, _account):
         cache["token"] = token
 
     expira_em_3h = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
@@ -267,7 +267,7 @@ def test_lock_indisponivel_e_erro_transiente_nao_auth(creds, monkeypatch):
     NAO credencial morta. Se isso virasse um erro fora de TRANSIENT, o modal de
     venda mandaria o vendedor refazer o OAuth em /config em vez de so enfileirar
     e tentar de novo."""
-    async def fake_lock(_account=None):
+    async def fake_lock(_account):
         class _Ctx:
             async def __aenter__(self):
                 return False  # nao conseguiu o lock
@@ -276,7 +276,7 @@ def test_lock_indisponivel_e_erro_transiente_nao_auth(creds, monkeypatch):
                 return False
         return _Ctx()
 
-    async def fake_cache_get(_account=None):
+    async def fake_cache_get(_account):
         return None
 
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
@@ -303,7 +303,7 @@ def test_tokens_nunca_aparecem_no_log(creds, caplog, monkeypatch):
         asyncio.run(auth._persist({
             "access_token": "SEGREDO-AAA", "refresh_token": "SEGREDO-BBB",
             "expires_in": 21600, "scope": "",
-        }))
+        }, auth.config.DEFAULT_ACCOUNT))
     assert "SEGREDO-AAA" not in caplog.text
     assert "SEGREDO-BBB" not in caplog.text
 
@@ -335,7 +335,7 @@ def test_persist_falha_no_postgres_loga_critical_sem_token_e_relevanta(creds, ca
             asyncio.run(auth._persist({
                 "access_token": "SEGREDO-CCC", "refresh_token": "SEGREDO-DDD",
                 "expires_in": 21600, "scope": "",
-            }))
+            }, auth.config.DEFAULT_ACCOUNT))
 
     assert tentativas["n"] >= 2, "tinha que ter tentado de novo antes de desistir"
     criticals = [r for r in caplog.records if r.levelname == "CRITICAL"]
@@ -477,3 +477,17 @@ def test_basic_header_usa_credencial_da_conta(monkeypatch):
     monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_SECRET", "csec2")
     esperado = "Basic " + base64.b64encode(b"cid2:csec2").decode()
     assert auth._basic_auth_header("secundaria") == esperado
+
+
+async def test_get_access_token_isola_cache_entre_contas(monkeypatch):
+    """Prova fim-a-fim do bug que da nome a esta task: com o token das DUAS
+    contas ja cacheado ao mesmo tempo, get_access_token nunca pode devolver o
+    da conta errada — o que uma chave global de cache faria em silencio (o
+    token e valido, so que do CNPJ errado)."""
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+    await fake.setex(auth._cache_key(auth.config.DEFAULT_ACCOUNT), 60, "tok-default")
+    await fake.setex(auth._cache_key("secundaria"), 60, "tok-secundaria")
+
+    assert await auth.get_access_token(auth.config.DEFAULT_ACCOUNT) == "tok-default"
+    assert await auth.get_access_token("secundaria") == "tok-secundaria"

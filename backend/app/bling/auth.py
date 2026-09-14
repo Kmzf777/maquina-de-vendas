@@ -64,7 +64,7 @@ def _get_redis() -> aioredis.Redis:
     return _redis
 
 
-def _basic_auth_header(account: str = config.DEFAULT_ACCOUNT) -> str:
+def _basic_auth_header(account: str) -> str:
     conta = config.account(account)
     # `conta.configured` e a fonte unica da regra "o que conta como configurado"
     # (Task 1). Repetir `client_id and client_secret` aqui criaria uma segunda
@@ -106,7 +106,7 @@ def authorize_url(state: str) -> str:
     return f"{config.AUTHORIZE_URL}?{params}"
 
 
-async def _token_request(data: dict, account: str = config.DEFAULT_ACCOUNT) -> dict:
+async def _token_request(data: dict, account: str) -> dict:
     headers = {
         "Authorization": _basic_auth_header(account),
         "Content-Type": "application/x-www-form-urlencoded",
@@ -117,7 +117,7 @@ async def _token_request(data: dict, account: str = config.DEFAULT_ACCOUNT) -> d
         resp = await client.post(config.TOKEN_URL, headers=headers, data=data)
     if resp.status_code != 200:
         # Nunca logar o corpo: pode conter o code ou o refresh_token.
-        logger.error("[BLING AUTH] /oauth/token devolveu %s", resp.status_code)
+        logger.error("[BLING AUTH] conta %s: /oauth/token devolveu %s", account, resp.status_code)
         raise BlingAuthError(f"/oauth/token devolveu {resp.status_code}")
     return resp.json()
 
@@ -130,7 +130,7 @@ async def exchange_code(code: str, account: str = config.DEFAULT_ACCOUNT) -> dic
     return payload
 
 
-async def _refresh_now(refresh_token: str, account: str = config.DEFAULT_ACCOUNT) -> str:
+async def _refresh_now(refresh_token: str, account: str) -> str:
     payload = await _token_request(
         {"grant_type": "refresh_token", "refresh_token": refresh_token}, account)
     await _persist(payload, account)
@@ -140,7 +140,7 @@ async def _refresh_now(refresh_token: str, account: str = config.DEFAULT_ACCOUNT
 # --------------------------------------------------------------------------
 # Storage
 # --------------------------------------------------------------------------
-async def _persist(payload: dict, account: str = config.DEFAULT_ACCOUNT) -> None:
+async def _persist(payload: dict, account: str) -> None:
     now = datetime.now(timezone.utc)
     expires_in = int(payload.get("expires_in") or 21600)
     row = {
@@ -176,9 +176,10 @@ async def _persist(payload: dict, account: str = config.DEFAULT_ACCOUNT) -> None
         # nao vazar segredo caso a excecao da lib carregue o corpo da resposta na
         # propria mensagem.
         logger.critical(
-            "[BLING AUTH] refresh_token rotacionado no Bling mas NAO persistido "
-            "no Postgres apos %d tentativas (%s) — reautorizacao manual necessaria",
-            _PERSIST_RETRY_ATTEMPTS, type(ultimo_erro).__name__,
+            "[BLING AUTH] conta %s: refresh_token rotacionado no Bling mas NAO "
+            "persistido no Postgres apos %d tentativas (%s) — reautorizacao manual "
+            "necessaria",
+            account, _PERSIST_RETRY_ATTEMPTS, type(ultimo_erro).__name__,
         )
         raise ultimo_erro
 
@@ -186,7 +187,7 @@ async def _persist(payload: dict, account: str = config.DEFAULT_ACCOUNT) -> None
     await _cache_set(row["access_token"], max(60, expires_in - _RENEW_MARGIN_SECONDS), account)
 
 
-def _stored_row(account: str = config.DEFAULT_ACCOUNT) -> dict | None:
+def _stored_row(account: str) -> dict | None:
     res = (get_supabase().table("bling_credentials")
            .select("*").eq("id", account).limit(1).maybe_single().execute())
     return getattr(res, "data", None)
@@ -203,14 +204,14 @@ def _seconds_until(iso_ts: str | None) -> float:
         return -1.0
 
 
-async def _cache_get(account: str = config.DEFAULT_ACCOUNT) -> str | None:
+async def _cache_get(account: str) -> str | None:
     try:
         return await _get_redis().get(_cache_key(account))
     except Exception:  # noqa: BLE001 — cache indisponivel cai para o Postgres
         return None
 
 
-async def _cache_set(token: str | None, ttl: int, account: str = config.DEFAULT_ACCOUNT) -> None:
+async def _cache_set(token: str | None, ttl: int, account: str) -> None:
     if not token:
         return
     try:
@@ -220,7 +221,7 @@ async def _cache_set(token: str | None, ttl: int, account: str = config.DEFAULT_
                        "da conta %s", account)
 
 
-async def _refresh_lock(account: str = config.DEFAULT_ACCOUNT):
+async def _refresh_lock(account: str):
     """Lock de refresh. Devolve um context manager que entrega True se pegou."""
     client = _get_redis()
     token = secrets.token_hex(8)
@@ -303,7 +304,7 @@ async def invalidate_cache(account: str = config.DEFAULT_ACCOUNT) -> None:
 
 async def status() -> dict:
     """Resumo para /api/bling/status: conectado, expiracoes, escopos."""
-    row = await asyncio.to_thread(_stored_row) or {}
+    row = await asyncio.to_thread(_stored_row, config.DEFAULT_ACCOUNT) or {}
     return {
         # Fonte unica da regra "o que conta como configurado" (config.is_configured).
         # Repetir a condicao aqui faria os dois lados divergirem no dia em que a
