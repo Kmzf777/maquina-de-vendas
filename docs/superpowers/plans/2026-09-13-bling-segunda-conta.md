@@ -811,7 +811,14 @@ E `status()` passa a devolver uma lista, uma entrada por conta.
 > Com o formato aditivo, o frontend das Tasks 14-16 migra para `accounts` quando
 > estiver pronto, sem janela de comportamento errado no meio.
 
-Forma do endpoint (`router.py`, Task 11):
+**O ajuste do endpoint é da Task 4, não da Task 11.** `router.py:481` faz hoje
+`return {**estado, "enabled": config.enabled()}` — desempacotamento de
+dicionário. No instante em que `auth.status()` devolve lista, isso vira
+`TypeError: 'list' object is not a mapping` e o endpoint ao vivo morre. Nenhum
+teste pega (só a existência da rota é verificada). Quem quebra conserta na mesma
+task; adiar por sete tasks é como uma branch apodrece.
+
+Forma do endpoint:
 
 ```python
     contas = await auth.status()
