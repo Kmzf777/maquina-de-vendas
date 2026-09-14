@@ -825,6 +825,26 @@ Forma do endpoint (`router.py`, Task 11):
     }
 ```
 
+> **`status()` precisa de teste direto NESTA task.** Ela acabou de ter um bug
+> real (chamava `_stored_row()` sem argumento, achado na T3 só porque a
+> assinatura ficou estrita) e é endpoint ao vivo em `/config`. A T11 só a testa
+> indiretamente pelo router, duas tasks adiante — tempo demais para uma função
+> recém-mexida ficar descoberta. Use o `FakeSupabase` que já existe no arquivo:
+
+```python
+async def test_status_devolve_uma_entrada_por_conta_configurada(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setattr(auth, "_stored_row",
+                        lambda conta: {"refresh_token": "r"} if conta == "default" else {})
+
+    saida = await auth.status()
+    assert [c["account"] for c in saida] == ["default", "secundaria"]
+    assert saida[0]["connected"] is True
+    assert saida[1]["connected"] is False   # sem refresh_token
+```
+
 A função interna:
 
 ```python
