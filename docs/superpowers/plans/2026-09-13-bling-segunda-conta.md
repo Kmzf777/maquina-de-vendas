@@ -794,7 +794,38 @@ def authorize_url(state: str, account: str = config.DEFAULT_ACCOUNT) -> str:
     return f"{config.AUTHORIZE_URL}?{params}"
 ```
 
-E `status()` passa a devolver uma lista, uma entrada por conta:
+E `status()` passa a devolver uma lista, uma entrada por conta.
+
+> ⚠️ **O endpoint `/api/bling/status` NÃO pode trocar de formato.** `auth.status()`
+> é interno e vira lista; o endpoint continua devolvendo `enabled` e `connected`
+> no topo, com a lista **ao lado**, em `accounts`.
+>
+> O motivo é um modo de falha silencioso: `use-bling-status.ts` lê
+> `body.enabled` e `body.connected` e colapsa os dois num booleano. Com a
+> resposta virando lista pura, `body.enabled` seria `undefined`, o hook devolveria
+> `enabled: false`, e `blingGate` cairia em `mode: "legacy", canSubmit: true` —
+> ou seja, **as vendas parariam de ir para o Bling sem nenhum erro na tela**. É
+> precisamente o defeito que o comentário do `bling-gate.ts` diz que aquele
+> arquivo existe para impedir.
+>
+> Com o formato aditivo, o frontend das Tasks 14-16 migra para `accounts` quando
+> estiver pronto, sem janela de comportamento errado no meio.
+
+Forma do endpoint (`router.py`, Task 11):
+
+```python
+    contas = await auth.status()
+    padrao = next((c for c in contas if c["account"] == config.DEFAULT_ACCOUNT), {})
+    return {
+        # Compatibilidade: o frontend atual le estes dois no topo. Sair daqui
+        # sem aviso faria o modal de venda cair em modo legado em silencio.
+        "enabled": config.enabled(),
+        "connected": bool(padrao.get("connected")),
+        "accounts": contas,
+    }
+```
+
+A função interna:
 
 ```python
 async def status() -> list[dict]:
@@ -1757,11 +1788,20 @@ async def test_authorize_com_conta_desconhecida_da_400(cliente_teste):
     assert resp.status_code == 400
 
 
-async def test_status_devolve_uma_entrada_por_conta(cliente_teste):
+async def test_status_lista_as_contas_em_accounts(cliente_teste):
     resp = cliente_teste.get("/api/bling/status")
     corpo = resp.json()
-    assert isinstance(corpo, list)
-    assert {c["account"] for c in corpo} == {"default", "secundaria"}
+    assert {c["account"] for c in corpo["accounts"]} == {"default", "secundaria"}
+
+
+async def test_status_preserva_enabled_e_connected_no_topo(cliente_teste):
+    """REGRESSAO: o frontend atual le body.enabled/body.connected no topo. Se a
+    resposta virar lista pura, os dois viram undefined, o hook devolve
+    enabled:false e o modal de venda cai em modo LEGADO em silencio — as vendas
+    param de ir para o Bling sem erro nenhum na tela."""
+    corpo = cliente_teste.get("/api/bling/status").json()
+    assert "enabled" in corpo
+    assert "connected" in corpo
 ```
 
 - [ ] **Step 2: Rodar e confirmar que falha**
@@ -1847,7 +1887,9 @@ async def oauth_callback(code: str = "", state: str = ""):
     # ... resto do fluxo de sucesso existente
 ```
 
-`/status` apenas repassa a lista de `auth.status()`.
+`/status` devolve o formato **aditivo** descrito na Task 4: `enabled` e
+`connected` no topo (compatibilidade com o frontend atual) mais `accounts` com a
+lista. Nunca trocar a lista pelo objeto — ver o aviso da Task 4.
 
 - [ ] **Step 4: Rodar**
 
@@ -2136,10 +2178,15 @@ chamada. E ele **colapsa a resposta num único booleano**:
 const ok = !!body.enabled && !!body.connected;
 ```
 
-Com a resposta virando lista, esse colapso não serve mais. O hook passa a
-guardar no memo a **lista inteira** (`ContaBling[]`) mais o `enabled` global, e
-expõe as duas coisas. Preserve o memo e o `inflight` — eles existem por um motivo
-real e removê-los multiplicaria as chamadas por quatro.
+Esse colapso deixa de bastar. O endpoint (Task 11) devolve `enabled` e
+`connected` no topo **e** `accounts` com a lista — formato aditivo, de propósito.
+O hook passa a guardar no memo a **lista inteira** (`ContaBling[]`) além do
+booleano que já expõe, e passa a expor as duas coisas.
+
+Preserve o memo e o `inflight`: eles existem por um motivo real e removê-los
+multiplicaria as chamadas por quatro. E mantenha o booleano funcionando a partir
+dos campos do topo — é o que garante que, se `accounts` vier ausente por qualquer
+razão, o modal de venda não caia em modo legado em silêncio.
 
 **`bling-gate.ts` — a assinatura real é maior do que a deste plano.**
 `blingGate({ loading, error, enabled, isEditing, skipBling })`, e há duas regras
