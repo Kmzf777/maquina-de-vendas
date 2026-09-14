@@ -46,6 +46,58 @@ O TypeScript não pega isso: `bling-settings.tsx` faz `body as BlingStatus`, um
 cast sem checagem. Teste de backend também não pega — os testes foram escritos
 contra o consumidor que eu conhecia.
 
+## Mapa completo dos consumidores de `/api/bling/*`
+
+Levantado por `grep` em 14/09/2026, depois de errar duas vezes por conferir só o
+consumidor que eu lembrava. **Esta é a lista autoritativa.**
+
+### ⚠️ A camada de proxy do Next — o ponto mais perigoso da entrega
+
+O frontend **não fala direto com o FastAPI**. Existem 13 rotas
+`frontend/src/app/api/bling/**/route.ts` que encaminham. E elas **não repassam a
+query string**: cada uma monta uma URL nova a partir de uma lista fixa de
+parâmetros (`products/route.ts` monta `?limit=&q=`; `catalog/route.ts` monta
+`q`, `situacao`, `page`, `limit`).
+
+Consequência se forem esquecidas: o vendedor escolhe a conta 2, o componente
+manda `?account=secundaria`, **o proxy descarta**, o backend cai no default e o
+**pedido é emitido no CNPJ errado — sem erro nenhum na tela.** É o pior modo de
+falha possível nesta entrega, e nenhum teste de backend o pega, porque o backend
+recebe exatamente o que o proxy mandou.
+
+| Proxy | Precisa repassar `account`? |
+|---|---|
+| `api/bling/products/route.ts` | **Sim** — monta `?limit=&q=` |
+| `api/bling/catalog/route.ts` | **Sim** — monta `q/situacao/page/limit` |
+| `api/bling/contacts/search/route.ts` | **Sim** |
+| `api/bling/contacts/route.ts` (POST) | **Sim** — no corpo |
+| `api/bling/contacts/link/route.ts` | **Sim** — query string |
+| `api/bling/contacts/unlink/route.ts` | **Sim** — query string |
+| `api/bling/payment-methods/route.ts` | **Sim** |
+| `api/bling/sellers/route.ts` | **Sim** |
+| `api/bling/orders/route.ts` (POST) | **Sim** — no corpo |
+| `api/bling/orders/[order_id]/route.ts` (PUT) | **Sim** — no corpo |
+| `api/bling/oauth/authorize/route.ts` | **Sim** — query string |
+| `api/bling/sync/route.ts` | Opcional (sync roda todas as contas) |
+| `api/bling/status/route.ts` | Não — a resposta já traz `accounts` |
+
+### Componentes e páginas que consomem
+
+| Arquivo | Endpoints | Task |
+|---|---|---|
+| `hooks/use-bling-status.ts` | `status` | 14 |
+| `components/config/bling-settings.tsx` | `status`, `sellers`, `oauth/authorize`, `sync` | 16 |
+| `components/sales/bling-order-form.tsx` | `payment-methods`, `products` | 15 |
+| `components/sales/sale-create-modal.tsx` | `orders` (POST e PUT) | 15 |
+| `components/sales/bling-contact-resolver.tsx` | `contacts`, `contacts/link` | 15 |
+| `components/leads/lead-bling-section.tsx` | `contacts/search`, `contacts/link`, `contacts/unlink` | 15 |
+| `app/(authenticated)/produtos/page.tsx` | `catalog` | **não estava no plano** |
+
+> A página `/produtos` lista o catálogo do espelho e não estava em nenhuma task.
+> Com duas contas ela passa a misturar os catálogos dos dois CNPJs numa lista
+> só, com códigos repetidos e sem dizer de quem é cada produto. Precisa de um
+> seletor de conta ou de uma coluna indicando a conta — decidir na Task 16.
+
 ## Decisões transversais (valem para TODAS as tasks)
 
 **1. Nunca escreva o literal `"default"`.** Use `config.DEFAULT_ACCOUNT`. Todos os
@@ -1961,11 +2013,45 @@ lista. Nunca trocar a lista pelo objeto — ver o aviso da Task 4.
 Run: `cd backend && python -m pytest tests/test_bling_router.py -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: A camada de proxy do Next — NÃO PULE**
+
+O backend aceitar `?account=` não serve de nada se o proxy o descartar. As 11
+rotas marcadas "Sim" no mapa de consumidores (topo deste documento) precisam
+repassar a conta. Padrão para as que usam query string:
+
+```ts
+  const account = sp.get("account");
+  if (account) params.set("account", account);
+```
+
+E para `orders` e `contacts`, que postam JSON, a conta viaja no corpo — o
+componente já a inclui, o proxy só não pode filtrá-la ao remontar o payload.
+
+**Teste obrigatório**, um por proxy que repassa (vitest, mockando `fetch`):
+
+```ts
+it("repassa o account para o backend", async () => {
+  const chamadas: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    chamadas.push(String(url));
+    return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+  });
+  await GET(new Request("http://x/api/bling/products?account=secundaria"));
+  expect(chamadas[0]).toContain("account=secundaria");
+});
+```
+
+> Sem isso o modo de falha é: vendedor escolhe a conta 2 → componente manda
+> `?account=secundaria` → **o proxy descarta** → backend usa o default → o
+> **pedido sai no CNPJ errado, sem erro na tela**. Nenhum teste de backend pega,
+> porque o backend recebe exatamente o que o proxy mandou.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add backend/app/bling/router.py backend/tests/test_bling_router.py
-git commit -m "feat(bling): endpoints com ?account= e OAuth por conta"
+git add backend/app/bling/router.py backend/tests/test_bling_router.py \
+        frontend/src/app/api/bling/
+git commit -m "feat(bling): endpoints e proxies do Next com ?account= e OAuth por conta"
 ```
 
 ---
