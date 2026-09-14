@@ -476,10 +476,20 @@ async def oauth_callback(code: str = "", state: str = ""):
 
 @router.get("/status")
 async def bling_status():
-    # `configured` ja vem de auth.status(), que consulta config.is_configured().
-    # `enabled` e outra coisa: o toggle BLING_ENABLED que liga os workers.
-    estado = await auth.status()
-    return {**estado, "enabled": config.enabled()}
+    # auth.status() devolve LISTA (Task 4: uma entrada por conta). O JSON aqui
+    # continua ADITIVO de proposito -- nunca troque por `return {**contas, ...}`
+    # nem por `return contas`. use-bling-status.ts le body.enabled e
+    # body.connected direto do topo; se sumissem, os dois virariam undefined no
+    # frontend, o hook devolveria enabled:false e blingGate cairia em
+    # mode:"legacy", canSubmit:true -- as vendas parariam de ir para o Bling SEM
+    # NENHUM ERRO na tela. `accounts` e o dado novo, ao lado, nao no lugar.
+    contas = await auth.status()
+    padrao = next((c for c in contas if c["account"] == config.DEFAULT_ACCOUNT), {})
+    return {
+        "enabled": config.enabled(),
+        "connected": bool(padrao.get("connected")),
+        "accounts": contas,
+    }
 
 
 @router.post("/sync")

@@ -401,6 +401,72 @@ def test_oauth_callback_rejeita_state_invalido(monkeypatch):
     assert resp.status_code == 400
 
 
+# --------------------------------------------------------------------------
+# /status: formato ADITIVO (Task 4 fechou o gap que a propria Task 4 abriu --
+# auth.status() virou lista por conta e este endpoint fazia {**estado, ...},
+# o que quebraria com TypeError assim que fosse exercitado de verdade. So
+# existia checagem de rota (test_router_expoe_as_rotas_esperadas), nunca uma
+# chamada de verdade ao handler -- por isso o defeito nao apareceu antes.
+# --------------------------------------------------------------------------
+def test_status_expoe_enabled_e_connected_no_topo_do_json(monkeypatch):
+    """Regressao do modo legado silencioso: use-bling-status.ts le body.enabled
+    e body.connected direto do topo do JSON e colapsa os dois num booleano. Se
+    estas duas chaves sumissem do topo (por exemplo devolvendo so a lista de
+    contas, ou fazendo {**contas, ...}), as duas virariam undefined no
+    frontend, o hook devolveria enabled:false, e blingGate cairia em
+    mode:"legacy", canSubmit:true -- as vendas parariam de ir para o Bling SEM
+    NENHUM ERRO na tela. NAO troque o formato deste endpoint para so a lista:
+    a redundancia com `accounts` e proposital e existe para evitar exatamente
+    essa regressao."""
+    async def fake_status():
+        return [{"account": "default", "connected": True}]
+
+    monkeypatch.setattr(br.auth, "status", fake_status)
+    monkeypatch.setattr(br.config, "enabled", lambda: True)
+
+    saida = asyncio.run(br.bling_status())
+
+    assert saida["enabled"] is True
+    assert saida["connected"] is True
+
+
+def test_status_accounts_carrega_uma_entrada_por_conta(monkeypatch):
+    contas_fake = [
+        {"account": "default", "connected": True},
+        {"account": "secundaria", "connected": False},
+    ]
+
+    async def fake_status():
+        return contas_fake
+
+    monkeypatch.setattr(br.auth, "status", fake_status)
+    monkeypatch.setattr(br.config, "enabled", lambda: True)
+
+    saida = asyncio.run(br.bling_status())
+
+    assert saida["accounts"] == contas_fake
+
+
+def test_status_connected_no_topo_e_da_conta_default_nao_de_qualquer_uma(monkeypatch):
+    """connected no topo precisa ser da conta DEFAULT especificamente, nao
+    "existe alguma conta conectada". Com a default desconectada e uma segunda
+    conta conectada, o topo tem que acusar False -- um refactor que trocasse
+    isso por any(c["connected"] for c in contas) passaria despercebido sem
+    este teste."""
+    async def fake_status():
+        return [
+            {"account": "default", "connected": False},
+            {"account": "secundaria", "connected": True},
+        ]
+
+    monkeypatch.setattr(br.auth, "status", fake_status)
+    monkeypatch.setattr(br.config, "enabled", lambda: True)
+
+    saida = asyncio.run(br.bling_status())
+
+    assert saida["connected"] is False
+
+
 def test_unlink_limpa_o_vinculo_do_lead(monkeypatch):
     sb = FakeSupabase({})
     monkeypatch.setattr(contacts, "get_supabase", lambda: sb)
