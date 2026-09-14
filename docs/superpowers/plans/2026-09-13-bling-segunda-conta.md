@@ -25,6 +25,35 @@ cd backend && python -m pytest tests/test_bling_config.py -v
 cd frontend && npm test
 ```
 
+## Decisões transversais (valem para TODAS as tasks)
+
+**1. Nunca escreva o literal `"default"`.** Use `config.DEFAULT_ACCOUNT`. Todos os
+módulos de `app/bling` já fazem `from app.bling import config`. O slug é a chave
+de tudo — cache Redis, lock, linha de credencial, coluna no Postgres — e um
+literal espalhado por 15 arquivos diverge da fonte de verdade no primeiro ajuste.
+
+**2. A validação e a normalização do slug moram em `BlingClient.__init__`.**
+Decisão explícita, tomada na revisão da Task 2. O construtor faz:
+
+```python
+        # Normaliza e VALIDA aqui, no unico ponto por onde toda chamada HTTP ao
+        # Bling passa. Sem isso, um slug com caixa ou espaco errado ("Secundaria",
+        # " secundaria") nao levanta erro nenhum: ele abre em silencio um
+        # namespace novo e sem governanca no Redis — orcamento de rate limit
+        # proprio, cache de token proprio, lock proprio. O erro so apareceria
+        # como "a conta 2 estourou o limite" sem causa visivel.
+        self._account = config.account(account).key
+```
+
+`ratelimit.acquire` e as funções de `auth` continuam recebendo a string já
+normalizada e **não** revalidam — o client é o gargalo, e revalidar em cada
+camada só multiplicaria o custo sem cobrir nenhum caminho novo.
+
+Isso importa nas duas entradas onde a string vem de fora e é menos confiável: o
+`?account=` da Task 11 (query param HTTP) e a conta lida da linha do banco na
+Task 10. Nas duas, o erro vira `BlingUnknownAccount` e sobe como 400/404, em vez
+de virar um namespace fantasma.
+
 ## Estrutura de arquivos
 
 | Arquivo | Responsabilidade | Ação |
@@ -324,7 +353,7 @@ def _day_key(account: str) -> str:
             + datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
 
-async def acquire(account: str = "default") -> None:
+async def acquire(account: str = config.DEFAULT_ACCOUNT) -> None:
 ```
 
 E dentro do corpo de `acquire`, na chamada `eval`:
@@ -340,7 +369,7 @@ Em `backend/app/bling/client.py`, no `__init__` (linha ~49):
 ```python
     def __init__(self, http: Any | None = None, timeout: float = 30.0,
                  max_attempts: int = _MAX_ATTEMPTS,
-                 account: str = "default"):
+                 account: str = config.DEFAULT_ACCOUNT):
         self._http = http
         self._owns_http = http is None
         self._timeout = timeout
@@ -474,7 +503,7 @@ Remover `_CACHE_KEY` e `_LOCK_KEY`. Manter `_STATE_PREFIX` (a Task 4 mexe nele).
 Adicionar `account` a estas funções, propagando para as chamadas internas:
 
 ```python
-def _basic_auth_header(account: str = "default") -> str:
+def _basic_auth_header(account: str = config.DEFAULT_ACCOUNT) -> str:
     conta = config.account(account)
     # `conta.configured` e a fonte unica da regra "o que conta como configurado"
     # (Task 1). Repetir `client_id and client_secret` aqui criaria uma segunda
@@ -490,7 +519,7 @@ def _basic_auth_header(account: str = "default") -> str:
         f"{conta.client_id}:{conta.client_secret}".encode()).decode()
 
 
-async def _token_request(data: dict, account: str = "default") -> dict:
+async def _token_request(data: dict, account: str = config.DEFAULT_ACCOUNT) -> dict:
     headers = {
         "Authorization": _basic_auth_header(account),
         "Content-Type": "application/x-www-form-urlencoded",
@@ -500,21 +529,21 @@ async def _token_request(data: dict, account: str = "default") -> dict:
     # ... resto igual
 
 
-async def exchange_code(code: str, account: str = "default") -> dict:
+async def exchange_code(code: str, account: str = config.DEFAULT_ACCOUNT) -> dict:
     payload = await _token_request(
         {"grant_type": "authorization_code", "code": code}, account)
     await _persist(payload, account)
     return payload
 
 
-async def _refresh_now(refresh_token: str, account: str = "default") -> str:
+async def _refresh_now(refresh_token: str, account: str = config.DEFAULT_ACCOUNT) -> str:
     payload = await _token_request(
         {"grant_type": "refresh_token", "refresh_token": refresh_token}, account)
     await _persist(payload, account)
     return payload["access_token"]
 
 
-async def _persist(payload: dict, account: str = "default") -> None:
+async def _persist(payload: dict, account: str = config.DEFAULT_ACCOUNT) -> None:
     # ... igual, trocando so a linha do id:
     row = {
         "id": account,
@@ -525,20 +554,20 @@ async def _persist(payload: dict, account: str = "default") -> None:
                      max(60, expires_in - _RENEW_MARGIN_SECONDS), account)
 
 
-def _stored_row(account: str = "default") -> dict | None:
+def _stored_row(account: str = config.DEFAULT_ACCOUNT) -> dict | None:
     res = (get_supabase().table("bling_credentials")
            .select("*").eq("id", account).limit(1).maybe_single().execute())
     return getattr(res, "data", None)
 
 
-async def _cache_get(account: str = "default") -> str | None:
+async def _cache_get(account: str = config.DEFAULT_ACCOUNT) -> str | None:
     try:
         return await _get_redis().get(_cache_key(account))
     except Exception:  # noqa: BLE001 — cache indisponivel cai para o Postgres
         return None
 
 
-async def _cache_set(token: str | None, ttl: int, account: str = "default") -> None:
+async def _cache_set(token: str | None, ttl: int, account: str = config.DEFAULT_ACCOUNT) -> None:
     if not token:
         return
     try:
@@ -548,7 +577,7 @@ async def _cache_set(token: str | None, ttl: int, account: str = "default") -> N
                        "da conta %s", account)
 
 
-async def _refresh_lock(account: str = "default"):
+async def _refresh_lock(account: str = config.DEFAULT_ACCOUNT):
     client = _get_redis()
     token = secrets.token_hex(8)
     chave = _lock_key(account)
@@ -556,7 +585,7 @@ async def _refresh_lock(account: str = "default"):
     # (o set nx, o eval de liberacao e o KEYS[1])
 
 
-async def get_access_token(account: str = "default") -> str:
+async def get_access_token(account: str = config.DEFAULT_ACCOUNT) -> str:
     cached = await _cache_get(account)
     if cached:
         return cached
@@ -587,7 +616,7 @@ async def get_access_token(account: str = "default") -> str:
         return await _refresh_now(refresh_token, account)
 
 
-async def invalidate_cache(account: str = "default") -> None:
+async def invalidate_cache(account: str = config.DEFAULT_ACCOUNT) -> None:
     try:
         await _get_redis().delete(_cache_key(account))
     except Exception:  # noqa: BLE001
@@ -704,7 +733,7 @@ Expected: FAIL — `TypeError: new_state() takes 0 positional arguments but 1 wa
 - [ ] **Step 3: Implementar**
 
 ```python
-async def new_state(account: str = "default") -> str:
+async def new_state(account: str = config.DEFAULT_ACCOUNT) -> str:
     """Gera o state (anti-CSRF) guardando a CONTA como valor.
 
     O valor precisa ser a conta, nao um "1": o /oauth/callback so recebe `code`
@@ -731,7 +760,7 @@ async def consume_state(state: str) -> str | None:
     return conta
 
 
-def authorize_url(state: str, account: str = "default") -> str:
+def authorize_url(state: str, account: str = config.DEFAULT_ACCOUNT) -> str:
     conta = config.account(account)
     if not conta.configured:
         from app.bling.errors import BlingNotConfigured
@@ -1854,7 +1883,7 @@ Expected: FAIL
 
 Em `backend/app/quotes/router.py`:
 
-- `QuoteIn` ganha `account: str = "default"`; `create_quote_endpoint` valida com
+- `QuoteIn` ganha `account: str = config.DEFAULT_ACCOUNT`; `create_quote_endpoint` valida com
   `_conta_valida` e grava `bling_account`.
 - `update_quote_endpoint` **ignora** qualquer `account` do corpo — a conta do
   orçamento é imutável depois de criado. Não levanta erro: simplesmente não
