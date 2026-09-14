@@ -476,7 +476,11 @@ Adicionar `account` a estas funções, propagando para as chamadas internas:
 ```python
 def _basic_auth_header(account: str = "default") -> str:
     conta = config.account(account)
-    if not (conta.client_id and conta.client_secret):
+    # `conta.configured` e a fonte unica da regra "o que conta como configurado"
+    # (Task 1). Repetir `client_id and client_secret` aqui criaria uma segunda
+    # versao da mesma regra, que diverge no dia em que a integracao passar a
+    # exigir tambem o redirect_uri.
+    if not conta.configured:
         from app.bling.errors import BlingNotConfigured
         raise BlingNotConfigured(
             f"conta {account!r}: BLING_CLIENT_ID e BLING_CLIENT_SECRET "
@@ -710,7 +714,7 @@ async def consume_state(state: str) -> str | None:
 
 def authorize_url(state: str, account: str = "default") -> str:
     conta = config.account(account)
-    if not (conta.client_id and conta.client_secret):
+    if not conta.configured:
         from app.bling.errors import BlingNotConfigured
         raise BlingNotConfigured(
             f"conta {account!r}: credenciais nao configuradas")
@@ -733,7 +737,7 @@ async def status() -> list[dict]:
         saida.append({
             "account": conta.key,
             "label": conta.label,
-            "configured": bool(conta.client_id and conta.client_secret),
+            "configured": conta.configured,
             "connected": bool(row.get("refresh_token")),
             "access_expires_at": row.get("access_expires_at"),
             "refresh_expires_at": row.get("refresh_expires_at"),
@@ -917,12 +921,14 @@ async def test_sync_roda_para_cada_conta_configurada(monkeypatch):
 
     chamadas = []
 
-    async def fake_sync_account(account, full=False):
+    async def fake_sync_account(account, *, full=False):
         chamadas.append(account)
+        return {"produtos": 0}
 
     monkeypatch.setattr(sync, "sync_account", fake_sync_account)
-    await sync.sync_all()
+    resultado = await sync.sync_all()
     assert chamadas == ["default", "secundaria"]
+    assert set(resultado) == {"default", "secundaria"}
 
 
 async def test_falha_numa_conta_nao_impede_a_outra(monkeypatch):
@@ -934,14 +940,17 @@ async def test_falha_numa_conta_nao_impede_a_outra(monkeypatch):
 
     chamadas = []
 
-    async def fake_sync_account(account, full=False):
+    async def fake_sync_account(account, *, full=False):
         chamadas.append(account)
         if account == "default":
             raise RuntimeError("conta 1 fora do ar")
+        return {"produtos": 3}
 
     monkeypatch.setattr(sync, "sync_account", fake_sync_account)
-    await sync.sync_all()          # nao pode propagar a excecao
+    resultado = await sync.sync_all()   # nao pode propagar a excecao
     assert chamadas == ["default", "secundaria"]
+    assert "erro" in resultado["default"]
+    assert resultado["secundaria"] == {"produtos": 3}
 
 
 def test_sync_state_e_lido_por_conta():
@@ -957,36 +966,68 @@ Expected: FAIL — `AttributeError: module 'app.bling.sync' has no attribute 'sy
 
 - [ ] **Step 3: Implementar**
 
-Em `backend/app/bling/sync.py`, renomear a função de sync existente para
-`sync_account(account: str, full: bool = False)`, fazendo com que:
+**Estado atual conferido no código** (não presumir): `sync.py:232` já tem
+`async def sync_all(*, full: bool = False) -> dict`, que devolve um dicionário de
+contagens e é chamada por `bling_sync_tick()` (`sync.py:247`), que **loga esse
+retorno**. Devolver `None` na versão nova faria o log de produção virar "None".
 
-- `BlingClient()` vire `BlingClient(account=account)`
-- todo upsert em `bling_products` / `bling_contacts` / `bling_sellers` /
-  `bling_payment_methods` inclua `"account": account` na linha
-- todo `on_conflict="id"` vire `on_conflict="account,id"`
-- toda leitura/escrita de `bling_sync_state` filtre também por `account`
+Passo 1 — **renomear** a `sync_all` existente para `sync_account`, acrescentando a
+conta como primeiro parâmetro e preservando o retorno em dicionário:
 
-E adicionar o laço com isolamento de falha:
+```python
+async def sync_account(account: str, *, full: bool = False) -> dict:
+    """Roda os cinco syncs de UMA conta, em sequencia (nunca em paralelo:
+    o teto de 3 req/s e da conta)."""
+    from app.bling.client import BlingClient
+
+    async with BlingClient(account=account) as client:
+        produtos = await sync_products(client, account, full=full)
+        contatos = await sync_contacts(client, account)
+        formas = await sync_payment_methods(client, account)
+        vendedores = await sync_sellers(client, account)
+        situacoes = await sync_situacoes(client, account)
+    return {"produtos": produtos, "contatos": contatos,
+            "formas_pagamento": formas, "vendedores": vendedores,
+            "situacoes": situacoes}
+```
+
+Passo 2 — as cinco funções `sync_*(client, account, ...)` passam a receber a conta
+e a gravá-la. Concretamente:
+
+- `_upsert(table, rows)` (`sync.py:124`) usa hoje `on_conflict="id"`; passa a ser
+  `_upsert(table, rows, account)`, injetando `"account": account` em cada linha e
+  usando `on_conflict="account,id"`.
+- `_load_sync_state(resource)` (`sync.py:111`) e `_save_sync_state(resource, ...)`
+  (`sync.py:117`, hoje `on_conflict="resource"`) passam a receber `account`,
+  filtrar por ele e usar `on_conflict="account,resource"`.
+
+Passo 3 — a `sync_all` **nova** vira o laço com isolamento de falha:
 
 ```python
 def _state_filter(resource: str, account: str) -> dict:
     return {"resource": resource, "account": account}
 
 
-async def sync_all(full: bool = False) -> None:
+async def sync_all(*, full: bool = False) -> dict:
     """Sincroniza TODAS as contas configuradas.
 
     Falha numa conta nao pode derrubar a outra: o worker roda as duas no mesmo
-    tick e um 401 na conta 2 nao tem por que parar o catalogo da conta 1.
+    tick e um 401 na conta 2 nao tem por que parar o catalogo da conta 1. Por
+    isso o resultado e por conta e o erro entra como valor, nao como excecao —
+    `bling_sync_tick` loga esse dicionario e precisa ver as duas.
     """
+    resultado = {}
     for conta in config.accounts():
         try:
-            await sync_account(conta.key, full=full)
+            resultado[conta.key] = await sync_account(conta.key, full=full)
         except Exception as exc:  # noqa: BLE001 — isolamento por conta
             logger.warning("[BLING SYNC] conta %s falhou: %s", conta.key, exc)
+            resultado[conta.key] = {"erro": str(exc)}
+    return resultado
 ```
 
-Atualizar o call site do worker (quem chamava a função antiga) para `sync_all`.
+`bling_sync_tick()` **não muda**: continua chamando `sync_all()` e logando o
+retorno, que agora vem agrupado por conta.
 
 Em `backend/app/bling/products.py`, `apply_product_event` recebe `account` e o
 inclui no upsert e no `on_conflict`.
@@ -1013,41 +1054,114 @@ git commit -m "feat(bling): sync por conta com isolamento de falha entre contas"
 
 - [ ] **Step 1: Escrever os testes que falham**
 
+> **Esta é a task mais delicada do plano.** `contacts.py` tem 498 linhas de lógica
+> de dedupe (validação de DV de CPF/CNPJ, variantes de telefone, tratamento de
+> violação de unicidade) e `leads.bling_contact_id` aparece em **13 pontos** dela.
+> A lógica de casamento **não muda** — o que muda é onde o vínculo mora e o fato
+> de ele passar a ser por conta. Preserve cada regra existente.
+
+**Os nomes das funções são os que já existem** (`link`, `unlink`, `_link`,
+`_unlink`, `resolve`, `ensure_lead`, `_find_lead`, `_pode_vincular_por_telefone`,
+`_upsert_mirror`) — acrescente o parâmetro `account`, não crie nomes novos.
+
+**⚠️ A armadilha central desta task.** Duas funções decidem coisas a partir de
+"o lead já tem contato?", e as duas precisam virar **"o lead já tem contato
+NESTA conta?"**:
+
+- `resolve()` (`contacts.py:226-229`) devolve `linked` de saída quando o lead já
+  tem vínculo.
+- `_pode_vincular_por_telefone()` (`contacts.py:407`, regra 1) **recusa** gravar
+  vínculo por telefone quando o lead já tem um.
+
+Se qualquer uma continuar olhando "tem vínculo em qualquer conta", o cliente que
+existe nos DOIS CNPJs — o caso de negócio que motivou esta entrega — nunca
+conseguiria ser vinculado na segunda conta. Seria uma falha silenciosa: sem erro,
+só um lead que nunca resolve o contato da conta 2.
+
 ```python
-async def test_vincula_lead_na_tabela_nova(monkeypatch):
+async def test_vincula_lead_por_conta(monkeypatch):
     from app.bling import contacts
     gravado = {}
 
-    def fake_link(lead_id, account, contact_id):
+    def fake_link(lead_id, contact_id, account):
         gravado.update({"lead_id": lead_id, "account": account,
                         "contact_id": contact_id})
 
-    monkeypatch.setattr(contacts, "_link_lead_contact", fake_link)
-    await contacts.link_lead("lead-1", "secundaria", 999)
+    monkeypatch.setattr(contacts, "_link", fake_link)
+    await contacts.link("lead-1", 999, "secundaria")
     assert gravado == {"lead_id": "lead-1", "account": "secundaria",
                        "contact_id": 999}
 
 
 async def test_mesmo_lead_pode_ter_contato_nas_duas_contas(monkeypatch):
     """O caso 'alguns clientes em comum': o mesmo cliente existe nos dois CNPJs
-    com IDs diferentes, e o lead precisa apontar para os dois."""
+    com IDs diferentes, e o lead precisa apontar para os dois ao mesmo tempo."""
     from app.bling import contacts
     gravadas = []
 
-    def fake_link(lead_id, account, contact_id):
+    def fake_link(lead_id, contact_id, account):
         gravadas.append((lead_id, account, contact_id))
 
-    monkeypatch.setattr(contacts, "_link_lead_contact", fake_link)
-    await contacts.link_lead("lead-1", "default", 111)
-    await contacts.link_lead("lead-1", "secundaria", 222)
+    monkeypatch.setattr(contacts, "_link", fake_link)
+    await contacts.link("lead-1", 111, "default")
+    await contacts.link("lead-1", 222, "secundaria")
     assert gravadas == [("lead-1", "default", 111),
                         ("lead-1", "secundaria", 222)]
 
 
-def test_leitura_do_vinculo_filtra_por_conta():
+async def test_resolve_ignora_vinculo_de_outra_conta(monkeypatch):
+    """REGRESSAO DA ARMADILHA: um lead vinculado na conta 1 deve continuar
+    resolvivel na conta 2, senao o cliente em comum nunca e vinculado la."""
     from app.bling import contacts
-    assert contacts._link_filter("lead-1", "secundaria") == {
-        "lead_id": "lead-1", "account": "secundaria"}
+
+    # O lead tem contato na conta 1, nenhum na conta 2.
+    monkeypatch.setattr(contacts, "_contato_do_lead",
+                        lambda lead_id, account: 111 if account == "default" else None)
+    monkeypatch.setattr(contacts, "_query_by_doc",
+                        lambda doc, account: [{"id": 222}])
+    gravado = {}
+    monkeypatch.setattr(contacts, "_link",
+                        lambda lead_id, contact_id, account: gravado.update(
+                            {"contact_id": contact_id, "account": account}))
+
+    lead = {"id": "lead-1", "cnpj": "11222333000181"}
+    r = await contacts.resolve(lead, "secundaria")
+    assert r.status == "linked"
+    assert gravado == {"contact_id": 222, "account": "secundaria"}
+
+
+def test_pode_vincular_por_telefone_olha_so_a_conta_corrente():
+    """Mesma armadilha do outro lado: ter contato na conta 1 nao pode BLOQUEAR
+    o vinculo por telefone na conta 2."""
+    from app.bling import contacts
+    # Sem contato na conta corrente e sem documento divergente => pode.
+    assert contacts._pode_vincular_por_telefone(
+        {"cnpj": None}, None, contato_da_conta=None) is True
+    # Ja tem contato NA CONTA CORRENTE => nao pode (regra original preservada).
+    assert contacts._pode_vincular_por_telefone(
+        {"cnpj": None}, None, contato_da_conta=111) is False
+
+
+def test_espelho_de_contato_usa_chave_composta(monkeypatch):
+    from app.bling import contacts
+    capturado = {}
+
+    class FakeTable:
+        def upsert(self, row, on_conflict=None):
+            capturado["row"] = row
+            capturado["on_conflict"] = on_conflict
+            return self
+        def execute(self):
+            class R: data = [{}]
+            return R()
+
+    class FakeSupa:
+        def table(self, _n): return FakeTable()
+
+    monkeypatch.setattr(contacts, "get_supabase", lambda: FakeSupa())
+    contacts._upsert_mirror({"id": 5, "nome": "X"}, "secundaria")
+    assert capturado["on_conflict"] == "account,id"
+    assert capturado["row"]["account"] == "secundaria"
 ```
 
 - [ ] **Step 2: Rodar e confirmar que falha**
@@ -1057,15 +1171,24 @@ Expected: FAIL — `AttributeError: module 'app.bling.contacts' has no attribute
 
 - [ ] **Step 3: Implementar**
 
-Em `backend/app/bling/contacts.py`, trocar toda escrita/leitura de
-`leads.bling_contact_id` por `lead_bling_contacts`:
+Núcleo do armazenamento — `leads.bling_contact_id` sai, `lead_bling_contacts` entra:
 
 ```python
-def _link_filter(lead_id: str, account: str) -> dict:
-    return {"lead_id": lead_id, "account": account}
+def _contato_do_lead(lead_id: str, account: str) -> int | None:
+    """Contato do lead NESTA conta, ou None.
+
+    Substitui a leitura direta de `leads.bling_contact_id`. O recorte por conta e
+    o ponto inteiro: um lead pode ter contato na conta 1 e nenhum na conta 2, e os
+    dois estados sao independentes.
+    """
+    res = (get_supabase().table("lead_bling_contacts").select("bling_contact_id")
+           .eq("lead_id", lead_id).eq("account", account)
+           .limit(1).maybe_single().execute())
+    linha = getattr(res, "data", None) or {}
+    return linha.get("bling_contact_id")
 
 
-def _link_lead_contact(lead_id: str, account: str, contact_id: int) -> None:
+def _link(lead_id: str, contact_id: int, account: str) -> None:
     (get_supabase().table("lead_bling_contacts").upsert({
         "lead_id": lead_id,
         "account": account,
@@ -1073,26 +1196,51 @@ def _link_lead_contact(lead_id: str, account: str, contact_id: int) -> None:
     }, on_conflict="lead_id,account").execute())
 
 
-async def link_lead(lead_id: str, account: str, contact_id: int) -> None:
-    """Vincula o lead ao contato do ERP DENTRO de uma conta.
-
-    O mesmo lead pode ter uma linha por conta — e o caso dos clientes que
-    existem nos dois CNPJs com IDs diferentes.
-    """
-    await asyncio.to_thread(_link_lead_contact, lead_id, account, contact_id)
-
-
-def _unlink_lead_contact(lead_id: str, account: str) -> None:
+def _unlink(lead_id: str, account: str) -> None:
     (get_supabase().table("lead_bling_contacts").delete()
      .eq("lead_id", lead_id).eq("account", account).execute())
 
 
-async def unlink_lead(lead_id: str, account: str) -> None:
-    await asyncio.to_thread(_unlink_lead_contact, lead_id, account)
+def _lead_por_contato(contact_id: int, account: str) -> dict | None:
+    """Lead dono deste contato, nesta conta. Substitui
+    `_find_lead("bling_contact_id", contact_id)`, que nao existe mais como coluna."""
+    res = (get_supabase().table("lead_bling_contacts").select("lead_id")
+           .eq("bling_contact_id", contact_id).eq("account", account)
+           .limit(1).maybe_single().execute())
+    linha = getattr(res, "data", None) or {}
+    if not linha.get("lead_id"):
+        return None
+    return _find_lead("id", linha["lead_id"])
 ```
 
-`ensure_lead(contato, account)` passa a receber a conta e chama `link_lead`.
-A lógica de casamento por telefone/documento/e-mail **não muda**.
+Inventário dos pontos a mudar em `contacts.py` (todos verificados por `grep`):
+
+| Linha | O que é hoje | Passa a ser |
+|---|---|---|
+| 10 | docstring cita `leads.bling_contact_id` sob UNIQUE | citar `lead_bling_contacts (account, bling_contact_id)` |
+| 177,184,198 | `_query_by_doc` / `_query_by_phones` / `_query_by_email` no espelho | recebem `account` e filtram `.eq("account", account)` |
+| 205 | `_link` faz `UPDATE leads` | escreve em `lead_bling_contacts` (acima) |
+| 211 | docstring do 23505 cita o índice de `leads` | citar o índice novo; **a detecção de 23505 continua igual** |
+| 226-229 | `resolve(lead)` lê `lead["bling_contact_id"]` | `resolve(lead, account)` usa `_contato_do_lead(lead["id"], account)` |
+| 276 | `link(lead_id, contact_id)` | `link(lead_id, contact_id, account)` |
+| 281-286 | `_unlink` / `unlink` | recebem `account` |
+| 297 | `_upsert_mirror` com `on_conflict="id"` | `_upsert_mirror(row, account)` com `on_conflict="account,id"` |
+| 302 | `create_contact(client, lead, dados)` | recebe `account`, repassa ao espelho e ao vínculo |
+| 401 | `_find_lead` seleciona `bling_contact_id` | remove da projeção; quem precisava agora chama `_contato_do_lead` |
+| 407-431 | `_pode_vincular_por_telefone(lead_row, doc_contato)` | ganha `contato_da_conta: int \| None` e testa **ele**, não `lead_row` |
+| 439-443 | `ensure_lead(contato)` + `_find_lead("bling_contact_id", …)` | `ensure_lead(contato, account)` + `_lead_por_contato(contact_id, account)` |
+| 493 | payload de lead novo grava `bling_contact_id` | grava o lead sem a coluna e chama `_link(...)` depois |
+
+**Regras que NÃO podem mudar** (são de nota fiscal, documentadas no próprio
+arquivo — releia os comentários antes de mexer):
+
+- Documento só vira chave depois de validar o DV. Documento inválido não para o
+  fluxo: cai para telefone/e-mail, que apenas **sugerem**.
+- Telefone e e-mail nunca gravam sozinhos (`suggested`, jamais `linked`).
+- Dois contatos com o mesmo documento → `ambiguous`, nunca escolha automática.
+- Violação de unicidade vira `ambiguous` com log, nunca 500.
+- Documentos que divergem dos dois lados continuam recusando o vínculo por
+  telefone, mesmo com o telefone batendo.
 
 - [ ] **Step 4: Rodar**
 
@@ -1118,8 +1266,12 @@ Esta é a task com a armadilha mais cara do plano. Ler o aviso do Step 5.
 
 - [ ] **Step 1: Escrever os testes que falham**
 
+> **Assinatura real conferida no código:** `_upsert_sale(row: dict) -> str | None`
+> em `orders.py:520` é **síncrona** (chamada via `asyncio.to_thread` na linha 578)
+> e usa hoje `on_conflict="bling_order_id"`. Os testes abaixo NÃO usam `await`.
+
 ```python
-async def test_upsert_de_venda_usa_on_conflict_composto(monkeypatch):
+def test_upsert_de_venda_usa_on_conflict_composto(monkeypatch):
     from app.bling import orders
     capturado = {}
 
@@ -1137,13 +1289,13 @@ async def test_upsert_de_venda_usa_on_conflict_composto(monkeypatch):
             return FakeTable()
 
     monkeypatch.setattr(orders, "get_supabase", lambda: FakeSupa())
-    await orders._upsert_sale({"bling_order_id": 10}, account="secundaria")
+    orders._upsert_sale({"bling_order_id": 10, "bling_account": "secundaria"})
 
     assert capturado["on_conflict"] == "bling_account,bling_order_id"
     assert capturado["row"]["bling_account"] == "secundaria"
 
 
-async def test_mesmo_order_id_em_contas_diferentes_nao_colide(monkeypatch):
+def test_mesmo_order_id_em_contas_diferentes_nao_colide(monkeypatch):
     """IDs do Bling sao sequencia POR CONTA: o pedido 10 existe nas duas."""
     from app.bling import orders
     linhas = []
@@ -1161,8 +1313,8 @@ async def test_mesmo_order_id_em_contas_diferentes_nao_colide(monkeypatch):
             return FakeTable()
 
     monkeypatch.setattr(orders, "get_supabase", lambda: FakeSupa())
-    await orders._upsert_sale({"bling_order_id": 10}, account="default")
-    await orders._upsert_sale({"bling_order_id": 10}, account="secundaria")
+    orders._upsert_sale({"bling_order_id": 10, "bling_account": "default"})
+    orders._upsert_sale({"bling_order_id": 10, "bling_account": "secundaria"})
     assert linhas == [("default", 10), ("secundaria", 10)]
 ```
 
@@ -1175,55 +1327,25 @@ Expected: FAIL — `TypeError: _upsert_sale() got an unexpected keyword argument
 
 Em `backend/app/bling/orders.py`:
 
-- `_upsert_sale(..., account: str = "default")` inclui `"bling_account": account`
-  na linha e usa `on_conflict="bling_account,bling_order_id"`.
+- `_upsert_sale(row)` (`orders.py:520`) usa
+  `on_conflict="bling_account,bling_order_id"`. A linha já chega com
+  `bling_account` preenchido pelo chamador — a função continua recebendo só
+  `row`, sem parâmetro novo.
 - `create_order`, `update_order`, `upsert_from_bling` e `cancel_from_bling`
-  recebem `account` e o repassam.
-- `cancel_from_bling` e qualquer `.eq("bling_order_id", ...)` ganham também
+  recebem `account` e o gravam em `bling_account` nas linhas que montam.
+- `cancel_from_bling` e **qualquer** `.eq("bling_order_id", ...)` ganham também
   `.eq("bling_account", account)` — sem isso, cancelar o pedido 10 da conta 2
-  cancelaria o pedido 10 da conta 1.
-- `store_id`/`situacao_id` do payload passam a vir de `config.account(account)`
-  em vez de `config.store_id()`.
-- A leitura de `bling_seller_map` (que resolve o `sold_by` do CRM para o ID de
-  vendedor do ERP) passa a filtrar **também por conta**:
+  cancelaria o pedido 10 da conta 1, porque o número se repete entre as contas.
+- `build_order_payload` (`orders.py:141`) lê hoje `config.store_id()` e
+  `config.order_situacao_id()` direto do env global (linhas 201 e 204). Passa a
+  **receber `store_id` e `situacao_id` como parâmetros**, resolvidos pelo
+  chamador via `config.account(account)`. Manter a função pura (sem ler env) é o
+  que a torna testável sem monkeypatch de ambiente, como já é hoje o resto do
+  módulo.
 
-```python
-def _seller_id(user_email: str, account: str) -> int | None:
-    """ID do vendedor no ERP. E por conta: o mesmo vendedor do CRM tem um id
-    diferente em cada CNPJ. Sem vinculo, o pedido vai sem vendedor — nao
-    bloqueia a venda, mesma regra de antes."""
-    res = (get_supabase().table("bling_seller_map").select("bling_seller_id")
-           .eq("user_email", user_email).eq("account", account)
-           .limit(1).maybe_single().execute())
-    linha = getattr(res, "data", None) or {}
-    return linha.get("bling_seller_id")
-```
-
-Teste correspondente:
-
-```python
-async def test_vendedor_e_resolvido_por_conta(monkeypatch):
-    from app.bling import orders
-    filtros = {}
-
-    class FakeTable:
-        def select(self, *_a): return self
-        def eq(self, campo, valor):
-            filtros[campo] = valor
-            return self
-        def limit(self, *_a): return self
-        def maybe_single(self): return self
-        def execute(self):
-            class R: data = {"bling_seller_id": 77}
-            return R()
-
-    class FakeSupa:
-        def table(self, _n): return FakeTable()
-
-    monkeypatch.setattr(orders, "get_supabase", lambda: FakeSupa())
-    assert orders._seller_id("joao@x.com", "secundaria") == 77
-    assert filtros["account"] == "secundaria"
-```
+> **O mapeamento de vendedor NÃO fica aqui.** `bling_seller_map` é lido em
+> `backend/app/bling/router.py:247`, não em `orders.py` — a mudança dele está na
+> Task 11, junto dos demais endpoints. Não criar um `_seller_id` em `orders.py`.
 
 - [ ] **Step 4: Varredura por `on_conflict` esquecido**
 
@@ -1576,6 +1698,36 @@ Em `backend/app/bling/router.py`, adicionar
 `/contacts/search`, `/payment-methods`, `/sellers`, `/orders` (POST e PUT),
 `/contacts`, `/contacts/link`, `/contacts/unlink`, `/sync`, e filtrar as
 consultas por `.eq("account", account)`.
+
+A leitura de `bling_seller_map` (`router.py:247`), que resolve o `sold_by` do CRM
+para o ID de vendedor do ERP, passa a filtrar **também por conta** — o mesmo
+vendedor tem um ID diferente em cada CNPJ:
+
+```python
+    res = (get_supabase().table("bling_seller_map").select("bling_seller_id")
+           .eq("user_email", user_email).eq("account", account)
+           .limit(1).maybe_single().execute())
+```
+
+Três pontos de `router.py` ainda leem a coluna que a Task 7 aposentou:
+`router.py:204` (docstring), `router.py:239` (o `select` do resolvedor de contato
+inclui `bling_contact_id` na projeção de `leads`) e `router.py:435` (o retorno
+`{"bling_contact_id": contact_id}`). O select deve parar de projetar a coluna e
+passar a resolver o vínculo por `contacts._contato_do_lead(lead_id, account)`; o
+retorno do endpoint mantém a chave `bling_contact_id` no JSON (é contrato com o
+frontend), mas agora acompanhada de `account`.
+
+Regra preservada: vendedor sem mapa na conta sai **sem vendedor** no pedido, sem
+bloquear a venda — é o comportamento de hoje e não muda. Teste:
+
+```python
+async def test_vendedor_resolvido_por_conta(monkeypatch, cliente_teste):
+    filtros = {}
+    _fingir_seller_map(monkeypatch, filtros, retorno={"bling_seller_id": 77})
+    cliente_teste.post("/api/bling/orders",
+                       json={**_pedido_minimo(), "account": "secundaria"})
+    assert filtros["account"] == "secundaria"
+```
 
 Um handler único para slug inválido:
 
