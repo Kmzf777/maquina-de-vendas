@@ -93,13 +93,64 @@ def test_gatilhos_sao_deal_stage_stagnation():
         assert _trigger(e)["config"]["trigger_type"] == "deal_stage_stagnation"
 
 
-def test_templates_ficam_em_branco_para_o_dono_preencher():
-    """Ligar a esteira exige template aprovado (regra da tela) — o seed nao pode
-    adivinhar qual template usar."""
+# ── Templates dos 24 toques ─────────────────────────────────────────────────────
+#
+# Ate 13/09/2026 `template_name` era string vazia em todo no de envio ("template e
+# responsabilidade do dono") e o teste daqui travava esse contrato. Na pratica isso
+# deixava as seis esteiras IMPOSSIVEIS de ligar: nenhum no tinha o que enviar. Os 24
+# templates foram escritos e submetidos (`scripts/create_templates_esteiras_joao.py`),
+# e o que se trava agora sao os invariantes que fazem eles funcionarem.
+
+
+def _envios(e):
+    return [no for no in e["nodes"] if no["type"] == "send"]
+
+
+def test_todo_no_de_envio_tem_template():
     for e in esteiras_joao.ESTEIRAS_JOAO:
-        for no in e["nodes"]:
-            if no["type"] == "send":
-                assert no["config"]["template_name"] == ""
+        for no in _envios(e):
+            assert no["config"]["template_name"], f"{e['name']}: no de envio sem template"
+
+
+def test_nenhum_template_se_repete_entre_toques():
+    """Reuso de nome faria o MESMO texto sair duas vezes para o mesmo lead.
+
+    O motor de cadencias nao tem o guardrail de dedup por (lead, template) que existe
+    em `broadcast/worker.py::_template_dedup_guardrail` — la um reenvio do mesmo nome
+    em 14 dias e pulado em silencio; aqui nada barra. A unicidade e a unica protecao.
+    """
+    nomes = [no["config"]["template_name"]
+             for e in esteiras_joao.ESTEIRAS_JOAO for no in _envios(e)]
+    assert len(nomes) == 24
+    assert len(set(nomes)) == 24, "template repetido entre toques"
+
+
+def test_template_casa_com_a_linha_do_funil():
+    """Esteira de Atacado nao pode mandar texto de Private Label, e vice-versa.
+
+    As duas linhas vendem coisas diferentes (revenda do nosso cafe x cafe com a marca
+    do cliente) e os corpos falam de coisas diferentes. Como `_em_conversa_nodes` e
+    `_reposicao_nodes` sao COMPARTILHADAS pelas duas linhas e recebem o prefixo do
+    template por parametro, trocar os argumentos nas chamadas manda a esteira inteira
+    com o texto da linha errada — sem erro em lugar nenhum.
+    """
+    for e in esteiras_joao.ESTEIRAS_JOAO:
+        gatilho = _trigger(e)["config"]["pipeline_id"]
+        esperado = "_atacado_" if gatilho in _FUNIS_ATACADO else "_privatelabel_"
+        for no in _envios(e):
+            assert esperado in no["config"]["template_name"], (
+                f"{e['name']}: template {no['config']['template_name']} nao e da linha "
+                f"do funil {gatilho}")
+
+
+def test_toda_variavel_e_o_primeiro_nome():
+    """Os 24 corpos tem exatamente uma variavel, {{1}}, e ela e o primeiro nome."""
+    for e in esteiras_joao.ESTEIRAS_JOAO:
+        for no in _envios(e):
+            assert no["config"]["template_variables"] == {
+                "__params_type__": "positional", "1": "{{primeiro_nome}}",
+            }
+            assert no["config"]["template_language"] == "pt_BR"
 
 
 # ── IDs deterministicos e distintos ──────────────────────────────────────────────

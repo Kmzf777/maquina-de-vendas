@@ -5,9 +5,14 @@ DIFERENCA para `esteiras.py` (o seed generico das 4 esteiras antigas): aquele na
 o canal/funil da instalacao e deixa `channel_id`/`pipeline_id` em None, "preenchido na
 tela". Este AQUI e amarrado a um vendedor especifico de proposito — a reuniao decidiu o
 desenho para o Joao, com os funis, o canal e as etapas de destino dele ja conhecidos
-(tabela abaixo) — entao o seed ja nasce com `pipeline_id`, `channel_id` e o `stage_id`
-de destino (`em_atencao`) corretos, um por funil. So o TEMPLATE fica para a tela: os 5
-textos da reuniao ainda nao foram submetidos a aprovacao da Meta.
+(tabela abaixo) — entao o seed ja nasce com `pipeline_id`, `channel_id`, o `stage_id`
+de destino (`em_atencao`) e o TEMPLATE de cada toque, um por funil.
+
+Os 24 templates (um por no de envio) foram submetidos a Meta em 13/09/2026 por
+`scripts/create_templates_esteiras_joao.py`, que audita antes de enviar: acento
+integro, botao de saida entre as DUAS frases que `campaigns/worker.py::is_optout_reply`
+reconhece, uma unica variavel e nenhum corpo repetido. Ligar uma esteira continua
+exigindo que a Meta tenha APROVADO o template — submetido nao e aprovado.
 
 Mesmo padrao do `esteiras.py`: UUID determinístico por `uuid5` incluindo o `env_tag` no
 namespace (dev e producao apontam para o MESMO Supabase; sem o env_tag, o primeiro
@@ -116,16 +121,34 @@ def _trigger(key: str, *, stage_key: str, stage_days: int, pipeline_id: str,
     }
 
 
-def _send(key: str, no: str) -> dict[str, Any]:
+# Preenchimento da unica variavel dos 24 templates: {{1}} = primeiro nome do lead.
+# `broadcast/worker.py::_build_template_components` le `__params_type__` e resolve o
+# token `{{primeiro_nome}}` contra o registro do lead no instante do envio. Medido em
+# producao (13/09/2026): 1.632 dos 1.731 cards dos funis do Joao (94,3%) tem nome
+# utilizavel; no resto `_lead_first_name` devolve "voce", por isso nenhum corpo abre
+# com o nome em vocativo isolado.
+_VARS_PRIMEIRO_NOME: dict[str, Any] = {
+    "__params_type__": "positional",
+    "1": "{{primeiro_nome}}",
+}
+
+
+def _send(key: str, no: str, template: str) -> dict[str, Any]:
     return {
         "id": _nid(key, no), "type": "send",
         "config": {
-            # STRING VAZIA de proposito: template e responsabilidade do dono,
-            # preenchida na tela — e ligar a esteira exige template APROVADO pela Meta
-            # (os 5 textos da reuniao de 10/09/2026 ainda nao foram submetidos).
-            "template_name": "",
+            # Um template POR TOQUE, submetido por
+            # `scripts/create_templates_esteiras_joao.py` em 13/09/2026. Nao ha nome
+            # repetido entre toques de proposito: o motor de cadencias NAO tem o
+            # guardrail de dedup por (lead, template) que vive em
+            # `broadcast/worker.py::_template_dedup_guardrail`, entao reaproveitar um
+            # nome faria o MESMO texto sair duas vezes para o mesmo lead sem ninguem
+            # barrar. Ate 13/09/2026 este campo era string vazia ("template e
+            # responsabilidade do dono"), o que deixava as seis esteiras impossiveis
+            # de ligar: nenhum nó tinha o que enviar.
+            "template_name": template,
             "template_language": "pt_BR",
-            "template_variables": {},
+            "template_variables": dict(_VARS_PRIMEIRO_NOME),
             # SEM "on_reply" aqui, DE PROPOSITO — nao e omissao. `esteiras.py`
             # (generico) grava 'cancel' em todo `send`, redundante com o gatilho ali
             # (que tambem e sempre 'cancel'). Aqui seria uma ARMADILHA:
@@ -192,7 +215,7 @@ _NOVO_ATACADO = _esteira(
     priority=6,
     nodes=[
         _trigger("novo_atacado", stage_key="novo", stage_days=2, pipeline_id=PIPELINE_ATACADO),
-        _send("novo_atacado", "t1"),
+        _send("novo_atacado", "t1", "joao_novo_atacado_t1"),
         _end("novo_atacado", "fim"),
     ],
 )
@@ -205,7 +228,7 @@ _NOVO_PRIVATE_LABEL = _esteira(
     priority=6,
     nodes=[
         _trigger("novo_private_label", stage_key="novo", stage_days=2, pipeline_id=PIPELINE_PRIVATE_LABEL),
-        _send("novo_private_label", "t1"),
+        _send("novo_private_label", "t1", "joao_novo_privatelabel_t1"),
         _end("novo_private_label", "fim"),
     ],
 )
@@ -213,25 +236,26 @@ _NOVO_PRIVATE_LABEL = _esteira(
 # ── "Em conversa" — 7 toques em 30 dias, on_reply='reset', termina em em_atencao ──
 
 
-def _em_conversa_nodes(key: str, pipeline_id: str, em_atencao_stage_id: str) -> list[dict]:
+def _em_conversa_nodes(key: str, pipeline_id: str, em_atencao_stage_id: str,
+                       tpl: str) -> list[dict]:
     # D+2, D+4, D+7, D+12, D+18, D+24, D+30 a partir da entrada na etapa 'respondeu'.
     # O toque 1 sai no proprio disparo do gatilho (stage_days=2); os seis toques
     # seguintes usam `wait` com os deltas restantes: 2, 3, 5, 6, 6, 6.
     return [
         _trigger(key, stage_key="respondeu", stage_days=2, pipeline_id=pipeline_id, on_reply="reset"),
-        _send(key, "t1"),
+        _send(key, "t1", f"{tpl}_t1"),
         _wait(key, "w1", 2),
-        _send(key, "t2"),
+        _send(key, "t2", f"{tpl}_t2"),
         _wait(key, "w2", 3),
-        _send(key, "t3"),
+        _send(key, "t3", f"{tpl}_t3"),
         _wait(key, "w3", 5),
-        _send(key, "t4"),
+        _send(key, "t4", f"{tpl}_t4"),
         _wait(key, "w4", 6),
-        _send(key, "t5"),
+        _send(key, "t5", f"{tpl}_t5"),
         _wait(key, "w5", 6),
-        _send(key, "t6"),
+        _send(key, "t6", f"{tpl}_t6"),
         _wait(key, "w6", 6),
-        _send(key, "t7"),
+        _send(key, "t7", f"{tpl}_t7"),
         # SEMPRE o em_atencao do MESMO funil do gatilho (`pipeline_id` acima) — as
         # quatro esteiras que terminam em em_atencao tem quatro destinos distintos,
         # nunca compartilhados entre funis. Trocar os dois moveria o card pro funil
@@ -248,7 +272,8 @@ _EM_CONVERSA_ATACADO = _esteira(
     "Atacado. Qualquer resposta do lead volta o relogio para D+0 (on_reply=reset). "
     "Termina movendo o card para 'em_atencao'.",
     priority=7,
-    nodes=_em_conversa_nodes("em_conversa_atacado", PIPELINE_ATACADO, STAGE_EM_ATENCAO_ATACADO),
+    nodes=_em_conversa_nodes("em_conversa_atacado", PIPELINE_ATACADO,
+                             STAGE_EM_ATENCAO_ATACADO, "joao_conversa_atacado"),
 )
 
 _EM_CONVERSA_PRIVATE_LABEL = _esteira(
@@ -259,25 +284,27 @@ _EM_CONVERSA_PRIVATE_LABEL = _esteira(
     "(on_reply=reset). Termina movendo o card para 'em_atencao'.",
     priority=7,
     nodes=_em_conversa_nodes(
-        "em_conversa_private_label", PIPELINE_PRIVATE_LABEL, STAGE_EM_ATENCAO_PRIVATE_LABEL,
+        "em_conversa_private_label", PIPELINE_PRIVATE_LABEL,
+        STAGE_EM_ATENCAO_PRIVATE_LABEL, "joao_conversa_privatelabel",
     ),
 )
 
 # ── "Reposicao" — stage_days=45, toques de 3/15/15, termina em em_atencao ───────
 
 
-def _reposicao_nodes(key: str, pipeline_id: str, em_atencao_stage_id: str) -> list[dict]:
+def _reposicao_nodes(key: str, pipeline_id: str, em_atencao_stage_id: str,
+                     tpl: str) -> list[dict]:
     # Card em "Cliente Ativo" (key 'novo' do funil de reposicao) ha 45 dias -> toque
     # imediato, depois D+3, D+18(+15), D+33(+15).
     return [
         _trigger(key, stage_key="novo", stage_days=45, pipeline_id=pipeline_id),
-        _send(key, "t1"),
+        _send(key, "t1", f"{tpl}_t1"),
         _wait(key, "w1", 3),
-        _send(key, "t2"),
+        _send(key, "t2", f"{tpl}_t2"),
         _wait(key, "w2", 15),
-        _send(key, "t3"),
+        _send(key, "t3", f"{tpl}_t3"),
         _wait(key, "w3", 15),
-        _send(key, "t4"),
+        _send(key, "t4", f"{tpl}_t4"),
         # SEMPRE o em_atencao do MESMO funil de reposicao do gatilho — ver o
         # comentario equivalente em `_em_conversa_nodes`.
         _mover_para_em_atencao(key, "a1", em_atencao_stage_id),
@@ -293,7 +320,8 @@ _REPOSICAO_ATACADO = _esteira(
     "'em_atencao'.",
     priority=4,
     nodes=_reposicao_nodes(
-        "reposicao_atacado", PIPELINE_REPOSICAO_ATACADO, STAGE_EM_ATENCAO_REPOSICAO_ATACADO,
+        "reposicao_atacado", PIPELINE_REPOSICAO_ATACADO,
+        STAGE_EM_ATENCAO_REPOSICAO_ATACADO, "joao_reposicao_atacado",
     ),
 )
 
@@ -306,7 +334,7 @@ _REPOSICAO_PRIVATE_LABEL = _esteira(
     priority=4,
     nodes=_reposicao_nodes(
         "reposicao_private_label", PIPELINE_REPOSICAO_PRIVATE_LABEL,
-        STAGE_EM_ATENCAO_REPOSICAO_PRIVATE_LABEL,
+        STAGE_EM_ATENCAO_REPOSICAO_PRIVATE_LABEL, "joao_reposicao_privatelabel",
     ),
 )
 

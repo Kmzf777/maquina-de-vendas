@@ -1,0 +1,157 @@
+"""Contrato entre o TEXTO dos 24 templates e o que o sistema faz com a resposta.
+
+Um template e um objeto que vive na Meta, fora do repo — nada aqui impede que alguem
+escreva um corpo bonito com um botao que nao faz nada. Foi exatamente o que estava em
+producao ate 13/09/2026: os tres templates de reposicao/cotacao ofereciam
+"Nao atendo mais", "Tirar dos contatos" e "Nao tenho mais interesse" como saida, e
+NENHUM dos tres e reconhecido por `campaigns/worker.py::is_optout_reply`, que compara
+por IGUALDADE normalizada contra um frozenset de duas frases. O lead apertava o botao
+pedindo para sair, o sistema cancelava o enrollment e mais nada: sem `leads.opt_out`,
+sem funil Blacklist, sem cancelar follow-up — e dias depois ele era reinscrito.
+
+Note o "mais" em "Nao tenho mais interesse": uma palavra a mais no rotulo e a diferenca
+entre honrar o pedido do lead e ignora-lo. Nenhum teste pegava isso porque o rotulo
+vivia so no script de submissao e o matcher so no worker; os dois nunca se encontravam.
+Estes testes sao esse encontro.
+"""
+import importlib.util
+import pathlib
+import re
+import unicodedata
+
+from app.campaigns.worker import is_optout_reply
+
+# Carregado por CAMINHO, nao por `from scripts import ...`: existem dois diretorios
+# `scripts/` no repo e o nome do pacote resolve para `backend/scripts/` (onde vive
+# `apply_migrations`). O script dos templates fica na raiz, ao lado do irmao
+# `create_esteira_templates.py`.
+_CAMINHO = (pathlib.Path(__file__).resolve().parents[2]
+            / "scripts" / "create_templates_esteiras_joao.py")
+_spec = importlib.util.spec_from_file_location("create_templates_esteiras_joao", _CAMINHO)
+tpls = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(tpls)
+
+
+def _corpo(t):
+    return next(c["text"] for c in t["components"] if c["type"] == "BODY")
+
+
+def _botoes(t):
+    return [b["text"] for c in t["components"] if c["type"] == "BUTTONS"
+            for b in c["buttons"]]
+
+
+def test_sao_24_templates_um_por_no_de_envio():
+    assert len(tpls.TEMPLATES) == 24
+
+
+def test_auditoria_do_proprio_script_passa():
+    """O script recusa submeter o que nao passa — aqui a recusa vira teste."""
+    assert tpls._auditar(tpls.TEMPLATES) == []
+
+
+def test_todo_template_oferece_uma_saida_QUE_O_SISTEMA_RECONHECE():
+    """O invariante central: o botao de saida tem de casar com `is_optout_reply`.
+
+    Sem isto o botao e decorativo — e um botao de saida decorativo e pior que nenhum,
+    porque o proximo passo do lead que pediu para sair e o "Bloquear" do WhatsApp.
+    """
+    for t in tpls.TEMPLATES:
+        vivos = [b for b in _botoes(t) if is_optout_reply(b)]
+        assert vivos, (
+            f"{t['name']}: nenhum dos botoes {_botoes(t)} e reconhecido por "
+            f"is_optout_reply — o lead nao consegue sair")
+
+
+def test_a_saida_e_o_ultimo_botao():
+    """Convencao do WhatsApp: a saida fica por ultimo, longe do polegar."""
+    for t in tpls.TEMPLATES:
+        assert is_optout_reply(_botoes(t)[-1]), f"{t['name']}: saida nao e o ultimo botao"
+
+
+def test_nenhum_botao_de_acao_e_confundido_com_saida():
+    """O inverso: 'Preciso repor' nao pode blacklistar quem quer comprar.
+
+    `is_optout_reply` compara por igualdade justamente para isso — substring faria
+    "nao tenho interesse em capsulas, so em graos" virar blacklist permanente.
+    """
+    for t in tpls.TEMPLATES:
+        for b in _botoes(t)[:-1]:
+            assert not is_optout_reply(b), f"{t['name']}: botao de acao '{b}' vira opt-out"
+
+
+def test_acentuacao_integra_em_todo_corpo_e_botao():
+    """A falha de 25/05/2026 gravou '?' no lugar dos acentos, permanentemente."""
+    perdido = re.compile(r"[A-Za-z]\?[A-Za-z]|Ol\? ")
+    for t in tpls.TEMPLATES:
+        assert not perdido.search(_corpo(t)), f"{t['name']}: acento perdido no corpo"
+        for b in _botoes(t):
+            assert not perdido.search(b), f"{t['name']}: acento perdido no botao '{b}'"
+        assert any(ord(c) > 127 for c in _corpo(t)), (
+            f"{t['name']}: corpo sem nenhum caractere acentuado — sinal de corrupcao")
+
+
+def test_payload_sai_em_ascii_puro():
+    """A defesa contra o bug de encoding: nenhum byte >127 chega na rede.
+
+    O corpo TEM acento (teste acima); o que garante a viagem intacta e o
+    `ensure_ascii=True` da serializacao, que transforma cada acento num escape.
+    """
+    import json
+    bruto = json.dumps(tpls.TEMPLATES, ensure_ascii=True)
+    assert bruto.encode("ascii")  # nao levanta
+    assert "\\u00e3" in bruto     # 'a' com til sobreviveu como escape
+
+
+def test_uma_variavel_so_e_o_example_bate():
+    for t in tpls.TEMPLATES:
+        corpo = _corpo(t)
+        assert set(re.findall(r"\{\{(\d+)\}\}", corpo)) == {"1"}, t["name"]
+        exemplo = next(c["example"]["body_text"][0]
+                       for c in t["components"] if c["type"] == "BODY")
+        assert len(exemplo) == 1, f"{t['name']}: example com {len(exemplo)} valores"
+
+
+def test_limites_da_meta():
+    for t in tpls.TEMPLATES:
+        assert len(_corpo(t)) <= 1024, f"{t['name']}: corpo longo demais"
+        for b in _botoes(t):
+            assert len(b) <= 25, f"{t['name']}: botao '{b}' > 25 chars"
+        for c in t["components"]:
+            if c["type"] == "FOOTER":
+                assert len(c["text"]) <= 60
+
+
+def test_todos_marketing_para_o_optout_ser_consistente():
+    """Categoria unica por esteira.
+
+    O opt-out de marketing do WhatsApp e POR CATEGORIA: uma esteira com categorias
+    misturadas entregaria alguns toques e silenciaria outros para o mesmo lead.
+    """
+    assert {t["category"] for t in tpls.TEMPLATES} == {"MARKETING"}
+
+
+def test_os_nomes_cobrem_exatamente_os_nos_de_envio_do_seed():
+    """Se o seed e o script divergirem, o envio falha em producao, nao aqui."""
+    from app.campaigns.esteiras_joao import ESTEIRAS_JOAO
+    no_seed = {no["config"]["template_name"]
+               for e in ESTEIRAS_JOAO for no in e["nodes"] if no["type"] == "send"}
+    no_script = {t["name"] for t in tpls.TEMPLATES}
+    assert no_seed == no_script, (
+        f"so no seed: {sorted(no_seed - no_script)}; "
+        f"so no script: {sorted(no_script - no_seed)}")
+
+
+def test_rotulos_que_parecem_saida_mas_nao_sao():
+    """Documenta a armadilha que derrubou os tres templates antigos."""
+    def norm(s):
+        t = unicodedata.normalize("NFKD", s.lower())
+        return "".join(c for c in t if not unicodedata.combining(c))
+
+    for morto in ("Nao atendo mais", "Tirar dos contatos", "Nao tenho mais interesse",
+                  "Sair da lista", "Pode parar", "Nao me chame mais"):
+        assert not is_optout_reply(morto), (
+            f"'{morto}' passou a ser reconhecido — atualize os templates para usa-lo")
+    for vivo in ("Nao tenho interesse", "Não tenho interesse", "PARAR MENSAGENS"):
+        assert is_optout_reply(vivo), f"'{vivo}' deixou de ser reconhecido"
+        assert norm(vivo) in {"nao tenho interesse", "parar mensagens"}
