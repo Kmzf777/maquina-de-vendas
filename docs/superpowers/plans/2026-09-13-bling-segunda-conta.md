@@ -1787,6 +1787,13 @@ async def test_vendedor_resolvido_por_conta(monkeypatch, cliente_teste):
     assert filtros["account"] == "secundaria"
 ```
 
+> ⚠️ **`create_contact_endpoint` (`router.py:429-434`) captura apenas
+> `BlingValidationError`** — não tem `except BlingError` nem catch-all. Hoje isso
+> é inerte, porque o endpoint não recebe conta e o default sempre resolve. No
+> momento em que ele ganhar o parâmetro `account`, um `BlingUnknownAccount`
+> passaria direto e viraria **500 em vez de 400**. Acrescente o `except
+> BlingError` nesse endpoint junto com o parâmetro, não depois.
+
 Um handler único para slug inválido:
 
 ```python
