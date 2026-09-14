@@ -84,21 +84,31 @@ def _next_window_start(now_utc: datetime, start_hour: int = 7,
     return target - BRT_OFFSET
 
 
-def _wait_target(cfg: dict, now: datetime) -> datetime:
+def _wait_target(cfg: dict, now: datetime, campaign: dict | None = None) -> datetime:
     """Instante do próximo passo após um nó `wait` — função PURA (testável).
 
     Granularidade em DIAS *e* HORAS (11/07): `hours` é opcional e retrocompatível —
     nós antigos só têm `days` (default 1, preservado). `days: 0` + `hours: N` permite
     esperas sub-diárias; ambos zero = segue no próximo tick (o clamp de janela
     comercial ainda se aplica). Valores negativos/lixo são saneados para 0.
+
+    Janela e fim de semana (13/09): a CAMPANHA é a fonte de verdade — o nó só
+    sobrescreve quando opina explicitamente (`campaign` fica `None`/{} nos testes
+    antigos que chamam com dois argumentos só, e o comportamento default 7/18 sem
+    pular fim de semana se preserva). Antes desta função só lia `cfg`, com defaults
+    fixos 7/18: o seed das esteiras preenche a janela na CAMPANHA, não no nó `wait`
+    (`_wait()` em esteiras_joao.py só gera `{"days": dias}`) — então os waits
+    ignoravam silenciosamente a janela configurada pelo dono e caiam no default.
     """
+    camp = campaign or {}
     days = max(0, int(cfg.get("days", 1) or 0))
     hours = max(0, int(cfg.get("hours", 0) or 0))
-    start_h = cfg.get("send_start_hour", 7)
-    end_h = cfg.get("send_end_hour", 18)
+    start_h = cfg.get("send_start_hour", camp.get("send_start_hour", 7))
+    end_h = cfg.get("send_end_hour", camp.get("send_end_hour", 18))
+    skip_wk = cfg.get("skip_weekends", camp.get("skip_weekends", False))
     target = now + timedelta(days=days, hours=hours)
-    if not _is_within_window(target, start_h, end_h):
-        target = _next_window_start(target, start_h)
+    if not _is_within_window(target, start_h, end_h, skip_weekends=skip_wk):
+        target = _next_window_start(target, start_h, skip_weekends=skip_wk)
     return target
 
 
@@ -218,7 +228,7 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
             "*, "
             "leads!inner(id, phone, name, company, stage, ai_enabled, last_customer_message_at, assigned_to), "
             "campaign_nodes!campaign_enrollments_current_node_id_fkey(*), "
-            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, channel_id, audience)"
+            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, skip_weekends, channel_id, audience)"
         )
         .eq("status", "active")
         .eq("env_tag", env_tag)
@@ -348,7 +358,7 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             #
             # `last_sent_node_id=None` importa: ele e a idempotencia do envio, e carregado
             # para o proximo no faria o toque seguinte ser pulado como se ja tivesse saido.
-            target = _wait_target(cfg, now)
+            target = _wait_target(cfg, now, campaign)
             proximo = node.get("next_node_id")
             _log_exec(enrollment, node, "done",
                       f"aguardando (d={cfg.get('days', 1)}, h={cfg.get('hours', 0)})")

@@ -63,10 +63,12 @@ STAGE_EM_ATENCAO_PRIVATE_LABEL = "e7f4a1ee-0785-4f43-b6db-c1b846255b03"
 STAGE_EM_ATENCAO_REPOSICAO_ATACADO = "499ab4a7-ce6a-4362-b7a5-63b2c65fd9d0"
 STAGE_EM_ATENCAO_REPOSICAO_PRIVATE_LABEL = "6a232838-221a-4e10-b2e1-100581e63601"
 
-# Janela de envio, mesmo racional do esteiras.py: o default da coluna (7h-18h) e cedo
-# demais para retomada comercial.
-_SEND_START_HOUR = 9
-_SEND_END_HOUR = 18
+# Janela de envio (ajustada 13/09/2026, pedido do dono): 8h-12h, so dias uteis. O
+# Joao trabalha das 9h as 16h, entao o disparo sai de manha para a resposta do lead
+# cair dentro do expediente dele — sabado/domingo ele nao esta la para responder.
+_SEND_START_HOUR = 8
+_SEND_END_HOUR = 12
+_SKIP_WEEKENDS = True
 
 
 def _campaign_id(key: str, env_tag: str) -> str:
@@ -354,6 +356,7 @@ def _campaign_row(esteira: dict[str, Any]) -> dict[str, Any]:
         "channel_id": esteira["channel_id"],
         "send_start_hour": _SEND_START_HOUR,
         "send_end_hour": _SEND_END_HOUR,
+        "skip_weekends": _SKIP_WEEKENDS,
     }
 
 

@@ -9,6 +9,13 @@ type Params = { params: Promise<{ id: string }> };
 // fazia spread cego de `body` sem validar nada).
 const AUDIENCIAS = ["ia", "humano", "ambos"];
 
+// Mesma validação do POST (src/app/api/campaigns/route.ts) para send_start_hour /
+// send_end_hour / skip_weekends — sem ela o PATCH fazia spread cego de `body` e um
+// horário fora de 0-23 (ou uma janela invertida) ia direto pro banco.
+function isValidHour(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 23;
+}
+
 function systemCampaignBlock() {
   return NextResponse.json(
     { error: "Cadência de sistema (espelho do motor da Valéria) — somente leitura" },
@@ -32,7 +39,40 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (body.audience !== undefined && !AUDIENCIAS.includes(body.audience)) {
     return NextResponse.json({ error: "audience inválido — use ia, humano ou ambos" }, { status: 400 });
   }
+  const hasStart = body.send_start_hour !== undefined;
+  const hasEnd = body.send_end_hour !== undefined;
+  if (hasStart && !isValidHour(body.send_start_hour)) {
+    return NextResponse.json({ error: "send_start_hour inválido — use um inteiro entre 0 e 23" }, { status: 400 });
+  }
+  if (hasEnd && !isValidHour(body.send_end_hour)) {
+    return NextResponse.json({ error: "send_end_hour inválido — use um inteiro entre 0 e 23" }, { status: 400 });
+  }
+  if (body.skip_weekends !== undefined && typeof body.skip_weekends !== "boolean") {
+    return NextResponse.json({ error: "skip_weekends inválido — use true ou false" }, { status: 400 });
+  }
+
   const supabase = await getServiceSupabase();
+
+  // Janela invertida é erro do chamador mesmo quando o PATCH só move um dos dois
+  // lados (ex.: só send_start_hour, deixando send_end_hour como já estava salvo) —
+  // por isso o lado ausente é lido do banco antes de comparar.
+  if (hasStart || hasEnd) {
+    let current: { send_start_hour: number; send_end_hour: number } | null = null;
+    if (!hasStart || !hasEnd) {
+      const res = await supabase
+        .from("campaigns")
+        .select("send_start_hour, send_end_hour")
+        .eq("id", id)
+        .single();
+      current = res.data;
+    }
+    const startCmp: number = hasStart ? body.send_start_hour : (current?.send_start_hour ?? 7);
+    const endCmp: number = hasEnd ? body.send_end_hour : (current?.send_end_hour ?? 18);
+    if (startCmp >= endCmp) {
+      return NextResponse.json({ error: "janela invertida — send_start_hour deve ser menor que send_end_hour" }, { status: 400 });
+    }
+  }
+
   const { data, error } = await supabase
     .from("campaigns")
     .update({ ...body, updated_at: new Date().toISOString() })
