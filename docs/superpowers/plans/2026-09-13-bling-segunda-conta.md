@@ -25,6 +25,27 @@ cd backend && python -m pytest tests/test_bling_config.py -v
 cd frontend && npm test
 ```
 
+## Antes de mudar QUALQUER resposta de API: ache TODOS os consumidores
+
+Regra nascida de um erro real cometido nesta entrega, duas vezes seguidas.
+
+Ao alterar o corpo de uma resposta, **não basta conferir o consumidor que você
+conhece**. Faça `grep` por *cada nome de campo* que a resposta devolve, no
+frontend inteiro. Em `/api/bling/status` havia dois consumidores independentes:
+`use-bling-status.ts` (o hook, que todo mundo lembra) e
+`bling-settings.tsx` (que faz `fetch` direto e lê `configured`,
+`access_expires_at`, `refresh_expires_at` e `scope`).
+
+O segundo passou despercebido e o "formato aditivo" derrubou os quatro campos.
+Consequência: banner de erro permanente, aviso de expiração do refresh_token
+nunca mais dispara, e o botão **"Conectar ao Bling" fica desabilitado para
+sempre** — ou seja, ninguém consegue autorizar conta nenhuma pela tela, que é
+exatamente o que a segunda conta precisa.
+
+O TypeScript não pega isso: `bling-settings.tsx` faz `body as BlingStatus`, um
+cast sem checagem. Teste de backend também não pega — os testes foram escritos
+contra o consumidor que eu conhecia.
+
 ## Decisões transversais (valem para TODAS as tasks)
 
 **1. Nunca escreva o literal `"default"`.** Use `config.DEFAULT_ACCOUNT`. Todos os
