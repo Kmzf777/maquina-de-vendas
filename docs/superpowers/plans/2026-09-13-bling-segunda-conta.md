@@ -916,6 +916,23 @@ git commit -m "feat(bling): state do OAuth carrega a conta e status devolve uma 
 Sem teste automatizado — o repo aplica migrations à mão. A verificação está no
 Step 3.
 
+> **Schema conferido contra PRODUÇÃO em 14/09/2026** (somente `SELECT` no
+> catálogo do Postgres), não contra os arquivos de migration — eles são
+> aplicados à mão neste repo e podem divergir. O que a consulta confirmou:
+>
+> | Verificação | Resultado |
+> |---|---|
+> | FKs apontando para tabelas `bling_*` | **exatamente uma**: `bling_seller_map_bling_seller_id_fkey` → `bling_sellers(id)` |
+> | Nomes das PKs | batem com o padrão `<tabela>_pkey` usado abaixo |
+> | `sales_bling_order_id_key` | é **ÍNDICE** (só em `pg_indexes`) → `DROP INDEX` |
+> | `quotes_bling_proposal_id_key` | é **CONSTRAINT** (em `pg_constraint`) → `ALTER TABLE ... DROP CONSTRAINT` |
+> | Coluna `account` / `bling_account` | **não existe** em nenhuma tabela ainda |
+> | `leads_bling_contact_id_key` | índice **parcial** (`WHERE bling_contact_id IS NOT NULL`) — intocado, a coluna fica |
+>
+> ⚠️ A assimetria índice-vs-constraint é uma armadilha: os dois têm sufixo
+> `_key` e parecem a mesma coisa. `DROP INDEX` numa constraint falha, e
+> `DROP CONSTRAINT` num índice também. Não "harmonize" os dois comandos.
+
 - [ ] **Step 1: Escrever a migration**
 
 Criar `supabase/migrations/20260913_bling_multi_conta.sql`:
