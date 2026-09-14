@@ -79,7 +79,49 @@ recebe exatamente o que o proxy mandou.
 | `api/bling/orders/[order_id]/route.ts` (PUT) | **Sim** — no corpo |
 | `api/bling/oauth/authorize/route.ts` | **Sim** — query string |
 | `api/bling/sync/route.ts` | Opcional (sync roda todas as contas) |
-| `api/bling/status/route.ts` | Não — a resposta já traz `accounts` |
+| `api/bling/status/route.ts` | Não repassa `account`, mas **corta a resposta** — ver abaixo |
+
+### ⚠️ O proxy de `status` corta o payload para não-admin
+
+`api/bling/status/route.ts` devolve o objeto **completo** para `role === "admin"`
+e apenas `{enabled, connected}` para todos os outros. O comentário explica por
+quê, e a razão é boa: expiração de token e escopos do OAuth são informação de
+administração e não têm por que circular na tela de venda.
+
+Mas com a segunda conta isso vira uma armadilha: **`accounts` não chega ao
+vendedor**. O seletor da Task 15 receberia lista vazia, `precisaSeletor([])`
+daria `false`, o seletor não apareceria — e **toda venda iria para a conta
+padrão**, em silêncio.
+
+O que torna este caso pior que os outros: **um admin testando a feature veria
+tudo funcionar.** A falha só aparece para quem tem `role` de vendedor — exatamente
+quem usa o modal.
+
+Correção (Task 14 ou 16): o não-admin passa a receber `accounts` numa forma
+**reduzida**, preservando a intenção de segurança original:
+
+```ts
+    if (role !== "admin") {
+      return Response.json({
+        enabled: !!status.enabled,
+        connected: !!status.connected,
+        // O vendedor precisa saber QUAIS contas existem e quais estao
+        // conectadas — sem isso o seletor de conta nao tem o que renderizar e
+        // toda venda cai na conta padrao em silencio. O que ele NAO recebe
+        // continua sendo o mesmo de antes: expiracao de token e escopos OAuth.
+        accounts: (status.accounts || []).map((c: BlingAccountStatus) => ({
+          account: c.account,
+          label: c.label,
+          configured: c.configured,
+          connected: c.connected,
+        })),
+      });
+    }
+```
+
+Teste obrigatório: com `role` de vendedor, a resposta traz `accounts` com
+`account`/`label`/`connected`/`configured` e **não** traz `access_expires_at`,
+`refresh_expires_at` nem `scope`.
 
 ### Componentes e páginas que consomem
 
@@ -301,8 +343,13 @@ DEFAULT_ACCOUNT = "default"
 ```
 
 E ao fim do arquivo (as funções antigas `client_id()`, `client_secret()`,
-`store_id()`, `order_situacao_id()`, `is_configured()`, `require_credentials()`
-**continuam como estão** — outros módulos ainda as usam nas tasks seguintes):
+`store_id()`, `order_situacao_id()` e `is_configured()` **continuam como estão**
+— outros módulos ainda as usam nas tasks seguintes):
+
+> Nota posterior: `require_credentials()` também sobreviveu à Task 1, mas foi
+> **removida na Task 4**, quando `authorize_url` — seu último chamador — passou a
+> usar `conta.configured`. Deixar um ajudante mono-conta num módulo que virou
+> multi-conta convida alguém a pegar o errado.
 
 ```python
 @dataclass(frozen=True)
