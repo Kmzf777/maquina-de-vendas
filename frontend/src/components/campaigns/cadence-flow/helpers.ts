@@ -19,7 +19,12 @@ export function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<s
       return { trigger_type: subtype || "no_message", days: 30 };
     case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
     case "send_text": return { message_text: "", on_reply: "pause" };
-    case "wait":      return { days: 3, hours: 0, send_start_hour: 7, send_end_hour: 18 };
+    // Sem janela no default: o nó HERDA a da campanha (motor: _wait_target resolve do
+    // nó quando ele opina, senão da campanha). Até 13/09/2026 este default gravava
+    // 7/18 explícitos em todo nó novo, o que fazia o nó "opinar" sempre — e a janela
+    // configurada na campanha nunca valia para campanha montada na tela. Quem quiser
+    // janela diferente NESTE nó ainda pode preenchê-la no inspector.
+    case "wait":      return { days: 3, hours: 0 };
     case "condition": return { condition_type: subtype || "replied_recently", days: 5 };
     case "action": {
       const at = subtype || "move_stage";
