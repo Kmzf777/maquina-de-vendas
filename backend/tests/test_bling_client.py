@@ -6,6 +6,7 @@ import app.bling.client as bc
 from app.bling.errors import (
     BlingAuthError, BlingRateLimitError, BlingServerError, BlingValidationError,
 )
+from app.bling.errors import BlingUnknownAccount
 
 
 class FakeResponse:
@@ -215,3 +216,15 @@ def test_200_com_corpo_quebrado_loga_erro_e_devolve_vazio(token, caplog):
     assert any("corpo" in m.lower() and "produtos" in m for m in mensagens)
     # Nunca logar o corpo da resposta em si.
     assert not any("<html>" in m for m in mensagens)
+
+
+def test_account_normaliza_espaco_e_caixa_na_construcao(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "secundaria")
+    client = bc.BlingClient(account=" SECUNDARIA ")
+    assert client._account == "secundaria"
+
+
+def test_account_desconhecida_levanta_na_construcao(monkeypatch):
+    monkeypatch.delenv("BLING_ACCOUNTS", raising=False)
+    with pytest.raises(BlingUnknownAccount):
+        bc.BlingClient(account="naoexiste")

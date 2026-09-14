@@ -48,7 +48,7 @@ class BlingClient:
 
     def __init__(self, http: Any | None = None, timeout: float = 30.0,
                  max_attempts: int = _MAX_ATTEMPTS,
-                 account: str = "default"):
+                 account: str = config.DEFAULT_ACCOUNT):
         self._http = http
         self._owns_http = http is None
         self._timeout = timeout
@@ -57,10 +57,13 @@ class BlingClient:
         # ou o do processamento de webhook, que podem esperar mais. O default
         # preserva o comportamento anterior (3 tentativas).
         self._max_attempts = max_attempts
-        # A conta viaja na instancia, nunca num default implicito no meio do
-        # caminho: e o que garante que cada chamada use o token e o orcamento
-        # de rate limit da conta certa.
-        self._account = account
+        # Normaliza e VALIDA aqui, no unico ponto por onde toda chamada HTTP ao
+        # Bling passa. Sem isso, um slug com caixa ou espaco errado ("Secundaria",
+        # " secundaria") nao levanta erro nenhum: ele abre em silencio um
+        # namespace novo e sem governanca no Redis — orcamento de rate limit
+        # proprio, cache de token proprio, lock proprio. O erro so apareceria
+        # como "a conta 2 estourou o limite" sem causa visivel.
+        self._account = config.account(account).key
 
     async def _client(self):
         if self._http is None:

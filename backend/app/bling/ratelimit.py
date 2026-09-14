@@ -89,7 +89,7 @@ def _day_key(account: str) -> str:
             + datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
 
-async def acquire(account: str = "default") -> None:
+async def acquire(account: str = config.DEFAULT_ACCOUNT) -> None:
     """Reserva uma requisicao para `account`. Espera o proximo segundo se preciso.
 
     Levanta BlingDailyCapError (teto diario), BlingRateLimitError (Redis fora,

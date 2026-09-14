@@ -146,3 +146,23 @@ def test_contas_nao_compartilham_orcamento():
     from app.bling import ratelimit
     agora = 1757800000.0
     assert ratelimit._second_key(agora, "default") != ratelimit._second_key(agora, "secundaria")
+
+
+def test_duas_contas_nao_disputam_o_orcamento_do_mesmo_segundo(monkeypatch, _no_sleep):
+    """Prova acquire() de ponta a ponta, nao so os formatadores de chave: se
+    alguem grudasse "default" direto dentro de acquire (bug que os testes de
+    _second_key/_day_key sozinhos NAO pegariam, porque os formatadores
+    continuariam corretos), 6 chamadas no mesmo segundo estourariam o limite
+    de 3/s e uma delas dormiria."""
+    fake = FakeRedis()
+    monkeypatch.setattr(rl, "_get_client", lambda: fake)
+    monkeypatch.setattr(rl.time, "time", lambda: 1_000_000.0)
+
+    async def run():
+        for _ in range(3):
+            await rl.acquire("default")
+        for _ in range(3):
+            await rl.acquire("secundaria")
+
+    asyncio.run(run())
+    assert _no_sleep == [], "contas diferentes nao podem disputar o mesmo orcamento de 3 req/s"
