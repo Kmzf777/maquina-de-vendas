@@ -391,24 +391,26 @@ def test_new_state_gera_valores_unicos_e_grava_no_redis_com_ttl(monkeypatch):
     assert ttl1 > 0
 
 
-def test_consume_state_true_para_state_existente(monkeypatch):
+def test_consume_state_devolve_a_conta_para_state_existente(monkeypatch):
+    """Desde a Task 4 o state carrega a CONTA (nao mais um "1"): consume_state
+    devolve o slug gravado por new_state, nao um bool."""
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
     state = asyncio.run(auth.new_state())
 
-    assert asyncio.run(auth.consume_state(state)) is True
+    assert asyncio.run(auth.consume_state(state)) == auth.config.DEFAULT_ACCOUNT
 
 
-def test_consume_state_false_para_state_inexistente(monkeypatch):
+def test_consume_state_none_para_state_inexistente(monkeypatch):
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
 
-    assert asyncio.run(auth.consume_state("nunca-existiu")) is False
+    assert asyncio.run(auth.consume_state("nunca-existiu")) is None
 
 
 def test_consume_state_queima_o_valor_impedindo_replay(monkeypatch):
     """Ponto central da defesa anti-CSRF: um state reutilizavel nao protege contra
-    replay. Mesma chamada duas vezes com o MESMO state: True na primeira, False na
+    replay. Mesma chamada duas vezes com o MESMO state: a conta na primeira, None na
     segunda — senao um state capturado uma vez poderia ser reaproveitado."""
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
@@ -417,16 +419,69 @@ def test_consume_state_queima_o_valor_impedindo_replay(monkeypatch):
     primeira = asyncio.run(auth.consume_state(state))
     segunda = asyncio.run(auth.consume_state(state))
 
-    assert primeira is True
-    assert segunda is False
+    assert primeira == auth.config.DEFAULT_ACCOUNT
+    assert segunda is None
 
 
-def test_consume_state_vazio_retorna_false_sem_tocar_redis(monkeypatch):
+def test_consume_state_vazio_retorna_none_sem_tocar_redis(monkeypatch):
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
 
-    assert asyncio.run(auth.consume_state("")) is False
+    assert asyncio.run(auth.consume_state("")) is None
     assert fake.delete_calls == 0
+
+
+# --------------------------------------------------------------------------
+# State carrega a conta, authorize_url por conta, status() vira lista (Task 4)
+# --------------------------------------------------------------------------
+async def test_state_guarda_a_conta_e_consume_devolve(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    state = await auth.new_state("secundaria")
+
+    assert await auth.consume_state(state) == "secundaria"
+
+
+async def test_state_queimado_devolve_none(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    state = await auth.new_state(auth.config.DEFAULT_ACCOUNT)
+
+    assert await auth.consume_state(state) == auth.config.DEFAULT_ACCOUNT
+    assert await auth.consume_state(state) is None
+
+
+async def test_state_vazio_devolve_none(monkeypatch):
+    assert await auth.consume_state("") is None
+
+
+def test_authorize_url_usa_client_id_da_conta(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_ID", "cid2")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_SECRET", "csec2")
+
+    url = auth.authorize_url("abc123", "secundaria")
+
+    assert "client_id=cid2" in url
+    assert "state=abc123" in url
+
+
+async def test_status_devolve_uma_entrada_por_conta_configurada(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setattr(auth, "_stored_row",
+                        lambda conta: {"refresh_token": "r"} if conta == "default" else {})
+
+    saida = await auth.status()
+
+    assert [c["account"] for c in saida] == ["default", "secundaria"]
+    assert saida[0]["connected"] is True
+    assert saida[1]["connected"] is False   # sem refresh_token
 
 
 # --------------------------------------------------------------------------

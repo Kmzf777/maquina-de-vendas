@@ -82,25 +82,41 @@ def _basic_auth_header(account: str) -> str:
 # --------------------------------------------------------------------------
 # Fluxo de autorizacao
 # --------------------------------------------------------------------------
-async def new_state() -> str:
-    """Gera e guarda o state (anti-CSRF). TTL de 10 min."""
+async def new_state(account: str = config.DEFAULT_ACCOUNT) -> str:
+    """Gera o state (anti-CSRF) guardando a CONTA como valor.
+
+    O valor precisa ser a conta, nao um "1": o /oauth/callback so recebe `code`
+    e `state`, entao o state e o unico canal que diz qual conta esta sendo
+    conectada. Sem isso, autorizar a conta 2 sobrescreveria o token da conta 1.
+    """
     state = secrets.token_urlsafe(24)
-    await _get_redis().setex(_STATE_PREFIX + state, _STATE_TTL, "1")
+    await _get_redis().setex(_STATE_PREFIX + state, _STATE_TTL, account)
     return state
 
 
-async def consume_state(state: str) -> bool:
-    """Valida e queima o state. False se invalido ou ja usado."""
+async def consume_state(state: str) -> str | None:
+    """Valida e queima o state. Devolve a conta, ou None se invalido/ja usado."""
     if not state:
-        return False
-    return bool(await _get_redis().delete(_STATE_PREFIX + state))
+        return None
+    chave = _STATE_PREFIX + state
+    redis = _get_redis()
+    conta = await redis.get(chave)
+    if conta is None:
+        return None
+    if not await redis.delete(chave):
+        # Outro request queimou entre o get e o delete — trata como invalido.
+        return None
+    return conta
 
 
-def authorize_url(state: str) -> str:
-    cid, _ = config.require_credentials()
+def authorize_url(state: str, account: str = config.DEFAULT_ACCOUNT) -> str:
+    conta = config.account(account)
+    if not conta.configured:
+        raise BlingNotConfigured(
+            f"conta {account!r}: credenciais nao configuradas")
     params = urllib.parse.urlencode({
         "response_type": "code",
-        "client_id": cid,
+        "client_id": conta.client_id,
         "state": state,
     })
     return f"{config.AUTHORIZE_URL}?{params}"
@@ -302,16 +318,24 @@ async def invalidate_cache(account: str = config.DEFAULT_ACCOUNT) -> None:
         pass
 
 
-async def status() -> dict:
-    """Resumo para /api/bling/status: conectado, expiracoes, escopos."""
-    row = await asyncio.to_thread(_stored_row, config.DEFAULT_ACCOUNT) or {}
-    return {
-        # Fonte unica da regra "o que conta como configurado" (config.is_configured).
-        # Repetir a condicao aqui faria os dois lados divergirem no dia em que a
-        # integracao passar a exigir tambem o redirect_uri.
-        "configured": config.is_configured(),
-        "connected": bool(row.get("refresh_token")),
-        "access_expires_at": row.get("access_expires_at"),
-        "refresh_expires_at": row.get("refresh_expires_at"),
-        "scope": row.get("scope"),
-    }
+async def status() -> list[dict]:
+    """Resumo para /api/bling/status: uma entrada por conta configurada.
+
+    Devolve LISTA, uma entrada por conta (Task 4) — antes so existia a conta
+    default. Este e o dado interno cru; o formato do JSON exposto ao frontend
+    (que hoje espera um dict com `enabled`/`connected` no topo) e decisao do
+    `router.py` (Task 11), nao desta funcao.
+    """
+    saida = []
+    for conta in config.accounts():
+        row = await asyncio.to_thread(_stored_row, conta.key) or {}
+        saida.append({
+            "account": conta.key,
+            "label": conta.label,
+            "configured": conta.configured,
+            "connected": bool(row.get("refresh_token")),
+            "access_expires_at": row.get("access_expires_at"),
+            "refresh_expires_at": row.get("refresh_expires_at"),
+            "scope": row.get("scope"),
+        })
+    return saida
