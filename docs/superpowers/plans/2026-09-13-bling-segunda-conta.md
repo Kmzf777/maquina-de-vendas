@@ -602,11 +602,30 @@ Em `backend/app/bling/client.py`, onde há `auth.invalidate_cache()`:
                 await auth.invalidate_cache(self._account)
 ```
 
-- [ ] **Step 5: Rodar a suíte de Bling inteira**
+- [ ] **Step 5: Restaurar o verde em `test_bling_client.py`**
+
+A Task 2 deixou **12 testes vermelhos de propósito**, todos em
+`backend/tests/test_bling_client.py`. Esta task é a responsável por devolvê-los
+ao verde. São dois dublês com assinatura de zero argumentos que a produção passou
+a chamar com um:
+
+- a fixture `token`, cujo `fake_token()` substitui `auth.get_access_token` — 11
+  testes;
+- `fake_acquire()` dentro de `test_rate_limiter_e_chamado_antes_de_cada_request`,
+  que substitui `ratelimit.acquire` — 1 teste.
+
+Os dois passam a aceitar o argumento da conta. **Ajustar o dublê, nunca afrouxar
+a asserção** — o que cada teste verifica continua igual.
+
+Aproveite para acrescentar uma asserção que hoje não existe: que o `BlingClient`
+repassa a conta que recebeu no construtor para `get_access_token` e para
+`ratelimit.acquire`. É o contrato que a Task 2 introduziu e nada o cobre ainda.
+
+- [ ] **Step 6: Rodar a suíte de Bling inteira**
 
 Run: `cd backend && python -m pytest tests/ -k bling -q`
-Expected: PASS. Se algum teste antigo chamava `auth._persist(payload)` com um
-argumento só, o default `account="default"` o mantém válido.
+Expected: **PASS, zero falhas** — o baseline antes da Task 2 era 261 passed,
+1 skipped. Se sobrar qualquer vermelho, a task não está pronta.
 
 - [ ] **Step 6: Commit**
 
