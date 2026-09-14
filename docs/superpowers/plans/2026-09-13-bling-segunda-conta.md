@@ -2091,8 +2091,35 @@ export function trocaLimpaFormulario(
 }
 ```
 
-Atualizar `use-bling-status.ts` para tipar a resposta como `ContaBling[]` e
-`bling-gate.ts` para receber a conta escolhida em vez de um booleano global.
+**`use-bling-status.ts` — o que o código realmente faz hoje** (conferido, não
+presumir): ele mantém um **memo de módulo** (`let cache`, `let inflight`)
+compartilhado entre todos os chamadores, porque os quatro pontos que abrem o
+modal de venda montam em telas diferentes e sem isso cada abertura repetiria a
+chamada. E ele **colapsa a resposta num único booleano**:
+
+```ts
+const ok = !!body.enabled && !!body.connected;
+```
+
+Com a resposta virando lista, esse colapso não serve mais. O hook passa a
+guardar no memo a **lista inteira** (`ContaBling[]`) mais o `enabled` global, e
+expõe as duas coisas. Preserve o memo e o `inflight` — eles existem por um motivo
+real e removê-los multiplicaria as chamadas por quatro.
+
+**`bling-gate.ts` — a assinatura real é maior do que a deste plano.**
+`blingGate({ loading, error, enabled, isEditing, skipBling })`, e há duas regras
+já documentadas no arquivo que **não podem ser quebradas**:
+
+- Falha ao consultar o status **bloqueia** o modal; não cai para o modo legado.
+  O comentário explica: rede é falha transitória, venda gravada fora do ERP é
+  permanente.
+- `skipBling` ("Registrar sem enviar ao Bling") curto-circuita tudo, inclusive
+  `error`.
+
+O `enabled` booleano vira "a conta escolhida está conectada". E **quando
+`skipBling` está marcado o seletor de conta some da tela**: a venda não vai para
+ERP nenhum, então escolher CNPJ não significa nada — deixar o seletor ali
+sugeriria que a escolha tem efeito. Isso vale para a Task 15 também.
 
 - [ ] **Step 4: Rodar**
 
@@ -2180,18 +2207,40 @@ git commit -m "feat(bling): seletor de conta no pedido e no orcamento"
 
 - [ ] **Step 1: Escrever o teste do rótulo**
 
+> **Funções reais do arquivo** (conferidas): `sale-display.ts` já tem
+> `orderLabel(sale): string` (devolve `"#1234"`) e
+> `blingOrderUrl(orderId): string`. **Não** invente um `rotuloDoPedido` paralelo
+> nem altere o significado de `orderLabel`, que é usado em vários lugares.
+> Acrescente uma função nova e separada, que devolve **só** o rótulo da conta e
+> deixa o componente decidir onde encaixá-lo.
+
 ```ts
 import { describe, expect, it } from "vitest";
-import { rotuloDoPedido } from "./sale-display";
+import { accountLabel } from "./sale-display";
 
-describe("rotuloDoPedido", () => {
-  it("nao mostra a conta quando so existe uma", () => {
-    expect(rotuloDoPedido(1234, "default", 1)).toBe("Pedido #1234");
+const CONTAS = [
+  { account: "default", label: "Canastra CNPJ 1", configured: true, connected: true },
+  { account: "secundaria", label: "Canastra CNPJ 2", configured: true, connected: true },
+];
+
+describe("accountLabel", () => {
+  it("devolve null quando so existe uma conta", () => {
+    expect(accountLabel({ bling_account: "default" }, [CONTAS[0]])).toBeNull();
   });
 
-  it("mostra o rotulo da conta quando existem duas", () => {
-    expect(rotuloDoPedido(1234, "Canastra CNPJ 2", 2))
-      .toBe("Pedido #1234 · Canastra CNPJ 2");
+  it("devolve o rotulo da conta quando existem duas", () => {
+    expect(accountLabel({ bling_account: "secundaria" }, CONTAS))
+      .toBe("Canastra CNPJ 2");
+  });
+
+  it("devolve null para venda fora do Bling", () => {
+    expect(accountLabel({ bling_account: null }, CONTAS)).toBeNull();
+  });
+
+  it("cai para o slug quando a conta nao esta mais configurada", () => {
+    // Venda historica de uma conta que foi removida do BLING_ACCOUNTS: mostrar
+    // o slug cru e melhor que esconder a informacao ou quebrar a tela.
+    expect(accountLabel({ bling_account: "antiga" }, CONTAS)).toBe("antiga");
   });
 });
 ```
@@ -2205,19 +2254,30 @@ Expected: FAIL — `rotuloDoPedido is not exported`
 
 ```ts
 /**
- * O Bling nao tem URL que force a conta: o link abre no painel de onde o usuario
- * estiver logado. Rotular a conta e o que da ao vendedor a informacao de qual
- * painel abrir antes de clicar. A limitacao e assumida, nao disfarcada.
+ * Rotulo da conta Bling de uma venda, ou null quando nao ha o que dizer.
+ *
+ * Existe porque o Bling NAO tem URL que force a conta: `blingOrderUrl` abre no
+ * painel de onde o usuario ja estiver logado, e um pedido da conta 2 aberto por
+ * quem esta logado na conta 1 mostra "nao encontrado". Nao da para resolver isso
+ * no link — da para dizer ao vendedor em qual painel entrar antes de clicar.
+ *
+ * Devolve null com uma conta so: nao ha ambiguidade a desfazer, e um rotulo
+ * constante em toda linha da tabela seria ruido.
  */
-export function rotuloDoPedido(
-  orderId: number, labelDaConta: string, totalDeContas: number,
-): string {
-  const base = `Pedido #${orderId}`;
-  return totalDeContas > 1 ? `${base} · ${labelDaConta}` : base;
+export function accountLabel(
+  sale: Pick<Sale, "bling_account">, contas: ContaBling[],
+): string | null {
+  if (!sale.bling_account) return null;      // venda fora do Bling
+  if (contas.length <= 1) return null;       // sem ambiguidade
+  const conta = contas.find((c) => c.account === sale.bling_account);
+  // Conta removida do BLING_ACCOUNTS depois da venda: o slug cru diz mais que
+  // esconder a informacao, e nao quebra a tela.
+  return conta?.label ?? sale.bling_account;
 }
 ```
 
-Equivalente em `bling-contact-display.ts` para o contato.
+Equivalente em `bling-contact-display.ts` para o contato, com a mesma regra de
+devolver `null` quando há uma conta só.
 
 - [ ] **Step 4: `/config` com uma linha por conta**
 
