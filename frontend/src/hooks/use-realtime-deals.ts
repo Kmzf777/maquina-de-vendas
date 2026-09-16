@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import type { Deal } from "@/lib/types";
 
 export function useRealtimeDeals(pipelineId?: string | null) {
@@ -38,7 +39,7 @@ export function useRealtimeDeals(pipelineId?: string | null) {
     const channel = supabase
       .channel(channelName)
       .on("postgres_changes", changeFilter, fetchDeals)
-      .subscribe();
+      .subscribe(onResubscribe(fetchDeals));
     return () => { supabase.removeChannel(channel); };
   }, [fetchDeals, pipelineId, supabase]);
 

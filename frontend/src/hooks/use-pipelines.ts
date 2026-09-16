@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import type { Pipeline, PipelineStage } from "@/lib/types";
 
 export function usePipelines() {
@@ -23,7 +24,7 @@ export function usePipelines() {
     const channel = supabase
       .channel("pipelines-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "pipelines" }, fetchPipelines)
-      .subscribe();
+      .subscribe(onResubscribe(fetchPipelines));
     return () => { supabase.removeChannel(channel); };
   }, [fetchPipelines, supabase]);
 
@@ -50,7 +51,7 @@ export function usePipelineStages(pipelineId: string | null) {
     const channel = supabase
       .channel(`pipeline-stages-${pipelineId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "pipeline_stages" }, fetchStages)
-      .subscribe();
+      .subscribe(onResubscribe(fetchStages));
     return () => { supabase.removeChannel(channel); };
   }, [fetchStages, pipelineId, supabase]);
 

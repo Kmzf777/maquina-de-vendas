@@ -4,85 +4,54 @@ import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 /**
- * Mantém a conexão Supabase Realtime viva ao longo da sessão — elimina a
- * necessidade de dar F5 para voltar a receber mensagens em tempo real.
+ * Rede de segurança do socket do Realtime: se a conexão está de fato caída
+ * (suspensão do SO, queda de Wi-Fi, aba longamente em segundo plano), pede para
+ * voltar. Só isso.
  *
- * CAUSA RAIZ que isto corrige:
- * O socket do Realtime autentica com o JWT do usuário no momento da conexão, e
- * esse token expira (~1h). Em abas em segundo plano o `autoRefreshToken` é
- * "throttled" pelo navegador (timers congelam) e o token expira sem renovar;
- * após suspensão do SO ou queda de Wi-Fi o socket cai. Sem re-autenticar e
- * reconectar, TODOS os canais postgres_changes (mensagens do chat aberto,
- * re-ordenação da lista, alerta sonoro de notificação) param de entregar em
- * silêncio. As chamadas REST continuam funcionando (o auth renova o token para
- * HTTP, e as rotas usam service role), por isso só o F5 — que cria um client
- * novo com token novo — ressuscitava o tempo real.
+ * O QUE ESTE HOOK DEIXOU DE FAZER — e por quê (medido em produção, 16/09/2026):
  *
- * Como o client do browser é singleton (@supabase/ssr), existe UM socket
- * compartilhado por toda a aplicação; revivê-lo aqui conserta todos os hooks de
- * realtime de uma só vez (chat, lista, notificações, presença, kanban, etc.).
+ * 1. NÃO chama mais `realtime.setAuth(token)` com token explícito.
+ *    O supabase-js já entrega ao realtime um callback de token
+ *    (`accessToken: this._getAccessToken`) e o renova a cada heartbeat. Passar
+ *    um token à mão marca o cliente como "token manual" e DESLIGA essa
+ *    renovação automática — o socket fica preso a um JWT que expira em 1h e o
+ *    canal morre em silêncio. Evidência: uma aba aberta às 14:49 perdeu TODAS
+ *    as inscrições entre 15:49:00 e 15:49:31, com o token expirando 15:49:06.
+ *    A versão anterior deste hook (jun/2026) reintroduzia exatamente o bug que
+ *    tinha sido escrito para consertar.
+ *
+ * 2. NÃO força mais `disconnect()` + `connect()` num socket saudável.
+ *    Derrubar a conexão abre um buraco de ~1,3s, e `postgres_changes` não tem
+ *    replay: todo evento nesse intervalo é perdido para sempre. Fazer isso a
+ *    cada volta de aba era, por si só, uma fonte de mensagens sumidas.
+ *
+ * 3. NÃO duplica o tratamento de visibilidade da biblioteca.
+ *    O @supabase/phoenix já escuta `visibilitychange`, `pagehide` e `pageshow`
+ *    e reconecta sozinho. Aqui ficou só o reforço idempotente.
+ *
+ * Reconciliar os dados perdidos durante uma queda NÃO é trabalho deste hook:
+ * isso é `onResubscribe` (@/lib/realtime-resync), ligado em cada hook que
+ * assina realtime.
  *
  * Deve ser montado UMA vez, alto na árvore autenticada (AuthenticatedShell).
  */
 export function useRealtimeKeepAlive() {
   useEffect(() => {
     const supabase = createClient();
-    let hiddenSince = 0;
 
-    async function revive(force: boolean) {
-      try {
-        // getSession renova o token se estiver expirado (inclusive após o
-        // throttle de aba em segundo plano), deixando o auth client com um JWT válido.
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        if (!token) return; // sem sessão → nada a reconectar (logout/expiração total)
-
-        // Empurra o token fresco para o socket e canais já vivos (re-autoriza).
-        await supabase.realtime.setAuth(token);
-
-        // Se o socket caiu (sleep/rede) ou ficou ocioso o bastante para o
-        // servidor ter derrubado a sessão, força um ciclo limpo: os canais
-        // re-entram automaticamente na reconexão (modelo Phoenix) com o token novo.
-        const isOpen = supabase.realtime.connectionState() === "open";
-        if (force || !isOpen) {
-          await supabase.realtime.disconnect();
-          supabase.realtime.connect();
-        }
-      } catch (err) {
-        console.warn("[realtime-keepalive] falha ao reviver a conexão:", err);
-      }
-    }
-
-    // Caminho normal (aba ativa): quando o auth renova o token, repassa ao socket.
-    const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.access_token && (event === "TOKEN_REFRESHED" || event === "SIGNED_IN")) {
-        supabase.realtime.setAuth(session.access_token);
-      }
-    });
-
-    // Aba volta ao foco: principal gatilho do bug (token expirou em background).
-    // Força reconexão só se ficou oculta tempo suficiente para o socket/token
-    // degradarem — evita churn em alt-tabs rápidos.
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        hiddenSince = Date.now();
-        return;
-      }
-      const hiddenMs = hiddenSince ? Date.now() - hiddenSince : 0;
-      hiddenSince = 0;
-      revive(hiddenMs > 5_000);
+    // Reconecta apenas o que está caído. Nunca derruba um socket vivo — é a
+    // diferença entre fechar um buraco e abrir um novo.
+    const reviveSeCaido = () => {
+      if (supabase.realtime.isConnected()) return;
+      supabase.realtime.connect();
     };
 
-    // Rede voltou (sleep/queda de Wi-Fi): força reconexão.
-    const onOnline = () => revive(true);
-
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("online", onOnline);
+    window.addEventListener("online", reviveSeCaido);
+    document.addEventListener("visibilitychange", reviveSeCaido);
 
     return () => {
-      authSub.subscription.unsubscribe();
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("online", onOnline);
+      window.removeEventListener("online", reviveSeCaido);
+      document.removeEventListener("visibilitychange", reviveSeCaido);
     };
   }, []);
 }

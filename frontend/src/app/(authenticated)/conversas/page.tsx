@@ -12,6 +12,7 @@ import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView, type SiblingConversationSummary } from "@/components/conversas/chat-view";
 import { ContactDetail } from "@/components/conversas/contact-detail";
 import { debounce } from "@/lib/debounce";
+import { onResubscribe } from "@/lib/realtime-resync";
 import {
   mergeConversationRow,
   sortByLastMsgDesc,
@@ -289,7 +290,13 @@ function ConversasContent() {
           );
         },
       )
-      .subscribe();
+      // Volta do canal = houve um buraco. `postgres_changes` não tem replay, e a
+      // lista é mantida por patches em memória, então tudo que aconteceu com o
+      // socket fora ficaria defasado para sempre (só o F5 corrigia). Invalidação
+      // integral aqui, sem debounce: reconexão é rara e precisa reconciliar já.
+      .subscribe(
+        onResubscribe(() => queryClient.invalidateQueries({ queryKey: ["conversations"] })),
+      );
 
     return () => {
       debouncedInvalidate.cancel();

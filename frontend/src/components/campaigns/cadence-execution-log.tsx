@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface ExecutionLogRow {
@@ -199,7 +200,7 @@ export function CadenceExecutionLog({ campaignId }: Props) {
           setOpen(true);
         }
       )
-      .subscribe();
+      .subscribe(onResubscribe(fetchRows));
 
     return () => { supabase.removeChannel(channel); };
   }, [campaignId, fetchRows, markNew]);

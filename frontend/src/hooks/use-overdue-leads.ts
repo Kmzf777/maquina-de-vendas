@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { debounce } from "@/lib/debounce";
+import { onResubscribe } from "@/lib/realtime-resync";
 import { spDateString, type BusinessWindow } from "@/lib/business-hours";
 import { collectOpenRounds, type SlaConversation } from "@/lib/sla-rounds";
 
@@ -256,7 +257,9 @@ export function useOverdueLeads(): OverdueData {
     const channel = supabase
       .channel("overdue-leads-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
-      .subscribe();
+      // Re-sincroniza na volta do canal usando o MESMO guard de aba oculta, para
+      // não reintroduzir o fetch pesado de 30d em background.
+      .subscribe(onResubscribe(guardedRefetch));
 
     const onVisible = () => {
       if (!isHidden() && staleWhileHidden) {
