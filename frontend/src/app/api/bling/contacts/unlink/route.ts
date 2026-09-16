@@ -10,11 +10,16 @@ const backend = () =>
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const leadId = String(body?.lead_id ?? "");
+  // Mesma traducao corpo -> query string de contacts/link/route.ts. Sem
+  // default sintetico: ausente, o backend aplica o dele sozinho.
+  const account = body?.account ? String(body.account) : "";
   if (!leadId) {
     return Response.json({ error: "lead_id e obrigatorio" }, { status: 400 });
   }
 
-  const url = `${backend()}/api/bling/contacts/unlink?lead_id=${encodeURIComponent(leadId)}`;
+  const url =
+    `${backend()}/api/bling/contacts/unlink?lead_id=${encodeURIComponent(leadId)}` +
+    (account ? `&account=${encodeURIComponent(account)}` : "");
   try {
     const resp = await fetch(url, { method: "POST", cache: "no-store" });
     return Response.json(await resp.json().catch(() => ({})), { status: resp.status });
