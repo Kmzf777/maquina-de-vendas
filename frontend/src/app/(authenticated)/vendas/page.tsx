@@ -20,64 +20,57 @@ import { LostReasonModal } from "@/components/deals/lost-reason-modal";
 import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
 import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
 import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
-import { BulkMoveDealsModal } from "@/components/deals/bulk-move-deals-modal";
+import { BulkMoveModal } from "@/components/deals/bulk-move-modal";
+import { chunk, summarizeMoveResults, MOVE_BATCH_SIZE, type MoveResult } from "@/lib/bulk-move-deals";
 import { useCurrentRole } from "@/hooks/use-current-role";
-import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
+import type { Deal, Pipeline } from "@/lib/types";
 import { dealMatchesSearch } from "@/lib/search";
 
 function DroppableColumn({
-  id, title, dotColor, deals, onDealClick, onBulkMove,
+  id, title, dotColor, deals, onDealClick, selectionMode, selectedIds, onToggleAll,
 }: {
-  id: string; title: string; dotColor: string; deals: Deal[]; onDealClick: (deal: Deal) => void; onBulkMove?: () => void;
+  id: string; title: string; dotColor: string; deals: Deal[];
+  onDealClick: (deal: Deal) => void;
+  selectionMode: boolean;
+  selectedIds: Set<string>;
+  onToggleAll: (dealIds: string[], selectAll: boolean) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   const columnValue = deals.reduce((sum, d) => sum + (d.value || 0), 0);
   const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0 })}`;
-  const [showMenu, setShowMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!showMenu) return;
-    function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowMenu(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showMenu]);
+  const selectedHere = deals.filter((d) => selectedIds.has(d.id)).length;
+  const allSelected = deals.length > 0 && selectedHere === deals.length;
+  const someSelected = selectedHere > 0 && !allSelected;
 
   return (
     <div className="bg-[#f7f5f1] border border-[#dedbd6] rounded-[8px] flex flex-col min-h-[200px] w-72 flex-shrink-0">
-      <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between group">
+      <div className="px-4 py-3 bg-[#f0ede8] border-b border-[#dedbd6] rounded-t-[8px] flex items-center justify-between">
         <div className="flex items-center gap-2">
+          {selectionMode && deals.length > 0 && (
+            <button
+              onClick={() => onToggleAll(deals.map((d) => d.id), !allSelected)}
+              role="checkbox"
+              aria-checked={allSelected ? true : someSelected ? "mixed" : false}
+              title={allSelected ? "Desmarcar coluna" : "Selecionar coluna"}
+              className={`w-4 h-4 rounded-[3px] border flex items-center justify-center flex-shrink-0 ${
+                allSelected || someSelected ? "bg-[#111111] border-[#111111]" : "bg-white border-[#dedbd6]"
+              }`}
+            >
+              {allSelected && (
+                <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+              )}
+              {someSelected && <span className="w-2 h-[2px] bg-white rounded-full" />}
+            </button>
+          )}
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
           <h3 className="text-[13px] font-medium text-[#111111] uppercase tracking-[0.6px]">{title}</h3>
         </div>
         <div className="flex items-center gap-2">
           {columnValue > 0 && <span className="text-[11px] text-[#7b7b78]">{fmt(columnValue)}</span>}
           <span className="text-[12px] text-[#7b7b78] bg-white border border-[#dedbd6] rounded-full px-2 py-0.5">{deals.length}</span>
-          {deals.length > 0 && (
-            <div ref={menuRef} className="relative">
-              <button
-                onClick={() => setShowMenu((v) => !v)}
-                className="opacity-0 group-hover:opacity-100 transition-opacity text-[#7b7b78] hover:text-[#111111] px-1 leading-none text-[16px]"
-                title="Opções da coluna"
-              >
-                ···
-              </button>
-              {showMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-white border border-[#dedbd6] rounded-[6px] shadow-none z-20 min-w-[140px]">
-                  <button
-                    onClick={() => { setShowMenu(false); onBulkMove?.(); }}
-                    className="w-full text-left px-3 py-2 text-[13px] text-[#111111] hover:bg-[#faf9f6] rounded-[6px] transition-colors"
-                  >
-                    Mover deals...
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
       <div
@@ -90,18 +83,39 @@ function DroppableColumn({
           </div>
         )}
         {deals.map((deal) => (
-          <DraggableDealCard key={deal.id} deal={deal} onClick={onDealClick} />
+          <DraggableDealCard
+            key={deal.id}
+            deal={deal}
+            onClick={onDealClick}
+            selectionMode={selectionMode}
+            selected={selectedIds.has(deal.id)}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function DraggableDealCard({ deal, onClick }: { deal: Deal; onClick: (deal: Deal) => void }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: deal.id, data: deal });
+function DraggableDealCard({
+  deal, onClick, selectionMode, selected,
+}: {
+  deal: Deal; onClick: (deal: Deal) => void; selectionMode: boolean; selected: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: deal.id,
+    data: deal,
+    // Em modo selecao o PointerSensor competiria com o clique de marcar, e um
+    // arrasto acidental moveria um card no meio da selecao.
+    disabled: selectionMode,
+  });
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} className={isDragging ? "opacity-30" : ""}>
-      <DealCard deal={deal} onClick={onClick} />
+    <div
+      ref={setNodeRef}
+      {...(selectionMode ? {} : listeners)}
+      {...attributes}
+      className={isDragging ? "opacity-30" : ""}
+    >
+      <DealCard deal={deal} onClick={onClick} selectable={selectionMode} selected={selected} />
     </div>
   );
 }
@@ -125,7 +139,49 @@ function VendasPageInner() {
   const [category, setCategory] = useState("");
   const [showActive, setShowActive] = useState(true);
   const [lostDeal, setLostDeal] = useState<{ deal: Deal; stageId: string } | null>(null);
-  const [bulkMoveStage, setBulkMoveStage] = useState<PipelineStage | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkMove, setShowBulkMove] = useState(false);
+  const [moveProgress, setMoveProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Trocar de funil zera a selecao: os ids marcados sao de outro board e mover as
+  // cegas seria surpresa. Ajuste no corpo do render — padrao oficial do React para
+  // "resetar estado quando algo muda" — e nao useEffect: com o efeito, a tela
+  // renderizava uma vez com a selecao antiga ainda valendo, e nessa janela o botao
+  // "Mover (N)" mostrava a contagem do funil anterior.
+  const [selectionPipelineId, setSelectionPipelineId] = useState(selectedPipelineId);
+  if (selectionPipelineId !== selectedPipelineId) {
+    setSelectionPipelineId(selectedPipelineId);
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setShowBulkMove(false);
+  }
+
+  function exitSelection() {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setShowBulkMove(false);
+  }
+
+  function toggleDealSelection(dealId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(dealId)) next.delete(dealId);
+      else next.add(dealId);
+      return next;
+    });
+  }
+
+  function toggleColumnSelection(dealIds: string[], selectAll: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of dealIds) {
+        if (selectAll) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -234,7 +290,12 @@ function VendasPageInner() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error("Erro ao atualizar deal");
+    if (!res.ok) {
+      // A rota devolve mensagens úteis (ex.: "Permissão insuficiente para este funil.")
+      // ao mover para um funil de outro vendedor — jogar fora vira erro genérico na tela.
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Erro ao atualizar deal");
+    }
     setSelectedDealId(null);
   }
 
@@ -264,19 +325,58 @@ function VendasPageInner() {
     setSelectedPipelineId(pipelines.find((p) => p.id !== pipeline.id)?.id ?? null);
   }
 
-  async function handleBulkMove(dealIds: string[], targetStageId: string) {
-    const results = await Promise.all(
-      dealIds.map((id) =>
-        fetch(`/api/deals/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ stage_id: targetStageId }),
-        })
-      )
-    );
-    if (results.some((r) => !r.ok)) {
-      alert("Erro ao mover alguns deals. Tente novamente.");
+  async function handleBulkMove(targetPipelineId: string, targetStageId: string) {
+    const ids = [...selectedIds];
+    setMoveProgress({ done: 0, total: ids.length });
+    let done = 0;
+
+    const results: MoveResult[] = [];
+    try {
+      // Em lotes: cada PATCH faz 3 round-trips no Supabase e dispara um webhook de
+      // automacao. Mandar tudo de uma vez martela o backend sem ganho nenhum.
+      for (const batch of chunk(ids, MOVE_BATCH_SIZE)) {
+        const batchResults = await Promise.all(
+          batch.map(async (id): Promise<MoveResult> => {
+            try {
+              const res = await fetch(`/api/deals/${id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                // Manda sempre os dois campos. Os lotes levam segundos, e decidir
+                // "o funil nao mudou" pelo estado que a tela tinha no inicio grava
+                // stage_id novo com pipeline_id velho se outra pessoa mover o mesmo
+                // deal no meio — e o card some do board. A rota compara com a linha
+                // fresca do banco, entao mandar valor igual nao custa guarda extra.
+                body: JSON.stringify({ pipeline_id: targetPipelineId, stage_id: targetStageId }),
+              });
+              if (res.ok) return { id, ok: true };
+              const body = await res.json().catch(() => ({}));
+              return { id, ok: false, error: body.error || `HTTP ${res.status}` };
+            } catch {
+              return { id, ok: false, error: "Falha de rede" };
+            } finally {
+              done += 1;
+              setMoveProgress({ done, total: ids.length });
+            }
+          })
+        );
+        results.push(...batchResults);
+      }
+    } finally {
+      // Sem isto, um throw inesperado deixaria progress != null para sempre — e o
+      // dialogo trava o X e o backdrop nesse estado, exigindo reload da pagina.
+      setMoveProgress(null);
     }
+
+    const summary = summarizeMoveResults(results);
+    setShowBulkMove(false);
+
+    if (summary.failed === 0) {
+      exitSelection();
+      return;
+    }
+    // Mantem os que falharam marcados: o usuario ve quais sao e pode tentar de novo.
+    setSelectedIds(new Set(summary.failedIds));
+    alert(summary.message);
   }
 
   async function handleDeleteDeal(dealId: string) {
@@ -323,15 +423,42 @@ function VendasPageInner() {
           onDelete={handleDeletePipeline}
         />
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowCreate(true)}
-            className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2"
-          >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
-          </svg>
-          Novo Card
-          </button>
+          {selectionMode ? (
+            <>
+              <button
+                onClick={exitSelection}
+                className="border border-[#dedbd6] text-[#313130] px-3 py-2 rounded-[4px] text-[14px] hover:border-[#111111] transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => setShowBulkMove(true)}
+                disabled={selectedIds.size === 0}
+                title={selectedIds.size === 0 ? "Selecione ao menos 1 deal" : undefined}
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                Mover ({selectedIds.size})
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setSelectionMode(true)}
+                className="border border-[#dedbd6] text-[#313130] px-3 py-2 rounded-[4px] text-[14px] hover:border-[#111111] transition-colors"
+              >
+                Editar Deals
+              </button>
+              <button
+                onClick={() => setShowCreate(true)}
+                className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] flex items-center gap-2"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
+                </svg>
+                Novo Card
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -364,8 +491,13 @@ function VendasPageInner() {
                   title={stage.label}
                   dotColor={stage.dot_color}
                   deals={stageDeals}
-                  onDealClick={(deal) => setSelectedDealId(deal.id)}
-                  onBulkMove={() => setBulkMoveStage(stage)}
+                  onDealClick={(deal) => {
+                    if (selectionMode) toggleDealSelection(deal.id);
+                    else setSelectedDealId(deal.id);
+                  }}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedIds}
+                  onToggleAll={toggleColumnSelection}
                 />
               );
             })}
@@ -381,7 +513,7 @@ function VendasPageInner() {
       </div>
 
       {selectedDeal && (
-        <DealDetailSidebar deal={selectedDeal} stages={stages} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} onDelete={handleDeleteDeal} />
+        <DealDetailSidebar deal={selectedDeal} stages={stages} pipelines={pipelines} onClose={() => setSelectedDealId(null)} onUpdate={handleUpdateDeal} onDelete={handleDeleteDeal} />
       )}
       {showCreate && selectedPipelineId && (
         <DealCreateModal leads={leads} pipelines={pipelines} onClose={() => setShowCreate(false)} onCreate={handleCreateDeal} />
@@ -403,13 +535,15 @@ function VendasPageInner() {
           onSaved={refetchStages}
         />
       )}
-      {bulkMoveStage && (
-        <BulkMoveDealsModal
-          deals={filteredDeals.filter((d) => d.stage_id === bulkMoveStage.id)}
-          stages={stages}
-          sourceStageId={bulkMoveStage.id}
-          sourceStageName={bulkMoveStage.label}
-          onClose={() => setBulkMoveStage(null)}
+      {showBulkMove && selectedPipelineId && (
+        <BulkMoveModal
+          count={selectedIds.size}
+          deals={deals.filter((d) => selectedIds.has(d.id))}
+          pipelines={pipelines}
+          currentPipelineId={selectedPipelineId}
+          currentStages={stages}
+          progress={moveProgress}
+          onClose={() => setShowBulkMove(false)}
           onMove={handleBulkMove}
         />
       )}

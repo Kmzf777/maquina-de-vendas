@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import type { Deal, PipelineStage } from "@/lib/types";
+import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
+import { StageTargetPicker } from "@/components/deals/stage-target-picker";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 
 function formatCurrency(value: number): string {
@@ -15,12 +16,13 @@ function formatCurrency(value: number): string {
 interface DealDetailSidebarProps {
   deal: Deal;
   stages: PipelineStage[];
+  pipelines: Pipeline[];
   onClose: () => void;
   onUpdate: (dealId: string, data: Record<string, unknown>) => Promise<void>;
   onDelete: (dealId: string) => void;
 }
 
-export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }: DealDetailSidebarProps) {
+export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, onDelete }: DealDetailSidebarProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [showFinalizeSale, setShowFinalizeSale] = useState(false);
@@ -33,10 +35,14 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
     category: deal.category || "",
     assigned_to: deal.assigned_to || "",
     expected_close_date: deal.expected_close_date || "",
+    pipeline_id: deal.pipeline_id || "",
+    stage_id: deal.stage_id || "",
   });
   const [notesDraft, setNotesDraft] = useState(deal.leads?.notes || "");
 
-  // Sincronizar form quando o deal atualizar via realtime (sem modo edição ativo)
+  // Sincronizar form quando o deal atualizar via realtime (sem modo edição ativo).
+  // Também é o que implementa "Cancelar": sair do modo edição reroda este efeito
+  // e restaura os valores originais do deal, descartando a escolha abandonada.
   useEffect(() => {
     if (!editing) {
       setForm({
@@ -45,6 +51,8 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
         category: deal.category || "",
         assigned_to: deal.assigned_to || "",
         expected_close_date: deal.expected_close_date || "",
+        pipeline_id: deal.pipeline_id || "",
+        stage_id: deal.stage_id || "",
       });
     }
   }, [deal, editing]);
@@ -59,24 +67,41 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
   const stageInfo = deal.pipeline_stages ?? stages.find((s) => s.id === deal.stage_id) ?? null;
+  // Trocar de funil sem escolher a etapa do destino gravaria um stage_id que
+  // pertence ao funil antigo: nenhuma coluna do board de destino casa com ele e
+  // o card some da tela. Acontece na janela de carregamento das etapas e tambem
+  // quando o funil de destino nao tem nenhuma etapa ativa.
+  const movingToOtherPipeline = form.pipeline_id !== (deal.pipeline_id || "");
+  const missingTargetStage = movingToOtherPipeline && !form.stage_id;
   const categoryInfo = DEAL_CATEGORIES.find((c) => c.key === deal.category);
   const daysActive = Math.floor(
     (Date.now() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24)
   );
 
   async function handleSave() {
+    if (missingTargetStage) {
+      setSaveError("Escolha a etapa do funil de destino antes de salvar.");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
-      const savePromises: Promise<unknown>[] = [
-        onUpdate(deal.id, {
-          title: form.title,
-          value: Number(form.value) || 0,
-          category: form.category || null,
-          assigned_to: form.assigned_to || null,
-          expected_close_date: form.expected_close_date || null,
-        }),
-      ];
+      const dealUpdates: Record<string, unknown> = {
+        title: form.title,
+        value: Number(form.value) || 0,
+        category: form.category || null,
+        assigned_to: form.assigned_to || null,
+        expected_close_date: form.expected_close_date || null,
+      };
+      // Só manda funil/etapa se de fato mudaram — evita PATCH desnecessário
+      // e mantém o payload limpo quando o usuário só editou outro campo.
+      if (form.stage_id && form.stage_id !== deal.stage_id) {
+        dealUpdates.stage_id = form.stage_id;
+      }
+      if (form.pipeline_id && form.pipeline_id !== deal.pipeline_id) {
+        dealUpdates.pipeline_id = form.pipeline_id;
+      }
+      const savePromises: Promise<unknown>[] = [onUpdate(deal.id, dealUpdates)];
       if (deal.lead_id) {
         savePromises.push(
           fetch(`/api/leads/${deal.lead_id}`, {
@@ -88,8 +113,10 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
       }
       await Promise.all(savePromises);
       setEditing(false);
-    } catch {
-      setSaveError("Erro ao salvar. Tente novamente.");
+    } catch (err) {
+      // A API devolve mensagens úteis (ex.: "Permissão insuficiente para este funil.")
+      // ao mover para um funil de outro vendedor — jogar fora vira erro genérico na tela.
+      setSaveError(err instanceof Error && err.message ? err.message : "Erro ao salvar. Tente novamente.");
     } finally {
       setSaving(false);
     }
@@ -138,6 +165,19 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {editing ? (
           <div className="space-y-3">
+            <div>
+              <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Etapa do funil</span>
+              <StageTargetPicker
+                pipelines={pipelines}
+                pipelineId={form.pipeline_id}
+                stageId={form.stage_id}
+                localPipelineId={deal.pipeline_id}
+                localStages={stages}
+                currentStageId={deal.stage_id}
+                autoSelectFirstStage
+                onChange={(pipeline_id, stage_id) => setForm((f) => ({ ...f, pipeline_id, stage_id }))}
+              />
+            </div>
             {/* Observações no topo do formulário de edição */}
             <div>
               <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Observacoes do Lead</label>
@@ -173,7 +213,12 @@ export function DealDetailSidebar({ deal, stages, onClose, onUpdate, onDelete }:
               <input type="date" value={form.expected_close_date} onChange={(e) => setForm({ ...form, expected_close_date: e.target.value })} className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full" />
             </div>
             {saveError && <p className="text-[12px] text-red-600">{saveError}</p>}
-            <button onClick={handleSave} disabled={saving} className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full disabled:opacity-50">
+            <button
+              onClick={handleSave}
+              disabled={saving || missingTargetStage}
+              title={missingTargetStage ? "Escolha a etapa do funil de destino" : undefined}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85] w-full disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+            >
               {saving ? "Salvando..." : "Salvar"}
             </button>
           </div>

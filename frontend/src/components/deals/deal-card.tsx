@@ -13,9 +13,12 @@ function daysInStage(updatedAt: string): number {
 interface DealCardProps {
   deal: Deal;
   onClick: (deal: Deal) => void;
+  /** Modo seleção em massa: mostra o quadrado e troca o clique por "marcar". */
+  selectable?: boolean;
+  selected?: boolean;
 }
 
-export function DealCard({ deal, onClick }: DealCardProps) {
+export function DealCard({ deal, onClick, selectable = false, selected = false }: DealCardProps) {
   const lead = deal.leads;
   const displayName = lead?.name || lead?.company || lead?.nome_fantasia || lead?.phone || "—";
   const initial = displayName[0]?.toUpperCase() || "?";
@@ -26,9 +29,27 @@ export function DealCard({ deal, onClick }: DealCardProps) {
   return (
     <button
       onClick={() => onClick(deal)}
-      className="bg-white border border-[#dedbd6] rounded-[8px] p-3 mx-2 mb-2 cursor-pointer hover:border-[#111111] transition-colors w-[calc(100%-16px)] text-left"
+      aria-pressed={selectable ? selected : undefined}
+      className={`bg-white border rounded-[8px] p-3 mx-2 mb-2 cursor-pointer transition-colors w-[calc(100%-16px)] text-left ${
+        selectable && selected ? "border-[#111111]" : "border-[#dedbd6] hover:border-[#111111]"
+      }`}
     >
       <div className="flex items-start justify-between mb-2">
+        {selectable && (
+          // Span estilizado, não input real: um elemento interativo dentro de <button>
+          // é HTML inválido e engoliria o clique do card.
+          <span
+            className={`w-4 h-4 rounded-[3px] border flex items-center justify-center flex-shrink-0 mr-2 mt-[1px] ${
+              selected ? "bg-[#111111] border-[#111111]" : "bg-white border-[#dedbd6]"
+            }`}
+          >
+            {selected && (
+              <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            )}
+          </span>
+        )}
         <p className="text-[13px] font-normal text-[#111111] truncate flex-1">{deal.title}</p>
         {deal.value > 0 && (
           <span className="text-[12px] text-[#7b7b78] ml-2 flex-shrink-0">
