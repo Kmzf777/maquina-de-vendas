@@ -441,6 +441,10 @@ export interface Sale {
   bling_order_number?: number | null;
   bling_situacao_id?: number | null;
   bling_situacao_nome?: string | null;
+  // Slug da conta Bling que recebeu o pedido (20260913_bling_multi_conta.sql).
+  // Null nas vendas fora do Bling, mesma regra de bling_order_id. Usado por
+  // accountLabel (sale-display.ts) para o rotulo de conta no deep link.
+  bling_account?: string | null;
   origin?: "crm" | "bling" | "manual";
   status?: "registrada" | "cancelada" | "pendente_bling";
   payment_method_id?: number | null;
