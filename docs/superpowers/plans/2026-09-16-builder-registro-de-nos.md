@@ -343,6 +343,30 @@ def validar(campanha: dict, nos: list[dict],
 
 # LOTE 5 — inspector (1 agente, arquivos acoplados)
 
+## Task 8b: a recusa da ativação precisa APARECER
+
+Achado pelo agente da Task 8, fora do escopo dela. **Sem isto, o Lote 4 entrega uma
+trava invisível.**
+
+Os dois chamadores de `/activate` — `frontend/src/components/campaigns/cadence-card.tsx`
+e `.../cadence-flow/index.tsx` — fazem `if (data.error) alert(data.error)`, esperando
+uma string plana. A validação devolve `{detail: {problemas: [{no_id, codigo, mensagem}]}}`.
+Logo `data.error` é `undefined`: o operador clica em "Ativar campanha", a recusa
+acontece corretamente no servidor, e **a tela não diz nada**.
+
+**Files:** Modify `frontend/src/components/campaigns/cadence-flow/index.tsx`,
+`frontend/src/components/campaigns/cadence-card.tsx` · Test junto do Lote 5
+
+- [ ] **Passo 1 — teste**: resposta 400 com `detail.problemas[]` → a tela mostra TODAS
+      as mensagens (não só a primeira); resposta 400 com `error` string → continua
+      mostrando; 200 → ativa normalmente.
+- [ ] **Passo 2** — ver falhar.
+- [ ] **Passo 3** — implementar. No builder (`cadence-flow/index.tsx`), além de listar
+      as mensagens, **destacar no canvas os nós cujo `no_id` veio na lista** — é para
+      isso que o campo existe. No card (`cadence-card.tsx`), listar as mensagens basta.
+- [ ] **Passo 4** — `tsc` + `vitest` verdes.
+- [ ] **Passo 5 — commit** `fix(builder): recusa de ativacao aparece na tela`
+
 ## Task 9: tela derivada do schema
 
 **Files:** Create `frontend/src/lib/node-schema.ts` · Modify

@@ -36,6 +36,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
   if (isSystemCampaign(id)) return systemCampaignBlock();
   const body = await request.json();
+
+  // `status` só muda por /activate (12 regras de validação, hoje só no FastAPI) ou
+  // /pause. Este PATCH faz `.update({ ...body })` — spread cego — logo abaixo: sem
+  // esta trava, `{ status: "active" }` chegava direto aqui e contornava a validação
+  // inteira que o /activate acabou de ganhar. É a porta dos fundos da trava.
+  if (body.status !== undefined) {
+    return NextResponse.json(
+      { error: "status não pode ser alterado por aqui — use /activate ou /pause" },
+      { status: 400 },
+    );
+  }
+
   if (body.audience !== undefined && !AUDIENCIAS.includes(body.audience)) {
     return NextResponse.json({ error: "audience inválido — use ia, humano ou ambos" }, { status: 400 });
   }
