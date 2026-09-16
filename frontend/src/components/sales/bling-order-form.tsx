@@ -33,6 +33,53 @@ import {
   type OrderLine,
   type OrderPayloadResult,
 } from "@/lib/bling-order-state";
+import {
+  contaPadrao,
+  contasDisponiveis,
+  precisaSeletor,
+  trocaLimpaFormulario,
+  type ContaBling,
+} from "@/lib/bling-accounts";
+
+/**
+ * Conta Bling deste formulario — primeiro campo, porque catalogo, pagamento e
+ * (no pai) contato e vendedor sao todos escopados por ela (Task 15, R1).
+ *
+ * Prop OMITIDA inteira = recurso desligado: nenhum elemento a mais aparece na
+ * tela e as buscas de catalogo/pagamento continuam sem `?account=`, byte a
+ * byte como antes da segunda conta existir. Os dois chamadores de hoje
+ * (SaleCreateModal, QuoteCreateModal) sempre passam.
+ */
+export interface BlingOrderFormConta {
+  /** Lista completa de `useBlingStatus().accounts` — o proprio formulario
+   *  decide, via `precisaSeletor`, se ha o que mostrar. */
+  contas: ContaBling[];
+  /** "Registrar sem enviar ao Bling" marcado: a venda nao vai a ERP nenhum,
+   *  entao o seletor some (nao ha CNPJ a escolher). Orcamento nunca passa isto
+   *  — nao existe escapatoria de "so no CRM" para proposta comercial. */
+  skipBling?: boolean;
+  /**
+   * Presente = conta imutavel (edicao de um orcamento/pedido que ja existe no
+   * Bling — a conta foi fixada na criacao, ver design §7). O campo vira
+   * somente-leitura mostrando esta conta e a `dica` explica o motivo.
+   */
+  travada?: { valor: string; dica: string };
+  /**
+   * Conta efetivamente selecionada agora, inclusive a padrao automatica assim
+   * que ela resolve. Quem monta o pedido por fora (POST/PUT, resolvedor de
+   * contato) precisa dela — este formulario so escopa catalogo e forma de
+   * pagamento, que busca sozinho.
+   */
+  onChange: (conta: string) => void;
+}
+
+/** Rotulo de exibicao para uma conta pelo slug — nunca o slug cru (R2 da Task
+ *  15: rotular com `label`). Cai para o proprio slug so se a conta sumiu da
+ *  lista corrente (ex.: desconectada depois que o orcamento foi criado) —
+ *  melhor mostrar algo do que deixar o campo em branco. */
+function rotuloDaConta(contas: ContaBling[], valor: string): string {
+  return contas.find((c) => c.account === valor)?.label ?? valor;
+}
 
 interface BlingOrderFormProps {
   /** Campos do pedido que pertencem ao modal, não a este bloco. */
@@ -70,6 +117,8 @@ interface BlingOrderFormProps {
    */
   showInstallments?: boolean;
   onChange: (result: OrderPayloadResult) => void;
+  /** Ver `BlingOrderFormConta`. Ausente = recurso de segunda conta desligado. */
+  conta?: BlingOrderFormConta;
 }
 
 const label = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
@@ -106,6 +155,7 @@ export function BlingOrderForm({
   initialPaymentMethodId,
   showInstallments = true,
   onChange,
+  conta,
 }: BlingOrderFormProps) {
   const { leadId, dealId, soldAt, soldBy, notes } = meta;
 
@@ -135,12 +185,86 @@ export function BlingOrderForm({
   const [carregando, setCarregando] = useState(true);
   const [falhaCatalogo, setFalhaCatalogo] = useState<string | null>(null);
 
+  // ── conta Bling ───────────────────────────────────────────────────────────
+  // Semeada direto quando travada (o valor ja chega pronto, sem espera
+  // assincrona nenhuma); senao comeca `null` ate o efeito abaixo resolver.
+  const [contaAtual, setContaAtual] = useState<string | null>(
+    conta?.travada?.valor ?? null,
+  );
+  // "Ja tentamos decidir a conta" — separado de `contaAtual` de proposito: com
+  // ZERO contas conectadas `contaPadrao` devolve `null` para sempre, e um gate
+  // baseado so em `contaAtual` truthy travaria as buscas de catalogo/pagamento
+  // esperando por um valor que nunca chega. Aqui, mesmo o resultado `null` conta
+  // como "resolvido" e libera as buscas (sem `?account=`, igual ao comportamento
+  // de antes da segunda conta existir).
+  const [contaResolvida, setContaResolvida] = useState(
+    () => !conta || !!conta.travada,
+  );
+
+  useEffect(() => {
+    if (!conta || conta.travada) return; // travada ja nasceu resolvida acima
+    setContaAtual((atual) => atual ?? contaPadrao(conta.contas));
+    setContaResolvida(true);
+    // Deps = `conta` inteiro (identidade nova a cada render do pai): o corpo e
+    // idempotente (os dois `set` acima nao mudam nada depois da primeira vez),
+    // entao rodar de novo em renders subsequentes custa uma comparacao de array
+    // pequena — mais simples e mais seguro do que depender de subcampos e
+    // arriscar esquecer um.
+  }, [conta]);
+
+  const contaOnChangeRef = useRef(conta?.onChange);
+  useEffect(() => {
+    contaOnChangeRef.current = conta?.onChange;
+  });
+  useEffect(() => {
+    if (contaAtual) contaOnChangeRef.current?.(contaAtual);
+  }, [contaAtual]);
+
+  // So conta CONECTADA vira opcao selecionavel — uma conta configurada mas sem
+  // token valido apareceria na lista e, se escolhida, falharia toda busca
+  // (mesmo raciocinio de `contaPadrao`/`contasDisponiveis` em bling-accounts.ts).
+  const contasOpcoes = contasDisponiveis(conta?.contas ?? []);
+  const mostrarConta = !!conta && precisaSeletor(conta?.contas ?? [], conta.skipBling);
+
+  /**
+   * Troca de conta (R4 da Task 15): confirma so quando ha itens ou contato a
+   * perder. Este formulario nao guarda um contato do Bling resolvido — a
+   * resolucao de contato e inteiramente do servidor, por tentativa de
+   * submissao (ver BlingContactResolver, que nem devolve um id ao terminar) —
+   * entao so os ITENS entram nesta decisao; `contatoId: null` documenta que
+   * nao ha o que checar aqui, nao que a regra foi ignorada.
+   */
+  const aoTrocarConta = (nova: string) => {
+    // Conta so as linhas com PRODUTO escolhido — o formulario sempre nasce com
+    // uma linha em branco (`blankLine()`), e contar `linhas.length` cru faria
+    // a confirmacao aparecer mesmo sem o vendedor ter tocado em nada, violando
+    // a regra de so confirmar quando ha algo a perder.
+    const itensPreenchidos = linhas.filter((l) => l.blingProductId !== null).length;
+    if (trocaLimpaFormulario({ itens: itensPreenchidos, contatoId: null })) {
+      const ok = window.confirm(
+        "Trocar de conta vai limpar os itens, o contato e a forma de pagamento. " +
+          "Os produtos têm códigos diferentes em cada conta. Continuar?",
+      );
+      if (!ok) return;
+    }
+    setLinhas([blankLine()]);
+    setPaymentMethodId(null);
+    // Catalogo da conta anterior fica sem sentido na conta nova (IDs nao
+    // coincidem) — limpar evita mostrar por uma fracao de segundo um resultado
+    // de busca que pertence ao CNPJ errado.
+    setResultados([]);
+    setConhecidos({});
+    setContaAtual(nova);
+  };
+
   // ── catálogo e formas de pagamento ───────────────────────────────────────
   const pedidoRef = useRef(0);
 
   useEffect(() => {
+    if (!contaResolvida) return; // espera o efeito acima decidir a conta (ou confirmar que o recurso esta desligado)
     let vivo = true;
-    fetch("/api/bling/payment-methods")
+    const qs = contaAtual ? `?account=${encodeURIComponent(contaAtual)}` : "";
+    fetch(`/api/bling/payment-methods${qs}`)
       .then((r) => r.json())
       .then((d) => {
         if (!vivo) return;
@@ -152,20 +276,22 @@ export function BlingOrderForm({
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [contaResolvida, contaAtual]);
 
   // Busca no espelho a cada tecla (com respiro), porque o catálogo pode ser
   // maior do que uma página — filtrar só o que veio no mount esconderia produto.
   useEffect(() => {
+    if (!contaResolvida) return;
     const termo = busca.trim();
     const atraso = termo ? 250 : 0;
     const timer = setTimeout(() => {
       const meu = ++pedidoRef.current;
       setCarregando(true);
+      const contaQs = contaAtual ? `&account=${encodeURIComponent(contaAtual)}` : "";
       fetch(
         `/api/bling/products?limit=${termo ? 50 : 100}${
           termo ? `&q=${encodeURIComponent(termo)}` : ""
-        }`,
+        }${contaQs}`,
       )
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http"))))
         .then((d) => {
@@ -187,7 +313,7 @@ export function BlingOrderForm({
         });
     }, atraso);
     return () => clearTimeout(timer);
-  }, [busca]);
+  }, [busca, contaResolvida, contaAtual]);
 
   // ── resultado publicado para o modal ─────────────────────────────────────
   const result = useMemo(
@@ -252,6 +378,51 @@ export function BlingOrderForm({
 
   return (
     <div className="space-y-4">
+      {/* Conta Bling — SEMPRE o primeiro campo (R1 da Task 15): catalogo,
+          contato, forma de pagamento e vendedor sao todos escopados por ela. */}
+      {mostrarConta && (
+        <div>
+          <label className={`${label} block mb-1`}>Conta Bling *</label>
+          {conta!.travada ? (
+            // Mesmo padrao visual do "Deal" travado em SaleCreateModal: campo
+            // somente-leitura, nao um controle desabilitado — comunica melhor
+            // que o valor e fixo, e evita depender do Select abrir sem opcoes.
+            <div className="h-[37px] flex items-center bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111]">
+              {/* Lista CRUA (nao so conectadas): o rotulo e informativo, nao um
+                  convite a clicar, entao continua valendo mesmo se esta conta
+                  especifica tiver se desconectado depois que o documento nasceu. */}
+              {rotuloDaConta(conta!.contas, conta!.travada.valor)}
+            </div>
+          ) : (
+            <Select
+              // String vazia (nunca `undefined`) enquanto `contaAtual` nao
+              // resolveu: o Select fica CONTROLADO desde o primeiro render.
+              // Com `undefined` no primeiro render e uma string depois, o
+              // Radix trata como troca de nao-controlado para controlado e
+              // avisa no console (React nao gosta da mesma forma que em
+              // <input>) — "" e uma selecao vazia legitima, nao ausencia de
+              // controle.
+              value={contaAtual ?? ""}
+              onValueChange={aoTrocarConta}
+            >
+              <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                <SelectValue placeholder="Selecione a conta" />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                {contasOpcoes.map((c) => (
+                  <SelectItem key={c.account} value={c.account}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {conta!.travada && (
+            <p className="mt-1 text-[11px] text-[#7b7b78]">{conta!.travada.dica}</p>
+          )}
+        </div>
+      )}
+
       <div>
         <div className="flex items-baseline justify-between mb-1">
           <span className={label}>Itens do pedido *</span>
