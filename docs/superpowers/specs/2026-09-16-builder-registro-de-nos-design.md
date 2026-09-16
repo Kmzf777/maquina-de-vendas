@@ -355,3 +355,118 @@ apagadas por script, não por migration.
 - **Templates:** ativação com template pendente recusa e nomeia o pendente; com todos
   aprovados, passa.
 - **Suíte inteira verde** (backend + frontend + `tsc` + `next build`).
+
+---
+
+# 11. Extensão: ramificação por botão de template
+
+**Data:** 2026-09-16 (aprovado pelo dono depois do Lote 5)
+
+## 11.1 O problema, medido
+
+Template com dois botões — "Continuar" e "Parar atendimento". O lead clica em **Parar
+atendimento**. O que acontece hoje:
+
+```
+is_optout_reply("Parar atendimento")  ->  False   (MORTO)
+is_optout_reply("Continuar")          ->  False   (MORTO)
+is_optout_reply("Parar mensagens")    ->  True
+is_optout_reply("Não tenho interesse")->  True
+```
+
+O sistema entende apenas "o lead respondeu alguma coisa", aplica a política única do nó
+(`pause`/`cancel`/`reset`) e nada mais. Sem `leads.opt_out`, sem funil Blacklist. Dias
+depois o lead é reinscrito e recebe de novo.
+
+**Não existe nenhuma configuração de botão no builder.** O nó `send` tem
+`template_name`, `template_language`, `template_variables`, `channel_id` e `on_reply` —
+e `on_reply` é uma política só, igual para qualquer resposta.
+
+## 11.2 A causa é uma assinatura
+
+```python
+def handle_campaign_reply(lead_id: str) -> None:
+```
+
+O motor de cadências recebe **só o id do lead**. Não sabe o que ele disse, se clicou
+botão, nem qual.
+
+O dado existe. `webhook/meta_parser.py` preserva tudo:
+
+```python
+parsed_type = "button"
+metadata_dict = {"payload": btn.get("payload") or text, "title": text}
+```
+
+E há um sistema que faz isso corretamente — `button_flow/` (agente de Recuperação), com
+classificador, efeitos e trilhas. Ele é **isolado do builder**: nenhum arquivo de
+`campaigns/` ou `automation/` o referencia. Portanto não é limitação da Meta: é
+informação que chega e é descartada na fronteira.
+
+## 11.3 O desenho
+
+Quatro peças, e a primeira habilita as outras. **Sem migration** —
+`campaign_enrollments.metadata` já é `jsonb` (criada por `20260904`, verificada
+aplicada).
+
+### (a) Levar a resposta para dentro da matrícula
+
+```python
+def handle_campaign_reply(lead_id: str, texto: str | None = None,
+                          tipo: str | None = None) -> None
+```
+
+Default `None` mantém compatibilidade com qualquer chamador. Grava em
+`enrollment.metadata.ultima_resposta = {"texto", "tipo", "em"}` — em TODAS as
+matrículas ativas do lead, que é o que a função já faz hoje.
+
+### (b) `optout` vira uma política, não um campo à parte
+
+O vocabulário `politica_resposta` ganha um quarto valor. Hoje: `pause`, `cancel`,
+`reset`. Passa a ter **`optout`**.
+
+`optout` = registra o opt-out de verdade (`leads.opt_out`, funil Blacklist, cancela
+follow-ups — os mesmos campos de `agent/tools.py::registrar_optout`) **e** cancela a
+matrícula.
+
+### (c) `on_reply_por_botao` no nó de envio
+
+```python
+"on_reply_por_botao": {"parar atendimento": "optout", "continuar": "reset"}
+```
+
+Chave normalizada pelo `_normalize_reply` que já existe em `campaigns/worker.py`
+(minúscula, sem acento, sem pontuação). Precedência em `_apply_reply_policy`:
+
+```
+on_reply_por_botao[resposta normalizada]  ->  on_reply do NÓ  ->  on_reply do GATILHO
+```
+
+Isto mata a classe inteira de botão morto: o rótulo de saída passa a ser **declarado no
+nó**, qualquer que seja o texto, em vez de adivinhado por um frozenset global de duas
+frases.
+
+### (d) Condição `clicou_botao`
+
+Nova condição lendo `enrollment.metadata.ultima_resposta.texto`, comparando normalizado
+com `cfg["botao"]`, ramificando yes/no. É o que falta para ramificar no meio da
+cadência em vez de só encerrar.
+
+## 11.4 O que NÃO muda
+
+- `is_optout_reply` e o frozenset de duas frases continuam como estão: são o caminho de
+  quem **não** está em cadência, e mexer neles é outro raio de impacto.
+- `button_flow/` (Recuperação) continua isolado e com o opt-out próprio dele, que é mais
+  rico (move o card para "Descadastrado", grava `opt_out_evidence`).
+- Nada de ativar campanha, preencher template ou rodar SQL.
+
+## 11.5 Como se prova
+
+- `is_optout_reply("Parar atendimento")` continua `False` — e mesmo assim, um nó que
+  declara `{"parar atendimento": "optout"}` **grava o opt-out**. É o teste que
+  demonstra a mudança de lugar da decisão.
+- Precedência nos três níveis, com teste por nível.
+- Resposta que não casa nenhum botão cai na política do nó, depois na do gatilho.
+- `clicou_botao` ramifica para `yes` no clique certo e `no` em qualquer outra coisa,
+  inclusive texto digitado igual ao rótulo (o motor não distingue, e isso é aceitável:
+  quem digita "continuar" quer continuar).
