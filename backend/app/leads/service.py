@@ -1135,6 +1135,70 @@ def create_deal(
     if dedupe_open:
         existing = get_open_deal(lead_id, pipeline_id=dedupe_pipeline_id)
         if existing:
+            # Reaproveitar o card NÃO pode significar ignorar a etapa pedida.
+            #
+            # Até 16/09/2026 este bloco devolvia `existing` onde ele estivesse, e o
+            # `stage_key` do chamador era descartado em silêncio. Quem pagou a conta
+            # foi `reposicao.ensure_reposicao_deal`, que pede stage_key='novo'
+            # ("Cliente Ativo") no funil de reposição: 684 leads já tinham card ABERTO
+            # nesse MESMO funil, parados em "Já chamado" (key 'chamado_reposicao'),
+            # herdados de uma importação antiga. O dedupe achava esses cards e os
+            # devolvia intactos. Efeito real e permanente: "Cliente Ativo" ficou com
+            # ZERO cards, e a esteira de Reposição — cujo gatilho é "parado 45 dias em
+            # Cliente Ativo" — nunca encontrou ninguém para disparar. Venda fechada
+            # não movia nada.
+            #
+            # Contrato correto: o dedupe reaproveita a LINHA (não duplica card), mas a
+            # ETAPA pedida ainda manda. Só quando `stage_key` foi informado — sem ele
+            # (fluxo LP→inbound→encaminhar_humano) o comportamento histórico de não
+            # tocar no card continua valendo.
+            if stage_key:
+                try:
+                    target_stage_id = stage_id_by_key(
+                        sb, existing.get("pipeline_id"), stage_key, label_fallback=stage_label
+                    )
+                    if not target_stage_id:
+                        # Etapa apagada/renomeada na tela: não move, mas não passa em
+                        # silêncio — silêncio de resolução de funil já produziu dois
+                        # incidentes de card extraviado (09/09 e 10/09/2026).
+                        logger.warning(
+                            "create_deal: stage_key '%s' não existe no funil %s — card %s "
+                            "reaproveitado ONDE ESTÁ (etapa de destino segue vazia)",
+                            stage_key, existing.get("pipeline_id"), existing.get("id"),
+                        )
+                    elif target_stage_id != existing.get("stage_id"):
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        update: dict[str, Any] = {
+                            "stage_id": target_stage_id,
+                            # `entered_stage_at` é o relógio que a RPC
+                            # get_deals_stage_stagnant lê
+                            # (`entered_stage_at <= now() - stage_days`). Mover sem
+                            # renovar entregaria o card na etapa nova já "parado há
+                            # meses" e a esteira dispararia na primeira varredura, em
+                            # cima de uma venda recém-fechada. Explícito de propósito:
+                            # o trigger trg_update_deal_entered_stage_at faz o mesmo,
+                            # mas depende da migration 20260904 estar aplicada.
+                            "entered_stage_at": now_iso,
+                            "updated_at": now_iso,
+                        }
+                        res = sb.table("deals").update(update).eq("id", existing["id"]).execute()
+                        existing = res.data[0] if res.data else {**existing, **update}
+                        logger.info(
+                            "create_deal: card %s do lead %s movido para a etapa '%s' (%s) "
+                            "no dedupe — relógio de etapa reiniciado",
+                            existing.get("id"), lead_id, stage_key, target_stage_id,
+                        )
+                    # target_stage_id == stage_id atual → NADA. Renovar
+                    # `entered_stage_at` à toa reiniciaria o relógio do gatilho sem que
+                    # nada tenha acontecido, e o card nunca completaria os 45 dias.
+                except Exception as exc:
+                    # Fail-soft: create_deal está no caminho de venda e de Kanban —
+                    # devolve o card como está, nunca levanta.
+                    logger.warning(
+                        "create_deal: falha ao mover card %s do lead %s para stage_key "
+                        "'%s': %s — reaproveitado sem mover",
+                        existing.get("id"), lead_id, stage_key, exc, exc_info=True,
+                    )
             logger.info(
                 "create_deal: lead %s já possui deal aberto %s — reaproveitando (sem duplicar)",
                 lead_id, existing.get("id"),

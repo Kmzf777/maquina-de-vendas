@@ -37,9 +37,18 @@ coisa, e com coisas **diferentes entre si**:
 | `deal_stage_stagnation` | `stage_id` (uuid) | RPC | `stage_id` | ✅ |
 | `keyword_received`, `repurchase_window`, `sale_created`, `tag_added`, `deal_closed_lost`, `post_broadcast` | — | — | — | ✅ |
 
-`leads.stage` é o **segmento do lead** (`novo`/`qualificado`/`respondeu`/`ja_chamado`),
-não a coluna do Kanban. Um único `<select>` serve dois vocabulários distintos e está
-errado para ambos.
+`leads.stage` é o **segmento do lead**, e o vocabulário dele é o de `AGENT_STAGES` —
+medido em 16/09/2026: `pending` (2.616), `private_label` (769), `atacado` (443),
+`secretaria` (416), `consumo` (178), `exportacao` (22), mais resíduo legado (`novo`,
+`perdido`, `contato`, `negociacao`, `ja_chamado`). **Não** é a coluna do Kanban e
+**não** é `deals.stage` (que aí sim guarda `novo`/`qualificado`/`respondeu`/
+`ja_chamado`). Um único `<select>` serve dois vocabulários distintos e está errado
+para ambos.
+
+> Correção de 16/09/2026: a primeira versão deste spec dizia que `leads.stage` valia
+> `novo`/`qualificado`/`respondeu`/`ja_chamado` — isso é `deals.stage`, medido na
+> tabela errada. Seguir aquela lista teria entregue um TERCEIRO vocabulário errado.
+> `node_registry.VALORES_FIXOS["segmento_lead"]` carrega os valores reais.
 
 Pior: `stage_stagnation` e `no_sale_in_stage` **pulam o gatilho inteiro** quando
 `stage_filter` é vazio (`if not stage: continue`), e `getDefaultConfig` não escreve esse
@@ -113,7 +122,7 @@ criar ciclo de import) e sem I/O.
 ```python
 VOCABULARIOS = {
     "texto", "texto_longo", "numero", "booleano",
-    "segmento_lead",       # leads.stage           — novo/qualificado/respondeu/...
+    "segmento_lead",       # leads.stage           — pending/atacado/private_label/...
     "etapa_key",           # pipeline_stages.key   — fechado_ganho/respondeu/...
     "etapa_id",            # pipeline_stages.id    (uuid)
     "funil_id",            # pipelines.id          (uuid)

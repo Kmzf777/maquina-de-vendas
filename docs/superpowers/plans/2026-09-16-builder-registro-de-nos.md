@@ -395,6 +395,30 @@ Modify `backend/app/main.py`, `frontend/src/app/(authenticated)/campanhas/page.t
 - [ ] **Passo 2/3/4** — escrever, verde, **não aplicar**.
 - [ ] **Passo 5 — commit** `chore(campanhas): SQL para apagar campanhas de teste`
 
+## Task 11b: aposentar o corretivo antigo de cards extraviados
+
+Achado pelo agente da Task 4, fora do escopo dela.
+
+**Files:** Modify `scripts/recuperacao/corrigir_deals_reposicao.sql`,
+`backend/tests/test_recuperacao_migration_2026_09_09.py`
+
+Existem DOIS scripts corretivos para o mesmo incidente, e o antigo está errado:
+`corrigir_deals_reposicao.sql` (09/09/2026) só conhece **um** destino — João - Reposição
+Atacado — com a etapa por UUID cravado, porque foi escrito **antes** de o funil
+Private Label existir (10/09/2026). Aplicado hoje, mandaria para o funil errado todo
+card cuja venda de origem fosse Private Label. Nunca foi aplicado.
+
+- [ ] **Passo 1** — teste em `test_recuperacao_migration_2026_09_09.py` exigindo que o
+      arquivo antigo comece com um aviso `SUPERSEDIDO` apontando para
+      `scripts/corrige_cards_reposicao_extraviados.sql` e explicando o defeito do
+      destino único.
+- [ ] **Passo 2** — ver falhar.
+- [ ] **Passo 3** — escrever o cabeçalho de aviso. **Não apagar o script** nem o resto
+      do teste: o arquivo documenta o incidente de 09/09 e a classe
+      `TestCorretivoDosDealsExtraviados` trava o conteúdo dele.
+- [ ] **Passo 4** — suíte verde.
+- [ ] **Passo 5 — commit** `chore(reposicao): marca o corretivo de 09/09 como supersedido`
+
 ---
 
 # LOTE 7 — fechamento

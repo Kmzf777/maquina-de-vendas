@@ -593,8 +593,26 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
 
     elif action_type == "create_deal":
         from app.leads.service import create_deal
+        pipeline_id = cfg.get("pipeline_id")
+        if not pipeline_id:
+            # Sem funil explicito, `leads.service.create_deal` cai no fallback
+            # "(4) primeiro pipeline" e o card nasce no funil errado, na primeira
+            # coluna nao protegida — e duplicado a cada execucao do no (sem
+            # dedupe_open). Foi o que espalhou 19 cards de reposicao em "Valeria -
+            # Importacao Leads Frios". Nao agir e visivel; criar errado nao e.
+            logger.warning(
+                "[AUTOMATION] create_deal sem pipeline_id no nó %s — não cria",
+                node.get("id"),
+            )
+            return False
         title = substitute_variables(cfg.get("title_template", "Deal automático"), lead, enrollment)
-        create_deal(enrollment["lead_id"], title, cfg.get("category"))
+        create_deal(
+            enrollment["lead_id"], title, cfg.get("category"),
+            pipeline_id=pipeline_id,
+            stage_key=cfg.get("stage_key") or None,
+            dedupe_open=bool(cfg.get("dedupe_open")),
+            dedupe_pipeline_id=pipeline_id if cfg.get("dedupe_open") else None,
+        )
         agiu = True
 
     elif action_type == "assign_to":
