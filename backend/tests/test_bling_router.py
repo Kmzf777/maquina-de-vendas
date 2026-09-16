@@ -36,6 +36,14 @@ class FakeQuery:
         self.captured["update"] = values
         return self
 
+    def delete(self):
+        # `unlink` deixou de ser UPDATE em leads e virou DELETE em
+        # lead_bling_contacts (multi-conta): o vinculo agora e uma LINHA, nao uma
+        # coluna, entao desvincular apaga a linha daquela conta em vez de anular
+        # um campo. Sem este metodo o duble estoura AttributeError.
+        self.captured["delete"] = True
+        return self
+
     def ilike(self, c, v):
         self.captured["ilike"] = (c, v)
         return self
@@ -543,15 +551,21 @@ def test_status_connected_no_topo_e_da_conta_default_nao_de_qualquer_uma(monkeyp
     assert saida["connected"] is False
 
 
-def test_unlink_limpa_o_vinculo_do_lead(monkeypatch):
+def test_unlink_apaga_a_linha_da_conta(monkeypatch):
+    """O vinculo virou LINHA em lead_bling_contacts, nao coluna em leads.
+
+    Desvincular apaga a linha DAQUELA conta — nao pode encostar no vinculo que o
+    mesmo lead tenha na outra conta, que e o caso do cliente com cadastro nos
+    dois CNPJs.
+    """
     sb = FakeSupabase({})
     monkeypatch.setattr(contacts, "get_supabase", lambda: sb)
 
-    asyncio.run(contacts.unlink("lead-1"))
+    asyncio.run(contacts.unlink("lead-1", "secundaria"))
 
     q = sb.queries[0]
-    assert q.captured["update"] == {"bling_contact_id": None}
-    assert q.captured["eq"] == {"id": "lead-1"}
+    assert q.captured["delete"] is True
+    assert q.captured["eq"] == {"lead_id": "lead-1", "account": "secundaria"}
 
 
 def test_unlink_endpoint_devolve_unlinked(monkeypatch):
