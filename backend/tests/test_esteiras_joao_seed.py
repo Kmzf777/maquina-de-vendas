@@ -95,21 +95,45 @@ def test_gatilhos_sao_deal_stage_stagnation():
 
 # ── Templates dos 24 toques ─────────────────────────────────────────────────────
 #
-# Ate 13/09/2026 `template_name` era string vazia em todo no de envio ("template e
-# responsabilidade do dono") e o teste daqui travava esse contrato. Na pratica isso
-# deixava as seis esteiras IMPOSSIVEIS de ligar: nenhum no tinha o que enviar. Os 24
-# templates foram escritos e submetidos (`scripts/create_templates_esteiras_joao.py`),
-# e o que se trava agora sao os invariantes que fazem eles funcionarem.
+# As esteiras sobem DESARMADAS (decisao do dono, 15/09/2026): `status='draft'` E
+# `template_name` vazio. Sao duas travas independentes — o seed nunca entrega algo
+# capaz de disparar sozinho. O mapa toque->template mora em `TEMPLATE_POR_TOQUE` e e
+# testado a parte, para que armar pela tela use o texto certo.
 
 
 def _envios(e):
     return [no for no in e["nodes"] if no["type"] == "send"]
 
 
-def test_todo_no_de_envio_tem_template():
+def test_seed_nasce_desarmado():
+    """Nenhum no de envio sai do seed com template — nem com a campanha em draft.
+
+    Medido em 15/09/2026: no instante em que uma esteira e ativada, o gatilho acha 888
+    cards ja elegiveis e dispara os 888 primeiros toques em ~6 minutos, em qualquer
+    horario (`create_enrollment` usa next_execute_at=now; a janela 8h-12h so governa os
+    nos `wait`). O template vazio e a trava que sobrevive a um `active` acidental.
+    """
+    assert esteiras_joao.ESTEIRAS_ARMADAS is False
     for e in esteiras_joao.ESTEIRAS_JOAO:
+        assert e["status"] == "draft", f"{e['name']} nao esta em draft"
         for no in _envios(e):
-            assert no["config"]["template_name"], f"{e['name']}: no de envio sem template"
+            assert no["config"]["template_name"] == "", (
+                f"{e['name']}: no de envio saiu do seed COM template")
+
+
+def test_mapa_de_templates_cobre_exatamente_os_nos_de_envio():
+    """Um template por toque, sem sobra dos dois lados."""
+    do_grafo = {(e["key"], no["id"].rsplit("/", 1)[-1]) for e in esteiras_joao.ESTEIRAS_JOAO
+                for no in _envios(e)}
+    assert len(esteiras_joao.TEMPLATE_POR_TOQUE) == 24
+    assert len(do_grafo) == 24
+    # o id do no e uuid5, entao a comparacao e por contagem por esteira
+    por_esteira = {}
+    for (chave, _no) in esteiras_joao.TEMPLATE_POR_TOQUE:
+        por_esteira[chave] = por_esteira.get(chave, 0) + 1
+    for e in esteiras_joao.ESTEIRAS_JOAO:
+        assert por_esteira[e["key"]] == len(_envios(e)), (
+            f"{e['name']}: {len(_envios(e))} envios mas {por_esteira[e['key']]} templates")
 
 
 def test_nenhum_template_se_repete_entre_toques():
@@ -119,28 +143,21 @@ def test_nenhum_template_se_repete_entre_toques():
     em `broadcast/worker.py::_template_dedup_guardrail` — la um reenvio do mesmo nome
     em 14 dias e pulado em silencio; aqui nada barra. A unicidade e a unica protecao.
     """
-    nomes = [no["config"]["template_name"]
-             for e in esteiras_joao.ESTEIRAS_JOAO for no in _envios(e)]
-    assert len(nomes) == 24
-    assert len(set(nomes)) == 24, "template repetido entre toques"
+    nomes = list(esteiras_joao.TEMPLATE_POR_TOQUE.values())
+    assert len(nomes) == len(set(nomes)) == 24
 
 
 def test_template_casa_com_a_linha_do_funil():
     """Esteira de Atacado nao pode mandar texto de Private Label, e vice-versa.
 
     As duas linhas vendem coisas diferentes (revenda do nosso cafe x cafe com a marca
-    do cliente) e os corpos falam de coisas diferentes. Como `_em_conversa_nodes` e
-    `_reposicao_nodes` sao COMPARTILHADAS pelas duas linhas e recebem o prefixo do
-    template por parametro, trocar os argumentos nas chamadas manda a esteira inteira
-    com o texto da linha errada — sem erro em lugar nenhum.
+    do cliente). Como `_em_conversa_nodes` e `_reposicao_nodes` sao COMPARTILHADAS
+    pelas duas linhas, trocar os argumentos nas chamadas mandaria a esteira inteira com
+    o texto da linha errada — sem erro em lugar nenhum.
     """
-    for e in esteiras_joao.ESTEIRAS_JOAO:
-        gatilho = _trigger(e)["config"]["pipeline_id"]
-        esperado = "_atacado_" if gatilho in _FUNIS_ATACADO else "_privatelabel_"
-        for no in _envios(e):
-            assert esperado in no["config"]["template_name"], (
-                f"{e['name']}: template {no['config']['template_name']} nao e da linha "
-                f"do funil {gatilho}")
+    for (chave, _no), tpl in esteiras_joao.TEMPLATE_POR_TOQUE.items():
+        esperado = "_privatelabel_" if chave.endswith("_private_label") else "_atacado_"
+        assert esperado in tpl, f"{chave}: template {tpl} nao e da linha certa"
 
 
 def test_toda_variavel_e_o_primeiro_nome():

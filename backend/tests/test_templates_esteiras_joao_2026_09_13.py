@@ -142,15 +142,19 @@ def test_todos_marketing_para_o_optout_ser_consistente():
     assert {t["category"] for t in tpls.TEMPLATES} == {"MARKETING"}
 
 
-def test_os_nomes_cobrem_exatamente_os_nos_de_envio_do_seed():
-    """Se o seed e o script divergirem, o envio falha em producao, nao aqui."""
-    from app.campaigns.esteiras_joao import ESTEIRAS_JOAO
-    no_seed = {no["config"]["template_name"]
-               for e in ESTEIRAS_JOAO for no in e["nodes"] if no["type"] == "send"}
+def test_os_nomes_batem_com_o_mapa_do_seed():
+    """Se o mapa do seed e o script divergirem, o envio falha em producao, nao aqui.
+
+    As esteiras sobem DESARMADAS (`template_name` vazio no banco), entao a checagem e
+    contra `TEMPLATE_POR_TOQUE` — o mapa que a tela usa para armar. Um nome errado ali
+    so apareceria no primeiro disparo real, como erro #132001 da Meta.
+    """
+    from app.campaigns.esteiras_joao import TEMPLATE_POR_TOQUE
+    no_mapa = set(TEMPLATE_POR_TOQUE.values())
     no_script = {t["name"] for t in tpls.TEMPLATES}
-    assert no_seed == no_script, (
-        f"so no seed: {sorted(no_seed - no_script)}; "
-        f"so no script: {sorted(no_script - no_seed)}")
+    assert no_mapa == no_script, (
+        f"so no mapa: {sorted(no_mapa - no_script)}; "
+        f"so no script: {sorted(no_script - no_mapa)}")
 
 
 def test_rotulos_que_parecem_saida_mas_nao_sao():
