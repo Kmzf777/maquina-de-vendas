@@ -97,7 +97,11 @@ describe("getDefaultConfig", () => {
   });
 
   it("wait tem 3 dias + 0 horas e janela de horário 7-18", () => {
-    expect(getDefaultConfig("wait")).toEqual({ days: 3, hours: 0, send_start_hour: 7, send_end_hour: 18 });
+    // Sem janela de propósito: o nó novo HERDA a janela da campanha. Antes de
+    // 13/09/2026 este default gravava 7/18 em todo nó `wait`, e como o motor dá
+    // precedência ao nó sobre a campanha (`_wait_target`), a janela configurada na
+    // campanha nunca valia para campanha montada na tela — só para as do seed.
+    expect(getDefaultConfig("wait")).toEqual({ days: 3, hours: 0 });
   });
 
   it("condition usa subtype ou replied_recently", () => {

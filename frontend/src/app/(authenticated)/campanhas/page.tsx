@@ -7,6 +7,7 @@ import { useRealtimeCampaigns } from "@/hooks/use-realtime-campaigns";
 import { CampaignsDashboard } from "@/components/campaigns/campaigns-dashboard";
 import { BroadcastList } from "@/components/campaigns/broadcast-list";
 import { CadenceList } from "@/components/campaigns/cadence-list";
+import { CampaignEnrollmentsTable } from "@/components/campaigns/cadence-enrollments-table";
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
@@ -60,6 +61,19 @@ function CampanhasPageInner() {
   const [channels, setChannels] = useState<{ id: string; name: string; is_active: boolean; provider: string }[]>([]);
   const [priority, setPriority] = useState(5);
   const [frequencyCap, setFrequencyCap] = useState(1);
+  // Sem esse campo toda cadência nasce com audience='ia' (default do banco) e fica
+  // cega para os leads do vendedor — eles têm ai_enabled=False por definição (o
+  // handoff desliga a IA), então uma automação 'ia' nunca os alcança.
+  const [audience, setAudience] = useState("ia");
+  // Janela de disparo + dias úteis (pedido do dono, 13/09/2026): sem esses campos
+  // toda cadência nasce com o default da coluna (7h-18h, todo dia da semana) e não
+  // tem como restringir o disparo ao expediente comercial pela tela — só editando o
+  // banco direto. Default aqui replica o default do banco (7/18/false), não o 8/12
+  // das esteiras do João — aquele é específico da decisão da reunião, não o padrão
+  // de toda cadência nova.
+  const [sendStartHour, setSendStartHour] = useState(7);
+  const [sendEndHour, setSendEndHour] = useState(18);
+  const [skipWeekends, setSkipWeekends] = useState(false);
   const [creatingSaving, setCreatingSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("visao-geral");
   // Estado do espelho do motor (regra Redis /api/cadence/mirror-visibility). O
@@ -109,13 +123,22 @@ function CampanhasPageInner() {
   }, [searchParams]);
 
   const handleCreateCadence = async () => {
-    if (!cadenceName.trim() || !channelId) return;
+    if (!cadenceName.trim() || !channelId || sendStartHour >= sendEndHour) return;
     setCreatingSaving(true);
     try {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: cadenceName.trim(), priority, frequency_cap: frequencyCap, channel_id: channelId || null }),
+        body: JSON.stringify({
+          name: cadenceName.trim(),
+          priority,
+          frequency_cap: frequencyCap,
+          channel_id: channelId || null,
+          audience,
+          send_start_hour: sendStartHour,
+          send_end_hour: sendEndHour,
+          skip_weekends: skipWeekends,
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -125,6 +148,10 @@ function CampanhasPageInner() {
       const camp = await res.json();
       setCadenceName("");
       setChannelId("");
+      setAudience("ia");
+      setSendStartHour(7);
+      setSendEndHour(18);
+      setSkipWeekends(false);
       setShowCadenceModal(false);
       router.push(`/campanhas/cadencias/${camp.id}`);
     } catch (e) {
@@ -274,6 +301,15 @@ function CampanhasPageInner() {
                 )}
               </div>
             </div>
+
+            {/* Leads em cadência — visão cruzada de todas as campanhas (item pedido
+                pelo dono: quais leads estão em jobs de disparo agora e em qual cadência). */}
+            <section className="mt-8">
+              <h2 className="text-[13px] font-medium uppercase tracking-[0.6px] text-[#7b7b78] mb-3">
+                Leads em cadência
+              </h2>
+              <CampaignEnrollmentsTable />
+            </section>
           </div>
         )}
 
@@ -321,7 +357,7 @@ function CampanhasPageInner() {
           <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[14px] font-normal text-[#111111]">Nova Cadencia</h2>
-              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
+              <button onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); setAudience("ia"); setSendStartHour(7); setSendEndHour(18); setSkipWeekends(false); }} className="text-[#7b7b78] hover:text-[#111111] text-xl transition-colors">&times;</button>
             </div>
             <div className="space-y-4">
               <div>
@@ -385,20 +421,86 @@ function CampanhasPageInner() {
                 />
               </div>
 
+              {/* Público (campaigns.audience) — sem este campo toda cadência nasce
+                  'ia' (default do banco) e é cega para os leads do vendedor: eles
+                  têm ai_enabled=False por definição (o handoff desliga a IA), então
+                  uma automação 'ia' nunca os alcança. Fallback continua 'ia' na API
+                  de propósito — é o comportamento histórico, não o mais permissivo. */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Público
+                </label>
+                <select
+                  value={audience}
+                  onChange={(e) => setAudience(e.target.value)}
+                  className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                >
+                  <option value="ia">Leads da ValerIA (IA ligada)</option>
+                  <option value="humano">Leads do vendedor (IA desligada)</option>
+                  <option value="ambos">Ambos</option>
+                </select>
+              </div>
+
+              {/* Janela de disparo + dias úteis (campaigns.send_start_hour /
+                  send_end_hour / skip_weekends) — pedido do dono (13/09/2026): sem
+                  isso toda cadência dispara a qualquer hora, 7 dias por semana (default
+                  da coluna), o que pode acordar o lead de madrugada ou mandar resposta
+                  num domingo em que o vendedor não está para atender. */}
+              <div>
+                <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">
+                  Disparar das <span className="text-red-500">*</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={sendStartHour}
+                    onChange={(e) => setSendStartHour(Number(e.target.value))}
+                    className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                  />
+                  <span className="text-[13px] text-[#7b7b78] flex-shrink-0">às</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={sendEndHour}
+                    onChange={(e) => setSendEndHour(Number(e.target.value))}
+                    className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full"
+                  />
+                </div>
+                {sendStartHour >= sendEndHour && (
+                  <p className="text-[11px] text-red-500 mt-1">Janela invertida — o início precisa ser antes do fim.</p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  id="skip-weekends"
+                  type="checkbox"
+                  checked={skipWeekends}
+                  onChange={(e) => setSkipWeekends(e.target.checked)}
+                  className="w-4 h-4 accent-[#111111]"
+                />
+                <label htmlFor="skip-weekends" className="text-[13px] text-[#111111] cursor-pointer">
+                  Só em dias úteis
+                </label>
+              </div>
+
               <p className="text-[12px] text-[#7b7b78]">
                 Apos criar, voce podera configurar steps, triggers e demais opcoes na pagina de detalhe.
               </p>
             </div>
             <div className="pt-4 border-t border-[#dedbd6] mt-4 flex justify-end gap-2">
               <button
-                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); }}
+                onClick={() => { setShowCadenceModal(false); setCadenceName(""); setChannelId(""); setPriority(5); setFrequencyCap(1); setAudience("ia"); setSendStartHour(7); setSendEndHour(18); setSkipWeekends(false); }}
                 className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleCreateCadence}
-                disabled={!cadenceName.trim() || !channelId || creatingSaving}
+                disabled={!cadenceName.trim() || !channelId || creatingSaving || sendStartHour >= sendEndHour}
                 className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
               >
                 {creatingSaving ? "Criando..." : "Criar Cadencia"}

@@ -84,21 +84,31 @@ def _next_window_start(now_utc: datetime, start_hour: int = 7,
     return target - BRT_OFFSET
 
 
-def _wait_target(cfg: dict, now: datetime) -> datetime:
+def _wait_target(cfg: dict, now: datetime, campaign: dict | None = None) -> datetime:
     """Instante do próximo passo após um nó `wait` — função PURA (testável).
 
     Granularidade em DIAS *e* HORAS (11/07): `hours` é opcional e retrocompatível —
     nós antigos só têm `days` (default 1, preservado). `days: 0` + `hours: N` permite
     esperas sub-diárias; ambos zero = segue no próximo tick (o clamp de janela
     comercial ainda se aplica). Valores negativos/lixo são saneados para 0.
+
+    Janela e fim de semana (13/09): a CAMPANHA é a fonte de verdade — o nó só
+    sobrescreve quando opina explicitamente (`campaign` fica `None`/{} nos testes
+    antigos que chamam com dois argumentos só, e o comportamento default 7/18 sem
+    pular fim de semana se preserva). Antes desta função só lia `cfg`, com defaults
+    fixos 7/18: o seed das esteiras preenche a janela na CAMPANHA, não no nó `wait`
+    (`_wait()` em esteiras_joao.py só gera `{"days": dias}`) — então os waits
+    ignoravam silenciosamente a janela configurada pelo dono e caiam no default.
     """
+    camp = campaign or {}
     days = max(0, int(cfg.get("days", 1) or 0))
     hours = max(0, int(cfg.get("hours", 0) or 0))
-    start_h = cfg.get("send_start_hour", 7)
-    end_h = cfg.get("send_end_hour", 18)
+    start_h = cfg.get("send_start_hour", camp.get("send_start_hour", 7))
+    end_h = cfg.get("send_end_hour", camp.get("send_end_hour", 18))
+    skip_wk = cfg.get("skip_weekends", camp.get("skip_weekends", False))
     target = now + timedelta(days=days, hours=hours)
-    if not _is_within_window(target, start_h, end_h):
-        target = _next_window_start(target, start_h)
+    if not _is_within_window(target, start_h, end_h, skip_weekends=skip_wk):
+        target = _next_window_start(target, start_h, skip_weekends=skip_wk)
     return target
 
 
@@ -218,7 +228,7 @@ def get_due_enrollments(now: datetime, limit: int = 20) -> list[dict]:
             "*, "
             "leads!inner(id, phone, name, company, stage, ai_enabled, last_customer_message_at, assigned_to), "
             "campaign_nodes!campaign_enrollments_current_node_id_fkey(*), "
-            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, channel_id, audience)"
+            "campaigns!inner(id, name, status, priority, frequency_cap, send_start_hour, send_end_hour, skip_weekends, channel_id, audience)"
         )
         .eq("status", "active")
         .eq("env_tag", env_tag)
@@ -338,10 +348,32 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             _log_exec(enrollment, node, "done", _send_summary)
 
         elif node_type == "wait":
-            target = _wait_target(cfg, now)
-            _update(enrollment["id"], next_execute_at=target.isoformat(), claimed_at=None)
+            # O `wait` AGENDA O PROXIMO no para depois — nao estaciona em si mesmo.
+            #
+            # Ate 11/09/2026 este ramo reagendava o PROPRIO no e dava `return` antes do
+            # avanco de `:367`, o unico ponto do codigo que muda `current_node_id`. A
+            # matricula voltava ao mesmo `wait` a cada tick, indefinidamente: nenhuma
+            # cadencia de dois ou mais toques podia funcionar. Como o motor nunca rodou
+            # em producao (0 matriculas na historia), o defeito nunca apareceu.
+            #
+            # `last_sent_node_id=None` importa: ele e a idempotencia do envio, e carregado
+            # para o proximo no faria o toque seguinte ser pulado como se ja tivesse saido.
+            target = _wait_target(cfg, now, campaign)
+            proximo = node.get("next_node_id")
             _log_exec(enrollment, node, "done",
                       f"aguardando (d={cfg.get('days', 1)}, h={cfg.get('hours', 0)})")
+            if not proximo:
+                # Wait como ultimo no do grafo: o fluxo acabou. Estacionar criaria zumbi.
+                _complete(enrollment["id"])
+                return
+            _update(enrollment["id"],
+                    current_node_id=proximo,
+                    next_execute_at=target.isoformat(),
+                    retry_count=0,
+                    last_error=None,
+                    claimed_at=None,
+                    last_sent_node_id=None,
+                    step_count=(enrollment.get("step_count") or 0) + 1)
             return
 
         elif node_type == "condition":
@@ -351,9 +383,10 @@ async def _process_one(enrollment: dict, now: datetime) -> None:
             return
 
         elif node_type == "action":
-            _execute_action(enrollment, node, lead)
-            _log_exec(enrollment, node, "done",
-                      f"ação {(cfg.get('action_type') or 'desconhecida')} executada")
+            agiu = _execute_action(enrollment, node, lead)
+            _log_exec(enrollment, node, "done" if agiu else "skipped",
+                      f"ação {(cfg.get('action_type') or 'desconhecida')} "
+                      + ("executada" if agiu else "sem alvo — nada foi feito"))
 
         elif node_type == "end":
             _execute_end(enrollment, node, lead)
@@ -406,7 +439,18 @@ async def _execute_send(enrollment: dict, node: dict, lead: dict, now: datetime,
 
 async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: datetime, campaign: dict | None = None) -> None:
     from app.whatsapp.registry import get_provider
-    from app.leads.service import save_message
+    from app.leads.service import save_message, is_lead_blacklisted
+
+    # Mesma guarda que o nó `send` (template) tem desde 25/06/2026 — camada 2, no
+    # instante do envio (app/campaigns/worker.py::_execute_send_node). O `send_text`
+    # (texto livre) nunca teve: sem isso, um lead que já tinha pedido para sair
+    # continuava recebendo texto livre da cadência.
+    if is_lead_blacklisted(enrollment.get("lead_id")):
+        logger.info(
+            "[AUTOMATION] send_text abortado — lead %s está na blacklist (opt-out / pipeline Blacklist)",
+            enrollment.get("lead_id"),
+        )
+        return None
 
     cfg = node.get("config") or {}
     campaign = campaign or {}
@@ -499,10 +543,16 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
     logger.info("[AUTOMATION] condition '%s' → %s for %s", cond, "YES" if result else "NO", lead["phone"])
 
 
-def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
+def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
+    """Executa a ação do nó. Devolve True se algo foi de fato efetivado, False quando o
+    alvo da ação não existia (deal inexistente, tag não encontrada, round-robin sem
+    usuários...) — o dispatch em `_process_one` usa este retorno para decidir entre os
+    status "done" e "skipped" no log de execução. Nenhum caminho deve devolver `None`
+    implicitamente: `None` é falsy e logaria "skipped" numa ação que na verdade rodou."""
     sb = get_supabase()
     cfg = node.get("config") or {}
     action_type = cfg.get("action_type")
+    agiu = False
 
     if action_type == "move_stage":
         # Move the LEAD in the lead-Kanban (leads.stage is a TEXT name, not a UUID).
@@ -510,14 +560,17 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
         if stage_name:
             from app.leads.service import update_lead
             update_lead(enrollment["lead_id"], stage=stage_name)
+            agiu = True
 
     elif action_type == "activate_agent":
         from app.leads.service import update_lead
         update_lead(enrollment["lead_id"], ai_enabled=True, human_control=False)
+        agiu = True
 
     elif action_type == "deactivate_agent":
         from app.leads.service import update_lead
         update_lead(enrollment["lead_id"], ai_enabled=False)
+        agiu = True
 
     elif action_type == "add_tag":
         tag_name = (cfg.get("tag_name") or "").strip()
@@ -526,6 +579,7 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             if tag_row:
                 try:
                     sb.table("lead_tags").insert({"lead_id": enrollment["lead_id"], "tag_id": tag_row[0]["id"]}).execute()
+                    agiu = True
                 except Exception:
                     pass
 
@@ -535,22 +589,25 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             tag_row = sb.table("tags").select("id").eq("name", tag_name).limit(1).execute().data
             if tag_row:
                 sb.table("lead_tags").delete().eq("lead_id", enrollment["lead_id"]).eq("tag_id", tag_row[0]["id"]).execute()
+                agiu = True
 
     elif action_type == "create_deal":
         from app.leads.service import create_deal
         title = substitute_variables(cfg.get("title_template", "Deal automático"), lead, enrollment)
         create_deal(enrollment["lead_id"], title, cfg.get("category"))
+        agiu = True
 
     elif action_type == "assign_to":
         user_id = cfg.get("user_id")
         if user_id:
             from app.leads.service import update_lead
             update_lead(enrollment["lead_id"], assigned_to=user_id)
+            agiu = True
 
     elif action_type in ("mark_deal_won", "mark_deal_lost", "move_deal_stage"):
         stage_id = cfg.get("stage_id")
         if not stage_id:
-            return
+            return False
         # O deal do ENROLLMENT tem precedência sobre "o mais recente do lead".
         # Um lead pode ter vários cards abertos (reposição + oportunidade nova);
         # a esteira que disparou esta ação sabe qual é o dela.
@@ -573,6 +630,7 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             if action_type == "mark_deal_lost" and cfg.get("lost_reason"):
                 update["lost_reason"] = cfg["lost_reason"]
             sb.table("deals").update(update).eq("id", deal_id).execute()
+            agiu = True
             # F9: dispara a conversão associada à etapa de destino (move_deal_stage /
             # mark_deal_won). Usa helper compartilhado com triggers._maybe_fire_stage_conversion.
             # Fail-soft — qualquer erro loga warning e NÃO interrompe o tick.
@@ -582,6 +640,8 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
                     fire_conversion_for_deal_stage(enrollment["lead_id"], deal_id)
                 except Exception as exc:
                     logger.warning("[AUTOMATION] %s: falha ao disparar conversão: %s", action_type, exc)
+        # deal_id continua None (nenhum deal do enrollment nem do lead): sem alvo,
+        # `agiu` permanece False.
 
     elif action_type == "add_note":
         template = cfg.get("note_template") or ""
@@ -591,12 +651,15 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
                 "lead_id": enrollment["lead_id"],
                 "content": content,
             }).execute()
+            agiu = True
 
     elif action_type == "alert_seller":
         # Avisa o dono do card que a esteira terminou sem resposta. O watchdog já
         # detecta silêncio pós-handoff em 20min (check handoff_sla_breach), mas só
         # em alerta interno; aqui o alerta nasce colado no card, com o histórico.
         # Fail-soft absoluto: alerta que falha não pode derrubar o tick da esteira.
+        # Não há "alvo" que possa faltar aqui (diferente de deal/tag) — a ação sempre
+        # se aplica ao lead do enrollment, então conta como efetivada.
         from app.alerts.service import create_system_alert
         titulo = substitute_variables(cfg.get("title") or "Esteira encerrada", lead, enrollment)
         corpo = substitute_variables(cfg.get("message_template") or "", lead, enrollment)
@@ -622,12 +685,13 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
             }).execute()
         except Exception as exc:
             logger.warning("[AUTOMATION] alert_seller: falha ao gravar nota: %s", exc)
+        agiu = True
 
     elif action_type == "assign_round_robin":
         user_ids = cfg.get("user_ids") or []
         campaign_id = enrollment.get("campaign_id")
         if not user_ids or not campaign_id:
-            return
+            return False
         camp = (
             sb.table("campaigns")
             .select("last_assigned_index")
@@ -642,8 +706,10 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> None:
         from app.leads.service import update_lead
         update_lead(enrollment["lead_id"], assigned_to=next_user)
         sb.table("campaigns").update({"last_assigned_index": next_idx}).eq("id", campaign_id).execute()
+        agiu = True
 
     logger.info("[AUTOMATION] action '%s' for %s", action_type, lead.get("phone"))
+    return agiu
 
 
 def _execute_end(enrollment: dict, node: dict, lead: dict) -> None:

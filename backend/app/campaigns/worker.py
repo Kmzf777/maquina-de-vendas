@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from app.campaigns.service import (
     cancel_enrollment,
     pause_enrollment,
+    reset_enrollment,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,27 @@ def _trigger_on_reply(campaign_id: str | None) -> str | None:
     return None
 
 
+def _trigger_first_node(campaign_id: str | None) -> str | None:
+    """`next_node_id` do nó de gatilho — o primeiro nó EXECUTÁVEL da esteira.
+
+    É para ele que `on_reply='reset'` rebobina. Espelha `_trigger_on_reply`: mesma
+    consulta (import local de `list_nodes`, para casar com o alvo de patch já usado por
+    `test_esteiras_on_reply.py` / `test_esteiras_reply_todos_enrollments_2026_09_04.py`
+    — `app.campaigns.service.list_nodes`), mesma doutrina fail-safe (None → o chamador
+    pausa em vez de adivinhar).
+    """
+    if not campaign_id:
+        return None
+    try:
+        from app.campaigns.service import list_nodes
+        for n in list_nodes(campaign_id) or []:
+            if n.get("type") == "trigger" and n.get("next_node_id"):
+                return n["next_node_id"]
+    except Exception as exc:
+        logger.error("[CAMPAIGNS] falha ao resolver o primeiro nó de %s: %s", campaign_id, exc)
+    return None
+
+
 def handle_campaign_reply(lead_id: str) -> None:
     """Called by webhook when a lead sends a message. Pauses (or cancels) EVERY
     active enrollment of the lead, regardless of which node each one is parked on.
@@ -169,22 +191,45 @@ def handle_campaign_reply(lead_id: str) -> None:
 
 
 def _apply_reply_policy(enrollment: dict) -> None:
-    """Pausa ou cancela UM enrollment segundo a sua própria política de `on_reply`.
+    """Pausa, cancela ou reseta UM enrollment segundo a sua própria política de `on_reply`.
 
     Precedência: o nó atual, quando define o seu, vence — inclusive para forçar `pause`
     contra um gatilho que pede `cancel`. Sem valor no nó, vale o do nó de gatilho (a
     política da esteira inteira). `cancel` vindo do NÓ segue restrito a nós `send`, como
     sempre foi: `system_cadence` grava `on_reply='cancel'` em nós `send_text` que hoje
     pausam, e honrá-lo agora mudaria campanha existente.
+
+    `reset` (reunião de 10/09/2026, esteira "Em conversa") rebobina a matrícula para o
+    primeiro nó em vez de encerrá-la — ver `service.reset_enrollment` para o porquê de
+    ela permanecer `active`.
     """
     node = enrollment.get("campaign_nodes") or {}
     node_on_reply = (node.get("config") or {}).get("on_reply") or None
     if node_on_reply is not None:
-        cancelar = node_on_reply == "cancel" and node.get("type") == "send"
+        politica = node_on_reply
         origem = "nó"
     else:
-        cancelar = _trigger_on_reply(enrollment.get("campaign_id")) == "cancel"
+        politica = _trigger_on_reply(enrollment.get("campaign_id"))
         origem = "gatilho"
+
+    # `reset` rebobina em vez de encerrar (esteira "Em conversa", reunião de 10/09/2026).
+    # Fail-safe: sem primeiro nó resolvido, pausa — pausar por engano é recuperável.
+    if politica == "reset":
+        primeiro = _trigger_first_node(enrollment.get("campaign_id"))
+        if primeiro:
+            reset_enrollment(enrollment["id"], primeiro)
+            logger.info(
+                "[CAMPAIGNS] Reset enrollment %s — lead respondeu (on_reply=reset via %s)",
+                enrollment["id"], origem,
+            )
+            return
+        logger.warning(
+            "[CAMPAIGNS] on_reply=reset em %s sem primeiro nó resolvível — pausando",
+            enrollment["id"],
+        )
+
+    # `cancel` vindo do NÓ segue restrito a nós `send`, como sempre foi.
+    cancelar = politica == "cancel" and (origem == "gatilho" or node.get("type") == "send")
     if cancelar:
         cancel_enrollment(enrollment["id"])
         logger.info(

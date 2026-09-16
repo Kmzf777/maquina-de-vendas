@@ -368,6 +368,7 @@ export interface Campaign {
   channel_id: string | null;
   send_start_hour?: number;
   send_end_hour?: number;
+  skip_weekends?: boolean;
   env_tag: string;
   start_date: string | null;
   created_at: string;

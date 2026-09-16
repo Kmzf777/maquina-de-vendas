@@ -64,8 +64,13 @@ PIPELINE = "b2f9c31d-8a47-4e26-95c0-3d7a1f6e8b09"
 
 # Os dois funis do incidente dos 19 deals, conferidos por SELECT em 09/09/2026.
 FUNIL_FRIO = "a9487d77-ae93-42fe-89b8-9747d5e9cdf4"       # Valeria - Importação Leads Frios
-FUNIL_REPOSICAO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"  # João - Reposição
-ETAPA_NOVO = "07b4a308-c2ad-4896-99ee-caee30f926b8"       # "Novo", order_index 0
+# O id não muda: só o RÓTULO mudou, duas vezes (09/09 e 10/09/2026) — primeiro o
+# nome estava invertido, depois ganhou o sufixo "Atacado" quando surgiu o segundo
+# funil de reposição (Private Label, Task 6). Prova de que o contrato não pode ser
+# por nome — ver TestPipelineDeReposicao abaixo.
+FUNIL_REPOSICAO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"  # João - Reposição Atacado
+ETAPA_NOVO = "07b4a308-c2ad-4896-99ee-caee30f926b8"       # "Cliente Ativo" (era "Novo"), order_index 0, key 'novo'
+FUNIL_ATACADO = "9706a14a-3d9a-413b-bceb-26838fc2cc45"    # João - Atacado (origem que gera o card de reposição)
 
 
 @pytest.fixture(scope="module")
@@ -311,20 +316,32 @@ class TestTagsDoDesfecho:
 
 # ── 4. O funil de reposição ─────────────────────────────────────────────────
 class TestPipelineDeReposicao:
-    def test_nome_bate_com_o_funil_real(self):
-        # Conferido por SELECT name FROM pipelines em 09/09/2026: existe
-        # "João - Reposição" (79e35e6b-01d1-482a-bdf0-64c733ff1ca4) e NÃO existe
-        # nenhum "Reposição - João".
-        from app.leads import reposicao
-        assert reposicao.REPOSICAO_PIPELINE_NAME == "João - Reposição"
+    """Task 6 (10/09/2026): o nome do funil mudou DE NOVO — "João - Reposição" virou
+    "João - Reposição Atacado" e passou a existir um segundo funil de reposição
+    (Private Label). REPOSICAO_PIPELINE_NAME foi REMOVIDA: reposicao.py não resolve
+    mais o destino por nome, resolve por um MAPA DE UUID indexado pelo funil de
+    ORIGEM (reposicao.reposicao_pipeline_para). A guarda original — "o card de
+    reposição vai para o funil de reposição certo, não para qualquer um" — não
+    desapareceu, só trocou de mecanismo: o nome já quebrou em silêncio duas vezes
+    (09/09 e 10/09/2026); UUID não muda quando alguém edita o rótulo na tela.
+    """
 
-    def test_o_nome_invertido_nao_volta(self):
-        # O valor errado não levanta nada: create_deal cria o deal, só no funil
-        # errado, e ensure_reposicao_deal é fail-soft. Foram 19 deals em 29 dias
-        # antes de alguém perceber. Este assert é a única coisa entre o typo e a
-        # repetição do incidente.
+    def test_atacado_resolve_para_o_funil_de_reposicao_real(self):
+        # Sucessor de test_nome_bate_com_o_funil_real: em vez de comparar uma
+        # constante de nome com uma string, confere que a função de mapa resolve a
+        # origem real (João - Atacado) para o destino real — o MESMO id
+        # (79e35e6b-...) que esta suíte já travava em 09/09/2026; só o rótulo mudou.
         from app.leads import reposicao
-        assert reposicao.REPOSICAO_PIPELINE_NAME != "Reposição - João"
+        assert reposicao.reposicao_pipeline_para(FUNIL_ATACADO) == FUNIL_REPOSICAO
+
+    def test_origem_desconhecida_nao_cai_em_fallback_silencioso(self):
+        # Sucessor de test_o_nome_invertido_nao_volta: lá, um nome errado não
+        # levantava nada — create_deal caía calado no fallback "primeiro pipeline por
+        # order_index" (foi assim que 19 deals foram parar no funil errado). Aqui não
+        # existe fallback nenhum: origem fora do mapa devolve None, e
+        # ensure_reposicao_deal (fail-closed) não cria o card.
+        from app.leads import reposicao
+        assert reposicao.reposicao_pipeline_para("00000000-0000-0000-0000-000000000000") is None
 
 
 # ── 4b. O corretivo dos 19 deals já extraviados ─────────────────────────────
@@ -369,11 +386,19 @@ class TestCorretivoDosDealsExtraviados:
         assert "d.title = 'Reposição'" in sql_corretivo
 
     def test_o_destino_e_o_funil_da_constante_na_etapa_de_entrada(self, sql_corretivo):
-        from app.leads import reposicao
-        assert reposicao.REPOSICAO_PIPELINE_NAME in sql_corretivo, (
-            "o script tem que nomear o funil de destino para quem revisa conferir"
+        # Task 6 (10/09/2026): REPOSICAO_PIPELINE_NAME foi removida — reposicao.py
+        # resolve o destino por UUID, não por nome (ver TestPipelineDeReposicao). A
+        # guarda "o script tem que nomear o funil de destino para quem revisa
+        # conferir" sobrevive na asserção de FUNIL_REPOSICAO abaixo, que já era por
+        # UUID (quem era por NOME era a constante do módulo, não o script). Medido em
+        # produção em 10/09/2026: o corretivo segue executável sem qualquer alteração
+        # — o UUID do funil (79e35e6b-...) e o UUID da etapa (07b4a308-..., ETAPA_NOVO)
+        # não mudaram; só os RÓTULOS mudaram ("João - Reposição" → "...Atacado";
+        # "Novo" → "Cliente Ativo"). É exatamente por isso que o script seleciona por
+        # UUID, não por rótulo.
+        assert FUNIL_REPOSICAO in sql_corretivo, (
+            "o script tem que nomear o funil de destino (por UUID) para quem revisa conferir"
         )
-        assert FUNIL_REPOSICAO in sql_corretivo
         assert ETAPA_NOVO in sql_corretivo
         # E a etapa não pode estar chumbada sem conferência: create_deal resolve a
         # primeira NÃO-protegida por order_index, e o board do João é editável na UI.
