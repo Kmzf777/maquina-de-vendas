@@ -55,6 +55,34 @@ async def api_create_campaign(body: CampaignCreate):
     return create_campaign(body.name, body.description)
 
 
+# CUIDADO COM A ORDEM: esta rota estatica precisa vir ANTES de "/{campaign_id}"
+# abaixo. Declarada depois, o FastAPI casaria "node-schema" como campaign_id e
+# a rota nunca seria alcancada (ver test_node_schema_endpoint_2026_09_16.py::
+# test_rota_estatica_vence_a_parametrizada_campaign_id).
+@router.get("/node-schema")
+async def api_node_schema():
+    """Contrato dos nos de cadencia, para a tela renderizar os campos.
+
+    A tela NAO mantem copia desta lista: o vocabulario de cada campo decide qual
+    lista de opcoes o <select> recebe. Foi a copia hard-coded que fez o inspector
+    gravar rotulo de coluna onde o motor lia segmento de lead (ver
+    app/campaigns/node_registry.py).
+    """
+    from app.campaigns import node_registry
+
+    return {
+        "tipos": node_registry.para_json(),
+        # VALORES_FIXOS e dict[str, tuple[tuple[str, str], ...]] — tupla e JSON
+        # valido, mas convertida para lista aqui na fronteira do endpoint para a
+        # resposta ficar em JSON puro (sem depender do jsonable_encoder do FastAPI
+        # para isso). node_registry.py nao e alterado.
+        "valores_fixos": {
+            chave: [list(par) for par in valores]
+            for chave, valores in node_registry.VALORES_FIXOS.items()
+        },
+    }
+
+
 @router.get("/{campaign_id}")
 async def api_get_campaign(campaign_id: str):
     camp = get_campaign(campaign_id)
