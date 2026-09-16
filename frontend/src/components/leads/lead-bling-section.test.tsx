@@ -41,7 +41,7 @@ describe("LeadBlingSection — seletor de conta", () => {
     mockUseBlingStatus.mockReturnValue({ enabled: true, accounts: UMA_CONTA, loading: false, error: null });
     global.fetch = vi.fn(() => Promise.resolve(resposta({ data: [] }))) as unknown as typeof fetch;
 
-    render(<LeadBlingSection leadId="lead-1" blingContactId={null} onChanged={vi.fn()} />);
+    render(<LeadBlingSection leadId="lead-1" blingContactIds={{}} onChanged={vi.fn()} />);
     expect(screen.queryByText("Conta Bling")).toBeNull();
   });
 
@@ -49,7 +49,7 @@ describe("LeadBlingSection — seletor de conta", () => {
     mockUseBlingStatus.mockReturnValue({ enabled: true, accounts: DUAS_CONTAS, loading: false, error: null });
     global.fetch = vi.fn(() => Promise.resolve(resposta({ data: [] }))) as unknown as typeof fetch;
 
-    render(<LeadBlingSection leadId="lead-1" blingContactId={null} onChanged={vi.fn()} />);
+    render(<LeadBlingSection leadId="lead-1" blingContactIds={{}} onChanged={vi.fn()} />);
     expect(screen.queryByText("Conta Bling")).not.toBeNull();
     expect(screen.queryByText("Canastra CNPJ 1")).not.toBeNull();
   });
@@ -62,7 +62,7 @@ describe("LeadBlingSection — seletor de conta", () => {
         : Promise.resolve(resposta({ data: [] })),
     ) as unknown as typeof fetch;
 
-    render(<LeadBlingSection leadId="lead-1" blingContactId={99} onChanged={vi.fn()} />);
+    render(<LeadBlingSection leadId="lead-1" blingContactIds={{ [CONTA_PADRAO]: 99 }} onChanged={vi.fn()} />);
     expect(await screen.findByText("VINCULADO")).not.toBeNull();
     expect(await screen.findByText("Cliente Default")).not.toBeNull();
   });
@@ -72,7 +72,7 @@ describe("LeadBlingSection — seletor de conta", () => {
     const fetchSpy = vi.fn(() => Promise.resolve(resposta({ data: [] }))) as unknown as typeof fetch;
     global.fetch = fetchSpy;
 
-    render(<LeadBlingSection leadId="lead-1" blingContactId={null} onChanged={vi.fn()} />);
+    render(<LeadBlingSection leadId="lead-1" blingContactIds={{}} onChanged={vi.fn()} />);
     const campo = screen.getByPlaceholderText("Buscar por nome, fantasia ou CNPJ/CPF…");
     fireEvent.change(campo, { target: { value: "acme" } });
 

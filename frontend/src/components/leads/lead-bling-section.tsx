@@ -39,7 +39,9 @@ export interface BlingContactSummary {
 
 interface LeadBlingSectionProps {
   leadId: string;
-  blingContactId: number | null;
+  /** Mapa conta -> id do contato no Bling. Um lead pode estar vinculado nos
+   *  dois CNPJs, com ids diferentes. */
+  blingContactIds: Record<string, number>;
   onChanged: () => void;
 }
 
@@ -67,7 +69,7 @@ async function fetchContactById(id: number, conta: string): Promise<BlingContact
   return data[0] ?? null;
 }
 
-export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlingSectionProps) {
+export function LeadBlingSection({ leadId, blingContactIds, onChanged }: LeadBlingSectionProps) {
   // --- Conta Bling -----------------------------------------------------------
   // Comeca na DEFAULT sempre (nao em `contaPadrao(...)`): e o que faz esta
   // secao mostrar, sem esperar rede nenhuma, exatamente o que ela sempre
@@ -77,15 +79,12 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
   const [conta, setConta] = useState(CONTA_PADRAO);
   const mostrarSeletorConta = precisaSeletor(blingStatus.accounts);
 
-  // `blingContactId` vem de `leads.bling_contact_id` — a coluna LEGADA de
-  // conta unica (quem chama este componente ainda le so ela, nao a tabela
-  // `lead_bling_contacts` por conta; migrar isso e responsabilidade de quem
-  // mantem a tela de lead, fora do escopo desta task). Ela so pode ser
-  // verdadeira para a conta DEFAULT: usa-la para outra conta mostraria um id
-  // que pode nem existir no namespace daquele CNPJ. Por isso a secao so trata
-  // o lead como "vinculado" quando a conta em tela e a default — para
-  // qualquer outra, mostra sempre a busca para vincular.
-  const vinculado = conta === CONTA_PADRAO && !!blingContactId;
+  // O vinculo vem de `lead_bling_contacts`, ja separado por conta pelo modal que
+  // chama esta secao. Nao ha mais a restricao de so confiar na conta default: um
+  // lead pode estar vinculado nos dois CNPJs, com ids diferentes, e cada conta
+  // mostra o seu.
+  const blingContactId = blingContactIds[conta] ?? null;
+  const vinculado = !!blingContactId;
 
   // --- Contato já vinculado ------------------------------------------------
   const [contact, setContact] = useState<BlingContactSummary | null>(null);
