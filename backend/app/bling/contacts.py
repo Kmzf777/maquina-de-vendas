@@ -7,8 +7,12 @@ contatos duplicados no ERP. Pior: o telefone do lead costuma ser o do COMPRADOR
 
 A SOLUCAO, em quatro camadas:
   1. CPF/CNPJ (so digitos) e a chave. Unico identificador canonico dos dois lados.
-  2. O vinculo e PERSISTIDO em `leads.bling_contact_id`, sob indice UNIQUE
-     parcial. Resolvido uma vez por cliente, para sempre.
+  2. O vinculo e PERSISTIDO em `lead_bling_contacts` (uma linha por lead+conta),
+     sob indice UNIQUE em (account, bling_contact_id). Resolvido uma vez por
+     cliente POR CONTA, para sempre — o mesmo lead pode ter contato na conta 1 e
+     outro na conta 2, porque o mesmo cliente pode existir nos dois CNPJs com
+     IDs diferentes ("alguns clientes em comum", o caso que motivou a segunda
+     conta).
   3. Telefone e e-mail apenas SUGEREM — exigem confirmacao humana.
   4. Antes de criar, lock por documento + re-checagem AO VIVO na API.
 """
@@ -39,7 +43,7 @@ class Resolution:
     """Resultado da resolucao de identidade.
 
     status:
-      linked    — vinculado (determinístico). `contact_id` preenchido.
+      linked    — vinculado (deterministico). `contact_id` preenchido.
       ambiguous — mais de um contato com o mesmo documento, OU o contato certo ja
                   pertence a outro lead. Nos dois casos decide o humano.
       suggested — casou por telefone/e-mail. Precisa de confirmacao.
@@ -174,14 +178,14 @@ def _phone_variants(lead: dict) -> list[str]:
     return saida
 
 
-def _query_by_doc(doc: str) -> list[dict]:
+def _query_by_doc(doc: str, account: str) -> list[dict]:
     res = (get_supabase().table("bling_contacts")
            .select(_CONTACT_COLS)
-           .eq("doc_digits", doc).limit(10).execute())
+           .eq("doc_digits", doc).eq("account", account).limit(10).execute())
     return getattr(res, "data", None) or []
 
 
-def _query_by_phones(phones: list[str]) -> list[dict]:
+def _query_by_phones(phones: list[str], account: str) -> list[dict]:
     if not phones:
         return []
     # Interpolar direto na expressao do PostgREST so e seguro porque `_phone_variants`
@@ -190,31 +194,54 @@ def _query_by_phones(phones: list[str]) -> list[dict]:
     lista = ",".join(phones)
     res = (get_supabase().table("bling_contacts")
            .select(_CONTACT_COLS)
+           .eq("account", account)
            .or_(f"telefone_e164.in.({lista}),celular_e164.in.({lista})")
            .limit(10).execute())
     return getattr(res, "data", None) or []
 
 
-def _query_by_email(email: str) -> list[dict]:
+def _query_by_email(email: str, account: str) -> list[dict]:
     res = (get_supabase().table("bling_contacts")
            .select(_CONTACT_COLS)
-           .eq("email", email).limit(10).execute())
+           .eq("email", email).eq("account", account).limit(10).execute())
     return getattr(res, "data", None) or []
 
 
-def _link(lead_id: str, contact_id: int) -> None:
-    (get_supabase().table("leads")
-     .update({"bling_contact_id": contact_id}).eq("id", lead_id).execute())
+def _contato_do_lead(lead_id: str, account: str) -> int | None:
+    """Contato do lead NESTA conta, ou None.
+
+    Substitui a leitura direta de `leads.bling_contact_id`. O recorte por conta e
+    o ponto inteiro: um lead pode ter contato na conta 1 e nenhum na conta 2, e os
+    dois estados sao independentes — por isso `resolve` e
+    `_pode_vincular_por_telefone` tem que perguntar por ESTA conta, nunca "o lead
+    tem vinculo em qualquer conta" (a armadilha central desta migracao).
+    """
+    res = (get_supabase().table("lead_bling_contacts").select("bling_contact_id")
+           .eq("lead_id", lead_id).eq("account", account)
+           .limit(1).maybe_single().execute())
+    linha = getattr(res, "data", None) or {}
+    return linha.get("bling_contact_id")
+
+
+def _link(lead_id: str, contact_id: int, account: str) -> None:
+    (get_supabase().table("lead_bling_contacts").upsert({
+        "lead_id": lead_id,
+        "account": account,
+        "bling_contact_id": contact_id,
+    }, on_conflict="lead_id,account").execute())
 
 
 def _e_violacao_de_unicidade(exc: Exception) -> bool:
-    """A violacao veio do UNIQUE parcial de `leads.bling_contact_id` (SQLSTATE 23505)?
+    """A violacao veio do indice UNIQUE
+    `lead_bling_contacts_account_contact_key` em (account, bling_contact_id)
+    (SQLSTATE 23505)?
 
     Dois leads com o mesmo CNPJ e plausivel (matriz e filial cadastradas separado,
-    lead duplicado por importacao). O primeiro a resolver fica com o contato; o
-    segundo bate no indice. Isso NAO e bug — e informacao — mas sem tratamento vira
-    500 opaco, e em `create_contact` vira laco de falha permanente: o contato ja
-    existe, entao toda tentativa futura repete GET → acha → `_link` → 500.
+    lead duplicado por importacao). O primeiro a resolver fica com o contato
+    NESTA conta; o segundo bate no indice. Isso NAO e bug — e informacao — mas
+    sem tratamento vira 500 opaco, e em `create_contact` vira laco de falha
+    permanente: o contato ja existe, entao toda tentativa futura repete GET →
+    acha → `_link` → 500.
 
     Checa `code` e o texto porque a pista depende da versao do supabase-py/postgrest.
     """
@@ -223,10 +250,17 @@ def _e_violacao_de_unicidade(exc: Exception) -> bool:
     return "23505" in texto or "duplicate key" in texto
 
 
-async def resolve(lead: dict) -> Resolution:
-    """Resolve o contato Bling de um lead. Ver docstring do modulo."""
-    if lead.get("bling_contact_id"):
-        return Resolution("linked", int(lead["bling_contact_id"]), reason="vinculo_existente")
+async def resolve(lead: dict, account: str = config.DEFAULT_ACCOUNT) -> Resolution:
+    """Resolve o contato Bling de um lead, NESTA conta. Ver docstring do modulo.
+
+    O recorte por conta e o que viabiliza o "cliente em comum": o mesmo lead pode
+    estar `linked` na conta 1 e `missing`/`suggested` na conta 2 ao mesmo tempo —
+    os dois estados moram em linhas diferentes de `lead_bling_contacts`, nunca no
+    lead. Por isso o primeiro passo NUNCA olha vinculo de outra conta.
+    """
+    ja_vinculado = await asyncio.to_thread(_contato_do_lead, lead["id"], account)
+    if ja_vinculado:
+        return Resolution("linked", int(ja_vinculado), reason="vinculo_existente")
 
     doc = doc_digits(lead.get("cnpj"))
     # O DV e validado ANTES de o documento virar chave. Este e o unico ramo que
@@ -236,19 +270,20 @@ async def resolve(lead: dict) -> Resolution:
     # e produziria vinculo permanente nascido de nada. Documento invalido nao para
     # o fluxo: cai para telefone/e-mail, que so sugerem.
     if doc and is_valid_document(doc):
-        achados = await asyncio.to_thread(_query_by_doc, doc)
+        achados = await asyncio.to_thread(_query_by_doc, doc, account)
         if len(achados) == 1:
             contact_id = int(achados[0]["id"])
             try:
-                await asyncio.to_thread(_link, lead["id"], contact_id)
+                await asyncio.to_thread(_link, lead["id"], contact_id, account)
             except Exception as exc:
                 if not _e_violacao_de_unicidade(exc):
                     raise
-                # O contato ja e de outro lead. Nao ha escolha automatica certa:
-                # devolve para o humano em vez de estourar 500 sem diagnostico.
+                # O contato ja e de outro lead NESTA conta. Nao ha escolha
+                # automatica certa: devolve para o humano em vez de estourar 500
+                # sem diagnostico.
                 logger.warning(
-                    "[BLING] contato %s ja vinculado a outro lead — %s fica para "
-                    "decisao humana", contact_id, lead.get("id"),
+                    "[BLING] contato %s ja vinculado a outro lead na conta %s — "
+                    "%s fica para decisao humana", contact_id, account, lead.get("id"),
                 )
                 return Resolution("ambiguous", None, achados,
                                   reason="contato_ja_vinculado")
@@ -258,7 +293,7 @@ async def resolve(lead: dict) -> Resolution:
             # por conta propria significa lancar a venda no cadastro errado.
             return Resolution("ambiguous", None, achados, reason="documento_duplicado")
 
-    achados = await asyncio.to_thread(_query_by_phones, _phone_variants(lead))
+    achados = await asyncio.to_thread(_query_by_phones, _phone_variants(lead), account)
     if achados:
         # SUGGESTED, nunca LINKED: nada e gravado aqui. O telefone do lead e do
         # comprador; o contato do Bling e a empresa. So o humano confirma.
@@ -266,44 +301,52 @@ async def resolve(lead: dict) -> Resolution:
 
     email = (lead.get("email") or "").strip().lower()
     if email:
-        achados = await asyncio.to_thread(_query_by_email, email)
+        achados = await asyncio.to_thread(_query_by_email, email, account)
         if achados:
             return Resolution("suggested", None, achados, reason="email")
 
     return Resolution("missing", None, [], reason="sem_correspondencia")
 
 
-async def link(lead_id: str, contact_id: int) -> None:
-    """Confirma manualmente o vinculo (usado quando o vendedor escolhe candidato)."""
-    await asyncio.to_thread(_link, lead_id, contact_id)
+async def link(lead_id: str, contact_id: int,
+                account: str = config.DEFAULT_ACCOUNT) -> None:
+    """Confirma manualmente o vinculo NESTA conta (usado quando o vendedor
+    escolhe candidato). O mesmo lead pode ter uma linha em `lead_bling_contacts`
+    por conta — vincular na conta 2 nunca apaga nem troca o vinculo da conta 1."""
+    await asyncio.to_thread(_link, lead_id, contact_id, account)
 
 
-def _unlink(lead_id: str) -> None:
-    (get_supabase().table("leads")
-     .update({"bling_contact_id": None}).eq("id", lead_id).execute())
+def _unlink(lead_id: str, account: str) -> None:
+    (get_supabase().table("lead_bling_contacts").delete()
+     .eq("lead_id", lead_id).eq("account", account).execute())
 
 
-async def unlink(lead_id: str) -> None:
-    """Desfaz o vinculo. Verbo proprio, e nao `link` com nulo, porque desvincular
-    tem consequencia diferente: a proxima venda do lead volta a cair na resolucao
-    por documento, e um nulo acidental no payload de `link` nao pode ser capaz de
-    apagar vinculo em silencio."""
-    await asyncio.to_thread(_unlink, lead_id)
+async def unlink(lead_id: str, account: str = config.DEFAULT_ACCOUNT) -> None:
+    """Desfaz o vinculo do lead NESTA conta. Verbo proprio, e nao `link` com nulo,
+    porque desvincular tem consequencia diferente: a proxima venda do lead nesta
+    conta volta a cair na resolucao por documento. O vinculo de OUTRA conta nunca
+    e tocado — cada linha de `lead_bling_contacts` e independente por conta."""
+    await asyncio.to_thread(_unlink, lead_id, account)
 
 
 # --------------------------------------------------------------------------
 # Criacao
 # --------------------------------------------------------------------------
-def _upsert_mirror(row: dict) -> None:
+def _upsert_mirror(row: dict, account: str) -> None:
+    linha = map_contact(row)
+    linha["account"] = account
     (get_supabase().table("bling_contacts")
-     .upsert(map_contact(row), on_conflict="id").execute())
+     .upsert(linha, on_conflict="account,id").execute())
 
 
-async def create_contact(client, lead: dict, dados: dict) -> int:
+async def create_contact(client, lead: dict, dados: dict,
+                          account: str = config.DEFAULT_ACCOUNT) -> int:
     """Cria (ou reaproveita) o contato no Bling e devolve o id.
 
     `dados` vem do modal: nome, numeroDocumento, tipo, email, telefone, celular,
-    endereco{geral{...}}.
+    endereco{geral{...}}. `client` ja e um `BlingClient` desta `account` — a
+    chamada HTTP cai na conta certa sozinha; aqui so precisamos repassar a conta
+    para o espelho e para o vinculo do lead.
     """
     doc = doc_digits(dados.get("numeroDocumento"))
     if not is_valid_document(doc):
@@ -314,7 +357,11 @@ async def create_contact(client, lead: dict, dados: dict) -> int:
             status=422,
         )
 
-    async with _lock(f"lock:bling_contact:{doc}") as owned:
+    # O lock leva a conta: o mesmo documento pode legitimamente virar DOIS
+    # contatos distintos (um por conta, ERPs separados). Sem a conta na chave, uma
+    # criacao na conta 2 esperaria a trava da conta 1 sem necessidade nenhuma —
+    # sao operacoes independentes contra APIs independentes.
+    async with _lock(f"lock:bling_contact:{account}:{doc}") as owned:
         if not owned:
             raise BlingValidationError(
                 "outro cadastro deste mesmo cliente esta em andamento; tente de novo",
@@ -326,7 +373,7 @@ async def create_contact(client, lead: dict, dados: dict) -> int:
         # E NAO confia no filtro do servidor: reconfere o documento item a item. Se
         # o Bling ignorar `numeroDocumento` — parametro desconhecido, REST costuma
         # devolver a colecao inteira em vez de erro — `data[0]` seria um contato
-        # QUALQUER da conta, e vincularíamos o cliente a ele. Falha silenciosa e
+        # QUALQUER da conta, e vincularia o cliente a ele. Falha silenciosa e
         # catastrofica, no ponto exato que existe para impedir duplicata.
         existentes = [c for c in (vivo.get("data") or [])
                       if doc_digits(c.get("numeroDocumento")) == doc]
@@ -368,9 +415,9 @@ async def create_contact(client, lead: dict, dados: dict) -> int:
             "email": dados.get("email"),
             "situacao": "A",
             "endereco": dados.get("endereco"),
-        })
+        }, account)
         try:
-            await asyncio.to_thread(_link, lead["id"], contact_id)
+            await asyncio.to_thread(_link, lead["id"], contact_id, account)
         except Exception as exc:
             if not _e_violacao_de_unicidade(exc):
                 raise
@@ -394,35 +441,42 @@ async def create_contact(client, lead: dict, dados: dict) -> int:
 def _find_lead(coluna: str, valor) -> dict | None:
     """Devolve a LINHA do lead, nao so o id.
 
-    `bling_contact_id` e `cnpj` vem junto porque quem chama precisa dos dois para
-    decidir se pode gravar o vinculo — reaproveitar a linha e gravar o vinculo sao
-    decisoes separadas. Ver `_pode_vincular_por_telefone`.
+    `cnpj` vem junto porque quem chama precisa dele para decidir se pode gravar o
+    vinculo — reaproveitar a linha e gravar o vinculo sao decisoes separadas. Ver
+    `_pode_vincular_por_telefone`. `bling_contact_id` NAO entra mais na projecao:
+    o vinculo mora em `lead_bling_contacts`, por conta — quem precisa dele chama
+    `_contato_do_lead`.
     """
-    res = (get_supabase().table("leads").select("id, bling_contact_id, cnpj")
+    res = (get_supabase().table("leads").select("id, cnpj")
            .eq(coluna, valor).limit(1).execute())
     linhas = getattr(res, "data", None) or []
     return linhas[0] if linhas else None
 
 
-def _pode_vincular_por_telefone(lead_row: dict, doc_contato: str | None) -> bool:
-    """O telefone bateu — mas isso autoriza GRAVAR o vinculo neste lead?
+def _pode_vincular_por_telefone(lead_row: dict, doc_contato: str | None,
+                                 contato_da_conta: int | None) -> bool:
+    """O telefone bateu — mas isso autoriza GRAVAR o vinculo neste lead, NESTA conta?
 
     Duas recusas, as duas por motivo de nota fiscal:
 
-    1. O lead JA tem `bling_contact_id`. Esse vinculo veio de documento (unico ramo
-       que vincula sozinho) ou de confirmacao humana. Um palpite de telefone nunca
-       o substitui: o lead passaria a apontar para outro cadastro e a proxima venda
-       sairia no CNPJ errado. O indice UNIQUE nao protege disso — ele impede dois
-       leads apontarem para o mesmo contato, nao um lead trocar de contato.
+    1. O lead JA tem contato NESTA CONTA (`contato_da_conta is not None`). Esse
+       vinculo veio de documento (unico ramo que vincula sozinho) ou de
+       confirmacao humana. Um palpite de telefone nunca o substitui: o lead
+       passaria a apontar para outro cadastro NESTA conta e a proxima venda
+       sairia no CNPJ errado. O indice UNIQUE nao protege disso — ele impede
+       dois leads apontarem para o mesmo contato, nao um lead trocar de contato.
+       IMPORTANTE: contato em OUTRA conta nao entra aqui — bloquear por causa
+       dela reabriria a armadilha central desta entrega, o "cliente em comum"
+       que nunca conseguiria vinculo na segunda conta.
     2. Os documentos existem dos dois lados e DIVERGEM. Documentos diferentes sao
        clientes diferentes, por mais que o telefone bata: numero compartilhado
        (matriz, escritorio do contador, celular do socio que responde por duas
        empresas) e comum na base real.
 
     Nos dois casos o lead ainda e REAPROVEITADO (devolvemos o id, nao duplicamos);
-    so o vinculo e que nao e gravado.
+    so o vinculo NESTA conta e que nao e gravado.
     """
-    if lead_row.get("bling_contact_id") is not None:
+    if contato_da_conta is not None:
         return False
     doc_lead = doc_digits(lead_row.get("cnpj"))
     if doc_lead and doc_contato and doc_lead != doc_contato:
@@ -436,11 +490,29 @@ def _insert_lead(payload: dict) -> str | None:
     return linhas[0]["id"] if linhas else None
 
 
-async def ensure_lead(contato: dict) -> str | None:
-    """Devolve o lead_id do contato, criando o lead se preciso (decisao D6)."""
+def _lead_por_contato(contact_id: int, account: str) -> dict | None:
+    """Lead dono deste contato, NESTA conta. Substitui
+    `_find_lead("bling_contact_id", contact_id)`, que nao existe mais como
+    coluna — o mesmo `contact_id` pode pertencer a leads DIFERENTES em contas
+    diferentes, entao a busca precisa ser sempre por (conta, contato).
+    """
+    res = (get_supabase().table("lead_bling_contacts").select("lead_id")
+           .eq("bling_contact_id", contact_id).eq("account", account)
+           .limit(1).maybe_single().execute())
+    linha = getattr(res, "data", None) or {}
+    if not linha.get("lead_id"):
+        return None
+    return _find_lead("id", linha["lead_id"])
+
+
+async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> str | None:
+    """Devolve o lead_id do contato NESTA conta, criando o lead se preciso
+    (decisao D6). A logica de casamento (documento -> celular -> criar) nao
+    muda: so o lugar onde o vinculo e lido/gravado passa a ser por conta.
+    """
     contact_id = int(contato["id"])
 
-    achado = await asyncio.to_thread(_find_lead, "bling_contact_id", contact_id)
+    achado = await asyncio.to_thread(_lead_por_contato, contact_id, account)
     if achado:
         return achado["id"]
 
@@ -448,11 +520,15 @@ async def ensure_lead(contato: dict) -> str | None:
     if doc:
         achado = await asyncio.to_thread(_find_lead, "cnpj", doc)
         if achado:
-            # Mesmo casando por documento, nao regrava vinculo ja existente: o lead
-            # pode estar preso a OUTRO contato (documento duplicado no ERP), e
-            # trocar por baixo mandaria a proxima venda para o cadastro errado.
-            if achado.get("bling_contact_id") is None:
-                await asyncio.to_thread(_link, achado["id"], contact_id)
+            # Mesmo casando por documento, nao regrava vinculo ja existente NESTA
+            # conta: o lead pode estar preso a OUTRO contato desta mesma conta
+            # (documento duplicado no ERP), e trocar por baixo mandaria a proxima
+            # venda para o cadastro errado. Contato em OUTRA conta nao bloqueia —
+            # so o vinculo desta conta importa aqui.
+            contato_da_conta = await asyncio.to_thread(
+                _contato_do_lead, achado["id"], account)
+            if contato_da_conta is None:
+                await asyncio.to_thread(_link, achado["id"], contact_id, account)
             return achado["id"]
 
     # SO celular como chave, nunca o fixo: um fixo de empresa e compartilhado entre
@@ -470,8 +546,10 @@ async def ensure_lead(contato: dict) -> str | None:
         # decisao separada de reaproveitar a linha: ver `_pode_vincular_por_telefone`.
         achado = await asyncio.to_thread(_find_lead, "phone", telefone)
         if achado:
-            if _pode_vincular_por_telefone(achado, doc):
-                await asyncio.to_thread(_link, achado["id"], contact_id)
+            contato_da_conta = await asyncio.to_thread(
+                _contato_do_lead, achado["id"], account)
+            if _pode_vincular_por_telefone(achado, doc, contato_da_conta):
+                await asyncio.to_thread(_link, achado["id"], contact_id, account)
             return achado["id"]
 
     endereco = contato.get("endereco") or {}
@@ -490,9 +568,14 @@ async def ensure_lead(contato: dict) -> str | None:
         "stage": config.lead_default_stage(),
         "status": "ativo",
         "channel": "bling",
-        "bling_contact_id": contact_id,
         "metadata": {"origem": "bling_webhook", "id_bling": str(contact_id)},
     }
     lead_id = await asyncio.to_thread(_insert_lead, payload)
-    logger.info("[BLING] lead %s criado a partir do contato %s", lead_id, contact_id)
+    if lead_id:
+        # Vinculo e escrita SEPARADA da criacao do lead (tabela diferente agora),
+        # entao so grava se o insert de fato devolveu um id — sem lead nao ha o
+        # que vincular.
+        await asyncio.to_thread(_link, lead_id, contact_id, account)
+    logger.info("[BLING] lead %s criado a partir do contato %s (conta %s)",
+                lead_id, contact_id, account)
     return lead_id
