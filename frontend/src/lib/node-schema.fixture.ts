@@ -16,6 +16,12 @@
  *   • os testes daqui provam que a TELA renderiza pelo VOCABULÁRIO do campo, nunca
  *     pelo nome do subtipo. Um vocabulário novo herda o renderizador certo mesmo que
  *     esta fixture envelheça.
+ *
+ * ISSO NÃO A ISENTA DE ENVELHECER, e já envelheceu uma vez: o motor ganhou a
+ * ramificação por botão (§11, 16/09/2026) — `optout` em `politica_resposta`,
+ * `on_reply_por_botao` nos dois nós de envio e a condição `clicou_botao` — e esta
+ * fixture ficou três releases atrás, com a suíte verde o tempo todo. Ao mexer no
+ * registro, mexa aqui na mesma leva.
  */
 import type { NodeSchema } from "./node-schema";
 
@@ -214,7 +220,7 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
       na_paleta: true, requer_um_de: [], campos: [],
     },
 
-    // ─── Condições (as NOVE, uma a uma na paleta) ──────────────────────────────
+    // ─── Condições (as DEZ, uma a uma na paleta) ───────────────────────────────
     {
       tipo: "condition", subtipo: "replied_recently", rotulo: "Respondeu recentemente", icone: "💬",
       na_paleta: true, requer_um_de: [],
@@ -259,6 +265,18 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
       na_paleta: true, requer_um_de: [],
       campos: [OPERADOR, campo("value", "numero", "Dias", { default: 30 })],
     },
+    {
+      // A décima (§11). As outras nove olham o CRM; esta lê a ÚLTIMA RESPOSTA do lead
+      // em `campaign_enrollments.metadata.ultima_resposta` e é o que permite RAMIFICAR
+      // no meio da cadência em vez de só encerrá-la.
+      tipo: "condition", subtipo: "clicou_botao", rotulo: "Clicou no botao", icone: "🔘",
+      na_paleta: true, requer_um_de: [],
+      campos: [
+        campo("botao", "texto", "Rotulo do botao", {
+          ajuda: "Igualdade normalizada (minuscula, sem acento, sem pontuacao) — nao substring.",
+        }),
+      ],
+    },
 
     // ─── Envio, espera e fim ───────────────────────────────────────────────────
     {
@@ -272,6 +290,12 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
         campo("on_reply", "politica_resposta", "Se o lead responder NESTE toque", {
           ajuda: "Vazio = herda a politica do gatilho (o normal). Preencher aqui SOBREPOE a esteira inteira, so neste toque.",
         }),
+        // Vocabulário PRÓPRIO, não `mapa`: os dois guardam dicionário, mas este é
+        // indexado pelo rótulo que o lead vê no botão (não pelos parâmetros de um
+        // template) e o valor de cada chave é `politica_resposta`, vocabulário fechado.
+        campo("on_reply_por_botao", "mapa_botoes", "Politica por botao do template", {
+          ajuda: "Vence o campo acima, mas SO para o rotulo que casar.",
+        }),
       ],
     },
     {
@@ -282,6 +306,11 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
         campo("channel_id", "canal_id", "Canal (opcional)"),
         campo("on_reply", "politica_resposta", "Se o lead responder NESTE toque", {
           ajuda: "Mesma regra do `send`: vazio herda do gatilho.",
+        }),
+        // O caso que prova que o vocabulário não podia ser `mapa`: nó SEM template
+        // nenhum, onde o renderizador de variáveis só sabia pedir um template.
+        campo("on_reply_por_botao", "mapa_botoes", "Politica por botao do template", {
+          ajuda: "Vence o campo acima, mas SO para o rotulo que casar.",
         }),
       ],
     },
@@ -319,10 +348,14 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
       ["lt", "< (menor)"],
       ["eq", "= (igual)"],
     ],
+    // `optout` (§11) é o único que sai da matrícula e toca o LEAD: grava
+    // `leads.opt_out`, move os cards para a Blacklist e cancela os follow-ups — e só
+    // então cancela a matrícula.
     politica_resposta: [
       ["pause", "Pausar a esteira"],
       ["cancel", "Cancelar a esteira"],
       ["reset", "Voltar ao primeiro toque"],
+      ["optout", "Descadastrar (opt-out + Blacklist)"],
     ],
     severidade: [
       ["info", "Informativo"],

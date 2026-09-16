@@ -56,6 +56,144 @@ function useFunis(): Funil[] {
   return funis;
 }
 
+// ─── mapa_botoes ────────────────────────────────────────────────────────────────
+//
+// `on_reply_por_botao` é `{rótulo do botão → política de saída}` e tem vocabulário
+// PRÓPRIO, separado do `mapa` de `template_variables`. Os dois guardam um dicionário e
+// é só o que têm em comum: `mapa` é indexado pelos PARÂMETROS do template escolhido — e
+// o controle dele, corretamente, começa pedindo um template —, enquanto este é indexado
+// pelo RÓTULO que o lead vê no botão, existe em nó `send_text` (que não tem template
+// nenhum) e o valor de cada chave é vocabulário fechado (`politica_resposta`).
+//
+// Enquanto os dois eram `mapa`, este campo renderizava "Escolha um template para
+// configurar as variáveis" no texto livre e input de parâmetro no template: declarado no
+// contrato e inutilizável na tela. A cura NÃO é `if (campo.chave === "on_reply_por_botao")`
+// — acoplar renderizador a NOME de campo é a forma exata do bug original, onde um único
+// <select> decidia a lista pelo subtipo do gatilho em vez de pelo vocabulário.
+
+type ParDeBotao = { rotulo: string; politica: string };
+
+function paresDoMapa(valor: unknown): ParDeBotao[] {
+  if (!valor || typeof valor !== "object" || Array.isArray(valor)) return [];
+  return Object.entries(valor as Record<string, unknown>).map(([rotulo, politica]) => ({
+    rotulo,
+    politica: typeof politica === "string" ? politica : "",
+  }));
+}
+
+/**
+ * Linha pela metade não vira regra: rótulo vazio casaria com resposta vazia e política
+ * vazia cairia no `politica or None` do motor — nos dois casos, config que parece
+ * configurada e não faz nada.
+ *
+ * Mapa sem nenhuma linha válida grava `null`, não `{}`: no registro `default=None`
+ * significa "ausente tem sentido próprio", e `_politica_do_botao` trata ausente e vazio
+ * do mesmo jeito.
+ */
+function mapaDosPares(pares: ParDeBotao[]): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const { rotulo, politica } of pares) {
+    const chave = rotulo.trim();
+    if (!chave || !politica) continue;
+    out[chave] = politica;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * O controle do vocabulário `mapa_botoes`.
+ *
+ * As linhas vivem em estado LOCAL, e não derivadas do dicionário a cada tecla: enquanto
+ * o operador digita "Parar atendimento" o rótulo passa por "P", "Pa"… — e um dicionário
+ * reconstruído a cada letra colapsaria duas linhas assim que uma ficasse vazia ou
+ * repetida. O dicionário é o que sai daqui (`onChange`), não o que governa a edição.
+ * A remontagem por nó é garantida pelo `key` de quem renderiza.
+ */
+function ControleMapaBotoes({
+  politicas, valor, onChange, estilos,
+}: {
+  politicas: { value: string; label: string }[];
+  valor: unknown;
+  onChange: (mapa: Record<string, string> | null) => void;
+  estilos: { input: React.CSSProperties; select: React.CSSProperties; hint: React.CSSProperties };
+}) {
+  const [pares, setPares] = useState<ParDeBotao[]>(() => paresDoMapa(valor));
+
+  const aplicar = (proximos: ParDeBotao[]) => {
+    setPares(proximos);
+    onChange(mapaDosPares(proximos));
+  };
+  const trocar = (i: number, patch: Partial<ParDeBotao>) =>
+    aplicar(pares.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+
+  const botaoLeve: React.CSSProperties = {
+    border: "1px solid #e0dbd4", background: "#fff", borderRadius: 6,
+    fontFamily: "'Outfit', sans-serif", fontSize: 12, color: "#555", cursor: "pointer",
+  };
+
+  return (
+    <div
+      data-controle="mapa_botoes"
+      style={{ padding: "10px 12px", background: "#fafaf7", borderRadius: 6, border: "1px solid #e8e4df" }}
+    >
+      {pares.length === 0 && (
+        <p style={{ ...estilos.hint, marginTop: 0, marginBottom: 8 }}>
+          Nenhum botão declarado — toda resposta cai na política do nó e, sem ela, na do gatilho.
+        </p>
+      )}
+
+      {pares.map((par, i) => (
+        <div key={i} data-botao-linha={i} style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="text"
+              aria-label={`Rótulo do botão ${i + 1}`}
+              style={{ ...estilos.input, padding: "6px 8px" } as React.CSSProperties}
+              value={par.rotulo}
+              onChange={e => trocar(i, { rotulo: e.target.value })}
+              placeholder="Ex.: Parar atendimento"
+            />
+            <button
+              type="button"
+              aria-label={`Remover botão ${i + 1}`}
+              title="Remover este botão"
+              onClick={() => aplicar(pares.filter((_, idx) => idx !== i))}
+              style={{ ...botaoLeve, width: 30, flexShrink: 0, color: "#b0a8a0" }}
+            >
+              ✕
+            </button>
+          </div>
+          <select
+            aria-label={`Política do botão ${i + 1}`}
+            style={{ ...estilos.select, marginTop: 4, padding: "6px 8px" } as React.CSSProperties}
+            value={par.politica}
+            onChange={e => trocar(i, { politica: e.target.value })}
+          >
+            <option value="">— O que fazer quando clicarem —</option>
+            {politicas.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={() => aplicar([...pares, { rotulo: "", politica: "" }])}
+        style={{ ...botaoLeve, padding: "5px 10px" }}
+      >
+        + Adicionar botão
+      </button>
+
+      <p style={{ ...estilos.hint, marginTop: 8 }}>
+        Pausar, cancelar e voltar ao primeiro toque mexem só nesta esteira;{" "}
+        <strong>Descadastrar</strong> registra a saída de verdade — grava o opt-out no lead,
+        move os cards para a Blacklist e cancela os follow-ups —, então nenhuma outra esteira
+        reinscreve esse lead depois. O rótulo casa por igualdade, ignorando acento, caixa e
+        pontuação: <em>Parar Atendimento</em> e <em>parar atendimento</em> são o mesmo botão.
+      </p>
+    </div>
+  );
+}
+
 /** A chave de config que guarda o subtipo do nó. Não é campo do registro. */
 const DISCRIMINADOR: Partial<Record<CampaignNodeType, { chave: string; rotulo: string }>> = {
   trigger:   { chave: "trigger_type",   rotulo: "Tipo de gatilho" },
@@ -298,6 +436,18 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
         return controleTemplate(campo);
       case "mapa":
         return controleMapa(campo);
+      case "mapa_botoes":
+        // `key` por NÓ: o estado local das linhas tem de recomeçar do config do nó novo
+        // quando o inspector troca de nó sem desmontar.
+        return (
+          <ControleMapaBotoes
+            key={`${node.id}:${campo.chave}`}
+            valor={valor}
+            politicas={fixedValues(schema, "politica_resposta").map(([value, rotulo]) => ({ value, label: rotulo }))}
+            onChange={mapa => set(campo.chave, mapa)}
+            estilos={{ input, select, hint }}
+          />
+        );
       case "lista_usuario_id":
         return controleListaDeUsuarios(campo);
       case "lista_texto":

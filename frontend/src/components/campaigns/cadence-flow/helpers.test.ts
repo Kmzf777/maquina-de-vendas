@@ -161,15 +161,16 @@ describe("getDefaultConfig", () => {
 describe("paleta montada do schema", () => {
   const paleta = buildPaletteFromSchema(NODE_SCHEMA_FIXTURE);
 
-  it("expõe as NOVE condições, uma a uma", () => {
+  it("expõe as DEZ condições, uma a uma", () => {
     // Até 16/09/2026 a paleta tinha um único item "Condição" que nascia
     // `replied_recently`; as outras oito só existiam num <select> escondido dentro
-    // do inspector — ninguém que não conhecesse o código sabia que existiam.
+    // do inspector — ninguém que não conhecesse o código sabia que existiam. A décima
+    // (`clicou_botao`, §11) é a primeira que lê a resposta do lead em vez do CRM.
     const condicoes = paleta.actions.filter(i => i.type === "condition");
-    expect(condicoes).toHaveLength(9);
+    expect(condicoes).toHaveLength(10);
     expect(condicoes.map(i => i.subtype)).toEqual([
       "replied_recently", "in_stage", "has_deal", "has_tag", "sale_count",
-      "total_spend", "last_sale_value", "deal_value", "repurchase_days",
+      "total_spend", "last_sale_value", "deal_value", "repurchase_days", "clicou_botao",
     ]);
   });
 

@@ -73,7 +73,7 @@ VOCABULARIOS = {
     "segmento_lead", "etapa_key", "etapa_id", "funil_id", "canal_id",
     "template", "tag", "usuario_id", "lista_usuario_id", "lista_texto",
     "operador", "politica_resposta", "severidade",
-    # Dois vocabularios ALEM da lista original do plano, ambos pela mesma razao: sem
+    # Tres vocabularios ALEM da lista original do plano, todos pela mesma razao: sem
     # eles a tela renderizaria o controle errado e reintroduziria o bug que este
     # modulo existe para matar.
     #   mapa    — `template_variables` e um DICIONARIO
@@ -84,7 +84,23 @@ VOCABULARIOS = {
     #             `falante` em 20260904_esteiras_vendedor.sql). Como texto livre, um
     #             "vendedor" digitado a mao faz a RPC devolver conjunto vazio para
     #             sempre, em silencio.
-    "mapa", "falante",
+    #
+    #   mapa_botoes — `on_reply_por_botao` TAMBEM e um dicionario, e mesmo assim NAO
+    #             pode ser `mapa`. Os dois guardam dict e e so o que tem em comum:
+    #             `mapa` e indexado pelos PARAMETROS do template escolhido (sem
+    #             template nao ha o que configurar, e o controle so sabe pedir um),
+    #             enquanto este e indexado pelo ROTULO que o lead ve no botao, existe
+    #             em no `send_text` — que nao tem template nenhum — e o VALOR de cada
+    #             chave e vocabulario fechado (`politica_resposta`), nao texto livre.
+    #             Enquanto os dois compartilharam o vocabulario, o campo de botoes
+    #             renderizava "Escolha um template para configurar as variaveis" num
+    #             no de texto livre e input de parametro num `send`: declarado no
+    #             contrato desde 16/09/2026 e inutilizavel na tela nos dois casos.
+    #             E a mesma forma do bug do `stage_filter` — um renderizador servindo
+    #             dois vocabularios incompativeis — e a cura e a mesma: vocabulario
+    #             proprio, renderizador escolhido pelo VOCABULARIO e nunca pelo nome
+    #             do campo.
+    "mapa", "falante", "mapa_botoes",
 }
 
 # Valores aceitos dos vocabularios FECHADOS — os que nao vem do banco. A tela monta o
@@ -561,17 +577,21 @@ _CONDICOES: tuple[TipoDeNo, ...] = (
 # (`worker._politica_do_botao`) casa por IGUALDADE normalizada — minuscula, sem acento,
 # sem pontuacao, nos DOIS lados, porque o rotulo e digitado por gente na tela.
 #
-# Vocabulario `mapa` pelo mesmo motivo de `template_variables`: e um DICIONARIO, e
-# tipar como "texto_longo" faria a tela gravar string onde o motor espera dict.
+# Vocabulario PROPRIO (`mapa_botoes`), e nao `mapa`. Nasceu `mapa` — pelo motivo certo,
+# "e um DICIONARIO e tipar como texto_longo faria a tela gravar string" — e isso bastou
+# para o campo ser inutilizavel na tela: o unico renderizador de `mapa` e o das
+# VARIAVEIS DE TEMPLATE, que pede um template antes de mostrar qualquer coisa. Num
+# `send_text` o campo virava "Escolha um template para configurar as variaveis"; num
+# `send`, input de parametro. Ver o comentario de `mapa_botoes` em VOCABULARIOS.
 #
 # default None e nao {}: `_politica_do_botao` exige `isinstance(mapa, dict)`, entao
 # ausente e vazio dao no mesmo — e um dict literal aqui seria compartilhado por todos
 # os nos (dataclass frozen congela a referencia, nao o conteudo).
 _BOTOES = Campo(
-    "on_reply_por_botao", "mapa", "Politica por botao do template", default=None,
-    ajuda="{rotulo do botao: politica}. Vence o campo acima, mas SO para o rotulo que "
-          "casar; qualquer outra resposta cai na politica do no e depois na do gatilho. "
-          "Ex.: {'parar atendimento': 'optout', 'continuar': 'reset'}.",
+    "on_reply_por_botao", "mapa_botoes", "Politica por botao do template", default=None,
+    ajuda="Vence o campo acima, mas SO para o rotulo que casar; qualquer outra resposta "
+          "cai na politica do no e depois na do gatilho. O rotulo casa por IGUALDADE "
+          "normalizada — acento, caixa e pontuacao sao ignorados nos dois lados.",
 )
 
 _DEMAIS: tuple[TipoDeNo, ...] = (

@@ -527,7 +527,11 @@ class TestRegistroDeNos:
     def test_10b_on_reply_por_botao_existe_nos_dois_nos_de_envio(self, tipo):
         from app.campaigns.node_registry import REGISTRO
         campos = {c.chave: c for c in REGISTRO[(tipo, None)].campos}
-        assert campos["on_reply_por_botao"].vocab == "mapa"
+        # Vocabulario PROPRIO, nao o `mapa` de `template_variables`: com o vocabulario
+        # compartilhado, o inspector renderizava o controle de VARIAVEIS DE TEMPLATE
+        # aqui — que num `send_text` so sabe dizer "Escolha um template". Ver
+        # `test_node_registry.test_on_reply_por_botao_tem_vocabulario_proprio`.
+        assert campos["on_reply_por_botao"].vocab == "mapa_botoes"
         # default None, nao {}: dict literal em dataclass frozen e compartilhado por
         # todos os nos, e gravar {} em todo no novo seria ruido no config.
         assert campos["on_reply_por_botao"].default is None

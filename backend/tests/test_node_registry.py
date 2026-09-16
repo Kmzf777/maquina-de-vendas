@@ -67,6 +67,30 @@ def test_todo_vocabulario_usado_e_conhecido():
         for c in t.campos:
             assert c.vocab in VOCABULARIOS, f"{t.subtipo}.{c.chave}: {c.vocab}"
 
+
+def test_on_reply_por_botao_tem_vocabulario_proprio():
+    """`on_reply_por_botao` e `template_variables` sao os DOIS dicionarios do registro —
+    e nao podem compartilhar vocabulario.
+
+    Enquanto os dois eram `mapa`, o unico renderizador de `mapa` no inspector era o das
+    VARIAVEIS DE TEMPLATE: ele abre pedindo um template ("Escolha um template para
+    configurar as variaveis") e, escolhido um, lista os PARAMETROS dele. Num no
+    `send_text` — que nao tem template nenhum — o campo de botoes virava aquela frase;
+    num `send`, virava input de parametro. Declarado no contrato, inutil na tela.
+
+    A cura e a mesma do bug que este modulo existe para matar (um <select> servindo dois
+    vocabularios incompativeis pelo mesmo NOME de campo): vocabulario proprio, e o
+    renderizador escolhido pelo VOCABULARIO — nunca pelo nome do campo.
+    """
+    assert "mapa_botoes" in VOCABULARIOS
+    for tipo in ("send", "send_text"):
+        campos = {c.chave: c for c in REGISTRO[(tipo, None)].campos}
+        assert campos["on_reply_por_botao"].vocab == "mapa_botoes", tipo
+    # E `template_variables` NAO muda: o renderizador de variaveis continua sendo o
+    # dono do vocabulario `mapa`.
+    envio = {c.chave: c for c in REGISTRO[("send", None)].campos}
+    assert envio["template_variables"].vocab == "mapa"
+
 def test_as_dez_condicoes_estao_na_paleta():
     # Nove ate 16/09/2026; a decima e `clicou_botao` (§11 do desenho), a unica que le a
     # ultima resposta do lead em vez do CRM. O numero e literal de proposito: condicao

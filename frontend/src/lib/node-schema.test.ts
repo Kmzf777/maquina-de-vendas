@@ -82,12 +82,25 @@ describe("helpers de leitura do schema", () => {
   });
 
   it("fixedValues devolve o vocabulário fechado, e [] para vocabulário aberto", () => {
-    expect(fixedValues(schema, "politica_resposta").map(v => v[0])).toEqual(["pause", "cancel", "reset"]);
+    expect(fixedValues(schema, "politica_resposta").map(v => v[0])).toEqual([
+      "pause", "cancel", "reset", "optout",
+    ]);
     expect(fixedValues(schema, "etapa_id")).toEqual([]);
   });
 
+  it("`optout` é uma política como as outras — some daqui e o botão de saída volta a ser decorativo", () => {
+    // Esta fixture já ficou para trás uma vez: o motor ganhou `optout` (§11) e ela
+    // continuou com as três políticas antigas, com a suíte verde. `optout` é o único
+    // valor que sai da matrícula e toca o LEAD (`leads.opt_out` + Blacklist + cancela
+    // follow-ups); sem ele na lista, a tela não tem como oferecer a saída de verdade
+    // e um botão "Parar atendimento" volta a só cancelar uma matrícula.
+    expect(fixedValues(schema, "politica_resposta")).toContainEqual([
+      "optout", "Descadastrar (opt-out + Blacklist)",
+    ]);
+  });
+
   it("paletteTypes filtra por na_paleta e, opcionalmente, por tipo", () => {
-    expect(paletteTypes(schema, "condition")).toHaveLength(9);
+    expect(paletteTypes(schema, "condition")).toHaveLength(10);
     expect(paletteTypes(schema, "trigger")).toHaveLength(12);
     expect(paletteTypes(schema).length).toBe(schema.tipos.length);
   });
