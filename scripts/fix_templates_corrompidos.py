@@ -126,6 +126,22 @@ def _chamar(url, payload=None):
         return {"__erro__": json.loads(e.read().decode("utf-8"))}
 
 
+def _ja_esta_certo(atual, desejado):
+    """True quando corpo e botoes ja batem — evita gastar a cota de edicao de 24h.
+
+    Sem isto, rodar o script de novo reenvia os tres e queima o limite dos que ja
+    estavam corretos, deixando-os travados por um dia caso surja uma correcao de
+    verdade. A comparacao e so de corpo e rotulos: e o que este script muda.
+    """
+    def resumo(componentes):
+        corpo = next((c.get("text") for c in componentes if c["type"] == "BODY"), None)
+        botoes = [b.get("text") for c in componentes if c["type"] == "BUTTONS"
+                  for b in c.get("buttons", [])]
+        return corpo, botoes
+
+    return resumo(atual) == resumo(desejado)
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     if not WABA_ID or not TOKEN:
@@ -134,7 +150,7 @@ def main():
 
     atuais = {}
     url = (f"https://graph.facebook.com/v21.0/{WABA_ID}/message_templates"
-           f"?limit=200&fields=id,name,status,category")
+           f"?limit=200&fields=id,name,status,category,components")
     while url:
         r = _chamar(url)
         if "__erro__" in r:
@@ -149,6 +165,9 @@ def main():
         alvo = atuais.get(c["nome"])
         if not alvo:
             print(f"PULADO  {c['nome']}: nao existe na WABA")
+            continue
+        if _ja_esta_certo(alvo.get("components") or [], c["components"]):
+            print(f"OK      {c['nome']}: ja esta correto, nada a fazer")
             continue
         if not aplicar:
             print(f"(dry-run) {c['nome']} [{alvo['status']}] -> corpo restaurado + "
