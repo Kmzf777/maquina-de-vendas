@@ -2443,7 +2443,29 @@ git commit -m "feat(bling): logica pura de selecao de conta no frontend"
 - Modify: `frontend/src/app/(authenticated)/orcamento/page.tsx`
 
 > **Antes de tocar em qualquer componente, invoque a skill `frontend-design`.**
-> É regra registrada do projeto para toda alteração de frontend.
+> É regra registrada do projeto para toda alteração de frontend. Leitura que o
+> coordenador já fez: esta task **modifica componentes existentes**, então a
+> escolha estética correta é consistência com o que já está na tela — não impor
+> uma direção nova.
+
+**API real da Task 14** (conferida, use verbatim — a assinatura de
+`precisaSeletor` difere do snippet antigo deste plano):
+
+```ts
+export type ContaBling = { account: string; label: string; configured: boolean; connected: boolean };
+export const CONTA_PADRAO = "default";
+export function contasDisponiveis(contas: ContaBling[]): ContaBling[];
+export function precisaSeletor(contas: ContaBling[], skipBling = false): boolean;  // <- 2 parametros
+export function contaPadrao(contas: ContaBling[]): string | null;
+export function trocaLimpaFormulario(estado: { itens: number; contatoId: number | null }): boolean;
+export function interpretarStatus(body: BlingStatusPayload): BlingStatusResult;
+```
+
+E `useBlingStatus()` agora devolve:
+`{ enabled: boolean | null; accounts: ContaBling[]; loading: boolean; error: string | null }`.
+
+Use `precisaSeletor(contas, skipBling)` — com "Registrar sem enviar ao Bling"
+marcado o seletor some, porque a venda não vai a ERP nenhum.
 
 - [ ] **Step 1: Adicionar o seletor como PRIMEIRO campo**
 
@@ -2578,6 +2600,49 @@ export function accountLabel(
 
 Equivalente em `bling-contact-display.ts` para o contato, com a mesma regra de
 devolver `null` quando há uma conta só.
+
+- [ ] **Step 3b: O proxy de `status` precisa entregar `accounts` ao vendedor**
+
+**Esta correção é DESTA task.** Ela está descrita no topo do plano ("O proxy de
+`status` corta o payload para não-admin") mas não estava nos passos concretos de
+nenhuma — nem da T11, nem daqui. Sem dono explícito, cairia no vão.
+
+`frontend/src/app/api/bling/status/route.ts` devolve o objeto completo para
+`role === "admin"` e apenas `{enabled, connected}` para todos os outros. Logo,
+**`accounts` nunca chega ao vendedor** — e o seletor da Task 15 receberia lista
+vazia, `precisaSeletor([])` daria `false`, e **toda venda iria para a conta
+padrão em silêncio**. Um admin testando veria tudo funcionar.
+
+```ts
+    if (role !== "admin") {
+      return Response.json({
+        enabled: !!status.enabled,
+        connected: !!status.connected,
+        // O vendedor precisa saber QUAIS contas existem e quais estao
+        // conectadas — sem isso o seletor nao tem o que renderizar e toda venda
+        // cai na conta padrao em silencio. O que ele NAO recebe continua sendo o
+        // mesmo de antes: expiracao de token e escopos OAuth, que sao
+        // informacao de administracao.
+        accounts: (status.accounts || []).map((c: ContaBling) => ({
+          account: c.account,
+          label: c.label,
+          configured: c.configured,
+          connected: c.connected,
+        })),
+      });
+    }
+```
+
+Teste: com `role` de vendedor, a resposta traz `accounts` com os quatro campos e
+**não** traz `access_expires_at`, `refresh_expires_at` nem `scope`.
+
+- [ ] **Step 3c: O resultado de `POST /bling/sync` mudou de forma**
+
+A Task 6 trocou o retorno de `sync_all` de plano (`{"produtos": N, …}`) para
+aninhado por conta (`{"default": {...}, "secundaria": {...}}`). `bling-settings.tsx`
+tipa como `Record<string, number>` e renderiza `{SYNC_LABELS[key] ?? key}: {value}`
+— passaria a exibir **"default: [object Object]"**. Não quebra, só mente.
+Renderizar por conta, com as contagens aninhadas.
 
 - [ ] **Step 4: `/config` com uma linha por conta**
 
