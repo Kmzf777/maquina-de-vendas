@@ -1,10 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+import { CONTA_PADRAO } from "@/lib/bling-accounts";
 
 // Vinculo e-mail do usuario do CRM -> vendedor do Bling (tabela bling_seller_map).
 // Lido pelo backend em _seller_id_for() na hora de montar o pedido; sem vinculo,
 // o pedido vai sem vendedor (nao bloqueia a venda).
+//
+// O vinculo e POR CONTA: o Bling identifica vendedor por id proprio de cada CNPJ,
+// entao o mesmo usuario do CRM tem um id diferente em cada conta. A PK da tabela
+// e (user_email, account) desde 20260913_bling_multi_conta.sql — um upsert com
+// onConflict:"user_email" sozinho quebra com 42P10 assim que a migration sobe,
+// para TODO salvamento, independente da segunda conta estar configurada.
 
 async function requireAdmin(): Promise<Response | null> {
   try {
@@ -23,7 +30,7 @@ export async function GET() {
   const supabase = await getServiceSupabase();
   const { data, error } = await supabase
     .from("bling_seller_map")
-    .select("user_email, bling_seller_id");
+    .select("user_email, bling_seller_id, account");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ data: data ?? [] });
 }
@@ -35,15 +42,19 @@ export async function PUT(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const email = typeof body.user_email === "string" ? body.user_email.trim() : "";
   if (!email) return NextResponse.json({ error: "user_email é obrigatório" }, { status: 400 });
+  const account = typeof body.account === "string" && body.account.trim()
+    ? body.account.trim()
+    : CONTA_PADRAO;
 
   const supabase = await getServiceSupabase();
 
   // Vendedor vazio significa desvincular — a linha some em vez de guardar null,
   // porque bling_seller_id é NOT NULL na tabela.
   if (body.bling_seller_id === null || body.bling_seller_id === "" || body.bling_seller_id === undefined) {
-    const { error } = await supabase.from("bling_seller_map").delete().eq("user_email", email);
+    const { error } = await supabase.from("bling_seller_map").delete()
+      .eq("user_email", email).eq("account", account);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ ok: true, user_email: email, bling_seller_id: null });
+    return NextResponse.json({ ok: true, user_email: email, account, bling_seller_id: null });
   }
 
   const sellerId = Number(body.bling_seller_id);
@@ -54,9 +65,10 @@ export async function PUT(request: NextRequest) {
   const { error } = await supabase
     .from("bling_seller_map")
     .upsert(
-      { user_email: email, bling_seller_id: sellerId, updated_at: new Date().toISOString() },
-      { onConflict: "user_email" }
+      { user_email: email, account, bling_seller_id: sellerId,
+        updated_at: new Date().toISOString() },
+      { onConflict: "user_email,account" }
     );
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, user_email: email, bling_seller_id: sellerId });
+  return NextResponse.json({ ok: true, user_email: email, account, bling_seller_id: sellerId });
 }

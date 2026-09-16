@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import type { Lead, Message } from "@/lib/types";
 
 interface ChatPanelProps {
@@ -36,7 +37,7 @@ export function ChatPanel({ lead, onClose }: ChatPanelProps) {
         { event: "INSERT", schema: "public", table: "messages", filter: `lead_id=eq.${lead.id}` },
         (payload) => setMessages((prev) => [...prev, payload.new as Message]),
       )
-      .subscribe();
+      .subscribe(onResubscribe(fetchMessages));
 
     return () => { supabase.removeChannel(channel); };
   }, [lead.id, fetchMessages]);

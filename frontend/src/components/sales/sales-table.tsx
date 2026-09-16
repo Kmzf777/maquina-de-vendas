@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { Pencil, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/types";
-import { blingOrderUrl, foraDoBling, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
+import { accountLabel, blingOrderUrl, foraDoBling, orderLabel, saleStatus, type StatusTone } from "@/lib/sale-display";
+import { useBlingStatus } from "@/hooks/use-bling-status";
 
 // Cores da paleta da tabela para cada tom devolvido por saleStatus().
 const TONE_COLOR: Record<StatusTone, string> = {
@@ -25,6 +26,9 @@ interface SalesTableProps {
 const LIMIT = 25;
 
 export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, onDelete }: SalesTableProps) {
+  // Lista de contas para rotular o link do pedido. O hook tem memo de modulo,
+  // entao isto nao acrescenta requisicao — reusa a que a tela ja fez.
+  const contasBling = useBlingStatus().accounts;
   const totalPages = Math.ceil(count / LIMIT);
 
   if (loading) {
@@ -68,6 +72,12 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
               // O numero do pedido so chega no enriquecimento/webhook; enquanto
               // nao chega, o link existe e o rotulo ainda nao — dai o fallback.
               const pedido = orderLabel(sale) || (pedidoUrl ? "Ver no Bling" : "");
+              // O Bling NAO tem URL que force a conta: o link abre no painel de
+              // onde o usuario ja estiver logado, e um pedido da conta 2 aberto
+              // por quem esta na conta 1 mostra "nao encontrado". Nao da para
+              // resolver no link — da para dizer em qual painel entrar antes de
+              // clicar. Devolve null com uma conta so, entao nada muda hoje.
+              const rotuloConta = accountLabel(sale, contasBling);
               const situacao = saleStatus(sale);
               return (
               <tr key={sale.id} className="border-b border-[#dedbd6]/50 hover:bg-[#faf9f6] transition-colors">
@@ -116,6 +126,9 @@ export function SalesTable({ sales, loading, count, page, onPageChange, onEdit, 
                     </a>
                   ) : (
                     <span className="text-[#111111]">{pedido}</span>
+                  )}
+                  {rotuloConta && (
+                    <span className="block text-[11px] text-[#7b7b78]">{rotuloConta}</span>
                   )}
                 </td>
                 <td className="py-3 px-3 whitespace-nowrap">

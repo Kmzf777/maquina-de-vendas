@@ -28,12 +28,12 @@ import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.bling import auth, config, contacts, jobs
-from app.bling.errors import TRANSIENT, BlingError, BlingValidationError
+from app.bling.errors import TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError
 from app.bling.orders import create_order, update_order
 from app.config import settings
 from app.db.supabase import get_supabase
@@ -41,6 +41,20 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/bling", tags=["bling"])
+
+
+def _conta_valida(account: str) -> config.BlingAccount:
+    """Resolve a conta ou devolve 400. Slug errado e erro do chamador.
+
+    Unico ponto do modulo onde um slug de conta vindo de fora (query string ou
+    corpo do POST) e validado. Todo endpoint que aceita `account` chama isto
+    PRIMEIRO e so repassa `.key` (a versao normalizada) para `contacts`,
+    `orders` e `auth` — nunca o parametro cru.
+    """
+    try:
+        return config.account(account)
+    except BlingUnknownAccount as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class OrderItemIn(BaseModel):
@@ -69,6 +83,12 @@ class OrderIn(BaseModel):
     items: list[OrderItemIn]
     payment: PaymentIn
     notes: str = ""
+    # CNPJ (conta Bling) da venda. Sobe DENTRO do corpo, nao como query param:
+    # este e um POST/PUT com body Pydantic e o proxy Next.js
+    # (frontend/src/app/api/bling/orders/**) repassa o JSON inteiro sem
+    # filtrar chaves — um Query() aqui nunca veria o valor que o vendedor
+    # escolheu, porque a URL do proxy para o backend nao carrega query string.
+    account: str = config.DEFAULT_ACCOUNT
 
 
 # Formato de e-mail: ESPELHO EXATO do `EMAIL_RE` de
@@ -108,6 +128,10 @@ class ContactIn(BaseModel):
     telefone: str | None = None
     celular: str | None = None
     endereco: dict | None = None
+    # Mesmo raciocinio do account em OrderIn: sobe no corpo porque o proxy
+    # Next.js (frontend/src/app/api/bling/contacts/route.ts) repassa o JSON
+    # inteiro sem filtrar chaves.
+    account: str = config.DEFAULT_ACCOUNT
 
     @field_validator("email")
     @classmethod
@@ -133,10 +157,10 @@ def _termo_seguro(q: str) -> str:
     return q.translate(str.maketrans({",": " ", "(": " ", ")": " ", '"': " "})).strip()
 
 
-def _query_products(q: str | None, limit: int):
+def _query_products(q: str | None, limit: int, account: str):
     query = (get_supabase().table("bling_products")
              .select("id, codigo, nome, preco, unidade, saldo_virtual, imagem_url")
-             .eq("situacao", "A"))
+             .eq("situacao", "A").eq("account", account))
     if q:
         alvo = f"%{_termo_seguro(q)}%"
         query = query.or_(f"nome.ilike.{alvo},codigo.ilike.{alvo}")
@@ -144,13 +168,15 @@ def _query_products(q: str | None, limit: int):
 
 
 @router.get("/products")
-async def list_products(q: str | None = Query(None), limit: int = Query(50, le=200)):
+async def list_products(q: str | None = Query(None), limit: int = Query(50, le=200),
+                         account: str = Query(config.DEFAULT_ACCOUNT)):
     """Busca no ESPELHO, nunca no Bling — o combobox dispara a cada tecla."""
-    data = await asyncio.to_thread(_query_products, q, limit)
+    conta = _conta_valida(account)
+    data = await asyncio.to_thread(_query_products, q, limit, conta.key)
     return {"data": data}
 
 
-def _query_catalog(q: str | None, situacao: str | None, page: int, limit: int):
+def _query_catalog(q: str | None, situacao: str | None, page: int, limit: int, account: str):
     """Catalogo completo, paginado. Diferente de `_query_products`, que fixa
     situacao='A' e teto de 200 porque nasceu para um combobox.
 
@@ -159,7 +185,8 @@ def _query_catalog(q: str | None, situacao: str | None, page: int, limit: int):
     inicio = (page - 1) * limit
     query = (get_supabase().table("bling_products")
              .select("id, codigo, nome, preco, unidade, situacao, saldo_virtual, "
-                     "imagem_url", count="exact"))
+                     "imagem_url", count="exact")
+             .eq("account", account))
     if situacao:
         query = query.eq("situacao", situacao)
     if q:
@@ -171,23 +198,27 @@ def _query_catalog(q: str | None, situacao: str | None, page: int, limit: int):
 
 @router.get("/catalog")
 async def list_catalog(q: str | None = Query(None), situacao: str | None = Query(None),
-                        page: int = Query(1, ge=1), limit: int = Query(50, le=200)):
+                        page: int = Query(1, ge=1), limit: int = Query(50, le=200),
+                        account: str = Query(config.DEFAULT_ACCOUNT)):
     """Catalogo do espelho para a tela de produtos — nunca a API do Bling.
 
     Diferente de GET /products (combobox de pedido: so ativos, teto de 200),
     aqui a paginacao e explicita e o total vem do PostgREST via `count=exact`.
     """
-    data, total = await asyncio.to_thread(_query_catalog, q, situacao, page, limit)
+    conta = _conta_valida(account)
+    data, total = await asyncio.to_thread(_query_catalog, q, situacao, page, limit, conta.key)
     return {"data": data, "page": page, "limit": limit, "total": total}
 
 
-def _query_contacts(q: str | None, limit: int, contact_id: int | None = None):
+def _query_contacts(q: str | None, limit: int, account: str, contact_id: int | None = None):
     query = (get_supabase().table("bling_contacts")
              .select("id, nome, fantasia, doc_digits, telefone_e164, celular_e164, "
-                     "email, situacao, endereco"))
+                     "email, situacao, endereco")
+             .eq("account", account))
     if contact_id is not None:
-        # id e exato (chave do espelho): combinar com o `or_` de texto nao faz
-        # sentido, entao o id vence e o texto e ignorado.
+        # id e exato (chave do espelho, agora composta (account, id)): combinar
+        # com o `or_` de texto nao faz sentido, entao o id vence e o texto e
+        # ignorado.
         query = query.eq("id", contact_id)
     elif q:
         alvo = f"%{_termo_seguro(q)}%"
@@ -197,70 +228,87 @@ def _query_contacts(q: str | None, limit: int, contact_id: int | None = None):
 
 @router.get("/contacts/search")
 async def search_contacts(q: str | None = Query(None), id: int | None = Query(None),
-                           limit: int = Query(20, le=100)):
+                           limit: int = Query(20, le=100),
+                           account: str = Query(config.DEFAULT_ACCOUNT)):
     """Busca no ESPELHO, nunca no Bling — o campo dispara a cada tecla.
 
-    `id` busca exata pela chave do espelho — usada pela tela de detalhe do
-    lead para carregar o contato ja vinculado (`leads.bling_contact_id`)
-    mesmo quando o lead nao tem CNPJ para servir de termo de busca (vinculo
-    por telefone/e-mail ou escolhido a mao).
+    `id` busca exata pela chave (account, id) do espelho — usada pela tela de
+    detalhe do lead para carregar o contato ja vinculado ao lead NESTA conta
+    (`contacts._contato_do_lead`, tabela `lead_bling_contacts` — a coluna
+    `leads.bling_contact_id` foi aposentada pela Task 7) mesmo quando o lead
+    nao tem CNPJ para servir de termo de busca (vinculo por telefone/e-mail ou
+    escolhido a mao).
     """
-    return {"data": await asyncio.to_thread(_query_contacts, q, limit, id)}
+    conta = _conta_valida(account)
+    return {"data": await asyncio.to_thread(_query_contacts, q, limit, conta.key, id)}
 
 
-def _query_payment_methods():
+def _query_payment_methods(account: str):
     rows = getattr(get_supabase().table("bling_payment_methods")
-                   .select("*").order("descricao").execute(), "data", None) or []
+                   .select("*").eq("account", account).order("descricao").execute(),
+                   "data", None) or []
     # finalidade: 1 pagamentos, 2 recebimentos, 3 ambos. Venda usa 2 ou 3.
     return [m for m in rows
             if m.get("situacao") == 1 and m.get("finalidade") in (2, 3)]
 
 
 @router.get("/payment-methods")
-async def list_payment_methods():
-    return {"data": await asyncio.to_thread(_query_payment_methods)}
+async def list_payment_methods(account: str = Query(config.DEFAULT_ACCOUNT)):
+    conta = _conta_valida(account)
+    return {"data": await asyncio.to_thread(_query_payment_methods, conta.key)}
 
 
-def _query_sellers():
+def _query_sellers(account: str):
     return getattr(get_supabase().table("bling_sellers").select("*")
-                   .order("nome").execute(), "data", None) or []
+                   .eq("account", account).order("nome").execute(), "data", None) or []
 
 
 @router.get("/sellers")
-async def list_sellers():
-    return {"data": await asyncio.to_thread(_query_sellers)}
+async def list_sellers(account: str = Query(config.DEFAULT_ACCOUNT)):
+    conta = _conta_valida(account)
+    return {"data": await asyncio.to_thread(_query_sellers, conta.key)}
 
 
 # --------------------------------------------------------------------------
 # Pedido
 # --------------------------------------------------------------------------
 def _load_lead(lead_id: str) -> dict | None:
+    # `bling_contact_id` NAO entra mais na projecao: Task 7 moveu o vinculo
+    # lead-contato para `lead_bling_contacts` (uma linha por lead+conta) --
+    # quem precisa do contato vinculado usa `contacts._contato_do_lead`
+    # (chamado indiretamente por `contacts.resolve`), nunca esta coluna.
     res = (get_supabase().table("leads")
-           .select("id, name, phone, telefone_comercial, email, cnpj, bling_contact_id")
+           .select("id, name, phone, telefone_comercial, email, cnpj")
            .eq("id", lead_id).limit(1).maybe_single().execute())
     return getattr(res, "data", None)
 
 
-def _seller_id_for(email: str | None) -> int | None:
+def _seller_id_for(email: str | None, account: str) -> int | None:
     if not email:
         return None
     res = (get_supabase().table("bling_seller_map").select("bling_seller_id")
-           .eq("user_email", email).limit(1).maybe_single().execute())
+           .eq("user_email", email).eq("account", account).limit(1).maybe_single().execute())
     row = getattr(res, "data", None) or {}
     return row.get("bling_seller_id")
 
 
-def _products_by_id(ids: list[int]) -> dict[int, dict]:
-    """Le do espelho SO os produtos citados no pedido.
+def _products_by_id(ids: list[int], account: str) -> dict[int, dict]:
+    """Le do espelho SO os produtos citados no pedido, DENTRO da conta.
 
     Filtrar por id (em vez de varrer a tabela) nao e so economia: o PostgREST
     devolve no maximo 1000 linhas por padrao, entao um catalogo maior que isso
     faria o produto do pedido simplesmente nao aparecer e a descricao cair no
     generico "Item" — dado errado dentro do ERP, em silencio.
+
+    O recorte por conta e obrigatorio desde a PK composta (account, id): as duas
+    contas tem sequencias de id independentes, entao o mesmo numero existe nas
+    duas apontando para produtos DIFERENTES. Sem o filtro, esta funcao devolve
+    a linha que o Postgres entregar primeiro e o item do pedido sai com a
+    descricao do produto do outro CNPJ.
     """
     if not ids:
         return {}
-    rows = getattr(get_supabase().table("bling_products")
+    rows = getattr(get_supabase().table("bling_products").eq("account", account)
                    .select("id, nome, codigo, unidade")
                    .in_("id", ids).execute(), "data", None) or []
     return {int(p["id"]): p for p in rows}
@@ -268,11 +316,12 @@ def _products_by_id(ids: list[int]) -> dict[int, dict]:
 
 @router.post("/orders")
 async def create_order_endpoint(body: OrderIn):
+    conta = _conta_valida(body.account)
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
 
-    resolucao = await contacts.resolve(lead)
+    resolucao = await contacts.resolve(lead, conta.key)
     if resolucao.status != "linked":
         # Nunca chuta o contato: sem match unico por documento, decide o humano.
         # Nada e criado aqui — nem contato, nem venda, nem job.
@@ -297,7 +346,7 @@ async def create_order_endpoint(body: OrderIn):
     faltando = [i for i in itens if not i["descricao"]]
     if faltando:
         por_id = await asyncio.to_thread(
-            _products_by_id, [i["bling_product_id"] for i in faltando]
+            _products_by_id, [i["bling_product_id"] for i in faltando], conta.key
         )
         for item in faltando:
             p = por_id.get(item["bling_product_id"]) or {}
@@ -314,13 +363,14 @@ async def create_order_endpoint(body: OrderIn):
         "sold_by": body.sold_by,
         "itens": itens,
         "payment": {"method_id": body.payment.method_id, "terms": body.payment.terms},
-        "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by),
+        "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by, conta.key),
         "notes": body.notes,
+        "account": conta.key,
     }
 
     from app.bling.client import BlingClient
     try:
-        async with BlingClient() as client:
+        async with BlingClient(account=conta.key) as client:
             out = await create_order(client, **kwargs)
     except BlingValidationError as exc:
         # Repetir payload invalido nunca conserta — nao vai para a fila.
@@ -329,8 +379,16 @@ async def create_order_endpoint(body: OrderIn):
             "detail": exc.description, "type": exc.type,
         }, status_code=422)
     except TRANSIENT as exc:
-        await jobs.enqueue("create_order", kwargs)
-        logger.warning("[BLING] pedido enfileirado (Bling indisponivel): %s", exc)
+        # `account=` PRECISA ir aqui. A conta oficial do job e a da LINHA, nao a
+        # do payload — `_handle_create_order` descarta a do payload de proposito,
+        # para nao colidir com o parametro nomeado. Sem passar a conta no enqueue,
+        # a linha nasce com a conta padrao e a retentativa roda INTEIRA como
+        # conta 1: autentica no Bling do CNPJ errado e cria o pedido la, sem erro
+        # nenhum na tela. E o mesmo defeito que esta entrega existe para impedir,
+        # so que no caminho da fila.
+        await jobs.enqueue("create_order", kwargs, account=conta.key)
+        logger.warning("[BLING] pedido enfileirado (conta %s, Bling indisponivel): %s",
+                       conta.key, exc)
         return JSONResponse({"status": "queued", "reason": str(exc)}, status_code=202)
     except BlingError as exc:
         return JSONResponse({"error": "bling", "message": str(exc)}, status_code=502)
@@ -343,6 +401,7 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
     """422 quando o Bling recusa (pedido faturado, tipicamente) — a UI pergunta
     se salva so no CRM e marca divergencia. 202 quando o erro e transitorio:
     ai NAO e divergencia, e retentativa (sem job — ver docstring do modulo)."""
+    conta = _conta_valida(body.account)
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
@@ -353,7 +412,7 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
     # `contacts`). So volta a exigir decisao humana se o vinculo tiver sido
     # desfeito manualmente depois — o mesmo caso que o POST ja trata, entao
     # reusar em vez de inventar um caminho novo para o PUT.
-    resolucao = await contacts.resolve(lead)
+    resolucao = await contacts.resolve(lead, conta.key)
     if resolucao.status != "linked":
         return JSONResponse({
             "error": "contact_unresolved",
@@ -376,7 +435,7 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
     faltando = [i for i in itens if not i["descricao"]]
     if faltando:
         por_id = await asyncio.to_thread(
-            _products_by_id, [i["bling_product_id"] for i in faltando]
+            _products_by_id, [i["bling_product_id"] for i in faltando], conta.key
         )
         for item in faltando:
             p = por_id.get(item["bling_product_id"]) or {}
@@ -390,13 +449,14 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
         "sold_at": body.sold_at,
         "itens": itens,
         "payment": {"method_id": body.payment.method_id, "terms": body.payment.terms},
-        "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by),
+        "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by, conta.key),
         "notes": body.notes,
+        "account": conta.key,
     }
 
     from app.bling.client import BlingClient
     try:
-        async with BlingClient() as client:
+        async with BlingClient(account=conta.key) as client:
             await update_order(client, **kwargs)
     except BlingValidationError as exc:
         # Repetir a mesma alteracao recusada nunca conserta — nao vira retentativa.
@@ -420,32 +480,45 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
 @router.post("/contacts")
 async def create_contact_endpoint(body: ContactIn):
     """Cria o contato no Bling e vincula ao lead (fluxo do 409)."""
+    conta = _conta_valida(body.account)
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
 
     from app.bling.client import BlingClient
-    dados = body.model_dump(exclude={"lead_id"}, exclude_none=True)
+    # `account` sai de `dados`: e roteamento (qual conta do Bling), nao um
+    # campo do contato -- `contacts.create_contact` so espera nome,
+    # numeroDocumento, tipo, email, telefone, celular, endereco.
+    dados = body.model_dump(exclude={"lead_id", "account"}, exclude_none=True)
     try:
-        async with BlingClient() as client:
-            contact_id = await contacts.create_contact(client, lead, dados)
+        async with BlingClient(account=conta.key) as client:
+            contact_id = await contacts.create_contact(client, lead, dados, account=conta.key)
     except BlingValidationError as exc:
         return JSONResponse({"error": "validation", "message": str(exc),
                              "detail": exc.description}, status_code=exc.status)
-    return {"bling_contact_id": contact_id}
+    except BlingError as exc:
+        # Antes so BlingValidationError era pega. Com multi-conta,
+        # BlingNotConfigured/BlingAuthError/BlingServerError deixam de ser
+        # teoricos aqui: uma conta valida mas ainda sem token (nunca passou
+        # pelo OAuth) cai exatamente neste caminho. Sem isto, 500 opaco.
+        return JSONResponse({"error": "bling", "message": str(exc)}, status_code=502)
+    return {"bling_contact_id": contact_id, "account": conta.key}
 
 
 @router.post("/contacts/link")
-async def link_contact_endpoint(lead_id: str, contact_id: int):
+async def link_contact_endpoint(lead_id: str, contact_id: int,
+                                 account: str = Query(config.DEFAULT_ACCOUNT)):
     """Confirma manualmente um candidato sugerido."""
-    await contacts.link(lead_id, contact_id)
+    conta = _conta_valida(account)
+    await contacts.link(lead_id, contact_id, conta.key)
     return {"linked": True}
 
 
 @router.post("/contacts/unlink")
-async def unlink_contact_endpoint(lead_id: str):
+async def unlink_contact_endpoint(lead_id: str, account: str = Query(config.DEFAULT_ACCOUNT)):
     """Desfaz o vinculo lead-contato (a proxima venda volta a resolucao por documento)."""
-    await contacts.unlink(lead_id)
+    conta = _conta_valida(account)
+    await contacts.unlink(lead_id, conta.key)
     return {"unlinked": True}
 
 
@@ -453,33 +526,72 @@ async def unlink_contact_endpoint(lead_id: str):
 # OAuth e operacao
 # --------------------------------------------------------------------------
 @router.get("/oauth/authorize")
-async def oauth_authorize():
-    # Sem credenciais, authorize_url levanta BlingNotConfigured e o admin veria um
-    # 500 opaco em vez de "falta configurar". is_configured() e a fonte unica da regra.
-    if not config.is_configured():
+async def oauth_authorize(account: str = Query(config.DEFAULT_ACCOUNT)):
+    # Slug invalido vira 400 aqui (_conta_valida), antes de qualquer outra
+    # checagem. Sem credenciais NESTA conta, begin_authorization levantaria
+    # BlingNotConfigured e o admin veria um 500 opaco em vez de "falta
+    # configurar" -- `conta.configured` (Task 1) e a fonte unica da regra,
+    # agora por conta (era `config.is_configured()` global).
+    #
+    # new_state e authorize_url NUNCA sao chamados em separado aqui -- so
+    # `begin_authorization`, que garante a MESMA conta nos dois. Como as duas
+    # contas podem compartilhar client_id/client_secret, um par trocado nao
+    # erraria do lado do Bling: gravaria o token exchangeado no CNPJ errado,
+    # em silencio.
+    conta = _conta_valida(account)
+    if not conta.configured:
         return JSONResponse({"error": "not_configured"}, status_code=400)
-    state = await auth.new_state()
-    return {"url": auth.authorize_url(state)}
+    return {"url": await auth.begin_authorization(conta.key)}
 
 
 @router.get("/oauth/callback")
 async def oauth_callback(code: str = "", state: str = ""):
     # O state e a protecao anti-CSRF do fluxo: validado (e queimado) ANTES de o
     # code ser trocado, senao um callback forjado plantaria o token de outra conta.
-    if not await auth.consume_state(state):
-        return JSONResponse({"error": "invalid_state"}, status_code=400)
-    # O authorization_code expira em 1 MINUTO — troca imediata.
-    await auth.exchange_code(code)
+    # Checagem EXPLICITA contra None, nao truthiness: consume_state devolve a
+    # CONTA como string, e uma conta vazia normaliza para default dentro de
+    # config.account() -- "" e um resultado VALIDO do consumo, so None e
+    # invalido (state ausente, inexistente ou ja usado).
+    conta = await auth.consume_state(state)
+    if conta is None:
+        return JSONResponse({"error": "state_invalido"}, status_code=400)
+    # O authorization_code expira em 1 MINUTO — troca imediata. `conta` (nao a
+    # default) vai para exchange_code: e a MESMA conta que o state carregava
+    # desde que o fluxo comecou em oauth_authorize, senao o token cairia no
+    # CNPJ errado.
+    await auth.exchange_code(code, conta)
     destino = (settings.frontend_url or "").rstrip("/") + "/config?bling=ok"
     return RedirectResponse(destino, status_code=302)
 
 
 @router.get("/status")
 async def bling_status():
-    # `configured` ja vem de auth.status(), que consulta config.is_configured().
-    # `enabled` e outra coisa: o toggle BLING_ENABLED que liga os workers.
-    estado = await auth.status()
-    return {**estado, "enabled": config.enabled()}
+    # auth.status() devolve LISTA (Task 4: uma entrada por conta). O JSON aqui
+    # continua ADITIVO de proposito -- nunca troque por `return {**contas, ...}`
+    # nem por `return contas`. use-bling-status.ts le body.enabled e
+    # body.connected direto do topo; se sumissem, os dois virariam undefined no
+    # frontend, o hook devolveria enabled:false e blingGate cairia em
+    # mode:"legacy", canSubmit:true -- as vendas parariam de ir para o Bling SEM
+    # NENHUM ERRO na tela. `accounts` e o dado novo, ao lado, nao no lugar.
+    #
+    # configured/access_expires_at/refresh_expires_at/scope no topo NAO sao
+    # redundancia gratuita: bling-settings.tsx busca este endpoint DIRETO (nao
+    # via use-bling-status.ts) e le estas quatro chaves no topo. Sem elas,
+    # `configured` vira undefined -> o banner de credenciais ausentes fica
+    # preso ligado e o botao Conectar/Reconectar fica desabilitado PARA
+    # SEMPRE; e o aviso de expiracao do refresh_token (5 dias de antecedencia)
+    # nunca mais dispara. Todas as quatro sao da conta DEFAULT, igual `connected`.
+    contas = await auth.status()
+    padrao = next((c for c in contas if c["account"] == config.DEFAULT_ACCOUNT), {})
+    return {
+        "enabled": config.enabled(),
+        "connected": bool(padrao.get("connected")),
+        "configured": bool(padrao.get("configured")),
+        "access_expires_at": padrao.get("access_expires_at"),
+        "refresh_expires_at": padrao.get("refresh_expires_at"),
+        "scope": padrao.get("scope"),
+        "accounts": contas,
+    }
 
 
 @router.post("/sync")

@@ -1,6 +1,7 @@
 import asyncio
 
 import app.bling.products as prod
+from app.bling import config
 
 
 class FakeTable:
@@ -86,14 +87,17 @@ def test_sync_completo_usa_criterio_5_e_faz_upsert(monkeypatch):
     monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(prod, "_save_sync_state", lambda *a, **k: None)
 
-    n = asyncio.run(prod.sync_products(client, full=True))
+    n = asyncio.run(prod.sync_products(client, config.DEFAULT_ACCOUNT, full=True))
 
     assert n == 2
     # criterio=5 => "Todos" (inclui inativos). Produto inativo precisa ficar no
     # espelho para pedidos antigos e o backfill resolverem a descricao.
     assert client.params["criterio"] == 5
-    assert store["on_conflict"] == "id"
+    # PK composta (account, id) desde a segunda conta -- ver migration
+    # 20260913_bling_multi_conta.sql.
+    assert store["on_conflict"] == "account,id"
     assert len(store["bling_products"]) == 2
+    assert all(row["account"] == config.DEFAULT_ACCOUNT for row in store["bling_products"])
 
 
 def test_sync_incremental_manda_data_alteracao_inicial(monkeypatch):
@@ -102,7 +106,7 @@ def test_sync_incremental_manda_data_alteracao_inicial(monkeypatch):
     monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(prod, "_save_sync_state", lambda *a, **k: None)
 
-    asyncio.run(prod.sync_products(client, full=False))
+    asyncio.run(prod.sync_products(client, config.DEFAULT_ACCOUNT, full=False))
 
     # Convertido para o formato que o Bling exige ('Y-m-d H:i:s') com a margem
     # de seguranca de 6h subtraida -- NAO e mais o ISO 8601 cru gravado em
@@ -117,7 +121,7 @@ def test_sem_estado_anterior_cai_para_sync_completo(monkeypatch):
     monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(prod, "_save_sync_state", lambda *a, **k: None)
 
-    asyncio.run(prod.sync_products(client, full=False))
+    asyncio.run(prod.sync_products(client, config.DEFAULT_ACCOUNT, full=False))
 
     assert client.params["criterio"] == 5
 
@@ -132,7 +136,7 @@ def test_sync_grava_em_lotes_sem_perder_o_resto_do_buffer(monkeypatch):
     monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(prod, "_save_sync_state", lambda *a, **k: None)
 
-    n = asyncio.run(prod.sync_products(client, full=True, batch_size=3))
+    n = asyncio.run(prod.sync_products(client, config.DEFAULT_ACCOUNT, full=True, batch_size=3))
 
     assert n == 7
     assert len(store["bling_products"]) == 7
@@ -146,12 +150,55 @@ def test_apply_webhook_product_faz_upsert(monkeypatch):
     monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
     payload = {"id": 55, "nome": "Novo", "codigo": "X", "preco": 9.9,
                "situacao": "A", "tipo": "P", "formato": "S"}
-    asyncio.run(prod.apply_product_event("product.updated", payload))
+    asyncio.run(prod.apply_product_event("product.updated", payload, config.DEFAULT_ACCOUNT))
     assert store["bling_products"][0]["id"] == 55
 
 
 def test_apply_webhook_deleted_marca_inativo(monkeypatch):
     store = {}
     monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
-    asyncio.run(prod.apply_product_event("product.deleted", {"id": 55}))
+    asyncio.run(prod.apply_product_event("product.deleted", {"id": 55}, config.DEFAULT_ACCOUNT))
     assert store["bling_products"][0]["situacao"] == "I"
+
+
+def test_apply_product_event_grava_a_conta_no_espelho(monkeypatch):
+    """Cada webhook de produto chega de UMA conta especifica. Se o account nao
+    fosse gravado, o produto de id=55 da conta secundaria pisaria na mesma
+    linha do id=55 da conta default -- a PK da tabela agora e (account, id)."""
+    store = {}
+    monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
+    payload = {"id": 55, "nome": "Novo", "codigo": "X", "preco": 9.9,
+               "situacao": "A", "tipo": "P", "formato": "S"}
+    asyncio.run(prod.apply_product_event("product.updated", payload, "secundaria"))
+    assert store["bling_products"][0]["account"] == "secundaria"
+
+
+def test_apply_product_event_deleted_tambem_grava_a_conta(monkeypatch):
+    store = {}
+    monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
+    asyncio.run(prod.apply_product_event("product.deleted", {"id": 55}, "secundaria"))
+    assert store["bling_products"][0]["account"] == "secundaria"
+
+
+def test_upsert_injeta_account_e_usa_conflito_composto_account_id(monkeypatch):
+    """_upsert e o unico lugar que grava em bling_products -- se ele nao
+    carimbar `account` em cada linha ou nao mirar o conflito composto, as duas
+    contas colidem na mesma PK (account, id) da migration 20260913."""
+    store = {}
+    monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
+
+    asyncio.run(prod._upsert([{"id": 1, "nome": "A"}, {"id": 2, "nome": "B"}], "secundaria"))
+
+    assert store["on_conflict"] == "account,id"
+    assert all(row["account"] == "secundaria" for row in store["bling_products"])
+
+
+def test_save_sync_state_usa_conflito_composto_account_resource(monkeypatch):
+    """bling_sync_state ganhou PK (account, resource) na mesma migration --
+    on_conflict="resource" sozinho voltaria a colidir entre as duas contas."""
+    store = {}
+    monkeypatch.setattr(prod, "get_supabase", lambda: FakeSupabase(store))
+
+    prod._save_sync_state("products", "secundaria", last_sync_at="2026-09-13T00:00:00+00:00")
+
+    assert store["on_conflict"] == "account,resource"

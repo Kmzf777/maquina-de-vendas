@@ -420,3 +420,99 @@ adicionar erro novo, não zerar.
 
 O `refresh_token` vence **18/09/2026**. `/config` avisa quando faltarem menos de 5 dias;
 perdê-lo obriga a refazer o OAuth no navegador.
+
+---
+
+# Segunda conta Bling (segundo CNPJ)
+
+Entrega de 13–16/09/2026. Spec: `docs/superpowers/specs/2026-09-13-bling-segunda-conta-design.md`.
+Plano: `docs/superpowers/plans/2026-09-13-bling-segunda-conta.md`.
+
+## O que mudou, em uma frase
+
+Tudo que vinha do Bling era chaveado pelo ID cru do Bling — e ID do Bling é
+sequência **por conta**. Produto 123 da conta A e produto 123 da conta B eram a
+mesma linha. Sincronizar a segunda conta sobrescreveria o catálogo da primeira,
+em silêncio. Agora toda chave é composta: `(account, id)`.
+
+## Variáveis de ambiente
+
+A conta atual mantém o slug `default` e **lê exatamente as variáveis de hoje**.
+Nada que já existe muda de nome ou de valor.
+
+```
+BLING_ACCOUNTS=default,secundaria          # ausente => so a default, tudo como hoje
+BLING_SECUNDARIA_LABEL="Canastra CNPJ 2"
+BLING_SECUNDARIA_CLIENT_ID=...             # ausente => cai para BLING_CLIENT_ID
+BLING_SECUNDARIA_CLIENT_SECRET=...         # idem
+BLING_SECUNDARIA_STORE_ID=...
+BLING_SECUNDARIA_ORDER_SITUACAO_ID=...
+```
+
+O fallback para a variável global resolve as duas topologias sem decidir por
+antecipação: se vocês autorizarem **o mesmo aplicativo Bling** nas duas contas
+(caminho natural do OAuth), `client_id` e `client_secret` são compartilhados e só
+entram label e `store_id`/`situacao_id`. Se forem dois aplicativos, preenche-se
+os dois pares.
+
+## Ordem de subida — a janela importa
+
+1. Aplicar `supabase/migrations/20260913_bling_multi_conta.sql` à mão no SQL
+   editor do Supabase.
+2. **Push imediatamente em seguida.**
+3. Só então preencher `BLING_ACCOUNTS` no `.env` da VPS e conectar a conta 2 em
+   `/config`.
+
+> ⚠️ **Existe uma janela real entre 1 e 2.** Com a PK já composta e o código
+> antigo ainda no ar, todo upsert com `on_conflict="id"` toma `42P10`: **sync de
+> catálogo e criação de pedido falham** nesse intervalo. Os passos 1 e 2 têm que
+> ser consecutivos e em **horário de baixo movimento**. Um vendedor que emitir
+> pedido dentro da janela recebe erro.
+
+Até o passo 3 acontecer, o sistema roda **idêntico ao de hoje**: uma conta, mesmo
+comportamento, seletor invisível na tela.
+
+## Webhook da conta 2
+
+Cadastrar no painel do Bling da segunda conta:
+
+```
+https://api.canastrainteligencia.com/webhook/bling/secundaria
+```
+
+> ⚠️ **A rota sem slug (`/webhook/bling`) NÃO pode ser removida.** O painel da
+> conta 1 aponta para ela. Se ela sumir, os webhooks passam a 404, o Bling
+> retenta por até 3 dias e depois **DESABILITA a configuração** — a integração
+> para em silêncio até alguém reabilitar na mão.
+
+## Recuperação: só para frente
+
+**Não existe down-migration.** Voltar a imagem antiga da aplicação sem reverter o
+schema não conserta nada — reproduz o mesmo `42P10`, agora sem prazo para acabar.
+E se a conta 2 já tiver sincronizado, o código antigo lendo `bling_products` /
+`bling_contacts` por `id` puro pode receber **mais de uma linha** onde espera
+uma: falha pior e mais silenciosa que o `42P10`.
+
+Se precisar reverter de verdade, o schema tem que voltar junto, e esse script não
+existe pronto.
+
+## O que ainda NÃO está fechado
+
+| Item | Situação |
+|---|---|
+| Verificação do `42P10` contra o Postgres real | ⏳ **obrigatória antes do push** — ver abaixo |
+| Migration aplicada | ⏳ não aplicada |
+| Conta 2 conectada via OAuth | ⏳ depende do passo 3 |
+| Mapeamento de vendedores por conta | ⏳ a tela existe por conta; popular os dados é decisão separada |
+| Backfill da conta 2 | ❌ fora de escopo por decisão (paridade sem histórico) |
+
+### A verificação que nenhum teste substitui
+
+Os dublês do Supabase **não fazem inferência real de índice** — isso está
+documentado em `20260818_bling_integration.sql`, e foi o que deixou o `42P10`
+passar da primeira vez. Suíte verde não prova que o `on_conflict` composto
+funciona.
+
+Depois de aplicar a migration e antes do push, criar **um pedido de teste real**
+e confirmar que a linha aparece em `sales` com o `bling_account` correto. É a
+única forma de fechar esse risco.

@@ -217,7 +217,7 @@ def test_sync_contacts_incremental_usa_data_alteracao(monkeypatch):
     monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    n = asyncio.run(sync.sync_contacts(client))
+    n = asyncio.run(sync.sync_contacts(client, sync.config.DEFAULT_ACCOUNT))
 
     assert n == 1
     # Convertido para o formato do Bling ('Y-m-d H:i:s', sem T/offset) com a
@@ -235,7 +235,7 @@ def test_sync_contacts_manda_data_alteracao_ja_formatada_para_o_bling(monkeypatc
     monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    asyncio.run(sync.sync_contacts(client))
+    asyncio.run(sync.sync_contacts(client, sync.config.DEFAULT_ACCOUNT))
 
     enviado = client.params["/contatos"]["dataAlteracaoInicial"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", enviado)
@@ -249,7 +249,7 @@ def test_sync_contacts_completo_usa_criterio_1_todos(monkeypatch):
     monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    asyncio.run(sync.sync_contacts(client))
+    asyncio.run(sync.sync_contacts(client, sync.config.DEFAULT_ACCOUNT))
 
     assert client.params["/contatos"]["criterio"] == 1
 
@@ -264,7 +264,7 @@ def test_sync_contacts_estoura_batch_size_em_varios_upserts(monkeypatch):
     monkeypatch.setattr(sync, "get_supabase", lambda: fake)
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    n = asyncio.run(sync.sync_contacts(client, batch_size=3))
+    n = asyncio.run(sync.sync_contacts(client, sync.config.DEFAULT_ACCOUNT, batch_size=3))
 
     assert n == 7
     assert len(fake.batches) > 1
@@ -281,8 +281,8 @@ def test_sync_payment_methods_e_sellers(monkeypatch):
     monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    asyncio.run(sync.sync_payment_methods(client))
-    asyncio.run(sync.sync_sellers(client))
+    asyncio.run(sync.sync_payment_methods(client, sync.config.DEFAULT_ACCOUNT))
+    asyncio.run(sync.sync_sellers(client, sync.config.DEFAULT_ACCOUNT))
 
     assert store["bling_payment_methods"][0]["descricao"] == "Boleto"
     assert store["bling_sellers"][0]["nome"] == "Joao Bras"
@@ -307,7 +307,7 @@ def test_sync_situacoes_mapeia_id_nome_cor_modulo_id(monkeypatch):
     monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    n = asyncio.run(sync.sync_situacoes(client))
+    n = asyncio.run(sync.sync_situacoes(client, sync.config.DEFAULT_ACCOUNT))
 
     assert n == 2
     rows = {r["id"]: r for r in store["bling_situacoes"]}
@@ -332,30 +332,33 @@ def test_sync_situacoes_modulo_sem_situacoes_nao_quebra(monkeypatch):
     monkeypatch.setattr(sync, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(sync, "_save_sync_state", lambda *a, **k: None)
 
-    n = asyncio.run(sync.sync_situacoes(client))
+    n = asyncio.run(sync.sync_situacoes(client, sync.config.DEFAULT_ACCOUNT))
 
     assert n == 0
 
 
-def test_sync_all_inclui_situacoes(monkeypatch):
-    """sync_all passa a rodar sync_situacoes e devolver a contagem no dict de
-    retorno, no mesmo padrao dos outros syncs."""
-    async def fake_products(client, *, full=False):
+def test_sync_account_inclui_situacoes(monkeypatch):
+    """sync_account (o antigo sync_all, agora por UMA conta) roda sync_situacoes
+    e devolve a contagem no dict de retorno, no mesmo padrao dos outros syncs."""
+    async def fake_products(client, _account, *, full=False):
         return 1
 
-    async def fake_contacts(client):
+    async def fake_contacts(client, _account):
         return 2
 
-    async def fake_payment_methods(client):
+    async def fake_payment_methods(client, _account):
         return 3
 
-    async def fake_sellers(client):
+    async def fake_sellers(client, _account):
         return 4
 
-    async def fake_situacoes(client):
+    async def fake_situacoes(client, _account):
         return 9
 
     class FakeBlingClient:
+        def __init__(self, *_a, **_k):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -369,9 +372,59 @@ def test_sync_all_inclui_situacoes(monkeypatch):
     monkeypatch.setattr(sync, "sync_situacoes", fake_situacoes)
     monkeypatch.setattr("app.bling.client.BlingClient", FakeBlingClient)
 
-    resultado = asyncio.run(sync.sync_all())
+    resultado = asyncio.run(sync.sync_account(sync.config.DEFAULT_ACCOUNT))
 
     assert resultado["situacoes"] == 9
+
+
+async def test_sync_roda_para_cada_conta_configurada(monkeypatch):
+    from app.bling import sync
+
+    # BLING_ACCOUNTS e env cru (string) -- nao da pra referenciar
+    # config.DEFAULT_ACCOUNT dentro do proprio valor, so no que comparamos
+    # depois.
+    monkeypatch.setenv("BLING_ACCOUNTS", f"{sync.config.DEFAULT_ACCOUNT},secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+
+    chamadas = []
+
+    async def fake_sync_account(account, *, full=False):
+        chamadas.append(account)
+        return {"produtos": 0}
+
+    monkeypatch.setattr(sync, "sync_account", fake_sync_account)
+    resultado = await sync.sync_all()
+    assert chamadas == [sync.config.DEFAULT_ACCOUNT, "secundaria"]
+    assert set(resultado) == {sync.config.DEFAULT_ACCOUNT, "secundaria"}
+
+
+async def test_falha_numa_conta_nao_impede_a_outra(monkeypatch):
+    from app.bling import sync
+
+    monkeypatch.setenv("BLING_ACCOUNTS", f"{sync.config.DEFAULT_ACCOUNT},secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+
+    chamadas = []
+
+    async def fake_sync_account(account, *, full=False):
+        chamadas.append(account)
+        if account == sync.config.DEFAULT_ACCOUNT:
+            raise RuntimeError("conta 1 fora do ar")
+        return {"produtos": 3}
+
+    monkeypatch.setattr(sync, "sync_account", fake_sync_account)
+    resultado = await sync.sync_all()   # nao pode propagar a excecao
+    assert chamadas == [sync.config.DEFAULT_ACCOUNT, "secundaria"]
+    assert "erro" in resultado[sync.config.DEFAULT_ACCOUNT]
+    assert resultado["secundaria"] == {"produtos": 3}
+
+
+def test_sync_state_e_lido_por_conta():
+    from app.bling import sync
+    assert sync._state_filter("produtos", "secundaria") == {
+        "resource": "produtos", "account": "secundaria"}
 
 
 def test_tick_nao_faz_nada_quando_desabilitado(monkeypatch):

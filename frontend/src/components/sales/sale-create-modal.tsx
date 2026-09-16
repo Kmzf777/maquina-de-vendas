@@ -33,6 +33,40 @@ import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { productSummary } from "@/lib/bling";
 import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
+import { CONTA_PADRAO } from "@/lib/bling-accounts";
+
+/**
+ * `bling_account` ainda nao esta no tipo `Sale` compartilhado — adiciona-lo
+ * pertence a quem mantem `lib/types.ts` (fora do escopo desta task, ver
+ * `frontend/src/lib/**` na lista de arquivos vedados). A coluna existe desde a
+ * migration da segunda conta e `/api/sales` ja devolve `select("*")`, entao o
+ * dado chega no JSON de qualquer forma — esta e so a extensao de tipo local
+ * para o TypeScript aceitar a leitura.
+ */
+type SaleComConta = Sale & { bling_account?: string | null };
+
+/**
+ * Deriva a conta travada de uma venda em edicao — extraida para ser testada
+ * sem montar o modal inteiro (mesmo padrao de `bling-accounts.ts`).
+ *
+ * Editar um pedido que ja existe no Bling nao pode trocar de conta: o
+ * `bling_order_id` so existe naquele CNPJ, e IDs de contato/produto nao
+ * coincidem entre contas (mesma invariante da conversao de orcamento, design
+ * secao 7). `bling_account` so falta em vendas de antes da migration da
+ * segunda conta — ai cai no fallback de CONTA_PADRAO, o mesmo valor que a
+ * migration usou para o backfill dessas linhas.
+ */
+export function contaTravadaDaVenda(
+  venda: SaleComConta | null | undefined,
+  isEditing: boolean,
+  blingEditable: boolean,
+): { valor: string; dica: string } | undefined {
+  if (!isEditing || !blingEditable || !venda?.bling_order_id) return undefined;
+  return {
+    valor: venda.bling_account ?? CONTA_PADRAO,
+    dica: `Definido pelo pedido${venda.bling_order_number ? ` #${venda.bling_order_number}` : ""}`,
+  };
+}
 
 interface LeadDeal {
   id: string;
@@ -135,6 +169,18 @@ export function SaleCreateModal({
   // grande quando o status chega e pior do que abrir grande. Tratar loading
   // como Bling aqui evita o salto de tamanho.
   const blingLayout = (gate.mode === "bling" || gate.mode === "loading") && blingEditable;
+
+  // ── conta Bling ──────────────────────────────────────────────────────────
+  // Fonte da verdade da conta selecionada mora AQUI (nao em BlingOrderForm):
+  // este modal tambem fala com o Bling por fora dele (POST/PUT do pedido,
+  // BlingContactResolver), entao precisa saber a conta atual sem depender de
+  // ler de volta um estado interno do filho.
+  const [conta, setConta] = useState<string | null>(null);
+  const contaTravada = contaTravadaDaVenda(
+    editingSale as SaleComConta | null | undefined,
+    isEditing,
+    blingEditable,
+  );
 
   const [selectedLeadId, setSelectedLeadId] = useState(
     editingSale?.lead_id ?? leadId ?? ""
@@ -372,10 +418,14 @@ export function SaleCreateModal({
       setError(null);
 
       const orderId = editingSale?.bling_order_id;
+      // A conta de um pedido que ja existe e fixa (`contaTravada` acima nunca
+      // deixa o vendedor trocar) — manda mesmo assim, pelo mesmo motivo do
+      // `update_quote_endpoint`: o backend e livre para ignorar e derivar da
+      // propria linha, mas o corpo nao pode ficar OMISSO por acidente.
       const res = await fetch(`/api/bling/orders/${orderId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, account: conta ?? undefined }),
       }).catch(() => null);
       const body: Record<string, unknown> = res
         ? await res.json().catch(() => ({}))
@@ -427,7 +477,7 @@ export function SaleCreateModal({
           "Erro ao atualizar o pedido no Bling"
       );
     },
-    [editingSale, saveLocalAfterBlingPut]
+    [editingSale, conta, saveLocalAfterBlingPut]
   );
 
   /** "Salvar só no CRM" após o Bling recusar (422): grava local e marca divergência. */
@@ -550,10 +600,17 @@ export function SaleCreateModal({
       // pedido), mas é a rastreabilidade que o caminho não-Bling já grava: quem
       // registra a venda a partir do chat vê a venda ligada ao atendimento que a
       // gerou. A retentativa pós-409 reenvia o payload inteiro, então herda o campo.
+      //
+      // `account` idem: ausente do `OrderPayloadResult` (e logica de
+      // `bling-order-state.ts`, fora do escopo desta task) — `undefined` quando
+      // `conta` ainda nao resolveu (zero contas conectadas) some do JSON e o
+      // backend cai no proprio default, igual ao comportamento de antes desta
+      // funcionalidade existir.
       await postBlingOrder({
         ...orderResult.payload,
         deal_id: deal ?? null,
         conversation_id: conversationId || null,
+        account: conta ?? undefined,
       });
       return;
     }
@@ -771,6 +828,12 @@ export function SaleCreateModal({
                   isEditing ? linesFromSaleItems(editingSale?.sale_items) : undefined
                 }
                 onChange={setOrderResult}
+                conta={{
+                  contas: blingStatus.accounts,
+                  skipBling,
+                  travada: contaTravada,
+                  onChange: setConta,
+                }}
               />
             ) : (
               <>
@@ -1007,6 +1070,10 @@ export function SaleCreateModal({
                 nome: leadSelecionado?.name ?? "",
                 telefone: leadSelecionado?.phone ?? "",
               }}
+              // Fallback para CONTA_PADRAO so e alcancado com zero contas
+              // conectadas (`conta` nunca resolveu) — mesmo comportamento de
+              // antes desta funcionalidade existir, nunca pior.
+              conta={conta ?? CONTA_PADRAO}
               onResolved={retryAfterContact}
               onCancel={() => setResolution(null)}
             />

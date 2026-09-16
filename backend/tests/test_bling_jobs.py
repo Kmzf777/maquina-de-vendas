@@ -59,6 +59,27 @@ def test_enqueue_grava_job_pendente(monkeypatch):
     assert job["sale_id"] == "S1"
 
 
+def test_enqueue_grava_a_conta_no_job(monkeypatch):
+    """A conta viaja na LINHA do job (como em `bling_webhook_events`), nao
+    dentro do payload — e o que `_handle_create_order` le de volta."""
+    store = {}
+    monkeypatch.setattr(jobs, "get_supabase", lambda: FakeSupabase(store))
+
+    asyncio.run(jobs.enqueue("create_order", {"lead_id": "L1"}, account="secundaria"))
+
+    assert store["bling_jobs_inserts"][0]["account"] == "secundaria"
+
+
+def test_enqueue_sem_conta_grava_o_default(monkeypatch):
+    """Sem conta explicita, o job nunca fica sem dono: cai na default."""
+    store = {}
+    monkeypatch.setattr(jobs, "get_supabase", lambda: FakeSupabase(store))
+
+    asyncio.run(jobs.enqueue("create_order", {"lead_id": "L1"}))
+
+    assert store["bling_jobs_inserts"][0]["account"] == jobs.config.DEFAULT_ACCOUNT
+
+
 def test_enqueue_gera_chave_de_idempotencia(monkeypatch):
     """A chave nasce no enfileiramento e vai gravada no job — e ela que vira
     `numeroLoja` no Bling e impede o pedido de nascer duas vezes."""
@@ -103,6 +124,9 @@ def test_chave_de_idempotencia_e_estavel_entre_tentativas(monkeypatch):
     chaves = []
 
     class FakeClient:
+        def __init__(self, account):   # duble exige a conta
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -127,6 +151,41 @@ def test_chave_de_idempotencia_e_estavel_entre_tentativas(monkeypatch):
     assert chaves[0] == chaves[1], "as duas tentativas usam a MESMA chave"
     # a chave e parametro nomeado, nao dado do pedido
     assert "idempotency_key" in payload_do_job, "o pop nao pode esvaziar o job"
+
+
+def test_handle_create_order_usa_a_conta_do_job(monkeypatch):
+    """A conta mora na LINHA do job (gravada por `enqueue`), nao dentro do
+    payload — `BlingClient` e `create_order` tem que receber exatamente essa
+    conta, nunca a default por omissao."""
+    contas_client = []
+    contas_create = []
+
+    class FakeClient:
+        def __init__(self, account):   # duble exige a conta
+            contas_client.append(account)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    async def fake_create_order(client, *, account, **kwargs):
+        contas_create.append(account)
+        return {"sale_id": "S1"}
+
+    import app.bling.client as client_mod
+    import app.bling.orders as orders_mod
+    monkeypatch.setattr(client_mod, "BlingClient", FakeClient)
+    monkeypatch.setattr(orders_mod, "create_order", fake_create_order)
+
+    job = {"id": "J1", "kind": "create_order", "account": "secundaria",
+           "payload": {"lead_id": "L1", "idempotency_key": "crm-x"}}
+
+    asyncio.run(jobs._handle_create_order(job["payload"], job))
+
+    assert contas_client == ["secundaria"]
+    assert contas_create == ["secundaria"]
 
 
 def test_drain_marca_done_no_sucesso(monkeypatch):

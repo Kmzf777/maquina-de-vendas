@@ -16,6 +16,7 @@ class FakeQuery:
         self.name = tabela
         self._resolver = resolver
         self.filters = {}
+        self._single = False
 
     def select(self, *_a, **_k):
         return self
@@ -36,6 +37,12 @@ class FakeQuery:
         return self
 
     def maybe_single(self):
+        # Marca a chamada em vez de so devolver self: o supabase-py real colapsa
+        # o resultado para UM registro (ou None) em vez de uma lista, e
+        # `_contato_do_lead`/`_lead_por_contato` (novas em contacts.py) dependem
+        # exatamente desse formato. Sem simular o colapso aqui, o double devolve
+        # a lista crua do resolver e `linha.get(...)` quebra com AttributeError.
+        self._single = True
         return self
 
     def update(self, payload):
@@ -54,7 +61,10 @@ class FakeQuery:
         class R:
             pass
         r = R()
-        r.data = self._resolver(self.name, self.filters)
+        dados = self._resolver(self.name, self.filters)
+        if self._single:
+            dados = dados[0] if dados else None
+        r.data = dados
         return r
 
 
@@ -91,7 +101,7 @@ class FakeUniqueViolation(Exception):
 
     def __init__(self):
         super().__init__('duplicate key value violates unique constraint '
-                         '"leads_bling_contact_id_key"')
+                         '"lead_bling_contacts_account_contact_key"')
         self.code = "23505"
 
 
@@ -145,23 +155,23 @@ def test_digito_verificador_e_conferido_de_verdade():
 # resolve
 # ==========================================================================
 def test_resolve_usa_o_vinculo_ja_gravado(monkeypatch):
-    lead = {"id": "L1", "bling_contact_id": 999, "cnpj": "29860598000170"}
+    lead = {"id": "L1", "cnpj": "29860598000170"}
     # Instancia UNICA fora do lambda: `lambda: FakeSupabase()` construiria um objeto
     # novo a cada chamada e as escritas registradas se perderiam entre as queries.
-    sb = FakeSupabase()
+    sb = FakeSupabase({"lead_bling_contacts": [{"bling_contact_id": 999}]})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
-    out = asyncio.run(ct.resolve(lead))
+    out = asyncio.run(ct.resolve(lead, "default"))
 
     assert out.contact_id == 999
     assert out.status == "linked"
-    # Vinculo ja gravado nao consulta nada: e o caminho barato do dia a dia.
-    assert sb.queries == []
+    # Vinculo ja gravado nao chega a olhar o espelho de contatos: e o caminho
+    # barato do dia a dia. So consulta `lead_bling_contacts`.
+    assert not any(q.name == "bling_contacts" for q in sb.queries)
 
 
 def test_resolve_por_documento_vincula_sozinho(monkeypatch):
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": "29.860.598/0001-70",
-            "phone": "5551992696163"}
+    lead = {"id": "L1", "cnpj": "29.860.598/0001-70", "phone": "5551992696163"}
     sb = FakeSupabase({"bling_contacts": [{"id": 5845664414, "nome": "360 LTDA"}]})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
@@ -169,8 +179,10 @@ def test_resolve_por_documento_vincula_sozinho(monkeypatch):
 
     assert out.status == "linked"
     assert out.contact_id == 5845664414
-    # o vinculo tem que ser PERSISTIDO — resolvido uma vez por cliente, para sempre
-    assert any(q.filters.get("update", {}).get("bling_contact_id") == 5845664414
+    # o vinculo tem que ser PERSISTIDO em lead_bling_contacts — resolvido uma vez
+    # por cliente NESTA conta, para sempre
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == 5845664414
                for q in sb.queries)
 
 
@@ -183,8 +195,7 @@ def test_resolve_ignora_documento_invalido(monkeypatch):
     produzindo um vinculo permanente nascido de nada. Documento invalido nao pode
     nem chegar a consultar o espelho.
     """
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": "00000000000",
-            "phone": "5551992696163"}
+    lead = {"id": "L1", "cnpj": "00000000000", "phone": "5551992696163"}
     sb = FakeSupabase({"bling_contacts": [{"id": 77, "nome": "Empresa X"}]})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
@@ -192,14 +203,14 @@ def test_resolve_ignora_documento_invalido(monkeypatch):
 
     assert out.status == "suggested", "documento invalido nunca vincula"
     assert out.reason == "telefone"
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any("upsert" in q.filters for q in sb.queries)
     assert not any("doc_digits" in q.filters for q in sb.queries), \
         "nem chega a consultar o espelho por um documento invalido"
 
 
 def test_documento_com_dois_contatos_nao_vincula(monkeypatch):
     """Ambiguidade nunca vira palpite: devolve candidatos e para."""
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": "29860598000170"}
+    lead = {"id": "L1", "cnpj": "29860598000170"}
     sb = FakeSupabase({"bling_contacts": [{"id": 1, "nome": "A"}, {"id": 2, "nome": "B"}]})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
@@ -208,25 +219,26 @@ def test_documento_com_dois_contatos_nao_vincula(monkeypatch):
     assert out.status == "ambiguous"
     assert out.contact_id is None
     assert len(out.candidates) == 2
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any("upsert" in q.filters for q in sb.queries)
 
 
 def test_resolve_devolve_ambiguous_quando_o_contato_ja_tem_dono(monkeypatch):
     """I5: dois leads com o mesmo CNPJ e plausivel; 500 opaco nao e resposta.
 
-    `leads.bling_contact_id` tem UNIQUE parcial. `resolve(A)` ja vinculou A ao
-    contato C; agora `resolve(B)` acha o mesmo C por documento e o Postgres recusa
-    o UPDATE (23505). Sem tratamento o vendedor ve erro sem diagnostico. Com
-    tratamento cai na mesma porta que qualquer outra ambiguidade: decide o humano.
+    `lead_bling_contacts` tem UNIQUE em (account, bling_contact_id). `resolve(A)`
+    ja vinculou A ao contato C nesta conta; agora `resolve(B)` acha o mesmo C por
+    documento e o Postgres recusa o upsert (23505). Sem tratamento o vendedor ve
+    erro sem diagnostico. Com tratamento cai na mesma porta que qualquer outra
+    ambiguidade: decide o humano.
     """
-    def leads(filters):
-        if "update" in filters:
+    def lead_bling_contacts(filters):
+        if "upsert" in filters:
             raise FakeUniqueViolation()
         return []
 
-    lead = {"id": "LEAD-B", "bling_contact_id": None, "cnpj": "29860598000170"}
+    lead = {"id": "LEAD-B", "cnpj": "29860598000170"}
     sb = FakeSupabase({"bling_contacts": [{"id": 5845664414, "nome": "360 LTDA"}],
-                       "leads": leads})
+                       "lead_bling_contacts": lead_bling_contacts})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
     out = asyncio.run(ct.resolve(lead))
@@ -243,13 +255,14 @@ def test_resolve_nao_engole_erro_que_nao_seja_de_unicidade(monkeypatch):
     Transformar "Supabase fora do ar" em `ambiguous` esconderia incidente atras de
     uma tela de escolha de candidato.
     """
-    def leads(filters):
-        if "update" in filters:
+    def lead_bling_contacts(filters):
+        if "upsert" in filters:
             raise RuntimeError("conexao recusada")
         return []
 
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": "29860598000170"}
-    sb = FakeSupabase({"bling_contacts": [{"id": 1, "nome": "A"}], "leads": leads})
+    lead = {"id": "L1", "cnpj": "29860598000170"}
+    sb = FakeSupabase({"bling_contacts": [{"id": 1, "nome": "A"}],
+                       "lead_bling_contacts": lead_bling_contacts})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
     with pytest.raises(RuntimeError):
@@ -259,7 +272,7 @@ def test_resolve_nao_engole_erro_que_nao_seja_de_unicidade(monkeypatch):
 def test_telefone_apenas_sugere_nunca_vincula(monkeypatch):
     """O telefone do lead costuma ser o do COMPRADOR; o contato do Bling e a
     EMPRESA. Casar por telefone sem confirmacao humana e chute."""
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": None, "phone": "5551992696163"}
+    lead = {"id": "L1", "cnpj": None, "phone": "5551992696163"}
     sb = FakeSupabase({"bling_contacts": [{"id": 77, "nome": "Empresa X"}]})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
@@ -268,7 +281,7 @@ def test_telefone_apenas_sugere_nunca_vincula(monkeypatch):
     assert out.status == "suggested"
     assert out.contact_id is None
     assert out.candidates[0]["id"] == 77
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any("upsert" in q.filters for q in sb.queries)
 
 
 def test_email_apenas_sugere_nunca_vincula(monkeypatch):
@@ -279,7 +292,7 @@ def test_email_apenas_sugere_nunca_vincula(monkeypatch):
     Sem este teste, fazer o ramo de e-mail devolver "linked" e chamar `_link`
     passa despercebido pela suite inteira.
     """
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": None, "phone": None,
+    lead = {"id": "L1", "cnpj": None, "phone": None,
             "email": "  Contato@Empresa.com  "}
     sb = FakeSupabase({"bling_contacts": [{"id": 88, "nome": "Empresa X"}]})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
@@ -290,7 +303,7 @@ def test_email_apenas_sugere_nunca_vincula(monkeypatch):
     assert out.reason == "email"
     assert out.contact_id is None
     assert out.candidates[0]["id"] == 88
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any("upsert" in q.filters for q in sb.queries)
     # e casado normalizado (trim + lower): o cadastro digitado com maiuscula no
     # Bling nunca casaria com o do CRM se comparassemos o texto cru.
     assert any(q.filters.get("email") == "contato@empresa.com" for q in sb.queries)
@@ -315,14 +328,12 @@ def test_telefone_do_lead_e_do_contato_casam_apesar_dos_formatos(monkeypatch):
     assert espelhado["telefone_e164"] == "5551992696163"
 
     # Como o lead esta no CRM: E.164 sem "+". Tem que produzir a MESMA chave.
-    lead_e164 = {"id": "L1", "bling_contact_id": None, "cnpj": None,
-                 "phone": "5551992696163"}
+    lead_e164 = {"id": "L1", "cnpj": None, "phone": "5551992696163"}
     assert espelhado["telefone_e164"] in ct._phone_variants(lead_e164)
 
     # E um lead cujo telefone foi salvo em formato local (importacao antiga, colagem
     # manual) tambem tem que casar — a normalizacao e por comprimento, nao por origem.
-    lead_local = {"id": "L1", "bling_contact_id": None, "cnpj": None,
-                  "phone": "(51) 99269-6163"}
+    lead_local = {"id": "L1", "cnpj": None, "phone": "(51) 99269-6163"}
     assert espelhado["telefone_e164"] in ct._phone_variants(lead_local)
 
     # E de ponta a ponta: a expressao que vai ao Postgrest carrega o E.164, nao o local.
@@ -337,7 +348,7 @@ def test_telefone_do_lead_e_do_contato_casam_apesar_dos_formatos(monkeypatch):
 
 
 def test_sem_nenhum_match_devolve_missing(monkeypatch):
-    lead = {"id": "L1", "bling_contact_id": None, "cnpj": None, "phone": "5511999999999"}
+    lead = {"id": "L1", "cnpj": None, "phone": "5511999999999"}
     sb = FakeSupabase()
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
@@ -386,8 +397,10 @@ def test_create_recheca_ao_vivo_e_vincula_em_vez_de_criar(monkeypatch):
 
     assert out == 424242
     assert client.posts == [], "nao pode criar quando o contato ja existe no Bling"
-    # E o vinculo precisa ficar GRAVADO: sem isso a proxima venda refaz tudo.
-    assert any(q.filters.get("update", {}).get("bling_contact_id") == 424242
+    # E o vinculo precisa ficar GRAVADO em lead_bling_contacts: sem isso a proxima
+    # venda refaz tudo.
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == 424242
                for q in sb.queries)
 
 
@@ -396,7 +409,7 @@ def test_create_ignora_contato_que_nao_tem_o_documento_pedido(monkeypatch):
 
     Se o Bling ignorar `numeroDocumento` — parametro desconhecido, e REST costuma
     devolver a colecao inteira em vez de erro — `data[0]` seria um contato QUALQUER
-    da conta, e vincularíamos o cliente a ele. Falha silenciosa e catastrofica, no
+    da conta, e vinculariamos o cliente a ele. Falha silenciosa e catastrofica, no
     ponto exato que existe para impedir duplicata. A resposta e reconferida item a
     item; nao sobrando ninguem, cria de verdade.
     """
@@ -425,7 +438,8 @@ def test_create_ignora_contato_que_nao_tem_o_documento_pedido(monkeypatch):
 
     assert out == 999999, "documento nao confere: e outro cliente, tem que criar"
     assert client.posts[0]["numeroDocumento"] == "12345678909"
-    assert not any(q.filters.get("update", {}).get("bling_contact_id") == 1
+    assert not any(q.name == "lead_bling_contacts" and
+                   q.filters.get("upsert", {}).get("bling_contact_id") == 1
                    for q in sb.queries)
 
 
@@ -465,12 +479,12 @@ def test_create_devolve_409_quando_o_contato_ja_e_de_outro_lead(monkeypatch):
     GET -> acha -> `_link` -> 23505: laco de falha permanente, sem mensagem que
     permita ao vendedor entender o que fazer. Vira 409 com instrucao.
     """
-    def leads(filters):
-        if "update" in filters:
+    def lead_bling_contacts(filters):
+        if "upsert" in filters:
             raise FakeUniqueViolation()
         return []
 
-    sb = FakeSupabase({"leads": leads})
+    sb = FakeSupabase({"lead_bling_contacts": lead_bling_contacts})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
     monkeypatch.setattr(ct, "_lock", _fake_lock)
 
@@ -545,18 +559,18 @@ def test_create_nao_cria_quando_o_lock_e_negado(monkeypatch):
 def test_ensure_lead_reaproveita_lead_existente_por_documento(monkeypatch):
     """O reaproveitamento tem que vir do RAMO DO DOCUMENTO, nao do primeiro acaso.
 
-    O fake responde POR FILTRO: a busca por `bling_contact_id` nao acha nada, so a
-    busca por `cnpj` acha. Com um fake que devolve a mesma linha para qualquer
-    query em `leads`, a primeira chamada ja retornaria e este ramo nunca rodaria —
-    apagar o ramo inteiro do codigo deixaria o teste verde.
+    O fake responde POR FILTRO: a busca de `_lead_por_contato` (em
+    `lead_bling_contacts`) nao acha nada, so a busca por `cnpj` (em `leads`) acha.
+    Com um fake que devolve a mesma linha para qualquer query em `leads`, a
+    primeira chamada ja retornaria e este ramo nunca rodaria — apagar o ramo
+    inteiro do codigo deixaria o teste verde.
     """
     contato = {"id": 55, "nome": "Empresa", "doc_digits": "29860598000170",
                "celular_e164": "5551992696163"}
 
     def leads(filters):
         if filters.get("cnpj") == "29860598000170":
-            return [{"id": "LEAD-X", "bling_contact_id": None,
-                     "cnpj": "29860598000170"}]
+            return [{"id": "LEAD-X", "cnpj": "29860598000170"}]
         return []
 
     sb = FakeSupabase({"leads": leads})
@@ -565,8 +579,9 @@ def test_ensure_lead_reaproveita_lead_existente_por_documento(monkeypatch):
     out = asyncio.run(ct.ensure_lead(contato))
 
     assert out == "LEAD-X"
-    # achou por documento e o lead ainda nao tinha vinculo: PODE gravar
-    assert any(q.filters.get("update", {}).get("bling_contact_id") == 55
+    # achou por documento e o lead ainda nao tinha vinculo NESTA conta: PODE gravar
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == 55
                for q in sb.queries)
 
 
@@ -581,17 +596,22 @@ def test_ensure_lead_nao_sobrescreve_vinculo_existente_no_ramo_do_documento(monk
 
     def leads(filters):
         if filters.get("cnpj") == "29860598000170":
-            return [{"id": "LEAD-X", "bling_contact_id": 100,
-                     "cnpj": "29860598000170"}]
+            return [{"id": "LEAD-X", "cnpj": "29860598000170"}]
         return []
 
-    sb = FakeSupabase({"leads": leads})
+    def lead_bling_contacts(filters):
+        if filters.get("lead_id") == "LEAD-X":
+            return [{"bling_contact_id": 100}]
+        return []
+
+    sb = FakeSupabase({"leads": leads, "lead_bling_contacts": lead_bling_contacts})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
     out = asyncio.run(ct.ensure_lead(contato))
 
     assert out == "LEAD-X", "reaproveita o lead (nao duplica) sem regravar o vinculo"
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any(q.name == "lead_bling_contacts" and "upsert" in q.filters
+                   for q in sb.queries)
 
 
 def test_ensure_lead_nao_sobrescreve_vinculo_existente_no_ramo_do_telefone(monkeypatch):
@@ -610,17 +630,22 @@ def test_ensure_lead_nao_sobrescreve_vinculo_existente_no_ramo_do_telefone(monke
 
     def leads(filters):
         if filters.get("phone") == "5551992696163":
-            return [{"id": "LEAD-L", "bling_contact_id": 100,
-                     "cnpj": "29860598000170"}]
+            return [{"id": "LEAD-L", "cnpj": "29860598000170"}]
         return []
 
-    sb = FakeSupabase({"leads": leads})
+    def lead_bling_contacts(filters):
+        if filters.get("lead_id") == "LEAD-L":
+            return [{"bling_contact_id": 100}]
+        return []
+
+    sb = FakeSupabase({"leads": leads, "lead_bling_contacts": lead_bling_contacts})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
     out = asyncio.run(ct.ensure_lead(contato))
 
     assert out == "LEAD-L", "devolve o lead (nao duplica), mas sem regravar o vinculo"
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any(q.name == "lead_bling_contacts" and "upsert" in q.filters
+                   for q in sb.queries)
 
 
 def test_ensure_lead_recusa_vinculo_por_telefone_com_documento_divergente(monkeypatch):
@@ -636,8 +661,7 @@ def test_ensure_lead_recusa_vinculo_por_telefone_com_documento_divergente(monkey
     def leads(filters):
         if filters.get("phone") == "5551992696163":
             # cnpj do lead vem FORMATADO: a comparacao tem que ser por digitos
-            return [{"id": "LEAD-A", "bling_contact_id": None,
-                     "cnpj": "29.860.598/0001-70"}]
+            return [{"id": "LEAD-A", "cnpj": "29.860.598/0001-70"}]
         return []
 
     sb = FakeSupabase({"leads": leads})
@@ -646,7 +670,8 @@ def test_ensure_lead_recusa_vinculo_por_telefone_com_documento_divergente(monkey
     out = asyncio.run(ct.ensure_lead(contato))
 
     assert out == "LEAD-A"
-    assert not any("update" in q.filters for q in sb.queries)
+    assert not any(q.name == "lead_bling_contacts" and "upsert" in q.filters
+                   for q in sb.queries)
 
 
 def test_ensure_lead_vincula_por_celular_quando_nada_impede(monkeypatch):
@@ -657,7 +682,7 @@ def test_ensure_lead_vincula_por_celular_quando_nada_impede(monkeypatch):
 
     def leads(filters):
         if filters.get("phone") == "5551992696163":
-            return [{"id": "LEAD-A", "bling_contact_id": None, "cnpj": None}]
+            return [{"id": "LEAD-A", "cnpj": None}]
         return []
 
     sb = FakeSupabase({"leads": leads})
@@ -666,7 +691,8 @@ def test_ensure_lead_vincula_por_celular_quando_nada_impede(monkeypatch):
     out = asyncio.run(ct.ensure_lead(contato))
 
     assert out == "LEAD-A"
-    assert any(q.filters.get("update", {}).get("bling_contact_id") == 200
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == 200
                for q in sb.queries)
 
 
@@ -696,12 +722,110 @@ def test_ensure_lead_cria_com_placeholder_quando_contato_nao_tem_telefone(monkey
     """leads.phone e UNIQUE NOT NULL — precisa de valor sempre."""
     contato = {"id": 55, "nome": "Sem Telefone", "doc_digits": "12345678909",
                "telefone_e164": None, "celular_e164": None}
-    sb = FakeSupabase({"leads": []})
+
+    def leads(filters):
+        if "insert" in filters:
+            return [{"id": "LEAD-NOVO"}]
+        return []
+
+    sb = FakeSupabase({"leads": leads})
     monkeypatch.setattr(ct, "get_supabase", lambda: sb)
 
-    asyncio.run(ct.ensure_lead(contato))
+    out = asyncio.run(ct.ensure_lead(contato))
 
+    assert out == "LEAD-NOVO"
     inseridos = [q.filters["insert"] for q in sb.queries if "insert" in q.filters]
     assert inseridos[0]["phone"] == "bling-55"
-    assert inseridos[0]["bling_contact_id"] == 55
+    assert "bling_contact_id" not in inseridos[0], \
+        "o vinculo agora mora em lead_bling_contacts, nao mais numa coluna do lead"
     assert inseridos[0]["metadata"]["origem"] == "bling_webhook"
+    # apos o insert, o vinculo do lead recem-criado tem que ser gravado a parte
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert") == {"lead_id": "LEAD-NOVO", "account": "default",
+                                            "bling_contact_id": 55}
+               for q in sb.queries)
+
+
+# ==========================================================================
+# Segunda conta Bling: o vinculo passa a ser por (lead, conta)
+# ==========================================================================
+async def test_vincula_lead_por_conta(monkeypatch):
+    from app.bling import contacts
+    gravado = {}
+
+    def fake_link(lead_id, contact_id, account):
+        gravado.update({"lead_id": lead_id, "account": account,
+                        "contact_id": contact_id})
+
+    monkeypatch.setattr(contacts, "_link", fake_link)
+    await contacts.link("lead-1", 999, "secundaria")
+    assert gravado == {"lead_id": "lead-1", "account": "secundaria",
+                       "contact_id": 999}
+
+
+async def test_mesmo_lead_pode_ter_contato_nas_duas_contas(monkeypatch):
+    """O caso 'alguns clientes em comum': o mesmo cliente existe nos dois CNPJs
+    com IDs diferentes, e o lead precisa apontar para os dois ao mesmo tempo."""
+    from app.bling import contacts
+    gravadas = []
+
+    def fake_link(lead_id, contact_id, account):
+        gravadas.append((lead_id, account, contact_id))
+
+    monkeypatch.setattr(contacts, "_link", fake_link)
+    await contacts.link("lead-1", 111, "default")
+    await contacts.link("lead-1", 222, "secundaria")
+    assert gravadas == [("lead-1", "default", 111),
+                        ("lead-1", "secundaria", 222)]
+
+
+async def test_resolve_ignora_vinculo_de_outra_conta(monkeypatch):
+    """REGRESSAO DA ARMADILHA: um lead vinculado na conta 1 deve continuar
+    resolvivel na conta 2, senao o cliente em comum nunca e vinculado la."""
+    from app.bling import contacts
+
+    monkeypatch.setattr(contacts, "_contato_do_lead",
+                        lambda lead_id, account: 111 if account == "default" else None)
+    monkeypatch.setattr(contacts, "_query_by_doc",
+                        lambda doc, account: [{"id": 222}])
+    gravado = {}
+    monkeypatch.setattr(contacts, "_link",
+                        lambda lead_id, contact_id, account: gravado.update(
+                            {"contact_id": contact_id, "account": account}))
+
+    lead = {"id": "lead-1", "cnpj": "11222333000181"}
+    r = await contacts.resolve(lead, "secundaria")
+    assert r.status == "linked"
+    assert gravado == {"contact_id": 222, "account": "secundaria"}
+
+
+def test_pode_vincular_por_telefone_olha_so_a_conta_corrente():
+    """Mesma armadilha do outro lado: ter contato na conta 1 nao pode BLOQUEAR
+    o vinculo por telefone na conta 2."""
+    from app.bling import contacts
+    assert contacts._pode_vincular_por_telefone(
+        {"cnpj": None}, None, contato_da_conta=None) is True
+    assert contacts._pode_vincular_por_telefone(
+        {"cnpj": None}, None, contato_da_conta=111) is False
+
+
+def test_espelho_de_contato_usa_chave_composta(monkeypatch):
+    from app.bling import contacts
+    capturado = {}
+
+    class FakeTable:
+        def upsert(self, row, on_conflict=None):
+            capturado["row"] = row
+            capturado["on_conflict"] = on_conflict
+            return self
+        def execute(self):
+            class R: data = [{}]
+            return R()
+
+    class FakeSupa:
+        def table(self, _n): return FakeTable()
+
+    monkeypatch.setattr(contacts, "get_supabase", lambda: FakeSupa())
+    contacts._upsert_mirror({"id": 5, "nome": "X"}, "secundaria")
+    assert capturado["on_conflict"] == "account,id"
+    assert capturado["row"]["account"] == "secundaria"

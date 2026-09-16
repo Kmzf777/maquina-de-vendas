@@ -11,14 +11,19 @@ import app.bling.webhook_router as wr
 SECRET = "csec-super-secreto"
 
 
-def _assinar(corpo: bytes) -> str:
-    return "sha256=" + hmac.new(SECRET.encode(), corpo, hashlib.sha256).hexdigest()
+def _assinar(corpo: bytes, secret: str = SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), corpo, hashlib.sha256).hexdigest()
 
 
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("BLING_CLIENT_SECRET", SECRET)
     monkeypatch.setenv("BLING_ENABLED", "true")
+    # Conta 2 (CNPJ novo): roster com duas contas e secret proprio da
+    # secundaria, pra exercitar a rota por conta sem quebrar quem so
+    # conhece a conta default.
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_SECRET", "csec2")
     app = FastAPI()
     app.include_router(wr.router)
     return TestClient(app)
@@ -134,6 +139,41 @@ def test_webhook_router_expoe_a_rota():
     from app.bling.webhook_router import router as bling_webhook_router
 
     assert "/webhook/bling" in {r.path for r in bling_webhook_router.routes}
+
+
+def test_rota_por_conta_grava_o_slug(client, gravados):
+    corpo = b'{"eventId":"e1","event":"order.created","data":{"id":7}}'
+    resp = client.post("/webhook/bling/secundaria", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo, "csec2")})
+    assert resp.status_code == 200
+    assert gravados[0]["account"] == "secundaria"
+
+
+def test_rota_legada_continua_valendo_como_default(client, gravados):
+    """O painel da conta 1 ja aponta para /webhook/bling. Se ela sumir, o Bling
+    retenta por 3 dias e DESABILITA a configuracao em silencio."""
+    corpo = b'{"eventId":"e2","event":"order.created","data":{"id":8}}'
+    resp = client.post("/webhook/bling", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo)})
+    assert resp.status_code == 200
+    assert gravados[0]["account"] == "default"
+
+
+def test_slug_desconhecido_responde_404(client, gravados):
+    corpo = b'{"eventId":"e3","event":"order.created","data":{"id":9}}'
+    resp = client.post("/webhook/bling/naoexiste", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo)})
+    assert resp.status_code == 404
+    assert gravados == []
+
+
+def test_assinatura_validada_com_o_secret_da_conta(client, gravados):
+    """Assinar com o secret da conta 1 e entregar na rota da conta 2 = 401."""
+    corpo = b'{"eventId":"e4","event":"order.created","data":{"id":10}}'
+    resp = client.post("/webhook/bling/secundaria", content=corpo,
+                       headers={"x-bling-signature-256": _assinar(corpo)})
+    assert resp.status_code == 401
+    assert gravados == []
 
 
 async def test_notify_worker_emite_no_dominio_bling_webhook(monkeypatch):

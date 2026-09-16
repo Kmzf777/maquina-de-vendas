@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import {
   MESSAGE_PAGE_SIZE,
   collectUnresolvedWamids,
@@ -146,7 +147,9 @@ export function useRealtimeMessages(conversationId: string | null) {
           setMessages((prev) => reEnrich(normalizeOrder([...prev, payload.new as Message])));
         }
       )
-      .subscribe();
+      // Na volta do canal a thread é recarregada: os INSERTs que aconteceram com
+      // o socket fora não voltam sozinhos (postgres_changes não tem replay).
+      .subscribe(onResubscribe(fetchMessages));
 
     return () => {
       supabase.removeChannel(channel);

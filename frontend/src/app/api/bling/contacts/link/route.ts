@@ -13,13 +13,18 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const leadId = String(body?.lead_id ?? "");
   const contactId = Number(body?.contact_id);
+  // account chega no CORPO (o modal manda JSON), mas o backend deste endpoint
+  // le como query string -- mesma traducao que lead_id/contact_id ja fazem.
+  // Sem default sintetico aqui: ausente, o backend aplica o dele sozinho.
+  const account = body?.account ? String(body.account) : "";
   if (!leadId || !Number.isFinite(contactId)) {
     return Response.json({ error: "lead_id e contact_id sao obrigatorios" }, { status: 400 });
   }
 
   const url =
     `${backend()}/api/bling/contacts/link` +
-    `?lead_id=${encodeURIComponent(leadId)}&contact_id=${contactId}`;
+    `?lead_id=${encodeURIComponent(leadId)}&contact_id=${contactId}` +
+    (account ? `&account=${encodeURIComponent(account)}` : "");
   try {
     const resp = await fetch(url, { method: "POST", cache: "no-store" });
     return Response.json(await resp.json().catch(() => ({})), { status: resp.status });

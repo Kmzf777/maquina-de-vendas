@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import type { Campaign } from "@/lib/types";
 
 export function useRealtimeCampaigns() {
@@ -23,7 +24,7 @@ export function useRealtimeCampaigns() {
     const channel = supabase
       .channel("campaigns-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "campaigns" }, load)
-      .subscribe();
+      .subscribe(onResubscribe(load));
     return () => { supabase.removeChannel(channel); };
   }, [load]);
 

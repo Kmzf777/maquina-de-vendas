@@ -47,6 +47,7 @@ import {
 } from "@/components/sales/bling-contact-resolver";
 import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
+import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { leadMatchesSearch } from "@/lib/search";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { buildQuotePayload, linesFromQuoteItems } from "@/lib/quote-state";
@@ -61,6 +62,39 @@ import {
   quoteSaveOutcome,
 } from "@/lib/quote-modal-state";
 import type { Quote } from "@/lib/types";
+
+/**
+ * `bling_account` ainda nao esta no tipo `Quote` compartilhado — adiciona-lo
+ * pertence a quem mantem `lib/types.ts` (fora do escopo desta task, ver
+ * `frontend/src/lib/**` na lista de arquivos vedados). A coluna existe desde a
+ * migration da segunda conta e `/api/quotes` ja devolve `select("*")`, entao o
+ * dado chega no JSON de qualquer forma — esta e so a extensao de tipo local
+ * para o TypeScript aceitar a leitura.
+ */
+type QuoteComConta = Quote & { bling_account?: string | null };
+
+/**
+ * Deriva a conta travada de um orcamento em edicao — extraida para ser
+ * testada sem montar o modal inteiro (mesmo padrao de `bling-accounts.ts`).
+ *
+ * A conta de um orcamento e gravada na criacao e NUNCA e editavel depois
+ * (design secao 7.1: a proposta comercial ja existe naquele CNPJ) — diferente
+ * da venda (`contaTravadaDaVenda`), aqui vale para TODA edicao, convertida ou
+ * nao, nao so quando ja virou pedido. `bling_account` so falta em orcamentos
+ * de antes desta migration; o fallback e o mesmo valor que o backfill usaria.
+ */
+export function contaTravadaDoOrcamento(
+  quote: QuoteComConta | null | undefined,
+  isEditing: boolean,
+): { valor: string; dica: string } | undefined {
+  if (!isEditing) return undefined;
+  return {
+    valor: quote?.bling_account ?? CONTA_PADRAO,
+    dica: `Definido pelo orçamento${
+      quote?.bling_proposal_number ? ` #${quote.bling_proposal_number}` : ""
+    }`,
+  };
+}
 
 interface LeadDeal {
   id: string;
@@ -145,6 +179,16 @@ export function QuoteCreateModal({
   // `blingGate` devolve "legacy" (com `canSubmit`) quando a integração está
   // desligada, porque para a VENDA isso é um caminho válido. Aqui não é.
   const podeEnviar = gate.mode === "bling";
+
+  // ── conta Bling ──────────────────────────────────────────────────────────
+  // Fonte da verdade da conta selecionada mora AQUI (nao em BlingOrderForm):
+  // `enviar()` e o BlingContactResolver abaixo tambem falam com o Bling por
+  // fora do formulario de itens.
+  const [conta, setConta] = useState<string | null>(null);
+  const contaTravada = contaTravadaDoOrcamento(
+    editingQuote as QuoteComConta | null | undefined,
+    isEditing,
+  );
 
   const [selectedLeadId, setSelectedLeadId] = useState(
     editingQuote?.lead_id ?? leadId ?? "",
@@ -358,7 +402,11 @@ export function QuoteCreateModal({
       );
       return;
     }
-    await enviar(resultado.payload);
+    // `account` ausente do `QuotePayloadResult` (fora do escopo desta task
+    // mexer em `lib/quote-state.ts`) — enviado sempre, mesmo na edicao: o PUT
+    // ignora o campo (invariante do backend, Task 12), entao nao ha risco de
+    // trocar a conta de um orcamento ja existente por aqui.
+    await enviar({ ...resultado.payload, account: conta ?? undefined });
   }
 
   /** Fecha avisando o chamador quando algo já foi gravado (recarrega a lista). */
@@ -531,6 +579,13 @@ export function QuoteCreateModal({
                   // aqui elas ainda não conhecem desconto de cabeçalho e frete.
                   showInstallments={false}
                   onChange={setOrderResult}
+                  conta={{
+                    contas: blingStatus.accounts,
+                    // Orcamento nao tem "registrar sem enviar ao Bling" — por
+                    // isso nenhum `skipBling` aqui (default `false`).
+                    travada: contaTravada,
+                    onChange: setConta,
+                  }}
                 />
 
                 {/* Desconto do orçamento e frete */}
@@ -758,6 +813,7 @@ export function QuoteCreateModal({
                 nome: leadSelecionado?.name ?? "",
                 telefone: leadSelecionado?.phone ?? "",
               }}
+              conta={conta ?? CONTA_PADRAO}
               onResolved={retryAfterContact}
               onCancel={() => setResolution(null)}
             />

@@ -38,6 +38,15 @@ interface BlingContactResolverProps {
   candidates: BlingContactCandidate[];
   /** Pré-preenchimento do cadastro com o que o CRM já sabe do lead. */
   defaults?: Partial<ContactForm>;
+  /**
+   * Conta Bling do pedido/orçamento que disparou este 409 — os candidatos
+   * acima já vieram dela. Vincular ou cadastrar precisa mandar a MESMA conta,
+   * senão o contato seria criado/vinculado no CNPJ errado (Task 15, R5).
+   * Obrigatória (não opcional): os dois chamadores sempre sabem a conta antes
+   * de chegar a um 409, e tornar o parâmetro implícito é a classe de bug que
+   * esta entrega existe para eliminar.
+   */
+  conta: string;
   /** Contato resolvido — o modal reenvia o pedido. */
   onResolved: () => void;
   onCancel: () => void;
@@ -71,6 +80,7 @@ export function BlingContactResolver({
   reason,
   candidates,
   defaults,
+  conta,
   onResolved,
   onCancel,
 }: BlingContactResolverProps) {
@@ -91,7 +101,7 @@ export function BlingContactResolver({
     const res = await fetch("/api/bling/contacts/link", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lead_id: leadId, contact_id: contactId }),
+      body: JSON.stringify({ lead_id: leadId, contact_id: contactId, account: conta }),
     }).catch(() => null);
 
     if (!res || !res.ok) {
@@ -116,7 +126,7 @@ export function BlingContactResolver({
     const res = await fetch("/api/bling/contacts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(montado.payload),
+      body: JSON.stringify({ ...montado.payload, account: conta }),
     }).catch(() => null);
 
     if (!res || !res.ok) {

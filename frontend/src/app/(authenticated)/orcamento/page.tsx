@@ -7,7 +7,16 @@ import { QuotesTable } from "@/components/quotes/quotes-table";
 import { QuoteCreateModal } from "@/components/quotes/quote-create-modal";
 import { useQuotes, type QuotesFilters } from "@/hooks/use-quotes";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
+import { useBlingStatus } from "@/hooks/use-bling-status";
+import { contasDisponiveis, precisaSeletor } from "@/lib/bling-accounts";
 import type { Quote } from "@/lib/types";
+
+/**
+ * `bling_account` ainda nao esta no tipo `Quote` compartilhado (fora do
+ * escopo desta task mexer em `lib/types.ts`) — a coluna existe desde a
+ * migration da segunda conta e `/api/quotes` ja devolve `select("*")`.
+ */
+type QuoteComConta = Quote & { bling_account?: string | null };
 
 function startOfMonth(): string {
   const d = new Date();
@@ -48,6 +57,9 @@ export default function OrcamentoPage() {
 
   const { quotes, count, loading, refetch } = useQuotes(filters);
   const currentUserEmail = useCurrentUserEmail();
+  // So para enriquecer o aviso de conversao com o nome da conta (ver
+  // `handleConvert`) — o seletor de conta em si vive no modal de edicao.
+  const blingStatus = useBlingStatus();
 
   // Os QUATRO cards levam os MESMOS filtros da tabela — a licao do commit
   // 85598b89, onde escolher um vendedor movia a lista e deixava os quatro
@@ -134,12 +146,24 @@ export default function OrcamentoPage() {
 
   async function handleConvert(quote: Quote) {
     if (emCurso.has(quote.id)) return;
+    // A conversao herda a conta do orcamento e nao aceita troca (backend nem
+    // recebe corpo no POST) — aqui so nomeia a conta no aviso, para o
+    // vendedor nao descobrir semanas depois que o pedido saiu no CNPJ errado.
+    // So menciona quando ha mais de uma conta CONECTADA: com uma so, dizer o
+    // nome da conta seria ruido que ninguem escolheu (R2 da Task 15).
+    const contaDoOrcamento = (quote as QuoteComConta).bling_account;
+    const rotuloConta =
+      contaDoOrcamento && precisaSeletor(blingStatus.accounts)
+        ? (contasDisponiveis(blingStatus.accounts).find((c) => c.account === contaDoOrcamento)
+            ?.label ?? contaDoOrcamento)
+        : null;
     // Confirmacao porque nao ha volta: cria o pedido no Bling, gera a venda e
     // TRAVA o orcamento para edicao. O texto diz as tres consequencias em vez de
     // perguntar "tem certeza?", que nao informa nada.
     const ok = window.confirm(
       `Converter o orçamento ${quote.bling_proposal_number ? `#${quote.bling_proposal_number}` : ""} em venda?\n\n` +
-        "Isso cria o pedido de venda no Bling e trava o orçamento: depois disso ele não pode mais ser editado.",
+        "Isso cria o pedido de venda no Bling e trava o orçamento: depois disso ele não pode mais ser editado." +
+        (rotuloConta ? `\n\nConta Bling: ${rotuloConta}.` : ""),
     );
     if (!ok) return;
 

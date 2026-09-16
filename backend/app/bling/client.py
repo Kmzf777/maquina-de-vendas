@@ -47,7 +47,8 @@ class BlingClient:
     """
 
     def __init__(self, http: Any | None = None, timeout: float = 30.0,
-                 max_attempts: int = _MAX_ATTEMPTS):
+                 max_attempts: int = _MAX_ATTEMPTS,
+                 account: str = config.DEFAULT_ACCOUNT):
         self._http = http
         self._owns_http = http is None
         self._timeout = timeout
@@ -56,6 +57,13 @@ class BlingClient:
         # ou o do processamento de webhook, que podem esperar mais. O default
         # preserva o comportamento anterior (3 tentativas).
         self._max_attempts = max_attempts
+        # Normaliza e VALIDA aqui, no unico ponto por onde toda chamada HTTP ao
+        # Bling passa. Sem isso, um slug com caixa ou espaco errado ("Secundaria",
+        # " secundaria") nao levanta erro nenhum: ele abre em silencio um
+        # namespace novo e sem governanca no Redis — orcamento de rate limit
+        # proprio, cache de token proprio, lock proprio. O erro so apareceria
+        # como "a conta 2 estourou o limite" sem causa visivel.
+        self._account = config.account(account).key
 
     async def _client(self):
         if self._http is None:
@@ -75,7 +83,7 @@ class BlingClient:
         return False
 
     async def _headers(self) -> dict:
-        token = await auth.get_access_token()
+        token = await auth.get_access_token(self._account)
         return {
             "Authorization": f"Bearer {token}",
             # Obrigatorio: sem isso o Bling devolve o token opaco descontinuado.
@@ -92,7 +100,7 @@ class BlingClient:
         for attempt in range(1, self._max_attempts + 1):
             # Consome uma vaga do orcamento a CADA tentativa — a tentativa
             # repetida tambem e uma requisicao real para o Bling.
-            await ratelimit.acquire()
+            await ratelimit.acquire(self._account)
             http = await self._client()
             try:
                 resp = await http.request(
@@ -143,7 +151,7 @@ class BlingClient:
                         f"{method} {path}: 401 apos renovar o token — refaca o OAuth"
                     )
                 renovou = True
-                await auth.invalidate_cache()
+                await auth.invalidate_cache(self._account)
                 continue
 
             if status == 429:

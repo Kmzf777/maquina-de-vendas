@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blingOrderUrl, foraDoBling, orderLabel, saleStatus } from "@/lib/sale-display";
+import { accountLabel, blingOrderUrl, foraDoBling, orderLabel, saleStatus } from "@/lib/sale-display";
+import { CONTA_PADRAO, type ContaBling } from "@/lib/bling-accounts";
 import type { Sale } from "@/lib/types";
 
 const base: Sale = {
@@ -57,6 +58,31 @@ describe("blingOrderUrl", () => {
 
   it("sem id nao ha link", () => {
     expect(blingOrderUrl(null)).toBe("");
+  });
+});
+
+describe("accountLabel", () => {
+  const CONTAS: ContaBling[] = [
+    { account: CONTA_PADRAO, label: "Canastra CNPJ 1", configured: true, connected: true },
+    { account: "secundaria", label: "Canastra CNPJ 2", configured: true, connected: true },
+  ];
+
+  it("devolve null quando so existe uma conta", () => {
+    expect(accountLabel({ bling_account: CONTA_PADRAO }, [CONTAS[0]])).toBeNull();
+  });
+
+  it("devolve o rotulo da conta quando existem duas", () => {
+    expect(accountLabel({ bling_account: "secundaria" }, CONTAS)).toBe("Canastra CNPJ 2");
+  });
+
+  it("devolve null para venda fora do Bling", () => {
+    expect(accountLabel({ bling_account: null }, CONTAS)).toBeNull();
+  });
+
+  it("cai para o slug quando a conta nao esta mais configurada", () => {
+    // Venda historica de uma conta que foi removida do BLING_ACCOUNTS: mostrar
+    // o slug cru e melhor que esconder a informacao ou quebrar a tela.
+    expect(accountLabel({ bling_account: "antiga" }, CONTAS)).toBe("antiga");
   });
 });
 
