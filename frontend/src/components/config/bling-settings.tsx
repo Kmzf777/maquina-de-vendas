@@ -11,7 +11,19 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
-import { CONTA_PADRAO, type ContaBling } from "@/lib/bling-accounts";
+import {
+  CONTA_PADRAO,
+  contaPadrao,
+  contasDisponiveis,
+  precisaSeletor,
+  type ContaBling,
+} from "@/lib/bling-accounts";
+import {
+  comVinculo,
+  indexarVinculos,
+  vinculoDe,
+  type MapaVendedores,
+} from "@/lib/bling-seller-map";
 
 /**
  * Uma linha de `accounts` em `GET /api/bling/status` (formato aditivo, ver
@@ -136,7 +148,13 @@ export function BlingSettings() {
 
   const [users, setUsers] = useState<CrmUser[]>([]);
   const [sellers, setSellers] = useState<BlingSeller[]>([]);
-  const [sellerMap, setSellerMap] = useState<Record<string, number | null>>({});
+  // Conta cujo quadro de vendedores esta aberto. O Bling identifica vendedor
+  // por id proprio de cada CNPJ: a lista oferecida e o vinculo salvo sao
+  // SEMPRE desta conta, nunca a uniao das duas.
+  const [contaVendedores, setContaVendedores] = useState<string>(CONTA_PADRAO);
+  // Chave COMPOSTA (conta + e-mail): o mesmo usuario tem um id de vendedor em
+  // cada CNPJ, e indexar so pelo e-mail colapsaria as duas linhas em uma.
+  const [sellerMap, setSellerMap] = useState<MapaVendedores>({});
   const [savingEmail, setSavingEmail] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
 
@@ -148,6 +166,24 @@ export function BlingSettings() {
   useEffect(() => {
     void loadAll();
   }, []);
+
+  // Separado de loadAll porque refaz a busca a cada troca de conta — os
+  // vendedores sao os do CNPJ selecionado, e o id de um nao existe no outro.
+  useEffect(() => {
+    void loadSellers(contaVendedores);
+  }, [contaVendedores]);
+
+  // O estado inicial e CONTA_PADRAO, mas ela pode nao estar conectada (a
+  // segunda conta conectada primeiro, ou a autorizacao da primeira vencida).
+  // Sem este ajuste o quadro ficaria preso numa conta sem espelho e o seletor
+  // — que so aparece com DUAS contas disponiveis — nao daria como sair dela.
+  useEffect(() => {
+    const disponiveis = contasDisponiveis(contasDoStatus(status));
+    if (disponiveis.length === 0) return;
+    if (disponiveis.some((c) => c.account === contaVendedores)) return;
+    const padrao = contaPadrao(contasDoStatus(status));
+    if (padrao) setContaVendedores(padrao);
+  }, [status, contaVendedores]);
 
   async function loadStatus() {
     try {
@@ -166,12 +202,28 @@ export function BlingSettings() {
     }
   }
 
+  async function loadSellers(account: string) {
+    try {
+      const res = await fetch(
+        `/api/bling/sellers?account=${encodeURIComponent(account)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        setSellers([]);
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      setSellers((body?.data ?? []) as BlingSeller[]);
+    } catch {
+      setSellers([]);
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
-    const [, usersRes, sellersRes, mapRes] = await Promise.all([
+    const [, usersRes, mapRes] = await Promise.all([
       loadStatus(),
       fetch("/api/users", { cache: "no-store" }),
-      fetch("/api/bling/sellers", { cache: "no-store" }),
       fetch("/api/bling/seller-map", { cache: "no-store" }),
     ]);
 
@@ -183,14 +235,9 @@ export function BlingSettings() {
           .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email, "pt-BR"))
       );
     }
-    if (sellersRes.ok) {
-      const body = await sellersRes.json();
-      setSellers((body?.data ?? []) as BlingSeller[]);
-    }
     if (mapRes.ok) {
       const body = await mapRes.json();
-      const rows = (body?.data ?? []) as { user_email: string; bling_seller_id: number }[];
-      setSellerMap(Object.fromEntries(rows.map((r) => [r.user_email, r.bling_seller_id])));
+      setSellerMap(indexarVinculos(body?.data ?? []));
     }
     setLoading(false);
   }
@@ -245,22 +292,28 @@ export function BlingSettings() {
     const sellerId = value === "" ? null : Number(value);
     setSavingEmail(email);
     setMapError(null);
-    const anterior = sellerMap[email] ?? null;
-    setSellerMap((prev) => ({ ...prev, [email]: sellerId }));
+    const anterior = vinculoDe(sellerMap, contaVendedores, email);
+    setSellerMap((prev) => comVinculo(prev, contaVendedores, email, sellerId));
     try {
       const res = await fetch("/api/bling/seller-map", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_email: email, bling_seller_id: sellerId }),
+        // `account` e obrigatorio: sem ele a rota cai em CONTA_PADRAO e grava
+        // um id do CNPJ 2 na linha da conta 1.
+        body: JSON.stringify({
+          user_email: email,
+          account: contaVendedores,
+          bling_seller_id: sellerId,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setMapError(body?.error ?? "Não foi possível salvar o vínculo.");
-        setSellerMap((prev) => ({ ...prev, [email]: anterior }));
+        setSellerMap((prev) => comVinculo(prev, contaVendedores, email, anterior));
       }
     } catch {
       setMapError("Backend inacessível.");
-      setSellerMap((prev) => ({ ...prev, [email]: anterior }));
+      setSellerMap((prev) => comVinculo(prev, contaVendedores, email, anterior));
     } finally {
       setSavingEmail(null);
     }
@@ -469,6 +522,29 @@ export function BlingSettings() {
           pedido é criado sem vendedor — a venda não é bloqueada por isso.
         </p>
 
+        {/* Seletor so aparece com mais de uma conta CONECTADA: vendedor so
+            existe no espelho depois do sync, que exige OAuth. Oferecer uma
+            conta sem conexao daria um dropdown vazio sem explicar por que. */}
+        {precisaSeletor(contas) && (
+          <div className="flex items-center gap-2 mb-4">
+            <label htmlFor="conta-vendedores" className="text-[13px] text-[#111111]">
+              Conta
+            </label>
+            <select
+              id="conta-vendedores"
+              value={contaVendedores}
+              onChange={(e) => setContaVendedores(e.target.value)}
+              className={`${inputCls} min-w-[200px]`}
+            >
+              {contasDisponiveis(contas).map((c) => (
+                <option key={c.account} value={c.account}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {mapError && <p className="text-[13px] text-[#c41c1c] mb-3">{mapError}</p>}
 
         {sellers.length === 0 && (
@@ -492,7 +568,11 @@ export function BlingSettings() {
                 <p className="text-[12px] text-[#7b7b78] truncate">{u.email}</p>
               </div>
               <select
-                value={sellerMap[u.email] != null ? String(sellerMap[u.email]) : ""}
+                value={
+                  vinculoDe(sellerMap, contaVendedores, u.email) != null
+                    ? String(vinculoDe(sellerMap, contaVendedores, u.email))
+                    : ""
+                }
                 onChange={(e) => void saveSellerMap(u.email, e.target.value)}
                 disabled={sellers.length === 0 || savingEmail === u.email}
                 className={`${inputCls} ml-auto min-w-[200px] disabled:opacity-50`}

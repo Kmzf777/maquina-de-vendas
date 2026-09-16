@@ -49,6 +49,48 @@ function mockarFetch(status: Corpo, opts: { sync?: Corpo } = {}) {
   }) as unknown as typeof fetch;
 }
 
+const USUARIOS = [{ id: "u1", name: "João Brás", email: "joao@x.com" }];
+
+/** Vendedores espelhados de cada CNPJ — ids diferentes, que e o ponto. */
+const VENDEDORES: Record<string, { id: number; nome: string }[]> = {
+  default: [{ id: 111, nome: "João do CNPJ 1" }],
+  secundaria: [{ id: 222, nome: "João do CNPJ 2" }],
+};
+
+type LinhaVinculo = { user_email: string; account: string; bling_seller_id: number };
+
+/**
+ * Mock focado no bloco "Vendedores": responde `/api/bling/sellers` conforme o
+ * `?account=` pedido e registra os PUTs de `/api/bling/seller-map`.
+ */
+function mockarVendedores(
+  opts: { contas?: (typeof CONTA_1)[]; vinculos?: LinhaVinculo[] } = {},
+) {
+  const puts: string[] = [];
+  const urls: string[] = [];
+  global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    urls.push(u);
+    if (u.includes("/api/bling/status")) {
+      return resposta(statusCom(opts.contas ?? [CONTA_1, CONTA_2]));
+    }
+    if (u.includes("/api/bling/sellers")) {
+      const conta = new URL(u, "http://x").searchParams.get("account") ?? "default";
+      return resposta({ data: VENDEDORES[conta] ?? [] });
+    }
+    if (u.includes("/api/bling/seller-map")) {
+      if (init?.method === "PUT") {
+        puts.push(String(init.body));
+        return resposta({ ok: true });
+      }
+      return resposta({ data: opts.vinculos ?? [] });
+    }
+    if (u.includes("/api/users")) return resposta(USUARIOS);
+    return resposta({});
+  }) as unknown as typeof fetch;
+  return { puts, urls };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -58,8 +100,8 @@ describe("BlingSettings", () => {
   it("lista uma linha por conta, rotulada com o label de cada uma", async () => {
     mockarFetch(statusCom([CONTA_1, CONTA_2]));
     render(<BlingSettings />);
-    await waitFor(() => expect(screen.getByText("Canastra CNPJ 1")).toBeTruthy());
-    expect(screen.getByText("Canastra CNPJ 2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Canastra CNPJ 1", { selector: "p" })).toBeTruthy());
+    expect(screen.getByText("Canastra CNPJ 2", { selector: "p" })).toBeTruthy();
     // Cada linha tem seu proprio pill de status — duas contas, dois "Conectado".
     expect(screen.getAllByText("Conectado").length).toBe(2);
   });
@@ -72,13 +114,13 @@ describe("BlingSettings", () => {
     render(<BlingSettings />);
     await waitFor(() => expect(screen.getAllByText(/Autorização expirando/).length).toBe(1));
     // A conta 2 aparece na tela (linha dela existe) mas sem o aviso.
-    expect(screen.getByText("Canastra CNPJ 2")).toBeTruthy();
+    expect(screen.getByText("Canastra CNPJ 2", { selector: "p" })).toBeTruthy();
   });
 
   it("sem nenhuma conta perto de vencer, nao mostra aviso nenhum", async () => {
     mockarFetch(statusCom([CONTA_1, CONTA_2]));
     render(<BlingSettings />);
-    await waitFor(() => expect(screen.getByText("Canastra CNPJ 1")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Canastra CNPJ 1", { selector: "p" })).toBeTruthy());
     expect(screen.queryByText(/Autorização expirando/)).toBeNull();
   });
 
@@ -101,12 +143,134 @@ describe("BlingSettings", () => {
       },
     });
     render(<BlingSettings />);
-    await waitFor(() => expect(screen.getByText("Canastra CNPJ 1")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Canastra CNPJ 1", { selector: "p" })).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Sincronizar agora/i }));
 
     await waitFor(() => expect(screen.getByText(/401 token expirado/)).toBeTruthy());
     expect(screen.getByText(/Produtos/)).toBeTruthy();
     expect(screen.getByText(/Contatos/)).toBeTruthy();
+  });
+});
+
+describe("BlingSettings — vendedores por conta", () => {
+  it("o seletor de conta troca a lista de vendedores oferecida", async () => {
+    mockarVendedores();
+    render(<BlingSettings />);
+    await waitFor(() => expect(screen.getByText("João do CNPJ 1")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Conta"), {
+      target: { value: "secundaria" },
+    });
+
+    await waitFor(() => expect(screen.getByText("João do CNPJ 2")).toBeTruthy());
+    // A lista TROCA, nao acumula: oferecer o vendedor do outro CNPJ seria
+    // oferecer um id que nao existe na conta que vai emitir o pedido.
+    expect(screen.queryByText("João do CNPJ 1")).toBeNull();
+  });
+
+  it("salva o vinculo NA CONTA selecionada, nao na default", async () => {
+    const { puts } = mockarVendedores();
+    render(<BlingSettings />);
+    await waitFor(() => expect(screen.getByText("João do CNPJ 1")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Conta"), {
+      target: { value: "secundaria" },
+    });
+    await waitFor(() => expect(screen.getByText("João do CNPJ 2")).toBeTruthy());
+
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[selects.length - 1], { target: { value: "222" } });
+
+    await waitFor(() => expect(puts.length).toBe(1));
+    expect(JSON.parse(puts[0])).toMatchObject({
+      user_email: "joao@x.com",
+      account: "secundaria",
+      bling_seller_id: 222,
+    });
+  });
+
+  it("mostra o vinculo DA CONTA selecionada quando o e-mail tem um em cada", async () => {
+    mockarVendedores({
+      vinculos: [
+        { user_email: "joao@x.com", account: "default", bling_seller_id: 111 },
+        { user_email: "joao@x.com", account: "secundaria", bling_seller_id: 222 },
+      ],
+    });
+    render(<BlingSettings />);
+    await waitFor(() => expect(screen.getByText("João do CNPJ 1")).toBeTruthy());
+
+    const vendedor = () =>
+      screen.getAllByRole("combobox").at(-1) as HTMLSelectElement;
+    expect(vendedor().value).toBe("111");
+
+    fireEvent.change(screen.getByLabelText("Conta"), {
+      target: { value: "secundaria" },
+    });
+    await waitFor(() => expect(screen.getByText("João do CNPJ 2")).toBeTruthy());
+
+    // Indexar so por e-mail colapsaria as duas linhas e mostraria o vendedor
+    // da conta errada — que e o defeito que `indexarVinculos` existe para evitar.
+    expect(vendedor().value).toBe("222");
+  });
+
+  it("cai para a conta conectada quando a default nao esta", async () => {
+    mockarVendedores({
+      contas: [{ ...CONTA_1, configured: false, connected: false }, CONTA_2],
+    });
+    render(<BlingSettings />);
+
+    // Sem isto o quadro ficaria preso na 'default' (estado inicial), que nao
+    // tem espelho nenhum — e o admin nao teria como mapear a conta que funciona.
+    await waitFor(() => expect(screen.getByText("João do CNPJ 2")).toBeTruthy());
+  });
+
+  it("com uma conta so, nao mostra seletor — a tela fica como era", async () => {
+    mockarVendedores({ contas: [CONTA_1] });
+    render(<BlingSettings />);
+    await waitFor(() => expect(screen.getByText("João do CNPJ 1")).toBeTruthy());
+
+    expect(screen.queryByLabelText("Conta")).toBeNull();
+  });
+});
+
+describe("BlingSettings — rollback do vinculo", () => {
+  it("falha de rede devolve o vinculo A CONTA de onde ele saiu", async () => {
+    global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/bling/status")) {
+        return resposta(statusCom([CONTA_1, CONTA_2]));
+      }
+      if (u.includes("/api/bling/sellers")) {
+        const conta = new URL(u, "http://x").searchParams.get("account") ?? "default";
+        return resposta({ data: VENDEDORES[conta] ?? [] });
+      }
+      if (u.includes("/api/bling/seller-map")) {
+        if (init?.method === "PUT") throw new Error("rede caiu");
+        return resposta({
+          data: [{ user_email: "joao@x.com", account: "secundaria", bling_seller_id: 222 }],
+        });
+      }
+      if (u.includes("/api/users")) return resposta(USUARIOS);
+      return resposta({});
+    }) as unknown as typeof fetch;
+
+    render(<BlingSettings />);
+    await waitFor(() => expect(screen.getByText("João do CNPJ 1")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Conta"), {
+      target: { value: "secundaria" },
+    });
+    await waitFor(() => expect(screen.getByText("João do CNPJ 2")).toBeTruthy());
+
+    const vendedor = () =>
+      screen.getAllByRole("combobox").at(-1) as HTMLSelectElement;
+    expect(vendedor().value).toBe("222");
+
+    fireEvent.change(vendedor(), { target: { value: "" } });
+
+    await waitFor(() => expect(screen.getByText("Backend inacessível.")).toBeTruthy());
+    // O desfazer tem que voltar para a MESMA celula (conta + e-mail) de onde
+    // o valor saiu — devolver na chave de e-mail cru perde o vinculo na tela.
+    expect(vendedor().value).toBe("222");
   });
 });
