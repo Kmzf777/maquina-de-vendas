@@ -292,17 +292,23 @@ def _seller_id_for(email: str | None, account: str) -> int | None:
     return row.get("bling_seller_id")
 
 
-def _products_by_id(ids: list[int]) -> dict[int, dict]:
-    """Le do espelho SO os produtos citados no pedido.
+def _products_by_id(ids: list[int], account: str) -> dict[int, dict]:
+    """Le do espelho SO os produtos citados no pedido, DENTRO da conta.
 
     Filtrar por id (em vez de varrer a tabela) nao e so economia: o PostgREST
     devolve no maximo 1000 linhas por padrao, entao um catalogo maior que isso
     faria o produto do pedido simplesmente nao aparecer e a descricao cair no
     generico "Item" — dado errado dentro do ERP, em silencio.
+
+    O recorte por conta e obrigatorio desde a PK composta (account, id): as duas
+    contas tem sequencias de id independentes, entao o mesmo numero existe nas
+    duas apontando para produtos DIFERENTES. Sem o filtro, esta funcao devolve
+    a linha que o Postgres entregar primeiro e o item do pedido sai com a
+    descricao do produto do outro CNPJ.
     """
     if not ids:
         return {}
-    rows = getattr(get_supabase().table("bling_products")
+    rows = getattr(get_supabase().table("bling_products").eq("account", account)
                    .select("id, nome, codigo, unidade")
                    .in_("id", ids).execute(), "data", None) or []
     return {int(p["id"]): p for p in rows}
@@ -340,7 +346,7 @@ async def create_order_endpoint(body: OrderIn):
     faltando = [i for i in itens if not i["descricao"]]
     if faltando:
         por_id = await asyncio.to_thread(
-            _products_by_id, [i["bling_product_id"] for i in faltando]
+            _products_by_id, [i["bling_product_id"] for i in faltando], conta.key
         )
         for item in faltando:
             p = por_id.get(item["bling_product_id"]) or {}
@@ -429,7 +435,7 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
     faltando = [i for i in itens if not i["descricao"]]
     if faltando:
         por_id = await asyncio.to_thread(
-            _products_by_id, [i["bling_product_id"] for i in faltando]
+            _products_by_id, [i["bling_product_id"] for i in faltando], conta.key
         )
         for item in faltando:
             p = por_id.get(item["bling_product_id"]) or {}

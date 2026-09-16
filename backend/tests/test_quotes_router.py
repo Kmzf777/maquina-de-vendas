@@ -79,11 +79,17 @@ def db(monkeypatch):
 
     monkeypatch.setattr(qr, "_load_lead", lambda _id: dict(LEAD))
     monkeypatch.setattr(qr, "_load_lead_para_pdf", lambda _id: dict(LEAD))
-    monkeypatch.setattr(qr, "_products_by_id", lambda _ids: {})
-    monkeypatch.setattr(qr, "_seller_id_for", lambda _email: 12)
-    monkeypatch.setattr(qr, "_payment_method_name", lambda _id: "Boleto")
+    # Os quatro dubles abaixo EXIGEM a conta, sem default. Nao e estilo: antes
+    # disso, `_seller_id_for` era substituido por `lambda _email: 12` enquanto a
+    # funcao real ja pedia dois argumentos — a suite ficava verde com
+    # /orcamento quebrado em producao (TypeError -> 500 em criar, editar e
+    # converter). Duble frouxo esconde exatamente a regressao que ele existiria
+    # para pegar.
+    monkeypatch.setattr(qr, "_products_by_id", lambda _ids, _account: {})
+    monkeypatch.setattr(qr, "_seller_id_for", lambda _email, _account: 12)
+    monkeypatch.setattr(qr, "_payment_method_name", lambda _id, _account: "Boleto")
     monkeypatch.setattr(qr, "_seller_for",
-                        lambda email: {"nome": "Vendedor", "email": email})
+                        lambda email, _account: {"nome": "Vendedor", "email": email})
     monkeypatch.setattr(qr, "_load_quote_items", lambda _id: list(ITENS_DA_QUOTE))
 
     def _insert(row):
@@ -324,7 +330,7 @@ async def test_falha_ao_gravar_itens_nao_derruba_o_orcamento(db, monkeypatch):
 async def test_descricao_do_item_e_completada_pelo_espelho(db, monkeypatch):
     """O Bling recusa item sem descrição mesmo com `produto.id` — mesma
     completude que o pedido de venda já faz."""
-    monkeypatch.setattr(qr, "_products_by_id", lambda _ids: {
+    monkeypatch.setattr(qr, "_products_by_id", lambda _ids, _account: {
         777: {"id": 777, "nome": "Cafe Classico 250g", "codigo": "CAF250",
               "unidade": "UN"}})
 
@@ -959,3 +965,41 @@ async def test_conversao_resolve_o_fallback_de_contato_na_conta_do_orcamento(db,
     # E o contato que o fallback resolveu (555, do fake_resolve) e o que segue
     # para o pedido — a mesma conta do inicio ao fim da conversao.
     assert db["order_kwargs"]["contact_id"] == 555
+
+
+async def test_helpers_do_bling_router_recebem_a_conta_do_orcamento(db, monkeypatch):
+    """REGRESSAO de contrato ENTRE MODULOS.
+
+    `quotes/router.py` reusa `_seller_id_for` e `_products_by_id` de
+    `bling/router.py` de proposito (duas copias divergiriam no primeiro ajuste de
+    coluna). O risco disso e o inverso: a funcao muda de assinatura do outro lado
+    e este arquivo nunca e revisitado. Foi o que aconteceu — `_seller_id_for`
+    ganhou `account` obrigatorio e as chamadas daqui continuaram com um argumento,
+    quebrando criar/editar/converter orcamento com 500 em producao, com a suite
+    verde porque o duble tinha a aridade ANTIGA.
+
+    Este teste afirma o que o duble sozinho nao afirma: que a conta que chega aos
+    dois helpers e a do ORCAMENTO, nao um default silencioso.
+    """
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+    recebidos = {}
+
+    def fake_seller_id_for(_email, account):
+        recebidos["seller"] = account
+        return 12
+
+    def fake_products_by_id(_ids, account):
+        recebidos["produtos"] = account
+        return {}
+
+    monkeypatch.setattr(qr, "_seller_id_for", fake_seller_id_for)
+    monkeypatch.setattr(qr, "_products_by_id", fake_products_by_id)
+
+    await qr.create_quote_endpoint(corpo(
+        account="secundaria",
+        items=[qr.QuoteItemIn(bling_product_id=777, descricao="", quantidade=1,
+                              valor_unitario=10.0)],
+    ))
+
+    assert recebidos["seller"] == "secundaria"
+    assert recebidos["produtos"] == "secundaria"

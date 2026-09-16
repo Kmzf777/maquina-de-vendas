@@ -218,17 +218,24 @@ def _load_lead_para_pdf(lead_id: str) -> dict | None:
     return getattr(res, "data", None)
 
 
-def _payment_method_name(method_id) -> str | None:
+def _payment_method_name(method_id, account: str) -> str | None:
     """Descrição da forma de pagamento, do espelho — nunca da API do Bling.
 
     Ausência devolve None e o bloco some do PDF: forma de pagamento apagada do
     ERP depois do orçamento não pode impedir o vendedor de baixar o arquivo.
+
+    Filtra por conta porque `bling_payment_methods` tem PK composta (account,
+    id). São 45 linhas com IDs baixos: é exatamente a faixa onde dois CNPJs
+    colidem no mesmo número, e isto roda em TODO download de PDF — sem o filtro,
+    a proposta da conta 2 pode imprimir a condição de pagamento da conta 1 num
+    documento que vai para o cliente.
     """
     if not method_id:
         return None
     try:
         res = (get_supabase().table("bling_payment_methods")
-               .select("descricao").eq("id", int(method_id)).limit(1).execute())
+               .select("descricao").eq("account", account)
+               .eq("id", int(method_id)).limit(1).execute())
     except Exception:
         logger.warning("[QUOTES] lookup da forma de pagamento %s falhou",
                        method_id, exc_info=True)
@@ -237,7 +244,7 @@ def _payment_method_name(method_id) -> str | None:
     return linhas[0].get("descricao") if linhas else None
 
 
-def _seller_for(email: str | None) -> dict | None:
+def _seller_for(email: str | None, account: str) -> dict | None:
     """`{"nome", "email"}` para a assinatura do rodapé do PDF.
 
     O nome vem de `bling_sellers` via `bling_seller_map`; vendedor sem mapa sai
@@ -248,9 +255,10 @@ def _seller_for(email: str | None) -> dict | None:
         return None
     nome = None
     try:
-        seller_id = _seller_id_for(email)
+        seller_id = _seller_id_for(email, account)
         if seller_id:
             res = (get_supabase().table("bling_sellers").select("nome")
+                   .eq("account", account)
                    .eq("id", int(seller_id)).limit(1).execute())
             linhas = getattr(res, "data", None) or []
             nome = linhas[0].get("nome") if linhas else None
@@ -304,7 +312,7 @@ def _move_deal_to_proposal(deal_id: str) -> bool:
 # --------------------------------------------------------------------------
 # Auxiliares
 # --------------------------------------------------------------------------
-async def _montar_itens(items: list[QuoteItemIn]) -> list[dict]:
+async def _montar_itens(items: list[QuoteItemIn], account: str) -> list[dict]:
     """Itens do corpo completados pelo espelho de produtos.
 
     O Bling recusa item sem `descricao` mesmo quando o `produto.id` vai junto —
@@ -323,7 +331,7 @@ async def _montar_itens(items: list[QuoteItemIn]) -> list[dict]:
     faltando = [i for i in itens if not i["descricao"]]
     if faltando:
         por_id = await asyncio.to_thread(
-            _products_by_id, [i["bling_product_id"] for i in faltando])
+            _products_by_id, [i["bling_product_id"] for i in faltando], account)
         for item in faltando:
             p = por_id.get(item["bling_product_id"]) or {}
             item["descricao"] = p.get("nome") or "Item"
@@ -452,9 +460,9 @@ async def create_quote_endpoint(body: QuoteIn):
     if resolucao.status != "linked":
         return _contato_nao_resolvido(resolucao)
 
-    itens = await _montar_itens(body.items)
+    itens = await _montar_itens(body.items, account)
     numeros = _numeros_do_corpo(body, itens)
-    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by)
+    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by, account)
 
     try:
         async with BlingClient(account=account) as client:
@@ -581,9 +589,9 @@ async def update_quote_endpoint(quote_id: str, body: QuoteIn):
     if resolucao.status != "linked":
         return _contato_nao_resolvido(resolucao)
 
-    itens = await _montar_itens(body.items)
+    itens = await _montar_itens(body.items, account)
     numeros = _numeros_do_corpo(body, itens)
-    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by)
+    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by, account)
 
     # A situação enviada no PUT é a que o orçamento já tem — o PUT altera o
     # conteúdo, não o estado. Mandar `Rascunho` fixo rebaixaria uma proposta já
@@ -773,7 +781,7 @@ async def convert_quote_endpoint(quote_id: str):
                           if quote.get("payment_method_id") else None),
             "terms": parse_terms(quote.get("payment_terms")),
         },
-        "seller_id": await asyncio.to_thread(_seller_id_for, quote.get("created_by")),
+        "seller_id": await asyncio.to_thread(_seller_id_for, quote.get("created_by"), account),
         # Já em reais: `quotes.discount_value` guarda o desconto convertido, e
         # `apply_discount` com unidade REAL subtrai exatamente esse valor.
         "discount": ({"valor": float(desconto), "unidade": "REAL"}
@@ -880,9 +888,16 @@ async def quote_pdf_endpoint(quote_id: str):
     if not quote:
         return JSONResponse({"error": "quote_not_found"}, status_code=404)
 
+    # A conta do PROPRIO orcamento manda aqui. Vendedor e forma de pagamento sao
+    # espelhos com PK composta (account, id) e com faixas de id baixas (16 e 45
+    # linhas hoje) — exatamente onde dois CNPJs colidem no mesmo numero. Sem o
+    # recorte, o PDF que vai para o cliente pode sair com o nome do vendedor ou a
+    # condicao de pagamento da OUTRA conta.
+    conta_do_pdf = quote.get("bling_account") or config.DEFAULT_ACCOUNT
+
     items = await asyncio.to_thread(_load_quote_items, quote_id)
     lead = await asyncio.to_thread(_load_lead_para_pdf, quote.get("lead_id")) or {}
-    seller = await asyncio.to_thread(_seller_for, quote.get("created_by"))
+    seller = await asyncio.to_thread(_seller_for, quote.get("created_by"), conta_do_pdf)
 
     razao = lead.get("razao_social") or lead.get("name")
     # "A/C" só quando o nome da pessoa difere do nome que encabeça o documento —
@@ -904,7 +919,7 @@ async def quote_pdf_endpoint(quote_id: str):
         "notes": quote.get("notes"),
         "payment_terms": quote.get("payment_terms"),
         "payment_method_name": await asyncio.to_thread(
-            _payment_method_name, quote.get("payment_method_id")),
+            _payment_method_name, quote.get("payment_method_id"), conta_do_pdf),
         "installments": _parcelas_para_o_pdf(quote),
         "lead_nome": razao,
         "lead_documento": lead.get("cnpj"),
