@@ -108,30 +108,34 @@ def map_contact(bruto: dict) -> dict:
     }
 
 
-def _load_sync_state(resource: str) -> dict | None:
-    res = (get_supabase().table("bling_sync_state")
-           .select("*").eq("resource", resource).limit(1).maybe_single().execute())
+def _load_sync_state(resource: str, account: str) -> dict | None:
+    filtro = _state_filter(resource, account)
+    res = (get_supabase().table("bling_sync_state").select("*")
+           .eq("resource", filtro["resource"]).eq("account", filtro["account"])
+           .limit(1).maybe_single().execute())
     return getattr(res, "data", None)
 
 
-def _save_sync_state(resource: str, *, last_sync_at: str, cursor: str | None = None) -> None:
+def _save_sync_state(resource: str, account: str, *, last_sync_at: str,
+                      cursor: str | None = None) -> None:
     (get_supabase().table("bling_sync_state").upsert(
-        {"resource": resource, "last_sync_at": last_sync_at, "last_cursor": cursor,
-         "updated_at": datetime.now(timezone.utc).isoformat()},
-        on_conflict="resource").execute())
+        {**_state_filter(resource, account), "last_sync_at": last_sync_at,
+         "last_cursor": cursor, "updated_at": datetime.now(timezone.utc).isoformat()},
+        on_conflict="account,resource").execute())
 
 
-async def _upsert(table: str, rows: list[dict]) -> None:
+async def _upsert(table: str, rows: list[dict], account: str) -> None:
     if not rows:
         return
+    linhas = [{**row, "account": account} for row in rows]
     await asyncio.to_thread(
-        lambda: get_supabase().table(table).upsert(rows, on_conflict="id").execute()
+        lambda: get_supabase().table(table).upsert(linhas, on_conflict="account,id").execute()
     )
 
 
-async def sync_contacts(client, *, batch_size: int = 200) -> int:
+async def sync_contacts(client, account: str, *, batch_size: int = 200) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
-    estado = await asyncio.to_thread(_load_sync_state, "contacts")
+    estado = await asyncio.to_thread(_load_sync_state, "contacts", account)
     desde = (estado or {}).get("last_sync_at")
     # `desde` esta em ISO 8601 (o que `bling_sync_state.last_sync_at` guarda); o
     # Bling exige 'Y-m-d H:i:s'. Ver `to_bling_datetime` para o porque da margem.
@@ -143,19 +147,19 @@ async def sync_contacts(client, *, batch_size: int = 200) -> int:
     async for bruto in client.paginate("/contatos", params):
         buffer.append(map_contact(bruto))
         if len(buffer) >= batch_size:
-            await _upsert("bling_contacts", buffer)
+            await _upsert("bling_contacts", buffer, account)
             total += len(buffer)
             buffer = []
     if buffer:
-        await _upsert("bling_contacts", buffer)
+        await _upsert("bling_contacts", buffer, account)
         total += len(buffer)
 
-    await asyncio.to_thread(_save_sync_state, "contacts", last_sync_at=started_at)
-    logger.info("[BLING] contatos sincronizados: %d", total)
+    await asyncio.to_thread(_save_sync_state, "contacts", account, last_sync_at=started_at)
+    logger.info("[BLING] contatos sincronizados (conta %s): %d", account, total)
     return total
 
 
-async def sync_payment_methods(client) -> int:
+async def sync_payment_methods(client, account: str) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
     rows = []
     async for b in client.paginate("/formas-pagamentos", {}):
@@ -168,12 +172,12 @@ async def sync_payment_methods(client) -> int:
             "finalidade": b.get("finalidade"),
             "synced_at": started_at,
         })
-    await _upsert("bling_payment_methods", rows)
-    await asyncio.to_thread(_save_sync_state, "payment_methods", last_sync_at=started_at)
+    await _upsert("bling_payment_methods", rows, account)
+    await asyncio.to_thread(_save_sync_state, "payment_methods", account, last_sync_at=started_at)
     return len(rows)
 
 
-async def sync_sellers(client) -> int:
+async def sync_sellers(client, account: str) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
     rows = []
     async for b in client.paginate("/vendedores", {}):
@@ -185,12 +189,12 @@ async def sync_sellers(client) -> int:
             "situacao": b.get("situacao"),
             "synced_at": started_at,
         })
-    await _upsert("bling_sellers", rows)
-    await asyncio.to_thread(_save_sync_state, "sellers", last_sync_at=started_at)
+    await _upsert("bling_sellers", rows, account)
+    await asyncio.to_thread(_save_sync_state, "sellers", account, last_sync_at=started_at)
     return len(rows)
 
 
-async def sync_situacoes(client) -> int:
+async def sync_situacoes(client, account: str) -> int:
     """Espelha as situacoes de pedido (nome, cor, modulo) em `bling_situacoes`.
 
     Existe porque nem o pedido nem o webhook trazem o NOME da situacao — os
@@ -202,6 +206,17 @@ async def sync_situacoes(client) -> int:
     conta de producao so tem um modulo mesmo) e mais robusto se o Bling passar
     a expor outros — o lookup de uma situacao e sempre por `id`, unico entre
     modulos de qualquer forma.
+
+    ATENCAO conta 2 (verificado em supabase/migrations/20260913_bling_multi_conta.sql):
+    `bling_situacoes` NAO esta na lista de tabelas que ganharam a coluna
+    `account`/PK composta — a migration cobre products/contacts/sellers/
+    payment_methods/sync_state, mas nao situacoes. Por isso o upsert dos
+    DADOS continua em on_conflict="id", sem gravar account (gravar um campo
+    que a tabela nao tem quebraria o upsert real com PGRST204). `account` so
+    entra aqui para logar e para o bookkeeping em `bling_sync_state`, que ESSE
+    sim ja tem a coluna. Se/quando a tabela ganhar a coluna numa migration
+    futura, trocar para `_upsert("bling_situacoes", rows, account)` como as
+    outras.
     """
     started_at = datetime.now(timezone.utc).isoformat()
     modulos = (await client.get("/situacoes/modulos")).get("data") or []
@@ -224,24 +239,52 @@ async def sync_situacoes(client) -> int:
                 "synced_at": started_at,
             })
 
-    await _upsert("bling_situacoes", rows)
-    await asyncio.to_thread(_save_sync_state, "situacoes", last_sync_at=started_at)
+    if rows:
+        await asyncio.to_thread(
+            lambda: get_supabase().table("bling_situacoes")
+            .upsert(rows, on_conflict="id").execute()
+        )
+    await asyncio.to_thread(_save_sync_state, "situacoes", account, last_sync_at=started_at)
+    logger.info("[BLING] situacoes sincronizadas (conta %s): %d", account, len(rows))
     return len(rows)
 
 
-async def sync_all(*, full: bool = False) -> dict:
-    """Roda os cinco syncs em sequencia (nunca em paralelo: 3 req/s e da conta)."""
+async def sync_account(account: str, *, full: bool = False) -> dict:
+    """Roda os cinco syncs de UMA conta, em sequencia (nunca em paralelo:
+    o teto de 3 req/s e da conta)."""
     from app.bling.client import BlingClient
 
-    async with BlingClient() as client:
-        produtos = await sync_products(client, full=full)
-        contatos = await sync_contacts(client)
-        formas = await sync_payment_methods(client)
-        vendedores = await sync_sellers(client)
-        situacoes = await sync_situacoes(client)
+    async with BlingClient(account=account) as client:
+        produtos = await sync_products(client, account, full=full)
+        contatos = await sync_contacts(client, account)
+        formas = await sync_payment_methods(client, account)
+        vendedores = await sync_sellers(client, account)
+        situacoes = await sync_situacoes(client, account)
     return {"produtos": produtos, "contatos": contatos,
             "formas_pagamento": formas, "vendedores": vendedores,
             "situacoes": situacoes}
+
+
+def _state_filter(resource: str, account: str) -> dict:
+    return {"resource": resource, "account": account}
+
+
+async def sync_all(*, full: bool = False) -> dict:
+    """Sincroniza TODAS as contas configuradas.
+
+    Falha numa conta nao pode derrubar a outra: o worker roda as duas no mesmo
+    tick e um 401 na conta 2 nao tem por que parar o catalogo da conta 1. Por
+    isso o resultado e por conta e o erro entra como valor, nao como excecao —
+    `bling_sync_tick` loga esse dicionario e precisa ver as duas.
+    """
+    resultado = {}
+    for conta in config.accounts():
+        try:
+            resultado[conta.key] = await sync_account(conta.key, full=full)
+        except Exception as exc:  # noqa: BLE001 — isolamento por conta
+            logger.warning("[BLING SYNC] conta %s falhou: %s", conta.key, exc)
+            resultado[conta.key] = {"erro": str(exc)}
+    return resultado
 
 
 async def bling_sync_tick() -> None:

@@ -41,30 +41,34 @@ def map_product(bruto: dict) -> dict:
     }
 
 
-def _load_sync_state(resource: str) -> dict | None:
+def _load_sync_state(resource: str, account: str) -> dict | None:
     res = (get_supabase().table("bling_sync_state")
-           .select("*").eq("resource", resource).limit(1).maybe_single().execute())
+           .select("*").eq("resource", resource).eq("account", account)
+           .limit(1).maybe_single().execute())
     return getattr(res, "data", None)
 
 
-def _save_sync_state(resource: str, *, last_sync_at: str, cursor: str | None = None) -> None:
+def _save_sync_state(resource: str, account: str, *, last_sync_at: str,
+                      cursor: str | None = None) -> None:
     now = datetime.now(timezone.utc).isoformat()
     (get_supabase().table("bling_sync_state").upsert(
-        {"resource": resource, "last_sync_at": last_sync_at,
+        {"resource": resource, "account": account, "last_sync_at": last_sync_at,
          "last_cursor": cursor, "updated_at": now},
-        on_conflict="resource").execute())
+        on_conflict="account,resource").execute())
 
 
-async def _upsert(rows: list[dict]) -> None:
+async def _upsert(rows: list[dict], account: str) -> None:
     if not rows:
         return
+    linhas = [{**row, "account": account} for row in rows]
     await asyncio.to_thread(
         lambda: get_supabase().table("bling_products")
-        .upsert(rows, on_conflict="id").execute()
+        .upsert(linhas, on_conflict="account,id").execute()
     )
 
 
-async def sync_products(client, *, full: bool = False, batch_size: int = 200) -> int:
+async def sync_products(client, account: str, *, full: bool = False,
+                         batch_size: int = 200) -> int:
     """Sincroniza o catalogo. `full=True` traz tudo; senao, so o que mudou.
 
     Sem estado anterior, cai para completo — e o primeiro sync.
@@ -72,7 +76,7 @@ async def sync_products(client, *, full: bool = False, batch_size: int = 200) ->
     started_at = datetime.now(timezone.utc).isoformat()
     params: dict = {}
     if not full:
-        estado = await asyncio.to_thread(_load_sync_state, _RESOURCE)
+        estado = await asyncio.to_thread(_load_sync_state, _RESOURCE, account)
         desde = (estado or {}).get("last_sync_at")
         # `desde` esta em ISO 8601; o Bling exige 'Y-m-d H:i:s'. Ver
         # `to_bling_datetime` para o porque da margem de seguranca.
@@ -88,19 +92,20 @@ async def sync_products(client, *, full: bool = False, batch_size: int = 200) ->
     async for bruto in client.paginate("/produtos", params):
         buffer.append(map_product(bruto))
         if len(buffer) >= batch_size:
-            await _upsert(buffer)
+            await _upsert(buffer, account)
             total += len(buffer)
             buffer = []
     if buffer:
-        await _upsert(buffer)
+        await _upsert(buffer, account)
         total += len(buffer)
 
-    await asyncio.to_thread(_save_sync_state, _RESOURCE, last_sync_at=started_at)
-    logger.info("[BLING] catalogo sincronizado: %d produtos (full=%s)", total, full)
+    await asyncio.to_thread(_save_sync_state, _RESOURCE, account, last_sync_at=started_at)
+    logger.info("[BLING] catalogo sincronizado (conta %s): %d produtos (full=%s)",
+                account, total, full)
     return total
 
 
-async def apply_product_event(event: str, payload: dict) -> None:
+async def apply_product_event(event: str, payload: dict, account: str) -> None:
     """Aplica um webhook `product.*` no espelho."""
     if event.endswith(".deleted"):
         row = {
@@ -111,4 +116,4 @@ async def apply_product_event(event: str, payload: dict) -> None:
         }
     else:
         row = map_product(payload)
-    await _upsert([row])
+    await _upsert([row], account)
