@@ -67,9 +67,12 @@ def test_todo_vocabulario_usado_e_conhecido():
         for c in t.campos:
             assert c.vocab in VOCABULARIOS, f"{t.subtipo}.{c.chave}: {c.vocab}"
 
-def test_as_nove_condicoes_estao_na_paleta():
+def test_as_dez_condicoes_estao_na_paleta():
+    # Nove ate 16/09/2026; a decima e `clicou_botao` (§11 do desenho), a unica que le a
+    # ultima resposta do lead em vez do CRM. O numero e literal de proposito: condicao
+    # nova tem de passar por aqui, e nao aparecer sozinha na paleta.
     conds = [t for (tipo, _), t in REGISTRO.items() if tipo == "condition"]
-    assert len(conds) == 9
+    assert len(conds) == 10
     assert all(t.na_paleta for t in conds)
 
 

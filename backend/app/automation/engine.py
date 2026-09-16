@@ -526,6 +526,25 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
             lt = sb.table("lead_tags").select("id").eq("lead_id", enrollment["lead_id"]).eq("tag_id", tag_row[0]["id"]).limit(1).execute()
             result = bool(lt.data)
 
+    elif cond == "clicou_botao":
+        # §11 (16/09/2026). A ÚNICA condição que não consulta o CRM: lê a última
+        # resposta do lead, que `campaigns/worker.py::handle_campaign_reply` grava em
+        # `campaign_enrollments.metadata.ultima_resposta` a cada inbound. Sem ela o
+        # clique num botão de template só conseguia ENCERRAR a esteira (política
+        # `on_reply_por_botao`); com ela dá para desviar no meio da cadência.
+        #
+        # `_normalize_reply` é o mesmo do worker — igualdade normalizada, nunca
+        # substring, nos dois lados. Alvo vazio responde NÃO sempre: condição
+        # incompleta cai no ramo que o dono desenhou e vê no canvas, nunca em SIM por
+        # vacuidade.
+        #
+        # Clique e digitação são indistinguíveis aqui, de propósito: o parser da Meta
+        # achata o QUICK_REPLY em texto, e quem digita "continuar" quer continuar.
+        from app.campaigns.worker import _normalize_reply
+        alvo = _normalize_reply(cfg.get("botao"))
+        ultima = ((enrollment.get("metadata") or {}).get("ultima_resposta")) or {}
+        result = bool(alvo) and _normalize_reply(ultima.get("texto")) == alvo
+
     elif cond == "repurchase_days":
         rows = sb.table("sales").select("sold_at").eq("lead_id", enrollment["lead_id"]).order("sold_at", desc=True).limit(1).execute().data
         if rows:

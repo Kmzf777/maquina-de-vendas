@@ -116,10 +116,20 @@ VALORES_FIXOS: dict[str, tuple[tuple[str, str], ...]] = {
     # worker `_apply_reply_policy`. 'reset' rebobina a matricula para o primeiro no
     # (esteira "Em conversa", reuniao de 10/09/2026); 'cancel' vindo do NO so vale em
     # no `send`; ausencia/valor desconhecido => pausa.
+    #
+    # 'optout' (16/09/2026, §11) e o unico que sai da matricula e toca o LEAD: grava
+    # `leads.opt_out`, move os cards para o funil Blacklist e cancela os follow-ups
+    # pendentes — os MESMOS campos de `agent/tools.py::registrar_optout`, pelo mesmo
+    # corpo (`worker._gravar_optout`) — e so entao cancela a matricula. Existe porque
+    # `is_optout_reply` so reconhece DUAS frases exatas ("parar mensagens", "nao tenho
+    # interesse"): um botao rotulado "Parar atendimento" era decorativo, cancelava um
+    # enrollment e nada mais, e a reinscricao das esteiras trazia o lead de volta dias
+    # depois. Com este valor, o rotulo que conta passa a ser DECLARADO no no.
     "politica_resposta": (
         ("pause", "Pausar a esteira"),
         ("cancel", "Cancelar a esteira"),
         ("reset", "Voltar ao primeiro toque"),
+        ("optout", "Descadastrar (opt-out + Blacklist)"),
     ),
     # alerts/service.create_system_alert
     "severidade": (
@@ -458,10 +468,10 @@ _ACOES: tuple[TipoDeNo, ...] = (
 
 # ─── Condicoes ───────────────────────────────────────────────────────────────────
 #
-# As nove entram na paleta UMA A UMA. Ate 16/09/2026 a paleta tinha um unico item
+# As dez entram na paleta UMA A UMA. Ate 16/09/2026 a paleta tinha um unico item
 # "Condicao" que nascia `replied_recently`, e as outras oito so existiam num <select>
 # escondido dentro do inspector — ninguem que nao conhecesse o codigo sabia que
-# existiam.
+# existiam. A decima (`clicou_botao`) nasceu ja na paleta.
 #
 # Condicao sem o seu campo preenchido NAO bloqueia a ativacao (nao ha `obrigatorio`
 # abaixo): diferente do gatilho, que e pulado em silencio, uma condicao incompleta
@@ -524,10 +534,45 @@ _CONDICOES: tuple[TipoDeNo, ...] = (
                            ajuda="Lead que nunca comprou responde NAO em qualquer "
                                  "operador — nao ha data para comparar.")),
     ),
+    # A decima, de 16/09/2026 (§11). As outras nove olham o CRM (segmento, cards,
+    # vendas, tags); esta olha a ULTIMA RESPOSTA do lead, gravada em
+    # `campaign_enrollments.metadata.ultima_resposta` por `worker.handle_campaign_reply`.
+    # E o que faltava para RAMIFICAR no meio da cadencia: sem ela, um clique so
+    # conseguia encerrar a esteira (via `on_reply_por_botao`), nunca desvia-la.
+    TipoDeNo(
+        tipo="condition", subtipo="clicou_botao", rotulo="Clicou no botao", icone="🔘",
+        campos=(
+            Campo("botao", "texto", "Rotulo do botao",
+                  ajuda="Comparacao por IGUALDADE normalizada (minuscula, sem acento, "
+                        "sem pontuacao) — nao substring. Vazio = a condicao responde "
+                        "NAO sempre. O motor nao distingue clique de digitacao: quem "
+                        "digitar o rotulo cai no mesmo ramo, e isso e aceito."),
+        ),
+    ),
 )
 
 
 # ─── Envio, espera e fim ─────────────────────────────────────────────────────────
+#
+# `on_reply_por_botao` (§11, 16/09/2026) e o campo que tira a decisao de saida do
+# frozenset global de duas frases e a poe NO NO. Um so `on_reply` por no aplicava a
+# mesma politica ao clique em "Continuar" e ao clique em "Parar atendimento": o botao
+# de saida era decorativo. Aqui o dono declara `{rotulo: politica}` e o motor
+# (`worker._politica_do_botao`) casa por IGUALDADE normalizada — minuscula, sem acento,
+# sem pontuacao, nos DOIS lados, porque o rotulo e digitado por gente na tela.
+#
+# Vocabulario `mapa` pelo mesmo motivo de `template_variables`: e um DICIONARIO, e
+# tipar como "texto_longo" faria a tela gravar string onde o motor espera dict.
+#
+# default None e nao {}: `_politica_do_botao` exige `isinstance(mapa, dict)`, entao
+# ausente e vazio dao no mesmo — e um dict literal aqui seria compartilhado por todos
+# os nos (dataclass frozen congela a referencia, nao o conteudo).
+_BOTOES = Campo(
+    "on_reply_por_botao", "mapa", "Politica por botao do template", default=None,
+    ajuda="{rotulo do botao: politica}. Vence o campo acima, mas SO para o rotulo que "
+          "casar; qualquer outra resposta cai na politica do no e depois na do gatilho. "
+          "Ex.: {'parar atendimento': 'optout', 'continuar': 'reset'}.",
+)
 
 _DEMAIS: tuple[TipoDeNo, ...] = (
     TipoDeNo(
@@ -560,6 +605,7 @@ _DEMAIS: tuple[TipoDeNo, ...] = (
                   default=None,
                   ajuda="Vazio = herda a politica do gatilho (o normal). Preencher "
                         "aqui SOBREPOE a esteira inteira, so neste toque."),
+            _BOTOES,
         ),
     ),
     TipoDeNo(
@@ -574,6 +620,7 @@ _DEMAIS: tuple[TipoDeNo, ...] = (
             Campo("on_reply", "politica_resposta", "Se o lead responder NESTE toque",
                   default=None,
                   ajuda="Mesma regra do `send`: vazio herda do gatilho."),
+            _BOTOES,
         ),
     ),
     TipoDeNo(
