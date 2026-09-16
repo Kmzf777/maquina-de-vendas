@@ -207,16 +207,11 @@ async def sync_situacoes(client, account: str) -> int:
     a expor outros — o lookup de uma situacao e sempre por `id`, unico entre
     modulos de qualquer forma.
 
-    ATENCAO conta 2 (verificado em supabase/migrations/20260913_bling_multi_conta.sql):
-    `bling_situacoes` NAO esta na lista de tabelas que ganharam a coluna
-    `account`/PK composta — a migration cobre products/contacts/sellers/
-    payment_methods/sync_state, mas nao situacoes. Por isso o upsert dos
-    DADOS continua em on_conflict="id", sem gravar account (gravar um campo
-    que a tabela nao tem quebraria o upsert real com PGRST204). `account` so
-    entra aqui para logar e para o bookkeeping em `bling_sync_state`, que ESSE
-    sim ja tem a coluna. Se/quando a tabela ganhar a coluna numa migration
-    futura, trocar para `_upsert("bling_situacoes", rows, account)` como as
-    outras.
+    E por conta como todos os outros espelhos, e nao por simetria: `sales`
+    guarda o id cru em `bling_situacao_id` e `_situacao_nome()` resolve o nome
+    por ele. As situacoes padrao do Bling ate compartilham id entre contas, mas
+    as personalizadas nao — a situacao 9 de um CNPJ pode ser um estado diferente
+    da 9 do outro, e a venda exibiria o nome errado.
     """
     started_at = datetime.now(timezone.utc).isoformat()
     modulos = (await client.get("/situacoes/modulos")).get("data") or []
@@ -240,10 +235,7 @@ async def sync_situacoes(client, account: str) -> int:
             })
 
     if rows:
-        await asyncio.to_thread(
-            lambda: get_supabase().table("bling_situacoes")
-            .upsert(rows, on_conflict="id").execute()
-        )
+        await _upsert("bling_situacoes", rows, account)
     await asyncio.to_thread(_save_sync_state, "situacoes", account, last_sync_at=started_at)
     logger.info("[BLING] situacoes sincronizadas (conta %s): %d", account, len(rows))
     return len(rows)

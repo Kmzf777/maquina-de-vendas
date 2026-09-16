@@ -64,6 +64,13 @@ ALTER TABLE bling_seller_map      ADD COLUMN IF NOT EXISTS account text NOT NULL
 ALTER TABLE bling_sync_state      ADD COLUMN IF NOT EXISTS account text NOT NULL DEFAULT 'default';
 ALTER TABLE bling_webhook_events  ADD COLUMN IF NOT EXISTS account text NOT NULL DEFAULT 'default';
 ALTER TABLE bling_jobs            ADD COLUMN IF NOT EXISTS account text NOT NULL DEFAULT 'default';
+-- bling_situacoes (criada em 20260822) entra pelo mesmo motivo dos outros
+-- espelhos, e nao por simetria: `sales.bling_situacao_id` guarda o id cru e
+-- `_situacao_nome()` resolve o nome por ele. As situacoes padrao do Bling ate
+-- compartilham id entre contas, mas as personalizadas nao — a situacao 9 de um
+-- CNPJ pode ser um estado diferente da 9 do outro, e a venda exibiria o nome
+-- errado. 9 linhas hoje; 5 ids distintos referenciados por sales.
+ALTER TABLE bling_situacoes        ADD COLUMN IF NOT EXISTS account text NOT NULL DEFAULT 'default';
 
 -- A FK de bling_seller_map aponta para bling_sellers(id) e IMPEDE a troca da PK.
 -- Derrubar antes, recriar composta depois. E a UNICA FK apontando para uma tabela
@@ -84,6 +91,8 @@ ALTER TABLE bling_webhook_events  DROP CONSTRAINT IF EXISTS bling_webhook_events
 ALTER TABLE bling_webhook_events  ADD PRIMARY KEY (account, event_id);
 ALTER TABLE bling_seller_map      DROP CONSTRAINT IF EXISTS bling_seller_map_pkey;
 ALTER TABLE bling_seller_map      ADD PRIMARY KEY (user_email, account);
+ALTER TABLE bling_situacoes       DROP CONSTRAINT IF EXISTS bling_situacoes_pkey;
+ALTER TABLE bling_situacoes       ADD PRIMARY KEY (account, id);
 
 -- O DROP antes do ADD nao e zelo: o Postgres nao tem ADD CONSTRAINT IF NOT
 -- EXISTS, entao sem ele a segunda execucao deste arquivo morre em 42710. Os PKs
