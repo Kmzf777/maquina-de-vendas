@@ -1,56 +1,60 @@
 import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import type { CampaignNode, CampaignNodeType } from "@/lib/types";
-import { NODE_META, TRIGGER_LABELS, ACTION_LABELS, TRIGGER_ICONS, ACTION_ICONS } from "./constants";
+import {
+  NODE_META, TRIGGER_LABELS, ACTION_LABELS, CONDITION_LABELS,
+  TRIGGER_ICONS, ACTION_ICONS, CONDITION_ICONS,
+} from "./constants";
+import { getCachedNodeSchema, schemaDefaults, type NodeSchema } from "@/lib/node-schema";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-export function getDefaultConfig(type: CampaignNodeType, subtype = ""): Record<string, unknown> {
-  switch (type) {
-    case "trigger":
-      if (subtype === "keyword_received") return { trigger_type: "keyword_received", keywords: [] };
-      // Card parado numa COLUNA do Kanban — não usa `days` (o gatilho tem dois
-      // relógios: tempo na etapa e tempo de silêncio). stage_id vazio = qualquer
-      // etapa; o backend converte "" em null antes de chamar a RPC.
-      if (subtype === "deal_stage_stagnation") {
-        return {
-          trigger_type: "deal_stage_stagnation",
-          stage_id: "", stage_days: 0, silence_days: 15, last_speaker: "qualquer",
-        };
-      }
-      return { trigger_type: subtype || "no_message", days: 30 };
-    case "send":      return { template_name: "", template_language: "pt_BR", template_variables: {}, on_reply: "pause" };
-    case "send_text": return { message_text: "", on_reply: "pause" };
-    // Sem janela no default: o nó HERDA a da campanha (motor: _wait_target resolve do
-    // nó quando ele opina, senão da campanha). Até 13/09/2026 este default gravava
-    // 7/18 explícitos em todo nó novo, o que fazia o nó "opinar" sempre — e a janela
-    // configurada na campanha nunca valia para campanha montada na tela. Quem quiser
-    // janela diferente NESTE nó ainda pode preenchê-la no inspector.
-    case "wait":      return { days: 3, hours: 0 };
-    case "condition": return { condition_type: subtype || "replied_recently", days: 5 };
-    case "action": {
-      const at = subtype || "move_stage";
-      const base: Record<string, unknown> = { action_type: at };
-      if (at === "move_stage") base.stage = "";
-      if (at === "mark_deal_won" || at === "mark_deal_lost" || at === "move_deal_stage") base.stage_id = "";
-      if (at === "add_tag" || at === "remove_tag") base.tag_name = "";
-      if (at === "add_note") base.note_template = "";
-      if (at === "create_deal") base.title_template = "";
-      if (at === "assign_to") base.user_id = "";
-      if (at === "assign_round_robin") base.user_ids = [];
-      if (at === "alert_seller") {
-        base.severity = "warning";
-        base.title = "";
-        base.message_template = "";
-      }
-      return base;
-    }
-    case "end":       return { label: "Concluído", final_actions: [] };
-    default:          return {};
-  }
+
+/** A chave de config que guarda o subtipo, e o subtipo que a paleta assume quando
+ *  o chamador não escolhe um. Não é campo do registro: é como a TELA sabe qual
+ *  variante do tipo está editando. */
+const DISCRIMINADOR: Partial<Record<CampaignNodeType, { chave: string; padrao: string }>> = {
+  trigger:   { chave: "trigger_type",   padrao: "no_message" },
+  condition: { chave: "condition_type", padrao: "replied_recently" },
+  action:    { chave: "action_type",    padrao: "move_stage" },
+};
+
+/**
+ * O config com que um nó NOVO nasce — derivado do contrato, não de uma tabela
+ * paralela mantida à mão.
+ *
+ * A tabela paralela (um `switch` com 20 linhas de `if`) divergia do motor em dois
+ * pontos que custavam caro e não davam erro nenhum:
+ *   • `send`/`send_text` nasciam com `on_reply: "pause"`. Como `_apply_reply_policy`
+ *     dá precedência ao NÓ sobre o GATILHO, toda campanha montada na tela sequestrava
+ *     em silêncio um gatilho `on_reply='reset'`.
+ *   • `wait` nascia com a janela de envio explícita, e `_wait_target` faz
+ *     `cfg.get("send_start_hour", camp.get(...))` — o nó vencia a campanha sempre.
+ * Nos dois casos o registro declara `default=None`: ausente TEM sentido próprio.
+ *
+ * Sem o contrato carregado o nó nasce só com o discriminador. É de propósito: config
+ * vazia é visível e corrigível no inspector; config errada é invisível até a campanha
+ * rodar em silêncio.
+ */
+export function getDefaultConfig(
+  type: CampaignNodeType,
+  subtype = "",
+  schema: NodeSchema | null = getCachedNodeSchema(),
+): Record<string, unknown> {
+  const disc = DISCRIMINADOR[type];
+  const sub = subtype || disc?.padrao || "";
+
+  const config: Record<string, unknown> = {};
+  if (disc) config[disc.chave] = sub;
+  // `final_actions` não existe no registro porque o motor não faz `cfg.get` nele: é a
+  // lista de configs de ação que a própria tela monta dentro do nó de encerramento.
+  if (type === "end") config.final_actions = [];
+
+  return { ...config, ...schemaDefaults(schema, type, sub || null) };
 }
 
 export function resolveNodeIcon(type: CampaignNodeType, config: Record<string, unknown>): string {
-  if (type === "trigger") return TRIGGER_ICONS[(config.trigger_type as string) ?? ""] ?? NODE_META.trigger.icon;
-  if (type === "action")  return ACTION_ICONS[(config.action_type as string) ?? ""]   ?? NODE_META.action.icon;
+  if (type === "trigger")   return TRIGGER_ICONS[(config.trigger_type as string) ?? ""]     ?? NODE_META.trigger.icon;
+  if (type === "action")    return ACTION_ICONS[(config.action_type as string) ?? ""]       ?? NODE_META.action.icon;
+  if (type === "condition") return CONDITION_ICONS[(config.condition_type as string) ?? ""] ?? NODE_META.condition.icon;
   return NODE_META[type]?.icon ?? "⚡";
 }
 
@@ -66,7 +70,7 @@ export function nodeDetail(type: CampaignNodeType, config: Record<string, unknow
       if (!d && h) return `${h} hora(s)`;
       return `${d} dia(s)`;
     }
-    case "condition": return (config.condition_type as string) ?? "";
+    case "condition": return CONDITION_LABELS[config.condition_type as string] ?? (config.condition_type as string) ?? "";
     case "action":    return ACTION_LABELS[config.action_type as string] ?? (config.action_type as string) ?? "";
     case "end":       return (config.label as string) || "Encerrar";
     default:          return "";

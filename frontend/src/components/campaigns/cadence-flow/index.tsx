@@ -33,6 +33,47 @@ import { NODE_TYPES, EDGE_TYPES, PaletteItemComp, setFlowHandlers, takeDragPaylo
 import { Inspector } from "./inspector";
 import { CadenceExecutionLog } from "@/components/campaigns/cadence-execution-log";
 
+/**
+ * Corpo de erro do POST /activate (ou /pause) → mensagens para o operador.
+ *
+ * A validação de 12 regras do backend (`backend/app/campaigns/validation.py`, atrás de
+ * `backend/app/campaigns/router.py`) recusa a ativação com
+ * `{detail: {problemas: [{no_id, codigo, mensagem}]}}` — um item por nó com defeito,
+ * não uma `error` string plana. O proxy Next (`activate/route.ts`) devolve
+ * `{error: "..."}` (string) quando o próprio FastAPI está fora do ar (502). Um corpo
+ * que não bate com nenhum dos dois formatos ainda precisa virar mensagem: silêncio
+ * nunca é resposta aceitável para uma recusa.
+ *
+ * Pura e exportada para o teste direto — é aqui que mora a lógica de verdade.
+ * Duplicada (mesmo formato) em `cadence-card.tsx`, o outro chamador de /activate: os
+ * dois arquivos não compartilham módulo de lib nesta task.
+ */
+export function parseActivationErrorMessages(data: unknown): string[] {
+  const body = (data ?? {}) as { detail?: { problemas?: unknown }; error?: unknown };
+  const problemas = body.detail?.problemas;
+  if (Array.isArray(problemas) && problemas.length > 0) {
+    return problemas.map((p) => {
+      const mensagem = (p as { mensagem?: unknown } | null)?.mensagem;
+      return typeof mensagem === "string" && mensagem ? mensagem : "Problema não especificado.";
+    });
+  }
+  if (typeof body.error === "string" && body.error) {
+    return [body.error];
+  }
+  return ["Não foi possível concluir a operação. Tente novamente."];
+}
+
+// `no_id` é o campo que o canvas usa pra destacar o nó culpado — ver toggleActivation,
+// que reaproveita o testNodeStates do modo ⚡ Testar (mesmo badge/anel vermelho).
+export function activationProblemNodeIds(data: unknown): string[] {
+  const body = (data ?? {}) as { detail?: { problemas?: unknown } };
+  const problemas = body.detail?.problemas;
+  if (!Array.isArray(problemas)) return [];
+  return problemas
+    .map((p) => (p as { no_id?: unknown } | null)?.no_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
 // ─── Inner builder (needs useReactFlow, so must be inside ReactFlowProvider) ───
 function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const router = useRouter();
@@ -353,10 +394,30 @@ function FlowBuilderInner({ campaignId }: { campaignId: string }) {
   const toggleActivation = useCallback(async () => {
     if (!campaign) return;
     const endpoint = campaign.status === "active" ? "pause" : "activate";
-    const res = await fetch(`/api/campaigns/${campaignId}/${endpoint}`, { method: "POST" });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    setCampaign(prev => prev ? { ...prev, status: data.status } : prev);
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/${endpoint}`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // A validação de 12 regras devolve `detail.problemas[]`, não `error` — o antigo
+        // `if (data.error) alert(...)` nunca disparava aqui: a recusa acontecia certinho
+        // no servidor e a tela não dizia nada. Reaproveita o testNodeStates do modo
+        // ⚡ Testar (mesmo badge/anel vermelho) pra apontar no canvas QUAL nó tem o
+        // problema — é pra isso que `no_id` existe na resposta. Substitui o mapa
+        // inteiro (não faz merge): uma tentativa nova não pode deixar destaque de uma
+        // tentativa anterior já corrigida.
+        const ids = activationProblemNodeIds(data);
+        setTestNodeStates(Object.fromEntries(ids.map(id => [id, "failed" as TestNodeState])));
+        alert(parseActivationErrorMessages(data).join("\n\n"));
+        return;
+      }
+      setTestNodeStates({}); // ativou: nenhum destaque de tentativa anterior deve sobrar
+      setCampaign(prev => prev ? { ...prev, status: data.status } : prev);
+    } catch (err) {
+      // O próprio fetch falhou (rede/servidor fora do ar) — mesmo tratamento do
+      // cadence-card.tsx. Sem isto, a promise rejeitada dentro de um onClick vira um
+      // erro não tratado no console e o operador não vê nada, de novo.
+      alert(`Erro de rede: ${err}`);
+    }
   }, [campaign, campaignId]);
 
   // ── Test mode: start SSE test run ────────────────────────────────────────

@@ -1,10 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import type { CampaignNode } from "@/lib/types";
 import { getDefaultConfig, nodeDetail, resolveNodeIcon, toRFNode, toRFEdges } from "./helpers";
-import {
-  ACTION_ICONS, ACTION_LABELS, PALETTE_ACTIONS, PALETTE_TRIGGERS,
-  TRIGGER_ICONS, TRIGGER_LABELS,
-} from "./constants";
+import { buildPaletteFromSchema } from "./constants";
+import { primeNodeSchema, schemaDefaults } from "@/lib/node-schema";
+import { NODE_SCHEMA_FIXTURE } from "@/lib/node-schema.fixture";
+
+afterEach(() => {
+  primeNodeSchema(null);
+});
 
 function makeNode(overrides: Partial<CampaignNode>): CampaignNode {
   return {
@@ -87,77 +90,133 @@ describe("nodeDetail", () => {
 });
 
 describe("getDefaultConfig", () => {
-  it("send tem defaults de template e on_reply pause", () => {
-    expect(getDefaultConfig("send")).toEqual({
-      template_name: "",
-      template_language: "pt_BR",
-      template_variables: {},
+  const schema = NODE_SCHEMA_FIXTURE;
+
+  // O contrato inteiro, não uma amostra: qualquer subtipo do schema tem de nascer
+  // com EXATAMENTE os defaults declarados no registro (mais o discriminador que a
+  // tela usa para saber qual subtipo é). Era essa tabela paralela — mantida à mão
+  // dentro de um `switch` — que divergia do motor.
+  it("todo subtipo do schema nasce com os defaults declarados", () => {
+    for (const tipo of schema.tipos) {
+      const sub = tipo.subtipo ?? "";
+      const esperado: Record<string, unknown> = { ...schemaDefaults(schema, tipo.tipo, tipo.subtipo) };
+      if (tipo.tipo === "trigger") esperado.trigger_type = sub;
+      if (tipo.tipo === "condition") esperado.condition_type = sub;
+      if (tipo.tipo === "action") esperado.action_type = sub;
+      // `final_actions` não é campo do registro: é a lista de ações finais que a
+      // própria tela monta dentro do nó `end`.
+      if (tipo.tipo === "end") esperado.final_actions = [];
+
+      expect(
+        getDefaultConfig(tipo.tipo as CampaignNode["type"], sub, schema),
+        `defaults de ${tipo.tipo}/${sub}`,
+      ).toEqual(esperado);
+    }
+  });
+
+  it("send NÃO grava on_reply — gravar aqui sequestra a política do gatilho", () => {
+    // `_apply_reply_policy` dá precedência ao NÓ sobre o GATILHO. Enquanto o builder
+    // semeava on_reply="pause" em todo nó de envio, uma esteira com gatilho
+    // on_reply="reset" pausava na primeira resposta em vez de rebobinar — sem erro
+    // em lugar nenhum.
+    const send = getDefaultConfig("send", "", schema);
+    expect(send).not.toHaveProperty("on_reply");
+    expect(send).toEqual({ template_language: "pt_BR" });
+    expect(getDefaultConfig("send_text", "", schema)).not.toHaveProperty("on_reply");
+  });
+
+  it("wait NÃO grava janela de envio — o nó herda a da campanha", () => {
+    // `_wait_target` faz cfg.get("send_start_hour", camp.get(...)): o valor do NÓ
+    // vence o da CAMPANHA. Gravar 7/18 em todo nó novo fazia o nó "opinar" sempre.
+    const wait = getDefaultConfig("wait", "", schema);
+    expect(wait).toEqual({ days: 1, hours: 0 });
+    for (const chave of ["send_start_hour", "send_end_hour", "skip_weekends"]) {
+      expect(wait, `wait não pode nascer com ${chave}`).not.toHaveProperty(chave);
+    }
+  });
+
+  it("o gatilho continua sendo o dono do on_reply", () => {
+    expect(getDefaultConfig("trigger", "deal_stage_stagnation", schema)).toMatchObject({
+      trigger_type: "deal_stage_stagnation",
       on_reply: "pause",
     });
   });
 
-  it("wait tem 3 dias + 0 horas e janela de horário 7-18", () => {
-    // Sem janela de propósito: o nó novo HERDA a janela da campanha. Antes de
-    // 13/09/2026 este default gravava 7/18 em todo nó `wait`, e como o motor dá
-    // precedência ao nó sobre a campanha (`_wait_target`), a janela configurada na
-    // campanha nunca valia para campanha montada na tela — só para as do seed.
-    expect(getDefaultConfig("wait")).toEqual({ days: 3, hours: 0 });
+  it("sem schema carregado, o nó nasce só com o discriminador — vazio é melhor que errado", () => {
+    primeNodeSchema(null);
+    expect(getDefaultConfig("send")).toEqual({});
+    expect(getDefaultConfig("trigger", "stage_stagnation")).toEqual({ trigger_type: "stage_stagnation" });
+    expect(getDefaultConfig("action")).toEqual({ action_type: "move_stage" });
   });
 
-  it("condition usa subtype ou replied_recently", () => {
-    expect(getDefaultConfig("condition")).toEqual({ condition_type: "replied_recently", days: 5 });
-    expect(getDefaultConfig("condition", "has_tag")).toEqual({ condition_type: "has_tag", days: 5 });
-  });
-
-  it("trigger keyword_received inicia keywords vazio", () => {
-    expect(getDefaultConfig("trigger", "keyword_received")).toEqual({
-      trigger_type: "keyword_received",
-      keywords: [],
-    });
-  });
-
-  it("action move_stage inclui campo stage vazio", () => {
-    expect(getDefaultConfig("action", "move_stage")).toEqual({ action_type: "move_stage", stage: "" });
-  });
-
-  it("trigger deal_stage_stagnation usa os dois relógios, não `days`", () => {
-    expect(getDefaultConfig("trigger", "deal_stage_stagnation")).toEqual({
-      trigger_type: "deal_stage_stagnation",
-      stage_id: "",
-      stage_days: 0,
-      silence_days: 15,
-      last_speaker: "qualquer",
-    });
-  });
-
-  it("action alert_seller traz severity, title e message_template", () => {
-    expect(getDefaultConfig("action", "alert_seller")).toEqual({
-      action_type: "alert_seller",
-      severity: "warning",
-      title: "",
-      message_template: "",
+  it("com o schema no cache, dispensa o terceiro argumento", () => {
+    primeNodeSchema(schema);
+    expect(getDefaultConfig("condition", "replied_recently")).toEqual({
+      condition_type: "replied_recently",
+      days: 5,
     });
   });
 });
 
-describe("cobertura dos mapas do builder", () => {
-  // Um subtype presente na paleta mas ausente de TRIGGER_LABELS/ACTION_LABELS é
-  // exatamente o bug que motivou esta rodada: o <select> do inspector não tem a
-  // opção, exibe a primeira, e salvar troca silenciosamente o tipo do nó.
-  it("todo subtype da paleta tem rótulo e ícone", () => {
-    for (const item of PALETTE_TRIGGERS) {
-      expect(TRIGGER_LABELS[item.subtype], `label do trigger ${item.subtype}`).toBeTruthy();
-      expect(TRIGGER_ICONS[item.subtype], `ícone do trigger ${item.subtype}`).toBeTruthy();
-    }
-    for (const item of PALETTE_ACTIONS.filter(i => i.type === "action")) {
-      expect(ACTION_LABELS[item.subtype], `label da ação ${item.subtype}`).toBeTruthy();
-      expect(ACTION_ICONS[item.subtype], `ícone da ação ${item.subtype}`).toBeTruthy();
+describe("paleta montada do schema", () => {
+  const paleta = buildPaletteFromSchema(NODE_SCHEMA_FIXTURE);
+
+  it("expõe as NOVE condições, uma a uma", () => {
+    // Até 16/09/2026 a paleta tinha um único item "Condição" que nascia
+    // `replied_recently`; as outras oito só existiam num <select> escondido dentro
+    // do inspector — ninguém que não conhecesse o código sabia que existiam.
+    const condicoes = paleta.actions.filter(i => i.type === "condition");
+    expect(condicoes).toHaveLength(9);
+    expect(condicoes.map(i => i.subtype)).toEqual([
+      "replied_recently", "in_stage", "has_deal", "has_tag", "sale_count",
+      "total_spend", "last_sale_value", "deal_value", "repurchase_days",
+    ]);
+  });
+
+  it("os 12 gatilhos viram itens de paleta com ícone e rótulo do registro", () => {
+    expect(paleta.triggers).toHaveLength(12);
+    const stagnation = paleta.triggers.find(i => i.subtype === "stage_stagnation");
+    expect(stagnation).toMatchObject({ type: "trigger", icon: "🕐", label: "Parado no segmento" });
+    for (const item of [...paleta.triggers, ...paleta.actions]) {
+      expect(item.icon, `ícone de ${item.type}/${item.subtype}`).toBeTruthy();
+      expect(item.label, `rótulo de ${item.type}/${item.subtype}`).toBeTruthy();
+      expect(item.desc, `descrição de ${item.type}/${item.subtype}`).toBeTruthy();
     }
   });
 
-  it("resolveNodeIcon usa o ícone do subtipo novo", () => {
+  it("tipo fora da paleta some da lista, mas continua sendo um tipo válido", () => {
+    const aposentado = {
+      ...NODE_SCHEMA_FIXTURE,
+      tipos: NODE_SCHEMA_FIXTURE.tipos.map(t =>
+        t.subtipo === "post_broadcast" ? { ...t, na_paleta: false } : t,
+      ),
+    };
+    expect(buildPaletteFromSchema(aposentado).triggers.map(i => i.subtype)).not.toContain("post_broadcast");
+  });
+
+  it("cada item da paleta produz um default válido", () => {
+    for (const item of [...paleta.triggers, ...paleta.actions]) {
+      const cfg = getDefaultConfig(item.type, item.subtype, NODE_SCHEMA_FIXTURE);
+      if (item.type === "trigger") expect(cfg.trigger_type).toBe(item.subtype);
+      if (item.type === "action") expect(cfg.action_type).toBe(item.subtype);
+      if (item.type === "condition") expect(cfg.condition_type).toBe(item.subtype);
+    }
+  });
+});
+
+describe("rótulos e ícones do canvas", () => {
+  it("resolveNodeIcon usa o ícone do subtipo", () => {
     expect(resolveNodeIcon("trigger", { trigger_type: "deal_stage_stagnation" })).toBe("📋");
     expect(resolveNodeIcon("action", { action_type: "alert_seller" })).toBe("🔔");
+  });
+
+  it("condição deixa de aparecer como key crua no card", () => {
+    // Com o contrato carregado, o rótulo do card é o do REGISTRO — os mapas locais
+    // são só a semente do primeiro paint. Antes desta leva o card exibia a key crua
+    // (`repurchase_days`), porque não havia mapa nenhum de condição.
+    primeNodeSchema(NODE_SCHEMA_FIXTURE);
+    expect(nodeDetail("condition", { condition_type: "repurchase_days" })).toBe("Dias desde a ultima compra");
+    expect(nodeDetail("condition", { condition_type: "inventada" })).toBe("inventada");
   });
 });
 
