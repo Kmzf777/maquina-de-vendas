@@ -7,6 +7,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useBlingStatus } from "@/hooks/use-bling-status";
+import { CONTA_PADRAO, contasDisponiveis, precisaSeletor } from "@/lib/bling-accounts";
 import { debounce } from "@/lib/debounce";
 
 interface CatalogProduct {
@@ -37,6 +39,13 @@ export default function ProdutosPage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [situacao, setSituacao] = useState<"" | "A" | "I">("A");
+  // O catalogo e POR CONTA: cada CNPJ tem o seu, com codigos que se repetem
+  // entre eles. Sem o recorte, a tela misturaria os dois numa lista so, com
+  // codigo duplicado e sem dizer de quem e cada produto.
+  const blingStatus = useBlingStatus();
+  const contas = contasDisponiveis(blingStatus.accounts);
+  const mostrarSeletorConta = precisaSeletor(blingStatus.accounts);
+  const [conta, setConta] = useState(CONTA_PADRAO);
   const [page, setPage] = useState(1);
 
   const [data, setData] = useState<CatalogProduct[]>([]);
@@ -54,7 +63,7 @@ export default function ProdutosPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [debouncedQuery, situacao]);
+  }, [debouncedQuery, situacao, conta]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -65,6 +74,7 @@ export default function ProdutosPage() {
     if (situacao) params.set("situacao", situacao);
     params.set("page", String(page));
     params.set("limit", String(LIMIT));
+    params.set("account", conta);
 
     let cancelled = false;
     fetch(`/api/bling/catalog?${params}`, { cache: "no-store" })
@@ -83,7 +93,7 @@ export default function ProdutosPage() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, situacao, page]);
+  }, [debouncedQuery, situacao, page, conta]);
 
   const totalPages = Math.ceil(total / LIMIT);
 
@@ -123,6 +133,24 @@ export default function ProdutosPage() {
                 <option value="">Todos</option>
               </select>
             </div>
+            {mostrarSeletorConta && (
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
+                  Conta Bling
+                </label>
+                <select
+                  value={conta}
+                  onChange={(e) => setConta(e.target.value)}
+                  className="bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[13px] text-[#111111] focus:border-[#111111] focus:outline-none"
+                >
+                  {contas.map((c) => (
+                    <option key={c.account} value={c.account}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {error && <p className="text-[13px] text-red-600">{error}</p>}

@@ -58,7 +58,12 @@ export function LeadDetailModal({
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string; category: string | null }>>([]);
   const [showCreateSale, setShowCreateSale] = useState(false);
-  const [blingContactId, setBlingContactId] = useState<number | null>(lead.bling_contact_id ?? null);
+  // Mapa conta -> id do contato no Bling. O vinculo e por conta desde a segunda
+  // conta Bling; `lead.bling_contact_id` (coluna legada) so serve de valor
+  // inicial para a conta default, ate o fetch abaixo trazer a verdade.
+  const [blingContactIds, setBlingContactIds] = useState<Record<string, number>>(
+    lead.bling_contact_id ? { default: lead.bling_contact_id } : {},
+  );
   const currentUserEmail = useCurrentUserEmail();
 
   const temp = getTemperature(lead.last_msg_at);
@@ -119,16 +124,23 @@ export function LeadDetailModal({
   // `lead` é a prop que abriu o modal — depois de vincular/desvincular no
   // Bling, ninguém a atualiza (não há polling), então a seção guarda seu
   // próprio estado e o recarrega direto do banco, como `fetchLeadDeals` já faz.
+  // Le de `lead_bling_contacts`, NAO mais de `leads.bling_contact_id`: o vinculo
+  // virou uma linha POR CONTA, e o mesmo lead pode ter contato nos dois CNPJs
+  // com ids diferentes. Continuar lendo a coluna antiga faria todo vinculo
+  // criado depois da migration sumir desta tela — sem erro, so vazio.
   const fetchBlingContactId = useCallback(() => {
     import("@/lib/supabase/client").then(({ createClient }) => {
       const supabase = createClient();
       supabase
-        .from("leads")
-        .select("bling_contact_id")
-        .eq("id", lead.id)
-        .single()
+        .from("lead_bling_contacts")
+        .select("account, bling_contact_id")
+        .eq("lead_id", lead.id)
         .then(({ data }) => {
-          if (data) setBlingContactId(data.bling_contact_id);
+          const porConta: Record<string, number> = {};
+          for (const linha of data ?? []) {
+            porConta[linha.account] = linha.bling_contact_id;
+          }
+          setBlingContactIds(porConta);
         });
     });
   }, [lead.id]);
@@ -370,7 +382,7 @@ export function LeadDetailModal({
               <div className="mt-5 pt-4 border-t border-[#dedbd6]">
                 <LeadBlingSection
                   leadId={lead.id}
-                  blingContactId={blingContactId}
+                  blingContactIds={blingContactIds}
                   onChanged={fetchBlingContactId}
                 />
               </div>

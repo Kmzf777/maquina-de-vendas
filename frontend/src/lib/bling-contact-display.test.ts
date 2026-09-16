@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blingContactUrl, formatBlingAddress } from "@/lib/bling-contact-display";
+import { accountLabel, blingContactUrl, formatBlingAddress } from "@/lib/bling-contact-display";
+import { CONTA_PADRAO, type ContaBling } from "@/lib/bling-accounts";
 
 describe("blingContactUrl", () => {
   it("monta a URL a partir do id", () => {
@@ -9,6 +10,30 @@ describe("blingContactUrl", () => {
   it("sem id nao ha link", () => {
     expect(blingContactUrl(null)).toBe("");
     expect(blingContactUrl(undefined)).toBe("");
+  });
+});
+
+describe("accountLabel", () => {
+  const CONTAS: ContaBling[] = [
+    { account: CONTA_PADRAO, label: "Canastra CNPJ 1", configured: true, connected: true },
+    { account: "secundaria", label: "Canastra CNPJ 2", configured: true, connected: true },
+  ];
+
+  it("devolve null quando so existe uma conta", () => {
+    expect(accountLabel(CONTA_PADRAO, [CONTAS[0]])).toBeNull();
+  });
+
+  it("devolve o rotulo da conta quando existem duas", () => {
+    expect(accountLabel("secundaria", CONTAS)).toBe("Canastra CNPJ 2");
+  });
+
+  it("devolve null sem conta conhecida", () => {
+    expect(accountLabel(null, CONTAS)).toBeNull();
+    expect(accountLabel(undefined, CONTAS)).toBeNull();
+  });
+
+  it("cai para o slug quando a conta nao esta mais configurada", () => {
+    expect(accountLabel("antiga", CONTAS)).toBe("antiga");
   });
 });
 

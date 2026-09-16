@@ -8,6 +8,10 @@ import app.bling.auth as auth
 from app.bling.errors import BlingNotConfigured, TRANSIENT
 
 
+async def _noop_async(*_a, **_k):
+    return None
+
+
 class FakeTable:
     def __init__(self, store):
         self.store = store
@@ -67,7 +71,7 @@ def test_authorize_url_exige_credenciais(monkeypatch):
 
 
 def test_basic_header_e_base64_de_id_dois_pontos_secret(creds):
-    header = auth._basic_auth_header()
+    header = auth._basic_auth_header(auth.config.DEFAULT_ACCOUNT)
     esperado = base64.b64encode(b"cid:csec").decode()
     assert header == f"Basic {esperado}"
 
@@ -150,7 +154,7 @@ def test_refresh_usa_grant_type_refresh_token(creds, monkeypatch):
     monkeypatch.setattr(auth, "get_supabase", lambda: FakeSupabase(store))
     monkeypatch.setattr(auth, "_cache_set", noop_cache)
 
-    asyncio.run(auth._refresh_now("ref-antigo"))
+    asyncio.run(auth._refresh_now("ref-antigo", auth.config.DEFAULT_ACCOUNT))
 
     assert capturado["data"]["grant_type"] == "refresh_token"
     assert capturado["data"]["refresh_token"] == "ref-antigo"
@@ -169,12 +173,12 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
     # duplicado — o mesmo erro de fake-sem-instancia-unica ja visto nesta feature.
     lock_real = asyncio.Lock()
 
-    async def fake_refresh_now(token):
+    async def fake_refresh_now(token, _account):
         chamadas.append(token)
-        await fake_cache_set("jwt-novo", 60)
+        await fake_cache_set("jwt-novo", 60, _account)
         return "jwt-novo"
 
-    async def fake_lock():
+    async def fake_lock(_account):
         class _Ctx:
             async def __aenter__(self):
                 await lock_real.acquire()
@@ -185,10 +189,10 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
                 return False
         return _Ctx()
 
-    async def fake_cache_get():
+    async def fake_cache_get(_account):
         return estado["token"]
 
-    async def fake_cache_set(token, ttl):
+    async def fake_cache_set(token, ttl, _account):
         estado["token"] = token
 
     monkeypatch.setattr(auth, "_refresh_now", fake_refresh_now)
@@ -196,7 +200,9 @@ def test_refresh_e_serializado_por_lock(creds, monkeypatch):
     # Postgres inteiro para poder achar um access_token ja valido; sem
     # "access_token" na linha, ele cai direto no caminho de refresh de qualquer
     # forma, entao esse teste continua exercitando so a serializacao do lock.
-    monkeypatch.setattr(auth, "_stored_row", lambda: {"refresh_token": "ref-x"})
+    # Aceita o `account` posicional que get_access_token agora sempre passa
+    # (Task 3) — este teste continua exercitando so a serializacao do lock.
+    monkeypatch.setattr(auth, "_stored_row", lambda _account: {"refresh_token": "ref-x"})
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
     monkeypatch.setattr(auth, "_cache_get", fake_cache_get)
     monkeypatch.setattr(auth, "_cache_set", fake_cache_set)
@@ -217,11 +223,11 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
     chamadas_token_endpoint = []
     cache = {"token": None}
 
-    async def fake_refresh_now(token):  # nao deveria ser chamado neste teste
+    async def fake_refresh_now(token, _account):  # nao deveria ser chamado neste teste
         chamadas_token_endpoint.append(token)
         return "nao-deveria-acontecer"
 
-    async def fake_lock():
+    async def fake_lock(_account):
         class _Ctx:
             async def __aenter__(self):
                 return True
@@ -230,10 +236,10 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
                 return False
         return _Ctx()
 
-    async def fake_cache_get():
+    async def fake_cache_get(_account):
         return cache["token"]
 
-    async def fake_cache_set(token, ttl):
+    async def fake_cache_set(token, ttl, _account):
         cache["token"] = token
 
     expira_em_3h = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
@@ -242,7 +248,8 @@ def test_get_access_token_rele_o_access_token_do_postgres_antes_de_renovar(creds
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
     monkeypatch.setattr(auth, "_cache_get", fake_cache_get)
     monkeypatch.setattr(auth, "_cache_set", fake_cache_set)
-    monkeypatch.setattr(auth, "_stored_row", lambda: {
+    # Aceita o `account` posicional que get_access_token agora sempre passa (Task 3).
+    monkeypatch.setattr(auth, "_stored_row", lambda _account: {
         "access_token": "jwt-do-postgres",
         "access_expires_at": expira_em_3h,
         "refresh_token": "ref-x",
@@ -260,7 +267,7 @@ def test_lock_indisponivel_e_erro_transiente_nao_auth(creds, monkeypatch):
     NAO credencial morta. Se isso virasse um erro fora de TRANSIENT, o modal de
     venda mandaria o vendedor refazer o OAuth em /config em vez de so enfileirar
     e tentar de novo."""
-    async def fake_lock():
+    async def fake_lock(_account):
         class _Ctx:
             async def __aenter__(self):
                 return False  # nao conseguiu o lock
@@ -269,7 +276,7 @@ def test_lock_indisponivel_e_erro_transiente_nao_auth(creds, monkeypatch):
                 return False
         return _Ctx()
 
-    async def fake_cache_get():
+    async def fake_cache_get(_account):
         return None
 
     monkeypatch.setattr(auth, "_refresh_lock", fake_lock)
@@ -296,7 +303,7 @@ def test_tokens_nunca_aparecem_no_log(creds, caplog, monkeypatch):
         asyncio.run(auth._persist({
             "access_token": "SEGREDO-AAA", "refresh_token": "SEGREDO-BBB",
             "expires_in": 21600, "scope": "",
-        }))
+        }, auth.config.DEFAULT_ACCOUNT))
     assert "SEGREDO-AAA" not in caplog.text
     assert "SEGREDO-BBB" not in caplog.text
 
@@ -328,7 +335,7 @@ def test_persist_falha_no_postgres_loga_critical_sem_token_e_relevanta(creds, ca
             asyncio.run(auth._persist({
                 "access_token": "SEGREDO-CCC", "refresh_token": "SEGREDO-DDD",
                 "expires_in": 21600, "scope": "",
-            }))
+            }, auth.config.DEFAULT_ACCOUNT))
 
     assert tentativas["n"] >= 2, "tinha que ter tentado de novo antes de desistir"
     criticals = [r for r in caplog.records if r.levelname == "CRITICAL"]
@@ -384,24 +391,26 @@ def test_new_state_gera_valores_unicos_e_grava_no_redis_com_ttl(monkeypatch):
     assert ttl1 > 0
 
 
-def test_consume_state_true_para_state_existente(monkeypatch):
+def test_consume_state_devolve_a_conta_para_state_existente(monkeypatch):
+    """Desde a Task 4 o state carrega a CONTA (nao mais um "1"): consume_state
+    devolve o slug gravado por new_state, nao um bool."""
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
     state = asyncio.run(auth.new_state())
 
-    assert asyncio.run(auth.consume_state(state)) is True
+    assert asyncio.run(auth.consume_state(state)) == auth.config.DEFAULT_ACCOUNT
 
 
-def test_consume_state_false_para_state_inexistente(monkeypatch):
+def test_consume_state_none_para_state_inexistente(monkeypatch):
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
 
-    assert asyncio.run(auth.consume_state("nunca-existiu")) is False
+    assert asyncio.run(auth.consume_state("nunca-existiu")) is None
 
 
 def test_consume_state_queima_o_valor_impedindo_replay(monkeypatch):
     """Ponto central da defesa anti-CSRF: um state reutilizavel nao protege contra
-    replay. Mesma chamada duas vezes com o MESMO state: True na primeira, False na
+    replay. Mesma chamada duas vezes com o MESMO state: a conta na primeira, None na
     segunda — senao um state capturado uma vez poderia ser reaproveitado."""
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
@@ -410,13 +419,180 @@ def test_consume_state_queima_o_valor_impedindo_replay(monkeypatch):
     primeira = asyncio.run(auth.consume_state(state))
     segunda = asyncio.run(auth.consume_state(state))
 
-    assert primeira is True
-    assert segunda is False
+    assert primeira == auth.config.DEFAULT_ACCOUNT
+    assert segunda is None
 
 
-def test_consume_state_vazio_retorna_false_sem_tocar_redis(monkeypatch):
+def test_consume_state_vazio_retorna_none_sem_tocar_redis(monkeypatch):
     fake = FakeRedis()
     monkeypatch.setattr(auth, "_get_redis", lambda: fake)
 
-    assert asyncio.run(auth.consume_state("")) is False
+    assert asyncio.run(auth.consume_state("")) is None
     assert fake.delete_calls == 0
+
+
+# --------------------------------------------------------------------------
+# State carrega a conta, authorize_url por conta, status() vira lista (Task 4)
+# --------------------------------------------------------------------------
+async def test_state_guarda_a_conta_e_consume_devolve(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    state = await auth.new_state("secundaria")
+
+    assert await auth.consume_state(state) == "secundaria"
+
+
+async def test_state_queimado_devolve_none(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+
+    state = await auth.new_state(auth.config.DEFAULT_ACCOUNT)
+
+    assert await auth.consume_state(state) == auth.config.DEFAULT_ACCOUNT
+    assert await auth.consume_state(state) is None
+
+
+async def test_state_vazio_devolve_none(monkeypatch):
+    assert await auth.consume_state("") is None
+
+
+def test_authorize_url_usa_client_id_da_conta(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_ID", "cid2")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_SECRET", "csec2")
+
+    url = auth.authorize_url("abc123", "secundaria")
+
+    assert "client_id=cid2" in url
+    assert "state=abc123" in url
+
+
+async def test_status_devolve_uma_entrada_por_conta_configurada(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setattr(auth, "_stored_row",
+                        lambda conta: {"refresh_token": "r"} if conta == "default" else {})
+
+    saida = await auth.status()
+
+    assert [c["account"] for c in saida] == ["default", "secundaria"]
+    assert saida[0]["connected"] is True
+    assert saida[1]["connected"] is False   # sem refresh_token
+
+
+# --------------------------------------------------------------------------
+# begin_authorization: um unico caminho para iniciar o OAuth. new_state e
+# authorize_url exigem a MESMA conta e, chamados separados, nada garante isso
+# -- com as duas contas podendo compartilhar client_id/secret (config.py), um
+# par trocado NAO daria erro do lado do Bling: gravaria o token exchangeado no
+# CNPJ errado em silencio. E o bug "conta 2 sobrescreve conta 1" que a Task 4
+# fechou no state, so que reaberto se os dois passos puderem divergir.
+# --------------------------------------------------------------------------
+async def test_begin_authorization_usa_a_mesma_conta_em_new_state_e_authorize_url(monkeypatch):
+    chamadas = {}
+
+    async def fake_new_state(account):
+        chamadas["new_state"] = account
+        return "state-abc"
+
+    def fake_authorize_url(state, account):
+        chamadas["authorize_url"] = account
+        assert state == "state-abc", "authorize_url tem que receber o state que new_state gerou"
+        return "https://bling.com.br/Api/v3/oauth/authorize?state=state-abc"
+
+    monkeypatch.setattr(auth, "new_state", fake_new_state)
+    monkeypatch.setattr(auth, "authorize_url", fake_authorize_url)
+
+    url = await auth.begin_authorization("secundaria")
+
+    assert chamadas["new_state"] == "secundaria"
+    assert chamadas["authorize_url"] == "secundaria"
+    assert url == "https://bling.com.br/Api/v3/oauth/authorize?state=state-abc"
+
+
+async def test_begin_authorization_usa_default_quando_omitido(monkeypatch):
+    chamadas = {}
+
+    async def fake_new_state(account):
+        chamadas["new_state"] = account
+        return "st"
+
+    def fake_authorize_url(state, account):
+        chamadas["authorize_url"] = account
+        return "url"
+
+    monkeypatch.setattr(auth, "new_state", fake_new_state)
+    monkeypatch.setattr(auth, "authorize_url", fake_authorize_url)
+
+    await auth.begin_authorization()
+
+    assert chamadas["new_state"] == auth.config.DEFAULT_ACCOUNT
+    assert chamadas["authorize_url"] == auth.config.DEFAULT_ACCOUNT
+
+
+# --------------------------------------------------------------------------
+# Chaves e storage por conta (Task 3) — fecham o bug do token cruzado entre
+# contas: com chave global, autorizar a conta 2 entregaria o access_token da
+# conta 1 para as chamadas da conta 2.
+# --------------------------------------------------------------------------
+def test_chave_de_cache_inclui_a_conta():
+    assert auth._cache_key("default") == "bling:default:access_token"
+    assert auth._cache_key("secundaria") == "bling:secundaria:access_token"
+
+
+def test_chave_de_lock_inclui_a_conta():
+    assert auth._lock_key("default") == "lock:bling_token_refresh:default"
+    assert auth._lock_key("secundaria") == "lock:bling_token_refresh:secundaria"
+
+
+def test_contas_distintas_nunca_compartilham_cache():
+    """Regressao do bug: com chave global, autorizar a conta 2 entregaria o
+    access_token da conta 1 para as chamadas da conta 2."""
+    assert auth._cache_key("default") != auth._cache_key("secundaria")
+    assert auth._lock_key("default") != auth._lock_key("secundaria")
+
+
+async def test_persist_grava_no_id_da_conta(monkeypatch, creds):
+    store = {}
+    monkeypatch.setattr(auth, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(auth, "_cache_set", _noop_async)
+    await auth._persist({"access_token": "tok", "refresh_token": "ref",
+                         "expires_in": 21600}, "secundaria")
+    assert store["upserted"]["id"] == "secundaria"
+
+
+async def test_persist_default_continua_gravando_em_default(monkeypatch, creds):
+    store = {}
+    monkeypatch.setattr(auth, "get_supabase", lambda: FakeSupabase(store))
+    monkeypatch.setattr(auth, "_cache_set", _noop_async)
+    await auth._persist({"access_token": "tok", "refresh_token": "ref",
+                         "expires_in": 21600}, "default")
+    assert store["upserted"]["id"] == "default"
+
+
+def test_basic_header_usa_credencial_da_conta(monkeypatch):
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_ID", "cid2")
+    monkeypatch.setenv("BLING_SECUNDARIA_CLIENT_SECRET", "csec2")
+    esperado = "Basic " + base64.b64encode(b"cid2:csec2").decode()
+    assert auth._basic_auth_header("secundaria") == esperado
+
+
+async def test_get_access_token_isola_cache_entre_contas(monkeypatch):
+    """Prova fim-a-fim do bug que da nome a esta task: com o token das DUAS
+    contas ja cacheado ao mesmo tempo, get_access_token nunca pode devolver o
+    da conta errada — o que uma chave global de cache faria em silencio (o
+    token e valido, so que do CNPJ errado)."""
+    fake = FakeRedis()
+    monkeypatch.setattr(auth, "_get_redis", lambda: fake)
+    await fake.setex(auth._cache_key(auth.config.DEFAULT_ACCOUNT), 60, "tok-default")
+    await fake.setex(auth._cache_key("secundaria"), 60, "tok-secundaria")
+
+    assert await auth.get_access_token(auth.config.DEFAULT_ACCOUNT) == "tok-default"
+    assert await auth.get_access_token("secundaria") == "tok-secundaria"

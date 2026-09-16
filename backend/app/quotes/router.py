@@ -22,7 +22,7 @@ O 409 de contato repete literalmente o formato do `POST /api/bling/orders` —
 o `BlingContactResolver` do frontend é o mesmo componente nos dois fluxos, e
 um formato diferente aqui o faria não reconhecer o erro.
 
-## Três regras de integridade que este arquivo existe para garantir
+## Quatro regras de integridade que este arquivo existe para garantir
 
 1. **Depois do 201 do Bling, nada levanta.** A proposta comercial não tem
    `numeroLoja` (nem campo equivalente) para servir de chave de idempotência —
@@ -37,6 +37,13 @@ um formato diferente aqui o faria não reconhecer o erro.
 3. **Na conversão a venda nasce ANTES do PATCH de situação.** Se a ordem fosse
    inversa, uma falha na criação do pedido deixaria uma proposta marcada como
    aprovada sem venda nenhuma — mentira no ERP que nada denunciaria depois.
+4. **Uma proposta so vira pedido NA MESMA conta Bling.** `quotes.bling_account`
+   e escolhido no POST (400 se o slug nao existe) e fica IMUTAVEL depois — o
+   PUT ignora qualquer `account` que venha no corpo, de proposito, e o
+   convert nem aceita corpo: ele so le `bling_account` da propria linha. O
+   contato e o produto do pedido tem que existir NAQUELA conta do ERP; emitir
+   na conta errada referenciaria ids que nao existem la — ou, pior, ids que
+   existem e apontam para outro contato ou produto.
 
 ## Escopo por vendedor
 
@@ -56,7 +63,9 @@ from pydantic import BaseModel, Field
 
 from app.bling import contacts
 from app.bling.client import BlingClient
-from app.bling.errors import TRANSIENT, BlingError, BlingValidationError
+from app.bling.errors import (
+    TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError,
+)
 from app.bling.orders import (_dec, _money, build_installments, create_order,
                               item_total, parse_terms)
 # `_load_lead`, `_products_by_id` e `_seller_id_for` são reaproveitados do router
@@ -140,6 +149,11 @@ class QuoteIn(BaseModel):
     payment: QuotePaymentIn
     notes: str = ""
     internal_notes: str = ""
+    # Slug da conta Bling (CNPJ) onde a proposta comercial vai viver. Escolhida
+    # aqui, no POST, e fica IMUTAVEL depois: o PUT recebe este mesmo campo mas
+    # ignora, de proposito (regra 4 do topo do arquivo). Default preserva o
+    # comportamento de hoje (unica conta) para quem ainda nao manda o campo.
+    account: str = config.DEFAULT_ACCOUNT
 
 
 class QuoteStatusIn(BaseModel):
@@ -204,17 +218,24 @@ def _load_lead_para_pdf(lead_id: str) -> dict | None:
     return getattr(res, "data", None)
 
 
-def _payment_method_name(method_id) -> str | None:
+def _payment_method_name(method_id, account: str) -> str | None:
     """Descrição da forma de pagamento, do espelho — nunca da API do Bling.
 
     Ausência devolve None e o bloco some do PDF: forma de pagamento apagada do
     ERP depois do orçamento não pode impedir o vendedor de baixar o arquivo.
+
+    Filtra por conta porque `bling_payment_methods` tem PK composta (account,
+    id). São 45 linhas com IDs baixos: é exatamente a faixa onde dois CNPJs
+    colidem no mesmo número, e isto roda em TODO download de PDF — sem o filtro,
+    a proposta da conta 2 pode imprimir a condição de pagamento da conta 1 num
+    documento que vai para o cliente.
     """
     if not method_id:
         return None
     try:
         res = (get_supabase().table("bling_payment_methods")
-               .select("descricao").eq("id", int(method_id)).limit(1).execute())
+               .select("descricao").eq("account", account)
+               .eq("id", int(method_id)).limit(1).execute())
     except Exception:
         logger.warning("[QUOTES] lookup da forma de pagamento %s falhou",
                        method_id, exc_info=True)
@@ -223,7 +244,7 @@ def _payment_method_name(method_id) -> str | None:
     return linhas[0].get("descricao") if linhas else None
 
 
-def _seller_for(email: str | None) -> dict | None:
+def _seller_for(email: str | None, account: str) -> dict | None:
     """`{"nome", "email"}` para a assinatura do rodapé do PDF.
 
     O nome vem de `bling_sellers` via `bling_seller_map`; vendedor sem mapa sai
@@ -234,9 +255,10 @@ def _seller_for(email: str | None) -> dict | None:
         return None
     nome = None
     try:
-        seller_id = _seller_id_for(email)
+        seller_id = _seller_id_for(email, account)
         if seller_id:
             res = (get_supabase().table("bling_sellers").select("nome")
+                   .eq("account", account)
                    .eq("id", int(seller_id)).limit(1).execute())
             linhas = getattr(res, "data", None) or []
             nome = linhas[0].get("nome") if linhas else None
@@ -290,7 +312,7 @@ def _move_deal_to_proposal(deal_id: str) -> bool:
 # --------------------------------------------------------------------------
 # Auxiliares
 # --------------------------------------------------------------------------
-async def _montar_itens(items: list[QuoteItemIn]) -> list[dict]:
+async def _montar_itens(items: list[QuoteItemIn], account: str) -> list[dict]:
     """Itens do corpo completados pelo espelho de produtos.
 
     O Bling recusa item sem `descricao` mesmo quando o `produto.id` vai junto —
@@ -309,7 +331,7 @@ async def _montar_itens(items: list[QuoteItemIn]) -> list[dict]:
     faltando = [i for i in itens if not i["descricao"]]
     if faltando:
         por_id = await asyncio.to_thread(
-            _products_by_id, [i["bling_product_id"] for i in faltando])
+            _products_by_id, [i["bling_product_id"] for i in faltando], account)
         for item in faltando:
             p = por_id.get(item["bling_product_id"]) or {}
             item["descricao"] = p.get("nome") or "Item"
@@ -383,7 +405,11 @@ def _numeros_do_corpo(body: QuoteIn, itens: list[dict]) -> dict:
 
 
 def _kwargs_da_proposta(body: QuoteIn, *, contact_id: int, itens: list[dict],
-                        numeros: dict, seller_id: int | None) -> dict:
+                        numeros: dict, seller_id: int | None,
+                        account: str) -> dict:
+    # `account` SEM default de proposito (funcao privada — ver as diretrizes):
+    # e o slug da CONTA desta proposta, e cada chamador (POST cria, PUT edita)
+    # tem que decidir explicitamente qual e, nunca herdar um default silencioso.
     return {
         "contact_id": contact_id,
         "quoted_at": body.quoted_at,
@@ -394,7 +420,9 @@ def _kwargs_da_proposta(body: QuoteIn, *, contact_id: int, itens: list[dict],
         "method_id": body.payment.method_id,
         "terms": body.payment.terms,
         "seller_id": seller_id,
-        "store_id": config.store_id(),
+        # A loja e por CONTA (R5): ler do env global misturaria a loja da
+        # conta 1 numa proposta que esta indo para a conta 2.
+        "store_id": config.account(account).store_id,
         "notes": body.notes,
         "internal_notes": body.internal_notes,
         # Vazio de propósito: não existe campo de "A/C" no formulário nem coluna
@@ -410,23 +438,37 @@ def _kwargs_da_proposta(body: QuoteIn, *, contact_id: int, itens: list[dict],
 # --------------------------------------------------------------------------
 @router.post("")
 async def create_quote_endpoint(body: QuoteIn):
+    # Valida e normaliza a conta ANTES de tocar em lead/contato/Bling: um slug
+    # que nao existe e erro de entrada (400), nao um problema do ERP — e nada
+    # deve ser criado (nem contato vinculado, nem proposta) so para descobrir
+    # isso depois.
+    try:
+        account = config.account(body.account).key
+    except BlingUnknownAccount as exc:
+        return JSONResponse({"error": "unknown_account", "message": str(exc)},
+                            status_code=400)
+
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
 
-    resolucao = await contacts.resolve(lead)
+    # O contato e resolvido NESTA conta (regra 4): o mesmo lead pode ter um id
+    # de contato diferente — ou nenhum — em cada CNPJ do Bling. Resolver no
+    # default por engano gravaria, na proposta da conta 2, um contato que so
+    # existe (ou so foi vinculado) na conta 1.
+    resolucao = await contacts.resolve(lead, account)
     if resolucao.status != "linked":
         return _contato_nao_resolvido(resolucao)
 
-    itens = await _montar_itens(body.items)
+    itens = await _montar_itens(body.items, account)
     numeros = _numeros_do_corpo(body, itens)
-    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by)
+    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by, account)
 
     try:
-        async with BlingClient() as client:
+        async with BlingClient(account=account) as client:
             criada = await create_proposal(client, **_kwargs_da_proposta(
                 body, contact_id=resolucao.contact_id, itens=itens,
-                numeros=numeros, seller_id=seller_id))
+                numeros=numeros, seller_id=seller_id, account=account))
     except BlingValidationError as exc:
         # Repetir payload invalido nunca conserta — e, sem proposta criada, nada
         # ficou pendurado no ERP.
@@ -449,6 +491,9 @@ async def create_quote_endpoint(body: QuoteIn):
         "quoted_at": body.quoted_at,
         "status": "rascunho",
         "bling_situacao": "Rascunho",
+        # Gravado uma unica vez, aqui, e nunca mais mudado (regra 4 / R2 do
+        # PUT) — e a chave que decide em qual conta o pedido de venda nasce.
+        "bling_account": account,
         "bling_proposal_id": criada["bling_proposal_id"],
         "bling_proposal_number": criada["bling_proposal_number"],
         "bling_contact_id": resolucao.contact_id,
@@ -530,17 +575,23 @@ async def update_quote_endpoint(quote_id: str, body: QuoteIn):
             "message": "orcamento sem proposta no Bling — nao ha o que alterar",
         }, status_code=422)
 
+    # A conta e a do ORCAMENTO, imutavel (regra 4) — `body.account`, se vier,
+    # e ignorado de proposito e NUNCA lido daqui para baixo. A proposta ja
+    # existe naquele ERP; trocar de conta so orfanaria o registro (o PUT iria
+    # bater na conta errada, que nem conhece este `proposal_id`).
+    account = quote.get("bling_account") or config.DEFAULT_ACCOUNT
+
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
 
-    resolucao = await contacts.resolve(lead)
+    resolucao = await contacts.resolve(lead, account)
     if resolucao.status != "linked":
         return _contato_nao_resolvido(resolucao)
 
-    itens = await _montar_itens(body.items)
+    itens = await _montar_itens(body.items, account)
     numeros = _numeros_do_corpo(body, itens)
-    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by)
+    seller_id = await asyncio.to_thread(_seller_id_for, body.created_by, account)
 
     # A situação enviada no PUT é a que o orçamento já tem — o PUT altera o
     # conteúdo, não o estado. Mandar `Rascunho` fixo rebaixaria uma proposta já
@@ -548,12 +599,12 @@ async def update_quote_endpoint(quote_id: str, body: QuoteIn):
     situacao = STATUS_SITUACAO.get(quote.get("status") or "rascunho", "Rascunho")
 
     try:
-        async with BlingClient() as client:
+        async with BlingClient(account=account) as client:
             await update_proposal(client, proposal_id=int(proposal_id),
                                   situacao=situacao, **_kwargs_da_proposta(
                                       body, contact_id=resolucao.contact_id,
                                       itens=itens, numeros=numeros,
-                                      seller_id=seller_id))
+                                      seller_id=seller_id, account=account))
     except BlingValidationError as exc:
         return _erro_de_validacao(exc)
     except BlingError as exc:
@@ -576,6 +627,8 @@ async def update_quote_endpoint(quote_id: str, body: QuoteIn):
             "payment_terms": "/".join(str(d) for d in (body.payment.terms or [0])),
             "notes": body.notes or None,
             "internal_notes": body.internal_notes or None,
+            # `account`/`bling_account` NAO entra aqui, nunca (R2, regra 4): a
+            # conta e imutavel depois da criacao.
         })
     except Exception:
         # Aqui a exceção SOBE (500), diferente do POST: o PUT é seguro de
@@ -625,8 +678,11 @@ async def update_status_endpoint(quote_id: str, body: QuoteStatusIn):
     proposal_id = quote.get("bling_proposal_id")
     sincronizado = False
     if proposal_id:
+        # A proposta vive na conta do ORCAMENTO (regra 4) — nunca na default
+        # por omissao, senao o PATCH bateria na conta errada do Bling.
+        account = quote.get("bling_account") or config.DEFAULT_ACCOUNT
         try:
-            async with BlingClient() as client:
+            async with BlingClient(account=account) as client:
                 await set_situacao(client, proposal_id=int(proposal_id),
                                    situacao=situacao)
             sincronizado = True
@@ -679,13 +735,22 @@ async def convert_quote_endpoint(quote_id: str):
             "message": "orcamento sem itens — nao ha o que vender",
         }, status_code=422)
 
+    # A conta NAO e parametro: a proposta comercial vive naquela conta do ERP e
+    # os IDs de contato e produto do pedido sao os de la. Emitir na outra conta
+    # referenciaria IDs inexistentes — ou, pior, IDs que existem e apontam para
+    # outro produto.
+    account = quote.get("bling_account") or config.DEFAULT_ACCOUNT
+
     contact_id = quote.get("bling_contact_id")
     if not contact_id:
         # O vínculo foi gravado na criação; só falta se alguém o desfez depois.
         lead = await asyncio.to_thread(_load_lead, quote.get("lead_id"))
         if not lead:
             return JSONResponse({"error": "lead_not_found"}, status_code=404)
-        resolucao = await contacts.resolve(lead)
+        # MESMA conta do orcamento (regra 4): resolver no default por engano
+        # devolveria um contact_id que nao existe (ou aponta para outra
+        # empresa) na conta onde o pedido esta prestes a nascer.
+        resolucao = await contacts.resolve(lead, account)
         if resolucao.status != "linked":
             return _contato_nao_resolvido(resolucao)
         contact_id = resolucao.contact_id
@@ -716,7 +781,7 @@ async def convert_quote_endpoint(quote_id: str):
                           if quote.get("payment_method_id") else None),
             "terms": parse_terms(quote.get("payment_terms")),
         },
-        "seller_id": await asyncio.to_thread(_seller_id_for, quote.get("created_by")),
+        "seller_id": await asyncio.to_thread(_seller_id_for, quote.get("created_by"), account),
         # Já em reais: `quotes.discount_value` guarda o desconto convertido, e
         # `apply_discount` com unidade REAL subtrai exatamente esse valor.
         "discount": ({"valor": float(desconto), "unidade": "REAL"}
@@ -731,10 +796,14 @@ async def convert_quote_endpoint(quote_id: str):
         # retentativa do vendedor depois de um timeout) reencontra o pedido já
         # criado em vez de criar o segundo. Mesmo formato de `jobs.enqueue`.
         "idempotency_key": f"orc-{str(quote_id).replace('-', '')[:16]}",
+        # A venda nasce na MESMA conta do orcamento — o invariante que esta
+        # rota existe para garantir. `create_order` grava isto em
+        # `sales.bling_account` e resolve loja/situacao via config.account().
+        "account": account,
     }
 
     try:
-        async with BlingClient() as client:
+        async with BlingClient(account=account) as client:
             venda = await create_order(client, **kwargs)
     except BlingValidationError as exc:
         return _erro_de_validacao(exc)
@@ -746,7 +815,7 @@ async def convert_quote_endpoint(quote_id: str):
     proposal_id = quote.get("bling_proposal_id")
     if proposal_id:
         try:
-            async with BlingClient() as client:
+            async with BlingClient(account=account) as client:
                 await set_situacao(client, proposal_id=int(proposal_id),
                                    situacao=STATUS_SITUACAO["convertido"])
             sincronizado = True
@@ -819,9 +888,16 @@ async def quote_pdf_endpoint(quote_id: str):
     if not quote:
         return JSONResponse({"error": "quote_not_found"}, status_code=404)
 
+    # A conta do PROPRIO orcamento manda aqui. Vendedor e forma de pagamento sao
+    # espelhos com PK composta (account, id) e com faixas de id baixas (16 e 45
+    # linhas hoje) — exatamente onde dois CNPJs colidem no mesmo numero. Sem o
+    # recorte, o PDF que vai para o cliente pode sair com o nome do vendedor ou a
+    # condicao de pagamento da OUTRA conta.
+    conta_do_pdf = quote.get("bling_account") or config.DEFAULT_ACCOUNT
+
     items = await asyncio.to_thread(_load_quote_items, quote_id)
     lead = await asyncio.to_thread(_load_lead_para_pdf, quote.get("lead_id")) or {}
-    seller = await asyncio.to_thread(_seller_for, quote.get("created_by"))
+    seller = await asyncio.to_thread(_seller_for, quote.get("created_by"), conta_do_pdf)
 
     razao = lead.get("razao_social") or lead.get("name")
     # "A/C" só quando o nome da pessoa difere do nome que encabeça o documento —
@@ -843,7 +919,7 @@ async def quote_pdf_endpoint(quote_id: str):
         "notes": quote.get("notes"),
         "payment_terms": quote.get("payment_terms"),
         "payment_method_name": await asyncio.to_thread(
-            _payment_method_name, quote.get("payment_method_id")),
+            _payment_method_name, quote.get("payment_method_id"), conta_do_pdf),
         "installments": _parcelas_para_o_pdf(quote),
         "lead_nome": razao,
         "lead_documento": lead.get("cnpj"),

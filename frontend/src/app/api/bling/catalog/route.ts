@@ -16,6 +16,8 @@ export async function GET(request: NextRequest) {
   if (situacao) params.set("situacao", situacao);
   params.set("page", sp.get("page") || "1");
   params.set("limit", sp.get("limit") || "50");
+  const account = sp.get("account");
+  if (account) params.set("account", account);
 
   try {
     const resp = await fetch(`${backend()}/api/bling/catalog?${params}`, { cache: "no-store" });

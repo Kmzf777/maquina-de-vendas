@@ -11,6 +11,19 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
+import { CONTA_PADRAO, type ContaBling } from "@/lib/bling-accounts";
+
+/**
+ * Uma linha de `accounts` em `GET /api/bling/status` (formato aditivo, ver
+ * Tasks 4/11): estende `ContaBling` com os campos de token que so a tela de
+ * admin mostra. `ContaBling` sozinho (usado pelo seletor de venda) nao tem
+ * esses tres campos de proposito — sao informacao de administracao.
+ */
+interface ContaStatus extends ContaBling {
+  access_expires_at: string | null;
+  refresh_expires_at: string | null;
+  scope: string | null;
+}
 
 interface BlingStatus {
   configured: boolean;
@@ -19,6 +32,12 @@ interface BlingStatus {
   access_expires_at: string | null;
   refresh_expires_at: string | null;
   scope: string | null;
+  // Os seis campos acima sao sempre os dados da conta DEFAULT (ver comentario
+  // de app/bling/router.py:bling_status no backend) — mantidos por
+  // compatibilidade. Esta tela migrou para ler `accounts`; `contasDoStatus`
+  // abaixo so recorre a eles quando `accounts` falta (resposta de formato
+  // antigo, durante uma transicao de deploy).
+  accounts?: ContaStatus[];
 }
 
 interface CrmUser {
@@ -34,10 +53,25 @@ interface BlingSeller {
   situacao: string | null;
 }
 
+/** Uma conta veio de `sync_all`: contagens por recurso, ou um erro isolado
+ *  (a falha numa conta nao derruba a outra — ver backend/app/bling/sync.py). */
+interface SyncCounts {
+  produtos?: number;
+  contatos?: number;
+  formas_pagamento?: number;
+  vendedores?: number;
+  situacoes?: number;
+  erro?: string;
+}
+
+/** `POST /bling/sync` aninhou o retorno por conta (Task 6): antes era
+ *  `{produtos: N, ...}`, agora e `{default: {produtos: N, ...}, secundaria: {...}}`. */
+type SyncResult = Record<string, SyncCounts>;
+
 /**
- * O refresh_token do Bling dura 30 dias. Se ele expirar, não há renovação
- * automática possível: alguém precisa refazer o OAuth no navegador. Cinco dias
- * de antecedência é o aviso.
+ * O refresh_token do Bling dura 30 dias. Se ele expirar, nao ha renovacao
+ * automatica possivel: alguem precisa refazer o OAuth no navegador. Cinco dias
+ * de antecedencia e o aviso.
  */
 const REFRESH_WARN_DAYS = 5;
 
@@ -46,6 +80,7 @@ const SYNC_LABELS: Record<string, string> = {
   contatos: "Contatos",
   formas_pagamento: "Formas de pagamento",
   vendedores: "Vendedores",
+  situacoes: "Situações",
 };
 
 function daysUntil(iso: string | null | undefined): number | null {
@@ -62,15 +97,41 @@ function formatDate(iso: string | null | undefined): string {
   return new Date(ms).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
+/**
+ * Lista de contas a renderizar, com fallback para o formato antigo (sem
+ * `accounts`) usando os seis campos de topo — todos da conta default, mesma
+ * regra do backend. Isso e o que deixa "os seis campos de topo continuam
+ * funcionando" verdadeiro sem duplicar a UI: com `accounts` presente (o caso
+ * normal hoje, ver router.py), o fallback nunca roda.
+ */
+function contasDoStatus(status: BlingStatus | null): ContaStatus[] {
+  if (!status) return [];
+  if (status.accounts && status.accounts.length > 0) return status.accounts;
+  return [
+    {
+      account: CONTA_PADRAO,
+      label: "Bling",
+      configured: status.configured,
+      connected: status.connected,
+      access_expires_at: status.access_expires_at,
+      refresh_expires_at: status.refresh_expires_at,
+      scope: status.scope,
+    },
+  ];
+}
+
 export function BlingSettings() {
   const [status, setStatus] = useState<BlingStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [connecting, setConnecting] = useState(false);
+  // Slug da conta cujo OAuth esta em andamento (redirecionando o navegador),
+  // ou null quando nenhuma esta. Por conta porque cada linha tem seu proprio
+  // botao Conectar/Reconectar agora.
+  const [connecting, setConnecting] = useState<string | null>(null);
 
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<Record<string, number> | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
   const [users, setUsers] = useState<CrmUser[]>([]);
@@ -134,11 +195,14 @@ export function BlingSettings() {
     setLoading(false);
   }
 
-  async function connect() {
-    setConnecting(true);
+  async function connect(account: string) {
+    setConnecting(account);
     setStatusError(null);
     try {
-      const res = await fetch("/api/bling/oauth/authorize", { cache: "no-store" });
+      const res = await fetch(
+        `/api/bling/oauth/authorize?account=${encodeURIComponent(account)}`,
+        { cache: "no-store" }
+      );
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body?.url) {
         setStatusError(
@@ -146,13 +210,13 @@ export function BlingSettings() {
             ? "Credenciais do app Bling não configuradas no servidor (BLING_CLIENT_ID / BLING_CLIENT_SECRET)."
             : "Não foi possível iniciar a conexão com o Bling."
         );
-        setConnecting(false);
+        setConnecting(null);
         return;
       }
       window.location.href = body.url as string;
     } catch {
       setStatusError("Backend inacessível.");
-      setConnecting(false);
+      setConnecting(null);
     }
   }
 
@@ -166,7 +230,7 @@ export function BlingSettings() {
       if (!res.ok) {
         setSyncError(body?.error ?? "Falha ao sincronizar.");
       } else {
-        setSyncResult(body as Record<string, number>);
+        setSyncResult(body as SyncResult);
         // Vendedores novos podem ter entrado agora — recarrega o que a tela mostra.
         void loadAll();
       }
@@ -242,99 +306,121 @@ export function BlingSettings() {
     );
   }
 
-  const conectado = !!status?.connected;
-  const diasRefresh = daysUntil(status?.refresh_expires_at);
-  const refreshExpirando =
-    conectado && diasRefresh !== null && diasRefresh < REFRESH_WARN_DAYS;
+  const contas = contasDoStatus(status);
+  const multiplasContas = contas.length > 1;
+  const algumaContaConfigurada = contas.some((c) => c.configured);
+  const algumaContaConectada = contas.some((c) => c.connected);
 
   return (
     <div className="space-y-6">
       {/* ---------------------------------------------------------------- */}
-      {/* Conexão                                                          */}
+      {/* Conexao                                                          */}
       {/* ---------------------------------------------------------------- */}
       <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h2 className="text-[14px] font-normal text-[#111111]">Conexão com o Bling</h2>
-            <p className="text-[13px] text-[#7b7b78] mt-1">
-              O Bling é a fonte da verdade do faturamento. O pedido nasce aqui e é criado lá.
-            </p>
-          </div>
-          <span className="flex items-center gap-2 text-[13px] whitespace-nowrap">
-            <span
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: conectado ? "#1f9d57" : "#7b7b78" }}
-            />
-            <span className={conectado ? "text-[#111111]" : "text-[#7b7b78]"}>
-              {conectado ? "Conectado" : "Desconectado"}
-            </span>
-          </span>
-        </div>
+        <h2 className="text-[14px] font-normal text-[#111111]">Conexão com o Bling</h2>
+        <p className="text-[13px] text-[#7b7b78] mt-1 mb-4">
+          O Bling é a fonte da verdade do faturamento. O pedido nasce aqui e é criado lá.
+        </p>
 
         {statusError && (
           <p className="text-[13px] text-[#c41c1c] mb-4">{statusError}</p>
         )}
 
-        {status && !status.configured && (
-          <p className="text-[13px] text-[#c41c1c] mb-4">
-            Credenciais do app Bling ausentes no servidor. Configure BLING_CLIENT_ID,
-            BLING_CLIENT_SECRET e BLING_REDIRECT_URI antes de conectar.
-          </p>
-        )}
-
-        {status && status.configured && !status.enabled && (
+        {status && algumaContaConfigurada && !status.enabled && (
           <p className="text-[13px] text-[#7b7b78] mb-4">
             Integração desligada por configuração (BLING_ENABLED). Os workers de sync e de
             fila não rodam enquanto ela estiver assim.
           </p>
         )}
 
-        {refreshExpirando && (
-          <div
-            className="mb-4 rounded-[6px] border px-4 py-3"
-            style={{ borderColor: "#ff5600", backgroundColor: "#ff56000d" }}
-          >
-            <p className="text-[13px] text-[#111111]">
-              <strong className="font-medium">Autorização expirando.</strong> O acesso ao
-              Bling vence em {Math.max(0, Math.ceil(diasRefresh ?? 0))} dia(s)
-              ({formatDate(status?.refresh_expires_at)}). Reconecte antes disso — depois de
-              expirar, só o fluxo de autorização manual traz a integração de volta.
-            </p>
-          </div>
-        )}
+        <div className="space-y-3">
+          {contas.map((conta) => {
+            const diasRefresh = daysUntil(conta.refresh_expires_at);
+            const refreshExpirando =
+              conta.connected && diasRefresh !== null && diasRefresh < REFRESH_WARN_DAYS;
 
-        {conectado && (
-          <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-            <div>
-              <dt className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Access token</dt>
-              <dd className="text-[13px] text-[#111111] mt-1">{formatDate(status?.access_expires_at)}</dd>
-            </div>
-            <div>
-              <dt className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Autorização até</dt>
-              <dd className="text-[13px] text-[#111111] mt-1">{formatDate(status?.refresh_expires_at)}</dd>
-            </div>
-            <div>
-              <dt className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Escopos</dt>
-              <dd className="text-[13px] text-[#111111] mt-1 break-words">{status?.scope || "—"}</dd>
-            </div>
-          </dl>
-        )}
+            return (
+              <div
+                key={conta.account}
+                className="bg-white border border-[#dedbd6] rounded-[8px] p-4"
+              >
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <p className="text-[13px] font-medium text-[#111111]">{conta.label}</p>
+                  <span className="flex items-center gap-2 text-[13px] whitespace-nowrap">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: conta.connected ? "#1f9d57" : "#7b7b78" }}
+                    />
+                    <span className={conta.connected ? "text-[#111111]" : "text-[#7b7b78]"}>
+                      {conta.connected ? "Conectado" : "Desconectado"}
+                    </span>
+                  </span>
+                </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={connect}
-            disabled={connecting || (status ? !status.configured : false)}
-            className={btnDark}
-          >
-            {connecting ? "Abrindo o Bling…" : conectado ? "Reconectar" : "Conectar ao Bling"}
-          </button>
+                {!conta.configured && (
+                  <p className="text-[13px] text-[#c41c1c] mb-3">
+                    {conta.account === CONTA_PADRAO
+                      ? "Credenciais do app Bling ausentes no servidor. Configure BLING_CLIENT_ID, BLING_CLIENT_SECRET e BLING_REDIRECT_URI antes de conectar."
+                      : `Credenciais ausentes para esta conta. Configure BLING_${conta.account.toUpperCase()}_CLIENT_ID e BLING_${conta.account.toUpperCase()}_CLIENT_SECRET, ou deixe cair para BLING_CLIENT_ID/BLING_CLIENT_SECRET (compartilhados com a conta padrão).`}
+                  </p>
+                )}
+
+                {refreshExpirando && (
+                  <div
+                    className="mb-3 rounded-[6px] border px-4 py-3"
+                    style={{ borderColor: "#ff5600", backgroundColor: "#ff56000d" }}
+                  >
+                    <p className="text-[13px] text-[#111111]">
+                      <strong className="font-medium">Autorização expirando.</strong> O acesso
+                      ao Bling{multiplasContas ? ` (${conta.label})` : ""} vence em{" "}
+                      {Math.max(0, Math.ceil(diasRefresh ?? 0))} dia(s)
+                      ({formatDate(conta.refresh_expires_at)}). Reconecte antes disso — depois
+                      de expirar, só o fluxo de autorização manual traz a integração de volta.
+                    </p>
+                  </div>
+                )}
+
+                {conta.connected && (
+                  <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Access token</dt>
+                      <dd className="text-[13px] text-[#111111] mt-1">{formatDate(conta.access_expires_at)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Autorização até</dt>
+                      <dd className="text-[13px] text-[#111111] mt-1">{formatDate(conta.refresh_expires_at)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Escopos</dt>
+                      <dd className="text-[13px] text-[#111111] mt-1 break-words">{conta.scope || "—"}</dd>
+                    </div>
+                  </dl>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => connect(conta.account)}
+                  disabled={connecting === conta.account || !conta.configured}
+                  className={btnDark}
+                >
+                  {connecting === conta.account
+                    ? "Abrindo o Bling…"
+                    : conta.connected
+                      ? "Reconectar"
+                      : "Conectar ao Bling"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 mt-4">
           <button
             type="button"
             onClick={runSync}
-            disabled={syncing || !conectado}
+            disabled={syncing || !algumaContaConectada}
             className={btnGhost}
-            title={conectado ? "" : "Conecte a conta antes de sincronizar"}
+            title={algumaContaConectada ? "" : "Conecte ao menos uma conta antes de sincronizar"}
           >
             {syncing ? "Sincronizando…" : "Sincronizar agora"}
           </button>
@@ -342,15 +428,33 @@ export function BlingSettings() {
 
         {syncError && <p className="text-[13px] text-[#c41c1c] mt-3">{syncError}</p>}
         {syncResult && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            {Object.entries(syncResult).map(([key, value]) => (
-              <span
-                key={key}
-                className="text-[12px] text-[#7b7b78] bg-white border border-[#dedbd6] rounded-full px-3 py-1"
-              >
-                {SYNC_LABELS[key] ?? key}: <span className="text-[#111111]">{String(value)}</span>
-              </span>
-            ))}
+          <div className="space-y-3 mt-3">
+            {Object.entries(syncResult).map(([account, counts]) => {
+              const rotulo = contas.find((c) => c.account === account)?.label ?? account;
+              return (
+                <div key={account}>
+                  {multiplasContas && (
+                    <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1.5">
+                      {rotulo}
+                    </p>
+                  )}
+                  {counts.erro ? (
+                    <p className="text-[13px] text-[#c41c1c]">{counts.erro}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(counts).map(([key, value]) => (
+                        <span
+                          key={key}
+                          className="text-[12px] text-[#7b7b78] bg-white border border-[#dedbd6] rounded-full px-3 py-1"
+                        >
+                          {SYNC_LABELS[key] ?? key}: <span className="text-[#111111]">{String(value)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -409,7 +513,7 @@ export function BlingSettings() {
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* Histórico                                                        */}
+      {/* Historico                                                        */}
       {/* ---------------------------------------------------------------- */}
       <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-6">
         <h2 className="text-[14px] font-normal text-[#111111]">Histórico de pedidos</h2>
@@ -420,9 +524,9 @@ export function BlingSettings() {
         <button
           type="button"
           onClick={() => setBackfillOpen(true)}
-          disabled={backfilling || !conectado}
+          disabled={backfilling || !algumaContaConectada}
           className={btnGhost}
-          title={conectado ? "" : "Conecte a conta antes de importar"}
+          title={algumaContaConectada ? "" : "Conecte ao menos uma conta antes de importar"}
         >
           {backfilling ? "Importando…" : "Importar histórico (12 meses)"}
         </button>
@@ -430,7 +534,7 @@ export function BlingSettings() {
         {backfillResult && <p className="text-[13px] text-[#111111] mt-3">{backfillResult}</p>}
       </div>
 
-      {/* Confirmação explícita: o job é longo e consome cota da API do Bling. */}
+      {/* Confirmacao explicita: o job e longo e consome cota da API do Bling. */}
       <AlertDialog
         open={backfillOpen}
         onOpenChange={(open) => { if (!open) setBackfillOpen(false); }}

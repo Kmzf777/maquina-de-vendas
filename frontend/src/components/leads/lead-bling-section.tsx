@@ -15,6 +15,15 @@ import { useEffect, useState } from "react";
 import { debounce } from "@/lib/debounce";
 import { formatDocument } from "@/lib/documento";
 import { blingContactUrl, formatBlingAddress, type BlingAddress } from "@/lib/bling-contact-display";
+import { useBlingStatus } from "@/hooks/use-bling-status";
+import { CONTA_PADRAO, contasDisponiveis, precisaSeletor } from "@/lib/bling-accounts";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export interface BlingContactSummary {
   id: number;
@@ -30,7 +39,9 @@ export interface BlingContactSummary {
 
 interface LeadBlingSectionProps {
   leadId: string;
-  blingContactId: number | null;
+  /** Mapa conta -> id do contato no Bling. Um lead pode estar vinculado nos
+   *  dois CNPJs, com ids diferentes. */
+  blingContactIds: Record<string, number>;
   onChanged: () => void;
 }
 
@@ -40,22 +51,41 @@ const input =
 const btnGhost =
   "bg-white border border-[#dedbd6] text-[#111111] px-3 py-1.5 rounded-[4px] text-[12px] hover:bg-[#f4f2ee] transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
-async function searchContacts(q: string): Promise<BlingContactSummary[]> {
-  const res = await fetch(`/api/bling/contacts/search?q=${encodeURIComponent(q)}&limit=20`, {
-    cache: "no-store",
-  });
+async function searchContacts(q: string, conta: string): Promise<BlingContactSummary[]> {
+  const res = await fetch(
+    `/api/bling/contacts/search?q=${encodeURIComponent(q)}&limit=20&account=${encodeURIComponent(conta)}`,
+    { cache: "no-store" },
+  );
   const body = await res.json().catch(() => ({}));
   return (body?.data ?? []) as BlingContactSummary[];
 }
 
-async function fetchContactById(id: number): Promise<BlingContactSummary | null> {
-  const res = await fetch(`/api/bling/contacts/search?id=${id}`, { cache: "no-store" });
+async function fetchContactById(id: number, conta: string): Promise<BlingContactSummary | null> {
+  const res = await fetch(`/api/bling/contacts/search?id=${id}&account=${encodeURIComponent(conta)}`, {
+    cache: "no-store",
+  });
   const body = await res.json().catch(() => ({}));
   const data = (body?.data ?? []) as BlingContactSummary[];
   return data[0] ?? null;
 }
 
-export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlingSectionProps) {
+export function LeadBlingSection({ leadId, blingContactIds, onChanged }: LeadBlingSectionProps) {
+  // --- Conta Bling -----------------------------------------------------------
+  // Comeca na DEFAULT sempre (nao em `contaPadrao(...)`): e o que faz esta
+  // secao mostrar, sem esperar rede nenhuma, exatamente o que ela sempre
+  // mostrou antes da segunda conta existir. Ver outras contas e uma escolha
+  // explicita do vendedor no seletor abaixo, nunca automatica.
+  const blingStatus = useBlingStatus();
+  const [conta, setConta] = useState(CONTA_PADRAO);
+  const mostrarSeletorConta = precisaSeletor(blingStatus.accounts);
+
+  // O vinculo vem de `lead_bling_contacts`, ja separado por conta pelo modal que
+  // chama esta secao. Nao ha mais a restricao de so confiar na conta default: um
+  // lead pode estar vinculado nos dois CNPJs, com ids diferentes, e cada conta
+  // mostra o seu.
+  const blingContactId = blingContactIds[conta] ?? null;
+  const vinculado = !!blingContactId;
+
   // --- Contato já vinculado ------------------------------------------------
   const [contact, setContact] = useState<BlingContactSummary | null>(null);
   const [loadingContact, setLoadingContact] = useState(false);
@@ -67,11 +97,11 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
     setContact(null);
     setContactNotFound(false);
     setActionError(null);
-    if (!blingContactId) return;
+    if (!vinculado) return;
 
     let cancelled = false;
     setLoadingContact(true);
-    fetchContactById(blingContactId)
+    fetchContactById(blingContactId as number, conta)
       .then((found) => {
         if (cancelled) return;
         if (found) setContact(found);
@@ -86,7 +116,7 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
     return () => {
       cancelled = true;
     };
-  }, [blingContactId]);
+  }, [vinculado, blingContactId, conta]);
 
   async function handleUnlink() {
     setUnlinking(true);
@@ -95,7 +125,7 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
       const res = await fetch("/api/bling/contacts/unlink", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lead_id: leadId }),
+        body: JSON.stringify({ lead_id: leadId, account: conta }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -118,7 +148,7 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
   const [linkingId, setLinkingId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (blingContactId) return;
+    if (vinculado) return;
     const termo = query.trim();
     if (termo.length < 2) {
       setResults([]);
@@ -128,14 +158,14 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
     setSearching(true);
     setSearchError(null);
     const buscar = debounce(() => {
-      searchContacts(termo)
+      searchContacts(termo, conta)
         .then((data) => setResults(data))
         .catch(() => setSearchError("Backend inacessível."))
         .finally(() => setSearching(false));
     }, 300);
     buscar();
     return () => buscar.cancel();
-  }, [query, blingContactId]);
+  }, [query, vinculado, conta]);
 
   async function handleLink(contactId: number) {
     setLinkingId(contactId);
@@ -144,7 +174,7 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
       const res = await fetch("/api/bling/contacts/link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lead_id: leadId, contact_id: contactId }),
+        body: JSON.stringify({ lead_id: leadId, contact_id: contactId, account: conta }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -163,11 +193,34 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
 
   // --- Render ----------------------------------------------------------------
 
-  if (blingContactId) {
+  // So aparece com mais de uma conta CONECTADA (R2 da Task 15) — com uma conta
+  // so, esta secao continua identica a antes da segunda conta existir.
+  const seletorConta = mostrarSeletorConta && (
+    <div className="mb-3">
+      <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">
+        Conta Bling
+      </label>
+      <Select value={conta} onValueChange={setConta}>
+        <SelectTrigger className="w-full bg-white border border-[#dedbd6] rounded-[6px] px-3 text-[13px] text-[#111111] focus:border-[#111111] focus:ring-0">
+          <SelectValue placeholder="Selecione a conta" />
+        </SelectTrigger>
+        <SelectContent position="popper">
+          {contasDisponiveis(blingStatus.accounts).map((c) => (
+            <SelectItem key={c.account} value={c.account}>
+              {c.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
+  if (vinculado && blingContactId) {
     const endereco = contact ? formatBlingAddress(contact.endereco) : "";
     const telefone = contact?.celular_e164 ?? contact?.telefone_e164 ?? null;
     return (
       <div>
+        {seletorConta}
         <div className="flex items-center justify-between mb-3">
           <p className={sectionLabel + " mb-0"}>Contato no Bling</p>
           <span
@@ -230,6 +283,7 @@ export function LeadBlingSection({ leadId, blingContactId, onChanged }: LeadBlin
 
   return (
     <div>
+      {seletorConta}
       <div className="flex items-center justify-between mb-3">
         <p className={sectionLabel + " mb-0"}>Contato no Bling</p>
         <span className="text-[10px] font-medium px-2 py-0.5 rounded-[4px] border border-[#dedbd6] text-[#7b7b78]">

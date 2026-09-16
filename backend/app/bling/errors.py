@@ -14,6 +14,10 @@ class BlingNotConfigured(BlingError):
     """Faltam BLING_CLIENT_ID / BLING_CLIENT_SECRET, ou nunca houve autorizacao."""
 
 
+class BlingUnknownAccount(BlingError):
+    """Slug de conta que nao esta em BLING_ACCOUNTS. Erro de configuracao."""
+
+
 class BlingAuthError(BlingError):
     """401 apos tentativa de renovacao — precisa refazer o fluxo OAuth."""
 

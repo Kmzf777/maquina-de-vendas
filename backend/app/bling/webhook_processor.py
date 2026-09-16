@@ -9,6 +9,12 @@ Duas garantias que este modulo implementa:
     chegar depois de um mais novo e reverteria a situacao do pedido. Comparamos
     `event_date` com o `bling_event_date` ja gravado na venda e descartamos o
     atrasado.
+
+MULTI-CONTA: cada linha de `bling_webhook_events` ja grava o slug da conta que
+entregou o evento (o receiver grava isso). Ler `evento["account"]` e mais
+direto e mais seguro que iterar `config.accounts()` — a linha ja diz qual
+conta processar, entao nao ha o que adivinhar nem risco de processar o evento
+com o cliente da conta errada.
 """
 import asyncio
 import logging
@@ -25,9 +31,9 @@ MAX_ATTEMPTS = 6
 BATCH = 20
 
 
-def _new_client():
+def _new_client(account: str):
     from app.bling.client import BlingClient
-    return BlingClient()
+    return BlingClient(account=account)
 
 
 def _claim() -> list[dict]:
@@ -42,61 +48,69 @@ def _update(event_id: str, payload: dict) -> None:
      .eq("event_id", event_id).execute())
 
 
-def _sale_event_date(order_id: int) -> str | None:
+def _contact_filter(account: str, contact_id: int) -> dict:
+    return {"account": account, "id": contact_id}
+
+
+def _contact_row(account: str, contact_id: int) -> dict | None:
+    res = (get_supabase().table("bling_contacts").select("*")
+           .eq("account", account).eq("id", contact_id)
+           .limit(1).maybe_single().execute())
+    return getattr(res, "data", None)
+
+
+def _sale_event_date(account: str, order_id: int) -> str | None:
     res = (get_supabase().table("sales").select("bling_event_date")
-           .eq("bling_order_id", order_id).limit(1).execute())
+           .eq("bling_account", account).eq("bling_order_id", order_id)
+           .limit(1).execute())
     linhas = getattr(res, "data", None) or []
     return (linhas[0] or {}).get("bling_event_date") if linhas else None
 
 
-async def _last_event_date(order_id: int) -> str | None:
-    return await asyncio.to_thread(_sale_event_date, order_id)
+async def _last_event_date(account: str, order_id: int) -> str | None:
+    return await asyncio.to_thread(_sale_event_date, account, order_id)
 
 
-def _contact_row(contact_id: int) -> dict | None:
-    res = (get_supabase().table("bling_contacts").select("*")
-           .eq("id", contact_id).limit(1).maybe_single().execute())
-    return getattr(res, "data", None)
-
-
-async def _resolve_lead(contato: dict) -> str | None:
+async def _resolve_lead(account: str, contato: dict) -> str | None:
     from app.bling.contacts import ensure_lead
-    return await ensure_lead(contato)
+    return await ensure_lead(contato, account)
 
 
 async def _handle_order(evento: dict, corpo: dict) -> str:
+    account = evento.get("account") or config.DEFAULT_ACCOUNT
     dados = corpo.get("data") or {}
     order_id = int(dados["id"])
     event_date = corpo.get("date") or evento.get("event_date")
 
-    anterior = await _last_event_date(order_id)
+    anterior = await _last_event_date(account, order_id)
     if anterior and event_date and event_date < anterior:
         logger.info("[BLING WEBHOOK] evento %s fora de ordem (%s < %s) — descartado",
                     evento["event_id"], event_date, anterior)
         return "skipped"
 
     if evento["event"].endswith(".deleted"):
-        await cancel_from_bling(order_id, event_date=event_date)
+        await cancel_from_bling(order_id, event_date=event_date, account=account)
         return "done"
 
-    async with _new_client() as client:
+    async with _new_client(account) as client:
         pedido = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
 
     contact_id = (pedido.get("contato") or dados.get("contato") or {}).get("id")
     lead_id = None
     if contact_id:
-        contato = await asyncio.to_thread(_contact_row, int(contact_id))
+        contato = await asyncio.to_thread(_contact_row, account, int(contact_id))
         if contato:
-            lead_id = await _resolve_lead(contato)
+            lead_id = await _resolve_lead(account, contato)
         else:
             logger.warning("[BLING WEBHOOK] contato %s ausente do espelho", contact_id)
 
-    await upsert_from_bling(pedido, lead_id=lead_id, event_date=event_date)
+    await upsert_from_bling(pedido, lead_id=lead_id, event_date=event_date, account=account)
     return "done"
 
 
 async def _handle_product(evento: dict, corpo: dict) -> str:
-    await apply_product_event(evento["event"], corpo.get("data") or {})
+    account = evento.get("account") or config.DEFAULT_ACCOUNT
+    await apply_product_event(evento["event"], corpo.get("data") or {}, account)
     return "done"
 
 
