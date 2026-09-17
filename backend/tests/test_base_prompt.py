@@ -433,6 +433,10 @@ def test_secretaria_inbound_nao_manda_coletar_nome():
     assert "coleta de nome" not in low
     assert "solicite o nome" not in low
     assert "com quem eu to falando" not in low
+    # o inbound nao tem caminho de negacao de identidade (regra 35 e do outbound, onde o
+    # nome vem do cadastro) — entao aqui a pergunta nao tem excecao nenhuma
+    assert "com quem voce fala" not in low
+    assert "logo apos confirmar o nome" not in low
 
 
 def test_secretaria_outbound_nao_manda_coletar_nome():
@@ -443,6 +447,22 @@ def test_secretaria_outbound_nao_manda_coletar_nome():
     assert "com quem eu to falando" not in low
     # o "pergunte o nome apenas se nao tiver sido informado" da ETAPA 1 tambem sai
     assert "pergunte o nome" not in low
+
+
+def test_secretaria_outbound_so_pergunta_quem_fala_na_negacao_de_identidade():
+    """A regra 35 MANDA perguntar com quem se fala quando o numero trocou de dono — e
+    reativo e sancionado, e vive no bloco de resposta a abertura. Da metade do FUNIL em
+    diante essa pergunta e a proibicao da regra 25 com outra roupa: proibida.
+
+    Este recorte existe porque o assert de 'pergunte o nome' nao pega estas duas
+    formulacoes ('pergunte com naturalidade com quem voce fala agora' / 'saber com quem
+    voce fala') — foi o ponto cego que deixou o conflito passar."""
+    prompt = _secretaria("valeria_outbound")
+    corte = prompt.index("# FUNIL - SECRETARIA OUTBOUND")
+    assert "com quem voce fala" in prompt[:corte].lower(), (
+        "o caminho reativo da regra 35 (numero trocou de dono) sumiu"
+    )
+    assert "com quem voce fala" not in prompt[corte:].lower()
 
 
 def test_secretaria_inbound_etapa1_nao_e_mais_etapa_de_coleta():
@@ -478,3 +498,51 @@ def test_secretaria_outbound_mantem_few_shots_de_nome_oferecido():
     prompt = _secretaria("valeria_outbound")
     assert 'salvar_nome("Johny")' in prompt
     assert 'salvar_nome("Luciano")' in prompt
+
+
+def test_regra_25_abre_excecao_para_negacao_de_identidade():
+    """A regra 35 MANDA perguntar com quem se fala quando o numero trocou de dono. Se a
+    excecao da regra 25 so citar a regra 20, o base se contradiz — e o prompt de estagio,
+    que carrega a mesma ordem e e montado DEPOIS, ganha a disputa."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    idx_25 = prompt.index("25. PROIBIDO PEDIR O NOME DO LEAD")
+    bloco_25 = prompt[idx_25:prompt.index("26.", idx_25)]
+    assert "regras 20 e 35" in bloco_25
+
+
+def test_checklist_21_preserva_a_pergunta_de_identidade():
+    """O checklist e o ultimo portao antes de responder: se o item 21 for incondicional,
+    ele apaga a pergunta que as regras 20 e 35 mandam fazer."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    # "21." aparece 2x no prompt (regra 21 e item 21 do checklist) — recorte o checklist
+    checklist = prompt[prompt.index("CHECKLIST ANTES DE RESPONDER"):]
+    item_21 = [l for l in checklist.splitlines() if l.startswith("21. ")][0]
+    assert "nunca se pede o nome do lead" in item_21
+    assert "regras 20 e 35" in item_21
+
+
+def test_hooks_de_consumo_escrevem_a_marca_com_maiuscula():
+    """Hook de copia literal em minuscula e um contraexemplo da regra dura de nome
+    proprio — e few-shot vence regra enunciada."""
+    for fluxo in ("valeria_inbound", "valeria_outbound"):
+        prompt = _secretaria(fluxo)
+        assert "site da cafe canastra" not in prompt, fluxo
+        assert "site da Cafe Canastra" in prompt, fluxo
+
+
+def test_contexto_outbound_1o_turno_so_manda_nomear_quando_ha_nome():
+    """A bolha (1) mandava 'abra reconhecendo o lead pelo primeiro nome' mesmo sem nome —
+    convite direto a pedir o nome."""
+    from app.agent.prompts.valeria_outbound.context import build_outbound_first_turn_context
+    com_nome = build_outbound_first_turn_context("template x", "Maria")
+    sem_nome = build_outbound_first_turn_context("template x", None)
+    assert "pelo primeiro nome" in com_nome
+    assert "Use o nome UMA vez" in com_nome
+    assert "pelo primeiro nome" not in sem_nome
+    assert "Use o nome UMA vez" not in sem_nome
+    # e o turno sem nome nao pode virar convite a pedir o nome
+    assert "PROIBIDO pedir o nome" in sem_nome
+    # o resto do arco continua nos dois
+    for txt in (com_nome, sem_nome):
+        assert "ack de sistema seco" in txt
+        assert "PONTE DE CONTEXTO" in txt

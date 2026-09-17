@@ -13,6 +13,17 @@ def build_outbound_first_turn_context(
       cadastro" (retrocompatível com a assinatura antiga).
     """
     name_line = f"O lead se chama {lead_name}.\n" if lead_name else ""
+    # Sem nome no cadastro a bolha (1) nao pode mandar nomear — era convite direto a
+    # pedir o nome, proibido pela regra 25.
+    reconhecimento_line = (
+        "(1) RECONHECIMENTO caloroso e NOMINAL: abra reconhecendo o lead pelo primeiro "
+        "nome, como gente. PROIBIDO abrir com ack de sistema seco ('cadastro confirmado', "
+        "'confirmado', 'ok'). Use o nome UMA vez, aqui.\n"
+        if lead_name
+        else "(1) RECONHECIMENTO caloroso: abra reagindo a resposta dele como gente. "
+        "PROIBIDO abrir com ack de sistema seco ('cadastro confirmado', 'confirmado', "
+        "'ok') e PROIBIDO pedir o nome (regra 25).\n"
+    )
     segment_line = (
         f"Esta campanha mirava leads de {campaign_segment} — trate isso como uma HIPÓTESE de "
         "segmento, não como fato. Confirme na conversa antes de assumir; não pressuponha o "
@@ -57,9 +68,7 @@ def build_outbound_first_turn_context(
         f"Este é o seu PRIMEIRO turno livre — conduza-o como um ARCO curto e humano, NÃO como "
         f"uma lista de itens a despejar. Máximo 3 bolhas, UMA ideia dominante por bolha, uma "
         f"pergunta no turno. O arco:\n"
-        f"(1) RECONHECIMENTO caloroso e NOMINAL: abra reconhecendo o lead pelo primeiro "
-        f"nome, como gente. PROIBIDO abrir com ack de sistema seco ('cadastro confirmado', "
-        f"'confirmado', 'ok'). Use o nome UMA vez, aqui.\n"
+        f"{reconhecimento_line}"
         f"(2) PONTE DE CONTEXTO — o lead acabou de confirmar o cadastro e está esperando "
         f"saber POR QUE você o chamou. FECHE o assunto do cadastro ('era só pra confirmar "
         f"que o contato é seu mesmo') E, na mesma respiração, diga o MOTIVO REAL do contato: "
