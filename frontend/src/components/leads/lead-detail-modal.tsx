@@ -3,15 +3,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { LeadBroadcastHistory } from "./lead-broadcast-history";
 import { LeadBlingSection } from "./lead-bling-section";
+import { LeadFunisTab } from "./lead-funis-tab";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
-import type { Lead, Tag, LeadNote, LeadEvent } from "@/lib/types";
+import type { Lead, Pipeline, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
-import { AGENT_STAGES, LEAD_CHANNELS, DEAL_STAGES } from "@/lib/constants";
+import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
 
 interface LeadDetailModalProps {
   lead: Lead;
   tags: Tag[];
+  /** Funis visiveis ao usuario, para a aba "Funis". `[]` = falha no fetch de funis. */
+  pipelines: Pipeline[];
   leadTagIds: string[];
   onClose: () => void;
   onSave: (leadId: string, data: Partial<Lead>) => Promise<void>;
@@ -19,10 +22,11 @@ interface LeadDetailModalProps {
   onDelete?: (leadId: string) => Promise<void>;
 }
 
-type TabKey = "dados" | "campanhas" | "tags_notas" | "metricas";
+type TabKey = "dados" | "funis" | "campanhas" | "tags_notas" | "metricas";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "dados", label: "Dados Gerais" },
+  { key: "funis", label: "Funis" },
   { key: "campanhas", label: "Campanhas" },
   { key: "tags_notas", label: "Tags & Notas" },
   { key: "metricas", label: "Metricas" },
@@ -31,6 +35,7 @@ const TABS: { key: TabKey; label: string }[] = [
 export function LeadDetailModal({
   lead,
   tags,
+  pipelines,
   leadTagIds,
   onClose,
   onSave,
@@ -56,7 +61,6 @@ export function LeadDetailModal({
   }>>([]);
   const [currentTagIds, setCurrentTagIds] = useState<string[]>(leadTagIds);
   const [showTagDropdown, setShowTagDropdown] = useState(false);
-  const [leadDeals, setLeadDeals] = useState<Array<{ id: string; title: string; value: number; stage: string; category: string | null }>>([]);
   const [showCreateSale, setShowCreateSale] = useState(false);
   const [blingContactId, setBlingContactId] = useState<number | null>(lead.bling_contact_id ?? null);
   const currentUserEmail = useCurrentUserEmail();
@@ -98,27 +102,9 @@ export function LeadDetailModal({
     }
   }, [activeTab, lead.id]);
 
-  const fetchLeadDeals = useCallback(() => {
-    import("@/lib/supabase/client").then(({ createClient }) => {
-      const supabase = createClient();
-      supabase
-        .from("deals")
-        .select("id, title, value, stage, category")
-        .eq("lead_id", lead.id)
-        .order("created_at", { ascending: false })
-        .then(({ data }) => {
-          if (data) setLeadDeals(data);
-        });
-    });
-  }, [lead.id]);
-
-  useEffect(() => {
-    fetchLeadDeals();
-  }, [fetchLeadDeals]);
-
   // `lead` é a prop que abriu o modal — depois de vincular/desvincular no
   // Bling, ninguém a atualiza (não há polling), então a seção guarda seu
-  // próprio estado e o recarrega direto do banco, como `fetchLeadDeals` já faz.
+  // próprio estado e o recarrega direto do banco.
   const fetchBlingContactId = useCallback(() => {
     import("@/lib/supabase/client").then(({ createClient }) => {
       const supabase = createClient();
@@ -403,11 +389,19 @@ export function LeadDetailModal({
                 </div>
               </div>
 
+              {/* A lista de oportunidades virou a aba "Funis": aqui ela lia a
+                  coluna legada `deals.stage` e rotulava por um array fixo, sem
+                  funil, sem etapa de verdade e sem como mover nada. O botao de
+                  registrar venda fica em "Dados Gerais" porque venda e um
+                  registro do lead, nao um card de funil. */}
               <div className="mt-5 pt-4 border-t border-[#dedbd6]">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
-                    Oportunidades ({leadDeals.length})
-                  </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</p>
+                    <p className="text-[13px] text-[#7b7b78] mt-1">
+                      Os cards do lead estao na aba Funis.
+                    </p>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setShowCreateSale(true)}
@@ -415,30 +409,6 @@ export function LeadDetailModal({
                   >
                     Registrar Venda
                   </button>
-                </div>
-                {leadDeals.length === 0 && (
-                  <p className="text-[13px] text-[#7b7b78]">Nenhuma oportunidade vinculada.</p>
-                )}
-                <div className="space-y-2">
-                  {leadDeals.map((deal) => {
-                    const stageInfo = DEAL_STAGES.find((s) => s.key === deal.stage);
-                    return (
-                      <div key={deal.id} className="flex items-center justify-between bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] p-3">
-                        <div>
-                          <p className="text-[13px] font-medium text-[#111111]">{deal.title}</p>
-                          <span
-                            className="text-[10px] font-medium px-2 py-0.5 rounded-[4px]"
-                            style={{ backgroundColor: (stageInfo?.dotColor || "#7b7b78") + "22", color: stageInfo?.dotColor || "#7b7b78" }}
-                          >
-                            {stageInfo?.label || deal.stage}
-                          </span>
-                        </div>
-                        <span className="text-[14px] font-semibold text-[#0bdf50]">
-                          {deal.value > 0 ? `R$ ${deal.value.toLocaleString("pt-BR")}` : "\u2014"}
-                        </span>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
 
@@ -455,6 +425,11 @@ export function LeadDetailModal({
               )}
             </div>
           )}
+
+          {/* TAB: Funis — montada so quando a aba esta ativa, entao trocar de
+              aba e voltar rebusca os cards (e o que mantem a lista fresca
+              depois de registrar uma venda, que pode criar card). */}
+          {activeTab === "funis" && <LeadFunisTab lead={lead} pipelines={pipelines} />}
 
           {/* TAB: Campanhas */}
           {activeTab === "campanhas" && (
@@ -671,10 +646,9 @@ export function LeadDetailModal({
             leadId={lead.id}
             currentUserEmail={currentUserEmail}
             onClose={() => setShowCreateSale(false)}
-            onSaved={() => {
-              setShowCreateSale(false);
-              fetchLeadDeals();
-            }}
+            // A aba "Funis" tem fetch proprio e remonta ao ser aberta, entao nao
+            // ha lista para recarregar daqui (antes recarregava `leadDeals`).
+            onSaved={() => setShowCreateSale(false)}
           />
         </div>
       )}

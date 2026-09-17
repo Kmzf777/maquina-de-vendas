@@ -141,9 +141,23 @@ ou vazio → secao inteira nao renderiza.
    "Oportunidades" de "Dados Gerais" **mantendo** o botao "Registrar Venda" onde esta.
    Remover o estado `leadDeals` e o `fetchLeadDeals` (fetch Supabase no cliente) que
    ficam sem uso, e o import de `DEAL_STAGES` se ficar orfao.
-3. Verificacao final, **com saida colada no relatorio**:
-   `npx tsc --noEmit` (zero erros), `npm run lint`, `npx vitest run`
-   (786 + os novos verdes; exatamente os 2 erros de jsdom pre-existentes, nada novo).
+3. Verificacao final, **com saida colada no relatorio**. Os criterios abaixo foram
+   CORRIGIDOS depois de medir a arvore de verdade — a versao original deste plano pedia
+   "tsc zero erros" e "lint limpo", e nenhum dos dois e verdade neste repo hoje:
+
+   - `npx tsc --noEmit` → **exatamente os 4 erros pre-existentes** de
+     `@testing-library/react` ausente no `node_modules` (2 de modulo nao encontrado em
+     `esteiras-tab.test.tsx` e `stage-target-picker.test.tsx`, mais 2 `TS18046` em
+     cascata em `stage-target-picker.test.tsx`). Zero erros fora desses 4 — em especial,
+     o `TS2322` de `leads/page.tsx:364` (call site antigo do `LeadCreateModal`) tem de
+     desaparecer, e e T6 quem o resolve.
+   - `npm run lint` → **nao pode ficar pior que a baseline**, que ja e vermelha: 69
+     problemas (33 erros, 36 warnings), dos quais 23 sao `react-hooks/set-state-in-effect`
+     — regra que ja dispara em `use-lead-sales.ts` e `use-lead-quotes.ts`, arquivos
+     commitados. `use-lead-deals.ts` herda esse mesmo aviso por seguir a convencao dos
+     irmaos; isso e aceito, e nao se adiciona `eslint-disable` para esconder.
+   - `npx vitest run` → 786 + os novos testes verdes, e os **mesmos 2 erros de coleta**
+     por jsdom ausente. Nada novo em vermelho.
 
 ---
 

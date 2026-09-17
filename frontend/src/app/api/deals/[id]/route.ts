@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { assertCanWriteDealsInPipeline, getAllowedPipelineIds } from "@/lib/supabase/pipeline-access";
+import { resolveEffectivePipelineId } from "@/lib/deal-patch-guard";
 
 export async function GET(
   _request: NextRequest,
@@ -63,14 +64,30 @@ export async function PATCH(
     if (!guardDst.ok) return NextResponse.json({ error: guardDst.error }, { status: guardDst.status });
   }
 
-  // Se stage_id foi fornecido, detectar se é stage protegido para setar closed_at
+  // Se stage_id foi fornecido, detectar se é stage protegido para setar closed_at.
+  // O select traz `pipeline_id` junto (sem request extra) porque a mesma linha serve de
+  // trava: até aqui, quem garantia que a etapa pertence ao funil era só o cliente
+  // (StageTargetPicker), e cinco bugs dessa forma exata — card gravado com etapa de
+  // outro funil e desaparecendo do board de destino — já saíram em review neste repo.
+  // maybeSingle() em vez de single(): etapa inexistente precisa virar 422, não exceção.
   let newStageKey: string | null = null;
   if (body.stage_id) {
     const { data: stage } = await supabase
       .from("pipeline_stages")
-      .select("key")
+      .select("key, pipeline_id")
       .eq("id", body.stage_id)
-      .single();
+      .maybeSingle();
+
+    const effectivePipelineId = resolveEffectivePipelineId(body, currentDeal);
+    // Funil efetivo null = deal legado sem pipeline_id: não há par para conferir e a
+    // trava se cala, para não mudar o comportamento desses deals.
+    if (effectivePipelineId && (!stage || stage.pipeline_id !== effectivePipelineId)) {
+      return NextResponse.json(
+        { error: "A etapa escolhida não pertence ao funil de destino." },
+        { status: 422 }
+      );
+    }
+
     newStageKey = stage?.key ?? null;
     if (stage?.key === "fechado_ganho" || stage?.key === "fechado_perdido") {
       updates.closed_at = new Date().toISOString();

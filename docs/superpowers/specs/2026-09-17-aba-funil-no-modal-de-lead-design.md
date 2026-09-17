@@ -109,9 +109,17 @@ Regras que o hook preserva do original (cada uma existe por um bug real ja corri
 - **Carga inicial engole o erro** (`.catch(() => {})` em quem chama): nao ha acao a
   reverter nem linha onde exibir; o painel so fica sem oportunidades.
 
-O hook busca etapas apenas dos funis que ja tem card: `distinctPipelineIds(deals)`. As
+O hook cobre etapas apenas dos funis que ja tem card: `distinctPipelineIds(deals)`. As
 etapas de um funil de **destino** que o usuario abra no "Mover" nao sao
 responsabilidade do hook — o `StageTargetPicker` busca as suas proprias etapas remotas.
+
+E essa parte **nao e reimplementada**: o repo ja tem `hooks/use-stages-by-pipeline.ts`,
+usado por `crm-perfil-tab.tsx`, que cacheia `null` (nunca `[]`) para o funil cujo fetch
+falhou. A distincao importa — `buildDealRows` separa "etapas desconhecidas" de "funil sem
+etapas abertas" por `pipelineId in stagesByPipeline`, e gravar `[]` faria toda linha
+aberta virar read-only em silencio em vez de esperar. `useLeadDeals` delega a esse hook
+em vez de abrir uma terceira copia da mesma armadilha, e ganha de graca o cache por
+`pipeline_id` e o `AbortController` dele.
 
 `contact-detail.tsx` **nao** e refatorado para usar o hook nesta entrega. E um painel de
 producao que o vendedor usa todo dia, o ganho e cosmetico e o risco nao e. Fica como
