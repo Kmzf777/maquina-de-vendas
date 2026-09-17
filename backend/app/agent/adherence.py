@@ -200,6 +200,9 @@ def detect_autoresponder(text: str) -> bool:
 # INEQUÍVOCAS por fronteira de palavra. Ambíguas ficam de fora de propósito:
 # "e"/"é" (conjunção × verbo), "esta"/"está", "ai"/"aí", "pais"/"país", "as"/"às".
 # Tokens de URL nunca são tocados (cafecanastra.com/cafe fica intacto).
+# `_URL_SPAN_RE` também reconhece e-mail completo (não só o domínio) — a
+# seção 13 (normalize_proper_nouns) reaproveita este mesmo split para não
+# maiusculizar "valeria" dentro de "valeria@cafecanastra.com".
 
 _ORTHO_MAP = {
     "nao": "não", "voce": "você", "voces": "vocês", "cafe": "café", "cafes": "cafés",
@@ -216,7 +219,9 @@ _ORTHO_MAP = {
     "proximo": "próximo", "proxima": "próxima",
 }
 _URL_SPAN_RE = re.compile(
-    r"(https?://\S+|www\.\S+|\b[\w.-]+\.(?:com|net|org|br)(?:/\S*)?)", re.IGNORECASE,
+    r"(https?://\S+|www\.\S+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    r"|\b[\w.-]+\.(?:com|net|org|br)(?:/\S*)?)",
+    re.IGNORECASE,
 )
 _ORTHO_WORD_RE = re.compile(
     r"\b(" + "|".join(sorted(_ORTHO_MAP, key=len, reverse=True)) + r")\b",
@@ -603,7 +608,10 @@ def strip_media_history_markers(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 13. normalize_proper_nouns (auditoria 90 dias — 2026-09-17)
+# 13. normalize_proper_nouns (auditoria 90 dias — 2026-09-17; revisão pós
+#     mutation testing no mesmo dia — reordenação C->B->A, gate de "café/blend
+#     + produto", NEVER com lookback, guards de URL/e-mail e de quebra de
+#     linha, NFC de entrada)
 # ---------------------------------------------------------------------------
 # A persona da Valéria escreve tudo em minúsculas de propósito (humanização de
 # WhatsApp), mas o LLM generaliza demais a regra e achata nomes próprios junto.
@@ -615,104 +623,44 @@ def strip_media_history_markers(text: str) -> str:
 # Mesma técnica de spans de strip_prohibited_phrases / normalize_orthography:
 # casa sobre o texto NORMALIZADO (NFD + lower, sem diacríticos) e substitui no
 # texto ORIGINAL pelos mesmos índices — NFD + filtro de Mn nunca insere/remove
-# caractere não-combinante, então os offsets batem 1:1.
-
-# Camada A — léxico inequívoco: nomes próprios com forma canônica FIXA,
-# independente da caixa/acento de entrada (inclui restauração de acento, ex.:
-# "cafe canastra" sem acento -> "Café Canastra"). Alternativas ordenadas por
-# comprimento decrescente (mesmo truque de `_ORTHO_WORD_RE`) para que "serra da
-# canastra"/"cafe canastra" sejam consumidas ANTES da forma isolada "canastra"
-# — o `re` do Python tenta as alternativas na ordem em que aparecem no padrão,
-# não a mais longa globalmente, então ordenar por tamanho é o que garante essa
-# precedência (e o finditer não reabre um match já consumido, então "canastra"
-# nunca é tentada de novo dentro de um "serra da canastra" já casado).
-_PROPER_NOUN_MAP = {
-    "serra da canastra": "Serra da Canastra",
-    "cafe canastra": "Café Canastra",
-    "joao bras": "João Brás",
-    "canastra": "Canastra",
-    "valeria": "Valéria",
-    "nespresso": "Nespresso",
-    "sca": "SCA",
-    "uberlandia": "Uberlândia",
-    "pratinha": "Pratinha",
-}
-_PROPER_NOUN_RE = re.compile(
-    r"\b("
-    + "|".join(
-        key.replace(" ", r"\s+")
-        for key in sorted(_PROPER_NOUN_MAP, key=len, reverse=True)
-    )
-    + r")\b"
-)
-
-
-def _apply_proper_noun_lexicon(text: str) -> str:
-    normalized = _normalize(text)
-    matches = list(_PROPER_NOUN_RE.finditer(normalized))
-    if not matches:
-        return text
-    result = text
-    for m in reversed(matches):
-        key = re.sub(r"\s+", " ", m.group(0))
-        result = result[: m.start()] + _PROPER_NOUN_MAP[key] + result[m.end() :]
-    return result
-
-
-# Camada B — produtos com porta de contexto. Medido em produção (45 dias de
-# mensagens do agente): capitalização cega seria muito errada — "canela" é
-# produto em 191 casos e especiaria/ingrediente em 214 (quase empate; "suave"
-# é 360 produto/15 adjetivo, "clássico" é 568/5). Só capitaliza quando
-# precedido por determinante MASCULINO (o/do/no/ao/um/pelo/nosso — sinal
-# linguístico que separa "o Canela" produto de "a canela" especiaria; por isso
-# "da"/"de"/"com" ficam de fora de propósito) OU seguido de token de
-# formato/preço (moído/em grãos/250g/500g/1kg). A lista NEVER (precedido por
-# palavra de qualidade: torra/sabor/notas/... ) tem precedência sobre a regra
-# de capitalizar — bloqueia mesmo quando um token de formato vem depois.
-_PRODUCT_MAP = {
-    "suave": "Suave",
-    "classico": "Clássico",
-    "canela": "Canela",
-    "microlote": "Microlote",
-}
-_PRODUCT_WORD_RE = re.compile(r"\b(" + "|".join(_PRODUCT_MAP) + r")\b")
-_PRODUCT_DETERMINERS = {"o", "do", "no", "ao", "um", "pelo", "nosso"}
-_PRODUCT_NEVER_PRECEDING = {
-    "torra", "sabor", "notas", "nota", "aroma", "toque", "perfil", "final",
-    "estilo", "jeito", "mais", "bem", "super", "bastante",
-}
-_PRECEDING_WORD_RE = re.compile(r"([a-z]+)\s*$")
-_PRODUCT_FORMAT_FOLLOW_RE = re.compile(r"^\s*(?:moido|em\s+graos|250g|500g|1kg)\b")
-
-
-def _capitalize_products(text: str) -> str:
-    normalized = _normalize(text)
-    spans: list[tuple[int, int, str]] = []
-    for m in _PRODUCT_WORD_RE.finditer(normalized):
-        before = normalized[: m.start()]
-        after = normalized[m.end() :]
-        prev_m = _PRECEDING_WORD_RE.search(before)
-        prev_word = prev_m.group(1) if prev_m else ""
-        if prev_word in _PRODUCT_NEVER_PRECEDING:
-            continue
-        if prev_word in _PRODUCT_DETERMINERS or _PRODUCT_FORMAT_FOLLOW_RE.match(after):
-            spans.append((m.start(), m.end(), _PRODUCT_MAP[m.group(1)]))
-    if not spans:
-        return text
-    result = text
-    for s, e, repl in reversed(spans):
-        result = result[:s] + repl + result[e:]
-    return result
-
+# caractere não-combinante, então os offsets batem 1:1. Esse invariante só
+# vale para texto já em forma composta (NFC); por isso a função pública
+# NFC-normaliza a entrada uma única vez antes de tudo — texto NFD (raro, mas
+# possível vindo de certos clientes/SOs) quebraria os offsets e corromperia a
+# saída em vez de falhar aberto.
+#
+# ORDEM DAS CAMADAS — C (nome do lead) roda PRIMEIRO, B (produtos) no meio, A
+# (léxico fixo) por ÚLTIMO, de propósito: a Camada A é a única com forma
+# canônica GARANTIDAMENTE correta (acento incluso); a Camada C deriva a forma
+# dela do nome GRAVADO NO BANCO, que pode estar sem acento ("Valeria"). Se A
+# rodasse primeiro, um lead chamado "Valeria" (nome comum no Brasil, 1000+
+# leads na base) faria a Camada C reescrever "Valéria" — já corrigida por A —
+# de volta para "Valeria" sem acento por último, apagando em silêncio o fix da
+# saudação de abertura para esse lead específico. Com A por último, ela
+# sempre tem a palavra final — reescreve de novo por cima do que C tiver
+# feito, então o resultado final não depende da ordem em que os dois layers
+# colidem no mesmo token.
+#
+# PROTEÇÃO DE URL/E-MAIL — reaproveita `_URL_SPAN_RE` (seção 4, o mesmo split
+# que `normalize_orthography` já usa): o texto é dividido em trechos fora de
+# URL/e-mail (índices pares, onde as 3 camadas rodam) e trechos de URL/e-mail
+# (índices ímpares, sempre intocados). Sem isso, "valeria@cafecanastra.com"
+# viraria "Valéria@cafecanastra.com" — endereço inválido.
 
 # Camada C — nome do lead (dinâmico): title-case do PRIMEIRO e ÚLTIMO token de
 # `lead_name`, mínimo 3 caracteres, casado como palavra isolada. Aplica mesmo
 # quando o nome está gravado em minúsculas no banco ("vanda" -> "Vanda") — a
-# regra é a fonte de verdade, não o registro. Efeito colateral ACEITO de
-# propósito: um nome de lead que colide com uma palavra comum (ex.:
-# lead_name="Rosa" + texto "a rosa dos ventos") também é capitalizado —
-# falso-positivo raro e de baixo custo (pior caso: uma palavra comum
-# maiusculizada), não vale a complexidade de desambiguar nome vs. palavra.
+# regra é fonte de verdade só para a CAIXA da primeira letra: o resto do
+# token é preservado EXATAMENTE como está gravado (não força .lower() nem
+# .upper() no restante) — "Jose-Maria" continua "Jose-Maria" (o "M" de Maria
+# já é maiúsculo, legítimo), não vira "Jose-maria". Consequência: esta camada
+# NÃO restaura acento a partir do nome gravado (só a Camada A faz isso, e só
+# para os nomes que conhece — por isso ela roda por último, ver acima).
+# Efeito colateral ACEITO de propósito: um nome de lead que colide com uma
+# palavra comum (ex.: lead_name="Rosa" + texto "a rosa dos ventos") também é
+# capitalizado — falso-positivo raro e de baixo custo (pior caso: uma palavra
+# comum maiusculizada), não vale a complexidade de desambiguar nome vs.
+# palavra.
 _LEAD_NAME_MIN_LEN = 3
 
 
@@ -733,7 +681,7 @@ def _title_case_lead_name(text: str, lead_name: str | None) -> str:
     spans: list[tuple[int, int, str]] = []
     for token in tokens:
         token_re = re.compile(r"\b" + re.escape(_normalize(token)) + r"\b")
-        canon = token[0].upper() + token[1:].lower()
+        canon = token[0].upper() + token[1:]
         for m in token_re.finditer(normalized):
             spans.append((m.start(), m.end(), canon))
     if not spans:
@@ -745,31 +693,185 @@ def _title_case_lead_name(text: str, lead_name: str | None) -> str:
     return result
 
 
+# Camada B — produtos com porta de contexto. Medido em produção (45 dias de
+# mensagens do agente): capitalização cega seria muito errada — "canela" é
+# produto em 191 casos e especiaria/ingrediente em 214 (quase empate; "suave"
+# é 360 produto/15 adjetivo, "clássico" é 568/5). Só capitaliza quando:
+#   - precedido (ADJACENTE) por determinante MASCULINO (o/do/no/ao/um/pelo/
+#     nosso — sinal linguístico que separa "o Canela" produto de "a canela"
+#     especiaria; por isso "da"/"de"/"com" ficam de fora de propósito); OU
+#   - seguido (adjacente) de token de formato/preço (moído/em grãos/250g/
+#     500g/1kg); OU
+#   - precedido por "determinante + café/blend", com o produto logo em
+#     seguida (ex.: "o nosso café suave") — medido em produção (45 dias,
+#     1857 mensagens com nome de produto): esse padrão aparece 68x e não era
+#     coberto pelo gate adjacente puro (que exige o determinante colado no
+#     produto, sem "café"/"blend" no meio). Cuidado: 341 casos do gate de
+#     formato/preço acima e 835 do gate de determinante adjacente já cobrem a
+#     maior parte — este bridge é o complemento dos dois, não substituto.
+# A lista NEVER (precedido por palavra de qualidade: torra/sabor/notas/nota/
+# aroma/toque/perfil/final/estilo/jeito/mais/bem/super/bastante) tem
+# precedência sobre TODAS as regras de capitalizar acima — e olha até 3
+# palavras para trás, não só a adjacente: "notas de canela", "perfil de
+# canela" e "torra do canela" são a construção clássica de nota de
+# degustação em português ("notas de", "aroma de", "toque de" + substantivo)
+# — exatamente o sentido de especiaria que o gate existe para proteger — e
+# não podem capitalizar mesmo com um determinante ou token de formato logo
+# depois (ex.: "torra do canela" tem "do" adjacente, que é determinante, mas
+# "torra" 2 palavras atrás bloqueia mesmo assim). Medido em produção (45
+# dias): só 4 ocorrências do padrão "notas de"/"perfil de"/"torra do" +
+# produto — seguro barato, não incêndio, mas o branch merece teste mesmo
+# assim (mutation testing pegou o lookback de 1 palavra só).
+# NÃO cobre fraseio de lista/escolha ("temos clássico, suave e canela",
+# "prefere suave ou clássico?" — 131 ocorrências em 45 dias): ambíguo para
+# gate determinístico o suficiente para valer a pena; fica a cargo do prompt.
+_PRODUCT_MAP = {
+    "suave": "Suave",
+    "classico": "Clássico",
+    "canela": "Canela",
+    "microlote": "Microlote",
+}
+_PRODUCT_WORD_RE = re.compile(
+    r"\b(" + "|".join(sorted(_PRODUCT_MAP, key=len, reverse=True)) + r")\b"
+)
+_PRODUCT_DETERMINERS = {"o", "do", "no", "ao", "um", "pelo", "nosso"}
+_PRODUCT_NEVER_PRECEDING = {
+    "torra", "sabor", "notas", "nota", "aroma", "toque", "perfil", "final",
+    "estilo", "jeito", "mais", "bem", "super", "bastante",
+}
+_PRODUCT_NEVER_LOOKBACK_WORDS = 3  # "notas de canela" = notas(2 atrás) de(1 atrás)
+_PRODUCT_WORD_TOKEN_RE = re.compile(r"[a-z]+")
+_PRODUCT_FORMAT_FOLLOW_RE = re.compile(r"^\s*(?:moido|em\s+graos|250g|500g|1kg)\b")
+# "determinante + cafe/blend" imediatamente antes do produto (ver comentário
+# acima). Construído a partir de `_PRODUCT_DETERMINERS` (não duplicado à mão)
+# para não desalinhar se a lista de determinantes mudar.
+_PRODUCT_CAFE_BRIDGE_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_PRODUCT_DETERMINERS, key=len, reverse=True))
+    + r")[ \t]+(?:cafe|blend)[ \t]*$"
+)
+
+
+def _capitalize_products(text: str) -> str:
+    normalized = _normalize(text)
+    spans: list[tuple[int, int, str]] = []
+    for m in _PRODUCT_WORD_RE.finditer(normalized):
+        before = normalized[: m.start()]
+        after = normalized[m.end() :]
+        prev_words = _PRODUCT_WORD_TOKEN_RE.findall(before)
+        recent = prev_words[-_PRODUCT_NEVER_LOOKBACK_WORDS:]
+        if any(w in _PRODUCT_NEVER_PRECEDING for w in recent):
+            continue
+        nearest = prev_words[-1] if prev_words else ""
+        capitalize = (
+            nearest in _PRODUCT_DETERMINERS
+            or bool(_PRODUCT_FORMAT_FOLLOW_RE.match(after))
+            or bool(_PRODUCT_CAFE_BRIDGE_RE.search(before))
+        )
+        if capitalize:
+            spans.append((m.start(), m.end(), _PRODUCT_MAP[m.group(1)]))
+    if not spans:
+        return text
+    result = text
+    for s, e, repl in reversed(spans):
+        result = result[:s] + repl + result[e:]
+    return result
+
+
+# Camada A — léxico inequívoco: nomes próprios com forma canônica FIXA,
+# independente da caixa/acento de entrada (inclui restauração de acento, ex.:
+# "cafe canastra" sem acento -> "Café Canastra"). Roda por ÚLTIMO (ver ordem
+# das camadas acima) — é a autoridade final.
+# Alternativas ordenadas por comprimento decrescente (mesmo truque de
+# `_ORTHO_WORD_RE`): isso NÃO é o que impede "canastra" de casar sozinha
+# dentro de "serra da canastra" hoje — "canastra" é SUFIXO de "serra da
+# canastra", então o scan não-sobreposto da esquerda para a direita do
+# `finditer` já consome a frase inteira antes de chegar lá, em QUALQUER ordem
+# de alternativas (o finditer nunca reabre uma posição já consumida por um
+# match anterior). A ordenação por tamanho importa para o caso ainda
+# inexistente de entradas que COMPARTILHAM O INÍCIO (ex.: se um dia existir
+# "cafe" solto ao lado de "cafe especial", a alternativa curta tentada
+# primeiro venceria e a mais longa nunca seria tentada) — mantida por
+# precaução futura, não porque resolve o caso "canastra"/"serra da canastra"
+# de hoje.
+# Usa `[ \t]+` (não `\s+`) entre as palavras de uma frase de duas ou mais
+# palavras: a persona quebra bolhas do WhatsApp propositalmente em `\n`;
+# `\s+` casaria "cafe" numa bolha com "canastra" na bolha seguinte e apagaria
+# a quebra ao substituir pela forma canônica de uma linha só.
+_PROPER_NOUN_MAP = {
+    "serra da canastra": "Serra da Canastra",
+    "cafe canastra": "Café Canastra",
+    "joao bras": "João Brás",
+    "canastra": "Canastra",
+    "valeria": "Valéria",
+    "nespresso": "Nespresso",
+    "sca": "SCA",
+    "uberlandia": "Uberlândia",
+    "pratinha": "Pratinha",
+}
+_PROPER_NOUN_RE = re.compile(
+    r"\b("
+    + "|".join(
+        key.replace(" ", r"[ \t]+")
+        for key in sorted(_PROPER_NOUN_MAP, key=len, reverse=True)
+    )
+    + r")\b"
+)
+
+
+def _apply_proper_noun_lexicon(text: str) -> str:
+    normalized = _normalize(text)
+    matches = list(_PROPER_NOUN_RE.finditer(normalized))
+    if not matches:
+        return text
+    result = text
+    for m in reversed(matches):
+        key = re.sub(r"[ \t]+", " ", m.group(0))
+        result = result[: m.start()] + _PROPER_NOUN_MAP[key] + result[m.end() :]
+    return result
+
+
 def normalize_proper_nouns(text: str, lead_name: str | None = None) -> str:
     """Restaura maiúscula (e acento) em nomes próprios achatados pelo LLM.
 
+    Roda em 3 camadas, na ordem C -> B -> A (a Camada A tem a PALAVRA FINAL —
+    ver o comentário no topo da seção 13 para o caso real que motivou essa
+    ordem: um lead chamado "Valeria" sem acento no banco):
+
+    Camada C: nome do lead — title-case do primeiro/último token de
+    `lead_name` quando aparece como palavra isolada no texto (só a CAIXA da
+    primeira letra é normalizada; o resto do token e o acento não são
+    tocados).
+    Camada B: produtos (Clássico/Suave/Canela/Microlote) — só capitaliza com
+    porta de contexto (determinante masculino adjacente, "determinante +
+    café/blend" adjacente, ou token de formato/preço adjacente depois; a
+    lista NEVER de palavra de qualidade — olhando até 3 palavras para trás —
+    tem precedência sobre as três).
     Camada A: léxico inequívoco (Valéria, João Brás, Café Canastra, Canastra
     isolado, Nespresso, SCA, Uberlândia, Pratinha, Serra da Canastra) —
     capitaliza sempre, fronteira de palavra, restaurando acento quando a
     entrada vier sem ele.
-    Camada B: produtos (Clássico/Suave/Canela/Microlote) — só capitaliza com
-    porta de contexto (determinante masculino antes OU token de formato/preço
-    depois; a lista NEVER de palavra de qualidade antes tem precedência).
-    Camada C: nome do lead — title-case do primeiro/último token de
-    `lead_name` quando aparece como palavra isolada no texto.
+
+    URLs e e-mails (`_URL_SPAN_RE`, seção 4) nunca são tocados por nenhuma
+    das 3 camadas.
 
     NÃO cobre cidades genéricas (ex.: "goiás", "copacabana") — não são
-    deterministicamente enumeráveis; esse caso fica a cargo do prompt.
+    deterministicamente enumeráveis. NÃO cobre fraseio de lista/escolha da
+    Camada B (ex.: "temos clássico, suave e canela") — ambíguo demais para
+    um gate determinístico. Ambos ficam a cargo do prompt.
 
     Função pura — sem I/O, sem logging. Fail-open: qualquer exceção devolve o
     texto original inalterado.
     """
     if not text:
         return text
+    text = unicodedata.normalize("NFC", text)
     try:
-        result = _apply_proper_noun_lexicon(text)
-        result = _capitalize_products(result)
-        result = _title_case_lead_name(result, lead_name)
-        return result
+        parts = _URL_SPAN_RE.split(text)
+        for i in range(0, len(parts), 2):  # índices pares = fora de URL/e-mail
+            chunk = _title_case_lead_name(parts[i], lead_name)
+            chunk = _capitalize_products(chunk)
+            chunk = _apply_proper_noun_lexicon(chunk)
+            parts[i] = chunk
+        return "".join(parts)
     except Exception:
         return text
