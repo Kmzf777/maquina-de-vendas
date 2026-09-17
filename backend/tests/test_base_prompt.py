@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from app.agent.prompts.base import build_base_prompt
+from app.agent.prompts.base import build_base_prompt, build_context_block
 
 TZ_BR = timezone(timedelta(hours=-3))
 
@@ -340,3 +340,78 @@ def test_outbound_handoff_para_joao():
     from app.agent.prompts import get_stage_prompts
     full = "\n".join(get_stage_prompts("valeria_outbound").values())
     assert "João" in full
+
+
+# ── Nome proprio acima da minuscula + fim do pedido de nome (17/09/2026) ─────
+# Auditoria de 90 dias: 22% das auto-mencoes saem "valeria" e 18,3% das mencoes
+# ao nome do lead saem minusculas — a regra de minuscula, por vir PRIMEIRO e sem
+# subordinacao, vencia a lista de excecoes. E a pergunta de nome (8 ocorrencias
+# reais, ultima em 14/08) e atrito puro: 97% dos leads ja chegam com nome.
+
+def test_estilo_enuncia_nome_proprio_antes_da_minuscula():
+    """A regra dura de nome proprio precisa vir ANTES da regra de minusculas — e a
+    minuscula tem que estar explicitamente subordinada a ela."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    idx_proprio = prompt.find("NOME PROPRIO SEMPRE COM MAIUSCULA")
+    idx_minuscula = prompt.find("MINUSCULAS EM TUDO QUE NAO FOR NOME PROPRIO")
+    assert idx_proprio != -1, "regra dura de nome proprio ausente na secao ## Estilo"
+    assert idx_minuscula != -1, "regra de minuscula subordinada ausente na secao ## Estilo"
+    assert idx_proprio < idx_minuscula, (
+        "a minuscula voltou a ser enunciada antes do nome proprio — e a primeira regra "
+        "que o modelo obedece (foi assim que 'aqui é a valeria' saiu 340x)"
+    )
+    # a formulacao antiga (minuscula como regra dominante) nao pode voltar
+    assert "MINUSCULAS POR PADRAO" not in prompt
+
+
+def test_estilo_traz_a_saudacao_de_abertura_como_exemplo():
+    """Caso de maior volume da auditoria (340 disparos) entra como par CORRETO/ERRADO."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    assert 'CORRETO: "aqui é a Valéria, do comercial da Café Canastra"' in prompt
+    assert 'ERRADO: "aqui é a valeria, do comercial da café canastra"' in prompt
+    # cidade/estado generico segue no enunciado: a guarda deterministica NAO cobre
+    assert "cidades/estados" in prompt
+
+
+def test_voice_card_enuncia_nome_proprio_antes_da_minuscula():
+    """O cartao de voz do follow-up carrega a copia condensada da mesma regra."""
+    from app.agent.prompts.voice_card import VALERIA_VOICE_CARD
+    idx_proprio = VALERIA_VOICE_CARD.find("NOME PROPRIO SEMPRE COM MAIUSCULA")
+    idx_minuscula = VALERIA_VOICE_CARD.find("MINUSCULAS EM TUDO QUE NAO FOR NOME PROPRIO")
+    assert idx_proprio != -1 and idx_minuscula != -1
+    assert idx_proprio < idx_minuscula
+    assert "MINUSCULAS POR PADRAO" not in VALERIA_VOICE_CARD
+
+
+def test_contexto_sem_nome_nao_manda_perguntar_o_nome():
+    """As perguntas literais saem do prompt — o modelo copia o que le."""
+    block = build_context_block(lead_name=None, lead_company=None, now=_now())
+    low = block.lower()
+    assert "qual seu nome" not in low
+    assert "com quem eu estou falando" not in low
+    assert "com quem eu to falando" not in low
+
+
+def test_contexto_sem_nome_proibe_pedir_o_nome():
+    block = build_context_block(lead_name=None, lead_company=None, now=_now())
+    assert "PROIBIDO PEDIR O NOME" in block
+    # segue a conversa sem nome e so grava se o lead disser por conta propria
+    assert "espontaneamente" in block.lower()
+    assert "salvar_nome" in block
+
+
+def test_contexto_com_nome_mantem_correcao_de_identidade():
+    """A correcao de identidade e REATIVA (quem levanta o assunto e o lead) e nao pode
+    ser vitima colateral da proibicao de pedir o nome — sem ela a Valeria fica presa a
+    um nome errado."""
+    block = build_context_block(lead_name="Maria", lead_company=None, now=_now())
+    assert "CORRECAO DE IDENTIDADE" in block
+    assert "pergunte de forma natural ('pode me dizer seu nome?')" in block
+    assert "salvar_nome" in block
+
+
+def test_regra_25_proibe_pedir_o_nome_em_vez_de_limitar_a_uma_vez():
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    assert "PROIBIDO PEDIR O NOME DO LEAD" in prompt
+    # a regra antiga tolerava UMA pergunta de nome
+    assert "NUNCA PERGUNTE O NOME MAIS DE UMA VEZ" not in prompt

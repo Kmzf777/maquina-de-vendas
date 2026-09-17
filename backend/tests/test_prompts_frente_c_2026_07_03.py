@@ -444,11 +444,16 @@ def test_build_system_prompt_atacado_monta_sem_erro_e_final_instruction_e_ultima
 def test_base_ramo_sem_nome_trata_saudacao_como_nome_ausente():
     # Defesa em profundidade (base.py): mesmo que um nome-saudacao ("Olá, boa tarde")
     # escape da sanitizacao em leads.service.sanitize_display_name, a instrucao do
-    # ramo "sem nome" manda a Valeria tratar como SEM nome e chamar salvar_nome — casos
-    # reais 01-02/07 ("Olá, boa tarde", "Boa tarde.... Luiz") motivaram a emenda.
+    # ramo "sem nome" manda a Valeria tratar como SEM nome — casos reais 01-02/07
+    # ("Olá, boa tarde", "Boa tarde.... Luiz") motivaram a emenda.
+    # 17/09/2026: a cauda "descubra o nome real" caiu junto com a proibicao de PEDIR o
+    # nome (auditoria de 90 dias: 8 pedidos reais, atrito puro — 97% dos leads ja chegam
+    # com nome). O tratamento da saudacao como nome-ausente continua; o que muda e que
+    # salvar_nome so entra se o lead disser o nome por conta propria.
     prompt = build_base_prompt(lead_name=None, lead_company=None, now=datetime(2026, 7, 3, 10, 0))
     assert "Se o cadastro tiver um nome que parece saudacao" in prompt
-    assert "descubra o nome real e chame salvar_nome" in prompt
+    assert "trate como SEM nome" in prompt
+    assert "Se ele disser o nome espontaneamente, chame salvar_nome" in prompt
 
 
 # ---------------------------------------------------------------------------

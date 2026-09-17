@@ -28,10 +28,14 @@ def test_safety_fallback_nao_promete_retorno_futuro():
 # --- Falha 4 / 7-8: regras presentes nos prompts -------------------------
 
 def test_base_prompt_tem_regra_anti_loop_nome():
+    # 17/09/2026: a regra 25 endureceu de "nunca pergunte o nome 2x" (ANTI-LOOP DE
+    # PERGUNTA DE NOME) para "nunca pergunte o nome" — o loop do lead 73b0d995 segue
+    # citado nela, mas agora a primeira pergunta ja e proibida.
     from app.agent.prompts.base import build_base_prompt
     from datetime import datetime
     s = build_base_prompt("Valdemar", None, datetime(2026, 6, 22, 14, 0))
-    assert "ANTI-LOOP DE PERGUNTA DE NOME" in s
+    assert "PROIBIDO PEDIR O NOME DO LEAD" in s
+    assert "73b0d995" in s
 
 
 def test_outbound_prompt_tem_regra_aquecer_antes_de_qualificar():
