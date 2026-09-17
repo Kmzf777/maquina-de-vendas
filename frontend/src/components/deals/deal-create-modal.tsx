@@ -7,6 +7,17 @@ interface DealCreateModalProps {
   leads: Lead[];
   pipelines?: Pipeline[];
   preselectedLead?: Lead;
+  /**
+   * Consulta opcional de card já aberto no funil escolhido. Recebe o funil
+   * selecionado AQUI DENTRO (o modal é que guarda essa escolha) e devolve o
+   * card a nomear no aviso, ou null quando não há.
+   *
+   * É uma função, e não um valor pronto, porque quem tem os cards do lead é o
+   * chamador e quem tem o funil da vez é o modal: um valor fixo só saberia do
+   * funil inicial. Sem a prop, o modal se comporta exatamente como antes —
+   * /vendas e /conversas não passam nada e não mudam de comportamento.
+   */
+  existingDealLookup?: (pipelineId: string) => { title: string; stageLabel: string } | null;
   onClose: () => void;
   onCreate: (data: {
     lead_id: string;
@@ -19,7 +30,7 @@ interface DealCreateModalProps {
   }) => Promise<void>;
 }
 
-export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, onCreate }: DealCreateModalProps) {
+export function DealCreateModal({ leads, pipelines, preselectedLead, existingDealLookup, onClose, onCreate }: DealCreateModalProps) {
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(preselectedLead ?? null);
   const [selectedLeadId, setSelectedLeadId] = useState(preselectedLead?.id || "");
@@ -47,6 +58,11 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
       .finally(() => setStagesLoading(false));
     return () => controller.abort();
   }, [selectedPipelineId]);
+
+  // Derivado a cada render, não estado: guardar o aviso em useState exigiria
+  // sincronizá-lo com o funil selecionado (inclusive no funil inicial, que é
+  // escolhido sem passar por nenhum onChange).
+  const cardAbertoNoFunil = existingDealLookup ? existingDealLookup(selectedPipelineId) : null;
 
   const filteredLeads = leadSearch.trim()
     ? leads.filter((l) => {
@@ -214,6 +230,20 @@ export function DealCreateModal({ leads, pipelines, preselectedLead, onClose, on
               className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full resize-none"
             />
           </div>
+
+          {/* Avisa e deixa criar: nada no banco impede dois cards no mesmo funil
+              e o caso legítimo existe (dois pedidos em paralelo). Bloquear
+              transformaria um alerta útil em parede. Trio de aviso já
+              estabelecido no projeto (bulk-move-modal, esteiras-tab). */}
+          {cardAbertoNoFunil && (
+            <div role="status" className="bg-[#fff8e0] border border-[#eadfb4] rounded-[6px] px-3 py-2.5">
+              <p className="text-[12px] text-[#7a5a00] leading-[1.5]">
+                Este lead já tem um card neste funil:{" "}
+                <span className="font-medium">{cardAbertoNoFunil.title}</span> em{" "}
+                {cardAbertoNoFunil.stageLabel}. Criar outro vai gerar 2 cards no board.
+              </p>
+            </div>
+          )}
 
           {error && (
             <p className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-[6px] px-3 py-2">{error}</p>

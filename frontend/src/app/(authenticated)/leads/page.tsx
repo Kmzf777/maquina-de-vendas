@@ -9,9 +9,10 @@ import { LeadsFilterBar, type LeadFilters } from "@/components/leads/leads-filte
 import { LeadDetailModal } from "@/components/leads/lead-detail-modal";
 import { LeadCreateModal } from "@/components/leads/lead-create-modal";
 import { LeadImportModal } from "@/components/leads/lead-import-modal";
-import type { Lead, Tag } from "@/lib/types";
+import type { Lead, Pipeline, Tag } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { leadMatchesSearch } from "@/lib/search";
+import { buildDealTitle } from "@/lib/lead-funnel-actions";
 
 const LEADS_PER_PAGE = 30;
 
@@ -27,6 +28,12 @@ function LeadsPageInner() {
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [mobileSelectedLead, setMobileSelectedLead] = useState<Lead | null>(null);
+  // Funis alimentam o funil opcional do modal de criacao e a aba "Funis" do modal
+  // de detalhe. `[]` e estado valido: significa "sem funil disponivel" (falha de
+  // rede ou usuario sem funil visivel), e os dois modais ja tratam esse caso.
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  // Aviso de pagina para a falha parcial de criar lead + card (ver handleCreateLead).
+  const [avisoFunil, setAvisoFunil] = useState("");
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -73,6 +80,15 @@ function LeadsPageInner() {
       }
     }
     fetchTags();
+  }, []);
+
+  // Carga unica dos funis. Falha de rede cai no `[]` — nunca em `undefined` —
+  // para que os modais mostrem "sem funis" em vez de quebrar no `.map()`.
+  useEffect(() => {
+    fetch("/api/pipelines")
+      .then((r) => r.json())
+      .then((data) => setPipelines(Array.isArray(data) ? data : []))
+      .catch(() => setPipelines([]));
   }, []);
 
   // Apply filters
@@ -148,15 +164,62 @@ function LeadsPageInner() {
     setLeadTagsMap((prev) => ({ ...prev, [leadId]: tagIds }));
   }
 
-  async function handleCreateLead(data: Record<string, string>): Promise<{ error?: string }> {
+  // Criar lead com funil sao duas escritas, em duas rotas: POST /api/leads e
+  // POST /api/deals. A segunda pode falhar sozinha, e nesse caso o lead JA EXISTE
+  // — devolver { error } manteria o modal aberto, o vendedor tentaria de novo e
+  // bateria no 409 de telefone duplicado. Por isso a falha do card nao volta como
+  // erro do formulario: o modal fecha e o aviso fica na pagina, dizendo o que foi
+  // e o que nao foi feito. Sucesso total nunca e reportado quando o card falhou.
+  async function handleCreateLead({
+    lead,
+    funnel,
+  }: {
+    lead: Record<string, string>;
+    funnel: { pipeline_id: string; stage_id: string } | null;
+  }): Promise<{ error?: string }> {
+    setAvisoFunil("");
     const res = await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
+      body: JSON.stringify(lead),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       return { error: err.error || "Erro ao criar lead" };
+    }
+    // Sem funil escolhido o fluxo termina aqui, exatamente como antes.
+    if (!funnel) return {};
+
+    // O 201 devolve a linha inserida (a rota faz .select().single()), e o id dela
+    // e a unica forma de vincular o card: o lead acabou de nascer e nao esta na
+    // lista do realtime ainda.
+    const criado = (await res.json().catch(() => null)) as Lead | null;
+    if (!criado?.id) {
+      setAvisoFunil("Lead criado, mas nao foi possivel criar o card no funil.");
+      return {};
+    }
+
+    const nomeFunil = pipelines.find((p) => p.id === funnel.pipeline_id)?.name;
+    try {
+      const dealRes = await fetch("/api/deals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lead_id: criado.id,
+          title: buildDealTitle(criado.name || criado.phone, nomeFunil),
+          value: 0,
+          pipeline_id: funnel.pipeline_id,
+          stage_id: funnel.stage_id,
+        }),
+      });
+      if (!dealRes.ok) {
+        const err = await dealRes.json().catch(() => ({}));
+        setAvisoFunil(
+          `Lead criado, mas nao foi possivel criar o card no funil.${err.error ? ` ${err.error}` : ""}`
+        );
+      }
+    } catch {
+      setAvisoFunil("Lead criado, mas nao foi possivel criar o card no funil.");
     }
     return {};
   }
@@ -233,6 +296,25 @@ function LeadsPageInner() {
           </button>
         </div>
       </div>
+
+      {/* Aviso de falha parcial: fica fora da area de scroll para nao sumir de
+          vista, e so sai quando o usuario dispensa. */}
+      {avisoFunil && (
+        <div
+          role="status"
+          className="flex-shrink-0 bg-[#fff8e0] border-b border-[#eadfb4] px-4 md:px-8 py-2.5 flex items-start justify-between gap-3"
+        >
+          <p className="text-[12px] text-[#7a5a00] leading-[1.5]">{avisoFunil}</p>
+          <button
+            type="button"
+            aria-label="Dispensar aviso"
+            onClick={() => setAvisoFunil("")}
+            className="text-[16px] leading-none text-[#7a5a00] px-1 hover:opacity-60 transition-opacity flex-shrink-0"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-auto bg-[#faf9f6]">
@@ -351,6 +433,7 @@ function LeadsPageInner() {
         <LeadDetailModal
           lead={selectedLead}
           tags={tags}
+          pipelines={pipelines}
           leadTagIds={leadTagsMap[selectedLead.id] || []}
           onClose={() => setSelectedLead(null)}
           onSave={handleSaveLead}
@@ -360,6 +443,7 @@ function LeadsPageInner() {
       )}
       {showCreate && (
         <LeadCreateModal
+          pipelines={pipelines}
           onClose={() => setShowCreate(false)}
           onCreate={handleCreateLead}
         />

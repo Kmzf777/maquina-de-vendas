@@ -88,7 +88,11 @@ TASK_SPECS = [
     ("memory", "periodic", _memory_tick, 60),
     ("channel-health", "periodic", _channel_health_tick, 300),
     ("reconcile", "periodic", _reconcile_tick, 300),
-    ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 86400),
+    # 3h, não 24h: o tick é ancorado no start do worker, então com 24h o dia corrente
+    # aparecia zerado na tela e o último dia sincronizado ficava pela metade (16/09/2026
+    # travou às 21h29 UTC, no meio do dia da conta) — o que inflava o ROAS do /trafego.
+    # O upsert é idempotente por (plataforma, campanha, dia), então reconferir sai barato.
+    ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 10800),
     ("bling-sync", "periodic", _bling_sync_tick, 86400),
     ("bling-jobs", "periodic", _bling_jobs_tick, 30),
     # "event": o receiver publica no event bus ao gravar o webhook — o

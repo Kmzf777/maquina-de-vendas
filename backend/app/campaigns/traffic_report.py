@@ -6,12 +6,18 @@ As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 import logging
 import re
 import unicodedata
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.db.supabase import get_supabase
 
+# Fuso de negócio: o dia do relatório é o dia de Brasília, do começo ao fim. A janela
+# (_resolve_window), o gráfico (_local_day) e o recorte do gasto por data usam ESTE relógio —
+# antes a janela era resolvida em UTC e só o gráfico era local, então a tabela virava o dia às
+# 21h e o gráfico à meia-noite: 09/09/2026 saía com 30 leads na tabela e 27 no gráfico logo
+# abaixo. Bate exatamente com a conta do Google Ads (America/Sao_Paulo); a conta do Meta fecha
+# em America/Noronha e fica 1h adiantada — resíduo conhecido, era de 3h.
 _TZ = ZoneInfo("America/Sao_Paulo")
 
 # Tokens ignorados ao comparar utm_campaign com campaign_name do Google Ads.
@@ -106,7 +112,13 @@ _PAID_CHANNEL_MEDIUMS: frozenset[str] = frozenset(
 
 
 def derive_channel(lead: dict[str, Any]) -> str:
-    """Canal do lead. Prioridade: click-id > utm_source de anúncio > orgânico > sem rastreio.
+    """Canal do lead. Prioridade: click-id > anúncio do Meta > utm_source de anúncio >
+    orgânico > sem rastreio.
+
+    `meta_ad_id` (referral.source_id do CTWA) conta como sinal de canal pago junto dos
+    click-ids: nem todo referral do WhatsApp traz `ctwa_clid`, mas o id do anúncio vem
+    sempre. Sem ele, 15 leads pagos da janela 01-16/09/2026 caíam em "Sem rastreio" com o
+    anúncio que os trouxe já gravado na própria linha.
 
     Meta e Google são detectados TAMBÉM por utm_source (a gestora tagueia 'metaads'/'google'),
     porque nem todo lead pago traz click-id (Meta→WhatsApp sem fbclid, PMAX sem gclid). Google
@@ -115,7 +127,7 @@ def derive_channel(lead: dict[str, Any]) -> str:
     """
     if _s(lead.get("gclid")):
         return "Google Ads"
-    if _s(lead.get("fbclid")) or _s(lead.get("ctwa_clid")):
+    if _s(lead.get("fbclid")) or _s(lead.get("ctwa_clid")) or _s(lead.get("meta_ad_id")):
         return "Meta Ads"
     source = _s(lead.get("utm_source")).lower()
     medium = _s(lead.get("utm_medium")).lower()
@@ -308,21 +320,35 @@ def _lead_cols() -> str:
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _day_start(d: date) -> str:
+    """Meia-noite de `d` no fuso de negócio, em ISO com offset."""
+    return datetime.combine(d, time.min, tzinfo=_TZ).isoformat()
+
+
+def _day_end(d: date) -> str:
+    """Último instante de `d` no fuso de negócio, em ISO com offset."""
+    return datetime.combine(d, time.max, tzinfo=_TZ).isoformat()
+
+
 def _resolve_window(period: str, date_from: str | None, date_to: str | None) -> tuple[str | None, str | None]:
-    """Resolve a janela (lo, hi) em ISO. `date_from`/`date_to` (YYYY-MM-DD) têm precedência
-    sobre `period`. Datas malformadas são ignoradas. Sem sinal → (None, None) = tudo."""
+    """Resolve a janela (lo, hi) em ISO no fuso de negócio (America/Sao_Paulo).
+
+    `date_from`/`date_to` (YYYY-MM-DD) têm precedência sobre `period` e são lidos como o DIA
+    de Brasília inteiro. Datas malformadas são ignoradas. Sem sinal → (None, None) = tudo."""
     df = (date_from or "").strip()
     dt = (date_to or "").strip()
     lo_explicit = df if _DATE_RE.match(df) else ""
     hi_explicit = dt if _DATE_RE.match(dt) else ""
     if lo_explicit or hi_explicit:
-        lo = f"{lo_explicit}T00:00:00+00:00" if lo_explicit else None
-        hi = f"{hi_explicit}T23:59:59.999999+00:00" if hi_explicit else None
+        lo = _day_start(date.fromisoformat(lo_explicit)) if lo_explicit else None
+        hi = _day_end(date.fromisoformat(hi_explicit)) if hi_explicit else None
         return lo, hi
     days = _PERIOD_DAYS.get(period)
     if not days:
         return None, None
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(), None
+    # Dias-calendário fechados no fuso de negócio, não 24h corridas contadas de agora para
+    # trás: "30d" é o que a plataforma chama de últimos 30 dias, com hoje incluído.
+    return _day_start(datetime.now(_TZ).date() - timedelta(days=days - 1)), None
 
 
 def _chunks(items: list, size: int = 200):
