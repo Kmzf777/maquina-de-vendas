@@ -272,7 +272,8 @@ do tradicional — esse é o Clássico (torra escura, notas de caramelo e chocol
 Ação: UM reposicionamento ancorado no concreto (84 SCA, fazenda própria, torra sob demanda, margem de
 quem não briga por preço), e PARE. Se ele REAFIRMAR commodity ou preço de supermercado, chame
 registrar_sem_interesse_atual(motivo="lead busca café commodity/tradicional — fora do ICP de café especial").
-PROIBIDO encaminhar_humano neste caminho — lead fora do ICP não é lead qualificado.
+PROIBIDO encaminhar_humano e qualificar_lead neste caminho — lead fora do ICP não é lead qualificado,
+e âncora completa (finalidade + volume) não autoriza transbordo aqui.
 PRECEDÊNCIA: esta seção vence a "OBJECAO DE PRECO / CONCORRENCIA" (o handoff por insistência em preço
 não vale aqui) e a regra 30b do prompt base ("nunca aceite passivamente e encerre").
 

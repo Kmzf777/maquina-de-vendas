@@ -567,14 +567,30 @@ def _atacado(fluxo: str) -> str:
     return get_stage_prompts(fluxo)["atacado"]
 
 
-def _secao_icp_commodity(fluxo: str) -> str:
-    """Recorta a secao de ICP commodity do prompt de atacado montado.
+# Os 4 prompts que carregam a regra de ICP commodity. A cobertura foi medida por
+# stage no momento do 1o handoff do coorte: private_label 45,1%, atacado 35,4% —
+# private_label e a fatia MAIOR, nao a menor.
+_STAGES_COM_ICP = [
+    ("valeria_inbound", "atacado"),
+    ("valeria_outbound", "atacado"),
+    ("valeria_inbound", "private_label"),
+    ("valeria_outbound", "private_label"),
+]
+
+
+def _stage(fluxo: str, stage: str) -> str:
+    from app.agent.prompts import get_stage_prompts
+    return get_stage_prompts(fluxo)[stage]
+
+
+def _secao_icp_commodity(fluxo: str, stage: str = "atacado") -> str:
+    """Recorta a secao de ICP commodity do prompt de stage montado.
 
     Ancora no motivo do descarte (unico desta secao — o do auto-produtor termina em
     'fora do ICP de atacado') e sobe ate o titulo da secao."""
-    prompt = _atacado(fluxo)
+    prompt = _stage(fluxo, stage)
     idx = prompt.find('fora do ICP de café especial")')
-    assert idx != -1, f"secao de ICP commodity ausente no atacado {fluxo}"
+    assert idx != -1, f"secao de ICP commodity ausente em {fluxo}/{stage}"
     inicio = prompt.rfind("\n#", 0, idx)
     fim = prompt.find("\n#", idx)
     return prompt[inicio:fim if fim != -1 else len(prompt)]
@@ -631,6 +647,116 @@ def test_atacado_outbound_espelha_a_secao_icp():
     assert "o mais barato" in low and "supermercado" in low
     assert "gourmet" in low
     assert "classico" in low or "clássico" in low
+
+
+# ── private_label carrega a MESMA regra (45,1% do coorte, a maior fatia) ────
+# Stage em vigor no 1o handoff dos 82 leads de commodity: private_label 37 (45,1%),
+# atacado 29 (35,4%), triagem 12, exportacao 3, consumo 1. O defeito e o mesmo; o
+# enquadramento muda — em private label o lead cria a marca DELE, e se o produto que
+# ele quer sob essa marca e commodity, a Canastra nao faz: e "produto que nao fazemos"
+# (o mesmo balde de graos de terceiros), nao objecao de preco.
+
+def test_private_label_inbound_tem_secao_icp_commodity():
+    secao = _secao_icp_commodity("valeria_inbound", "private_label").lower()
+    assert "fora do icp" in secao or "nao fazemos" in secao
+    assert "supermercado" in secao, "preco de supermercado ausente como sinal"
+    assert "o mais barato" in secao, "sinal de commodity ausente"
+
+
+def test_private_label_inbound_icp_descarta_em_vez_de_encaminhar():
+    secao = _secao_icp_commodity("valeria_inbound", "private_label")
+    assert _MOTIVO_ICP_COMMODITY in secao, (
+        "o motivo tem que ser identico ao do atacado — um unico causa raiz atribuivel"
+    )
+    proibicao = [l for l in secao.splitlines() if "encaminhar_humano" in l and "PROIBIDO" in l]
+    assert proibicao, "a secao precisa PROIBIR encaminhar_humano neste caminho"
+
+
+def test_private_label_inbound_icp_vence_o_circuit_breaker_de_8_turnos():
+    """O circuit breaker do private_label se declara aplicavel 'independente do
+    comportamento do lead' e so abre UMA excecao (graos de terceiros)."""
+    secao = _secao_icp_commodity("valeria_inbound", "private_label").lower()
+    assert "precedencia" in secao or "precedência" in secao
+    assert "circuit breaker" in secao
+    prompt = _stage("valeria_inbound", "private_label")
+    cb = prompt[prompt.index("## Circuit Breaker — 8 Turnos"):]
+    cb = cb[:cb.index("\n##", 1)]
+    assert "commodity" in cb.lower(), (
+        "o circuit breaker de 8 turnos segue com uma unica excecao — falta a de ICP"
+    )
+
+
+def test_private_label_inbound_icp_nao_dispara_handoff_no_encerramento():
+    """'cliente pediu algo fora do modelo + despedida seca' chama encaminhar_humano —
+    e um lead de commodity e, por definicao, alguem que pediu algo fora do modelo."""
+    prompt = _stage("valeria_inbound", "private_label")
+    bloco = prompt[prompt.index("### Encerramento — Distinguir Rejeicao de Despedida Amigavel"):]
+    bloco = bloco[:bloco.index("\n###", 1)]
+    assert "commodity" in bloco.lower(), (
+        "o encerramento por 'algo fora do modelo' ainda manda encaminhar_humano "
+        "para o lead de commodity"
+    )
+
+
+def test_private_label_inbound_icp_preserva_os_nao_sinais():
+    """Metade das mensagens do coorte em private_label era PERGUNTA de categoria
+    ('esse café especial é tradicional?', 'tradicional, superior e gourmet?') ou
+    pedido explicitamente NAO-tradicional ('quero lançar um café funcional')."""
+    secao = _secao_icp_commodity("valeria_inbound", "private_label").lower()
+    assert "gourmet" in secao, "a pergunta de categoria precisa constar como NAO-sinal"
+    assert "funcional" in secao, "quem quer lancar um cafe NAO-tradicional nao e sinal"
+    assert "robusta" in secao or "conilon especial" in secao, (
+        "perguntar por robusta/conilon ESPECIAL e pergunta sobre produto especial, nao commodity"
+    )
+
+
+def test_private_label_inbound_reusa_o_gancho_de_fora_do_perfil():
+    """O prompt ja reservava 'encerramento imediato para leads genuinamente fora do
+    perfil (ex.: produto que nao fazemos)' — commodity passa a ser esse exemplo."""
+    prompt = _stage("valeria_inbound", "private_label")
+    linha = [l for l in prompt.splitlines() if l.startswith("Reserve encerramento imediato")]
+    assert linha, "o gancho de 'fora do perfil' sumiu"
+    assert "genuinamente fora do perfil" in linha[0]
+    assert "commodity" in linha[0].lower(), (
+        "o gancho existente nao nomeia commodity — era o ponto mais barato de ancorar"
+    )
+
+
+def test_private_label_outbound_espelha_a_secao_icp():
+    secao = _secao_icp_commodity("valeria_outbound", "private_label")
+    assert _MOTIVO_ICP_COMMODITY in secao
+    low = secao.lower()
+    assert "supermercado" in low and "o mais barato" in low
+    assert "gourmet" in low and "funcional" in low
+
+
+def test_private_label_outbound_icp_vence_a_qualificacao_proativa():
+    """No outbound o handoff sai sozinho por qualificar_lead (finalidade + volume),
+    sem o modelo chamar encaminhar_humano."""
+    secao = _secao_icp_commodity("valeria_outbound", "private_label").lower()
+    assert "qualificacao proativa" in secao or "qualificar_lead" in secao
+
+
+# ── o handoff tambem sai por qualificar_lead, nao so por encaminhar_humano ──
+# tools.py:709 — "ancoras completas → handoff proativo". Proibir so encaminhar_humano
+# deixa a porta dos fundos aberta: basta finalidade + volume + preco na conversa.
+
+def test_icp_commodity_proibe_tambem_qualificar_lead_nos_4_stages():
+    for fluxo, stage in _STAGES_COM_ICP:
+        secao = _secao_icp_commodity(fluxo, stage)
+        proibicao = [
+            l for l in secao.splitlines()
+            if "PROIBIDO" in l and "encaminhar_humano" in l and "qualificar_lead" in l
+        ]
+        assert proibicao, (
+            f"{fluxo}/{stage}: a secao proibe encaminhar_humano mas deixa qualificar_lead "
+            "(tools.py:709 faz handoff proativo com ancoras completas)"
+        )
+
+
+def test_icp_commodity_usa_um_unico_motivo_nos_4_stages():
+    for fluxo, stage in _STAGES_COM_ICP:
+        assert _MOTIVO_ICP_COMMODITY in _secao_icp_commodity(fluxo, stage), f"{fluxo}/{stage}"
 
 
 def _regra_7(prompt: str) -> str:
