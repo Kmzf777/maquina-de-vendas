@@ -148,6 +148,27 @@ def test_bridge_determinante_mais_cafe_antes_do_produto():
     assert normalize_proper_nouns(entrada) == esperado
 
 
+def test_objecao_de_preco_mais_nao_bloqueia_suave_a_3_palavras():
+    # Achado de mutation testing (revisão 2026-09-17): uma janela NEVER única
+    # de 3 palavras pra "mais/bem/bastante/..." bloqueava objeção de preço —
+    # o caminho dominante do funil ("mais barato?" é a pergunta mais comum) —
+    # porque "mais" ficava 3 palavras atrás do produto. Intensificador só
+    # bloqueia ADJACENTE agora ("mais suave" comparativo), não a distância.
+    entrada = "mais barato? o suave 250g"
+    esperado = "mais barato? o Suave 250g"
+    assert normalize_proper_nouns(entrada) == esperado
+
+
+def test_objecao_de_preco_bem_e_bastante_nao_bloqueiam_a_distancia():
+    entrada = "quer algo mais barato? o clássico 250g"
+    esperado = "quer algo mais barato? o Clássico 250g"
+    assert normalize_proper_nouns(entrada) == esperado
+
+    entrada2 = "bastante procurado, o microlote 250g"
+    esperado2 = "bastante procurado, o Microlote 250g"
+    assert normalize_proper_nouns(entrada2) == esperado2
+
+
 # ---------------------------------------------------------------------------
 # Camada B — NÃO capitaliza (porta de contexto fechada)
 # ---------------------------------------------------------------------------
@@ -205,6 +226,19 @@ def test_torra_do_canela_nao_capitaliza_mesmo_com_determinante_adjacente():
     assert normalize_proper_nouns(entrada) == entrada
 
 
+def test_bridge_nao_escapa_do_gate_never_substantivo():
+    # Achado de mutation testing: o bridge "determinante + café/blend" insere
+    # 2 tokens entre o NEVER-substantivo e o produto, empurrando "torra" pra
+    # 4 palavras de distância — fora de uma janela de 3 aplicada ingenuamente
+    # ao texto inteiro. O gate agora olha o texto ANTES do bridge, não entre
+    # o bridge e o produto.
+    entrada = "a torra do nosso café suave"
+    assert normalize_proper_nouns(entrada) == entrada
+
+    entrada2 = "torra do nosso cafe canela"
+    assert normalize_proper_nouns(entrada2) == entrada2
+
+
 # ---------------------------------------------------------------------------
 # Camada C — nome do lead (dinâmico)
 # ---------------------------------------------------------------------------
@@ -254,6 +288,16 @@ def test_lead_name_preserva_caixa_interna_apos_primeira_letra():
     entrada = "boa, jose-maria, tudo certo"
     esperado = "boa, Jose-Maria, tudo certo"
     assert normalize_proper_nouns(entrada, lead_name="Jose-Maria") == esperado
+
+
+def test_lead_name_todo_maiusculo_vira_title_case_nao_grita():
+    # Dado real (export de 2771 leads nomeados, leads-bling-completo-*.csv):
+    # 42,3% de TODOS os nomes, 19,0% dos nomes de pessoa, estão gravados
+    # TODO-MAIÚSCULO. Sem este caso especial, a persona (que escreve em
+    # minúsculas calmas de propósito) gritaria o nome de 1 em cada 5 leads.
+    entrada = "obrigada, VANDA! ate mais"
+    esperado = "obrigada, Vanda! ate mais"
+    assert normalize_proper_nouns(entrada, lead_name="VANDA") == esperado
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +372,23 @@ def test_fail_open_quando_camada_lanca_excecao(monkeypatch):
     monkeypatch.setattr(adherence, "_apply_proper_noun_lexicon", _boom)
     entrada = "aqui é a valeria, do comercial da café canastra"
     assert normalize_proper_nouns(entrada) == entrada
+
+
+def test_fail_open_com_entrada_nao_string():
+    # A chamada de NFC (`unicodedata.normalize`) só é segura DENTRO do try —
+    # fora dele, `normalize_proper_nouns(123)` levantava TypeError, o que
+    # contradiz o próprio docstring ("qualquer exceção devolve o texto
+    # original inalterado").
+    entrada = 123
+    assert normalize_proper_nouns(entrada) == entrada  # type: ignore[arg-type]
+
+
+def test_quebra_de_bolha_deixa_frase_de_2_palavras_parcialmente_corrigida():
+    # Gap documentado no docstring: a quebra de bolha (\n) entre "serra da" e
+    # "canastra" não é reconectada — o `[ \t]+` da Camada A (correto, não
+    # deve atravessar bolha) significa que só a segunda linha bate a forma
+    # isolada "canastra" -> "Canastra"; a frase completa "Serra da Canastra"
+    # não se forma. Comportamento aceito de propósito, não regressão.
+    entrada = "cultivado na serra da\ncanastra"
+    esperado = "cultivado na serra da\nCanastra"
+    assert normalize_proper_nouns(entrada) == esperado

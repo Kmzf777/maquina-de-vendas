@@ -99,6 +99,19 @@ def test_preserva_urls():
     assert normalize_orthography(entrada2) == entrada2
 
 
+def test_preserva_email_local_part_nao_so_o_dominio():
+    # Regressão-âncora (2026-09-17): `_URL_SPAN_RE` ganhou uma alternativa de
+    # e-mail pra atender normalize_proper_nouns (seção 13), mas o fix mora
+    # aqui (seção 4) porque normalize_orthography também usa o mesmo split —
+    # sem a alternativa de e-mail, só o domínio era protegido e "cafe@..."
+    # virava "café@..." (endereço inválido). Se um editor futuro decidir que
+    # a alternativa de e-mail "pertence" à seção 13 e a mover pra lá, este
+    # teste (não o de section 13) é quem pega a regressão.
+    entrada = "manda pro cafe@exemplo.com que eu nao respondo"
+    esperado = "manda pro cafe@exemplo.com que eu não respondo"
+    assert normalize_orthography(entrada) == esperado
+
+
 def test_idempotente_em_texto_ja_acentuado():
     texto = "não força nada, você já sabe que o café é especial"
     assert normalize_orthography(texto) == texto

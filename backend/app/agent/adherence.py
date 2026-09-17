@@ -649,13 +649,25 @@ def strip_media_history_markers(text: str) -> str:
 
 # Camada C — nome do lead (dinâmico): title-case do PRIMEIRO e ÚLTIMO token de
 # `lead_name`, mínimo 3 caracteres, casado como palavra isolada. Aplica mesmo
-# quando o nome está gravado em minúsculas no banco ("vanda" -> "Vanda") — a
-# regra é fonte de verdade só para a CAIXA da primeira letra: o resto do
-# token é preservado EXATAMENTE como está gravado (não força .lower() nem
-# .upper() no restante) — "Jose-Maria" continua "Jose-Maria" (o "M" de Maria
-# já é maiúsculo, legítimo), não vira "Jose-maria". Consequência: esta camada
-# NÃO restaura acento a partir do nome gravado (só a Camada A faz isso, e só
-# para os nomes que conhece — por isso ela roda por último, ver acima).
+# quando o nome está gravado em minúsculas no banco ("vanda" -> "Vanda").
+#
+# DOIS casos de caixa (revisão 2026-09-17 pós mutation testing, dado real:
+# export de 2771 leads nomeados em leads-bling-completo-2026-08-08-br (1).csv
+# — 42,3% de TODOS os nomes, 19,0% dos nomes de pessoa, estão gravados TODO-
+# MAIÚSCULO):
+#   - token TODO-MAIÚSCULO ("VANDA", "ELIATAN") -> Title Case ("Vanda",
+#     "Eliatan") via .capitalize(). Sem isso a persona — cujo ponto inteiro é
+#     escrever em minúsculas calmas — GRITA o nome de 1 em cada 5 leads
+#     nomeados.
+#   - qualquer outro token só tem a PRIMEIRA letra forçada; o resto fica
+#     EXATAMENTE como está gravado (não força .lower()) — "Jose-Maria"
+#     continua "Jose-Maria" (o "M" de Maria já é maiúsculo, legítimo), não
+#     vira "Jose-maria". Essa forma (mista, não TODO-MAIÚSCULO) é só 0,5%
+#     dos nomes de pessoa no mesmo export — e a maioria das ocorrências ali
+#     é ruído de empresa ("PedidoOK", "Global Nove SpA"), não gente.
+# Consequência de ambos os casos: esta camada NÃO restaura acento a partir do
+# nome gravado (só a Camada A faz isso, e só para os nomes que conhece — por
+# isso ela roda por último, ver acima).
 # Efeito colateral ACEITO de propósito: um nome de lead que colide com uma
 # palavra comum (ex.: lead_name="Rosa" + texto "a rosa dos ventos") também é
 # capitalizado — falso-positivo raro e de baixo custo (pior caso: uma palavra
@@ -681,7 +693,7 @@ def _title_case_lead_name(text: str, lead_name: str | None) -> str:
     spans: list[tuple[int, int, str]] = []
     for token in tokens:
         token_re = re.compile(r"\b" + re.escape(_normalize(token)) + r"\b")
-        canon = token[0].upper() + token[1:]
+        canon = token.capitalize() if token.isupper() else token[0].upper() + token[1:]
         for m in token_re.finditer(normalized):
             spans.append((m.start(), m.end(), canon))
     if not spans:
@@ -709,19 +721,27 @@ def _title_case_lead_name(text: str, lead_name: str | None) -> str:
 #     produto, sem "café"/"blend" no meio). Cuidado: 341 casos do gate de
 #     formato/preço acima e 835 do gate de determinante adjacente já cobrem a
 #     maior parte — este bridge é o complemento dos dois, não substituto.
-# A lista NEVER (precedido por palavra de qualidade: torra/sabor/notas/nota/
-# aroma/toque/perfil/final/estilo/jeito/mais/bem/super/bastante) tem
-# precedência sobre TODAS as regras de capitalizar acima — e olha até 3
-# palavras para trás, não só a adjacente: "notas de canela", "perfil de
-# canela" e "torra do canela" são a construção clássica de nota de
-# degustação em português ("notas de", "aroma de", "toque de" + substantivo)
-# — exatamente o sentido de especiaria que o gate existe para proteger — e
-# não podem capitalizar mesmo com um determinante ou token de formato logo
-# depois (ex.: "torra do canela" tem "do" adjacente, que é determinante, mas
-# "torra" 2 palavras atrás bloqueia mesmo assim). Medido em produção (45
-# dias): só 4 ocorrências do padrão "notas de"/"perfil de"/"torra do" +
-# produto — seguro barato, não incêndio, mas o branch merece teste mesmo
-# assim (mutation testing pegou o lookback de 1 palavra só).
+#
+# NEVER tem precedência sobre as três regras acima, mas é DUAS listas com
+# janelas DIFERENTES (revisão 2026-09-17 pós mutation testing — uma janela
+# única de 3 palavras pra tudo bloqueava a MAIORIA das menções genuínas de
+# produto, porque objeção de preço é o caminho dominante do funil: "mais
+# barato? o suave 250g" tinha 10 de 13 casos reais de "deveria capitalizar"
+# bloqueados por um "mais"/"bem"/"bastante" 2-3 palavras atrás, contra só 4
+# ocorrências/45 dias do padrão que a janela larga protegia):
+#   - NOUNS (substantivo de qualidade: torra/sabor/notas/nota/aroma/toque/
+#     perfil) — aparecem com palavra(s) no meio ("notas DE canela"), janela
+#     de 3 palavras é o correto. Se o bridge "determinante + café/blend"
+#     casou, a janela de NOUNS é aplicada ao texto ANTES do início do bridge
+#     (não ao texto entre o bridge e o produto) — senão "a torra do nosso
+#     café suave" escaparia: com o bridge no meio, "torra" fica a 4 palavras
+#     do produto, fora de uma janela de 3 aplicada ingenuamente.
+#   - ADJACENT (intensificador/advérbio: final/estilo/jeito/mais/bem/super/
+#     bastante) — só fazem sentido colados ("mais suave" = comparativo); a
+#     2-3 palavras de distância eles disparam em cima de fraseio de venda
+#     comum (objeção de preço: "mais barato? o suave 250g") e bloqueiam
+#     produto de verdade. Só bloqueiam quando são a palavra IMEDIATAMENTE
+#     anterior ao produto.
 # NÃO cobre fraseio de lista/escolha ("temos clássico, suave e canela",
 # "prefere suave ou clássico?" — 131 ocorrências em 45 dias): ambíguo para
 # gate determinístico o suficiente para valer a pena; fica a cargo do prompt.
@@ -731,15 +751,17 @@ _PRODUCT_MAP = {
     "canela": "Canela",
     "microlote": "Microlote",
 }
+# Ordenado por tamanho decrescente por precaução futura (mesmo motivo do
+# sort da Camada A, ver comentário lá embaixo): hoje é um no-op comportamental
+# — nenhuma chave de _PRODUCT_MAP é prefixo de outra — mas evita a armadilha
+# no dia em que uma for.
 _PRODUCT_WORD_RE = re.compile(
     r"\b(" + "|".join(sorted(_PRODUCT_MAP, key=len, reverse=True)) + r")\b"
 )
 _PRODUCT_DETERMINERS = {"o", "do", "no", "ao", "um", "pelo", "nosso"}
-_PRODUCT_NEVER_PRECEDING = {
-    "torra", "sabor", "notas", "nota", "aroma", "toque", "perfil", "final",
-    "estilo", "jeito", "mais", "bem", "super", "bastante",
-}
-_PRODUCT_NEVER_LOOKBACK_WORDS = 3  # "notas de canela" = notas(2 atrás) de(1 atrás)
+_PRODUCT_NEVER_NOUNS = {"torra", "sabor", "notas", "nota", "aroma", "toque", "perfil"}
+_PRODUCT_NEVER_ADJACENT = {"final", "estilo", "jeito", "mais", "bem", "super", "bastante"}
+_PRODUCT_NEVER_NOUN_LOOKBACK_WORDS = 3  # "notas de canela" = notas(2 atrás) de(1 atrás)
 _PRODUCT_WORD_TOKEN_RE = re.compile(r"[a-z]+")
 _PRODUCT_FORMAT_FOLLOW_RE = re.compile(r"^\s*(?:moido|em\s+graos|250g|500g|1kg)\b")
 # "determinante + cafe/blend" imediatamente antes do produto (ver comentário
@@ -758,14 +780,29 @@ def _capitalize_products(text: str) -> str:
         before = normalized[: m.start()]
         after = normalized[m.end() :]
         prev_words = _PRODUCT_WORD_TOKEN_RE.findall(before)
-        recent = prev_words[-_PRODUCT_NEVER_LOOKBACK_WORDS:]
-        if any(w in _PRODUCT_NEVER_PRECEDING for w in recent):
-            continue
         nearest = prev_words[-1] if prev_words else ""
+
+        if nearest in _PRODUCT_NEVER_ADJACENT:
+            continue
+
+        bridge_m = _PRODUCT_CAFE_BRIDGE_RE.search(before)
+        # Se o bridge casou, a janela de NOUNS olha o texto ANTES do bridge
+        # (não entre o bridge e o produto) — ver comentário acima.
+        noun_scope_words = (
+            _PRODUCT_WORD_TOKEN_RE.findall(before[: bridge_m.start()])
+            if bridge_m
+            else prev_words
+        )
+        if any(
+            w in _PRODUCT_NEVER_NOUNS
+            for w in noun_scope_words[-_PRODUCT_NEVER_NOUN_LOOKBACK_WORDS:]
+        ):
+            continue
+
         capitalize = (
             nearest in _PRODUCT_DETERMINERS
             or bool(_PRODUCT_FORMAT_FOLLOW_RE.match(after))
-            or bool(_PRODUCT_CAFE_BRIDGE_RE.search(before))
+            or bool(bridge_m)
         )
         if capitalize:
             spans.append((m.start(), m.end(), _PRODUCT_MAP[m.group(1)]))
@@ -838,14 +875,15 @@ def normalize_proper_nouns(text: str, lead_name: str | None = None) -> str:
     ordem: um lead chamado "Valeria" sem acento no banco):
 
     Camada C: nome do lead — title-case do primeiro/último token de
-    `lead_name` quando aparece como palavra isolada no texto (só a CAIXA da
-    primeira letra é normalizada; o resto do token e o acento não são
-    tocados).
+    `lead_name` quando aparece como palavra isolada no texto. Token
+    TODO-MAIÚSCULO ("VANDA") vira Title Case ("Vanda" — a persona nunca
+    grita); qualquer outro token só tem a PRIMEIRA letra forçada, o resto
+    fica como está gravado (acento não é restaurado a partir do nome).
     Camada B: produtos (Clássico/Suave/Canela/Microlote) — só capitaliza com
     porta de contexto (determinante masculino adjacente, "determinante +
     café/blend" adjacente, ou token de formato/preço adjacente depois; a
-    lista NEVER de palavra de qualidade — olhando até 3 palavras para trás —
-    tem precedência sobre as três).
+    lista NEVER tem precedência — substantivo de qualidade olha até 3
+    palavras para trás, intensificador/advérbio só bloqueia se adjacente).
     Camada A: léxico inequívoco (Valéria, João Brás, Café Canastra, Canastra
     isolado, Nespresso, SCA, Uberlândia, Pratinha, Serra da Canastra) —
     capitaliza sempre, fronteira de palavra, restaurando acento quando a
@@ -857,15 +895,19 @@ def normalize_proper_nouns(text: str, lead_name: str | None = None) -> str:
     NÃO cobre cidades genéricas (ex.: "goiás", "copacabana") — não são
     deterministicamente enumeráveis. NÃO cobre fraseio de lista/escolha da
     Camada B (ex.: "temos clássico, suave e canela") — ambíguo demais para
-    um gate determinístico. Ambos ficam a cargo do prompt.
+    um gate determinístico. NÃO reconecta nome/frase partido entre bolhas
+    por `\n` (ex.: "serra da\ncanastra" vira "serra da\nCanastra" só na
+    segunda linha, "joao\nbras" fica como está) — a quebra proposital da
+    persona é preservada (ver `[ \t]+` na Camada A), o fix fica parcial
+    nesses casos raros de propósito. Os três ficam a cargo do prompt.
 
-    Função pura — sem I/O, sem logging. Fail-open: qualquer exceção devolve o
-    texto original inalterado.
+    Função pura — sem I/O, sem logging. Fail-open: qualquer exceção (incl.
+    `text` não ser string) devolve o texto original inalterado.
     """
     if not text:
         return text
-    text = unicodedata.normalize("NFC", text)
     try:
+        text = unicodedata.normalize("NFC", text)
         parts = _URL_SPAN_RE.split(text)
         for i in range(0, len(parts), 2):  # índices pares = fora de URL/e-mail
             chunk = _title_case_lead_name(parts[i], lead_name)
