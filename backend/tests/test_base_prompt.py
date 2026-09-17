@@ -754,6 +754,22 @@ def test_icp_commodity_proibe_tambem_qualificar_lead_nos_4_stages():
         )
 
 
+def test_convite_a_qualificar_lead_na_descoberta_carrega_a_ressalva_de_icp():
+    """"continue a descoberta ou registre ancoras com qualificar_lead" convida a chamar
+    justamente a tool que transborda sozinha (tools.py:709) — e mora na fase de DESCOBERTA,
+    que e onde o sinal de commodity aparece. Proibicao numa secao distante e contrapeso mais
+    fraco que uma ressalva local."""
+    for stage in ("atacado", "private_label"):
+        prompt = _stage("valeria_inbound", stage)
+        linhas = [l for l in prompt.splitlines() if "registre ancoras com qualificar_lead" in l]
+        assert linhas, f"valeria_inbound/{stage}: o convite a qualificar_lead sumiu"
+        for linha in linhas:
+            assert "ICP" in linha, (
+                f"valeria_inbound/{stage}: o convite a qualificar_lead nao ressalva o lead "
+                "fora do ICP — ancora completa transborda sozinha"
+            )
+
+
 def test_icp_commodity_usa_um_unico_motivo_nos_4_stages():
     for fluxo, stage in _STAGES_COM_ICP:
         assert _MOTIVO_ICP_COMMODITY in _secao_icp_commodity(fluxo, stage), f"{fluxo}/{stage}"
