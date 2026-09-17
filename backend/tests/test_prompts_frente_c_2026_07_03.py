@@ -123,9 +123,12 @@ def test_secretaria_few_shots_sem_promessa_vazia():
 
 def test_secretaria_nada_de_existente_foi_removido():
     # Regressao: ETAPAs, tags e o ultimo exemplo pre-existentes continuam intactos.
+    # 17/09/2026: a ETAPA 1 perdeu o sufixo "E COLETA DE NOME" — ela deixou de ser
+    # etapa de coleta (PROIBIDO PEDIR O NOME, regra 25), mas a etapa em si continua
+    # existindo, que e o que este guarda-estrutura afere.
     for marker in (
         "## ETAPA 0: TRIAGEM IMEDIATA",
-        "## ETAPA 1: APRESENTACAO E COLETA DE NOME",
+        "## ETAPA 1: APRESENTACAO",
         "## ETAPA 2: IDENTIFICACAO DO MERCADO",
         "## ETAPA 3: IDENTIFICACAO DA DEMANDA ESPECIFICA",
         "## ETAPA 4: QUALIFICACAO E DIRECIONAMENTO",

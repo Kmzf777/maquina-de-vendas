@@ -415,3 +415,66 @@ def test_regra_25_proibe_pedir_o_nome_em_vez_de_limitar_a_uma_vez():
     assert "PROIBIDO PEDIR O NOME DO LEAD" in prompt
     # a regra antiga tolerava UMA pergunta de nome
     assert "NUNCA PERGUNTE O NOME MAIS DE UMA VEZ" not in prompt
+
+
+# ── Os prompts de estagio nao podem contradizer a regra 25 ──────────────────
+# A secretaria (inbound e outbound) mandava COLETAR o nome numa etapa dedicada —
+# instrucao que vinha DEPOIS do base na montagem do prompt e ganhava dele. Sem
+# limpar isso, a proibicao do base e letra morta.
+
+def _secretaria(fluxo: str) -> str:
+    from app.agent.prompts import get_stage_prompts
+    return get_stage_prompts(fluxo)["secretaria"]
+
+
+def test_secretaria_inbound_nao_manda_coletar_nome():
+    low = _secretaria("valeria_inbound").lower()
+    assert "coletar o nome" not in low
+    assert "coleta de nome" not in low
+    assert "solicite o nome" not in low
+    assert "com quem eu to falando" not in low
+
+
+def test_secretaria_outbound_nao_manda_coletar_nome():
+    low = _secretaria("valeria_outbound").lower()
+    assert "coletar o nome" not in low
+    assert "coleta de nome" not in low
+    assert "solicite o nome" not in low
+    assert "com quem eu to falando" not in low
+    # o "pergunte o nome apenas se nao tiver sido informado" da ETAPA 1 tambem sai
+    assert "pergunte o nome" not in low
+
+
+def test_secretaria_inbound_etapa1_nao_e_mais_etapa_de_coleta():
+    prompt = _secretaria("valeria_inbound")
+    assert "## ETAPA 1: APRESENTACAO\n" in prompt
+    assert "PROIBIDO PEDIR O NOME" in prompt
+
+
+def test_secretaria_inbound_salva_nome_oferecido_espontaneamente():
+    """O caminho que SOBREVIVE: o lead se apresenta sozinho e ela grava."""
+    prompt = _secretaria("valeria_inbound")
+    assert "espontaneamente" in prompt
+    assert 'salvar_nome("Ana Lima")' in prompt
+
+
+def test_secretaria_inbound_regra_c_nao_conta_mais_a_pergunta_de_nome():
+    prompt = _secretaria("valeria_inbound")
+    assert "Regra C" in prompt
+    # a aritmetica antiga somava a pergunta de nome como pergunta 1
+    assert "entre a coleta de nome (Etapa 1)" not in prompt
+    assert "PRIMEIRA pergunta da conversa" in prompt
+
+
+def test_secretaria_outbound_mantem_correcao_de_identidade():
+    """Reativo (quem levanta o assunto e o lead) — nao pode virar dano colateral."""
+    prompt = _secretaria("valeria_outbound")
+    assert "CORRECAO DE NOME / IDENTIDADE" in prompt
+    assert "Chame salvar_nome com o nome informado IMEDIATAMENTE" in prompt
+
+
+def test_secretaria_outbound_mantem_few_shots_de_nome_oferecido():
+    """Os 2 exemplos em que o LEAD da o nome e ela salva sao o comportamento desejado."""
+    prompt = _secretaria("valeria_outbound")
+    assert 'salvar_nome("Johny")' in prompt
+    assert 'salvar_nome("Luciano")' in prompt
