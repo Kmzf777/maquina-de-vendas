@@ -225,6 +225,11 @@ async def test_run_agent_informacional_nao_dispara_guard():
     from app.agent.orchestrator import run_agent
 
     info_text = "quem cuida da amostra é o Joao Bras, nosso supervisor de vendas"
+    # A PROPER NOUN GUARD (17/09) recapitaliza "Joao Bras" -> "João Brás" no funil de
+    # saída (_sanitize_assistant_text). O texto SEGUE informacional e o guard de handoff
+    # verbalizado continua sem disparar — que é o invariante coberto aqui; a caixa/acento
+    # do nome é assunto de outra guarda.
+    esperado = "quem cuida da amostra é o João Brás, nosso supervisor de vendas"
 
     with patch("app.agent.orchestrator.get_history", return_value=_history_one_user_msg()), \
          patch("app.agent.orchestrator.get_lead", return_value={
@@ -237,8 +242,8 @@ async def test_run_agent_informacional_nao_dispara_guard():
                new=AsyncMock(return_value=fake_text(info_text))):
         result = await run_agent(_conversation(), "quem é o João?")
 
-    # run_agent deve retornar o texto normal
-    assert result == info_text, f"esperado texto original, got {result!r}"
+    # run_agent deve retornar o texto normal (com os nomes próprios recapitalizados)
+    assert result == esperado, f"esperado texto informacional, got {result!r}"
     # execute_tool NÃO deve ser chamado com encaminhar_humano
     if mock_exec.called:
         for call in mock_exec.call_args_list:

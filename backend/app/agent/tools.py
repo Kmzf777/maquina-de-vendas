@@ -16,6 +16,7 @@ from app.leads.service import (
     get_relationship_summary, sanitize_display_name,
 )
 from pydantic import ValidationError as _PydanticValidationError
+from app.agent.adherence import normalize_proper_nouns
 from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
 from app.agent.pricing import (
     MAX_DISAMBIGUATION, OrcamentoInput, LineQuote, match_products, parse_brl,
@@ -411,6 +412,17 @@ async def _send_despedida_descarte(
             )
             return
         lead = get_lead(lead_id) or {}
+        # A despedida NÃO passa pelo _sanitize_assistant_text do orchestrator (a tool
+        # manda o texto do LLM direto pro cliente), então a guarda de nomes próprios
+        # (auditoria 90 dias, 17/09) tem que ser aplicada aqui. Função pura/fail-open
+        # em app.agent.adherence; o log mora no call site, como no orchestrator.
+        _com_nomes = normalize_proper_nouns(despedida, lead.get("name"))
+        if _com_nomes != despedida:
+            logger.debug(
+                "[PROPER NOUN GUARD] despedida de descarte recapitalizada (conv=%s)",
+                conversation_id,
+            )
+            despedida = _com_nomes
         provider = get_provider(channel)
         send_to = resolve_send_target(lead, phone)
         send_result = await provider.send_text(send_to, despedida)
@@ -841,6 +853,17 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
         despedida = (args.get("mensagem_despedida") or "").strip() or _HANDOFF_MSG
         if len(despedida) > _MAX_DESPEDIDA_LEN:
             despedida = despedida[:_MAX_DESPEDIDA_LEN].rstrip() + "…"
+        # Esta bolha NÃO passa pelo _sanitize_assistant_text do orchestrator, e é
+        # justamente a que FECHA a conversa e NOMEIA o vendedor — falha real de
+        # produção: "perfeito, eliatan, o joao bras que te ajuda" (auditoria 90 dias,
+        # 17/09). Função pura/fail-open; o log mora no call site.
+        _com_nomes = normalize_proper_nouns(despedida, (lead.get("name") if lead else None))
+        if _com_nomes != despedida:
+            logger.debug(
+                "[PROPER NOUN GUARD] despedida de handoff recapitalizada (conv=%s)",
+                conversation_id,
+            )
+            despedida = _com_nomes
         if _despedida_ja_enviada(conversation_id, despedida):
             logger.info(
                 "[HANDOFF DEDUP] despedida ~idêntica a bolha já enviada — pulando send_text "

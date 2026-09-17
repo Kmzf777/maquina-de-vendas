@@ -37,6 +37,7 @@ from app.agent.adherence import (
     is_repeated_question,
     media_result_is_no_send,
     normalize_orthography,
+    normalize_proper_nouns,
     price_without_cta,
     strip_consecutive_vocative_name,
     strip_kitchen_leak,
@@ -341,13 +342,20 @@ def _strip_leaked_reasoning(text: str) -> str:
     return cleaned.strip()
 
 
-def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None, source: str) -> str:
+def _sanitize_assistant_text(
+    text: str, conversation_id: str, stage: str | None, source: str,
+    lead_name: str | None = None,
+) -> str:
     """Passa QUALQUER texto de saída do agente pela rede anti-tool_code e loga o vazamento.
 
     Centraliza a defesa em profundidade: toda saída textual de run_agent (resposta inicial,
     retry-on-empty, despedida de opt-out) passa por aqui antes de ser retornada OU avaliada como
     vazia — fechando a lacuna do retry (lead 5567996264477), onde o leak reincidente ia cru pro
     cliente. Se o strip esvaziar, o chamador cai no fluxo de vazio (retry / fallback / silêncio).
+
+    `lead_name` (opcional) alimenta a Camada C de `normalize_proper_nouns` — o nome do lead
+    não é enumerável num léxico fixo, então sem ele só as outras duas camadas agem. Default
+    None para os chamadores que não têm o lead à mão.
     """
     pre = text or ""
     cleaned = _strip_leaked_tool_code(pre)
@@ -410,7 +418,19 @@ def _sanitize_assistant_text(text: str, conversation_id: str, stage: str | None,
             "[ORTHO GUARD] acentuação normalizada em conv %s (source=%s)",
             conversation_id, source,
         )
-    return normalized
+    # Nomes próprios achatados pela regra de minúsculas da persona (auditoria 90 dias,
+    # 17/09): 22% das auto-menções saíam "valeria" e 18,3% das menções ao lead saíam
+    # minúsculas — a saudação de abertura foi enviada 340x como "aqui é a valeria, do
+    # comercial da café canastra". Roda DEPOIS da ortografia de propósito: a Camada A
+    # do léxico é a autoridade final sobre a forma canônica (acento incluso).
+    # Função pura em app.agent.adherence (fail-open); todo o log mora aqui.
+    with_proper_nouns = normalize_proper_nouns(normalized, lead_name)
+    if with_proper_nouns != normalized:
+        logger.debug(
+            "[PROPER NOUN GUARD] nome próprio recapitalizado em conv %s (source=%s)",
+            conversation_id, source,
+        )
+    return with_proper_nouns
 
 
 # ---------------------------------------------------------------------------
@@ -1236,8 +1256,10 @@ async def run_agent(
         # wrote lives in result.text of this same turn — return it now and skip
         # the second API call (there is nothing left to say after opt-out).
         if any(fc.name == "registrar_optout" for fc in result.function_calls):
-            return _sanitize_assistant_text(result.text or "", conversation_id, stage, source="optout") \
-                or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
+            return _sanitize_assistant_text(
+                result.text or "", conversation_id, stage, source="optout",
+                lead_name=lead.get("name"),
+            ) or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
 
         # registrar_sem_interesse_atual (soft rejection): NÃO retornamos aqui — o modelo costuma
         # gerar um fechamento gracioso na chamada pós-tool. Só marcamos a flag para que, se o turno
@@ -1307,7 +1329,9 @@ async def run_agent(
     # o texto (o turno era SÓ código), caímos no RETRY-ON-EMPTY abaixo (tools=None → o modelo
     # não consegue emitir tool_code e devolve fala humana real). Determinístico: o cliente
     # nunca vê código, independente do prompt.
-    assistant_text = _sanitize_assistant_text(assistant_text, conversation_id, stage, source="initial")
+    assistant_text = _sanitize_assistant_text(
+        assistant_text, conversation_id, stage, source="initial", lead_name=lead.get("name"),
+    )
 
     # RETRY-ON-EMPTY (unificado — auditoria 2026-06-24, leads 5549984064339 / 5551984772757,
     # reincidência da Carla). gemini-2.5-flash às vezes devolve completion_tokens=0 MESMO num
@@ -1453,7 +1477,8 @@ async def run_agent(
                 # registrar_optout → despedida sanitizada (mesmo default do loop principal)
                 if "registrar_optout" in _retry_names:
                     return _sanitize_assistant_text(
-                        retry_result.text or "", conversation_id, stage, source="retry-optout"
+                        retry_result.text or "", conversation_id, stage, source="retry-optout",
+                        lead_name=lead.get("name"),
                     ) or "sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa é só chamar"
                 # registrar_sem_interesse_atual → silêncio é correto após soft rejection.
                 # A regra "nunca mudo" vale só para turnos normais, não para descarte.
@@ -1481,10 +1506,12 @@ async def run_agent(
                 assistant_text = _sanitize_assistant_text(
                     post_result.text or "",
                     conversation_id, stage, source="retry-post-tool",
+                    lead_name=lead.get("name"),
                 )
             else:
                 assistant_text = _sanitize_assistant_text(
-                    retry_result.text or "", conversation_id, stage, source="retry"
+                    retry_result.text or "", conversation_id, stage, source="retry",
+                    lead_name=lead.get("name"),
                 )
         except Exception as _exc:
             logger.error(
@@ -1528,6 +1555,7 @@ async def run_agent(
             assistant_text = _sanitize_assistant_text(
                 retry2_result.text or "",
                 conversation_id, stage, source="retry2",
+                lead_name=lead.get("name"),
             )
         except Exception as _exc2:
             logger.error(
@@ -1619,6 +1647,7 @@ async def run_agent(
                 _fix_text = _sanitize_assistant_text(
                     _fix_result.text or "",
                     conversation_id, stage, source="repeat-question-fix",
+                    lead_name=lead.get("name"),
                 )
                 if _fix_text and not is_repeated_question(_fix_text, _prior_assistant):
                     assistant_text = _fix_text
