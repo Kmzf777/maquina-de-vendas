@@ -192,8 +192,9 @@ def sanitize_display_name(name: str | None) -> str | None:
     """Retorna o nome se parecer um nome real; None se parecer saudação, handle/username,
     apelido de pushname ou lixo de import.
 
-    None faz o fluxo cair naturalmente em "sem nome" (a Valéria pergunta o nome em vez de
-    chamar o lead por um handle; o template do disparo usa "você"). Conservador: só descarta
+    None faz o fluxo cair naturalmente em "sem nome" (a Valéria não usa nome nenhum em vez de
+    chamar o lead por um handle -- ela não pergunta mais pelo nome; o template do disparo usa "você").
+    Conservador: só descarta
     com sinal claro — saudação pura (ex.: "Olá, boa tarde"), handle (dígito/underscore),
     apelido afetivo genérico de pushname ("querido") ou marcador de lixo de importação/CRM
     — pra não derrubar nomes legítimos como "João Silva".

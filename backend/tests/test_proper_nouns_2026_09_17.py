@@ -343,10 +343,17 @@ def test_lead_name_colide_com_palavra_comum_capitaliza_mesmo_assim():
 
 
 def test_lead_name_preserva_caixa_interna_apos_primeira_letra():
-    # "Jose-Maria" tem uma maiúscula legítima no meio (o "M" de Maria) — só a
-    # primeira letra do token é forçada; achado de mutation testing: forçar
-    # .lower() no resto degradava um nome já corretamente gravado.
-    entrada = "boa, jose-maria, tudo certo"
+    # "jose-Maria" no TEXTO tem uma maiúscula legítima no meio (o "M" de
+    # Maria) — só a primeira letra é forçada; achado de mutation testing:
+    # forçar .lower() no resto degradava uma grafia já correta.
+    #
+    # Nota (revisão pós-merge 2026-09-17): a caixa vem do TRECHO CASADO no
+    # texto agora, não mais de `lead_name` — ver comentário da Camada C.
+    # Antes desse fix o replacement vinha de lead_name, então bastava o
+    # BANCO ter "Jose-Maria" pra sair certo mesmo com o texto todo minúsculo;
+    # agora é o texto que precisa ter a maiúscula pra ela sobreviver (troca
+    # deliberada — ver o bug de acento/NFD que motivou a mudança).
+    entrada = "boa, jose-Maria, tudo certo"
     esperado = "boa, Jose-Maria, tudo certo"
     assert normalize_proper_nouns(entrada, lead_name="Jose-Maria") == esperado
 
@@ -362,13 +369,61 @@ def test_lead_name_todo_maiusculo_vira_title_case_nao_grita():
 
 
 def test_lead_name_todo_maiusculo_com_apostrofo_preserva_segunda_maiuscula():
-    # Achado de mutation testing: token.capitalize() puro maiusculiza só a
+    # Achado de mutation testing: .capitalize() puro maiusculiza só a
     # PRIMEIRA letra da string inteira e minusculiza o resto -- sobrenome
     # real com apóstrofo saía errado ("D'AVILA" -> "D'avila", perdendo o "A"
     # de Avila). Precisa maiusculizar cada sequência de letras separada.
-    entrada = "boa, d'avila, tudo certo"
+    #
+    # Nota (revisão pós-merge 2026-09-17): TEXTO agora precisa estar
+    # TODO-MAIÚSCULO pra disparar esse caso (a caixa vem do texto, não do
+    # banco) — ver teste seguinte para o gap aceito quando só o banco tem a
+    # forma TODO-MAIÚSCULO.
+    entrada = "boa, D'AVILA, tudo certo"
     esperado = "boa, D'Avila, tudo certo"
     assert normalize_proper_nouns(entrada, lead_name="D'AVILA") == esperado
+
+
+def test_lead_name_todo_maiusculo_no_banco_mas_minusculo_no_texto_gap_aceito():
+    # Gap ACEITO de propósito (revisão pós-merge 2026-09-17, consequência
+    # direta do fix de acento/NFD): se o BANCO tem "D'AVILA" mas o texto que
+    # o modelo escreveu já está em minúscula ("d'avila"), a segunda
+    # maiúscula do sobrenome composto NÃO é restaurada — sai "D'avila", não
+    # "D'Avila". Não há nada pra "des-gritar" num texto minúsculo (a
+    # persona já está calma), então isso não é regressão de humanização —
+    # é o guard deliberadamente não olhando mais pra `lead_name` pra decidir
+    # grafia, que é exatamente o que fechou a regressão de acento medida em
+    # 60 leads (2,2% dos nomeados) e a corrupção silenciosa de lead_name NFD.
+    entrada = "boa, d'avila, tudo certo"
+    esperado = "boa, D'avila, tudo certo"
+    assert normalize_proper_nouns(entrada, lead_name="D'AVILA") == esperado
+
+
+# ---------------------------------------------------------------------------
+# Camada C — regressão de acento (revisão pós-merge 2026-09-17): nome
+# gravado SEM acento não pode apagar um acento que o MODELO já escreveu
+# certo. Medido no export de 2771 leads: 60 leads (2,2% de todos os
+# nomeados, 54% dos que carregam um desses nomes) têm nome com acento
+# gravado sem acento -- "JOSE SABINO FILHO", "SERGIO COELHO LEMOS",
+# "JOAO NICO EMPORIO". Encadeado com normalize_orthography (que roda antes
+# no pipeline de saída e RESTAURA o acento) o bug antigo tirava de volta.
+# ---------------------------------------------------------------------------
+
+def test_lead_name_sem_acento_nao_apaga_acento_que_o_modelo_escreveu_jose():
+    entrada = "oi josé, tudo bem?"
+    esperado = "oi José, tudo bem?"
+    assert normalize_proper_nouns(entrada, lead_name="Jose") == esperado
+
+
+def test_lead_name_sem_acento_nao_apaga_acento_que_o_modelo_escreveu_joao():
+    entrada = "oi joão"
+    esperado = "oi João"
+    assert normalize_proper_nouns(entrada, lead_name="Joao") == esperado
+
+
+def test_lead_name_todo_maiusculo_sem_acento_nao_apaga_acento_antonio():
+    entrada = "valeu antônio"
+    esperado = "valeu Antônio"
+    assert normalize_proper_nouns(entrada, lead_name="ANTONIO") == esperado
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +449,26 @@ def test_nfc_normaliza_entrada_ja_decomposta_nfd():
     )
     esperado = "aqui é a Valéria, do comercial da Café Canastra"
     assert normalize_proper_nouns(entrada) == esperado
+
+
+def test_lead_name_em_nfd_nao_corrompe_o_texto():
+    # Achado de review pós-merge (2026-09-17): `text` é NFC-normalizado no
+    # topo, mas `lead_name` nunca era. Um `lead_name` gravado (ou pushname)
+    # em forma NFD injetava um combining mark no replacement da Camada C;
+    # as Camadas B/A rodam depois, re-normalizam com `_normalize()` (que
+    # filtra Mn), e o invariante de índice 1:1 entre texto normalizado e
+    # original quebrava SEM levantar exceção -- o fail-open documentado
+    # nunca entrava, e o texto saía embaralhado pro cliente em silêncio
+    # ("oi Jose, oSuavee 250g e aCafé Canastraa agradecem" era a saída real
+    # antes do fix). Corrigido tornando o bug estruturalmente impossível: a
+    # Camada C não deriva mais NADA da grafia de `lead_name`, só usa ele
+    # pra achar o trecho no texto (ver comentário da Camada C).
+    import unicodedata
+
+    lead_name_nfd = unicodedata.normalize("NFD", "JOSÉ")
+    entrada = "oi jose, o suave 250g e a cafe canastra agradecem"
+    esperado = "oi Jose, o Suave 250g e a Café Canastra agradecem"
+    assert normalize_proper_nouns(entrada, lead_name=lead_name_nfd) == esperado
 
 
 def test_lexico_nao_atravessa_quebra_de_linha_entre_bolhas():

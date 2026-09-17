@@ -651,38 +651,68 @@ def strip_media_history_markers(text: str) -> str:
 # `lead_name`, mínimo 3 caracteres, casado como palavra isolada. Aplica mesmo
 # quando o nome está gravado em minúsculas no banco ("vanda" -> "Vanda").
 #
-# DOIS casos de caixa (revisão 2026-09-17 pós mutation testing, dado real:
-# export de 2771 leads nomeados em leads-bling-completo-2026-08-08-br (1).csv
-# — 42,3% de TODOS os nomes, 19,0% dos nomes de pessoa, estão gravados TODO-
-# MAIÚSCULO):
-#   - token TODO-MAIÚSCULO ("VANDA", "ELIATAN") -> Title Case ("Vanda",
-#     "Eliatan"), maiusculizando cada SEQUÊNCIA DE LETRAS separadamente (não
-#     `token.capitalize()` puro — esse só maiusculiza a primeira letra da
-#     STRING inteira e minusculiza o resto, então sobrenome real com
-#     apóstrofo/hífen saía errado: "D'AVILA" -> "D'avila", "DELL'ANTONIA" ->
-#     "Dell'antonia", "JOSE-MARIA" -> "Jose-maria" — o "A"/"M" depois do
-#     apóstrofo/hífen, que devia continuar maiúsculo, virava minúsculo).
-#     Sem o caso TODO-MAIÚSCULO nenhum, a persona — cujo ponto inteiro é
-#     escrever em minúsculas calmas — GRITA o nome de 1 em cada 5 leads
-#     nomeados.
-#   - qualquer outro token só tem a PRIMEIRA letra forçada; o resto fica
-#     EXATAMENTE como está gravado (não força .lower()) — "Jose-Maria"
-#     continua "Jose-Maria" (o "M" de Maria já é maiúsculo, legítimo), não
-#     vira "Jose-maria". Essa forma (mista, não TODO-MAIÚSCULO) é só 0,5%
-#     dos nomes de pessoa no mesmo export — e a maioria das ocorrências ali
-#     é ruído de empresa ("PedidoOK", "Global Nove SpA"), não gente.
-# Consequência de ambos os casos: esta camada NÃO restaura acento a partir do
-# nome gravado (só a Camada A faz isso, e só para os nomes que conhece — por
-# isso ela roda por último, ver acima).
+# `lead_name` só serve pra ACHAR onde o nome aparece no texto (via
+# `_normalize(token)` no regex de match) — o REPLACEMENT vem do próprio
+# TRECHO CASADO em `text` (já NFC, ver seção 13), não do valor gravado no
+# banco. Revisão 2026-09-17 (achado de review pós-merge): usar o valor
+# gravado pra montar o replacement tinha 2 bugs reais:
+#   - REGRESSÃO DE ACENTO: nome gravado sem acento é comum — no mesmo export
+#     de 2771 leads usado pra medir ALL-CAPS, 60 leads (2,2% de todos os
+#     nomeados, 54% dos que carregam um desses nomes) têm nome próprio com
+#     acento gravado SEM acento: "JOSE SABINO FILHO", "SERGIO COELHO LEMOS",
+#     "JOAO NICO EMPORIO". Usar essa grafia como replacement apagava um
+#     acento que o MODELO já tinha escrito certo — lead_name="Jose" + "oi
+#     josé" virava "oi Jose", sem acento, violando a própria regra ACENTOS
+#     OBRIGATÓRIOS do prompt com código nosso. Encadeado com
+#     `normalize_orthography` (que roda logo antes no pipeline de saída) o
+#     efeito é pior: um guard restaura o acento, o outro tira de volta.
+#   - CORRUPÇÃO SILENCIOSA COM lead_name EM NFD: `text` é NFC-normalizado
+#     uma vez no topo (seção 13), mas `lead_name` nunca era — um pushname ou
+#     nome gravado em forma decomposta injetava um combining mark no
+#     replacement, e as Camadas B/A (que rodam depois e chamam `_normalize`
+#     de novo) perdiam o invariante de índice 1:1 entre texto normalizado e
+#     original. Nenhuma exceção era levantada, então o fail-open documentado
+#     nunca entrava — o texto saía visivelmente embaralhado pro cliente. Não
+#     medido em produção hoje (o mesmo export não tem nome em NFD), mas é
+#     corrupção silenciosa num caminho sem amostra (pushname do WhatsApp).
+# Derivar do texto casado resolve os dois de uma vez, e por CONSTRUÇÃO: o
+# replacement é sempre um re-caixamento de uma substring de `text` (já
+# NFC), então tem o MESMO comprimento do match sempre — o invariante que o
+# resto do módulo já depende — em vez de precisar validar isso caso a caso.
+#
+# DOIS casos de caixa, decididos pela caixa do TRECHO CASADO (não mais pela
+# grafia gravada em lead_name):
+#   - trecho TODO-MAIÚSCULO no texto ("VANDA", "ELIATAN") -> Title Case
+#     ("Vanda", "Eliatan"), maiusculizando cada SEQUÊNCIA DE LETRAS
+#     separadamente (não `.capitalize()` puro — esse só maiusculiza a
+#     primeira letra da STRING inteira e minusculiza o resto, então
+#     sobrenome real com apóstrofo/hífen sairia errado: "D'AVILA" ->
+#     "D'avila"). Dado real (mesmo export, 2771 leads nomeados): 42,3% de
+#     TODOS os nomes, 19,0% dos nomes de pessoa, estão gravados TODO-
+#     MAIÚSCULO — sem este caso, a persona (que escreve em minúsculas
+#     calmas de propósito) gritaria o nome de 1 em cada 5 leads nomeados.
+#   - qualquer outro trecho só tem a PRIMEIRA letra forçada; o resto fica
+#     EXATAMENTE como o MODELO escreveu (não força .lower()) — "jose-Maria"
+#     no texto vira "Jose-Maria", preservando um "M" já maiúsculo legítimo.
+# Efeito colateral ACEITO: se o texto tiver um nome composto todo em
+# minúscula ("d'avila"), a segunda maiúscula NÃO é restaurada mesmo que
+# lead_name esteja gravado "D'AVILA" — sai "D'avila", não "D'Avila". Não há
+# nada pra "des-gritar" num texto minúsculo, então isso não é regressão de
+# humanização — é só a mesma correção que fecha o bug de acento/NFD acima:
+# o guard não deveria decidir grafia olhando pra lead_name.
+# Consequência (já era assim, continua): esta camada NÃO restaura acento a
+# partir do nome gravado — só a Camada A faz isso, e só para os nomes que
+# conhece (por isso ela roda por último, ver acima).
 # Efeito colateral ACEITO de propósito: um nome de lead que colide com uma
 # palavra comum (ex.: lead_name="Rosa" + texto "a rosa dos ventos") também é
 # capitalizado — falso-positivo raro e de baixo custo (pior caso: uma palavra
 # comum maiusculizada), não vale a complexidade de desambiguar nome vs.
 # palavra.
 _LEAD_NAME_MIN_LEN = 3
-# Sequência de letras (não dígito/underscore) — usada pra maiusculizar
-# cada "palavra" de um token TODO-MAIÚSCULO separadamente (ver comentário
-# acima): "D'AVILA" -> runs ["D", "AVILA"] -> ["D", "Avila"] -> "D'Avila".
+# Sequência de letras (não dígito/underscore) — usada pra maiusculizar cada
+# "palavra" de um TRECHO TODO-MAIÚSCULO do texto separadamente (ver
+# comentário acima): "D'AVILA" -> runs ["D", "AVILA"] -> ["D", "Avila"] ->
+# "D'Avila".
 _LEAD_NAME_LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
 
 
@@ -703,15 +733,22 @@ def _title_case_lead_name(text: str, lead_name: str | None) -> str:
     spans: list[tuple[int, int, str]] = []
     for token in tokens:
         token_re = re.compile(r"\b" + re.escape(_normalize(token)) + r"\b")
-        canon = (
-            _LEAD_NAME_LETTER_RUN_RE.sub(
-                lambda wm: wm.group(0).capitalize(), token.lower()
-            )
-            if token.isupper()
-            else token[0].upper() + token[1:]
-        )
         for m in token_re.finditer(normalized):
-            spans.append((m.start(), m.end(), canon))
+            # `repl` vem do trecho CASADO no texto original (já NFC), não do
+            # `lead_name` gravado — ver comentário acima. Só a CAIXA é
+            # transformada; o acento que já está no texto é preservado, e o
+            # tamanho do replacement é garantido igual ao do match (mesma
+            # string, só re-caixada), que é exatamente o invariante que o
+            # resto do módulo documenta e depende.
+            orig = text[m.start() : m.end()]
+            repl = (
+                _LEAD_NAME_LETTER_RUN_RE.sub(
+                    lambda wm: wm.group(0).capitalize(), orig.lower()
+                )
+                if orig.isupper()
+                else orig[0].upper() + orig[1:]
+            )
+            spans.append((m.start(), m.end(), repl))
     if not spans:
         return text
     spans.sort()
@@ -811,6 +848,16 @@ _PRODUCT_CAFE_BRIDGE_RE = re.compile(
     r"\b(?:" + "|".join(sorted(_PRODUCT_DETERMINERS, key=len, reverse=True))
     + r")[ \t]+(?:cafe|blend)[ \t]*$"
 )
+# Teto de quanto texto ANTES de cada match de produto entra em jogo (medido,
+# review 2026-09-17: sem teto, `_noun_scope_since_boundary` + o `.search()`
+# do bridge re-escaneiam o prefixo inteiro a cada match de produto — O(n²)
+# no texto, 4x por dobra de tamanho: 187 chars = 0,09ms, 4000 = 2,7ms,
+# 8000 = 238ms, 16000 = 921ms — e essa função roda síncrona dentro de
+# código async, bloqueando o event loop). Nenhum dos gates (NOUN a 3
+# palavras, ADJACENT/determinante a 1, bridge a 2 palavras coladas) nunca
+# precisa olhar mais que umas poucas dezenas de caracteres pra trás; 200 é
+# folgado pra qualquer frase/bolha real e limita o custo por match a O(1).
+_PRODUCT_LOOKBACK_CHARS = 200
 
 
 def _noun_scope_since_boundary(span: str) -> list[str]:
@@ -839,7 +886,7 @@ def _capitalize_products(text: str) -> str:
     normalized = _normalize(text)
     spans: list[tuple[int, int, str]] = []
     for m in _PRODUCT_WORD_RE.finditer(normalized):
-        before = normalized[: m.start()]
+        before = normalized[max(0, m.start() - _PRODUCT_LOOKBACK_CHARS) : m.start()]
         after = normalized[m.end() :]
 
         # `nearest` (ADJACENT e determinante) também respeita a quebra de
@@ -942,11 +989,13 @@ def normalize_proper_nouns(text: str, lead_name: str | None = None) -> str:
     ordem: um lead chamado "Valeria" sem acento no banco):
 
     Camada C: nome do lead — title-case do primeiro/último token de
-    `lead_name` quando aparece como palavra isolada no texto. Token
-    TODO-MAIÚSCULO ("VANDA") vira Title Case ("Vanda" — a persona nunca
-    grita, e "D'AVILA"/"JOSE-MARIA" mantêm a segunda maiúscula legítima);
-    qualquer outro token só tem a PRIMEIRA letra forçada, o resto fica como
-    está gravado (acento não é restaurado a partir do nome).
+    `lead_name` quando aparece como palavra isolada no texto. `lead_name` só
+    localiza o trecho; a CAIXA do replacement vem do próprio trecho casado
+    em `text` (TODO-MAIÚSCULO -> Title Case letra-run a letra-run, ex.
+    "D'AVILA" -> "D'Avila"; qualquer outra caixa só tem a primeira letra
+    forçada) — nunca da grafia gravada no banco, então acento e forma NFD/
+    NFC do nome gravado não vazam pro texto (ver comentário da Camada C na
+    seção 13 para os dois bugs reais que isso fechou).
     Camada B: produtos (Clássico/Suave/Canela/Microlote) — só capitaliza com
     porta de contexto (determinante masculino adjacente, "determinante +
     café/blend" adjacente, ou token de formato/preço adjacente depois; a
