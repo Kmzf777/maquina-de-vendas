@@ -45,7 +45,9 @@ def test_worker_registers_ad_spend_sync_tick():
     # (name, kind, fn, interval)
     assert spec[1] == "periodic"
     assert callable(spec[2])
-    assert spec[3] == 86400
+    # 3h: com 24h o dia corrente ficava zerado na tela do /trafego e o último dia
+    # sincronizado ficava pela metade — ver test_traffic_report_fuso_e_meta_ad_id.py.
+    assert spec[3] == 10800
 
 
 def test_sync_endpoint_calls_sync(monkeypatch):

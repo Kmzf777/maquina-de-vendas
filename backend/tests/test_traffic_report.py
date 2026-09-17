@@ -13,9 +13,10 @@ def test_resolve_window_all_is_open():
 
 
 def test_resolve_window_explicit_range_takes_precedence():
+    # A janela é o DIA de Brasília inteiro — ver test_traffic_report_fuso_e_meta_ad_id.py.
     lo, hi = _resolve_window("30d", "2026-08-01", "2026-08-31")
-    assert lo == "2026-08-01T00:00:00+00:00"
-    assert hi == "2026-08-31T23:59:59.999999+00:00"
+    assert lo == "2026-08-01T00:00:00-03:00"
+    assert hi == "2026-08-31T23:59:59.999999-03:00"
 
 
 def test_resolve_window_ignores_malformed_dates():
@@ -26,7 +27,7 @@ def test_resolve_window_ignores_malformed_dates():
 
 def test_resolve_window_only_from():
     lo, hi = _resolve_window("all", "2026-08-10", None)
-    assert lo == "2026-08-10T00:00:00+00:00" and hi is None
+    assert lo == "2026-08-10T00:00:00-03:00" and hi is None
 
 
 def test_derive_channel_google_by_gclid():
