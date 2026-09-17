@@ -119,10 +119,18 @@ escopo, deixe o default.
 Logue no padrão do módulo quando a guarda alterar o texto (veja `[ORTHO GUARD]`, linha ~409):
 `[PROPER NOUN GUARD]`, nível `debug`.
 
-**2b — `tools.py`:** a `mensagem_despedida` do handoff não passa pelo funil acima — os três
-pontos que enviam o texto do LLM direto são `backend/app/agent/tools.py:404`, `:841` e `:1164`
-(variável `despedida`). Aplique `normalize_proper_nouns` ao valor de `despedida` nos três, com
-o nome do lead quando disponível no escopo.
+**2b — `tools.py`:** a `mensagem_despedida` do handoff não passa pelo funil acima. Verificado
+no código (17/09): há **dois** pontos que enviam o texto do LLM direto, não três —
+
+- `backend/app/agent/tools.py:404` (`_send_despedida_descarte`) — envia `despedida` cru;
+- `backend/app/agent/tools.py:841` (`encaminhar_humano`) — envia `despedida` cru.
+
+`tools.py:1164` (`escalar_reclamacao`) **não envia**: ele só repassa `mensagem_despedida` para
+`encaminhar_humano` via `ctx.invoke`, caindo no caminho de `:841`. Não adicione chamada lá —
+seria dupla normalização (idempotente, mas redundante e enganosa para quem ler depois).
+
+Aplique `normalize_proper_nouns` ao valor de `despedida` nos DOIS pontos, com o nome do lead
+quando disponível no escopo.
 
 Essa é a mensagem que fecha o atendimento e nomeia o João — foi onde saiu
 `"perfeito, eliatan, o joao bras que te ajuda"`.
