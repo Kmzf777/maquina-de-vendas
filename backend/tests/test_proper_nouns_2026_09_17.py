@@ -151,17 +151,23 @@ def test_bridge_determinante_mais_cafe_antes_do_produto():
 def test_objecao_de_preco_mais_nao_bloqueia_suave_a_3_palavras():
     # Achado de mutation testing (revisão 2026-09-17): uma janela NEVER única
     # de 3 palavras pra "mais/bem/bastante/..." bloqueava objeção de preço —
-    # o caminho dominante do funil ("mais barato?" é a pergunta mais comum) —
-    # porque "mais" ficava 3 palavras atrás do produto. Intensificador só
-    # bloqueia ADJACENTE agora ("mais suave" comparativo), não a distância.
-    entrada = "mais barato? o suave 250g"
-    esperado = "mais barato? o Suave 250g"
+    # o caminho dominante do funil ("mais barato" e afins e a pergunta mais
+    # comum) — porque "mais" ficava 2-3 palavras atrás do produto.
+    # Intensificador só bloqueia ADJACENTE agora ("mais suave" comparativo),
+    # não a distância. Usa VÍRGULA (não "?") de propósito: achado de review
+    # posterior — "?" reseta a janela por si só (fix da quebra de
+    # bolha/frase), então uma frase com "?" passaria mesmo SEM o split
+    # NOUN/ADJACENT e o teste não provaria nada. Vírgula não reseta.
+    entrada = "quer algo mais barato, o suave 250g"
+    esperado = "quer algo mais barato, o Suave 250g"
     assert normalize_proper_nouns(entrada) == esperado
 
 
 def test_objecao_de_preco_bem_e_bastante_nao_bloqueiam_a_distancia():
-    entrada = "quer algo mais barato? o clássico 250g"
-    esperado = "quer algo mais barato? o Clássico 250g"
+    # Mesmo cuidado com vírgula do teste acima — nenhuma das duas entradas
+    # usa "?", pra garantir que é o split NOUN/ADJACENT sendo testado.
+    entrada = "quer algo mais barato, o clássico 250g"
+    esperado = "quer algo mais barato, o Clássico 250g"
     assert normalize_proper_nouns(entrada) == esperado
 
     entrada2 = "bastante procurado, o microlote 250g"
@@ -172,6 +178,18 @@ def test_objecao_de_preco_bem_e_bastante_nao_bloqueiam_a_distancia():
 # ---------------------------------------------------------------------------
 # Camada B — NÃO capitaliza (porta de contexto fechada)
 # ---------------------------------------------------------------------------
+
+def test_adjacent_nearest_tambem_respeita_quebra_de_bolha():
+    # Achado de mutation testing (review seguinte ao boundary-reset das
+    # NOUNS): o `nearest` de ADJACENT/determinante usava `[a-z]+` cru sobre
+    # o texto inteiro, que ignora pontuacao/quebra de bolha -- entao "mais"
+    # de uma bolha ANTERIOR era lido como "a palavra anterior" de um
+    # produto em bolha seguinte com determinante colado, e bloqueava por
+    # engano (bolha de lista de preco realista neste funil).
+    entrada = "qual desses te agrada mais?\n\nsuave 250g - R$28,70"
+    esperado = "qual desses te agrada mais?\n\nSuave 250g - R$28,70"
+    assert normalize_proper_nouns(entrada) == esperado
+
 
 def test_torra_suave_nao_capitaliza():
     entrada = "esse café tem uma torra suave"
@@ -250,12 +268,35 @@ def test_never_nouns_nao_atravessa_quebra_de_bolha():
     assert normalize_proper_nouns(entrada) == esperado
 
 
+def test_never_nouns_reseta_tambem_em_reticencias_e_dois_pontos():
+    # Achado de review posterior: "..." (3 pontos, ja coberto por ".") e "\u2026"
+    # (reticencias, um unico codepoint) sao intencao identica -- o prompt
+    # sanciona reticencias e o splitter tem regra dedicada preservando "...",
+    # entao o modelo emite as duas formas. Dois-pontos tambem reseta (lista
+    # de produto apos introducao, forma natural neste agente).
+    entrada = "torra especial\u2026 o microlote 250g"
+    esperado = "torra especial\u2026 o Microlote 250g"
+    assert normalize_proper_nouns(entrada) == esperado
+
+    entrada2 = "de torra especial: o microlote 250g sai R$59"
+    esperado2 = "de torra especial: o Microlote 250g sai R$59"
+    assert normalize_proper_nouns(entrada2) == esperado2
+
+
 def test_never_nouns_distancia_3_sem_boundary_continua_bloqueando():
     # Contraprova: SEM quebra de bolha/frase, a janela de 3 continua valendo
     # -- medido em producao (90 dias): distancia-3 ("toque natural de
     # canela") e a forma MAIS comum de uso como especiaria (26 ocorrencias,
     # mais que distancia-2 com 22), nao um caso residual a se descartar.
-    entrada = "toque natural de canela"
+    #
+    # String verbatim de producao (nao "toque natural de canela" -- achado de
+    # review posterior: aquela entrada nao tem NENHUM gate de capitalizar
+    # disparando -- nem determinante adjacente, nem formato, nem bridge --
+    # entao ela passa em janela=3, janela=2 e ate com o NEVER inteiro
+    # deletado; nao prova nada sobre o tamanho da janela). Esta tem "250g"
+    # (gate de formato) logo depois -- bloqueia com janela=3 ("torra" 3
+    # palavras atras) e CAPITALIZARIA com janela=2 (mutation-check abaixo).
+    entrada = "torra escura com canela 250g"
     assert normalize_proper_nouns(entrada) == entrada
 
 
@@ -318,6 +359,16 @@ def test_lead_name_todo_maiusculo_vira_title_case_nao_grita():
     entrada = "obrigada, VANDA! ate mais"
     esperado = "obrigada, Vanda! ate mais"
     assert normalize_proper_nouns(entrada, lead_name="VANDA") == esperado
+
+
+def test_lead_name_todo_maiusculo_com_apostrofo_preserva_segunda_maiuscula():
+    # Achado de mutation testing: token.capitalize() puro maiusculiza só a
+    # PRIMEIRA letra da string inteira e minusculiza o resto -- sobrenome
+    # real com apóstrofo saía errado ("D'AVILA" -> "D'avila", perdendo o "A"
+    # de Avila). Precisa maiusculizar cada sequência de letras separada.
+    entrada = "boa, d'avila, tudo certo"
+    esperado = "boa, D'Avila, tudo certo"
+    assert normalize_proper_nouns(entrada, lead_name="D'AVILA") == esperado
 
 
 # ---------------------------------------------------------------------------
