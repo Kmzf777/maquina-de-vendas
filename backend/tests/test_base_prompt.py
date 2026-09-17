@@ -546,3 +546,121 @@ def test_contexto_outbound_1o_turno_so_manda_nomear_quando_ha_nome():
     for txt in (com_nome, sem_nome):
         assert "ack de sistema seco" in txt
         assert "PONTE DE CONTEXTO" in txt
+
+
+# ── ICP: lead de cafe commodity/tradicional nao vira handoff (17/09/2026) ────
+# Producao, 90 dias: 116 leads sinalizaram commodity/tradicional e 82 (70,7%) foram
+# entregues ao Joao — 14 pontos ACIMA da media geral (56,9%). Nenhum prompt inbound
+# tinha regra de ICP; o "objecao de preco -> handoff", o circuit breaker que se declara
+# incondicional e o "nao encerre com registrar_sem_interesse_atual" convertiam esse lead
+# em "qualificado" por construcao. O motivo do descarte foi conferido contra a guarda 18C
+# de tools.py (_ADIAMENTO_MORNO_SIGNALS): nao contem nenhum sinal de adiamento morno.
+
+_MOTIVO_ICP_COMMODITY = (
+    'registrar_sem_interesse_atual(motivo="lead busca café commodity/tradicional'
+    ' — fora do ICP de café especial")'
+)
+
+
+def _atacado(fluxo: str) -> str:
+    from app.agent.prompts import get_stage_prompts
+    return get_stage_prompts(fluxo)["atacado"]
+
+
+def _secao_icp_commodity(fluxo: str) -> str:
+    """Recorta a secao de ICP commodity do prompt de atacado montado.
+
+    Ancora no motivo do descarte (unico desta secao — o do auto-produtor termina em
+    'fora do ICP de atacado') e sobe ate o titulo da secao."""
+    prompt = _atacado(fluxo)
+    idx = prompt.find('fora do ICP de café especial")')
+    assert idx != -1, f"secao de ICP commodity ausente no atacado {fluxo}"
+    inicio = prompt.rfind("\n#", 0, idx)
+    fim = prompt.find("\n#", idx)
+    return prompt[inicio:fim if fim != -1 else len(prompt)]
+
+
+def test_atacado_inbound_tem_secao_icp_commodity():
+    """O conceito de ICP passa a existir no inbound — antes so existia no outbound."""
+    secao = _secao_icp_commodity("valeria_inbound").lower()
+    assert "fora do icp" in secao
+    assert "o mais barato" in secao, "sinal de commodity ausente"
+    assert "supermercado" in secao, "preco de supermercado ausente como sinal"
+
+
+def test_atacado_inbound_icp_descarta_em_vez_de_encaminhar():
+    secao = _secao_icp_commodity("valeria_inbound")
+    assert _MOTIVO_ICP_COMMODITY in secao, (
+        "motivo do descarte divergiu do texto conferido contra a guarda 18C"
+    )
+    proibicao = [l for l in secao.splitlines() if "encaminhar_humano" in l and "PROIBIDO" in l]
+    assert proibicao, "a secao precisa PROIBIR encaminhar_humano neste caminho"
+
+
+def test_atacado_inbound_icp_vence_o_circuit_breaker():
+    """O circuit breaker se declara 'incondicional e sobrepoe qualquer outra regra de
+    fluxo' — sem precedencia explicita ele segue convertendo o lead fora do ICP em handoff."""
+    secao = _secao_icp_commodity("valeria_inbound").lower()
+    assert "precedencia" in secao or "precedência" in secao
+    assert "circuit breaker" in secao
+    assert "objecao de preco" in secao, "a regra das 2 tentativas tem que ser nomeada"
+    # e o proprio circuit breaker deixa de se declarar incondicional sem ressalva
+    prompt = _atacado("valeria_inbound")
+    cb = prompt[prompt.index("## Circuit breaker"):]
+    cb = cb[:cb.index("\n##", 1)]
+    assert "ICP" in cb, "o circuit breaker segue incondicional — precisa citar a excecao de ICP"
+
+
+def test_atacado_inbound_icp_preserva_os_nao_sinais():
+    """Dos 116 leads do coorte, muitos so PERGUNTAVAM a diferenca entre as categorias —
+    desqualificar em bloco destruiria lead bom."""
+    secao = _secao_icp_commodity("valeria_inbound").lower()
+    assert "gourmet" in secao, "a pergunta de categoria precisa constar como NAO-sinal"
+    assert "migrar" in secao or "ampliar" in secao, (
+        "quem vende tradicional HOJE e quer migrar/ampliar nao e sinal"
+    )
+    assert "classico" in secao or "clássico" in secao, (
+        "o Classico atende quem quer o cafe mais proximo do tradicional"
+    )
+
+
+def test_atacado_outbound_espelha_a_secao_icp():
+    secao = _secao_icp_commodity("valeria_outbound")
+    assert _MOTIVO_ICP_COMMODITY in secao
+    low = secao.lower()
+    assert "o mais barato" in low and "supermercado" in low
+    assert "gourmet" in low
+    assert "classico" in low or "clássico" in low
+
+
+def _regra_7(prompt: str) -> str:
+    bloco = prompt[prompt.index("# REGRAS ABSOLUTAS"):]
+    idx = bloco.index("\n7. ")
+    return bloco[idx:bloco.index("\n8. ", idx)]
+
+
+def test_regra_7_nao_e_mais_proibicao_absoluta_de_nomear_a_categoria():
+    """Producao: 64 violacoes em 57 leads em 90 dias — inclusive a resposta CERTA
+    ("a gente não trabalha com café tradicional, só com café especial"), que a regra
+    proibia. Regra inseguivel nao e regra."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    assert 'NUNCA DIZER "CAFE TRADICIONAL"' not in prompt
+    regra = _regra_7(prompt).lower()
+    assert "tradicional" in regra
+    assert "categoria" in regra, "a regra precisa autorizar nomear a categoria do lead"
+
+
+def test_regra_7_ainda_proibe_chamar_o_nosso_cafe_de_tradicional():
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    regra = _regra_7(prompt).lower()
+    assert "proibido" in regra or "nunca" in regra
+    assert "especia" in regra, "a regra tem que reafirmar que o nosso cafe e especial"
+
+
+def test_voice_card_espelha_a_regra_7_corrigida():
+    from app.agent.prompts.voice_card import VALERIA_VOICE_CARD
+    assert 'NUNCA diga "cafe tradicional"' not in VALERIA_VOICE_CARD
+    # o cartao quebra linha no meio das frases — normalize antes de procurar
+    low = " ".join(VALERIA_VOICE_CARD.lower().split())
+    assert "tradicional" in low
+    assert "nunca chame o nosso cafe de tradicional" in low
