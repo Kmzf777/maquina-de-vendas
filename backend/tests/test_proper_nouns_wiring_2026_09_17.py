@@ -178,3 +178,87 @@ async def test_despedida_do_handoff_sai_com_nomes_proprios_corrigidos(monkeypatc
     assert sent == [esperada]
     assistant_saves = [c for c in mock_save.call_args_list if c.args[1] == "assistant"]
     assert [c.args[2] for c in assistant_saves] == [esperada]
+
+
+# ---------------------------------------------------------------------------
+# 3. run_agent ponta a ponta — a PLUMBING do `lead_name` nos 7 call sites
+# ---------------------------------------------------------------------------
+# Os testes da seção 1 chamam _sanitize_assistant_text direto, passando
+# `lead_name=` na mão — eles provam que o FUNIL usa o parâmetro, mas não que os
+# call sites o PASSAM. Se um `lead_name=lead.get("name")` cair de um dos 7
+# sites, a Camada C para de agir naquele caminho em silêncio e o nome do lead
+# volta a sair minúsculo — exatamente a falha que este trabalho existe pra
+# impedir. Os dois testes abaixo fecham esse buraco indo por run_agent, com um
+# nome que NÃO está no léxico fixo (só a Camada C capitaliza "vanda").
+#
+# COBERTURA PARCIAL, de propósito: estes dois exercitam source="initial" (o
+# caminho de maior volume) e source="optout". Os outros 5 sites — "retry",
+# "retry-post-tool", "retry-optout", "retry2" e "repeat-question-fix" — seguem
+# SEM teste de plumbing: todos exigem encenar um turno vazio (ou uma pergunta
+# repetida) MAIS uma segunda geração, e a montagem não se paga contra o risco.
+# Se você mexer num deles, confira o `lead_name=lead.get("name")` na mão.
+
+
+def _conversation_pn(lead_name: str) -> dict:
+    return {
+        "id": "conv-pn-001",
+        "stage": "secretaria",
+        "leads": {
+            "id": "lead-pn-001", "name": lead_name,
+            "phone": "5511900000099", "ai_enabled": True,
+        },
+    }
+
+
+def _history_pn() -> list:
+    return [{
+        "role": "user", "content": "como funciona a compra?",
+        "stage": "secretaria", "created_at": "2026-09-17T10:00:00Z",
+        "wamid": "wamid-pn-01", "quoted_wamid": None,
+        "message_type": "text", "metadata": None,
+    }]
+
+
+async def _run_agent_pn(resultado, lead_name: str):
+    """run_agent ponta a ponta com o lead GRAVADO como `lead_name`.
+
+    run_agent re-busca o lead (defense-in-depth do ai_enabled) e passa a usar o
+    dict fresco — então é o retorno de `get_lead` que alimenta lead.get("name").
+    """
+    from app.agent.orchestrator import run_agent
+
+    with patch("app.agent.orchestrator.get_history", return_value=_history_pn()), \
+         patch("app.agent.orchestrator.get_lead", return_value={
+             "id": "lead-pn-001", "name": lead_name,
+             "phone": "5511900000099", "ai_enabled": True,
+         }), \
+         patch("app.agent.orchestrator.execute_tool",
+               new_callable=AsyncMock, return_value="ok"), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate", new=AsyncMock(return_value=resultado)):
+        return await run_agent(_conversation_pn(lead_name), "como funciona a compra?")
+
+
+@pytest.mark.asyncio
+async def test_run_agent_leva_o_nome_do_lead_ate_a_camada_c():
+    """source="initial": lead gravado "vanda" (minúsculo no banco) sai "Vanda"."""
+    from tests.gemini_fakes import fake_text
+
+    resultado = await _run_agent_pn(fake_text("funciona assim, vanda"), "vanda")
+    assert resultado == "funciona assim, Vanda"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_optout_leva_o_nome_do_lead_ate_a_camada_c():
+    """source="optout": a despedida de opt-out volta pelo mesmo funil, com o nome."""
+    from tests.gemini_fakes import fake_tool_call
+
+    resultado = await _run_agent_pn(
+        fake_tool_call(
+            "registrar_optout",
+            {"motivo": "pediu para nao receber mais mensagens"},
+            text="sem problema, vanda\n\nqualquer coisa é só chamar",
+        ),
+        "vanda",
+    )
+    assert resultado == "sem problema, Vanda\n\nqualquer coisa é só chamar"

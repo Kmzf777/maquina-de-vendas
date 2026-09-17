@@ -765,6 +765,10 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
             lead_id, phone, exc,
         )
     try:
+        # BUG LATENTE PRÉ-EXISTENTE (registrado 17/09, NÃO corrigido): este bind mora
+        # DENTRO do try. Se get_lead levantar, `lead` nunca existe e o
+        # resolve_send_target(lead, phone) lá embaixo estoura NameError — o que torna
+        # o `if lead else` do schedule_handoff_rescue uma falsa proteção.
         lead = get_lead(lead_id)
         lead_stage = lead.get("stage") if lead else None
         deal_title = f"{vendedor} - {motivo}"
@@ -857,6 +861,10 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
         # justamente a que FECHA a conversa e NOMEIA o vendedor — falha real de
         # produção: "perfeito, eliatan, o joao bras que te ajuda" (auditoria 90 dias,
         # 17/09). Função pura/fail-open; o log mora no call site.
+        # ESCOPO (registrado 17/09, NÃO corrigido): só a guarda de nomes próprios foi
+        # ligada aqui. A despedida segue escapando das OUTRAS guardas de aderência
+        # (strip_prohibited_phrases, normalize_orthography, strip_kitchen_leak...) —
+        # na mesma falha real, o "perfeito" da blacklist do prompt continua saindo.
         _com_nomes = normalize_proper_nouns(despedida, (lead.get("name") if lead else None))
         if _com_nomes != despedida:
             logger.debug(
