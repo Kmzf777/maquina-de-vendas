@@ -25,7 +25,7 @@ from pydantic import ValidationError
 
 import app.quotes.router as qr
 from app.bling.contacts import Resolution
-from app.bling.errors import BlingServerError, BlingValidationError
+from app.bling.errors import BlingServerError, BlingUnknownAccount, BlingValidationError
 
 LEAD = {"id": "L1", "name": "Empresa X", "cnpj": "24252228000137",
         "email": "compras@empresa.com", "phone": "5534999998888",
@@ -37,6 +37,10 @@ QUOTE_CONVERTIDO = {
     "bling_contact_id": 555, "quoted_at": "2026-08-25", "total": "100.00",
     "payment_method_id": 45, "payment_terms": "0", "created_by": "v@e.com",
     "sale_id": "S1",
+    # Toda quote nasce com uma conta gravada (regra 4 / invariante
+    # orcamento-pedido); "default" e o que o POST de hoje produz sem o campo
+    # `account` no corpo.
+    "bling_account": "default",
 }
 
 QUOTE_RASCUNHO = {**QUOTE_CONVERTIDO, "status": "rascunho", "sale_id": None}
@@ -71,15 +75,21 @@ def db(monkeypatch):
     sobra sendo exercitado é a decisão do endpoint — que é o que pode quebrar.
     """
     estado = {"inserted": None, "items": None, "updates": [], "deal": [],
-              "ordem": []}
+              "ordem": [], "resolve_accounts": [], "clientes": []}
 
     monkeypatch.setattr(qr, "_load_lead", lambda _id: dict(LEAD))
     monkeypatch.setattr(qr, "_load_lead_para_pdf", lambda _id: dict(LEAD))
-    monkeypatch.setattr(qr, "_products_by_id", lambda _ids: {})
-    monkeypatch.setattr(qr, "_seller_id_for", lambda _email: 12)
-    monkeypatch.setattr(qr, "_payment_method_name", lambda _id: "Boleto")
+    # Os quatro dubles abaixo EXIGEM a conta, sem default. Nao e estilo: antes
+    # disso, `_seller_id_for` era substituido por `lambda _email: 12` enquanto a
+    # funcao real ja pedia dois argumentos — a suite ficava verde com
+    # /orcamento quebrado em producao (TypeError -> 500 em criar, editar e
+    # converter). Duble frouxo esconde exatamente a regressao que ele existiria
+    # para pegar.
+    monkeypatch.setattr(qr, "_products_by_id", lambda _ids, _account: {})
+    monkeypatch.setattr(qr, "_seller_id_for", lambda _email, _account: 12)
+    monkeypatch.setattr(qr, "_payment_method_name", lambda _id, _account: "Boleto")
     monkeypatch.setattr(qr, "_seller_for",
-                        lambda email: {"nome": "Vendedor", "email": email})
+                        lambda email, _account: {"nome": "Vendedor", "email": email})
     monkeypatch.setattr(qr, "_load_quote_items", lambda _id: list(ITENS_DA_QUOTE))
 
     def _insert(row):
@@ -105,10 +115,37 @@ def db(monkeypatch):
     monkeypatch.setattr(qr, "_replace_quote_items", _replace)
     monkeypatch.setattr(qr, "_move_deal_to_proposal", _move)
 
-    async def fake_resolve(lead):
+    async def fake_resolve(lead, account):
+        # `account` SEM default de proposito (mesma razao de
+        # `_fake_account_sem_loja` em test_bling_orders.py): um duble frouxo
+        # deixaria passar, em silencio, uma chamada que esqueceu de repassar a
+        # conta certa. Fica registrado para os testes do invariante
+        # orcamento-pedido conferirem QUAL conta foi usada.
+        estado["resolve_accounts"].append(account)
         return Resolution("linked", 555)
 
     monkeypatch.setattr(qr.contacts, "resolve", fake_resolve)
+
+    class _ClienteFake:
+        """Duble de BlingClient. Exige `account` (sem default) pelo mesmo
+        motivo do `fake_resolve` acima: se algum `BlingClient()` do router
+        esquecer de repassar a conta, o TypeError estoura em QUALQUER teste
+        que exercite aquele caminho — nao so nos testes escritos para o
+        invariante orcamento-pedido. Sem I/O real: create_proposal,
+        update_proposal, set_situacao e create_order sao todos fakes nesta
+        suite, entao o client nunca chega a executar uma request de verdade.
+        """
+
+        def __init__(self, *, account):
+            estado["clientes"].append(account)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(qr, "BlingClient", _ClienteFake)
 
     async def fake_create_proposal(client, **kwargs):
         estado["ordem"].append("create_proposal")
@@ -122,9 +159,14 @@ def db(monkeypatch):
     async def fake_set_situacao(client, *, proposal_id, situacao):
         estado["ordem"].append(f"set_situacao:{situacao}")
 
-    async def fake_create_order(client, **kwargs):
+    async def fake_create_order(client, *, account, **kwargs):
+        # `account` isolado dos demais (sem default) pelo mesmo motivo do
+        # `fake_resolve`/`_ClienteFake`: convert_quote_endpoint SEMPRE manda
+        # este campo (nao e opcional em nenhum ramo), entao exigi-lo aqui pega
+        # em cheque um esquecimento em vez de deixa-lo sumir dentro de
+        # **kwargs sem chamar atencao.
         estado["ordem"].append("create_order")
-        estado["order_kwargs"] = kwargs
+        estado["order_kwargs"] = {**kwargs, "account": account}
         return {"sale_id": "S9", "bling_order_id": 34215992,
                 "bling_order_number": 1234}
 
@@ -200,7 +242,7 @@ async def test_criar_grava_os_itens_com_total_e_ordem(db):
 async def test_criar_devolve_409_quando_o_contato_nao_resolve(db, monkeypatch):
     """Mesmo contrato do POST /api/bling/orders: nada é criado — nem contato,
     nem proposta, nem linha em `quotes`. Quem decide é o humano."""
-    async def fake_resolve(lead):
+    async def fake_resolve(lead, account):
         return Resolution("suggested", None, [{"id": 77, "nome": "Empresa X"}],
                           "telefone")
 
@@ -288,7 +330,7 @@ async def test_falha_ao_gravar_itens_nao_derruba_o_orcamento(db, monkeypatch):
 async def test_descricao_do_item_e_completada_pelo_espelho(db, monkeypatch):
     """O Bling recusa item sem descrição mesmo com `produto.id` — mesma
     completude que o pedido de venda já faz."""
-    monkeypatch.setattr(qr, "_products_by_id", lambda _ids: {
+    monkeypatch.setattr(qr, "_products_by_id", lambda _ids, _account: {
         777: {"id": 777, "nome": "Cafe Classico 250g", "codigo": "CAF250",
               "unidade": "UN"}})
 
@@ -718,3 +760,246 @@ async def test_converter_sem_frete_nao_inventa_valor(db, monkeypatch):
 
     assert db["order_kwargs"]["freight"] == 0.0
     assert db["order_kwargs"]["freight_mode"] is None
+
+
+# ---------------------------------------------------------------------------
+# Invariante orcamento-pedido: uma proposta so vira pedido NA MESMA conta
+# (regra 4 do topo do arquivo)
+# ---------------------------------------------------------------------------
+def _fake_account(key: str) -> qr.config.BlingAccount:
+    """Stand-in p/ config.account(): so reconhece "default" e "secundaria",
+    cada uma com uma LOJA diferente (111/222) — e o numero diferente que deixa
+    os testes provarem qual conta foi de fato usada, em vez de so conferir que
+    "alguma" conta chegou. Levanta para qualquer outra chave, do mesmo jeito
+    que o config.account() real levantaria para um slug fora de
+    BLING_ACCOUNTS.
+    """
+    lojas = {qr.config.DEFAULT_ACCOUNT: 111, "secundaria": 222}
+    if key not in lojas:
+        raise BlingUnknownAccount(f"conta Bling desconhecida: {key!r}")
+    return qr.config.BlingAccount(
+        key=key, label=key, client_id=f"cid-{key}", client_secret=f"csec-{key}",
+        store_id=lojas[key], situacao_id=None,
+    )
+
+
+async def test_criar_grava_a_conta_escolhida_na_linha(db, monkeypatch):
+    """R1: `account` do corpo vira `quotes.bling_account`, normalizado."""
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+
+    await qr.create_quote_endpoint(corpo(account="secundaria"))
+
+    assert db["inserted"]["bling_account"] == "secundaria"
+
+
+async def test_criar_grava_o_key_normalizado_e_nao_o_texto_cru_do_corpo(db, monkeypatch):
+    """R1 e explicito: e o `.key` NORMALIZADO de `config.account()` que e
+    gravado — nao `body.account` direto. Um bug que gravasse o texto cru
+    passaria pelo teste acima (que ja manda "secundaria" pronto); aqui o
+    corpo manda algo DIFERENTE do `.key` devolvido para separar os dois.
+
+    `config.account()` e chamado mais de uma vez no fluxo (validacao no
+    inicio do POST, e de novo dentro de `_kwargs_da_proposta` para a loja) —
+    a segunda chamada legitimamente recebe o `.key` JA normalizado da
+    primeira, entao o duble aceita as duas formas (igual a funcao real, que e
+    idempotente) em vez de travar em uma so.
+    """
+    def fake_account_normaliza(key):
+        assert key in (" Secundaria ", "secundaria"), (
+            f"esperava o texto cru ou o key ja normalizado, veio {key!r}")
+        return qr.config.BlingAccount(
+            key="secundaria", label="secundaria", client_id="x", client_secret="y",
+            store_id=None, situacao_id=None)
+
+    monkeypatch.setattr(qr.config, "account", fake_account_normaliza)
+
+    await qr.create_quote_endpoint(corpo(account=" Secundaria "))
+
+    assert db["inserted"]["bling_account"] == "secundaria"
+
+
+async def test_criar_sem_account_no_corpo_grava_a_conta_default(db):
+    """Sem o campo no corpo (clientes antigos do frontend), a conta gravada e
+    a default de sempre — R1 nao pode quebrar quem ainda nao manda `account`."""
+    await qr.create_quote_endpoint(corpo())
+
+    assert db["inserted"]["bling_account"] == qr.config.DEFAULT_ACCOUNT
+
+
+async def test_criar_com_conta_desconhecida_devolve_400_e_nada_e_gravado(db, monkeypatch):
+    """R1: slug que nao existe e 400, e nada e criado — nem contato vinculado,
+    nem proposta no Bling, nem linha em `quotes`."""
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+
+    resp = await qr.create_quote_endpoint(corpo(account="atlantida"))
+
+    assert resp.status_code == 400
+    texto = resp.body.decode()
+    assert "unknown_account" in texto
+    assert db["inserted"] is None
+    assert db["ordem"] == []
+    assert db["resolve_accounts"] == [], "nem o contato pode ser tocado"
+
+
+async def test_criar_resolve_o_contato_na_conta_escolhida(db, monkeypatch):
+    """O contato e account-scoped (`lead_bling_contacts`): resolver no default
+    por engano gravaria, na proposta da conta 2, um contato que so existe (ou
+    so foi vinculado) na conta 1."""
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+
+    await qr.create_quote_endpoint(corpo(account="secundaria"))
+
+    assert db["resolve_accounts"] == ["secundaria"]
+
+
+async def test_criar_usa_a_loja_da_conta_escolhida_no_payload_da_proposta(db, monkeypatch):
+    """R5: `store_id` vem de `config.account(conta).store_id`, nunca do env
+    global — senao a proposta da conta 2 sairia com a loja da conta 1."""
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+
+    await qr.create_quote_endpoint(corpo(account="secundaria"))
+    assert db["proposal_kwargs"]["store_id"] == 222
+
+    await qr.create_quote_endpoint(corpo())
+    assert db["proposal_kwargs"]["store_id"] == 111
+
+
+async def test_criar_constroi_o_blingclient_da_conta_escolhida(db, monkeypatch):
+    """R6: o `BlingClient` que fala com o Bling na criacao e o da conta
+    escolhida, nunca o default por omissao."""
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+
+    await qr.create_quote_endpoint(corpo(account="secundaria"))
+
+    assert db["clientes"] == ["secundaria"]
+
+
+async def test_editar_ignora_a_conta_do_corpo_e_preserva_a_original(db, monkeypatch):
+    """R2: a proposta ja existe naquele ERP — trocar de conta so orfanaria o
+    registro. `body.account` e ignorado de proposito: nunca gravado, e nunca
+    repassado para o contato/BlingClient/loja da edicao."""
+    quote_original = {**QUOTE_RASCUNHO, "bling_account": "default"}
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(quote_original))
+
+    resp = await qr.update_quote_endpoint(
+        "Q1", corpo(account="secundaria"))
+
+    assert resp.status_code == 200
+    valores = db["updates"][0][1]
+    assert "account" not in valores
+    assert "bling_account" not in valores
+    # A edicao inteira (contato, BlingClient) rodou na conta ORIGINAL — nao na
+    # "secundaria" que veio (e foi ignorada) no corpo.
+    assert db["resolve_accounts"] == ["default"]
+    assert db["clientes"] == ["default"]
+
+
+async def test_editar_usa_a_loja_da_conta_original_nunca_a_do_corpo(db, monkeypatch):
+    """R2 + R5 combinados: se a conta gravada NAO for a default, a loja da
+    edicao tem que vir de `config.account(conta_original)` — nunca da conta
+    que (ignorada) veio no corpo."""
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+    quote_original = {**QUOTE_RASCUNHO, "bling_account": "secundaria"}
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(quote_original))
+
+    # Corpo pede "default" — o oposto da conta gravada — para o teste provar
+    # que e a linha, e nao o corpo, quem decide.
+    resp = await qr.update_quote_endpoint("Q1", corpo(account="default"))
+
+    assert resp.status_code == 200
+    assert db["proposal_kwargs"]["store_id"] == 222
+    assert db["clientes"] == ["secundaria"]
+    assert db["resolve_accounts"] == ["secundaria"]
+
+
+async def test_conversao_repassa_a_conta_do_orcamento_para_create_order(db, monkeypatch):
+    """R3: o pedido nasce na MESMA conta do orcamento — o invariante que esta
+    rota existe para garantir. O endpoint nao aceita corpo, entao nao ha
+    `account` para o chamador inventar: a conta so pode vir da propria linha."""
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: {
+        **QUOTE_RASCUNHO, "bling_account": "secundaria"})
+
+    resp = await qr.convert_quote_endpoint("Q1")
+
+    assert resp.status_code == 201
+    assert db["order_kwargs"]["account"] == "secundaria"
+
+
+async def test_conversao_usa_a_conta_do_orcamento_nos_dois_clientes_bling(db, monkeypatch):
+    """R6: tanto o client que cria o pedido quanto o client que marca a
+    proposta como "Aprovado" tem que ser da conta do orcamento."""
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: {
+        **QUOTE_RASCUNHO, "bling_account": "secundaria"})
+
+    resp = await qr.convert_quote_endpoint("Q1")
+
+    assert resp.status_code == 201
+    assert db["clientes"] == ["secundaria", "secundaria"]
+
+
+async def test_conversao_sem_conta_gravada_cai_no_default(db, monkeypatch):
+    """Defensivo: uma quote sem `bling_account` (nunca deve acontecer em
+    producao — a coluna e gravada no POST desde R1) nao pode quebrar a
+    conversao. Cai na mesma conta unica que o sistema sempre usou."""
+    quote_sem_conta = {k: v for k, v in QUOTE_RASCUNHO.items() if k != "bling_account"}
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: quote_sem_conta)
+
+    resp = await qr.convert_quote_endpoint("Q1")
+
+    assert resp.status_code == 201
+    assert db["order_kwargs"]["account"] == qr.config.DEFAULT_ACCOUNT
+
+
+async def test_conversao_resolve_o_fallback_de_contato_na_conta_do_orcamento(db, monkeypatch):
+    """R4: se o vinculo em `bling_contact_id` se perdeu, o fallback que
+    re-resolve o contato tem que usar a MESMA conta do orcamento — resolver no
+    default devolveria um contact_id que nao existe (ou aponta para outra
+    empresa) na conta onde o pedido esta prestes a nascer."""
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: {
+        **QUOTE_RASCUNHO, "bling_account": "secundaria", "bling_contact_id": None})
+
+    resp = await qr.convert_quote_endpoint("Q1")
+
+    assert resp.status_code == 201
+    assert db["resolve_accounts"] == ["secundaria"]
+    # E o contato que o fallback resolveu (555, do fake_resolve) e o que segue
+    # para o pedido — a mesma conta do inicio ao fim da conversao.
+    assert db["order_kwargs"]["contact_id"] == 555
+
+
+async def test_helpers_do_bling_router_recebem_a_conta_do_orcamento(db, monkeypatch):
+    """REGRESSAO de contrato ENTRE MODULOS.
+
+    `quotes/router.py` reusa `_seller_id_for` e `_products_by_id` de
+    `bling/router.py` de proposito (duas copias divergiriam no primeiro ajuste de
+    coluna). O risco disso e o inverso: a funcao muda de assinatura do outro lado
+    e este arquivo nunca e revisitado. Foi o que aconteceu — `_seller_id_for`
+    ganhou `account` obrigatorio e as chamadas daqui continuaram com um argumento,
+    quebrando criar/editar/converter orcamento com 500 em producao, com a suite
+    verde porque o duble tinha a aridade ANTIGA.
+
+    Este teste afirma o que o duble sozinho nao afirma: que a conta que chega aos
+    dois helpers e a do ORCAMENTO, nao um default silencioso.
+    """
+    monkeypatch.setattr(qr.config, "account", _fake_account)
+    recebidos = {}
+
+    def fake_seller_id_for(_email, account):
+        recebidos["seller"] = account
+        return 12
+
+    def fake_products_by_id(_ids, account):
+        recebidos["produtos"] = account
+        return {}
+
+    monkeypatch.setattr(qr, "_seller_id_for", fake_seller_id_for)
+    monkeypatch.setattr(qr, "_products_by_id", fake_products_by_id)
+
+    await qr.create_quote_endpoint(corpo(
+        account="secundaria",
+        items=[qr.QuoteItemIn(bling_product_id=777, descricao="", quantidade=1,
+                              valor_unitario=10.0)],
+    ))
+
+    assert recebidos["seller"] == "secundaria"
+    assert recebidos["produtos"] == "secundaria"

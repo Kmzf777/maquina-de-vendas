@@ -140,6 +140,7 @@ def order_net_total(itens: list[dict], discount: dict | None,
 
 def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
                         payment: dict, seller_id: int | None,
+                        store_id: int | None = None, situacao_id: int | None = None,
                         discount: dict | None = None, notes: str = "",
                         internal_notes: str = "", freight=0,
                         freight_mode: int | None = None) -> dict:
@@ -150,6 +151,12 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
     de frete. Quem os usa e a conversao de orcamento em venda: o orcamento fecha
     com frete no total e o cliente aceita ESSE numero, entao o pedido tem que
     nascer com ele, ou a nota sai a menor que o combinado.
+
+    `store_id`/`situacao_id` chegam como PARAMETROS — a funcao nao le mais
+    config/env direto. A segunda conta Bling pode ter loja e situacao padrao
+    DIFERENTES da conta default; quem resolve isso por conta e o chamador, via
+    `config.account(account)`. Manter a funcao pura (sem ler env) e o que a
+    torna testavel sem monkeypatch de ambiente — como ja e o resto do modulo.
     """
     if not itens:
         raise BlingValidationError(
@@ -198,12 +205,10 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
 
     if seller_id:
         payload["vendedor"] = {"id": int(seller_id)}
-    store = config.store_id()
-    if store:
-        payload["loja"] = {"id": store}
-    situacao = config.order_situacao_id()
-    if situacao:
-        payload["situacao"] = {"id": situacao}
+    if store_id:
+        payload["loja"] = {"id": store_id}
+    if situacao_id:
+        payload["situacao"] = {"id": situacao_id}
     if discount and _dec(discount.get("valor")) > 0:
         payload["desconto"] = {
             "valor": float(_dec(discount["valor"])),
@@ -228,7 +233,7 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
 
 async def update_order(client, *, order_id: int, contact_id: int, sold_at: str,
                        itens: list[dict], payment: dict, seller_id: int | None,
-                       notes: str) -> dict:
+                       notes: str, account: str = config.DEFAULT_ACCOUNT) -> dict:
     """Altera o pedido no Bling. Reaproveita o mesmo payload do POST — o Bling
     nao tem formato separado para alteracao.
 
@@ -239,10 +244,17 @@ async def update_order(client, *, order_id: int, contact_id: int, sold_at: str,
     diferente de `create_order`, nao ha projecao aqui para nao acoplar a
     chamada ao Bling com a decisao — que e do chamador — de gravar a mudanca
     no CRM mesmo quando o ERP recusa.
+
+    `account` resolve loja/situacao da CONTA (abaixo) — nao decide para qual
+    conta Bling o PUT vai. Isso e do `client` recebido, e precisa ser o mesmo
+    account: um `client` da conta 1 com `account="secundaria"` aqui gravaria
+    loja/situacao da conta 2 num pedido que fisicamente esta na conta 1.
     """
+    conta = config.account(account)
     payload = build_order_payload(
         contact_id=contact_id, sold_at=sold_at, itens=itens,
         payment=payment, seller_id=seller_id, notes=notes,
+        store_id=conta.store_id, situacao_id=conta.situacao_id,
     )
     return await client.put(f"/pedidos/vendas/{order_id}", payload)
 
@@ -346,7 +358,8 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
                        discount: dict | None = None, notes: str = "",
                        idempotency_key: str | None = None,
                        conversation_id: str | None = None,
-                       freight=0, freight_mode: int | None = None) -> dict:
+                       freight=0, freight_mode: int | None = None,
+                       account: str = config.DEFAULT_ACCOUNT) -> dict:
     """Cria o pedido no Bling e projeta em `sales` + `sale_items`.
 
     `idempotency_key` vai para o campo `numeroLoja` (o "numero do pedido na loja
@@ -354,6 +367,13 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
     ela, uma retentativa que ja tinha POSTado com sucesso reencontra o pedido em
     vez de criar o segundo. Quem gera a chave e o `enqueue` da fila, uma unica
     vez por job — ver o comentario la sobre o caminho sincrono.
+
+    `account` identifica a conta Bling (CNPJ) da venda e e gravado em
+    `bling_account` — a chave que agora distingue pedidos de contas diferentes
+    que compartilham o mesmo `bling_order_id` (a numeracao e por conta). Tambem
+    resolve loja/situacao via `config.account(account)`. NAO decide para qual
+    conta a chamada HTTP vai: isso e do `client` recebido, que precisa ser o
+    MESMO account — responsabilidade de quem chama.
     """
     # Retentativa: o pedido pode ja existir no ERP de uma tentativa anterior que
     # POSTou e caiu antes de gravar a `sales`.
@@ -367,10 +387,12 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
                        "de novo (tentativa anterior criou e falhou depois)",
                        order_id, idempotency_key)
     else:
+        conta = config.account(account)
         payload = build_order_payload(
             contact_id=contact_id, sold_at=sold_at, itens=itens, payment=payment,
             seller_id=seller_id, discount=discount, notes=notes,
             internal_notes=f"CRM lead {lead_id}" + (f" - deal {deal_id}" if deal_id else ""),
+            store_id=conta.store_id, situacao_id=conta.situacao_id,
             freight=freight, freight_mode=freight_mode,
         )
         if idempotency_key:
@@ -403,6 +425,7 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         "sold_by": sold_by,
         "origin": "crm",
         "status": "registrada",
+        "bling_account": account,
         "bling_order_id": order_id,
         # `numero` e a situacao resolvida so existem apos o GET abaixo; sao
         # cosmeticos e o webhook order.updated os completa se o GET falhar.
@@ -448,8 +471,8 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         await asyncio.to_thread(_update_sale, order_id, {
             "bling_order_number": numero,
             "bling_situacao_id": situacao_id,
-            "bling_situacao_nome": await asyncio.to_thread(_situacao_nome, situacao_id),
-        })
+            "bling_situacao_nome": await asyncio.to_thread(_situacao_nome, situacao_id, account),
+        }, account)
     except Exception:
         logger.warning("[BLING] pedido %s criado, mas o GET de detalhe falhou; "
                        "numero e situacao ficam para o webhook", order_id,
@@ -478,7 +501,7 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
     }
 
 
-def _situacao_nome(situacao_id: int | None) -> str | None:
+def _situacao_nome(situacao_id: int | None, account: str) -> str | None:
     """Nome da situacao a partir do espelho. Ausencia devolve None, nunca levanta:
     situacao criada no painel e ainda nao sincronizada nao pode derrubar o
     processamento do webhook.
@@ -487,12 +510,18 @@ def _situacao_nome(situacao_id: int | None) -> str | None:
     nunca chama a API do Bling aqui: essa funcao roda no meio do processamento
     do webhook e do POST de criacao, onde uma chamada extra so acrescentaria
     latencia e mais um jeito de falhar.
+
+    Filtra por conta porque `bling_situacoes` tem PK composta (account, id): as
+    situacoes padrao do Bling compartilham id entre contas, mas as personalizadas
+    nao — sem o filtro, a venda de um CNPJ poderia exibir o rotulo da situacao
+    homonima do outro.
     """
     if situacao_id is None:
         return None
     try:
         res = (get_supabase().table("bling_situacoes")
-               .select("nome").eq("id", int(situacao_id)).limit(1).execute())
+               .select("nome").eq("account", account)
+               .eq("id", int(situacao_id)).limit(1).execute())
     except Exception:
         logger.warning("[BLING] lookup de situacao %s no espelho falhou",
                        situacao_id, exc_info=True)
@@ -501,9 +530,13 @@ def _situacao_nome(situacao_id: int | None) -> str | None:
     return linhas[0].get("nome") if linhas else None
 
 
-def _existing_sale(order_id: int) -> dict | None:
+def _existing_sale(order_id: int, account: str) -> dict | None:
+    # bling_order_id sozinho NAO identifica mais uma venda: e sequencia POR
+    # CONTA, entao o pedido 10 pode existir (com lead/deal diferentes) nas
+    # duas. Sem o filtro por conta, a conta 2 acharia a venda da conta 1.
     res = (get_supabase().table("sales").select("id, origin, deal_id, lead_id, status")
-           .eq("bling_order_id", order_id).limit(1).execute())
+           .eq("bling_order_id", order_id).eq("bling_account", account)
+           .limit(1).execute())
     linhas = getattr(res, "data", None) or []
     return linhas[0] if linhas else None
 
@@ -518,8 +551,23 @@ def _sold_at_iso(pedido: dict, event_date: str | None) -> str | None:
 
 
 def _upsert_sale(row: dict) -> str | None:
+    # A linha ja chega com `bling_account` preenchido pelo chamador. O indice
+    # unico agora e composto (migration 20260913_bling_multi_conta.sql: DROP do
+    # sales_bling_order_id_key + CREATE de sales_bling_order_key em
+    # (bling_account, bling_order_id)) porque o numero do pedido e uma
+    # sequencia POR CONTA — sem a conta no on_conflict, o pedido 10 da conta 2
+    # colidiria com o pedido 10 da conta 1 em vez de criar a propria linha.
+    #
+    # ATENCAO — armadilha ja paga uma vez nesta integracao (ver o comentario
+    # longo na migration 20260818_bling_integracao.sql): os dubles do Supabase
+    # usados nos testes deste modulo NAO validam que o par de colunas aqui
+    # corresponde a um indice unico de verdade no Postgres. Um on_conflict que
+    # nao bate com nenhum indice/constraint so falha contra o banco real, com
+    # SQLSTATE 42P10 ("no unique or exclusion constraint matching the ON
+    # CONFLICT specification") — teste verde aqui NAO prova que a migration foi
+    # aplicada nem que o indice existe com este nome/colunas.
     res = (get_supabase().table("sales")
-           .upsert(row, on_conflict="bling_order_id").execute())
+           .upsert(row, on_conflict="bling_account,bling_order_id").execute())
     return (getattr(res, "data", None) or [{}])[0].get("id")
 
 
@@ -531,14 +579,18 @@ def _replace_items(sale_id: str, itens: list[dict]) -> None:
 
 
 async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
-                            event_date: str | None) -> str | None:
+                            event_date: str | None,
+                            account: str = config.DEFAULT_ACCOUNT) -> str | None:
     """Projeta um pedido do Bling em `sales` (webhook e backfill).
 
-    O UNIQUE em `bling_order_id` faz o pedido que o CRM acabou de criar casar com
-    a linha ja gravada — nao duplica quando o webhook volta.
+    O UNIQUE composto em (bling_account, bling_order_id) faz o pedido que o CRM
+    acabou de criar casar com a linha ja gravada — nao duplica quando o webhook
+    volta. E composto, e nao so `bling_order_id`, porque o numero do pedido e
+    uma sequencia POR CONTA: o pedido 10 pode existir, com clientes diferentes,
+    nas duas contas Bling ao mesmo tempo.
     """
     order_id = int(pedido["id"])
-    existente = await asyncio.to_thread(_existing_sale, order_id)
+    existente = await asyncio.to_thread(_existing_sale, order_id, account)
 
     # Payload de webhook costuma vir RESUMIDO, sem `itens`. Nesse caso nao
     # tocamos em sale_items nem em `product`: um order.updated magro apagaria os
@@ -547,6 +599,7 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
     traz_itens = bool(pedido.get("itens"))
 
     linha = {
+        "bling_account": account,
         "bling_order_id": order_id,
         "lead_id": (existente or {}).get("lead_id") or lead_id,
         # Venda vinda do ERP entra sem deal (D7); venda do CRM mantem o dela.
@@ -561,7 +614,7 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
         "bling_order_number": pedido.get("numero"),
         "bling_situacao_id": (pedido.get("situacao") or {}).get("id"),
         "bling_situacao_nome": await asyncio.to_thread(
-            _situacao_nome, (pedido.get("situacao") or {}).get("id")),
+            _situacao_nome, (pedido.get("situacao") or {}).get("id"), account),
         "bling_event_date": event_date,
     }
 
@@ -581,13 +634,24 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
     return sale_id
 
 
-def _update_sale(order_id: int, payload: dict) -> None:
+def _update_sale(order_id: int, payload: dict, account: str) -> None:
+    # bling_order_id sozinho casaria com o pedido de MESMO numero em outra
+    # conta (a numeracao e por conta) — .eq("bling_account", ...) e o que evita
+    # que um update destinado ao pedido 10 da conta 2 alcance o pedido 10 da
+    # conta 1.
     (get_supabase().table("sales").update(payload)
-     .eq("bling_order_id", order_id).execute())
+     .eq("bling_order_id", order_id).eq("bling_account", account).execute())
 
 
-async def cancel_from_bling(order_id: int, *, event_date: str | None) -> None:
-    """`order.deleted`: marca cancelada, preserva linha e itens."""
+async def cancel_from_bling(order_id: int, *, event_date: str | None,
+                            account: str = config.DEFAULT_ACCOUNT) -> None:
+    """`order.deleted`: marca cancelada, preserva linha e itens.
+
+    Filtra por `bling_account` alem de `bling_order_id` (via `_update_sale`):
+    o numero do pedido se REPETE entre contas Bling, entao sem esse filtro
+    cancelar o pedido 10 da conta 2 cancelaria, em silencio, o pedido 10 da
+    conta 1.
+    """
     await asyncio.to_thread(_update_sale, int(order_id), {
         "status": "cancelada", "bling_event_date": event_date,
-    })
+    }, account)

@@ -1432,10 +1432,16 @@ async def process_buffered_messages(
         except Exception as oe:
             logger.warning("[OPT-OUT] caminho determinístico falhou p/ %s: %s", phone, oe)
 
-    # Notify campaign worker of reply
+    # Notify campaign worker of reply.
+    #
+    # O TEXTO E O TIPO VÃO JUNTO (§11, 16/09/2026). Até aqui só o id atravessava esta
+    # fronteira, e o motor de cadências ficava sabendo apenas que o lead falou: um
+    # template com os botões "Continuar" e "Parar atendimento" aplicava a MESMA política
+    # aos dois cliques. O dado já estava na mão — `_message_type` vale "button" quando
+    # `meta_parser` decodifica um QUICK_REPLY — e era descartado nesta linha.
     try:
         from app.campaigns.worker import handle_campaign_reply
-        handle_campaign_reply(lead["id"])
+        handle_campaign_reply(lead["id"], resolved_text, _message_type)
     except Exception as ce:
         logger.debug("[CAMPAIGNS] handle_campaign_reply error: %s", ce)
 

@@ -1,3 +1,26 @@
+-- ⚠️ SUPERSEDIDO em 16/09/2026 — NÃO USAR. Substituto:
+--     scripts/corrige_cards_reposicao_extraviados.sql
+--
+-- Defeito deste arquivo: conhece um ÚNICO destino ("João - Reposição
+-- Atacado", funil e etapa cravados por UUID). Foi escrito em 09/09/2026, um
+-- dia ANTES de existir o segundo funil de reposição — "João - Reposição
+-- Private Label", criado em 10/09/2026 (ver `_ORIGEM_PARA_REPOSICAO` em
+-- backend/app/leads/reposicao.py). Aplicado hoje, moveria para o funil
+-- ERRADO todo deal extraviado cuja venda de origem fosse, na verdade, do
+-- Private Label.
+--
+-- O substituto resolve o destino de CADA card pelo funil de origem da
+-- venda do PRÓPRIO lead (espelhando `reposicao_pipeline_para`), e deixa
+-- de fora, sem chutar, qualquer card cuja origem não seja inequívoca —
+-- em vez de uma constante única de destino.
+--
+-- Este script NUNCA foi aplicado em produção. Fica neste caminho só
+-- como registro do incidente de 09/09/2026 — o conteúdo abaixo é travado
+-- por `TestCorretivoDosDealsExtraviados` em
+-- backend/tests/test_recuperacao_migration_2026_09_09.py. NÃO EXECUTE
+-- este arquivo — use o substituto acima.
+-- ═════════════════════════════════════════════════════════════════════════════
+
 -- scripts/recuperacao/corrigir_deals_reposicao.sql
 --
 -- ⛔ NÃO EXECUTAR SEM AUTORIZAÇÃO EXPLÍCITA DO DONO. Escreve em PRODUÇÃO, e o que

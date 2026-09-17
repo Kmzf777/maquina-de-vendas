@@ -1,5 +1,6 @@
 /** Derivações de exibição da venda (status e link do pedido no Bling). */
 import type { Sale } from "@/lib/types";
+import type { ContaBling } from "@/lib/bling-accounts";
 
 /**
  * O deep-link do pedido NÃO está documentado no OpenAPI do Bling. Confirme o
@@ -28,6 +29,28 @@ export function orderLabel(sale: Sale): string {
 
 export function blingOrderUrl(orderId: number | null | undefined): string {
   return orderId ? BLING_ORDER_URL_TEMPLATE.replace("{id}", String(orderId)) : "";
+}
+
+/**
+ * Rotulo da conta Bling de uma venda, ou null quando nao ha o que dizer.
+ *
+ * Existe porque o Bling NAO tem URL que force a conta: `blingOrderUrl` abre no
+ * painel de onde o usuario ja estiver logado, e um pedido da conta 2 aberto por
+ * quem esta logado na conta 1 mostra "nao encontrado". Nao da para resolver isso
+ * no link — da para dizer ao vendedor em qual painel entrar antes de clicar.
+ *
+ * Devolve null com uma conta so: nao ha ambiguidade a desfazer, e um rotulo
+ * constante em toda linha da tabela seria ruido.
+ */
+export function accountLabel(
+  sale: Pick<Sale, "bling_account">, contas: ContaBling[],
+): string | null {
+  if (!sale.bling_account) return null;      // venda fora do Bling
+  if (contas.length <= 1) return null;       // sem ambiguidade
+  const conta = contas.find((c) => c.account === sale.bling_account);
+  // Conta removida do BLING_ACCOUNTS depois da venda: o slug cru diz mais que
+  // esconder a informacao, e nao quebra a tela.
+  return conta?.label ?? sale.bling_account;
 }
 
 /**

@@ -46,6 +46,19 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "delay_minutes": 15,
 }
 
+# Origens do site institucional (cafecanastra.com). O formulário promete
+# "Entraremos em contato em até 1 minuto!" — esperar o delay padrão do webhook
+# quebraria a promessa, então estas origens disparam sem espera. O agendamento já
+# emite `emit_event("followups")`, então delay 0 acorda o worker na hora, e não no
+# tick de fallback de 30s. LPs de tráfego pago seguem com o delay configurado.
+# Lista EXPLÍCITA por decisão de produto: página nova do site NÃO vira instantânea
+# sozinha — precisa ser adicionada aqui.
+INSTANT_ORIGINS: frozenset[str] = frozenset({
+    "site-cafecanastra-atacado",
+    "site-cafecanastra-atacado-en",
+    "site-cafecanastra-atacado-es",
+})
+
 # Use same pattern as follow_up/service.py
 _ENV_TAG = "dev" if get_settings().is_dev_env else "production"
 
@@ -120,6 +133,18 @@ async def get_lp_config(redis) -> dict:
 async def save_lp_config(redis, config: dict) -> None:
     """Persist config to Redis as JSON string."""
     await redis.set(REDIS_CONFIG_KEY, json.dumps(config))
+
+
+def _resolve_delay_minutes(origem: str, configured_delay: int) -> int:
+    """Minutos de espera até o disparo de boas-vindas, para esta `origem`.
+
+    Origem do site institucional → 0 (ver INSTANT_ORIGINS); qualquer outra → o delay
+    configurado no CRM. `origem` chega do payload público, então normaliza caixa e
+    espaço antes de comparar.
+    """
+    if (origem or "").strip().lower() in INSTANT_ORIGINS:
+        return 0
+    return configured_delay
 
 
 async def process_landing_page_lead(payload: dict, redis) -> dict:
@@ -213,7 +238,14 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
         channel_id: str = config.get("channel_id", "")
         template_name: str = config.get("template_name", "")
         language_code: str = config.get("language_code", "pt_BR")
-        delay_minutes: int = int(config.get("delay_minutes", 15))
+        configured_delay: int = int(config.get("delay_minutes", 15))
+        delay_minutes: int = _resolve_delay_minutes(origem, configured_delay)
+        if delay_minutes != configured_delay:
+            logger.info(
+                "[LP_WELCOME] Origem %r é do site institucional — disparo imediato "
+                "(delay %dmin → %dmin) lead=%s",
+                origem, configured_delay, delay_minutes, lead_id,
+            )
 
         logger.info(
             "[LP_WELCOME] Config carregada: channel_id=%r template_name=%r delay_minutes=%d lead=%s",

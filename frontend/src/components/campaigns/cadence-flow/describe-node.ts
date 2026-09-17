@@ -19,6 +19,17 @@ function dias(n: unknown): string {
   return v === 1 ? "1 dia" : `${v} dias`;
 }
 
+/** Frase sobre o que acontece quando o lead responde.
+ *
+ * `on_reply` AUSENTE no nó significa herdar a política do GATILHO — não "pause".
+ * `worker._apply_reply_policy` dá precedência ao nó, então um "pause" gravado por
+ * default mataria um gatilho `reset` sem ninguém perceber. */
+function descreveResposta(onReply: string | undefined): string {
+  if (!onReply) return "Se o lead responder, vale a política definida no gatilho.";
+  const texto = ON_REPLY[onReply] ?? ON_REPLY.pause;
+  return `Se o lead responder, ${texto} (sobrepõe o gatilho).`;
+}
+
 function describeTrigger(c: Config): string {
   const tipo = (c.trigger_type as string) ?? "";
   const nome = TRIGGER_LABELS[tipo] ?? tipo ?? "—";
@@ -47,9 +58,10 @@ function describeTrigger(c: Config): string {
       return `Inicia quando o CARD do lead (Kanban de deals${c.stage_id ? ", numa coluna específica" : ", qualquer coluna aberta"}) fica ${quando}.${falante}`;
     }
     case "post_broadcast":
-      return c.replied_only
-        ? "Inicia após um disparo, SÓ para quem respondeu."
-        : "Inicia após um disparo em massa.";
+      // Sem "só para quem respondeu": `replied_only` saiu do registro em 16/09/2026.
+      // O toggle existia na tela, `broadcast/worker.py` mandava `False` fixo e
+      // `_passes_filter` nunca lia — descrever um filtro que não existe é mentir.
+      return "Inicia após um disparo em massa.";
     case "sale_created":
       return `Inicia quando uma venda é criada${c.min_value ? ` (valor mínimo R$ ${c.min_value})` : ""}${c.product_filter ? ` contendo "${c.product_filter}"` : ""}.`;
     case "tag_added":
@@ -89,20 +101,23 @@ export function describeNode(type: CampaignNodeType, config: Config): string {
     case "send": {
       const nome = (config.template_name as string) || "(template não escolhido)";
       const lang = (config.template_language as string) || "pt_BR";
-      const reply = ON_REPLY[(config.on_reply as string) ?? "pause"] ?? ON_REPLY.pause;
+      // AUSENTE != "pause". Até 16/09/2026 o default da tela gravava `on_reply:"pause"`
+      // em todo nó de envio, e como `worker._apply_reply_policy` dá precedência ao NÓ
+      // sobre o GATILHO, isso sequestrava em silêncio um gatilho `on_reply='reset'`.
+      // Agora ausente quer dizer "herda do gatilho", e o texto tem de dizer isso.
+      const reply = descreveResposta(config.on_reply as string | undefined);
       return (
         `Envia o template aprovado "${nome}" (${lang}) pela Meta — o único formato aceito ` +
-        `mesmo com a janela de 24h fechada. Se o lead responder, ${reply}.`
+        `mesmo com a janela de 24h fechada. ${reply}`
       );
     }
     case "send_text": {
       const texto = ((config.message_text as string) || "").trim();
       const previa = texto ? `"${texto.length > 140 ? texto.slice(0, 140) + "…" : texto}"` : "(mensagem vazia)";
-      const reply = ON_REPLY[(config.on_reply as string) ?? "pause"] ?? ON_REPLY.pause;
+      const reply = descreveResposta(config.on_reply as string | undefined);
       return (
         `Envia mensagem de TEXTO LIVRE: ${previa}. Só é aceito pela Meta com a janela de 24h ` +
-        `ABERTA (lead falou há menos de 24h) — fora dela o motor bloqueia o envio. ` +
-        `Se o lead responder, ${reply}.`
+        `ABERTA (lead falou há menos de 24h) — fora dela o motor bloqueia o envio. ${reply}`
       );
     }
     case "wait": {

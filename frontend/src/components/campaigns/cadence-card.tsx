@@ -12,6 +12,36 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
   archived: { bg: "bg-[#f0ede8]",       text: "text-[#7b7b78]",   label: "Arquivada" },
 };
 
+/**
+ * Corpo de erro do POST /activate (ou /pause) → mensagens para o operador.
+ *
+ * A validação de 12 regras do backend (`backend/app/campaigns/validation.py`, atrás de
+ * `backend/app/campaigns/router.py`) recusa a ativação com
+ * `{detail: {problemas: [{no_id, codigo, mensagem}]}}` — um item por nó com defeito,
+ * não uma `error` string plana. O proxy Next (`activate/route.ts`) devolve
+ * `{error: "..."}` (string) quando o próprio FastAPI está fora do ar (502). Um corpo
+ * que não bate com nenhum dos dois formatos ainda precisa virar mensagem: silêncio
+ * nunca é resposta aceitável para uma recusa.
+ *
+ * Pura e exportada para o teste direto — é aqui que mora a lógica de verdade.
+ * Duplicada (mesmo formato) em `cadence-flow/index.tsx`, o outro chamador de
+ * /activate: os dois arquivos não compartilham módulo de lib nesta task.
+ */
+export function parseActivationErrorMessages(data: unknown): string[] {
+  const body = (data ?? {}) as { detail?: { problemas?: unknown }; error?: unknown };
+  const problemas = body.detail?.problemas;
+  if (Array.isArray(problemas) && problemas.length > 0) {
+    return problemas.map((p) => {
+      const mensagem = (p as { mensagem?: unknown } | null)?.mensagem;
+      return typeof mensagem === "string" && mensagem ? mensagem : "Problema não especificado.";
+    });
+  }
+  if (typeof body.error === "string" && body.error) {
+    return [body.error];
+  }
+  return ["Não foi possível concluir a operação. Tente novamente."];
+}
+
 interface CadenceCardProps {
   campaign: Campaign;
   onClick: () => void;
@@ -48,8 +78,11 @@ export function CadenceCard({ campaign, onClick, onRefresh, mirrorVisible, onTog
         const endpoint = toggle.on ? "pause" : "activate";
         const res = await fetch(`/api/campaigns/${campaign.id}/${endpoint}`, { method: "POST" });
         const data = await res.json();
-        if (!res.ok || data.error) {
-          alert(data.error ?? `Erro ao ${toggle.on ? "pausar" : "ativar"}: ${res.statusText}`);
+        if (!res.ok) {
+          // A validação de 12 regras devolve `detail.problemas[]` — um item por nó com
+          // defeito, não uma `error` string. "Erro ao ativar: Bad Request" escondia os
+          // motivos de verdade (e, com mais de um problema, todos menos o primeiro).
+          alert(parseActivationErrorMessages(data).join("\n\n"));
         } else {
           onRefresh();
         }

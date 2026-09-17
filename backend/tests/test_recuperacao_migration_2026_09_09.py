@@ -604,3 +604,59 @@ def test_o_csv_de_producao_existe_e_casa_por_id_bling():
         linhas = list(csv.DictReader(fh, delimiter=";"))
     assert len(indice) == len(linhas), "id_bling duplicado no CSV — o join escolheria um a esmo"
     assert len(indice) > 2000
+
+
+# ── 4c. O corretivo de 09/09 foi substituído pelo de 16/09/2026 ─────────────
+class TestCorretivoAntigoMarcadoComoSupersedido:
+    """scripts/recuperacao/corrigir_deals_reposicao.sql (09/09/2026) só conhece
+    UM destino (João - Reposição Atacado, funil e etapa cravados por UUID) —
+    foi escrito um dia ANTES de existir o funil "João - Reposição Private
+    Label" (10/09/2026, ver `_ORIGEM_PARA_REPOSICAO` em
+    backend/app/leads/reposicao.py). Aplicado hoje, mandaria para o funil
+    errado todo card cuja venda de origem fosse Private Label. Nunca foi
+    aplicado.
+
+    O substituto (scripts/corrige_cards_reposicao_extraviados.sql, 16/09/2026,
+    guardado por test_sql_cards_extraviados_2026_09_16.py) resolve o destino de
+    CADA card pelo funil de origem da venda do próprio lead. O arquivo antigo
+    não é apagado — ele documenta o incidente de 09/09 e o resto desta suíte
+    (TestCorretivoDosDealsExtraviados, acima) trava o conteúdo dele — só ganha
+    um aviso no topo para que ninguém o aplique por engano supondo que é o
+    corretivo vigente.
+    """
+
+    SUBSTITUTO = "scripts/corrige_cards_reposicao_extraviados.sql"
+
+    def test_comeca_com_aviso_supersedido(self, sql_corretivo):
+        inicio = sql_corretivo[:200].upper()
+        assert "SUPERSEDIDO" in inicio, (
+            "o arquivo tem que COMEÇAR com o aviso — é a primeira coisa que "
+            "quem abre o arquivo precisa ver, antes até do aviso de autorização"
+        )
+
+    def test_aponta_o_substituto_pelo_caminho(self, sql_corretivo):
+        cabecalho = sql_corretivo[:2000]
+        assert self.SUBSTITUTO in cabecalho
+
+    def test_explica_o_defeito_do_destino_unico(self, sql_corretivo):
+        cabecalho = sql_corretivo[:2000].lower()
+        # Não basta dizer SUPERSEDIDO: tem que dizer o porquê — destino único
+        # e escrito antes de existir o funil Private Label.
+        assert "único destino" in cabecalho
+        assert "private label" in cabecalho
+        assert "10/09/2026" in sql_corretivo[:2000]
+
+    def test_aviso_novo_nao_empurra_o_aviso_de_autorizacao_para_fora_do_cabecalho(
+        self, sql_corretivo
+    ):
+        # O cabeçalho novo não pode deslocar "NÃO EXECUTAR SEM AUTORIZAÇÃO..."
+        # para fora da janela [:2000] que test_avisa_que_nao_pode_ser_executado_
+        # sem_autorizacao (acima, em TestCorretivoDosDealsExtraviados) audita.
+        cabecalho = sql_corretivo[:2000]
+        assert "NÃO EXECUTAR SEM AUTORIZAÇÃO EXPLÍCITA DO DONO" in cabecalho
+
+    def test_arquivo_continua_existindo_com_o_conteudo_original(self, sql_corretivo):
+        # Task 11b não apaga o script nem o corretivo em si — só acrescenta um
+        # cabeçalho. O UPDATE original e a transação continuam lá.
+        assert "UPDATE deals d" in sql_corretivo
+        assert "BEGIN;" in sql_corretivo and "COMMIT;" in sql_corretivo

@@ -87,7 +87,9 @@ def test_quarta_chamada_no_mesmo_segundo_espera(monkeypatch, _no_sleep):
 
 def test_teto_diario_recusa(monkeypatch, _no_sleep):
     fake = FakeRedis()
-    fake.counts[rl._day_key()] = rl.config.DAILY_SOFT_CAP
+    # _day_key agora exige a conta (chave por conta) — rl.acquire() sem
+    # argumento usa "default", entao a semente tem que vir da mesma conta.
+    fake.counts[rl._day_key(rl.config.DEFAULT_ACCOUNT)] = rl.config.DAILY_SOFT_CAP
     monkeypatch.setattr(rl, "_get_client", lambda: fake)
     monkeypatch.setattr(rl.time, "time", lambda: 1_000_000.0)
 
@@ -121,3 +123,46 @@ def test_falha_ativa_cooldown_e_proxima_chamada_nao_toca_redis(monkeypatch, _no_
     with pytest.raises(BlingRateLimitError):
         asyncio.run(rl.acquire())
     assert fake.calls == 1, "cooldown deveria evitar nova tentativa de conexao ao Redis"
+
+
+def test_chave_do_segundo_inclui_a_conta():
+    from app.bling import ratelimit
+    assert ratelimit._second_key(1757800000.4, "default") == "bling:rl:default:1757800000"
+    assert ratelimit._second_key(1757800000.4, "secundaria") == "bling:rl:secundaria:1757800000"
+
+
+def test_chave_do_dia_inclui_a_conta():
+    from app.bling import ratelimit
+    a = ratelimit._day_key("default")
+    b = ratelimit._day_key("secundaria")
+    assert a.startswith("bling:rl:default:day:")
+    assert b.startswith("bling:rl:secundaria:day:")
+    assert a != b
+
+
+def test_contas_nao_compartilham_orcamento():
+    """O teto do Bling e POR CONTA (3 req/s, 120k/dia). Chave compartilhada
+    faria duas contas dividirem um orcamento so."""
+    from app.bling import ratelimit
+    agora = 1757800000.0
+    assert ratelimit._second_key(agora, "default") != ratelimit._second_key(agora, "secundaria")
+
+
+def test_duas_contas_nao_disputam_o_orcamento_do_mesmo_segundo(monkeypatch, _no_sleep):
+    """Prova acquire() de ponta a ponta, nao so os formatadores de chave: se
+    alguem grudasse "default" direto dentro de acquire (bug que os testes de
+    _second_key/_day_key sozinhos NAO pegariam, porque os formatadores
+    continuariam corretos), 6 chamadas no mesmo segundo estourariam o limite
+    de 3/s e uma delas dormiria."""
+    fake = FakeRedis()
+    monkeypatch.setattr(rl, "_get_client", lambda: fake)
+    monkeypatch.setattr(rl.time, "time", lambda: 1_000_000.0)
+
+    async def run():
+        for _ in range(3):
+            await rl.acquire("default")
+        for _ in range(3):
+            await rl.acquire("secundaria")
+
+    asyncio.run(run())
+    assert _no_sleep == [], "contas diferentes nao podem disputar o mesmo orcamento de 3 req/s"

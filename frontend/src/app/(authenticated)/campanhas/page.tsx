@@ -11,7 +11,6 @@ import { CampaignEnrollmentsTable } from "@/components/campaigns/cadence-enrollm
 import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-modal";
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
-import { EsteirasTab } from "@/components/campaigns/esteiras-tab";
 import { FollowupBoard } from "@/components/campaigns/followup-board";
 import { campaignNodeCount } from "@/lib/campaign-node-count";
 import { isSystemCampaign } from "@/lib/system-campaign";
@@ -39,10 +38,11 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// "esteiras" fica logo depois de "cadencias" de propósito: é a mesma máquina, vista pelo
-// vendedor. Quem quer o grafo continua em Cadências; quem quer mudar prazo e mensagem
-// para na aba anterior e não precisa aprender React Flow.
-const VALID_TABS = ["visao-geral", "disparos", "cadencias", "esteiras", "follow-up", "templates"] as const;
+// A aba "Esteiras" foi removida: era um segundo editor sobre as mesmas tabelas
+// (`campaigns`/`campaign_nodes`) que o builder de Cadências usa, com validações
+// próprias — foi essa duplicidade que produziu a divergência de regras. As esteiras
+// continuam existindo como campanhas normais, editáveis pelo builder.
+const VALID_TABS = ["visao-geral", "disparos", "cadencias", "follow-up", "templates"] as const;
 type TabId = typeof VALID_TABS[number];
 
 function CampanhasPageInner() {
@@ -227,7 +227,6 @@ function CampanhasPageInner() {
               {tab === "visao-geral" ? "Visão Geral"
                 : tab === "disparos" ? "Disparos"
                 : tab === "cadencias" ? "Cadências"
-                : tab === "esteiras" ? "Esteiras"
                 : tab === "follow-up" ? "Follow-up"
                 : "Templates"}
             </button>
@@ -322,7 +321,6 @@ function CampanhasPageInner() {
             onToggleMirror={toggleMirrorVisibility}
           />
         )}
-        {activeTab === "esteiras" && <EsteirasTab />}
         {activeTab === "follow-up" && <FollowupBoard />}
         {activeTab === "templates" && <TemplatesTab />}
       </div>

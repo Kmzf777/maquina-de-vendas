@@ -107,3 +107,39 @@ describe("describeNode — linguagem de operador por tipo de nó", () => {
     expect(describeNode("end", { label: "Fim", final_actions: [{}, {}] })).toContain("2 ação(ões)");
   });
 });
+
+// ── Correções de 16/09/2026 ─────────────────────────────────────────────────────
+//
+// Duas frases que o painel "O que este nó faz" dizia e que deixaram de ser verdade
+// quando o contrato dos nós virou dado declarado (`node_registry.py`).
+
+describe("descrição não mente sobre on_reply nem sobre replied_only", () => {
+  it("nó de envio SEM on_reply diz que herda do gatilho, não que pausa", () => {
+    // Até 16/09 o default da tela gravava `on_reply: "pause"` em todo nó novo, e
+    // `worker._apply_reply_policy` dá precedência ao NÓ sobre o GATILHO — o que
+    // sequestrava em silêncio um gatilho `on_reply='reset'`. Agora ausente = herda,
+    // e a descrição tem de dizer isso em vez de afirmar "pausar".
+    const texto = describeNode("send", { template_name: "x" });
+    expect(texto).toContain("vale a política definida no gatilho");
+    expect(texto).not.toContain("sobrepõe");
+  });
+
+  it("nó de envio COM on_reply avisa que sobrepõe o gatilho", () => {
+    const texto = describeNode("send", { template_name: "x", on_reply: "cancel" });
+    expect(texto).toContain("sobrepõe o gatilho");
+    expect(texto).not.toContain("vale a política definida no gatilho");
+  });
+
+  it("send_text segue a mesma regra", () => {
+    expect(describeNode("send_text", { message_text: "oi" }))
+      .toContain("vale a política definida no gatilho");
+  });
+
+  it("post_broadcast não promete filtro de 'só quem respondeu'", () => {
+    // `replied_only` saiu do registro: o toggle existia na tela, o worker mandava
+    // `False` fixo e `_passes_filter` nunca lia. Descrever o filtro era mentira.
+    const comFlag = describeNode("trigger", { trigger_type: "post_broadcast", replied_only: true });
+    expect(comFlag).not.toContain("respondeu");
+    expect(comFlag).toContain("disparo em massa");
+  });
+});

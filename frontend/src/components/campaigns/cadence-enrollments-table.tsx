@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import type { CampaignEnrollment } from "@/lib/types";
 
 interface CampaignEnrollmentsTableProps {
@@ -63,7 +64,7 @@ export function CampaignEnrollmentsTable({ campaignId }: CampaignEnrollmentsTabl
           : { event: "*", schema: "public", table: "campaign_enrollments" },
         () => fetchEnrollments()
       )
-      .subscribe();
+      .subscribe(onResubscribe(fetchEnrollments));
 
     return () => {
       supabase.removeChannel(channel);

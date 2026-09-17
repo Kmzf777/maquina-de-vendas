@@ -12,9 +12,11 @@ export async function GET(request: NextRequest) {
   const q = sp.get("q") || "";
   const id = sp.get("id");
   const limit = sp.get("limit") || "20";
+  const account = sp.get("account");
   try {
     const params = new URLSearchParams({ q, limit });
     if (id) params.set("id", id);
+    if (account) params.set("account", account);
     const resp = await fetch(
       `${backend()}/api/bling/contacts/search?${params.toString()}`,
       { cache: "no-store" }

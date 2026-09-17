@@ -129,10 +129,9 @@ def test_resumo_de_produto_para_a_coluna_product():
 
 # ---------- payload ----------
 
-def test_payload_tem_os_campos_obrigatorios_do_bling(monkeypatch):
-    monkeypatch.setattr(orders.config, "store_id", lambda: 203455519)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: 6)
-
+def test_payload_tem_os_campos_obrigatorios_do_bling():
+    # store_id/situacao_id chegam como PARAMETROS: build_order_payload nao le
+    # mais config/env direto (quem resolve por conta e o chamador).
     payload = orders.build_order_payload(
         contact_id=5845664414,
         sold_at="2026-08-18",
@@ -141,6 +140,8 @@ def test_payload_tem_os_campos_obrigatorios_do_bling(monkeypatch):
                 "desconto_percentual": 0}],
         payment={"method_id": 45, "terms": [30]},
         seller_id=7,
+        store_id=203455519,
+        situacao_id=6,
         notes="obs do cliente",
         internal_notes="CRM lead L1",
     )
@@ -160,10 +161,9 @@ def test_payload_tem_os_campos_obrigatorios_do_bling(monkeypatch):
     assert payload["observacoesInternas"] == "CRM lead L1"
 
 
-def test_payload_omite_loja_e_situacao_quando_nao_configurados(monkeypatch):
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
-
+def test_payload_omite_loja_e_situacao_quando_nao_configurados():
+    # store_id/situacao_id NAO informados (o default de build_order_payload) —
+    # equivale a uma conta sem loja/situacao configuradas.
     payload = orders.build_order_payload(
         contact_id=1, sold_at="2026-08-18",
         itens=[{"bling_product_id": 1, "descricao": "X", "quantidade": 1,
@@ -175,12 +175,23 @@ def test_payload_omite_loja_e_situacao_quando_nao_configurados(monkeypatch):
     assert "vendedor" not in payload
 
 
-def test_parcelas_dividem_o_total_liquido_com_desconto_em_reais(monkeypatch):
+def test_build_order_payload_recebe_loja_e_situacao_como_parametro():
+    """Trava de regressao: build_order_payload precisa continuar PURA — sem ler
+    config/env — e refletir exatamente os valores recebidos por parametro."""
+    payload = orders.build_order_payload(
+        contact_id=1, sold_at="2026-08-18",
+        itens=[{"bling_product_id": 1, "descricao": "X", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        store_id=999888, situacao_id=42,
+    )
+    assert payload["loja"] == {"id": 999888}
+    assert payload["situacao"] == {"id": 42}
+
+
+def test_parcelas_dividem_o_total_liquido_com_desconto_em_reais():
     """Itens de R$267,00 com R$67,00 de desconto = pedido de R$200,00. Parcelar
     o BRUTO cobraria R$67 a mais do que o pedido vale."""
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
-
     payload = orders.build_order_payload(
         contact_id=1, sold_at="2026-08-18",
         itens=[{"bling_product_id": 1, "descricao": "Cafe 250g", "quantidade": 10,
@@ -194,10 +205,7 @@ def test_parcelas_dividem_o_total_liquido_com_desconto_em_reais(monkeypatch):
     assert payload["desconto"] == {"valor": 67.0, "unidade": "REAL"}
 
 
-def test_parcelas_dividem_o_total_liquido_com_desconto_percentual(monkeypatch):
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
-
+def test_parcelas_dividem_o_total_liquido_com_desconto_percentual():
     payload = orders.build_order_payload(
         contact_id=1, sold_at="2026-08-18",
         itens=[{"bling_product_id": 1, "descricao": "Cafe 250g", "quantidade": 10,
@@ -223,11 +231,8 @@ def test_desconto_liquido_e_calculado_em_decimal():
         Decimal("100.00"), {"valor": 25}) == Decimal("75.00")
 
 
-def test_desconto_maior_que_o_total_e_recusado(monkeypatch):
+def test_desconto_maior_que_o_total_e_recusado():
     """Liquido negativo nao vira pedido: a guarda de parcelas recusa."""
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
-
     with pytest.raises(BlingValidationError):
         orders.build_order_payload(
             contact_id=1, sold_at="2026-08-18",
@@ -268,6 +273,20 @@ def test_payload_recusa_item_sem_vinculo_com_o_bling():
 
 # ---------- criacao e projecao ----------
 
+def _fake_account_sem_loja(_account):
+    """Stand-in para config.account(): sem loja/situacao configuradas — o
+    ambiente de teste nao tem BLING_STORE_ID nem BLING_ORDER_SITUACAO_ID.
+
+    Exige o parametro (sem default `=None`): create_order/update_order chamam
+    config.account(account) com a conta recebida, e um duble com default
+    aceitaria silenciosamente uma chamada que esqueceu de repassar `account`.
+    """
+    return orders.config.BlingAccount(
+        key=orders.config.DEFAULT_ACCOUNT, label="default",
+        client_id="", client_secret="", store_id=None, situacao_id=None,
+    )
+
+
 class FakeQuery:
     def __init__(self, store, name):
         self.store, self.name = store, name
@@ -278,6 +297,12 @@ class FakeQuery:
 
     def eq(self, col, val):
         self.captured.setdefault("eq", {})[col] = val
+        # Tambem acumulado no store (nao so no self.captured, que e por
+        # instancia e se perde entre chamadas encadeadas de tabelas
+        # diferentes): os testes de escopo por conta (`cancel_from_bling`,
+        # `_existing_sale`) precisam conferir QUAIS filtros .eq() foram
+        # aplicados, e este fake nao filtra de verdade os dados devolvidos.
+        self.store.setdefault(self.name + "_eq", []).append((col, val))
         return self
 
     def limit(self, *_a, **_k):
@@ -331,8 +356,7 @@ def test_create_order_persiste_venda_e_itens(monkeypatch):
     # objeto novo a cada chamada e esconderia estado acumulado dentro do fake.
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     class FakeClient:
         async def post(self, path, json=None):
@@ -393,8 +417,7 @@ def test_create_order_preenche_nome_da_situacao_a_partir_do_espelho(monkeypatch)
     store = {"row_bling_situacoes": [{"id": 6, "nome": "Em aberto"}]}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     class FakeClient:
         async def post(self, path, json=None):
@@ -426,8 +449,7 @@ def test_create_order_grava_a_venda_mesmo_se_o_get_de_detalhe_falhar(monkeypatch
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     class FakeClientGetQuebrado:
         async def post(self, path, json=None):
@@ -464,8 +486,7 @@ def test_create_order_com_chave_reaproveita_pedido_ja_criado(monkeypatch):
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     chamadas = []
 
@@ -509,8 +530,7 @@ def test_create_order_nao_posta_se_a_consulta_por_chave_falhar(monkeypatch):
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     class FakeClientConsultaQuebrada:
         async def post(self, path, json=None):
@@ -540,8 +560,7 @@ def test_create_order_com_chave_envia_numero_loja_no_payload(monkeypatch):
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     postados = []
 
@@ -575,8 +594,7 @@ def test_create_order_sem_chave_nao_consulta_antes_de_postar(monkeypatch):
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     gets = []
 
@@ -607,8 +625,7 @@ def test_create_order_desconta_o_cabecalho_do_valor_gravado(monkeypatch):
     store = {}
     fake_db = FakeSupabase(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
     class FakeClient:
         async def post(self, path, json=None):
@@ -632,9 +649,13 @@ def test_create_order_desconta_o_cabecalho_do_valor_gravado(monkeypatch):
 
 # ---------- update ----------
 
-def test_update_order_manda_put_com_o_payload_do_pedido():
+def test_update_order_manda_put_com_o_payload_do_pedido(monkeypatch):
     """PUT /pedidos/vendas/{id} recebe o MESMO payload que o POST monta — o
     Bling nao tem um formato separado para alteracao."""
+    # update_order agora resolve loja/situacao via config.account(account); sem
+    # este fake a comparacao com build_order_payload(...) direto (que nao le
+    # config) ficaria dependente de qualquer BLING_STORE_ID real do ambiente.
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
     chamadas = []
 
     class FakeClient:
@@ -660,6 +681,36 @@ def test_update_order_manda_put_com_o_payload_do_pedido():
     )
 
 
+def test_update_order_resolve_loja_e_situacao_da_conta_informada(monkeypatch):
+    """A conta 2 pode ter loja/situacao DIFERENTES da conta default — update_order
+    precisa buscar em config.account(account), nao num valor fixo."""
+    def fake_account(_account):
+        assert _account == "secundaria"
+        return orders.config.BlingAccount(
+            key="secundaria", label="Secundaria", client_id="x", client_secret="y",
+            store_id=222, situacao_id=9)
+    monkeypatch.setattr(orders.config, "account", fake_account)
+
+    chamadas = []
+
+    class FakeClient:
+        async def put(self, path, json=None):
+            chamadas.append((path, json))
+            return {"data": {"id": 34215992}}
+
+    asyncio.run(orders.update_order(
+        FakeClient(), order_id=34215992, contact_id=555, sold_at="2026-08-18",
+        itens=[{"bling_product_id": 123, "descricao": "Cafe 250g", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None, notes="",
+        account="secundaria",
+    ))
+
+    _, payload = chamadas[0]
+    assert payload["loja"] == {"id": 222}
+    assert payload["situacao"] == {"id": 9}
+
+
 def test_update_order_nao_engole_recusa_de_validacao():
     """A recusa (pedido ja faturado, tipicamente) tem que subir intacta: quem
     chama e que decide virar divergencia, nao `update_order`."""
@@ -680,6 +731,171 @@ def test_update_order_nao_engole_recusa_de_validacao():
     assert "faturado" in str(exc.value)
 
 
+# ---------- on_conflict composto (bling_account, bling_order_id) ----------
+#
+# A armadilha mais cara desta entrega: a migration 20260913_bling_multi_conta
+# trocou o indice unico de sales_bling_order_id_key (so bling_order_id) por
+# sales_bling_order_key em (bling_account, bling_order_id) — porque o numero
+# do pedido e uma sequencia POR CONTA, nao global. Um on_conflict que nao bate
+# EXATAMENTE com o indice composto falha em producao com SQLSTATE 42P10, e os
+# dubles do Supabase abaixo NAO pegam esse tipo de falha (ver o comentario em
+# _upsert_sale) — so o Postgres real infere ON CONFLICT de verdade.
+
+def test_upsert_de_venda_usa_on_conflict_composto(monkeypatch):
+    capturado = {}
+
+    class FakeTable:
+        def upsert(self, row, on_conflict=None):
+            capturado["row"] = row
+            capturado["on_conflict"] = on_conflict
+            return self
+        def execute(self):
+            class R: data = [{"id": "venda-1"}]
+            return R()
+
+    class FakeSupa:
+        def table(self, _n):
+            return FakeTable()
+
+    monkeypatch.setattr(orders, "get_supabase", lambda: FakeSupa())
+    orders._upsert_sale({"bling_order_id": 10, "bling_account": "secundaria"})
+
+    assert capturado["on_conflict"] == "bling_account,bling_order_id"
+    assert capturado["row"]["bling_account"] == "secundaria"
+
+
+def test_mesmo_order_id_em_contas_diferentes_nao_colide(monkeypatch):
+    """IDs do Bling sao sequencia POR CONTA: o pedido 10 existe nas duas."""
+    linhas = []
+
+    class FakeTable:
+        def upsert(self, row, on_conflict=None):
+            linhas.append((row["bling_account"], row["bling_order_id"]))
+            return self
+        def execute(self):
+            class R: data = [{"id": "x"}]
+            return R()
+
+    class FakeSupa:
+        def table(self, _n):
+            return FakeTable()
+
+    monkeypatch.setattr(orders, "get_supabase", lambda: FakeSupa())
+    orders._upsert_sale({"bling_order_id": 10, "bling_account": "default"})
+    orders._upsert_sale({"bling_order_id": 10, "bling_account": "secundaria"})
+    assert linhas == [("default", 10), ("secundaria", 10)]
+
+
+# ---------- create_order/cancel_from_bling escopados por conta ----------
+
+def test_create_order_grava_a_conta_na_venda(monkeypatch):
+    """A venda criada pelo CRM carrega bling_account — sem isso o upsert
+    composto (acima) nao teria o que comparar quando o webhook voltar."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            return {"data": {"id": 1}}
+
+        async def get(self, path, params=None):
+            return {"data": {"id": 1, "numero": 1, "situacao": {"id": 1}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 1, "descricao": "Item", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        account="secundaria",
+    ))
+
+    assert store["sales_inserts"][0]["bling_account"] == "secundaria"
+
+
+def test_create_order_sem_conta_informada_usa_a_default(monkeypatch):
+    """account e opcional na superficie publica (regra do modulo) — quem ainda
+    nao repassa a conta (router.py/quotes/router.py, antes das tasks 9/11/14)
+    continua operando exatamente como antes: na conta default."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            return {"data": {"id": 1}}
+
+        async def get(self, path, params=None):
+            return {"data": {"id": 1, "numero": 1, "situacao": {"id": 1}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 1, "descricao": "Item", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+    ))
+
+    assert store["sales_inserts"][0]["bling_account"] == orders.config.DEFAULT_ACCOUNT
+
+
+def test_create_order_resolve_loja_e_situacao_da_conta_informada(monkeypatch):
+    """create_order busca store_id/situacao_id em config.account(account) — a
+    conta 2 pode ter loja/situacao DIFERENTES da conta default."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    def fake_account(_account):
+        assert _account == "secundaria"
+        return orders.config.BlingAccount(
+            key="secundaria", label="Secundaria", client_id="x", client_secret="y",
+            store_id=222, situacao_id=9)
+    monkeypatch.setattr(orders.config, "account", fake_account)
+
+    postados = []
+
+    class FakeClient:
+        async def post(self, path, json=None):
+            postados.append(json)
+            return {"data": {"id": 1}}
+
+        async def get(self, path, params=None):
+            return {"data": {"id": 1, "numero": 1, "situacao": {"id": 9}}}
+
+    asyncio.run(orders.create_order(
+        FakeClient(),
+        lead_id="L1", deal_id=None, contact_id=555, sold_at="2026-08-18",
+        sold_by=None,
+        itens=[{"bling_product_id": 1, "descricao": "Item", "quantidade": 1,
+                "valor_unitario": 10.0, "desconto_percentual": 0}],
+        payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        account="secundaria",
+    ))
+
+    assert postados[0]["loja"] == {"id": 222}
+    assert postados[0]["situacao"] == {"id": 9}
+
+
+def test_cancel_from_bling_filtra_por_conta_alem_do_order_id(monkeypatch):
+    """Cancelar o pedido 10 da conta secundaria NAO pode cancelar o pedido 10
+    da conta default — o numero do pedido se REPETE entre contas Bling."""
+    store = {}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    asyncio.run(orders.cancel_from_bling(
+        10, event_date="2026-08-11T10:00:00Z", account="secundaria"))
+
+    assert ("bling_order_id", 10) in store["sales_eq"]
+    assert ("bling_account", "secundaria") in store["sales_eq"]
+
+
 def test_upsert_from_bling_marca_origin_bling_para_venda_nova(monkeypatch):
     store = {"row_sales": []}
     fake_db = FakeSupabase(store)
@@ -697,8 +913,39 @@ def test_upsert_from_bling_marca_origin_bling_para_venda_nova(monkeypatch):
     linha = store["sales_upserts"][0]
     assert linha["origin"] == "bling"
     assert linha["bling_order_id"] == 999
+    assert linha["bling_account"] == orders.config.DEFAULT_ACCOUNT
     assert linha["deal_id"] is None, "venda vinda do ERP entra sem deal (decisao D7)"
-    assert store["on_conflict_sales"] == "bling_order_id"
+    assert store["on_conflict_sales"] == "bling_account,bling_order_id"
+
+
+def test_upsert_from_bling_grava_a_conta_informada(monkeypatch):
+    store = {"row_sales": []}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    pedido = {"id": 999, "numero": 77, "data": "2026-08-10", "total": 150.0,
+              "situacao": {"id": 9}, "itens": []}
+    asyncio.run(orders.upsert_from_bling(pedido, lead_id="L1",
+                                         event_date="2026-08-10T10:00:00Z",
+                                         account="secundaria"))
+
+    assert store["sales_upserts"][0]["bling_account"] == "secundaria"
+
+
+def test_upsert_from_bling_busca_venda_existente_filtrando_pela_conta(monkeypatch):
+    """Sem o filtro por conta, o pedido 10 da conta secundaria acharia a linha
+    do pedido 10 da conta default se ela existisse — mesmo numero de pedido,
+    contas diferentes."""
+    store = {"row_sales": [{"id": "SALE-1", "origin": "crm", "deal_id": "D1"}]}
+    fake_db = FakeSupabase(store)
+    monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
+
+    asyncio.run(orders.upsert_from_bling(
+        {"id": 10, "numero": 1, "data": "2026-08-10", "total": 1.0, "itens": []},
+        lead_id="L1", event_date="2026-08-10T10:00:00Z", account="secundaria"))
+
+    assert ("bling_order_id", 10) in store["sales_eq"]
+    assert ("bling_account", "secundaria") in store["sales_eq"]
 
 
 def test_upsert_from_bling_preenche_nome_da_situacao_do_espelho(monkeypatch):
@@ -949,8 +1196,7 @@ def _prepara(monkeypatch, store):
     # os inserts/updates acumulados que os asserts leem.
     fake_db = FakeCrmDb(store)
     monkeypatch.setattr(orders, "get_supabase", lambda: fake_db)
-    monkeypatch.setattr(orders.config, "store_id", lambda: None)
-    monkeypatch.setattr(orders.config, "order_situacao_id", lambda: None)
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
 
 
 def test_create_order_grava_o_vinculo_com_a_conversa(monkeypatch):

@@ -18,12 +18,26 @@
  * pertence ao CNPJ integrado, ou quando o Bling nao respondeu e o vendedor
  * precisa registrar mesmo assim. Se a venda nem vai para o ERP, o estado da
  * conexao com o ERP e irrelevante.
+ *
+ * Segunda conta Bling: `enabled` deixou de significar "a conta default esta
+ * conectada" e passou a significar "a conta ESCOLHIDA esta conectada". Este
+ * modulo continua sem saber nada sobre contas — quem resolve qual conta esta
+ * selecionada e traduz isso num booleano e o chamador, com a ajuda de
+ * `bling-accounts.ts` (`contasDisponiveis`/`contaPadrao`). `blingGate` so
+ * consome o booleano ja resolvido, exatamente como antes.
  */
 export type BlingMode = "loading" | "bling" | "legacy" | "error";
 
 export interface BlingGateInput {
   loading: boolean;
   error: string | null;
+  /**
+   * A conta Bling relevante para esta venda esta conectada. Com uma conta so,
+   * "relevante" so podia significar a conta default; com duas, e a conta que
+   * o seletor tem selecionada no momento (ver `bling-accounts.ts`). O campo
+   * continua sendo so um booleano — a resolucao de qual conta importa
+   * acontece antes, no chamador, nao aqui.
+   */
   enabled: boolean | null;
   isEditing: boolean;
   /**
@@ -31,6 +45,11 @@ export interface BlingGateInput {
    * inclusive `error`: se a venda nao vai para o ERP, nao ha o que confirmar.
    * Avaliar isto depois de `error` manteria o modal travado exatamente na
    * situacao em que a escapatoria e mais util.
+   *
+   * Consequencia para quem monta o seletor de conta (Task 15): `precisaSeletor`
+   * em `bling-accounts.ts` recebe este mesmo flag e esconde o seletor quando
+   * ele esta ligado — a venda nao vai para ERP nenhum, entao oferecer uma
+   * escolha de CNPJ sugeriria um efeito que nao existe.
    */
   skipBling?: boolean;
 }

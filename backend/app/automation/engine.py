@@ -526,6 +526,25 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
             lt = sb.table("lead_tags").select("id").eq("lead_id", enrollment["lead_id"]).eq("tag_id", tag_row[0]["id"]).limit(1).execute()
             result = bool(lt.data)
 
+    elif cond == "clicou_botao":
+        # §11 (16/09/2026). A ÚNICA condição que não consulta o CRM: lê a última
+        # resposta do lead, que `campaigns/worker.py::handle_campaign_reply` grava em
+        # `campaign_enrollments.metadata.ultima_resposta` a cada inbound. Sem ela o
+        # clique num botão de template só conseguia ENCERRAR a esteira (política
+        # `on_reply_por_botao`); com ela dá para desviar no meio da cadência.
+        #
+        # `_normalize_reply` é o mesmo do worker — igualdade normalizada, nunca
+        # substring, nos dois lados. Alvo vazio responde NÃO sempre: condição
+        # incompleta cai no ramo que o dono desenhou e vê no canvas, nunca em SIM por
+        # vacuidade.
+        #
+        # Clique e digitação são indistinguíveis aqui, de propósito: o parser da Meta
+        # achata o QUICK_REPLY em texto, e quem digita "continuar" quer continuar.
+        from app.campaigns.worker import _normalize_reply
+        alvo = _normalize_reply(cfg.get("botao"))
+        ultima = ((enrollment.get("metadata") or {}).get("ultima_resposta")) or {}
+        result = bool(alvo) and _normalize_reply(ultima.get("texto")) == alvo
+
     elif cond == "repurchase_days":
         rows = sb.table("sales").select("sold_at").eq("lead_id", enrollment["lead_id"]).order("sold_at", desc=True).limit(1).execute().data
         if rows:
@@ -593,8 +612,26 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
 
     elif action_type == "create_deal":
         from app.leads.service import create_deal
+        pipeline_id = cfg.get("pipeline_id")
+        if not pipeline_id:
+            # Sem funil explicito, `leads.service.create_deal` cai no fallback
+            # "(4) primeiro pipeline" e o card nasce no funil errado, na primeira
+            # coluna nao protegida — e duplicado a cada execucao do no (sem
+            # dedupe_open). Foi o que espalhou 19 cards de reposicao em "Valeria -
+            # Importacao Leads Frios". Nao agir e visivel; criar errado nao e.
+            logger.warning(
+                "[AUTOMATION] create_deal sem pipeline_id no nó %s — não cria",
+                node.get("id"),
+            )
+            return False
         title = substitute_variables(cfg.get("title_template", "Deal automático"), lead, enrollment)
-        create_deal(enrollment["lead_id"], title, cfg.get("category"))
+        create_deal(
+            enrollment["lead_id"], title, cfg.get("category"),
+            pipeline_id=pipeline_id,
+            stage_key=cfg.get("stage_key") or None,
+            dedupe_open=bool(cfg.get("dedupe_open")),
+            dedupe_pipeline_id=pipeline_id if cfg.get("dedupe_open") else None,
+        )
         agiu = True
 
     elif action_type == "assign_to":

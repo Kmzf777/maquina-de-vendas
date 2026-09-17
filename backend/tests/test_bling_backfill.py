@@ -52,27 +52,74 @@ def test_run_projeta_cada_pedido_e_salva_progresso(monkeypatch):
 
     projetados = []
 
-    async def fake_upsert(pedido, lead_id, event_date):
-        projetados.append(pedido["id"])
+    async def fake_upsert(pedido, lead_id, event_date, account):
+        projetados.append((pedido["id"], account))
         return "S"
 
-    async def fake_lead(contact_id):
+    async def fake_lead(account, contact_id):
         return "LEAD-1"
 
     progresso = []
-    monkeypatch.setattr(bf, "_new_client", lambda: FakeClient())
+    monkeypatch.setattr(bf, "_new_client", lambda account: FakeClient())
     monkeypatch.setattr(bf, "upsert_from_bling", fake_upsert)
     monkeypatch.setattr(bf, "_lead_for_contact", fake_lead)
-    monkeypatch.setattr(bf, "_save_progress", lambda cursor: progresso.append(cursor))
+    monkeypatch.setattr(bf, "_save_progress", lambda account, cursor: progresso.append(cursor))
     # Sem isso, _load_progress bate no Supabase real (URL fake da suite) e o
     # teste falha com erro de rede em vez de exercitar a logica do backfill.
-    monkeypatch.setattr(bf, "_load_progress", lambda: None)
+    monkeypatch.setattr(bf, "_load_progress", lambda account: None)
 
     out = asyncio.run(bf.run(months=1))
 
     assert out["pedidos"] == 2
-    assert projetados == [1, 2]
+    assert projetados == [(1, bf.config.DEFAULT_ACCOUNT), (2, bf.config.DEFAULT_ACCOUNT)]
     assert progresso, "o progresso tem que ser salvo para o job ser retomavel"
+
+
+def test_run_encaminha_a_conta_explicita_para_client_e_upsert(monkeypatch):
+    """`account` so e util se realmente chega em quem fala com o Bling e em
+    quem grava a venda — sem isso o parametro seria decorativo. NAO e chamado
+    hoje para a conta 2 (decisao 4), mas a funcao precisa se comportar direito
+    se algum dia for."""
+    contas_client = []
+    contas_upsert = []
+    contas_lead = []
+
+    class FakeClient:
+        async def paginate(self, path, params=None, limite=100):
+            yield {"id": 1}
+
+        async def get(self, path, params=None):
+            return {"data": {"id": 1, "data": "2026-08-01", "contato": {"id": 9}}}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    def fake_new_client(account):
+        contas_client.append(account)
+        return FakeClient()
+
+    async def fake_upsert(pedido, lead_id, event_date, account):
+        contas_upsert.append(account)
+        return "S"
+
+    async def fake_lead(account, contact_id):
+        contas_lead.append(account)
+        return None
+
+    monkeypatch.setattr(bf, "_new_client", fake_new_client)
+    monkeypatch.setattr(bf, "upsert_from_bling", fake_upsert)
+    monkeypatch.setattr(bf, "_lead_for_contact", fake_lead)
+    monkeypatch.setattr(bf, "_load_progress", lambda account: None)
+    monkeypatch.setattr(bf, "_save_progress", lambda account, cursor: None)
+
+    asyncio.run(bf.run(months=1, account="secundaria"))
+
+    assert contas_client == ["secundaria"]
+    assert contas_upsert == ["secundaria"]
+    assert contas_lead == ["secundaria"]
 
 
 def test_run_retoma_da_ultima_janela_concluida(monkeypatch):
@@ -95,8 +142,8 @@ def test_run_retoma_da_ultima_janela_concluida(monkeypatch):
             return False
 
     client = FakeClient()
-    monkeypatch.setattr(bf, "_new_client", lambda: client)
-    monkeypatch.setattr(bf, "_save_progress", lambda cursor: None)
+    monkeypatch.setattr(bf, "_new_client", lambda account: client)
+    monkeypatch.setattr(bf, "_save_progress", lambda account, cursor: None)
 
     # Data FIXA (nao datetime.now()): sem isso, o numero de janelas restantes
     # varia com o dia em que a suite roda, e o teste pode passar por outro
@@ -113,7 +160,7 @@ def test_run_retoma_da_ultima_janela_concluida(monkeypatch):
     # exatamente as ultimas 6, nem uma a mais nem a menos.
     cursor = todas[5][1]
     restantes_esperadas = todas[6:]
-    monkeypatch.setattr(bf, "_load_progress", lambda: cursor)
+    monkeypatch.setattr(bf, "_load_progress", lambda account: cursor)
 
     out = asyncio.run(bf.run(months=12, hoje=hoje))
 

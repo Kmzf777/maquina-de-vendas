@@ -6,9 +6,12 @@ foi substituído pelo automation engine (app/automation/engine.py) e removido em
 outros módulos:
 
 - `_execute_send_node`  → automation/engine.py (nó `send` das cadências)
-- `handle_campaign_reply` → buffer/processor.py (inbound pausa/cancela enrollments)
-- `handle_optout_reply` / `is_optout_reply` → buffer/processor.py (opt-out determinístico
-  do botão de saída dos templates, para o público que nunca chega ao LLM)
+- `handle_campaign_reply` → buffer/processor.py (inbound pausa/cancela/descadastra
+  enrollments; desde 16/09/2026 recebe TAMBÉM o texto e o tipo da resposta, e é o que
+  permite ramificar por BOTÃO de template — ver `_politica_do_botao`)
+- `handle_optout_reply` / `is_optout_reply` / `_gravar_optout` → buffer/processor.py
+  (opt-out determinístico do botão de saída dos templates, para o público que nunca
+  chega ao LLM; `_gravar_optout` é o corpo compartilhado com a política `optout`)
 - `decide_failure_update` / `_is_permanent_error` → classificador puro de erro Meta
   (permanente vs transitório) com suíte própria (test_campaigns_worker_retry.py)
 """
@@ -160,7 +163,9 @@ def _trigger_first_node(campaign_id: str | None) -> str | None:
     return None
 
 
-def handle_campaign_reply(lead_id: str) -> None:
+def handle_campaign_reply(
+    lead_id: str, texto: str | None = None, tipo: str | None = None,
+) -> None:
     """Called by webhook when a lead sends a message. Pauses (or cancels) EVERY
     active enrollment of the lead, regardless of which node each one is parked on.
 
@@ -178,11 +183,20 @@ def handle_campaign_reply(lead_id: str) -> None:
     reposição rodava até o fim e marcava como PERDIDO o card de um lead que engajou.
 
     Cada enrollment é tratado ISOLADO — erro em um não pode deixar os outros armados.
+
+    `texto`/`tipo` (§11, 16/09/2026) são a RESPOSTA em si. Até aqui esta função recebia
+    só o id: o motor sabia que o lead falou e nada mais, então um template com os botões
+    "Continuar" e "Parar atendimento" aplicava a MESMA política aos dois cliques. O dado
+    sempre existiu (`webhook/meta_parser.py` preserva `payload`/`title` e marca
+    `parsed_type='button'`) e era descartado nesta fronteira. Default `None` nos dois
+    para que qualquer chamador antigo continue válido — e, sem texto, nada muda: nem a
+    escrita de `metadata`, nem a escada de políticas.
     """
     from app.campaigns.service import get_active_enrollments_for_lead
     for enrollment in get_active_enrollments_for_lead(lead_id) or []:
         try:
-            _apply_reply_policy(enrollment)
+            _registrar_ultima_resposta(enrollment, texto, tipo)
+            _apply_reply_policy(enrollment, texto)
         except Exception as exc:
             logger.error(
                 "[CAMPAIGNS] falha ao aplicar on_reply no enrollment %s do lead %s: %s",
@@ -190,10 +204,80 @@ def handle_campaign_reply(lead_id: str) -> None:
             )
 
 
-def _apply_reply_policy(enrollment: dict) -> None:
-    """Pausa, cancela ou reseta UM enrollment segundo a sua própria política de `on_reply`.
+def _registrar_ultima_resposta(
+    enrollment: dict, texto: str | None, tipo: str | None,
+) -> None:
+    """Grava `metadata.ultima_resposta = {texto, tipo, em}` na matrícula. FAIL-SOFT.
 
-    Precedência: o nó atual, quando define o seu, vence — inclusive para forçar `pause`
+    É o que a condição `clicou_botao` (`automation/engine.py::_execute_condition`) lê
+    para ramificar NO MEIO da cadência — sem isto, o clique só conseguiria encerrar a
+    esteira, nunca desviá-la. Sem migration: `campaign_enrollments.metadata` já é
+    `jsonb` (migration `20260904`).
+
+    Sem resposta nenhuma (chamador antigo) NÃO escreve: compatibilidade não pode custar
+    um UPDATE por matrícula a cada inbound.
+
+    O dict é copiado antes de ser alterado e devolvido também EM MEMÓRIA, porque a linha
+    que já está na mão do chamador é a mesma que a política vai ler em seguida.
+    """
+    if texto is None and tipo is None:
+        return
+    metadata = dict(enrollment.get("metadata") or {})
+    metadata["ultima_resposta"] = {
+        "texto": texto,
+        "tipo": tipo,
+        "em": datetime.now(timezone.utc).isoformat(),
+    }
+    enrollment["metadata"] = metadata
+    try:
+        from app.campaigns.service import update_enrollment
+        update_enrollment(enrollment["id"], metadata=metadata)
+    except Exception as exc:
+        logger.warning(
+            "[CAMPAIGNS] não consegui gravar ultima_resposta na matrícula %s: %s",
+            enrollment.get("id"), exc,
+        )
+
+
+def _politica_do_botao(cfg: dict, texto: str | None) -> str | None:
+    """A política declarada NO NÓ para o rótulo que o lead respondeu, ou None.
+
+    `on_reply_por_botao` é `{rótulo: política}` — e é aqui que a decisão sai do
+    frozenset global de duas frases (`_OPTOUT_REPLY_LABELS`) e passa a ser DECLARADA
+    pelo dono da esteira. Qualquer que seja o texto do botão, num template qualquer.
+
+    Os DOIS lados são normalizados: o rótulo é digitado por gente na tela ("Parar
+    atendimento"), e exigir que ela acerte a forma canônica seria reintroduzir, no
+    campo novo, exatamente o tipo de divergência silenciosa que o registro de nós
+    existe para matar.
+
+    IGUALDADE, nunca substring — mesma doutrina de `is_optout_reply`: "não quero parar
+    atendimento agora" não é o clique no botão.
+    """
+    mapa = cfg.get("on_reply_por_botao")
+    if not isinstance(mapa, dict) or texto is None:
+        return None
+    chave = _normalize_reply(texto)
+    if not chave:
+        return None
+    for rotulo, politica in mapa.items():
+        if _normalize_reply(rotulo) == chave:
+            return politica or None
+    return None
+
+
+def _apply_reply_policy(enrollment: dict, texto: str | None = None) -> None:
+    """Pausa, cancela, reseta ou descadastra UM enrollment segundo a sua política.
+
+    PRECEDÊNCIA, do mais específico para o mais geral:
+
+        on_reply_por_botao[resposta normalizada]  →  on_reply do NÓ  →  do GATILHO
+
+    O nível do BOTÃO entrou em 16/09/2026 (§11) e é o único que sabe QUAL resposta
+    chegou; os outros dois só sabem que alguma chegou. Sem `texto` (chamador antigo) a
+    escada começa no nó, exatamente como antes.
+
+    O nó atual, quando define o seu, vence o gatilho — inclusive para forçar `pause`
     contra um gatilho que pede `cancel`. Sem valor no nó, vale o do nó de gatilho (a
     política da esteira inteira). `cancel` vindo do NÓ segue restrito a nós `send`, como
     sempre foi: `system_cadence` grava `on_reply='cancel'` em nós `send_text` que hoje
@@ -202,15 +286,37 @@ def _apply_reply_policy(enrollment: dict) -> None:
     `reset` (reunião de 10/09/2026, esteira "Em conversa") rebobina a matrícula para o
     primeiro nó em vez de encerrá-la — ver `service.reset_enrollment` para o porquê de
     ela permanecer `active`.
+
+    `optout` grava a blacklist de verdade e encerra — ver `_optout_por_politica`.
     """
     node = enrollment.get("campaign_nodes") or {}
-    node_on_reply = (node.get("config") or {}).get("on_reply") or None
-    if node_on_reply is not None:
-        politica = node_on_reply
-        origem = "nó"
-    else:
-        politica = _trigger_on_reply(enrollment.get("campaign_id"))
-        origem = "gatilho"
+    cfg = node.get("config") or {}
+    politica = _politica_do_botao(cfg, texto)
+    origem = "botão"
+    if politica is None:
+        node_on_reply = cfg.get("on_reply") or None
+        if node_on_reply is not None:
+            politica = node_on_reply
+            origem = "nó"
+        else:
+            politica = _trigger_on_reply(enrollment.get("campaign_id"))
+            origem = "gatilho"
+
+    # `optout` é o remédio do botão decorativo: até aqui, clicar em "Parar atendimento"
+    # cancelava uma matrícula e nada mais — sem `leads.opt_out`, sem funil Blacklist,
+    # sem cancelar follow-up — e a reinscrição das esteiras trazia o lead de volta dias
+    # depois. Grava a blacklist ANTES de cancelar: se o Supabase cair no meio, o pior
+    # cenário é a matrícula viva com o opt-out registrado (o guardrail de blacklist em
+    # `_execute_send_node` ainda segura o envio), e não o contrário.
+    if politica == "optout":
+        _optout_por_politica(enrollment, texto)
+        cancel_enrollment(enrollment["id"])
+        logger.info(
+            "[CAMPAIGNS] Opt-out + cancelamento do enrollment %s — lead respondeu "
+            "(on_reply=optout via %s, texto=%r)",
+            enrollment["id"], origem, texto,
+        )
+        return
 
     # `reset` rebobina em vez de encerrar (esteira "Em conversa", reunião de 10/09/2026).
     # Fail-safe: sem primeiro nó resolvido, pausa — pausar por engano é recuperável.
@@ -228,8 +334,14 @@ def _apply_reply_policy(enrollment: dict) -> None:
             enrollment["id"],
         )
 
-    # `cancel` vindo do NÓ segue restrito a nós `send`, como sempre foi.
-    cancelar = politica == "cancel" and (origem == "gatilho" or node.get("type") == "send")
+    # `cancel` vindo do `on_reply` do NÓ segue restrito a nós `send`, como sempre foi —
+    # a restrição existe para não mudar o comportamento de campanha JÁ GRAVADA
+    # (`system_cadence` escreve `on_reply='cancel'` em nós `send_text` que hoje pausam).
+    # `on_reply_por_botao` é campo NOVO: nenhuma campanha o tem, não há dado antigo a
+    # preservar, e um rótulo declarado à mão é intenção explícita. Por isso `origem !=
+    # "nó"` — que para as duas origens antigas ("nó"/"gatilho") é literalmente a mesma
+    # expressão de antes.
+    cancelar = politica == "cancel" and (origem != "nó" or node.get("type") == "send")
     if cancelar:
         cancel_enrollment(enrollment["id"])
         logger.info(
@@ -292,10 +404,52 @@ def is_optout_reply(text: str | None) -> bool:
     return _normalize_reply(text) in _OPTOUT_REPLY_LABELS
 
 
+def _optout_por_politica(enrollment: dict, texto: str | None) -> None:
+    """Política `optout` de uma matrícula → o MESMO opt-out do botão de saída.
+
+    Não é um quarto caminho de blacklist: carrega o lead e chama `_gravar_optout`, o
+    corpo que `handle_optout_reply` já usava. O que muda é só o GATILHO da decisão —
+    lá é o frozenset de duas frases, aqui é o rótulo declarado no nó.
+
+    FAIL-SOFT, e de propósito sem levantar: quem chama cancela a matrícula em seguida, e
+    é esse cancelamento que efetivamente cala a esteira. Opt-out que não gravou é um
+    problema; toque que continua saindo depois do "Parar atendimento" é o problema.
+    """
+    lead_id = enrollment.get("lead_id")
+    if not lead_id:
+        logger.warning(
+            "[OPT-OUT] matrícula %s sem lead_id — política optout ignorada",
+            enrollment.get("id"),
+        )
+        return
+    try:
+        from app.leads.service import get_lead
+        _gravar_optout(get_lead(lead_id), texto, None)
+    except Exception as exc:
+        logger.error(
+            "[OPT-OUT] política optout falhou para o lead %s (matrícula %s): %s",
+            lead_id, enrollment.get("id"), exc, exc_info=True,
+        )
+
+
 def handle_optout_reply(
     lead: dict | None, text: str | None, conversation_id: str | None = None,
 ) -> bool:
     """Grava a marca de blacklist quando o inbound É a saída de opt-out. True se gravou.
+
+    O GATE é `is_optout_reply` — o frozenset de duas frases, que atende quem NÃO está em
+    cadência. Quem está tem a política `optout` do nó (§11), que decide pelo rótulo
+    declarado e cai no mesmo `_gravar_optout` daqui.
+    """
+    if not is_optout_reply(text):
+        return False
+    return _gravar_optout(lead, text, conversation_id)
+
+
+def _gravar_optout(
+    lead: dict | None, text: str | None, conversation_id: str | None = None,
+) -> bool:
+    """O opt-out em si, sem o gate de reconhecimento. True se gravou.
 
     Escreve os MESMOS campos de `agent/tools.py::registrar_optout` — `leads.opt_out=True`
     + `apply_optout_side_effects` (deals para o pipeline Blacklist + cancelamento dos
@@ -311,8 +465,6 @@ def handle_optout_reply(
 
     Fail-soft em todos os passos: erro aqui não pode derrubar o processamento da mensagem.
     """
-    if not is_optout_reply(text):
-        return False
     lead = lead or {}
     lead_id = lead.get("id")
     if not lead_id or lead.get("opt_out"):

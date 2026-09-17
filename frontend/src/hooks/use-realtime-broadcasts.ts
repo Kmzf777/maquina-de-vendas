@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { onResubscribe } from "@/lib/realtime-resync";
 import type { Broadcast } from "@/lib/types";
 
 export function useRealtimeBroadcasts() {
@@ -29,7 +30,7 @@ export function useRealtimeBroadcasts() {
         { event: "*", schema: "public", table: "broadcasts" },
         () => fetchBroadcasts()
       )
-      .subscribe();
+      .subscribe(onResubscribe(fetchBroadcasts));
 
     return () => {
       supabase.removeChannel(channel);

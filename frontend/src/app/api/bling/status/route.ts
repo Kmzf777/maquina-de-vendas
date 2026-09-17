@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+import type { ContaBling } from "@/lib/bling-accounts";
 
 const backend = () =>
   (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
@@ -26,6 +27,14 @@ export async function GET() {
       return Response.json({
         enabled: !!status.enabled,
         connected: !!status.connected,
+        // O vendedor precisa saber QUAIS contas existem e quais estao
+        // conectadas — sem isso o seletor nao tem o que renderizar e toda venda
+        // cai na conta padrao em silencio. O que ele NAO recebe continua sendo o
+        // mesmo de antes: expiracao de token e escopos OAuth.
+        accounts: (status.accounts || []).map((c: ContaBling) => ({
+          account: c.account, label: c.label,
+          configured: c.configured, connected: c.connected,
+        })),
       });
     }
     return Response.json(status);

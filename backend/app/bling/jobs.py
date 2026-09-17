@@ -32,7 +32,8 @@ def _insert(row: dict) -> None:
     get_supabase().table("bling_jobs").insert(row).execute()
 
 
-async def enqueue(kind: str, payload: dict, *, sale_id: str | None = None) -> None:
+async def enqueue(kind: str, payload: dict, *, sale_id: str | None = None,
+                   account: str = config.DEFAULT_ACCOUNT) -> None:
     payload = dict(payload)  # copia: nao mutamos o dict do chamador
 
     if kind == "create_order" and not payload.get("idempotency_key"):
@@ -54,10 +55,15 @@ async def enqueue(kind: str, payload: dict, *, sale_id: str | None = None) -> No
         "status": "pending",
         "attempts": 0,
         "sale_id": sale_id,
+        # A conta mora na LINHA do job, no mesmo nivel de `kind`/`sale_id` — nao
+        # dentro do payload. Mesmo padrao de `bling_webhook_events`: quem
+        # processa o job depois le a conta da linha, sem precisar adivinhar nem
+        # duplicar a chave dentro do JSON do payload.
+        "account": account,
         "run_after": _now().isoformat(),
     })
-    logger.info("[BLING JOBS] enfileirado %s (sale=%s, chave=%s)",
-                kind, sale_id, payload.get("idempotency_key"))
+    logger.info("[BLING JOBS] enfileirado %s (conta=%s, sale=%s, chave=%s)",
+                kind, account, sale_id, payload.get("idempotency_key"))
 
 
 def _claim() -> list[dict]:
@@ -82,9 +88,15 @@ async def _handle_create_order(payload: dict, job: dict) -> dict:
     # parametro nomeado, nao como parte dos dados do pedido.
     kwargs = dict(payload)
     idempotency_key = kwargs.pop("idempotency_key", None)
+    # A conta oficial e a da LINHA do job (gravada por enqueue), nunca a de
+    # dentro do payload — remove um eventual "account" duplicado ali para nao
+    # colidir com o account= explicito abaixo (create_order() so aceita um).
+    kwargs.pop("account", None)
+    account = job.get("account") or config.DEFAULT_ACCOUNT
 
-    async with BlingClient() as client:
-        return await create_order(client, idempotency_key=idempotency_key, **kwargs)
+    async with BlingClient(account=account) as client:
+        return await create_order(client, idempotency_key=idempotency_key,
+                                   account=account, **kwargs)
 
 
 _HANDLERS = {"create_order": _handle_create_order}
