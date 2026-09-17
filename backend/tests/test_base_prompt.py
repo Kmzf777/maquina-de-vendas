@@ -364,6 +364,20 @@ def test_estilo_enuncia_nome_proprio_antes_da_minuscula():
     assert "MINUSCULAS POR PADRAO" not in prompt
 
 
+def test_estilo_lista_as_grafias_canonicas_acentuadas():
+    """A lista de nomes proprios da regra dura e o enunciado da grafia CORRETA — citar
+    "Valeria" e "Cafe Canastra" sem acento ali contradiz o par CORRETO/ERRADO que vem
+    duas linhas abaixo. Mesma categoria do produto Clássico, ja acentuado."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    bloco = prompt[prompt.index("NOME PROPRIO SEMPRE COM MAIUSCULA"):]
+    bloco = bloco[:bloco.index("MINUSCULAS EM TUDO QUE NAO FOR NOME PROPRIO")]
+    linha = [l for l in bloco.splitlines() if "marcas/empresas" in l]
+    assert linha, "a linha de marcas/empresas sumiu da regra dura"
+    assert "Valéria" in linha[0] and "Café Canastra" in linha[0], (
+        "as grafias canonicas na lista seguem sem acento"
+    )
+
+
 def test_estilo_traz_a_saudacao_de_abertura_como_exemplo():
     """Caso de maior volume da auditoria (340 disparos) entra como par CORRETO/ERRADO."""
     prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
@@ -773,6 +787,38 @@ def test_convite_a_qualificar_lead_na_descoberta_carrega_a_ressalva_de_icp():
 def test_icp_commodity_usa_um_unico_motivo_nos_4_stages():
     for fluxo, stage in _STAGES_COM_ICP:
         assert _MOTIVO_ICP_COMMODITY in _secao_icp_commodity(fluxo, stage), f"{fluxo}/{stage}"
+
+
+def test_icp_commodity_exige_o_motivo_literal_sem_parafrase():
+    """O motivo prescrito passa nas guardas, mas parafrases do modelo NAO passam:
+    "...vai pensar depois" cai em _motivo_indica_adiamento (18C) e o descarte e ABORTADO;
+    "...ja compra de outro fornecedor" cai em _motivo_indica_cliente e nao vira perdido.
+    Nos dois casos o lead fica parado no funil — nao e o desfecho pretendido."""
+    for fluxo, stage in _STAGES_COM_ICP:
+        secao = _secao_icp_commodity(fluxo, stage)
+        low = secao.lower()
+        assert "literal" in low, (
+            f"{fluxo}/{stage}: a secao nao exige o motivo LITERAL — parafrase aborta o descarte"
+        )
+        assert "parafrase" in low or "paráfrase" in low, f"{fluxo}/{stage}"
+
+
+def test_excecao_de_icp_no_base_aponta_so_para_os_stages_que_a_carregam():
+    """A secao de ICP so existe em atacado e private_label. Mandar a secretaria (ou
+    exportacao/consumo) "seguir a secao de ICP do stage" aponta pra um texto que nao
+    esta no prompt dela — instrucao pendurada e pior que instrucao nenhuma."""
+    prompt = build_base_prompt(lead_name=None, lead_company=None, now=_now())
+    linha = [l for l in prompt.splitlines() if l.strip().startswith("EXCECAO: quem quer cafe commodity")]
+    assert linha, "a excecao de ICP sumiu da lista SITUACOES COMERCIAIS"
+    bloco = prompt[prompt.index(linha[0]):]
+    bloco = bloco[:bloco.index("\n- ")]
+    low = bloco.lower()
+    assert "atacado" in low and "private label" in low, (
+        "a excecao precisa nomear os dois stages que carregam a secao de ICP"
+    )
+    assert "secao de ICP do stage" not in bloco, (
+        "referencia generica 'do stage' aponta pra texto inexistente em 3 dos 5 prompts"
+    )
 
 
 def _regra_7(prompt: str) -> str:

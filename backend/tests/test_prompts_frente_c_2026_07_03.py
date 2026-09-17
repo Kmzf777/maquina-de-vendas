@@ -141,6 +141,12 @@ def test_secretaria_nada_de_existente_foi_removido():
         "Exemplo 7 ",
     ):
         assert marker in SECRETARIA_PROMPT, f"marcador removido/alterado: {marker!r}"
+    # "## ETAPA 1: APRESENTACAO" e PREFIXO do titulo antigo ("... E COLETA DE NOME"),
+    # entao sozinho ele passa nos dois textos e nao detecta a volta da etapa de coleta.
+    # Este assert e o que fecha o buraco (regra 25: PROIBIDO PEDIR O NOME).
+    assert "COLETA DE NOME" not in SECRETARIA_PROMPT, (
+        "a ETAPA 1 voltou a ser etapa de coleta de nome — contradiz a regra 25"
+    )
 
 
 # ---------------------------------------------------------------------------
