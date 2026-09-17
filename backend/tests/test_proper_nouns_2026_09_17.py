@@ -239,6 +239,26 @@ def test_bridge_nao_escapa_do_gate_never_substantivo():
     assert normalize_proper_nouns(entrada2) == entrada2
 
 
+def test_never_nouns_nao_atravessa_quebra_de_bolha():
+    # Achado de mutation testing (dado real, 90 dias): dos 6 matches
+    # distintos de distancia-3 substantivo->produto em producao, 1 era falso
+    # bloqueio: "torra" fica na bolha anterior, separada por uma linha em
+    # branco, sem relacao com "microlote" na bolha seguinte que tem "o"
+    # (determinante) colado. A janela de NOUNS reseta em quebra de bolha/frase.
+    entrada = "torra especial\n\no microlote 250g"
+    esperado = "torra especial\n\no Microlote 250g"
+    assert normalize_proper_nouns(entrada) == esperado
+
+
+def test_never_nouns_distancia_3_sem_boundary_continua_bloqueando():
+    # Contraprova: SEM quebra de bolha/frase, a janela de 3 continua valendo
+    # -- medido em producao (90 dias): distancia-3 ("toque natural de
+    # canela") e a forma MAIS comum de uso como especiaria (26 ocorrencias,
+    # mais que distancia-2 com 22), nao um caso residual a se descartar.
+    entrada = "toque natural de canela"
+    assert normalize_proper_nouns(entrada) == entrada
+
+
 # ---------------------------------------------------------------------------
 # Camada C — nome do lead (dinâmico)
 # ---------------------------------------------------------------------------
