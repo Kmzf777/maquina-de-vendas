@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { describeMetaReactionError } from "@/lib/meta-error";
+import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
 
 const META_API_VERSION = "v21.0";
 
@@ -34,7 +35,7 @@ export async function POST(
 
   const { data: conv, error: convError } = await supabase
     .from("conversations")
-    .select("*, leads(id, phone), channels(id, provider, provider_config)")
+    .select("*, leads(id, phone, opt_out), channels(id, provider, provider_config)")
     .eq("id", conversationId)
     .single();
 
@@ -47,7 +48,7 @@ export async function POST(
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as { id: string; phone: string } | null;
+  const lead = conv.leads as { id: string; phone: string; opt_out?: boolean | null } | null;
 
   if (!channel || !lead?.phone) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
@@ -57,6 +58,12 @@ export async function POST(
       { error: "Reações disponíveis apenas para Meta Cloud" },
       { status: 400 }
     );
+  }
+
+  // BLOQUEIO: reagir é mensagem saindo pelo mesmo número, então segue a mesma regra do
+  // envio manual. Guard antes de montar o POST da reação.
+  if (await isLeadBlocked(supabase, lead.id, lead.opt_out)) {
+    return NextResponse.json({ error: MENSAGEM_LEAD_BLOQUEADO }, { status: 403 });
   }
 
   const { phone_number_id, access_token, api_version } = channel.provider_config;
