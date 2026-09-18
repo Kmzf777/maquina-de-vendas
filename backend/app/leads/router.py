@@ -15,6 +15,17 @@ class WonSalePayload(BaseModel):
     deal_id: str | None = None
 
 
+class BlockPayload(BaseModel):
+    """Corpo OPCIONAL de /block, /unblock e /optout — quem bloqueou e por quê.
+
+    Tudo opcional de propósito: o proxy Next (`api/leads/[id]/optout/route.ts`) faz o POST
+    sem corpo nenhum, e uma auditoria incompleta não pode impedir o bloqueio de acontecer.
+    """
+
+    by: str | None = None
+    reason: str | None = None
+
+
 @router.get("")
 async def list_leads(
     status: str | None = None,
@@ -84,25 +95,66 @@ async def get_lead_followups(lead_id: str):
     return {"data": rows}
 
 
-@router.post("/{lead_id}/optout")
-async def optout_lead(lead_id: str):
-    """Parar mensagens: desativa IA, move deals para Blacklist e cancela follow-ups."""
-    from app.leads.service import get_lead, update_lead, apply_optout_side_effects, save_message
+@router.post("/{lead_id}/block")
+async def block_lead_endpoint(lead_id: str, body: BlockPayload | None = None):
+    """Bloqueia o lead: hard opt-out, cards na Blacklist, conversa fora de /conversas.
 
-    lead = get_lead(lead_id)
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-
-    update_lead(lead_id, ai_enabled=False)
-    apply_optout_side_effects(lead_id, lead.get("phone", ""), reason="optout_manual")
+    Toda a regra vive em `leads.service.block_lead` — a rota só traduz o `ValueError`
+    de lead inexistente em 404 e devolve os contadores que a UI usa na confirmação.
+    """
+    from app.leads.service import block_lead
 
     try:
-        save_message(lead_id, "system", "[optout_manual] Operador parou mensagens manualmente.")
-    except Exception as exc:
-        logger.warning("optout_lead: falha ao salvar system message para lead %s: %s", lead_id, exc)
+        result = block_lead(lead_id, by=(body.by if body else None),
+                            reason=(body.reason if body else None))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "ok", **result}
 
-    logger.info("optout_lead: ai_enabled=False para lead %s (opt-out manual)", lead_id)
-    return {"status": "ok"}
+
+@router.post("/{lead_id}/unblock")
+async def unblock_lead_endpoint(lead_id: str, body: BlockPayload | None = None):
+    """Desbloqueia o lead. `deals_pendentes > 0` = cards que a UI precisa mandar mover.
+
+    A prova do bloqueio (`opt_out_at`/`opt_out_channel`/evidência) NÃO é apagada — ver
+    `leads.service.unblock_lead`.
+    """
+    from app.leads.service import unblock_lead
+
+    try:
+        result = unblock_lead(lead_id, by=(body.by if body else None))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "ok", **result}
+
+
+@router.get("/{lead_id}/blocked")
+async def is_lead_blocked(lead_id: str):
+    """Estado de bloqueio pelo critério canônico (`opt_out` OU deal na Blacklist)."""
+    from app.leads.service import is_lead_blacklisted
+
+    return {"blocked": is_lead_blacklisted(lead_id)}
+
+
+@router.post("/{lead_id}/optout")
+async def optout_lead(lead_id: str, body: BlockPayload | None = None):
+    """Alias histórico de /block. Mantido porque o frontend e scripts ainda chamam esta URL.
+
+    Até 18/09/2026 esta rota fazia `ai_enabled=False` + side effects e NUNCA gravava
+    `opt_out=True`: o "parar mensagens" do operador ficava apoiado só no braço "tem deal
+    na Blacklist" de `is_lead_blacklisted` e evaporava assim que alguém arrastasse o card
+    no Kanban. Delegar para `block_lead` é o conserto — a rota continua respondendo
+    `{"status": "ok"}` (contrato que chat-view.tsx já consome) com os contadores novos por
+    cima.
+    """
+    from app.leads.service import block_lead
+
+    try:
+        result = block_lead(lead_id, by=(body.by if body else None),
+                            reason=(body.reason if body else None) or "optout_manual")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "ok", **result}
 
 
 @router.post("/{lead_id}/won")
