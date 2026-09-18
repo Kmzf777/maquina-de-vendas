@@ -205,6 +205,24 @@ async def _execute_test_node(
     node_type = node["type"]
     cfg = node.get("config") or {}
 
+    # BLOQUEIO: o "testar campanha" manda mensagem DE VERDADE (só os nós de ação é que
+    # são simulados) — é disparo real para um número real, e nenhuma camada o cobria.
+    # Um guarda só para os dois nós que enviam: os demais (condition/wait/action) não
+    # tocam o lead e travá-los tiraria do operador a capacidade de depurar o fluxo.
+    # O ValueError é a via de erro que o gerador SSE já conhece: vira um evento
+    # `failed` com este texto na tela, em vez de um "enviado" que nunca saiu.
+    if node_type in ("send", "send_text"):
+        from app.leads.service import is_lead_blacklisted
+        if is_lead_blacklisted(lead.get("id")):
+            logger.warning(
+                "[AUTOMATION][TEST][BLACKLIST] lead %s (%s) bloqueado — nó '%s' NÃO enviado",
+                lead.get("id"), lead.get("phone"), node_type,
+            )
+            raise ValueError(
+                "Lead bloqueado (opt-out ou funil Blacklist) — teste interrompido, "
+                "nenhuma mensagem foi enviada."
+            )
+
     if node_type == "send":
         from app.whatsapp.registry import get_provider
         from app.broadcast.worker import _build_template_components

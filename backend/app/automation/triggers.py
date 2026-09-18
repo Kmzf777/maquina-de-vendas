@@ -325,6 +325,17 @@ def _safe_enroll(trigger_node: dict, lead_id: str, now: datetime) -> None:
     if _engine._conversation_followup_disabled(lead_id, trigger_node.get("channel_id")):
         logger.info("[AUTOMATION] polling: conversation finalized — skip enrollment for lead %s", lead_id)
         return
+    # BLOQUEIO: ponto comum de TODOS os gatilhos de polling (tag, stage, keyword,
+    # inatividade…). Só `deal_stage_stagnation` tinha a guarda, e ela nasceu ali por ser
+    # a esteira que varre a base inteira — mas qualquer gatilho pode pegar um lead que
+    # pediu para sair. Aqui a matrícula nem chega a existir: barrar só no envio deixaria
+    # o enrollment vivo, ocupando a vaga do cooldown por 90 dias sem nunca disparar.
+    if is_lead_blacklisted(lead_id):
+        logger.info(
+            "[AUTOMATION][BLACKLIST] polling %s: lead %s na blacklist — matrícula barrada",
+            trigger_node.get("type"), lead_id,
+        )
+        return
     try:
         create_enrollment(trigger_node["campaign_id"], lead_id, trigger_node["next_node_id"], now)
         logger.info("[AUTOMATION] polling enrolled %s via %s", lead_id, trigger_node.get("type"))

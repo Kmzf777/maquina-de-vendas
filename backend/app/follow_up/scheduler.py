@@ -16,7 +16,7 @@ from app.follow_up.service import (
 )
 from app.leads.service import (
     resolve_send_target, create_deal, record_dispatch_note,
-    strip_greeting_prefix, sanitize_display_name,
+    strip_greeting_prefix, sanitize_display_name, is_lead_blacklisted,
 )
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
@@ -168,6 +168,20 @@ async def send_joao_handoff_template(lead_phone: str, lead_name: str = "", lead_
     """
     if not lead_phone:
         logger.error("[JOAO_REENGAGE] lead_phone vazio — disparo abortado")
+        return False
+
+    # BLOQUEIO: este disparo é síncrono e roda FORA do loop de `process_due_followups`,
+    # que é onde mora o backstop (`_lead_stop_reason`) — a tool `retomar_contato_vendedor`
+    # chama esta função direto. Sem o guard aqui, o único caminho que manda template pelo
+    # número do João escapava de todas as camadas. Só checa quando há `lead_id` (o
+    # parâmetro é opcional e a assinatura não muda): sem ele não há o que consultar, e o
+    # `False` devolvido leva o chamador ao fallback de reagendamento, que passa pelo
+    # backstop no próximo tick.
+    if lead_id and is_lead_blacklisted(lead_id):
+        logger.warning(
+            "[JOAO_REENGAGE][BLACKLIST] lead %s (%s) na blacklist — template do João ABORTADO",
+            lead_id, lead_phone,
+        )
         return False
 
     joao_channel = get_channel_by_provider_config("phone_number_id", JOAO_PHONE_NUMBER_ID, "meta_cloud")
@@ -841,9 +855,17 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
 
     Fonte única do backstop de envio de `process_due_followups`. Ordem de prioridade dá
     o `cancel_reason` gravado (preserva a semântica de analytics já existente: `opt_out`,
-    `wrong_number`, `ai_disabled`). Função PURA e fail-open: lead None/sem flags → None
-    (na dúvida, o fluxo normal segue). `ai_enabled` só para quando é EXPLICITAMENTE False
-    (ausente/None não dispara — o lead veio de um select que pode não trazer o campo).
+    `wrong_number`, `ai_disabled`). Fail-open: lead None/sem flags → None (na dúvida, o
+    fluxo normal segue). `ai_enabled` só para quando é EXPLICITAMENTE False (ausente/None
+    não dispara — o lead veio de um select que pode não trazer o campo).
+
+    NÃO é mais uma função pura: o último critério (`is_lead_blacklisted`) vai ao banco.
+    A troca é deliberada — este é o backstop ÚNICO de 6 caminhos de envio e ele só
+    enxergava `leads.opt_out` e `metadata.blacklisted_at`. Um lead BLOQUEADO só pelo card
+    no funil Blacklist (o outro braço do critério canônico, e o único que sobra quando a
+    coluna de evidência não existe) passava reto e seguia recebendo toque. As checagens
+    em memória vêm antes de propósito: a consulta só acontece para o lead que, pelo que
+    está em mãos, seguiria recebendo.
     """
     if not isinstance(lead, dict):
         return None
@@ -855,6 +877,17 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
             return "blacklisted"
         if meta.get("wrong_number_at"):
             return "wrong_number"
+    # ANTES de `ai_disabled`, e a ordem é o ponto: `ai_disabled` é o único motivo com
+    # isenção (`_STOP_REASON_EXEMPT_JOB_TYPES` → handoff_rescue). Um lead bloqueado tem
+    # `ai_enabled=False` junto, então checar depois devolveria "ai_disabled" e o resgate
+    # isento dispararia template para quem está na Blacklist. "blacklisted" não é isento
+    # de nada — e continua não sendo.
+    if lead.get("id") and is_lead_blacklisted(lead["id"]):
+        logger.info(
+            "[FOLLOWUP][BLACKLIST] lead %s na blacklist (opt-out ou funil Blacklist) — follow-up barrado",
+            lead["id"],
+        )
+        return "blacklisted"
     if lead.get("ai_enabled") is False:
         return "ai_disabled"
     return None
