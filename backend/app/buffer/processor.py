@@ -1292,6 +1292,40 @@ async def process_buffered_messages(
     """Process accumulated buffer messages for a lead on a specific channel."""
     try:
         lead = get_or_create_lead(phone)
+
+        # BLOQUEIO (hard opt-out): lead bloqueado não entra no CRM.
+        #
+        # POSIÇÃO DELIBERADA — aqui, e não mais abaixo. Esta função é o único
+        # estreitamento por onde passam TODOS os caminhos inbound (meta_router,
+        # webhook/router legado, buffer/flusher e buffer/recovery), e o gate precisa
+        # ficar ANTES de:
+        #   - get_or_create_conversation / save_message, que criariam a conversa e a
+        #     linha em `messages`;
+        #   - do unread_count++, que somaria badge de não lida numa conversa bloqueada;
+        #   - de advance_deal_on_reply, que moveria o card de volta para 'Respondeu' e
+        #     DESFARIA a ida para a Blacklist — um gate depois dele anularia o bloqueio;
+        #   - de _resolve_media (download de mídia e transcrição de áudio), o item mais
+        #     caro do turno.
+        #
+        # Consultamos SÓ `opt_out`: get_or_create_lead faz select("*"), então o campo já
+        # veio em memória e a checagem custa zero. NÃO chame is_lead_blacklisted aqui — o
+        # braço "tem deal no funil Blacklist" custaria uma query Supabase por mensagem
+        # recebida, no caminho mais quente do sistema. Ele é dispensável porque a migration
+        # 20260918 faz o backfill de opt_out=true em quem já tinha card na Blacklist e o
+        # block_lead sempre grava os dois lados.
+        #
+        # CONSEQUÊNCIA (comportamento pedido, não é bug): as mensagens recebidas enquanto o
+        # lead está bloqueado são DESCARTADAS EM DEFINITIVO. Não ficam em `messages` e não
+        # reaparecem no desbloqueio — não há fila, buffer nem replay. É exatamente o que o
+        # usuário pediu ("suas mensagens não chegam no CRM"); está escrito aqui para
+        # ninguém tratar a lacuna no histórico como defeito mais tarde.
+        if lead.get("opt_out"):
+            logger.info(
+                "[BLOQUEADO] inbound descartado — lead %s (phone %s) está com opt_out=true",
+                lead.get("id"), phone,
+            )
+            return
+
         channel = get_channel_by_id(channel_id) if channel_id else None
         if not channel:
             logger.warning(f"No channel found for {phone} (channel_id={channel_id}), skipping")
