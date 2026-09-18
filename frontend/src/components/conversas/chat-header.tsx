@@ -23,7 +23,10 @@ interface ChatHeaderProps {
   onMarkRead?: () => void | Promise<void>;
   onBack?: () => void;
   onOpenContact?: () => void;
-  onOptOut?: () => void | Promise<void>;
+  /** Lead em hard opt-out: o item do menu vira "Desbloquear lead". */
+  blocked?: boolean;
+  onBlock?: () => void | Promise<void>;
+  onUnblock?: () => void | Promise<void>;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -49,7 +52,9 @@ export function ChatHeader({
   onMarkRead,
   onBack,
   onOpenContact,
-  onOptOut,
+  blocked = false,
+  onBlock,
+  onUnblock,
 }: ChatHeaderProps) {
   const lead = conversation.leads;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -202,28 +207,53 @@ export function ChatHeader({
               </span>
             </button>
 
-            {onOptOut && (
-              <>
-                <div className="border-t border-[#dedbd6] my-1" />
-                {/* Parar mensagens — opt-out manual */}
-                <button
-                  type="button"
-                  onClick={() => { setMenuOpen(false); onOptOut(); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-left hover:bg-red-50 transition-colors"
-                >
-                  <svg
-                    className="w-4 h-4 text-red-500 flex-shrink-0"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.5}
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
-                  </svg>
-                  <span className="text-red-600">Parar mensagens</span>
-                </button>
-              </>
-            )}
+            {/* Bloquear/Desbloquear lead — mesma posição do antigo "Parar
+                mensagens". O bloqueio É o hard opt-out (leads.opt_out + funil
+                Blacklist); o rótulo inverte quando o lead já está bloqueado para
+                o operador não precisar adivinhar o estado atual. */}
+            {blocked
+              ? onUnblock && (
+                  <>
+                    <div className="border-t border-[#dedbd6] my-1" />
+                    <button
+                      type="button"
+                      onClick={() => { setMenuOpen(false); onUnblock(); }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-left hover:bg-red-50 transition-colors"
+                    >
+                      <svg
+                        className="w-4 h-4 text-red-500 flex-shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        strokeWidth={1.5}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 1 1 9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                      </svg>
+                      <span className="text-red-600">Desbloquear lead</span>
+                    </button>
+                  </>
+                )
+              : onBlock && (
+                  <>
+                    <div className="border-t border-[#dedbd6] my-1" />
+                    <button
+                      type="button"
+                      onClick={() => { setMenuOpen(false); onBlock(); }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-left hover:bg-red-50 transition-colors"
+                    >
+                      <svg
+                        className="w-4 h-4 text-red-500 flex-shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        strokeWidth={1.5}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                      <span className="text-red-600">Bloquear lead</span>
+                    </button>
+                  </>
+                )}
           </div>
         )}
       </div>

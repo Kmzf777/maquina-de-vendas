@@ -14,7 +14,8 @@ import { ContactDetail } from "@/components/conversas/contact-detail";
 import { debounce } from "@/lib/debounce";
 import { onResubscribe } from "@/lib/realtime-resync";
 import {
-  mergeConversationRow,
+  applyConversationUpdate,
+  isBlockedConversationRow,
   sortByLastMsgDesc,
   previewFromMessage,
   type ConversationRow,
@@ -230,11 +231,15 @@ function ConversasContent() {
         forceUnreadZero: recentlyMarkedRef.current.has(row.id),
         pendingFollowup: recentlyToggledFollowupRef.current.get(row.id),
       };
-      patchList((prev) =>
-        sortByLastMsgDesc(
-          prev.map((c) => (c.id === row.id ? mergeConversationRow(c, row, overrides) : c)),
-        ),
-      );
+      patchList((prev) => applyConversationUpdate(prev, row, overrides));
+      // A regra de bloqueio REMOVE a linha (ver applyConversationUpdate), e a
+      // removida pode ser justamente a aberta. A seleção é derivada do cache mas
+      // tem fallback para o último objeto conhecido, então sem zerar o id o
+      // operador ficaria olhando um chat fantasma — de um lead que acabou de
+      // pedir para sair — com o composer ainda montado.
+      if (isBlockedConversationRow(row)) {
+        setSelectedId((cur) => (cur === row.id ? null : cur));
+      }
     };
 
     const realtimeChannel = supabase
@@ -254,6 +259,13 @@ function ConversasContent() {
           if (selectedChannelId && row.channel_id !== selectedChannelId) return;
           if (payload.eventType === "INSERT") {
             debouncedInvalidate(); // linha crua não tem lead/channel — precisa da API
+            return;
+          }
+          // BLOQUEIO antes da checagem de cache: remover linha não precisa dos
+          // joins da API, então não vale gastar um refetch integral atrás de uma
+          // conversa que a listagem justamente deixou de devolver.
+          if (isBlockedConversationRow(row)) {
+            applyRowPatch(row);
             return;
           }
           const cached = queryClient.getQueryData<Conversation[]>([

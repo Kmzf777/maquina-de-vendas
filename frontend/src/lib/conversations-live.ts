@@ -51,6 +51,38 @@ export function mergeConversationRow(
   return merged;
 }
 
+/**
+ * Status que o backend grava nas conversas de um lead BLOQUEADO. A listagem
+ * (`/api/conversations`) já filtra por ele; estes helpers replicam a mesma
+ * regra do lado do Realtime.
+ */
+export const BLOCKED_CONVERSATION_STATUS = "blocked";
+
+/** A linha do evento diz que a conversa foi bloqueada (lead em hard opt-out)? */
+export function isBlockedConversationRow(row: ConversationRow): boolean {
+  return row.status === BLOCKED_CONVERSATION_STATUS;
+}
+
+/**
+ * Aplica um UPDATE de `conversations` na lista em memória.
+ *
+ * Bloqueio REMOVE a linha em vez de mesclar: o UPDATE que marca
+ * `status='blocked'` é o mesmo evento que tira a conversa do /conversas. Um
+ * merge ingênuo manteria a conversa viva no cache até o próximo refetch
+ * integral — o operador continuaria vendo (e podendo abrir) o chat de um lead
+ * que acabou de pedir para sair. É o mesmo tratamento que o DELETE já recebe.
+ */
+export function applyConversationUpdate(
+  list: Conversation[],
+  row: ConversationRow,
+  overrides: MergeOverrides = {},
+): Conversation[] {
+  if (isBlockedConversationRow(row)) return list.filter((c) => c.id !== row.id);
+  return sortByLastMsgDesc(
+    list.map((c) => (c.id === row.id ? mergeConversationRow(c, row, overrides) : c)),
+  );
+}
+
 /** Mesma ordenação do /api/conversations: `last_msg_at desc`, nulls por último. */
 export function sortByLastMsgDesc(list: Conversation[]): Conversation[] {
   return [...list].sort((a, b) => {

@@ -25,6 +25,10 @@ export interface Lead {
   first_response_at: string | null;
   on_hold: boolean;
   ai_enabled: boolean;
+  // Bloqueio do lead (hard opt-out): fonte canônica do "lead bloqueado". A UI de
+  // /conversas trava o composer e troca o item do menu com base nele, então ele
+  // PRECISA vir no select das conversas (ver conversationSelect).
+  opt_out?: boolean;
   notes: string | null;
   metadata?: Record<string, unknown> | null;
   traffic_type?: "paid" | "organic" | null;
