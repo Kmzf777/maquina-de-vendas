@@ -181,14 +181,38 @@ def test_store_id_e_situacao_sao_por_conta(duas_contas, monkeypatch):
     assert cfg.account("secundaria").situacao_id == 9
 
 
-def test_label_cai_para_a_propria_key(duas_contas, monkeypatch):
-    monkeypatch.delenv("BLING_SECUNDARIA_LABEL", raising=False)
-    assert cfg.account("secundaria").label == "secundaria"
+def test_label_cai_para_a_propria_key(monkeypatch):
+    # Slug FORA do mapa: e o unico caso em que o fallback cru ainda vale.
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,terceira")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.delenv("BLING_TERCEIRA_LABEL", raising=False)
+    assert cfg.account("terceira").label == "terceira"
 
 
-def test_label_le_do_env(duas_contas, monkeypatch):
+def test_label_le_do_env_para_conta_fora_do_mapa(monkeypatch):
+    # O escape hatch por env sobrevive para quem ainda precisa dele.
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,terceira")
+    monkeypatch.setenv("BLING_CLIENT_ID", "cid")
+    monkeypatch.setenv("BLING_CLIENT_SECRET", "csec")
+    monkeypatch.setenv("BLING_TERCEIRA_LABEL", "Canastra CNPJ 3")
+    assert cfg.account("terceira").label == "Canastra CNPJ 3"
+
+
+def test_rotulos_das_duas_contas_conhecidas_vem_do_codigo(duas_contas):
+    assert cfg.account("default").label == "Bling Café Canastra (1)"
+    assert cfg.account("secundaria").label == "Bling Café Rural (2)"
+
+
+def test_rotulo_do_codigo_vence_o_env_antigo(duas_contas, monkeypatch):
+    # A asserção que protege o objetivo da entrega: BLING_LABEL e
+    # BLING_SECUNDARIA_LABEL continuam preenchidas com os nomes velhos no .env
+    # da VPS. Sem esta inversao, o mapa seria ignorado em producao e a tela nao
+    # mudaria.
+    monkeypatch.setenv("BLING_LABEL", "Canastra CNPJ 1")
     monkeypatch.setenv("BLING_SECUNDARIA_LABEL", "Canastra CNPJ 2")
-    assert cfg.account("secundaria").label == "Canastra CNPJ 2"
+    assert cfg.account("default").label == "Bling Café Canastra (1)"
+    assert cfg.account("secundaria").label == "Bling Café Rural (2)"
 
 
 def test_conta_desconhecida_levanta(duas_contas):
