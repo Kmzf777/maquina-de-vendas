@@ -26,12 +26,34 @@ cd frontend && npx tsc --noEmit       # equivale ao script "type-check" do packa
 **Baseline verificado em 2026-09-17, antes de qualquer mudança:**
 `test_bling_config.py` → 37 passed. `bling-accounts.test.ts` → 18 passed.
 
-**Limitação conhecida do ambiente:** os arquivos `.test.tsx` (testes de
-componente) **não rodam nesta máquina** — `jsdom` está declarado em
-`frontend/package.json` (`^25.0.1`) mas ausente do `node_modules`. Isso é
-anterior a esta entrega e **não** deve ser consertado aqui. Rodar a suíte
-inteira (`npx vitest run`) vai falhar nos `.test.tsx` por esse motivo; use os
-comandos por arquivo acima.
+**CORREÇÃO 2026-09-17 (durante a execução).** A versão original deste plano
+dizia que os `.test.tsx` "não rodam nesta máquina" e mandava ignorá-los. Isso
+estava **errado e era perigoso**, por dois motivos descobertos na Onda A:
+
+1. O `node_modules` estava incompleto (faltavam `jsdom` e `@testing-library/*`,
+   ambos **declarados** no `package.json`). É um defeito do ambiente local, não
+   uma propriedade do projeto — resolvido com `cd frontend && npm ci`, que é
+   exatamente o que o CI faz.
+2. `.github/workflows/deploy.yml:49-52` roda `npm run test` como
+   **gate bloqueante de deploy** ("qualquer teste vermelho impede o deploy").
+   Um `.test.tsx` desatualizado não é dívida silenciosa: trava a subida para
+   produção.
+
+E três arquivos de teste de componente **afirmam o comportamento que esta
+entrega inverte**. Eles não estavam em task nenhuma do plano original:
+
+| Arquivo | O que afirma | Quebra por causa da |
+|---|---|---|
+| `components/sales/bling-order-form.test.tsx:109` | `toHaveBeenCalledWith(CONTA_PADRAO)` com as duas contas conectadas | Task 2 |
+| `components/config/bling-settings.test.tsx` (~156, ~172, ~192) | espera abrir em "João do CNPJ 1" e depois trocar para `secundaria` | Task 3 |
+| `components/leads/lead-bling-section.test.tsx:57` | teste chamado *"comeca na conta DEFAULT"* | Task 5 |
+
+`/produtos` não tem arquivo de teste — nada a corrigir lá.
+
+As Tasks 3 e 5 passam a incluir o conserto do seu próprio teste, e nasce a
+**Task 7** para o `bling-order-form.test.tsx`. Depois do `npm ci`, **todos os
+comandos de teste desta seção rodam de verdade** — inclusive `npx vitest run`
+completo, que é o que o gate de deploy executa.
 
 ---
 
@@ -57,8 +79,11 @@ qualquer migration.
 ## Ordem e paralelismo
 
 - **Onda A (paralela):** Task 1 (backend) ‖ Task 2 (frontend lib) — arquivos disjuntos, zero dependência.
-- **Onda B (paralela):** Task 3 ‖ Task 4 ‖ Task 5 — arquivos disjuntos, todas dependem do `CONTA_PREFERIDA` exportado na Task 2.
+- **Onda B (paralela):** Task 3 ‖ Task 4 ‖ Task 5 ‖ Task 7 — arquivos disjuntos, todas dependem do `CONTA_PREFERIDA` exportado na Task 2.
 - **Onda C:** Task 6 — documentação e verificação final.
+
+Pré-requisito da Onda B: `cd frontend && npm ci` concluído, senão os testes de
+componente das Tasks 3, 5 e 7 não têm como ser verificados.
 
 **Commits:** quem dispara agentes em paralelo deve deixar os agentes **apenas
 editarem e rodarem testes**, e fazer os `git commit` sequencialmente entre as
@@ -361,12 +386,41 @@ vira:
   const [contaVendedores, setContaVendedores] = useState<string>(CONTA_PREFERIDA);
 ```
 
-- [ ] **Step 3: Conferir que o type-check passa**
+- [ ] **Step 2b: Consertar os três testes que afirmam o comportamento antigo**
+
+`frontend/src/components/config/bling-settings.test.tsx` tem três testes
+(~156, ~172, ~192) que fazem a mesma sequência:
+
+```ts
+await waitFor(() => expect(screen.getByText("João do CNPJ 1")).toBeTruthy());
+fireEvent.change(screen.getByLabelText("Conta"), { target: { value: "secundaria" } });
+await waitFor(() => expect(screen.getByText("João do CNPJ 2")).toBeTruthy());
+```
+
+Depois do Step 2 o painel **já abre** em `secundaria`, então a primeira espera
+mira a lista errada e o `fireEvent.change` para o mesmo valor não dispara
+evento nenhum. Inverta a sequência nos três: espere por `"João do CNPJ 2"`
+primeiro, e quando o teste precisar exercitar a TROCA, troque para `"default"`
+e espere `"João do CNPJ 1"`.
+
+Cuidado com o terceiro teste (`"salva o vinculo NA CONTA selecionada, nao na
+default"`): o nome e a asserção final (`account: "secundaria"`) dependem de a
+conta salva **não** ser a default. Como `secundaria` virou a conta de abertura,
+esse teste perde o sentido se ficar em `secundaria`. Reescreva-o para trocar
+para `"default"` e afirmar `account: "default"` — o ponto do teste é que o
+vínculo vai para a conta SELECIONADA, seja ela qual for. Ajuste o nome do teste
+junto (`"salva o vinculo NA CONTA selecionada, nao na de abertura"`).
+
+Não mude os rótulos `"Canastra CNPJ 1"`/`"Canastra CNPJ 2"` das fixtures: são
+dados locais do teste, não vêm de `ROTULOS_PADRAO`, e trocá-los não prova nada.
+
+- [ ] **Step 3: Rodar o teste do componente e o type-check**
+
+Run: `cd frontend && npx vitest run src/components/config/bling-settings.test.tsx`
+Expected: todos passam. (Exige o `npm ci` já concluído.)
 
 Run: `cd frontend && npx tsc --noEmit`
-Expected: sem erro. (O projeto tem erros pré-existentes? Compare com a saída do
-mesmo comando em `git stash` se aparecer qualquer coisa — não conserte erro que
-não é seu.)
+Expected: sem erro.
 
 - [ ] **Step 4: Verificar que `CONTA_PADRAO` continua usado neste arquivo**
 
@@ -545,7 +599,41 @@ viram:
   }, [blingStatus.accounts, conta]);
 ```
 
-- [ ] **Step 3: Rodar lint e type-check**
+- [ ] **Step 2b: Consertar o teste que afirma o comportamento antigo**
+
+`frontend/src/components/leads/lead-bling-section.test.tsx:57` é o teste
+`"comeca na conta DEFAULT — nada muda para quem usa o CRM hoje enquanto o
+vendedor nao mexe no seletor"`. Ele monta com `DUAS_CONTAS` (as duas
+conectadas) e `blingContactIds={{ [CONTA_PADRAO]: 99 }}`, afirmando que a
+seção abre mostrando o vínculo da conta default.
+
+Isso é exatamente o que a Task 5 inverte. Reescreva o teste para a preferida:
+
+```ts
+  it("comeca na conta PREFERIDA — o vendedor cai direto no CNPJ que mais emite", async () => {
+    mockUseBlingStatus.mockReturnValue({ enabled: true, accounts: DUAS_CONTAS, loading: false, error: null });
+    // ...mesmo mock de fetch do teste original...
+    render(<LeadBlingSection leadId="lead-1" blingContactIds={{ [CONTA_PREFERIDA]: 99 }} onChanged={vi.fn()} />);
+    // ...mesma asserção do original, agora contra o vinculo da conta preferida...
+  });
+```
+
+Mantenha o resto do corpo idêntico ao original — só a conta muda. Acrescente
+`CONTA_PREFERIDA` ao import de `@/lib/bling-accounts` na linha 16 (o
+`CONTA_PADRAO` continua sendo usado nas fixtures `UMA_CONTA`/`DUAS_CONTAS`, não
+o remova).
+
+Confira também o teste `"busca de vinculo manda a conta na querystring"`
+(~linha 70): se ele afirma `account=default` na querystring, agora vai receber
+`account=secundaria`. Ajuste para a preferida.
+
+Não mude os rótulos das fixtures (`"Canastra CNPJ 1"`/`"Canastra CNPJ 2"`):
+são dados locais do teste, passados como props, e não vêm de `ROTULOS_PADRAO`.
+
+- [ ] **Step 3: Rodar o teste do componente, lint e type-check**
+
+Run: `cd frontend && npx vitest run src/components/leads/lead-bling-section.test.tsx`
+Expected: todos passam. (Exige o `npm ci` já concluído.)
 
 Run: `cd frontend && npx tsc --noEmit && npx eslint src/components/leads/lead-bling-section.tsx`
 Expected: sem erro. Se o ESLint reclamar de `react-hooks/set-state-in-effect`,
@@ -606,10 +694,14 @@ Expected: mesma contagem de falhas do baseline (idealmente zero). Compare com
 `git stash && python -m pytest tests/ -q` se houver falha, para não assumir
 como sua uma quebra pré-existente.
 
-- [ ] **Step 3: Rodar os testes de lógica pura do frontend**
+- [ ] **Step 3: Rodar a suíte do frontend INTEIRA — é o gate de deploy**
 
-Run: `cd frontend && npx vitest run src/lib/`
-Expected: todos os `.test.ts` de `src/lib/` passam.
+Run: `cd frontend && npm run test`
+Expected: **todos passam**, incluindo os `.test.tsx`. Este é literalmente o
+comando de `.github/workflows/deploy.yml:52`, marcado no próprio workflow como
+"Gate bloqueante: qualquer teste vermelho impede o deploy". Não substitua por
+`npx vitest run src/lib/` — rodar só um subconjunto aqui foi o erro que deixou
+três testes desatualizados passarem despercebidos no plano original.
 
 - [ ] **Step 4: Type-check do frontend inteiro**
 
@@ -623,18 +715,29 @@ Run:
 git diff origin/master --stat
 ```
 
-Expected: **exatamente** estes 10 arquivos e nenhum outro —
-`docs/superpowers/specs/2026-09-17-*.md`, `docs/superpowers/plans/2026-09-17-*.md`,
-`docs/setup/bling-observacoes-producao.md`, `backend/app/bling/config.py`,
-`backend/tests/test_bling_config.py`, `frontend/src/lib/bling-accounts.ts`,
-`frontend/src/lib/bling-accounts.test.ts`,
-`frontend/src/components/config/bling-settings.tsx`,
-`frontend/src/app/(authenticated)/produtos/page.tsx`,
-`frontend/src/components/leads/lead-bling-section.tsx`.
+Expected: **exatamente** estes 13 arquivos e nenhum outro —
 
-Se `sale-create-modal.tsx`, `quote-create-modal.tsx`, `bling-order-form.tsx`,
-`seller-map/route.ts` ou qualquer migration aparecer no diff, **algo saiu do
-escopo** — reverta esse arquivo.
+```
+docs/superpowers/specs/2026-09-17-bling-rotulos-conta-preferida-design.md
+docs/superpowers/plans/2026-09-17-bling-rotulos-conta-preferida.md
+docs/setup/bling-observacoes-producao.md
+backend/app/bling/config.py
+backend/tests/test_bling_config.py
+frontend/src/lib/bling-accounts.ts
+frontend/src/lib/bling-accounts.test.ts
+frontend/src/components/config/bling-settings.tsx
+frontend/src/components/config/bling-settings.test.tsx
+frontend/src/app/(authenticated)/produtos/page.tsx
+frontend/src/components/leads/lead-bling-section.tsx
+frontend/src/components/leads/lead-bling-section.test.tsx
+frontend/src/components/sales/bling-order-form.test.tsx
+```
+
+Se `sale-create-modal.tsx`, `quote-create-modal.tsx`, **`bling-order-form.tsx`**
+(o `.tsx` de código, não o `.test.tsx`), `seller-map/route.ts`,
+`frontend/package.json`, `frontend/package-lock.json` ou qualquer migration
+aparecer no diff, **algo saiu do escopo** — reverta esse arquivo. O `npm ci`
+não deve alterar `package.json` nem `package-lock.json`; se alterou, reverta.
 
 - [ ] **Step 6: Conferir a trava de identidade com os próprios olhos**
 
@@ -651,6 +754,62 @@ história.
 ```bash
 git add docs/setup/bling-observacoes-producao.md
 git commit -m "docs(bling): rotulo vem do codigo e o env antigo esta ignorado"
+```
+
+---
+
+### Task 7: Teste do formulário de pedido que afirma a conta antiga
+
+**Files:**
+- Modify: `frontend/src/components/sales/bling-order-form.test.tsx:109`
+
+Nasceu durante a execução (ver "CORREÇÃO 2026-09-17" no topo). Pertence à Onda
+B: depende só da Task 2, que já está commitada. É a contrapartida do
+`bling-order-form.tsx` estar em "não tocar" — o **código-fonte** não muda
+(ele já delega a decisão a `contaPadrao`), mas o **teste** cristalizou o valor
+antigo.
+
+- [ ] **Step 1: Rodar o teste e ver a falha**
+
+Run: `cd frontend && npx vitest run src/components/sales/bling-order-form.test.tsx`
+Expected: **FAIL** no teste que contém
+`await waitFor(() => expect(aoMudarConta).toHaveBeenCalledWith(CONTA_PADRAO));`,
+com `AssertionError` mostrando que foi chamado com `"secundaria"`.
+
+- [ ] **Step 2: Corrigir a asserção**
+
+A fixture `CONTAS` (linhas 29-32) tem as **duas** contas conectadas, então
+`contaPadrao` agora devolve `"secundaria"`. Troque a asserção e o comentário
+acima dela:
+
+```ts
+    // A conta PREFERIDA e comunicada ao pai (ele precisa dela para as PROPRIAS
+    // chamadas — POST do pedido, resolvedor de contato). Com as duas contas
+    // conectadas, `contaPadrao` escolhe o Cafe Rural.
+    await waitFor(() => expect(aoMudarConta).toHaveBeenCalledWith(CONTA_PREFERIDA));
+```
+
+Acrescente `CONTA_PREFERIDA` ao import da linha 27. **Não remova**
+`CONTA_PADRAO`: ele continua sendo usado na fixture `CONTAS` (linha 30) e na
+asserção `expect(screen.queryByText(CONTA_PADRAO)).toBeNull()` (~linha 103),
+que prova que o seletor mostra o `label` e nunca o slug cru — essa continua
+válida e não deve mudar.
+
+- [ ] **Step 3: Rodar e confirmar verde**
+
+Run: `cd frontend && npx vitest run src/components/sales/bling-order-form.test.tsx`
+Expected: PASS, todos.
+
+- [ ] **Step 4: Confirmar que o código-fonte não foi tocado**
+
+Run: `git status --porcelain frontend/src/components/sales/bling-order-form.tsx`
+Expected: **saída vazia**. Se esse arquivo aparecer, a task saiu do escopo.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/sales/bling-order-form.test.tsx
+git commit -m "test(bling): pedido pre-seleciona o Cafe Rural, nao a conta 1"
 ```
 
 ---
