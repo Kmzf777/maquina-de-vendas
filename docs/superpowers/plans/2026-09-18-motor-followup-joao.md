@@ -119,6 +119,17 @@ jobs). Nenhuma linha dele pode mudar.** Seu ponto de contato é só o despacho p
 **Files:** `backend/app/follow_up/service.py`,
 `backend/app/automation/triggers.py` · `backend/tests/test_agendador_joao_2026_09_18.py`
 
+**ACHADO DA TASK J1, PENDENTE DE DECISÃO SUA:** `reposicao` e `em_atencao` vigiam a
+MESMA `stage_key='novo'` do mesmo funil de Reposição — aos 45 e aos 90 dias. O desenho
+antigo não colidia porque a esteira movia o card ao terminar; o handler novo não move
+card. Hoje é inerte porque `em_atencao` nasce sem template (os 24 aprovados cobrem só
+Novo+Em conversa+Reposição), mas no dia em que alguém preencher o template pela tela
+(Task J5) a sobreposição vira ativa sem que ninguém tenha decidido a regra. **Decida e
+implemente uma regra explícita** — candidatos: (a) `em_atencao` só varre card que já
+passou pelos 4 toques de `reposicao` (campo de progresso), ou (b) os gatilhos se
+excluem mutuamente por dias (`em_atencao` só pega card com 90+ dias E que não está
+elegível para `reposicao`). Não deixe os dois gatilhos coexistirem sem exclusão.
+
 - [ ] Varredura por cadência **ativa**, reusando a RPC `get_deals_stage_stagnant` que já
       existe e já tem as guardas (blacklist, número errado, conversa finalizada) — **não
       escreva consulta nova**.
