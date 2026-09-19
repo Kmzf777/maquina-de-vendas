@@ -14,15 +14,21 @@ aqui por um motivo específico:
 
 2/3. `test_wait_target_*` — `_wait_target` não recebia `skip_weekends` nem a janela
    da campanha: ele só lia `cfg` (o nó), com defaults fixos 7/18 e sem fim de semana.
-   O seed das esteiras (`esteiras_joao._wait`) só grava `{"days": dias}` no nó — a
-   janela e o flag vivem exclusivamente na CAMPANHA — então todo `wait` de uma
+   O seed das esteiras do João (apagado em 18/09/2026) só gravava `{"days": dias}` no
+   nó — a janela e o flag vivem exclusivamente na CAMPANHA — então todo `wait` de uma
    esteira multi-toque ignorava silenciosamente a janela configurada pelo dono e um
-   toque que caía num sábado era agendado PARA o sábado.
+   toque que caía num sábado era agendado PARA o sábado. Isso vale para QUALQUER
+   campanha do builder, não só para as do João: o nó `wait` do builder
+   (`campaigns/node_registry.py`) também nasce sem janela própria de propósito.
 
-4. `test_seed_esteiras_joao_nasce_com_janela_8_12_e_skip_weekends` — trava de
-   regressão do seed: as 6 esteiras do João (`esteiras_joao.py`) precisam nascer com
-   send_start_hour=8, send_end_hour=12 e skip_weekends=True — a decisão exata da
-   reunião com o dono.
+4. Havia aqui um quarto teste, de regressão do seed das 6 esteiras do João (janela
+   8h-12h, skip_weekends=True). Ele morreu em 18/09/2026 junto com o seed: as
+   cadências do João deixaram de ser campanhas do builder e passaram a rodar como
+   novos `job_type` em `follow_up_jobs`
+   (docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md). A janela
+   comercial do motor novo é a do scheduler, não a de uma linha de `campaigns` —
+   quem a cobre é a suíte do follow-up, não este arquivo. Os três testes acima
+   continuam valendo: eles são sobre `automation/engine.py`, que segue em produção.
 
 É seguro testar contra os valores exatos de data/hora abaixo porque não existe
 nenhuma matrícula viva (`campaign_enrollments` = 0 linhas em toda a história,
@@ -34,7 +40,6 @@ from datetime import datetime, timezone
 
 from app.automation import engine
 from app.automation.engine import _wait_target
-from app.campaigns.esteiras_joao import ESTEIRAS_JOAO, _campaign_row
 
 # Sexta-feira, 09:00 BRT (12:00 UTC). weekday() == 4 (segunda=0).
 _SEXTA = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
@@ -90,17 +95,6 @@ def test_wait_target_com_dois_argumentos_continua_funcionando():
     _NOW = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
     alvo = _wait_target({"days": 3, "hours": 20, "send_start_hour": 0, "send_end_hour": 24}, _NOW)
     assert alvo == datetime(2026, 7, 17, 8, 0, tzinfo=timezone.utc)
-
-
-def test_seed_esteiras_joao_nasce_com_janela_8_12_e_skip_weekends():
-    """As 6 esteiras do João (reunião de 10/09) precisam nascer com a janela exata
-    que o dono pediu em 13/09: 8h-12h, só em dias úteis."""
-    assert len(ESTEIRAS_JOAO) == 6
-    for esteira in ESTEIRAS_JOAO:
-        row = _campaign_row(esteira)
-        assert row["send_start_hour"] == 8, esteira["key"]
-        assert row["send_end_hour"] == 12, esteira["key"]
-        assert row["skip_weekends"] is True, esteira["key"]
 
 
 def test_select_de_get_due_enrollments_inclui_skip_weekends():

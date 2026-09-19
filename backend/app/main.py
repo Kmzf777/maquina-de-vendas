@@ -84,14 +84,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("[STARTUP] seed das esteiras falhou: %s", exc)
 
-    # Esteiras do Joao (reuniao de 10/09/2026): 6 campanhas (3 esteiras x 2 funis,
-    # Atacado/Private Label) ja com pipeline_id e channel_id conhecidos. Mesma
-    # doutrina do seed acima — cria uma vez, nunca sobrescreve, fail-soft.
-    try:
-        from app.campaigns.esteiras_joao import seed_esteiras_joao
-        await asyncio.to_thread(seed_esteiras_joao)
-    except Exception as exc:
-        logger.error("[STARTUP] seed das esteiras do Joao falhou: %s", exc)
+    # NAO ha seed das esteiras do Joao aqui, e isso e deliberado (18/09/2026). As 6
+    # esteiras-campanha da reuniao de 10/09 foram descartadas: `engine._guard_broken`
+    # cancela a matricula quando o card sai da coluna que o gatilho vigia, e a ata
+    # manda mover o card no primeiro toque — a esteira de Reposicao morria no toque 1,
+    # e o motor nao distingue "o vendedor moveu" de "a propria esteira moveu". O
+    # follow-up do Joao passou a rodar como novos `job_type` no scheduler que ja
+    # existe (docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md).
+    # As 6 linhas que o seed ja criou saem por `scripts/apaga_esteiras_joao.sql`,
+    # aplicado a mao — so apagar as linhas nao bastaria enquanto este seed existisse,
+    # porque ele as recriava a cada start da API.
 
     flusher_task = asyncio.create_task(run_flusher(app))
     watchdog_task = asyncio.create_task(run_watchdog(app))
