@@ -16,7 +16,12 @@ import { debounce } from "@/lib/debounce";
 import { formatDocument } from "@/lib/documento";
 import { blingContactUrl, formatBlingAddress, type BlingAddress } from "@/lib/bling-contact-display";
 import { useBlingStatus } from "@/hooks/use-bling-status";
-import { CONTA_PADRAO, contasDisponiveis, precisaSeletor } from "@/lib/bling-accounts";
+import {
+  CONTA_PREFERIDA,
+  contaPadrao,
+  contasDisponiveis,
+  precisaSeletor,
+} from "@/lib/bling-accounts";
 import {
   Select,
   SelectContent,
@@ -71,13 +76,24 @@ async function fetchContactById(id: number, conta: string): Promise<BlingContact
 
 export function LeadBlingSection({ leadId, blingContactIds, onChanged }: LeadBlingSectionProps) {
   // --- Conta Bling -----------------------------------------------------------
-  // Comeca na DEFAULT sempre (nao em `contaPadrao(...)`): e o que faz esta
-  // secao mostrar, sem esperar rede nenhuma, exatamente o que ela sempre
-  // mostrou antes da segunda conta existir. Ver outras contas e uma escolha
-  // explicita do vendedor no seletor abaixo, nunca automatica.
+  // Semeia a conta PREFERIDA de forma sincrona: esta secao pinta antes de
+  // `/api/bling/status` responder, e esperar a rede para so entao decidir a
+  // conta deixaria o painel piscando em branco a cada abertura de modal.
+  // O efeito abaixo corrige a aposta quando ela estiver errada.
   const blingStatus = useBlingStatus();
-  const [conta, setConta] = useState(CONTA_PADRAO);
+  const [conta, setConta] = useState(CONTA_PREFERIDA);
   const mostrarSeletorConta = precisaSeletor(blingStatus.accounts);
+
+  // Sem esta reconciliacao, o Cafe Rural desconectado prenderia o painel numa
+  // conta que nao existe — e o seletor abaixo so aparece com DUAS contas
+  // disponiveis, entao o vendedor nao teria como sair de la na mao.
+  useEffect(() => {
+    const disponiveis = contasDisponiveis(blingStatus.accounts);
+    if (disponiveis.length === 0) return;                     // ainda carregando
+    if (disponiveis.some((c) => c.account === conta)) return; // aposta certa
+    const padrao = contaPadrao(blingStatus.accounts);
+    if (padrao) setConta(padrao);
+  }, [blingStatus.accounts, conta]);
 
   // O vinculo vem de `lead_bling_contacts`, ja separado por conta pelo modal que
   // chama esta secao. Nao ha mais a restricao de so confiar na conta default: um
