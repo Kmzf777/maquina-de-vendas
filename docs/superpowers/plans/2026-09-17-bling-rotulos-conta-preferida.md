@@ -772,28 +772,46 @@ antigo.
 - [ ] **Step 1: Rodar o teste e ver a falha**
 
 Run: `cd frontend && npx vitest run src/components/sales/bling-order-form.test.tsx`
-Expected: **FAIL** no teste que contém
-`await waitFor(() => expect(aoMudarConta).toHaveBeenCalledWith(CONTA_PADRAO));`,
-com `AssertionError` mostrando que foi chamado com `"secundaria"`.
+Expected: **1 failed | 6 passed**. A falha é no teste `"aparece como o PRIMEIRO
+campo quando ha duas contas conectadas, e avisa o pai da conta padrao"`, e para
+na **linha 104** com `AssertionError: expected null not to be null`.
 
-- [ ] **Step 2: Corrigir a asserção**
+**Medido em 2026-09-17, não previsto:** a falha é na linha 104, não na 109. O
+seletor é um `<Select>` do Radix — `SelectValue` renderiza **apenas o label da
+opção selecionada**, e `SelectContent` nem monta até o dropdown abrir. Com o
+Café Rural agora selecionado, o texto no documento é `"Canastra CNPJ 2"`, então
+`queryByText("Canastra CNPJ 1")` devolve `null` e o teste morre antes de chegar
+ao `waitFor` da linha 109.
+
+- [ ] **Step 2: Corrigir as três asserções e o nome do teste**
 
 A fixture `CONTAS` (linhas 29-32) tem as **duas** contas conectadas, então
-`contaPadrao` agora devolve `"secundaria"`. Troque a asserção e o comentário
-acima dela:
+`contaPadrao` agora devolve `"secundaria"` — cujo label na fixture é
+`"Canastra CNPJ 2"`.
+
+Nome do teste (linha 85): troque `"...e avisa o pai da conta padrao"` por
+`"...e avisa o pai da conta preferida"`.
+
+Linhas 103-105:
+
+```ts
+    // Rotula com `label`, nunca o slug cru. O Radix so renderiza o label da
+    // opcao SELECIONADA (SelectValue), entao o texto esperado aqui e o da
+    // conta preferida — nao o das duas.
+    expect(screen.queryByText("Canastra CNPJ 2")).not.toBeNull();
+    expect(screen.queryByText(CONTA_PREFERIDA)).toBeNull();
+```
+
+Linhas 107-109:
 
 ```ts
     // A conta PREFERIDA e comunicada ao pai (ele precisa dela para as PROPRIAS
-    // chamadas — POST do pedido, resolvedor de contato). Com as duas contas
-    // conectadas, `contaPadrao` escolhe o Cafe Rural.
+    // chamadas — POST do pedido, resolvedor de contato).
     await waitFor(() => expect(aoMudarConta).toHaveBeenCalledWith(CONTA_PREFERIDA));
 ```
 
 Acrescente `CONTA_PREFERIDA` ao import da linha 27. **Não remova**
-`CONTA_PADRAO`: ele continua sendo usado na fixture `CONTAS` (linha 30) e na
-asserção `expect(screen.queryByText(CONTA_PADRAO)).toBeNull()` (~linha 103),
-que prova que o seletor mostra o `label` e nunca o slug cru — essa continua
-válida e não deve mudar.
+`CONTA_PADRAO`: ele continua sendo usado na fixture `CONTAS` (linha 30).
 
 - [ ] **Step 3: Rodar e confirmar verde**
 
