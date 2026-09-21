@@ -1,13 +1,30 @@
 import logging
 import os
 import random
+import uuid
 from datetime import datetime, timezone, timedelta, time
-from typing import Any
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
 from app.events.bus import emit_event
+from app.channels.service import get_channel_by_provider_config
+from app.conversations.service import get_or_create_conversation
+from app.follow_up.cadence_joao import (
+    ADIAMENTO_ESTOQUE,
+    CADENCIAS,
+    CODIGOS,
+    JOB_TYPES as JOAO_JOB_TYPES,
+    LINHAS as JOAO_LINHAS,
+    RESPOSTA_ADIAR,
+    RESPOSTA_OPTOUT,
+    CadenciaResolvida,
+    Touch,
+    adiar_toques,
+    classificar_resposta,
+    resolver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -684,3 +701,705 @@ def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
         return []
 
     return result.data
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AGENDADOR DAS CADÊNCIAS DO JOÃO — quem CRIA os jobs (Task J3, spec 2026-09-18)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# A J1 declarou as cadências (`follow_up/cadence_joao.py`), a J2 escreveu o handler que
+# as executa (`scheduler._process_joao_touch`). Entre as duas falta quem varre o funil e
+# decide QUEM recebe. É isto.
+#
+# NÃO É UM SEGUNDO MOTOR: os jobs nascem no mesmo `follow_up_jobs`, com `job_type`
+# próprio, e o scheduler que já existe os despacha. E a varredura NÃO tem consulta nova —
+# reusa a RPC `get_deals_stage_stagnant` (20260904_esteiras_vendedor.sql), que já carrega
+# no WHERE as guardas que custaram caro para existir: card aberto, opt-out, funil
+# Blacklist, número errado, conversa finalizada pelo vendedor.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# A EXCLUSÃO MÚTUA ENTRE `reposicao` E `em_atencao` — a decisão desta task
+# ──────────────────────────────────────────────────────────────────────────────
+# As duas vigiam a MESMA etapa (`stage_key='novo'`) do MESMO funil de Reposição — aos 45
+# e aos 90 dias (ver a decisão 2 no cabeçalho de `cadence_joao.py`). O desenho anterior
+# (esteira-campanha, apagada na Task J0) não colidia porque a esteira MOVIA o card para
+# "Em atenção" ao terminar; este handler não move card nenhum. Sem regra explícita, no
+# dia em que alguém preencher o template de "Em atenção" pela tela (Task J5) o mesmo card
+# passaria a casar os dois gatilhos — e receberia as duas cadências ao mesmo tempo, do
+# mesmo vendedor, no mesmo número.
+#
+# A REGRA É UMA PARTIÇÃO sobre um único booleano — "a Reposição já se esgotou aqui?":
+#
+#     reposicao   só pega card com reposicao_concluida == False
+#     em_atencao  só pega card com reposicao_concluida == True
+#
+# Por ser partição (e não uma diferença de PRAZO), não existe estado do card em que as
+# duas sejam elegíveis — nem no dia 90, nem em nenhum outro, nem depois de qualquer
+# cooldown expirar. Ela também traduz a ata melhor: "90 dias que ele não compra" (38:08)
+# descreve quem já esgotou a régua de Reposição, não quem nunca entrou nela.
+#
+# O ALTERNATIVO REJEITADO era "em_atencao pega 90+ dias E que não está elegível para
+# reposicao": depende do relógio, e os prazos são exatamente o que a ata manda deixar o
+# João editar (33:28). Bastaria ele subir o gatilho de Reposição para 120 dias para as
+# duas voltarem a colidir, em silêncio.
+#
+# "Reposição esgotada" é lida de um FATO gravado no job (`metadata.ultimo_toque` num job
+# `sent`), não de uma contagem de toques: a tela pode mudar os dias e o código pode mudar
+# a forma da cadência, e uma contagem passaria a mentir nos dois casos.
+
+# Número do vendedor. Mesmo valor de `scheduler.JOAO_PHONE_NUMBER_ID` e de
+# `schedule_handoff_rescue` acima — declarado aqui, e não importado, porque
+# `scheduler.py` importa ESTE módulo e o import inverso fecharia o ciclo. A suíte cruza
+# os dois valores.
+JOAO_PHONE_NUMBER_ID = "1049315514934778"
+
+# Público da varredura. `humano` = `leads.ai_enabled = FALSE`, que é o público do funil
+# do João por definição (o handoff desliga a IA, e os 1.208 leads do Bling nasceram
+# assim). A escolha é DELIBERADAMENTE conservadora: com `ambos`, um lead que a ValerIA
+# ainda estivesse atendendo receberia o template do vendedor no meio da conversa. O custo
+# do lado escolhido é uma cadência que "não pega ninguém" se o funil tiver card de lead
+# com IA ligada — visível e corrigível; o custo do outro lado é mensagem duplicada.
+JOAO_CADENCIA_AUDIENCIA = "humano"
+
+# TETO POR PASSAGEM ("quantos cards por vez"). Medido em 16/09/2026: 888 cards ficam
+# elegíveis no INSTANTE em que uma cadência liga. Sem teto, a primeira varredura
+# matricularia a base inteira. 20 é o mesmo teto que `automation/triggers.py` usa em
+# todos os gatilhos de polling (e o `p_limit` default da própria RPC).
+JOAO_TETO_PADRAO = 20
+JOAO_TETO_ENV = "JOAO_CADENCIA_TETO"
+
+# COOLDOWN de reentrada, em dias. O defeito que a RPC documenta em 20260904: quando a
+# cadência acaba o card NÃO sai da etapa, então na varredura seguinte ele é elegível de
+# novo — um template a cada poucos dias, para sempre. Exclusão TEMPORÁRIA e não
+# permanente pela mesma razão que a RPC dá: card que sai da etapa e volta meses depois é
+# oportunidade legítima.
+JOAO_COOLDOWN_DIAS = 90
+
+_joao_overrides_aviso_dado = False
+
+
+def _joao_teto(teto: int | None = None) -> int:
+    """O teto efetivo desta passagem. Parâmetro > env > default."""
+    if teto is not None:
+        return max(1, int(teto))
+    bruto = os.environ.get(JOAO_TETO_ENV)
+    try:
+        return max(1, int(bruto)) if bruto else JOAO_TETO_PADRAO
+    except (TypeError, ValueError):
+        return JOAO_TETO_PADRAO
+
+
+def _parse_ts(valor: Any) -> datetime | None:
+    """ISO do Postgres para datetime aware, ou None. Nunca levanta."""
+    if isinstance(valor, datetime):
+        return valor if valor.tzinfo else valor.replace(tzinfo=timezone.utc)
+    if not valor:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _job_metadata(job: Mapping[str, Any]) -> dict:
+    md = job.get("metadata") or {}
+    return md if isinstance(md, dict) else {}
+
+
+def _job_toque(job: Mapping[str, Any]) -> int:
+    try:
+        return int(_job_metadata(job).get("toque") or job.get("sequence") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+# ── A sobreposição do banco ───────────────────────────────────────────────────
+def carregar_overrides_joao() -> dict[str, dict]:
+    """As duas tabelas de sobreposição viram `{codigo: {gatilho_dias, ativa, linhas}}`.
+
+    FAIL-CLOSED, e essa é a decisão de projeto mais importante desta função: a migration
+    `20260918_followup_joao_config.sql` NÃO é aplicada pelo deploy (é a decisão da Task
+    J1 — um humano a roda à mão). Até lá a leitura falha, e falhar para o lado de
+    "desligado" é a única falha segura: o outro lado seriam 888 templates saindo por uma
+    tabela que ninguém criou.
+
+    Vazio significa a mesma coisa que ausência de linha e que coluna NULL: vale o código.
+    E o código traz `ativa=False` nas quatro cadências (spec §7).
+    """
+    global _joao_overrides_aviso_dado
+    sb = get_supabase()
+    try:
+        linhas_cadencia = sb.table("followup_joao_cadencia").select(
+            "cadencia, gatilho_dias, ativa"
+        ).execute().data or []
+    except Exception as exc:
+        if not _joao_overrides_aviso_dado:
+            # Uma vez por processo: este erro é ESPERADO enquanto a migration não for
+            # aplicada, e repeti-lo a cada tick de 30s afogaria o log de verdade.
+            logger.warning(
+                "[JOAO_CADENCIA] sobreposição não lida (%s) — todas as cadências "
+                "seguem DESLIGADAS. A migration 20260918 é aplicada à mão.", exc,
+            )
+            _joao_overrides_aviso_dado = True
+        return {}
+
+    overrides: dict[str, dict] = {}
+    for row in linhas_cadencia:
+        codigo = row.get("cadencia")
+        if codigo not in CADENCIAS:
+            continue
+        overrides[codigo] = {
+            "gatilho_dias": row.get("gatilho_dias"),
+            "ativa": row.get("ativa"),
+            "linhas": {},
+        }
+
+    try:
+        linhas_toque = sb.table("followup_joao_toque").select(
+            "cadencia, linha, toque, dias, template_name"
+        ).execute().data or []
+    except Exception as exc:
+        logger.warning("[JOAO_CADENCIA] toques não lidos (%s) — vale o código", exc)
+        linhas_toque = []
+
+    for row in linhas_toque:
+        codigo, linha = row.get("cadencia"), row.get("linha")
+        if codigo not in CADENCIAS or linha not in JOAO_LINHAS:
+            continue
+        try:
+            toque = int(row.get("toque"))
+        except (TypeError, ValueError):
+            continue
+        # Toque gravado sem a cadência correspondente é legítimo: editar os dias não
+        # exige tocar no liga/desliga. Sem esta linha a edição seria descartada em
+        # silêncio — o pior modo de falha de uma tela de configuração.
+        alvo = overrides.setdefault(
+            codigo, {"gatilho_dias": None, "ativa": None, "linhas": {}})
+        da_linha = alvo["linhas"].setdefault(linha, {"toques": {}})
+        da_linha["toques"][toque] = {
+            "dias": row.get("dias"), "template_name": row.get("template_name"),
+        }
+    return overrides
+
+
+def resolver_para_agendar(
+    codigo: str, linha: str, overrides_da_cadencia: Mapping[str, Any] | None = None,
+) -> CadenciaResolvida:
+    """`cadence_joao.resolver` com a sobreposição já achatada para UMA linha. PURA.
+
+    `carregar_overrides_joao` devolve os toques aninhados por linha
+    (`linhas.atacado.toques`), porque uma cadência tem duas; `resolver` consome UMA linha
+    por vez. Aceita também o formato achatado (`toques` direto) para que quem já tem a
+    sobreposição de uma linha na mão — a API da Task J4, um teste — não precise
+    reconstruir o aninhamento.
+    """
+    ov = dict(overrides_da_cadencia or {})
+    toques = ov.get("toques")
+    if toques is None:
+        toques = ((ov.get("linhas") or {}).get(linha) or {}).get("toques")
+    return resolver(codigo, linha, {
+        "gatilho_dias": ov.get("gatilho_dias"),
+        "ativa": ov.get("ativa"),
+        "toques": toques or {},
+    })
+
+
+# ── O estado do card, lido dos jobs que ele já teve ───────────────────────────
+def _jobs_joao_dos_leads(sb, lead_ids: list[str]) -> list[dict] | None:
+    """Todos os jobs de cadência do João destes leads, numa consulta só.
+
+    UMA consulta por passagem (e não uma por card): com o teto em 20, o N+1 seria 20
+    idas ao banco a cada 30 segundos por cadência ligada.
+
+    FAIL-CLOSED no erro (devolve None, e o chamador pula a passagem): sem saber o que o
+    card já recebeu não existe idempotência. Devolver lista vazia faria a varredura achar
+    que ninguém tem cadência e matricular a base inteira de novo.
+    """
+    if not lead_ids:
+        return []
+    try:
+        return sb.table("follow_up_jobs").select(
+            "id, lead_id, job_type, status, sequence, fire_at, sent_at, created_at, metadata"
+        ).in_("lead_id", lead_ids).in_(
+            "job_type", sorted(JOAO_JOB_TYPES)
+        ).execute().data or []
+    except Exception as exc:
+        logger.error("[JOAO_CADENCIA] falha ao ler os jobs existentes: %s", exc)
+        return None
+
+
+def _jobs_do_card(jobs: list[dict], lead_id: str, deal_id: str | None) -> list[dict]:
+    """Os jobs daquele CARD, não daquele lead.
+
+    A cadência é do card: o mesmo lead tem card em Atacado e card em Reposição, e eles
+    caminham em paralelo. Job sem `deal_id` no metadata (nenhum criado por este
+    agendador, mas um criado à mão teria) casa pelo lead, que é o comportamento
+    conservador — ele BARRA em vez de deixar passar.
+    """
+    do_card = []
+    for job in jobs:
+        if job.get("lead_id") != lead_id:
+            continue
+        do_job = _job_metadata(job).get("deal_id")
+        if do_job and deal_id and str(do_job) != str(deal_id):
+            continue
+        do_card.append(job)
+    return do_card
+
+
+def _reposicao_concluida(jobs_do_card: list[dict]) -> bool:
+    """True quando a régua de Reposição se ESGOTOU neste card.
+
+    O fato é o último toque ENVIADO (`metadata.ultimo_toque` num job `sent`), gravado
+    pelo próprio agendador na criação. Não é uma contagem de toques: a tela pode mudar os
+    dias e o código pode mudar a forma da cadência, e a contagem mentiria nos dois casos.
+    """
+    return any(
+        job.get("job_type") == CADENCIAS["reposicao"].job_type
+        and job.get("status") == "sent"
+        and _job_metadata(job).get("ultimo_toque")
+        for job in jobs_do_card
+    )
+
+
+def _ultimo_envio(jobs_do_card: list[dict], job_type: str) -> datetime | None:
+    enviados = [
+        _parse_ts(job.get("sent_at")) or _parse_ts(job.get("fire_at"))
+        for job in jobs_do_card
+        if job.get("job_type") == job_type and job.get("status") == "sent"
+    ]
+    validos = [dt for dt in enviados if dt]
+    return max(validos) if validos else None
+
+
+def motivo_para_pular_joao(
+    cadencia: CadenciaResolvida, jobs_do_card: list[dict], now: datetime,
+) -> str | None:
+    """Por que este card NÃO entra nesta cadência agora — ou None se ele entra. PURA.
+
+    Devolver o motivo (em vez de um booleano) é o que torna a decisão auditável no log e
+    testável isoladamente: é aqui que mora a exclusão mútua descrita no cabeçalho desta
+    seção, e ela precisa de um teste que a prove sem passar pelo banco.
+
+    A ORDEM das regras é parte do contrato:
+      1. cadência em andamento — um card, uma cadência por vez;
+      2. a PARTIÇÃO reposicao x em_atencao;
+      3. repetição (cadência sem fim) ou cooldown (cadência com fim).
+    """
+    # 1. UM CARD, UMA CADÊNCIA POR VEZ — inclusive entre cadências diferentes. Duas
+    #    abertas no mesmo card mandariam dois templates distintos, do mesmo vendedor,
+    #    no mesmo dia. É também a idempotência pedida: card com job aberto não ganha
+    #    outro, nem na varredura seguinte, nem em nenhuma.
+    if any(job.get("status") == "pending" for job in jobs_do_card):
+        return "cadencia_em_andamento"
+
+    # 2. A PARTIÇÃO. Ver o cabeçalho desta seção para o porquê de não ser por prazo.
+    concluiu_reposicao = _reposicao_concluida(jobs_do_card)
+    if cadencia.codigo == "em_atencao" and not concluiu_reposicao:
+        return "reposicao_nao_concluida"
+    if cadencia.codigo == "reposicao" and concluiu_reposicao:
+        return "reposicao_ja_concluida"
+
+    # 3a. Cadência que SE REPETE ("Em atenção": uma mensagem a cada 3 dias até o lead
+    #     dizer que não quer — ata 38:08). Não tem cooldown: ela é feita para voltar. O
+    #     que a segura é o intervalo desde o último envio.
+    if cadencia.repete_ultimo:
+        intervalo = cadencia.intervalo_repeticao
+        if intervalo is None:
+            # `intervalo_repeticao` devolve None em intervalo <= 0 — um zero gravado na
+            # tela faria o motor reenviar em laço. Parar é a falha segura.
+            return "sem_intervalo_de_repeticao"
+        ultimo = _ultimo_envio(jobs_do_card, cadencia.job_type)
+        if ultimo is not None and now < ultimo + intervalo:
+            return "intervalo_da_repeticao"
+        return None
+
+    # 3b. Cadência com fim: cooldown de reentrada.
+    corte = now - timedelta(days=JOAO_COOLDOWN_DIAS)
+    for job in jobs_do_card:
+        if job.get("job_type") != cadencia.job_type:
+            continue
+        # `cancelled` não é cadência que rodou — é cadência que MORREU (número errado,
+        # conversa finalizada, template ausente). Segurar a reentrada por causa dela
+        # deixaria o card preso por 90 dias por um erro já corrigido.
+        if job.get("status") == "cancelled":
+            continue
+        nascimento = _parse_ts(job.get("created_at")) or _parse_ts(job.get("fire_at"))
+        if nascimento and nascimento > corte:
+            return "cooldown"
+    return None
+
+
+# ── A criação dos jobs ────────────────────────────────────────────────────────
+def _montar_jobs_da_matricula(
+    cadencia: CadenciaResolvida, linha_rpc: Mapping[str, Any], *,
+    canal: Mapping[str, Any], conversation_id: str, now: datetime,
+    jobs_do_card: list[dict],
+) -> list[dict]:
+    """Os jobs de UMA matrícula, no formato que `scheduler._process_joao_touch` lê.
+
+    DECISÃO, e ela está no plano como escolha do implementador: a cadência inteira é
+    agendada de uma vez, na matrícula. O alternativo (criar só o próximo toque, e o
+    seguinte quando este sair) obrigaria o HANDLER a reagendar — acoplando o caminho de
+    envio ao de agendamento, que é justamente o que separa este motor do builder
+    abandonado. Uma matrícula é um bloco de jobs com o mesmo `matricula_id`, e é esse id
+    que deixa a resposta do lead adiar o bloco certo.
+
+    A exceção é a cadência que SE REPETE: "uma mensagem a cada três dias até ele falar
+    que não quer" não tem fim declarado, então "todos os toques de uma vez" é
+    literalmente impossível nela. Ela cria UM job por passagem, e a passagem seguinte
+    cria o próximo depois do intervalo.
+    """
+    matricula_id = str(uuid.uuid4())
+    matricula_em = now.isoformat()
+    lead_id = linha_rpc.get("lead_id")
+    ultimo_sequence = cadencia.touches[-1].sequence if cadencia.touches else 0
+
+    toques = cadencia.touches[-1:] if cadencia.repete_ultimo else cadencia.touches
+    rows: list[dict] = []
+    for toque in toques:
+        if cadencia.repete_ultimo:
+            ultimo = _ultimo_envio(jobs_do_card, cadencia.job_type)
+            intervalo = cadencia.intervalo_repeticao or toque.offset
+            # A repetição conta do ÚLTIMO ENVIO, não do instante da varredura: contar da
+            # varredura somaria o intervalo duas vezes (o tick só vê o card depois de o
+            # intervalo já ter passado) e a cada volta a cadência ficaria mais lenta.
+            base = (ultimo + intervalo) if ultimo else (now + toque.offset)
+            base = max(base, now)
+        else:
+            base = now + toque.offset
+
+        rows.append({
+            "conversation_id": conversation_id,
+            "lead_id": lead_id,
+            "channel_id": canal["id"],
+            "sequence": toque.sequence,
+            "fire_at": _clamp_to_business_window(base).isoformat(),
+            "status": "pending",
+            "env_tag": _ENV_TAG,
+            "job_type": cadencia.job_type,
+            "metadata": {
+                "cadencia": cadencia.codigo,
+                "linha": cadencia.linha,
+                "toque": toque.sequence,
+                "template_name": toque.template_name,
+                "aceita_adiamento": toque.aceita_adiamento,
+                # O FATO sobre o qual a exclusão mútua decide, gravado na criação.
+                "ultimo_toque": (
+                    not cadencia.repete_ultimo and toque.sequence == ultimo_sequence
+                ),
+                "matricula_id": matricula_id,
+                "matricula_em": matricula_em,
+                "deal_id": linha_rpc.get("deal_id"),
+                "stage_id": linha_rpc.get("stage_id"),
+                "pipeline_id": cadencia.pipeline_id,
+                # O toque TEM de sair do número do VENDEDOR — ver
+                # `scheduler._resolve_joao_channel`.
+                "phone_number_id": JOAO_PHONE_NUMBER_ID,
+            },
+        })
+    return rows
+
+
+def _varrer_cadencia_joao(
+    sb, cadencia: CadenciaResolvida, canal: Mapping[str, Any],
+    now: datetime, teto: int,
+) -> int:
+    """Uma passagem de UMA (cadência, linha). Devolve quantos jobs foram criados."""
+    args = {
+        # Por KEY e não por id: a etapa é a mesma em todo funil do João, e um id
+        # hardcoded morreria na primeira reestruturação de funil (Arthur reestruturou os
+        # funis à mão na reunião de 10/09).
+        "p_stage_id": None,
+        "p_stage_key": cadencia.gatilho_stage_key,
+        "p_pipeline_id": cadencia.pipeline_id,
+        "p_channel_id": canal["id"],
+        "p_stage_days": int(cadencia.gatilho_dias or 0),
+        # O relógio da ata é o da ETAPA ("dois dias em Novo", "45 dias em Cliente
+        # Ativo"), não o do silêncio. 0 desliga o filtro de silêncio na RPC.
+        "p_silence_days": 0,
+        "p_last_speaker": "qualquer",
+        "p_audience": JOAO_CADENCIA_AUDIENCIA,
+        "p_limit": teto,
+    }
+    try:
+        linhas = sb.rpc("get_deals_stage_stagnant", args).execute().data or []
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] RPC falhou p/ %s/%s: %s",
+            cadencia.codigo, cadencia.linha, exc)
+        return 0
+    if not linhas:
+        return 0
+
+    jobs = _jobs_joao_dos_leads(sb, [l["lead_id"] for l in linhas if l.get("lead_id")])
+    if jobs is None:
+        return 0
+
+    from app.leads.service import is_lead_blacklisted
+
+    rows: list[dict] = []
+    matriculados = 0
+    for linha_rpc in linhas:
+        # TETO POR PASSAGEM. O `p_limit` já foi para a RPC, mas o corte é refeito AQUI:
+        # a defesa não pode depender de o banco honrar o LIMIT — e não dependeu, no
+        # incidente de 16/09, de a tela honrar a validação.
+        if matriculados >= teto:
+            break
+        lead_id, deal_id = linha_rpc.get("lead_id"), linha_rpc.get("deal_id")
+        if not lead_id:
+            continue
+        do_card = _jobs_do_card(jobs, lead_id, deal_id)
+        motivo = motivo_para_pular_joao(cadencia, do_card, now)
+        if motivo:
+            logger.debug(
+                "[JOAO_CADENCIA] %s/%s pula card %s: %s",
+                cadencia.codigo, cadencia.linha, deal_id, motivo)
+            continue
+        # Defesa em profundidade: a mesma condição já está no WHERE da RPC. Barata (no
+        # máximo `teto` leituras) e é a última linha antes de um template sair para quem
+        # pediu para não receber mais.
+        if is_lead_blacklisted(lead_id):
+            logger.info("[JOAO_CADENCIA] lead %s na blacklist — skip", lead_id)
+            continue
+        try:
+            conversa = get_or_create_conversation(lead_id, canal["id"])
+        except Exception as exc:
+            logger.error(
+                "[JOAO_CADENCIA] sem conversa no canal do vendedor p/ lead %s: %s",
+                lead_id, exc)
+            continue
+        rows.extend(_montar_jobs_da_matricula(
+            cadencia, linha_rpc, canal=canal, conversation_id=conversa["id"],
+            now=now, jobs_do_card=do_card))
+        matriculados += 1
+
+    if not rows:
+        return 0
+    try:
+        sb.table("follow_up_jobs").insert(rows).execute()
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] falha ao inserir %d jobs de %s/%s: %s",
+            len(rows), cadencia.codigo, cadencia.linha, exc)
+        return 0
+    logger.info(
+        "[JOAO_CADENCIA] %s/%s: %d card(s) matriculado(s), %d toque(s) agendado(s)",
+        cadencia.codigo, cadencia.linha, matriculados, len(rows))
+    return len(rows)
+
+
+def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None) -> int:
+    """Uma passagem do agendador sobre as cadências ATIVAS. Devolve os jobs criados.
+
+    Chamada pelo tick de automação (`automation/triggers.py::check_polling_triggers`).
+    Cadência desligada não varre NADA — nem chega a perguntar ao banco.
+    """
+    if os.environ.get("REHEARSAL_MODE") == "true":
+        logger.info("[JOAO_CADENCIA] REHEARSAL_MODE ativo — varredura ignorada")
+        return 0
+
+    now = now or datetime.now(timezone.utc)
+    teto = _joao_teto(teto)
+    overrides = carregar_overrides_joao()
+
+    criados = 0
+    canal: dict | None = None
+    canal_resolvido = False
+    sb = None
+
+    for codigo in CODIGOS:
+        ov = overrides.get(codigo) or {}
+        for linha in JOAO_LINHAS:
+            cadencia = resolver_para_agendar(codigo, linha, ov)
+            if not cadencia.ativa:
+                continue
+            # Defesa em profundidade da trava da Task J4 ("ligar exige template aprovado
+            # em todo toque"). O banco pode ser editado à mão, e um job sem template
+            # morre no handler com `missing_template_name`: cadência que matricula, não
+            # envia, e caminha até o fim — o defeito exato que este spec corrige.
+            faltando = [t.sequence for t in cadencia.touches if not t.template_name]
+            if faltando:
+                logger.warning(
+                    "[JOAO_CADENCIA] %s/%s ativa SEM template nos toques %s — "
+                    "nenhum job criado", codigo, linha, faltando)
+                continue
+            if not canal_resolvido:
+                canal_resolvido = True
+                canal = get_channel_by_provider_config(
+                    "phone_number_id", JOAO_PHONE_NUMBER_ID, "meta_cloud")
+            if not canal:
+                logger.error(
+                    "[JOAO_CADENCIA] canal do vendedor (phone_number_id=%s) não "
+                    "encontrado — nenhuma cadência agendada", JOAO_PHONE_NUMBER_ID)
+                return criados
+            if sb is None:
+                sb = get_supabase()
+            criados += _varrer_cadencia_joao(sb, cadencia, canal, now, teto)
+
+    if criados:
+        emit_event("followups")  # wake-up do worker (fail-open; o tick cobre)
+    return criados
+
+
+# ── A resposta do lead (ata 41:40) ────────────────────────────────────────────
+def processar_resposta_joao(
+    lead_id: str, texto: str | None, *,
+    conversation_id: str | None = None, now: datetime | None = None,
+) -> str | None:
+    """Aplica as duas regras de resposta da ata às matrículas ABERTAS do João.
+
+        botão "ainda tenho estoque" -> adia 60 dias, SEM recomeçar a contagem (41:40)
+        botão de saída              -> opt-out REAL (blacklist), reusando a autoridade
+
+    Devolve a classificação aplicada, ou None quando não havia o que fazer.
+
+    ESCOPO — e ele é deliberado: só age quando o lead tem matrícula ABERTA do João.
+    `buffer/processor.py` já tem um caminho determinístico de opt-out, e ele é
+    propositalmente restrito ao público que o LLM não arbitra
+    (`_optout_deterministico_cabe`), porque o parser da Meta achata clique de botão em
+    texto comum e blacklistar o público da IA transformaria negativa reflexa digitada em
+    banimento. Agir fora da cadência do João aqui reabriria esse buraco por outra porta.
+    """
+    classificacao = classificar_resposta(texto)
+    if not classificacao:
+        return None
+
+    now = now or datetime.now(timezone.utc)
+    sb = get_supabase()
+    try:
+        jobs = sb.table("follow_up_jobs").select(
+            "id, lead_id, job_type, status, sequence, fire_at, sent_at, metadata"
+        ).eq("lead_id", lead_id).in_(
+            "job_type", sorted(JOAO_JOB_TYPES)
+        ).in_("status", ["pending", "sent"]).execute().data or []
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] falha ao ler as matrículas do lead %s: %s", lead_id, exc)
+        return None
+
+    pendentes = [j for j in jobs if j.get("status") == "pending"]
+    if not pendentes:
+        return None
+
+    if classificacao == RESPOSTA_OPTOUT:
+        _optout_da_cadencia_joao(lead_id, texto, conversation_id, pendentes, sb)
+        return RESPOSTA_OPTOUT
+
+    _adiar_matriculas_joao(jobs, pendentes, sb)
+    return RESPOSTA_ADIAR
+
+
+def _optout_da_cadencia_joao(
+    lead_id: str, texto: str | None, conversation_id: str | None,
+    pendentes: list[dict], sb,
+) -> None:
+    """Opt-out REAL, DELEGADO a `campaigns/worker.py::handle_optout_reply`.
+
+    Não é um quarto caminho de blacklist: `handle_optout_reply` -> `_gravar_optout` grava
+    `leads.opt_out` + `apply_optout_side_effects` (funil Blacklist, cancelamento de
+    campanhas e de follow-ups), que é o par que `is_lead_blacklisted` lê. Uma segunda
+    cópia da regra divergiria no primeiro dia, e o custo do desvio é um "parar mensagens"
+    que o sistema não honra.
+
+    O cancelamento dos jobs do João é EXPLÍCITO mesmo assim, e não por desconfiança:
+    `handle_optout_reply` é idempotente e devolve False sem fazer nada quando o lead já
+    está na blacklist — o que acontece sempre que o caminho determinístico do
+    `buffer/processor.py` arbitrou o mesmo turno primeiro. Nesse caso os efeitos
+    colaterais não rodam de novo, e é este cancelamento que garante que a cadência pare.
+    """
+    lead = None
+    try:
+        from app.leads.service import get_lead
+        lead = get_lead(lead_id)
+    except Exception as exc:
+        logger.warning("[JOAO_CADENCIA] não consegui reler o lead %s: %s", lead_id, exc)
+    try:
+        from app.campaigns.worker import handle_optout_reply
+        handle_optout_reply(lead, texto, conversation_id)
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] opt-out do lead %s falhou: %s", lead_id, exc, exc_info=True)
+
+    ids = [j["id"] for j in pendentes if j.get("id")]
+    if not ids:
+        return
+    try:
+        sb.table("follow_up_jobs").update({
+            "status": "cancelled", "cancel_reason": RESPOSTA_OPTOUT,
+        }).in_("id", ids).execute()
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] falha ao cancelar %d toque(s) do lead %s: %s",
+            len(ids), lead_id, exc)
+        return
+    logger.info(
+        "[JOAO_CADENCIA] opt-out do lead %s — %d toque(s) cancelado(s)",
+        lead_id, len(ids))
+
+
+def _chave_matricula(job: Mapping[str, Any]) -> str:
+    """O bloco a que este job pertence. `matricula_id` quando há; senão o job_type.
+
+    O fallback importa para job criado antes deste agendador (ou à mão): sem ele, jobs
+    sem `matricula_id` cairiam todos na mesma chave vazia e o `ultimo_enviado` de uma
+    cadência contaminaria o de outra.
+    """
+    md = _job_metadata(job)
+    return str(md.get("matricula_id") or job.get("job_type") or "")
+
+
+def _adiar_matriculas_joao(jobs: list[dict], pendentes: list[dict], sb) -> None:
+    """"Ainda tenho estoque" -> +60 dias nos toques que ainda não saíram (ata 41:40).
+
+    Duas coisas ao mesmo tempo, e a segunda é a que costuma se perder: adiar 60 dias, e
+    NÃO recomeçar a contagem. Recomeçar devolveria a cadência ao toque 1, e o lead
+    releria o texto que já leu.
+
+    Quem faz o cálculo é `cadence_joao.adiar_toques` — a mesma função pura que a Task J1
+    escreveu, com o filtro `sequence > ultimo_enviado` fazendo o trabalho de "os que já
+    saíram não voltam". Aqui só traduzimos jobs<->toques: o `offset` de cada job é a
+    distância dele até a MATRÍCULA (`metadata.matricula_em`), que é exatamente a régua
+    que `adiar_toques` empurra. O espaçamento entre os toques restantes é preservado — o
+    bloco inteiro desliza, ele não é reescrito.
+    """
+    por_matricula: dict[str, list[dict]] = {}
+    for job in pendentes:
+        por_matricula.setdefault(_chave_matricula(job), []).append(job)
+
+    enviados = [j for j in jobs if j.get("status") == "sent"]
+    for chave, abertos in por_matricula.items():
+        ultimo_enviado = max(
+            (_job_toque(j) for j in enviados if _chave_matricula(j) == chave),
+            default=0)
+        base = _parse_ts(_job_metadata(abertos[0]).get("matricula_em"))
+        if base is None:
+            base = min(
+                (dt for dt in (_parse_ts(j.get("fire_at")) for j in abertos) if dt),
+                default=None)
+        if base is None:
+            logger.warning(
+                "[JOAO_CADENCIA] matrícula %s sem régua de tempo — não adiada", chave)
+            continue
+
+        por_sequence = {_job_toque(j): j for j in abertos}
+        touches = tuple(
+            Touch(sequence=seq, offset=(_parse_ts(job.get("fire_at")) or base) - base,
+                  template_name=_job_metadata(job).get("template_name"))
+            for seq, job in sorted(por_sequence.items())
+        )
+        for adiado in adiar_toques(touches, ultimo_enviado=ultimo_enviado):
+            job = por_sequence.get(adiado.sequence)
+            if not job:
+                continue
+            novo = _clamp_to_business_window(base + adiado.offset)
+            try:
+                sb.table("follow_up_jobs").update(
+                    {"fire_at": novo.isoformat()}).eq("id", job["id"]).execute()
+            except Exception as exc:
+                logger.error(
+                    "[JOAO_CADENCIA] falha ao adiar o toque %s: %s", job.get("id"), exc)
+        logger.info(
+            "[JOAO_CADENCIA] matrícula %s adiada em %d dias (%d toque(s) em aberto)",
+            chave, ADIAMENTO_ESTOQUE.days, len(abertos))
