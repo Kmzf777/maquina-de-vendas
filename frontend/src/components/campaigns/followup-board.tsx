@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { objectiveLabel, touchStateLabel } from "@/lib/cadence-display";
 import {
@@ -22,12 +22,84 @@ type DefinitionTouch = {
   objective: string;
 };
 
+/** Um toque do João, já RESOLVIDO (banco sobreposto ao código) pelo backend.
+ *
+ * `*_codigo` vem junto de propósito: é o que deixa a tela mostrar "padrão 45" ao lado
+ * do 60 gravado. Sem isso ninguém descobre o que a configuração mudou nem como voltar.
+ */
+type JoaoTouch = {
+  sequence: number;
+  dias: number;
+  dias_codigo: number;
+  template_name: string | null;
+  template_name_codigo: string | null;
+  aceita_adiamento: boolean;
+};
+
+type JoaoLinha = {
+  linha: string;
+  rotulo: string;
+  pipeline_id: string;
+  toques: JoaoTouch[];
+  toques_sem_template: number[];
+};
+
+type JoaoCadencia = {
+  codigo: string;
+  rotulo: string;
+  job_type: string;
+  gatilho_stage_key: string;
+  gatilho_dias: number;
+  gatilho_dias_codigo: number;
+  ativa: boolean;
+  repete_ultimo: boolean;
+  /** Só a metade que não depende da Meta: "todo toque tem NOME de template". */
+  pode_ligar: boolean;
+  linhas: JoaoLinha[];
+};
+
+/**
+ * O payload de `GET /api/cadence/definition`.
+ *
+ * As quatro chaves do TOPO são a cadência da ValerIA e estão em produção — este
+ * componente é o único consumidor delas. `valeria` é o MESMO dicionário espelhado
+ * para o seletor, e `joao` é a chave nova. `joao` é OPCIONAL porque o CRM e o FastAPI
+ * sobem separados: um frontend novo contra um backend antigo tem de mostrar a esteira
+ * da ValerIA normalmente, sem o seletor.
+ */
 type CadenceDefinition = {
   touches: DefinitionTouch[];
   outbound_nudge: DefinitionTouch;
   min_gap_hours: number;
   business_window: { start: string; end: string; days: string; timezone: string };
+  joao?: { cadencias: JoaoCadencia[] } | null;
 };
+
+/** Um motivo de recusa do PUT — `linha`/`sequence` dizem QUAL toque é o culpado. */
+type Problema = {
+  codigo: string;
+  mensagem: string;
+  cadencia?: string | null;
+  linha?: string | null;
+  sequence?: number | null;
+};
+
+/** O que o operador mudou e ainda não salvou, por cadência.
+ *
+ * Guardar só o que MUDOU é o que faz o PUT ser MERGE de verdade: o backend trata
+ * campo ausente como "não mexe" e `null` como "volta a valer o código". Mandar o
+ * objeto inteiro transformaria cada gravação num replace, e um `dias` reenviado por
+ * inércia viraria sobreposição permanente de um valor que ninguém escolheu.
+ */
+type ToqueEditado = { dias?: number | null; template_name?: string | null };
+type Rascunho = {
+  gatilho_dias?: number | null;
+  ativa?: boolean;
+  /** linha → sequence → campos editados */
+  toques: Record<string, Record<number, ToqueEditado>>;
+};
+
+const RASCUNHO_VAZIO: Rascunho = { toques: {} };
 
 type Summary = {
   pending: number;
@@ -56,24 +128,22 @@ function KpiCard({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-function DefinitionStrip({ definition }: { definition: CadenceDefinition | null }) {
-  if (!definition) {
-    return (
-      <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
-        <p className="text-[13px] text-[#7b7b78]">Definição da cadência indisponível</p>
-      </div>
-    );
-  }
-  const steps: { title: string; offset: string; objective: string }[] = [
-    ...definition.touches.map((t) => ({
-      title: `T${t.sequence}`,
-      offset: offsetLabel(t.offset_hours, t.jitter_minutes),
-      objective: objectiveLabel(t.objective),
-    })),
-  ];
+/** A esteira da ValerIA — SÓ LEITURA, e é uma decisão do spec §6.
+ *
+ * O que definiria cada toque dela é o `objective_prompt`, texto de LLM: editá-lo por
+ * uma caixinha de tela seria mover prompt de produção para fora da revisão de código.
+ * Os dias dela também não entram aqui: a cadência da ValerIA roda dentro da janela de
+ * 24h da Meta, onde o espaçamento é parte do desenho do prompt, não configuração.
+ */
+function ValeriaStrip({ definition }: { definition: CadenceDefinition }) {
+  const steps = definition.touches.map((t) => ({
+    title: `T${t.sequence}`,
+    offset: offsetLabel(t.offset_hours, t.jitter_minutes),
+    objective: objectiveLabel(t.objective),
+  }));
   return (
-    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
-      <div className="flex items-center justify-between mb-4">
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h3 style={{ letterSpacing: "-0.3px" }} className="text-[18px] font-medium text-[#111111]">
           Esteira da cadência (motor da Valéria)
         </h3>
@@ -98,8 +168,455 @@ function DefinitionStrip({ definition }: { definition: CadenceDefinition | null 
         Lead outbound "sim-e-sumiu": T1 é substituído pelo nudge (+
         {definition.outbound_nudge.offset_hours}h, dentro da janela de 24h da Meta). Toque
         que vence com a janela fechada vira template de reabertura e os seguintes se
-        dobram nele (aguardando reabertura).
+        dobram nele (aguardando reabertura). O objetivo de cada toque é prompt de LLM e
+        vive no código — por isso esta esteira é só leitura.
       </p>
+    </>
+  );
+}
+
+/** `message_templates.status`: o sync local grava minúsculo, a Meta manda 'APPROVED'. */
+function aprovado(status: string | null | undefined): boolean {
+  return (status ?? "").toLowerCase() === "approved";
+}
+
+/** Vazio vira `null` de propósito: no backend, `null` explícito é "apaga a
+ *  sobreposição e volta a valer o código" — é o botão de desfazer desta tela. */
+function numeroOuNulo(valor: string): number | null {
+  const limpo = valor.trim();
+  if (!limpo) return null;
+  const n = Number(limpo);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+/**
+ * A recusa do backend, transformada em algo que uma pessoa lê.
+ *
+ * O formato real é `400 {"detail": {"problemas": [...]}}` (FastAPI embrulha o `detail`).
+ * Tolerar também `{"problemas": [...]}` na raiz é barato e cobre proxy que desembrulhe.
+ * E o último recurso NUNCA é silêncio: sem lista, mostra o texto do erro ou o status —
+ * "a tela ficou muda" é exatamente a falha de 16/09/2026 que esta função existe para
+ * impedir.
+ */
+function extrairProblemas(corpo: unknown, status: number): Problema[] {
+  const raiz = (corpo ?? {}) as Record<string, unknown>;
+  const detail = raiz.detail;
+  const candidatas = [
+    (detail as Record<string, unknown> | undefined)?.problemas,
+    raiz.problemas,
+  ];
+  for (const lista of candidatas) {
+    if (Array.isArray(lista) && lista.length > 0) return lista as Problema[];
+  }
+  const texto =
+    typeof detail === "string"
+      ? detail
+      : typeof raiz.error === "string"
+        ? raiz.error
+        : null;
+  return [
+    {
+      codigo: "recusado",
+      mensagem: texto ?? `O backend respondeu ${status} e não disse por quê.`,
+    },
+  ];
+}
+
+function rotuloDaLinha(cadencia: JoaoCadencia, linha: string | null | undefined): string {
+  if (!linha) return "";
+  return cadencia.linhas.find((l) => l.linha === linha)?.rotulo ?? linha;
+}
+
+const CAMPO =
+  "border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[13px] text-[#111111] bg-white";
+const ROTULO_CAMPO = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
+
+/**
+ * O editor das cadências do João.
+ *
+ * Quatro botões, e nada além deles (spec §5): dias de cada toque, template de cada
+ * toque, prazo do gatilho, liga/desliga. NÃO existe "adicionar toque" — mudar a forma
+ * da cadência é mudança de código, e é isso que impede esta tela de virar um builder
+ * de novo. O backend recusa `sequence` fora do que o código declara, então um botão
+ * aqui só produziria uma recusa.
+ */
+function JoaoEditor({ cadencias: iniciais }: { cadencias: JoaoCadencia[] }) {
+  const [cadencias, setCadencias] = useState<JoaoCadencia[]>(iniciais);
+  const [codigo, setCodigo] = useState<string>(iniciais[0]?.codigo ?? "");
+  const [rascunhos, setRascunhos] = useState<Record<string, Rascunho>>({});
+  const [templates, setTemplates] = useState<{ name: string; status: string }[] | null>(null);
+  const [problemas, setProblemas] = useState<Problema[] | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => setCadencias(iniciais), [iniciais]);
+
+  // A MESMA fonte de templates do builder de campanhas (`/api/templates`, que lê
+  // `message_templates` e já colapsa a linha-espelho por canal). Uma segunda fonte
+  // divergiria da primeira no primeiro sync.
+  useEffect(() => {
+    let vivo = true;
+    fetch("/api/templates")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => {
+        if (vivo) setTemplates(Array.isArray(d) ? d : []);
+      })
+      .catch(() => {
+        if (vivo) setTemplates([]);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  const aprovados = useMemo(() => {
+    const nomes = new Set<string>();
+    for (const t of templates ?? []) if (aprovado(t.status)) nomes.add(t.name);
+    return Array.from(nomes).sort();
+  }, [templates]);
+
+  const cadencia = cadencias.find((c) => c.codigo === codigo) ?? cadencias[0];
+  const rascunho = rascunhos[cadencia.codigo] ?? RASCUNHO_VAZIO;
+
+  const editado = (linha: string, sequence: number): ToqueEditado =>
+    rascunho.toques[linha]?.[sequence] ?? {};
+  const diasEfetivo = (linha: string, t: JoaoTouch): number | null => {
+    const e = editado(linha, t.sequence);
+    return "dias" in e ? (e.dias ?? null) : t.dias;
+  };
+  const templateEfetivo = (linha: string, t: JoaoTouch): string | null => {
+    const e = editado(linha, t.sequence);
+    return "template_name" in e ? (e.template_name ?? null) : t.template_name;
+  };
+  const gatilhoEfetivo =
+    "gatilho_dias" in rascunho ? (rascunho.gatilho_dias ?? null) : cadencia.gatilho_dias;
+  const ativaEfetiva = "ativa" in rascunho ? !!rascunho.ativa : cadencia.ativa;
+
+  const limparAvisos = () => {
+    setProblemas(null);
+    setSucesso(null);
+  };
+
+  const editarToque = (linha: string, sequence: number, campos: ToqueEditado) => {
+    limparAvisos();
+    setRascunhos((prev) => {
+      const atual = prev[cadencia.codigo] ?? RASCUNHO_VAZIO;
+      const daLinha = { ...(atual.toques[linha] ?? {}) };
+      daLinha[sequence] = { ...(daLinha[sequence] ?? {}), ...campos };
+      return {
+        ...prev,
+        [cadencia.codigo]: { ...atual, toques: { ...atual.toques, [linha]: daLinha } },
+      };
+    });
+  };
+
+  const editarCadencia = (campos: Partial<Rascunho>) => {
+    limparAvisos();
+    setRascunhos((prev) => {
+      const atual = prev[cadencia.codigo] ?? RASCUNHO_VAZIO;
+      return { ...prev, [cadencia.codigo]: { ...atual, ...campos } };
+    });
+  };
+
+  const salvar = async () => {
+    limparAvisos();
+    const pedidos: Record<string, unknown>[] = [];
+
+    // Um PUT POR LINHA, e sempre com `linha`: o template é específico dela (o texto do
+    // Atacado não serve para Private Label), e o backend recusa `template_name` sem
+    // linha justamente para impedir que metade da base receba a mensagem errada.
+    for (const l of cadencia.linhas) {
+      const toques = rascunho.toques[l.linha];
+      if (toques && Object.keys(toques).length > 0) {
+        pedidos.push({ cadencia: cadencia.codigo, linha: l.linha, toques });
+      }
+    }
+
+    const daCadencia: Record<string, unknown> = { cadencia: cadencia.codigo };
+    let temCadencia = false;
+    if ("gatilho_dias" in rascunho) {
+      daCadencia.gatilho_dias = rascunho.gatilho_dias;
+      temCadencia = true;
+    }
+    if ("ativa" in rascunho) {
+      daCadencia.ativa = rascunho.ativa;
+      temCadencia = true;
+    }
+    // Os toques vão ANTES do liga/desliga: a trava de ativação olha a configuração
+    // RESULTANTE, então "escolher o template e ligar no mesmo Salvar" só funciona se o
+    // template já estiver gravado quando o `ativa: true` chegar.
+    if (temCadencia) pedidos.push(daCadencia);
+
+    if (pedidos.length === 0) {
+      setSucesso("Nada mudou para salvar.");
+      return;
+    }
+
+    setSalvando(true);
+    try {
+      for (const corpo of pedidos) {
+        const res = await fetch("/api/cadence/joao", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(corpo),
+        });
+        const body = await res.json().catch(() => null);
+        // A recusa TEM que aparecer. Seguir em frente aqui — ou tratar 400 como
+        // sucesso — é literalmente o bug de 16/09/2026 no builder de campanhas: o
+        // backend recusava certo e a interface ficava muda.
+        if (!res.ok) {
+          setProblemas(extrairProblemas(body, res.status));
+          return;
+        }
+        if (body && typeof body === "object" && "codigo" in (body as object)) {
+          const atualizada = body as JoaoCadencia;
+          setCadencias((prev) =>
+            prev.map((c) => (c.codigo === atualizada.codigo ? atualizada : c)),
+          );
+        }
+      }
+      setRascunhos((prev) => {
+        const copia = { ...prev };
+        delete copia[cadencia.codigo];
+        return copia;
+      });
+      setSucesso("Configuração salva.");
+    } catch (e) {
+      setProblemas([
+        { codigo: "rede", mensagem: `Não deu para falar com o servidor: ${e}` },
+      ]);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {cadencias.map((c) => (
+          <button
+            key={c.codigo}
+            onClick={() => {
+              setCodigo(c.codigo);
+              limparAvisos();
+            }}
+            aria-pressed={c.codigo === cadencia.codigo}
+            className={`px-3 py-1.5 rounded-[4px] text-[13px] border transition-colors ${
+              c.codigo === cadencia.codigo
+                ? "bg-[#111111] text-white border-[#111111]"
+                : "bg-transparent text-[#7b7b78] border-[#dedbd6] hover:text-[#111111]"
+            }`}
+          >
+            {c.rotulo}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-[15px] font-medium text-[#111111]">{cadencia.rotulo}</h4>
+          <p className="text-[12px] text-[#7b7b78] mt-0.5">
+            Dispara com o card parado {gatilhoEfetivo ?? cadencia.gatilho_dias_codigo} dia(s)
+            na etapa <code>{cadencia.gatilho_stage_key}</code>
+            {cadencia.repete_ultimo && " · o último toque se repete até o lead pedir para parar"}
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-[13px] text-[#111111]">
+          <input
+            type="checkbox"
+            aria-label="Ligar cadência"
+            checked={ativaEfetiva}
+            onChange={(e) => editarCadencia({ ativa: e.target.checked })}
+          />
+          <span>{ativaEfetiva ? "Ativa" : "Desligada"}</span>
+        </label>
+      </div>
+
+      <div className="flex items-center gap-2 mt-3">
+        <span className={ROTULO_CAMPO}>Prazo do gatilho (dias)</span>
+        <input
+          type="number"
+          min={1}
+          aria-label="Prazo do gatilho (dias)"
+          value={gatilhoEfetivo ?? ""}
+          placeholder={String(cadencia.gatilho_dias_codigo)}
+          onChange={(e) => editarCadencia({ gatilho_dias: numeroOuNulo(e.target.value) })}
+          className={`${CAMPO} w-[84px]`}
+        />
+        <span className="text-[11px] text-[#7b7b78]">
+          padrão {cadencia.gatilho_dias_codigo} · vazio volta ao padrão
+        </span>
+      </div>
+
+      {cadencia.linhas.map((l) => (
+        <div key={l.linha} className="border-t border-[#f0ede8] mt-4 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[13px] font-medium text-[#111111]">{l.rotulo}</p>
+            {l.toques_sem_template.length > 0 && (
+              <span className="text-[11px] text-[#c41c1c]">
+                {l.toques_sem_template.length} toque(s) sem template — não dá para ligar
+              </span>
+            )}
+          </div>
+          <div className="mt-2 space-y-2">
+            {l.toques.map((t) => {
+              const dias = diasEfetivo(l.linha, t);
+              const template = templateEfetivo(l.linha, t);
+              return (
+                <div key={t.sequence} className="flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] font-medium text-[#111111] w-[28px]">
+                    T{t.sequence}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    aria-label={`Dias do toque ${t.sequence} (${l.rotulo})`}
+                    value={dias ?? ""}
+                    placeholder={String(t.dias_codigo)}
+                    onChange={(e) =>
+                      editarToque(l.linha, t.sequence, { dias: numeroOuNulo(e.target.value) })
+                    }
+                    className={`${CAMPO} w-[74px]`}
+                  />
+                  <span className="text-[11px] text-[#7b7b78]">dias · padrão {t.dias_codigo}</span>
+                  {templates === null ? (
+                    <span className="text-[12px] text-[#7b7b78]">carregando templates…</span>
+                  ) : (
+                    <select
+                      aria-label={`Template do toque ${t.sequence} (${l.rotulo})`}
+                      value={template ?? ""}
+                      onChange={(e) =>
+                        editarToque(l.linha, t.sequence, {
+                          template_name: e.target.value || null,
+                        })
+                      }
+                      className={`${CAMPO} min-w-[230px]`}
+                    >
+                      <option value="">— sem template —</option>
+                      {/* O que está gravado, mas não está entre os aprovados, continua
+                          visível: esconder trocaria o valor do banco por um vazio no
+                          primeiro clique em Salvar, sem ninguém pedir. */}
+                      {template && !aprovados.includes(template) && (
+                        <option value={template}>{template} (fora dos aprovados)</option>
+                      )}
+                      {aprovados.map((nome) => (
+                        <option key={nome} value={nome}>
+                          {nome}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {t.aceita_adiamento && (
+                    <span
+                      title={
+                        'O template deste toque traz o botão "Ainda tenho estoque": a ' +
+                        "resposta adia 60 dias sem recomeçar a cadência. É config do " +
+                        "código, não da tela."
+                      }
+                      className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] px-1.5 py-0.5"
+                    >
+                      Aceita adiamento
+                    </span>
+                  )}
+                  {!template && (
+                    <span className="text-[11px] text-[#c41c1c]">sem template</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {problemas && problemas.length > 0 && (
+        <div
+          role="alert"
+          className="mt-4 border border-[#c41c1c]/30 bg-[#c41c1c]/5 rounded-[6px] p-3"
+        >
+          <p className="text-[13px] font-medium text-[#c41c1c]">
+            O backend recusou — nada foi gravado:
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {problemas.map((p, i) => (
+              <li key={`${p.codigo}-${i}`} className="text-[12px] text-[#111111]">
+                {p.sequence != null && p.linha ? (
+                  <strong className="font-medium">
+                    Toque {p.sequence} · {rotuloDaLinha(cadencia, p.linha)} —{" "}
+                  </strong>
+                ) : null}
+                {p.mensagem}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 mt-4">
+        <button
+          onClick={salvar}
+          disabled={salvando}
+          className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] disabled:opacity-50"
+        >
+          {salvando ? "Salvando..." : "Salvar"}
+        </button>
+        {sucesso && <span className="text-[13px] text-[#0f9d43]">{sucesso}</span>}
+        {!cadencia.pode_ligar && (
+          <span className="text-[12px] text-[#7b7b78]">
+            Ligar exige template aprovado em todo toque das duas linhas.
+          </span>
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * A faixa da definição — agora com DOIS motores.
+ *
+ * O seletor só aparece quando o backend manda o bloco `joao`: CRM e FastAPI sobem
+ * separados, e um frontend novo contra um backend antigo tem de continuar mostrando a
+ * esteira da ValerIA, que é o único follow-up que roda em produção hoje.
+ */
+export function DefinitionStrip({ definition }: { definition: CadenceDefinition | null }) {
+  const [motor, setMotor] = useState<"valeria" | "joao">("valeria");
+
+  if (!definition) {
+    return (
+      <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+        <p className="text-[13px] text-[#7b7b78]">Definição da cadência indisponível</p>
+      </div>
+    );
+  }
+
+  const cadenciasJoao = definition.joao?.cadencias ?? [];
+  const temJoao = cadenciasJoao.length > 0;
+  const noJoao = temJoao && motor === "joao";
+
+  return (
+    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5">
+      {temJoao && (
+        <div className="flex gap-2 mb-4" role="group" aria-label="Motor de follow-up">
+          {(["valeria", "joao"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMotor(m)}
+              aria-pressed={motor === m}
+              className={`px-3 py-1.5 rounded-[4px] text-[13px] border transition-colors ${
+                motor === m
+                  ? "bg-[#111111] text-white border-[#111111]"
+                  : "bg-transparent text-[#7b7b78] border-[#dedbd6] hover:text-[#111111]"
+              }`}
+            >
+              {m === "valeria" ? "Valéria" : "João"}
+            </button>
+          ))}
+        </div>
+      )}
+      {noJoao ? (
+        <JoaoEditor cadencias={cadenciasJoao} />
+      ) : (
+        <ValeriaStrip definition={definition} />
+      )}
     </div>
   );
 }
