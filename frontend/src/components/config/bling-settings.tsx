@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   CONTA_PADRAO,
+  CONTA_PREFERIDA,
   contaPadrao,
   contasDisponiveis,
   precisaSeletor,
@@ -151,7 +152,9 @@ export function BlingSettings() {
   // Conta cujo quadro de vendedores esta aberto. O Bling identifica vendedor
   // por id proprio de cada CNPJ: a lista oferecida e o vinculo salvo sao
   // SEMPRE desta conta, nunca a uniao das duas.
-  const [contaVendedores, setContaVendedores] = useState<string>(CONTA_PADRAO);
+  // Semente na conta PREFERIDA; o efeito abaixo corrige se ela nao estiver
+  // conectada.
+  const [contaVendedores, setContaVendedores] = useState<string>(CONTA_PREFERIDA);
   // Chave COMPOSTA (conta + e-mail): o mesmo usuario tem um id de vendedor em
   // cada CNPJ, e indexar so pelo e-mail colapsaria as duas linhas em uma.
   const [sellerMap, setSellerMap] = useState<MapaVendedores>({});
@@ -173,10 +176,10 @@ export function BlingSettings() {
     void loadSellers(contaVendedores);
   }, [contaVendedores]);
 
-  // O estado inicial e CONTA_PADRAO, mas ela pode nao estar conectada (a
-  // segunda conta conectada primeiro, ou a autorizacao da primeira vencida).
-  // Sem este ajuste o quadro ficaria preso numa conta sem espelho e o seletor
-  // — que so aparece com DUAS contas disponiveis — nao daria como sair dela.
+  // O estado inicial e CONTA_PREFERIDA, mas ela pode nao estar conectada (so a
+  // outra conta autorizada, ou a autorizacao desta vencida). Sem este ajuste o
+  // quadro ficaria preso numa conta sem espelho e o seletor — que so aparece
+  // com DUAS contas disponiveis — nao daria como sair dela.
   useEffect(() => {
     const disponiveis = contasDisponiveis(contasDoStatus(status));
     if (disponiveis.length === 0) return;

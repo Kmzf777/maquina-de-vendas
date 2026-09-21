@@ -8,7 +8,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBlingStatus } from "@/hooks/use-bling-status";
-import { CONTA_PADRAO, contasDisponiveis, precisaSeletor } from "@/lib/bling-accounts";
+import {
+  CONTA_PREFERIDA,
+  contaPadrao,
+  contasDisponiveis,
+  precisaSeletor,
+} from "@/lib/bling-accounts";
 import { debounce } from "@/lib/debounce";
 
 interface CatalogProduct {
@@ -45,8 +50,22 @@ export default function ProdutosPage() {
   const blingStatus = useBlingStatus();
   const contas = contasDisponiveis(blingStatus.accounts);
   const mostrarSeletorConta = precisaSeletor(blingStatus.accounts);
-  const [conta, setConta] = useState(CONTA_PADRAO);
+  const [conta, setConta] = useState(CONTA_PREFERIDA);
   const [page, setPage] = useState(1);
+
+  // A semente acima e sincrona (a tela pinta antes de `/api/bling/status`
+  // responder) e nao tem como saber se a conta preferida esta conectada.
+  // Sem esta reconciliacao, o Cafe Rural desconectado deixaria a tela presa
+  // num catalogo vazio SEM saida: o seletor so aparece com DUAS contas
+  // disponiveis, entao nao haveria como trocar de conta na mao.
+  useEffect(() => {
+    const disponiveis = contasDisponiveis(blingStatus.accounts);
+    if (disponiveis.length === 0) return;                     // ainda carregando
+    if (disponiveis.some((c) => c.account === conta)) return; // aposta certa
+    const padrao = contaPadrao(blingStatus.accounts);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (padrao) setConta(padrao);
+  }, [blingStatus.accounts, conta]);
 
   const [data, setData] = useState<CatalogProduct[]>([]);
   const [total, setTotal] = useState(0);

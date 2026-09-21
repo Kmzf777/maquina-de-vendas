@@ -24,7 +24,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { BlingOrderForm } from "./bling-order-form";
-import { CONTA_PADRAO, type ContaBling } from "@/lib/bling-accounts";
+import { CONTA_PADRAO, CONTA_PREFERIDA, type ContaBling } from "@/lib/bling-accounts";
 
 const CONTAS: ContaBling[] = [
   { account: CONTA_PADRAO, label: "Canastra CNPJ 1", configured: true, connected: true },
@@ -82,7 +82,7 @@ describe("BlingOrderForm — seletor de conta", () => {
     expect(screen.queryByText("Conta Bling *")).toBeNull();
   });
 
-  it("aparece como o PRIMEIRO campo quando ha duas contas conectadas, e avisa o pai da conta padrao", async () => {
+  it("aparece como o PRIMEIRO campo quando ha duas contas conectadas, e avisa o pai da conta preferida", async () => {
     mockFetchVazio();
     const aoMudarConta = vi.fn();
     const { container } = render(
@@ -100,13 +100,15 @@ describe("BlingOrderForm — seletor de conta", () => {
     expect(texto.indexOf("Conta Bling")).toBeGreaterThanOrEqual(0);
     expect(texto.indexOf("Conta Bling")).toBeLessThan(texto.indexOf("Itens do pedido"));
 
-    // Rotula com `label`, nunca o slug cru.
-    expect(screen.queryByText("Canastra CNPJ 1")).not.toBeNull();
-    expect(screen.queryByText(CONTA_PADRAO)).toBeNull();
+    // Rotula com `label`, nunca o slug cru. O Radix so renderiza o label da
+    // opcao SELECIONADA (SelectValue), entao o texto esperado aqui e o da
+    // conta preferida — nao o das duas.
+    expect(screen.queryByText("Canastra CNPJ 2")).not.toBeNull();
+    expect(screen.queryByText(CONTA_PREFERIDA)).toBeNull();
 
-    // Conta padrao e comunicada ao pai (ele precisa dela para as PROPRIAS
+    // A conta PREFERIDA e comunicada ao pai (ele precisa dela para as PROPRIAS
     // chamadas — POST do pedido, resolvedor de contato).
-    await waitFor(() => expect(aoMudarConta).toHaveBeenCalledWith(CONTA_PADRAO));
+    await waitFor(() => expect(aoMudarConta).toHaveBeenCalledWith(CONTA_PREFERIDA));
   });
 
   it("so lista contas CONECTADAS como opcao selecionavel", () => {

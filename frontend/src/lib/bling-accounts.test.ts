@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONTA_PADRAO,
+  CONTA_PREFERIDA,
   contasDisponiveis,
   precisaSeletor,
   contaPadrao,
@@ -48,17 +50,41 @@ describe("precisaSeletor", () => {
 });
 
 describe("contaPadrao", () => {
-  it("prefere a default quando conectada", () => {
-    expect(contaPadrao(CONTAS)).toBe("default");
+  it("prefere a CONTA_PREFERIDA (Cafe Rural) quando conectada", () => {
+    expect(contaPadrao(CONTAS)).toBe("secundaria");
   });
 
-  it("cai para a primeira conectada quando a default nao esta", () => {
-    const contas = [{ ...CONTAS[0], connected: false }, CONTAS[1]];
-    expect(contaPadrao(contas)).toBe("secundaria");
+  // O degrau 2 da escada, e a razao de ele existir: com a preferida fora do ar
+  // a tela volta para a conta que todo mundo conhece, nao para a primeira da
+  // lista por acaso.
+  it("cai para a CONTA_PADRAO quando a preferida nao esta conectada", () => {
+    const contas = [
+      CONTAS[0],
+      { ...CONTAS[1], connected: false },
+      { account: "terceira", label: "T", configured: true, connected: true },
+    ];
+    expect(contaPadrao(contas)).toBe("default");
+  });
+
+  it("cai para a primeira conectada quando nem a preferida nem a padrao estao", () => {
+    const contas = [
+      { ...CONTAS[0], connected: false },
+      { ...CONTAS[1], connected: false },
+      { account: "terceira", label: "T", configured: true, connected: true },
+    ];
+    expect(contaPadrao(contas)).toBe("terceira");
   });
 
   it("devolve null sem nenhuma conta conectada", () => {
     expect(contaPadrao([{ ...CONTAS[0], connected: false }])).toBeNull();
+  });
+
+  // Trava de identidade: o slug historico nao pode ser arrastado pela mudanca
+  // de preferencia. Se este teste quebrar, toda venda antiga sem bling_account
+  // passou a ser rotulada como Cafe Rural.
+  it("CONTA_PADRAO continua sendo o slug da conta 1", () => {
+    expect(CONTA_PADRAO).toBe("default");
+    expect(CONTA_PREFERIDA).toBe("secundaria");
   });
 });
 

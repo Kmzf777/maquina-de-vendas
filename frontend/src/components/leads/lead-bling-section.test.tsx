@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { LeadBlingSection } from "./lead-bling-section";
-import { CONTA_PADRAO, type ContaBling } from "@/lib/bling-accounts";
+import { CONTA_PADRAO, CONTA_PREFERIDA, type ContaBling } from "@/lib/bling-accounts";
 
 const UMA_CONTA: ContaBling[] = [
   { account: CONTA_PADRAO, label: "Canastra CNPJ 1", configured: true, connected: true },
@@ -51,23 +51,32 @@ describe("LeadBlingSection — seletor de conta", () => {
 
     render(<LeadBlingSection leadId="lead-1" blingContactIds={{}} onChanged={vi.fn()} />);
     expect(screen.queryByText("Conta Bling")).not.toBeNull();
-    expect(screen.queryByText("Canastra CNPJ 1")).not.toBeNull();
+    // O `Select` e do Radix: `SelectValue` renderiza APENAS o label da opcao
+    // selecionada, e o `SelectContent` so monta quando o dropdown abre. Com a
+    // conta preferida semeada, o unico label no documento e o dela.
+    expect(screen.queryByText("Canastra CNPJ 2")).not.toBeNull();
+    expect(screen.queryByText(CONTA_PREFERIDA)).toBeNull();
   });
 
-  it("comeca na conta DEFAULT — nada muda para quem usa o CRM hoje enquanto o vendedor nao mexe no seletor", async () => {
+  it("comeca na conta PREFERIDA — o vendedor cai direto no CNPJ que mais emite", async () => {
     mockUseBlingStatus.mockReturnValue({ enabled: true, accounts: DUAS_CONTAS, loading: false, error: null });
     global.fetch = vi.fn((url: string) =>
-      String(url).includes(`account=${CONTA_PADRAO}`)
-        ? Promise.resolve(resposta({ data: [{ id: 99, nome: "Cliente Default" }] }))
+      String(url).includes(`account=${CONTA_PREFERIDA}`)
+        ? Promise.resolve(resposta({ data: [{ id: 99, nome: "Cliente Cafe Rural" }] }))
         : Promise.resolve(resposta({ data: [] })),
     ) as unknown as typeof fetch;
 
-    render(<LeadBlingSection leadId="lead-1" blingContactIds={{ [CONTA_PADRAO]: 99 }} onChanged={vi.fn()} />);
+    render(<LeadBlingSection leadId="lead-1" blingContactIds={{ [CONTA_PREFERIDA]: 99 }} onChanged={vi.fn()} />);
     expect(await screen.findByText("VINCULADO")).not.toBeNull();
-    expect(await screen.findByText("Cliente Default")).not.toBeNull();
+    expect(await screen.findByText("Cliente Cafe Rural")).not.toBeNull();
   });
 
-  it("busca de vinculo manda a conta na querystring", async () => {
+  // Com `UMA_CONTA` a preferida NAO esta no ar, entao a querystring tem que sair
+  // com a default: e o efeito de reconciliacao corrigindo a semente sincrona
+  // antes de qualquer chamada. Sem ele, a busca iria para uma conta inexistente
+  // e voltaria vazia — sem seletor para o vendedor escapar (`precisaSeletor`
+  // exige DUAS contas disponiveis).
+  it("busca de vinculo manda a conta na querystring, ja reconciliada", async () => {
     mockUseBlingStatus.mockReturnValue({ enabled: true, accounts: UMA_CONTA, loading: false, error: null });
     const fetchSpy = vi.fn(() => Promise.resolve(resposta({ data: [] }))) as unknown as typeof fetch;
     global.fetch = fetchSpy;
@@ -77,10 +86,16 @@ describe("LeadBlingSection — seletor de conta", () => {
     fireEvent.change(campo, { target: { value: "acme" } });
 
     await vi.waitFor(() => {
-      const chamouComConta = (fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c: unknown[]) => String(c[0]).includes(`account=${CONTA_PADRAO}`),
+      const chamadas = (fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const chamouComConta = chamadas.some((c: unknown[]) =>
+        String(c[0]).includes(`account=${CONTA_PADRAO}`),
       );
       expect(chamouComConta).toBe(true);
     });
+
+    const chamouComPreferida = (
+      fetchSpy as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.some((c: unknown[]) => String(c[0]).includes(`account=${CONTA_PREFERIDA}`));
+    expect(chamouComPreferida).toBe(false);
   });
 });
