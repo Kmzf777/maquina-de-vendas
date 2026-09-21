@@ -890,6 +890,21 @@ async def _retry_single_undelivered(sb, bl: dict) -> None:
     if not claim.data:
         return
 
+    # BLOQUEIO — o mesmo guardrail da Camada 2 (`_blacklist_guardrail`, 400 linhas acima),
+    # que este caminho não tinha. A retentativa do 9º dígito reenvia o template HORAS ou
+    # DIAS depois do disparo original — exatamente a janela em que o opt-out acontece — e
+    # sem esta checagem o template voltava para quem já tinha pedido para sair.
+    # Posição deliberada: DEPOIS do claim atômico (delivery_retried já virou true), então
+    # marcar e sair aqui encerra a retentativa de vez; nenhum tick futuro a ressuscita.
+    block_reason = _blacklist_guardrail(lead)
+    if block_reason:
+        logger.warning(
+            "[DELIVERY][RETRY][BLACKLIST] lead %s (%s) na blacklist — retentativa ABORTADA (%s)",
+            lead.get("id"), lead.get("phone"), block_reason,
+        )
+        mark_broadcast_lead_failed(bl["id"], block_reason)
+        return
+
     channel_id = broadcast.get("channel_id")
     channel = get_channel_by_id(channel_id) if channel_id else None
     if not channel:

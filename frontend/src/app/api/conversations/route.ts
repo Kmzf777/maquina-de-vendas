@@ -159,6 +159,11 @@ export async function GET(request: NextRequest) {
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
   if (status) dbQuery = dbQuery.eq("status", status);
   if (leadId) dbQuery = dbQuery.eq("lead_id", leadId);
+  // BLOQUEIO: a conversa de um lead bloqueado SOME do /conversas (decisão de produto).
+  // `block_lead` carimba conversations.status = 'blocked'; o filtro fica aqui, na fonte
+  // da listagem, para valer inclusive no deep-link ?lead_id=. O histórico não some do
+  // sistema — continua acessível pelo funil Blacklist e pela tela de leads.
+  dbQuery = dbQuery.neq("status", "blocked");
   // Restringe ao conjunto de canais permitidos para o usuário logado
   if (allowedChannelIds !== null) {
     if (allowedChannelIds.length === 0) {

@@ -1731,6 +1731,364 @@ def apply_optout_side_effects(lead_id: str, phone: str, reason: str) -> None:
             )
 
 
+# ── Bloquear / desbloquear lead (botão do CRM em /conversas) ────────────────
+# Bloquear NÃO é conceito novo: é o hard opt-out que já existe. A fonte da verdade
+# continua sendo `leads.opt_out` (canônico) OU deal no funil Blacklist — exatamente o
+# critério de `is_lead_blacklisted` (:381), e nenhuma coluna nova foi criada.
+#
+# O que estas funções acrescentam é fechar o furo do caminho MANUAL. Até 18/09/2026 o
+# POST /api/leads/{id}/optout desligava a IA e mandava os cards para a Blacklist, mas
+# nunca gravava `opt_out = true`: o bloqueio ficava pendurado só no braço "tem deal na
+# Blacklist" e evaporava no instante em que alguém arrastasse o card no Kanban — sem
+# aviso, sem registro, e com o lead voltando a ser elegível a disparo.
+#
+# E acrescentam a volta: desbloquear é direito do operador que errou o clique, mas a
+# PROVA do opt-out nunca é apagada (`opt_out_at`, `opt_out_channel` e a evidência
+# original ficam onde estão — o desbloqueio só ACRESCENTA a revogação).
+
+# Vocabulário de `leads.opt_out_channel` (COMMENT da coluna em
+# 20260909_recuperacao_stages_optout.sql): minúsculo, sem acento. Este é o valor do
+# operador agindo pelo CRM — os do bot vivem em button_flow/effects.py.
+OPTOUT_CANAL_MANUAL = "manual_crm"
+
+
+def _snapshot_para_desbloqueio(lead_id: str, lead: dict[str, Any]) -> dict[str, Any]:
+    """Fotografa o estado que o bloqueio vai destruir, para o desbloqueio devolver.
+
+    OBRIGATORIAMENTE antes de `apply_optout_side_effects`: ele chama
+    `move_lead_deals_to_blacklist`, que sobrescreve `pipeline_id`/`stage_id` de TODOS os
+    cards do lead. Depois dele a origem não existe mais em lugar nenhum — o Kanban não
+    guarda histórico de movimentação — e o desbloqueio só saberia dizer "está na
+    Blacklist", sem para onde voltar.
+
+    Fail-soft: um snapshot vazio degrada o desbloqueio para `deals_pendentes` (ruim, mas
+    seguro — ver `unblock_lead`); uma exceção aqui impediria o bloqueio, que não é.
+    """
+    snapshot: dict[str, Any] = {
+        "ai_enabled": lead.get("ai_enabled", True),
+        "deals": [],
+        "conversations": [],
+    }
+    try:
+        sb = get_supabase()
+        deals = (
+            sb.table("deals").select("id, pipeline_id, stage_id")
+            .eq("lead_id", lead_id).execute()
+        )
+        snapshot["deals"] = [
+            {"id": d.get("id"), "pipeline_id": d.get("pipeline_id"), "stage_id": d.get("stage_id")}
+            for d in (deals.data or [])
+            if d.get("id")
+        ]
+        convs = (
+            sb.table("conversations").select("id, status")
+            .eq("lead_id", lead_id).execute()
+        )
+        snapshot["conversations"] = [
+            {"id": c.get("id"), "status": c.get("status")}
+            for c in (convs.data or [])
+            if c.get("id")
+        ]
+    except Exception as exc:
+        logger.error(
+            "_snapshot_para_desbloqueio: falha ao fotografar o estado do lead %s — o "
+            "desbloqueio vai precisar do operador para mover os cards: %s",
+            lead_id, exc, exc_info=True,
+        )
+    return snapshot
+
+
+def _evidencia_de_bloqueio(
+    lead_id: str, snapshot: dict[str, Any], by: str | None, reason: str | None,
+) -> dict[str, Any]:
+    """As 3 colunas de prova do opt-out manual (`opt_out_at/channel/evidence`).
+
+    Reimplementa o contrato de `button_flow.effects._campos_de_evidencia` (:170) em vez
+    de importá-lo por dois motivos. O menor: `app.button_flow.effects` importa DESTE
+    módulo no topo, então o import direto seria circular. O maior: aquela função carimba
+    `source="button_flow"`, o que seria mentira num bloqueio feito pelo operador no CRM —
+    e o valor inteiro de uma evidência é ela não mentir sobre a própria origem.
+
+    `restore` viaja dentro da prova de propósito: é o único lugar onde a origem dos cards
+    sobrevive ao `move_lead_deals_to_blacklist`, e uma coluna própria custaria uma
+    migration (que ninguém aplica no deploy) para um dado que só faz sentido ao lado do
+    opt-out que o gerou.
+    """
+    agora = datetime.now(timezone.utc).isoformat()
+    prova: dict[str, Any] = {
+        "source": "crm_manual",
+        "registrado_em": agora,
+        "lead_id": lead_id,
+        "canal": OPTOUT_CANAL_MANUAL,
+        "restore": snapshot,
+    }
+    if by:
+        prova["by"] = by
+    if reason:
+        prova["reason"] = reason
+    return {
+        "opt_out_at": agora,
+        "opt_out_channel": OPTOUT_CANAL_MANUAL,
+        "opt_out_evidence": prova,
+    }
+
+
+def _marcar_conversas_bloqueadas(lead_id: str) -> int:
+    """`status='blocked'` + `unread_count=0` em todas as conversas do lead. Fail-soft.
+
+    O zero no `unread_count` não é cosmético: a conversa some da listagem de /conversas
+    (que passa a filtrar `status <> 'blocked'`), mas o contador continuaria somando a cada
+    mensagem contabilizada e voltaria como badge de não-lidas de uma conversa que o
+    operador não tem mais como abrir para "ler". É o mesmo zero de
+    `conversations.service.reset_unread_count`, aplicado em lote pelo lead.
+    """
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("conversations")
+            .update({"status": "blocked", "unread_count": 0})
+            .eq("lead_id", lead_id)
+            .execute()
+        )
+        return len(res.data or [])
+    except Exception as exc:
+        logger.error(
+            "_marcar_conversas_bloqueadas: falha ao bloquear conversas do lead %s — o "
+            "opt-out já está gravado, a conversa é que segue visível: %s",
+            lead_id, exc, exc_info=True,
+        )
+        return 0
+
+
+def block_lead(lead_id: str, *, by: str | None = None, reason: str | None = None) -> dict[str, Any]:
+    """Bloqueia o lead: hard opt-out canônico + Blacklist + conversa fora de /conversas.
+
+    Ponto único do bloqueio manual — o endpoint /block, o /optout legado e qualquer
+    script futuro passam por aqui, para que a sequência não divirja entre chamadores.
+
+    ORDEM E DEGRADAÇÃO, copiadas de `button_flow.effects._aplicar_optout` (:114) porque o
+    incidente que as motivou é o mesmo: primeiro tenta gravar booleano + evidência e, se o
+    PostgREST devolver PGRST204 (colunas de evidência ausentes porque a migration ainda
+    não foi aplicada à mão), REGRAVA só `{ai_enabled, opt_out}`. Nunca o contrário. Perder
+    a evidência é um problema de auditoria; perder o `opt_out` é continuar disparando para
+    quem pediu para sair.
+
+    FAIL-HARD só na gravação do `opt_out` (a segunda tentativa propaga a exceção: sem o
+    booleano não há bloqueio nenhum e o operador precisa saber). Tudo o que vem depois é
+    efeito colateral e é FAIL-SOFT — um card que não moveu ou um follow-up que não
+    cancelou não podem desfazer um opt-out já honrado no banco.
+
+    IDEMPOTENTE: lead já com `opt_out` volta `already=True` sem tocar em nada. Isso é o que
+    protege o snapshot — uma segunda chamada fotografaria os cards JÁ na Blacklist e
+    gravaria "a origem é a Blacklist", destruindo a única cópia da origem real.
+
+    Retorna `{"blocked": True, "already": bool, "deals": n, "conversations": m}`.
+    """
+    lead = get_lead(lead_id)
+    if not lead:
+        raise ValueError(f"block_lead: lead {lead_id} não encontrado")
+
+    if lead.get("opt_out"):
+        logger.info("block_lead: lead %s já estava bloqueado — nenhum efeito reaplicado", lead_id)
+        return {"blocked": True, "already": True, "deals": 0, "conversations": 0}
+
+    snapshot = _snapshot_para_desbloqueio(lead_id, lead)
+
+    obrigatorio = {"ai_enabled": False, "opt_out": True}
+    try:
+        update_lead(lead_id, **obrigatorio,
+                    **_evidencia_de_bloqueio(lead_id, snapshot, by, reason))
+    except Exception as exc:
+        logger.warning(
+            "block_lead: evidência não gravada p/ lead %s (migration 20260909 aplicada?) "
+            "— regravando só o booleano; o desbloqueio perde o snapshot: %s", lead_id, exc,
+        )
+        update_lead(lead_id, **obrigatorio)  # fail-HARD de propósito: sem isto não há bloqueio
+
+    try:
+        apply_optout_side_effects(lead_id, lead.get("phone") or "", reason="block_manual")
+    except Exception as exc:  # já é fail-soft internamente; a rede aqui é contra regressão
+        logger.error(
+            "block_lead: efeitos colaterais falharam p/ lead %s (opt_out JÁ gravado): %s",
+            lead_id, exc, exc_info=True,
+        )
+
+    conversas = _marcar_conversas_bloqueadas(lead_id)
+
+    detalhe = f" por {by}" if by else ""
+    detalhe += f" — motivo: {reason}" if reason else ""
+    try:
+        save_message(
+            lead_id, "system",
+            f"🚫 [bloqueio] Lead bloqueado no CRM{detalhe}. Cards na Blacklist, IA "
+            "desativada, follow-ups e esteiras cancelados, mensagens recebidas "
+            "descartadas até o desbloqueio.",
+        )
+    except Exception as exc:
+        logger.warning("block_lead: falha ao salvar system message do lead %s: %s", lead_id, exc)
+
+    # `deals` sai do snapshot (o que tínhamos ANTES de mover) e não da resposta do update:
+    # é o número que o operador reconhece — quantos cards existiam e foram para a Blacklist.
+    deals = len(snapshot.get("deals") or [])
+    logger.info(
+        "block_lead: lead %s bloqueado (%d deal(s), %d conversa(s))", lead_id, deals, conversas,
+    )
+    return {"blocked": True, "already": False, "deals": deals, "conversations": conversas}
+
+
+def _restaurar_deals(lead_id: str, snapshot: dict[str, Any]) -> tuple[int, int]:
+    """Devolve cada card da Blacklist ao funil/etapa de origem. (restaurados, pendentes).
+
+    NÃO ADIVINHA destino. Card na Blacklist sem origem no snapshot — lead bloqueado antes
+    desta entrega, ou snapshot perdido na degradação PGRST204 — é CONTADO em `pendentes` e
+    deixado onde está. Chutar um funil espalharia cards em boards de vendedor que ninguém
+    pediu; deixar parado mantém `is_lead_blacklisted` em True e o lead efetivamente
+    bloqueado, que é o lado seguro do erro. A UI avisa o operador para mover à mão.
+
+    Card cuja origem JÁ era a Blacklist também entra em `pendentes`: "restaurar" ali seria
+    um no-op silencioso que devolveria um `deals_restaurados` mentiroso à tela.
+    """
+    origens = {
+        d["id"]: d for d in (snapshot.get("deals") or [])
+        if isinstance(d, dict) and d.get("id")
+    }
+    restaurados = pendentes = 0
+    try:
+        sb = get_supabase()
+        atuais = (
+            sb.table("deals").select("id, pipeline_id, stage_id")
+            .eq("lead_id", lead_id).eq("pipeline_id", BLACKLIST_PIPELINE_ID).execute()
+        )
+        for deal in (atuais.data or []):
+            origem = origens.get(deal.get("id")) or {}
+            destino = origem.get("pipeline_id")
+            if not destino or destino == BLACKLIST_PIPELINE_ID:
+                pendentes += 1
+                continue
+            update: dict[str, Any] = {
+                "pipeline_id": destino,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if origem.get("stage_id"):
+                update["stage_id"] = origem["stage_id"]
+            try:
+                sb.table("deals").update(update).eq("id", deal["id"]).execute()
+                restaurados += 1
+            except Exception as exc:
+                # Por card: um destino que não existe mais (funil apagado) não pode
+                # impedir a volta dos outros.
+                pendentes += 1
+                logger.error(
+                    "_restaurar_deals: card %s do lead %s não voltou para o funil %s: %s",
+                    deal.get("id"), lead_id, destino, exc, exc_info=True,
+                )
+    except Exception as exc:
+        logger.error(
+            "_restaurar_deals: falha ao listar cards do lead %s na Blacklist: %s",
+            lead_id, exc, exc_info=True,
+        )
+    return restaurados, pendentes
+
+
+def _restaurar_conversas(lead_id: str, snapshot: dict[str, Any]) -> int:
+    """Tira as conversas do lead de `status='blocked'`. Fail-soft. Devolve quantas voltaram.
+
+    Só toca em quem está `blocked`: o bloqueio pode ter sido dado sobre uma conversa que
+    já estava arquivada/encerrada por outro motivo, e reabri-la seria inventar estado.
+    Sem status de origem no snapshot o destino é `'active'` — o default da coluna desde
+    007_multi_channel.sql:33.
+    """
+    origens = {
+        c["id"]: c.get("status") for c in (snapshot.get("conversations") or [])
+        if isinstance(c, dict) and c.get("id")
+    }
+    voltaram = 0
+    try:
+        sb = get_supabase()
+        atuais = (
+            sb.table("conversations").select("id, status")
+            .eq("lead_id", lead_id).eq("status", "blocked").execute()
+        )
+        for conv in (atuais.data or []):
+            destino = origens.get(conv.get("id")) or "active"
+            if destino == "blocked":
+                # O snapshot foi tirado DEPOIS de um bloqueio anterior; devolver
+                # 'blocked' deixaria a conversa invisível para sempre.
+                destino = "active"
+            sb.table("conversations").update({"status": destino}).eq("id", conv["id"]).execute()
+            voltaram += 1
+    except Exception as exc:
+        logger.error(
+            "_restaurar_conversas: falha ao reativar conversas do lead %s: %s",
+            lead_id, exc, exc_info=True,
+        )
+    return voltaram
+
+
+def unblock_lead(lead_id: str, *, by: str | None = None) -> dict[str, Any]:
+    """Desbloqueia o lead SEM apagar a prova de que o bloqueio existiu.
+
+    `opt_out_at`, `opt_out_channel` e a evidência original ficam intocados: a defesa do
+    legítimo interesse na ANPD (LGPD art. 18 §2) depende de saber QUANDO e POR ONDE a
+    pessoa se opôs, e isso continua verdade depois de ela voltar atrás. O desbloqueio só
+    ACRESCENTA `opt_out_evidence["revogado"] = {"em", "por"}`, preservando o resto do
+    jsonb — por isso o update reescreve a evidência a partir de uma CÓPIA da existente,
+    em vez de gravar um objeto novo.
+
+    Mesma degradação em duas tentativas de `block_lead`, pelo mesmo motivo invertido: se
+    a coluna de evidência não existir, o lead precisa sair da lista de bloqueados mesmo
+    assim — ficar preso num bloqueio por causa de uma migration pendente é pior que ficar
+    sem o registro da revogação.
+
+    Retorna `{"blocked": False, "deals_restaurados": n, "deals_pendentes": m}`. Com
+    `deals_pendentes > 0` o lead segue EFETIVAMENTE bloqueado (`is_lead_blacklisted` lê o
+    card na Blacklist), e é a UI que avisa o operador a mover o card no Kanban.
+    """
+    lead = get_lead(lead_id)
+    if not lead:
+        raise ValueError(f"unblock_lead: lead {lead_id} não encontrado")
+
+    evidencia = lead.get("opt_out_evidence")
+    evidencia = dict(evidencia) if isinstance(evidencia, dict) else {}
+    snapshot = evidencia.get("restore")
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+
+    ai_enabled = snapshot.get("ai_enabled")
+    obrigatorio = {"opt_out": False, "ai_enabled": True if ai_enabled is None else bool(ai_enabled)}
+    evidencia["revogado"] = {"em": datetime.now(timezone.utc).isoformat(), "por": by}
+    try:
+        update_lead(lead_id, **obrigatorio, opt_out_evidence=evidencia)
+    except Exception as exc:
+        logger.warning(
+            "unblock_lead: revogação não registrada p/ lead %s (migration 20260909 "
+            "aplicada?) — desbloqueando só o booleano: %s", lead_id, exc,
+        )
+        update_lead(lead_id, **obrigatorio)  # fail-HARD: sem isto o lead continua bloqueado
+
+    restaurados, pendentes = _restaurar_deals(lead_id, snapshot)
+    _restaurar_conversas(lead_id, snapshot)
+
+    detalhe = f" por {by}" if by else ""
+    aviso = (
+        f" {pendentes} card(s) continuam na Blacklist (origem desconhecida) e precisam "
+        "ser movidos à mão no Kanban." if pendentes else ""
+    )
+    try:
+        save_message(
+            lead_id, "system",
+            f"✅ [desbloqueio] Lead desbloqueado no CRM{detalhe}. {restaurados} card(s) "
+            f"devolvidos ao funil de origem.{aviso}",
+        )
+    except Exception as exc:
+        logger.warning("unblock_lead: falha ao salvar system message do lead %s: %s", lead_id, exc)
+
+    logger.info(
+        "unblock_lead: lead %s desbloqueado (%d card(s) restaurados, %d pendente(s))",
+        lead_id, restaurados, pendentes,
+    )
+    return {"blocked": False, "deals_restaurados": restaurados, "deals_pendentes": pendentes}
+
+
 def get_relationship_summary(lead_id: str) -> str:
     """Resumo do relacionamento do lead para a tool de percepção (consultar_relacionamento).
 

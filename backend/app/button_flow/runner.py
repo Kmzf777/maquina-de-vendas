@@ -29,7 +29,7 @@ from app.conversations.service import (
     save_message,
     update_conversation,
 )
-from app.leads.service import get_open_deal, resolve_send_target
+from app.leads.service import get_open_deal, is_lead_blacklisted, resolve_send_target
 from app.whatsapp.meta import extract_wamid
 
 logger = logging.getLogger(__name__)
@@ -190,10 +190,21 @@ def _evidencia_do_turno(
 def _motivo_para_nao_rodar(lead: dict, estado: dict | None, deal: dict | None) -> str | None:
     """Razão para o bot sair de cena neste turno, ou None para seguir.
 
-    Duas situações, as duas significando a mesma coisa — um humano já assumiu:
+    Três situações. Duas significam a mesma coisa — um humano já assumiu:
     `human_control=true` (o carimbo formal do handoff) e o card já movido de etapa.
     O bot rodando por cima disso responderia por cima do vendedor na MESMA thread,
     no número dele, que é o pior efeito colateral possível deste desenho.
+
+    A terceira é o BLOQUEIO (`is_lead_blacklisted`), e a posição dela é AQUI, no guarda
+    de não-rodar, e NÃO em `_enviar`. `effects._aplicar_optout` grava `opt_out=true` no
+    próprio clique de "Parar mensagens", e `_enviar` roda DEPOIS de `effects.aplicar` no
+    mesmo turno: um guarda ingênuo lá engoliria justamente a mensagem que confirma ao
+    lead que ele foi atendido — ficaria sem resposta quem acabou de pedir para sair.
+    Aqui a checagem acontece ANTES do evento ser montado, então a confirmação do turno
+    do opt-out sai normalmente e só os turnos SEGUINTES ficam mudos.
+
+    Por último na ordem de propósito: os dois guardas acima são de memória e este vai ao
+    banco — a consulta só acontece no turno que de fato rodaria o bot.
 
     O stage de referência é o que o próprio runner gravou no turno anterior
     (`flow_state.deal_stage_id`); sem referência não há como afirmar que mudou, e a
@@ -218,6 +229,10 @@ def _motivo_para_nao_rodar(lead: dict, estado: dict | None, deal: dict | None) -
     stage_atual = (deal or {}).get("stage_id")
     if stage_gravado and stage_atual and stage_atual != stage_gravado:
         return f"deal mudou de etapa ({stage_gravado} -> {stage_atual})"
+    lead_id = lead.get("id")
+    if lead_id and is_lead_blacklisted(lead_id):
+        logger.info("[BUTTON FLOW][BLACKLIST] lead %s bloqueado — bot não roda neste turno", lead_id)
+        return "blacklist"
     return None
 
 

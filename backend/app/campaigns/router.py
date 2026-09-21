@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -9,6 +11,11 @@ from app.campaigns.service import (
     is_already_enrolled,
 )
 from app.campaigns.execution_log import list_execution_log
+# Critério canônico do bloqueio (leads.opt_out OU card no funil Blacklist), direto da
+# origem — o mesmo que o worker da esteira usa antes de cada envio.
+from app.leads.service import is_lead_blacklisted
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
@@ -239,6 +246,16 @@ async def api_enroll_lead(campaign_id: str, body: EnrollRequest):
     _reject_system_campaign(campaign_id, "enroll")
     if is_already_enrolled(campaign_id, body.lead_id):
         raise HTTPException(400, "Lead já está nesta campanha")
+    # BLOQUEIO — camada 1 da esteira, que a matrícula manual não tinha. O worker
+    # (`campaigns/worker.py:55`) já barra o envio, mas SÓ na hora de enviar: sem este 409
+    # o operador recebia "matriculado com sucesso", o enrollment ficava vivo no banco e
+    # nenhum toque saía nunca. Silêncio confuso — melhor recusar na cara.
+    if is_lead_blacklisted(body.lead_id):
+        logger.info(
+            "[CAMPAIGNS][BLACKLIST] matrícula manual recusada — lead %s na blacklist (campanha %s)",
+            body.lead_id, campaign_id,
+        )
+        raise HTTPException(409, "Lead bloqueado (opt-out ou funil Blacklist) — não pode ser matriculado.")
     camp = get_campaign(campaign_id)
     if not camp:
         raise HTTPException(404, "Campaign não encontrada")

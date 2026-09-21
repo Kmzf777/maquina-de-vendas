@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyConversationUpdate,
+  isBlockedConversationRow,
   mergeConversationRow,
   sortByLastMsgDesc,
   previewFromMessage,
@@ -68,6 +70,73 @@ describe("mergeConversationRow", () => {
       { pendingFollowup: false },
     );
     expect(merged.followup_enabled).toBe(false);
+  });
+});
+
+describe("isBlockedConversationRow", () => {
+  it("reconhece só o status 'blocked'", () => {
+    expect(isBlockedConversationRow({ id: "a", status: "blocked" })).toBe(true);
+    expect(isBlockedConversationRow({ id: "a", status: "active" })).toBe(false);
+    // Payload de UPDATE que não mexeu em `status` não pode sumir com a conversa.
+    expect(isBlockedConversationRow({ id: "a" })).toBe(false);
+  });
+});
+
+describe("applyConversationUpdate", () => {
+  it("UPDATE com status='blocked' REMOVE a linha da lista", () => {
+    const list = [conv({ id: "a" }), conv({ id: "b" })];
+    const out = applyConversationUpdate(list, { id: "a", status: "blocked" });
+    expect(out.map((c) => c.id)).toEqual(["b"]);
+  });
+
+  it("bloqueio não mescla: nenhum campo do payload sobrevive na lista", () => {
+    const list = [conv({ id: "a", unread_count: 9 })];
+    const out = applyConversationUpdate(list, { id: "a", status: "blocked", unread_count: 3 });
+    // Sem isso a conversa de um lead bloqueado ficaria viva em memória (com
+    // badge e tudo) até o próximo refetch integral.
+    expect(out).toEqual([]);
+  });
+
+  it("bloqueio de uma conversa que não está na lista é no-op", () => {
+    const list = [conv({ id: "a" })];
+    const out = applyConversationUpdate(list, { id: "fora", status: "blocked" });
+    expect(out.map((c) => c.id)).toEqual(["a"]);
+  });
+
+  it("UPDATE comum continua mesclando e reordenando (sem regressão)", () => {
+    const list = [
+      conv({ id: "a", last_msg_at: "2026-09-18T10:00:00+00:00" }),
+      conv({ id: "b", last_msg_at: "2026-09-18T12:00:00+00:00" }),
+    ];
+    const out = applyConversationUpdate(list, {
+      id: "a",
+      last_msg_at: "2026-09-18T14:00:00+00:00",
+      unread_count: 4,
+    });
+    expect(out.map((c) => c.id)).toEqual(["a", "b"]);
+    expect(out[0].unread_count).toBe(4);
+    expect(out[0].leads).toBe(list[0].leads); // joins preservados
+  });
+
+  it("UPDATE que reabre a conversa (status='active') mantém a linha", () => {
+    const out = applyConversationUpdate([conv({ id: "a" })], { id: "a", status: "active" });
+    expect(out.map((c) => c.id)).toEqual(["a"]);
+    expect(out[0].status).toBe("active");
+  });
+
+  it("repassa os overrides otimistas ao merge", () => {
+    const out = applyConversationUpdate(
+      [conv({ id: "a" })],
+      { id: "a", unread_count: 7 },
+      { forceUnreadZero: true },
+    );
+    expect(out[0].unread_count).toBe(0);
+  });
+
+  it("não muta a lista original", () => {
+    const list = [conv({ id: "a" }), conv({ id: "b" })];
+    applyConversationUpdate(list, { id: "a", status: "blocked" });
+    expect(list.map((c) => c.id)).toEqual(["a", "b"]);
   });
 });
 

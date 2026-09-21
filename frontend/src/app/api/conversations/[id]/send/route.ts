@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
 
 function parseEvoId(id: string): { channelId: string; phone: string } | null {
   if (!id.startsWith("evo_")) return null;
@@ -86,7 +87,7 @@ export async function POST(
   // Regular DB conversation
   const { data: conv, error: convError } = await supabase
     .from("conversations")
-    .select("*, leads(id, phone), channels(id, provider, provider_config)")
+    .select("*, leads(id, phone, opt_out), channels(id, provider, provider_config)")
     .eq("id", conversationId)
     .single();
 
@@ -99,10 +100,18 @@ export async function POST(
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as { id: string; phone: string } | null;
+  const lead = conv.leads as { id: string; phone: string; opt_out?: boolean | null } | null;
 
   if (!channel || !lead?.phone) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
+  }
+
+  // BLOQUEIO: decisão de produto — o envio MANUAL do operador também é barrado, não só
+  // o disparo automático. Travar só o composer na UI não basta: esta rota fala direto
+  // com a graph.facebook.com e responde a qualquer POST (aba velha aberta, retry de
+  // rede, chamada fora da tela). O 403 é o que o chat exibe ao operador.
+  if (await isLeadBlocked(supabase, lead.id, lead.opt_out)) {
+    return NextResponse.json({ error: MENSAGEM_LEAD_BLOQUEADO }, { status: 403 });
   }
 
   try {

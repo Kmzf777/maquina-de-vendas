@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { describeOutboundMediaContent } from '@/lib/media-message-content';
+import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
 
 const META_API_VERSION = "v21.0";
 const MAX_SIZE_MEDIA = 16 * 1024 * 1024;   // 16MB — áudio e imagem
@@ -98,7 +99,7 @@ export async function POST(
 
   const { data: conv, error: convError } = await supabase
     .from("conversations")
-    .select("*, leads(id, phone), channels(id, provider, provider_config)")
+    .select("*, leads(id, phone, opt_out), channels(id, provider, provider_config)")
     .eq("id", conversationId)
     .single();
 
@@ -111,10 +112,18 @@ export async function POST(
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as { id: string; phone: string } | null;
+  const lead = conv.leads as { id: string; phone: string; opt_out?: boolean | null } | null;
 
   if (!channel || !lead?.phone) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
+  }
+
+  // BLOQUEIO: mesmo motivo do send/route.ts — envio manual do operador também é barrado,
+  // e esta rota fala direto com a graph.facebook.com. Guard aqui em cima, e não junto do
+  // POST de /messages: assim nem a conversão de áudio (ffmpeg) nem o upload para a Media
+  // API da Meta chegam a rodar para um lead bloqueado.
+  if (await isLeadBlocked(supabase, lead.id, lead.opt_out)) {
+    return NextResponse.json({ error: MENSAGEM_LEAD_BLOQUEADO }, { status: 403 });
   }
 
   if (channel.provider !== "meta_cloud") {

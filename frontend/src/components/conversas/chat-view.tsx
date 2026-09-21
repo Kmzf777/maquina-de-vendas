@@ -56,7 +56,13 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const [dispatchSuccess, setDispatchSuccess] = useState(false);
   const [quickSendPhone, setQuickSendPhone] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
-  const [optOutLoading, setOptOutLoading] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
+  // Resultado do último /block|/unblock desta sessão. Necessário porque NÃO há
+  // realtime em `leads`: o `opt_out` que chega por prop vem do cache da lista e
+  // só se atualiza num refetch integral, então sem este override o composer
+  // continuaria destravado depois de bloquear. `null` = confia na prop.
+  // Zerado na troca de conversa, junto do resto do estado local (efeito abaixo).
+  const [blockOverride, setBlockOverride] = useState<boolean | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
   const messageListRef = useRef<MessageListHandle>(null);
@@ -91,13 +97,19 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   // Janela 24h POR CANAL: usa o campo da conversa (lead+canal), não o global do lead.
   const lastCustomerMsgAt = conversation.last_customer_message_at ?? null;
   const windowStatus = getWindowStatus(lastCustomerMsgAt, provider);
-  const isInputBlocked = windowStatus === "closed";
+  const leadBlocked = blockOverride ?? lead?.opt_out === true;
+  // Bloqueio entra no MESMO mecanismo da janela de 24h em vez de abrir um
+  // caminho paralelo: handleSend, os botões de áudio/anexo e o card que
+  // substitui o composer já consultam `isInputBlocked`, então somar a condição
+  // aqui trava tudo de uma vez — e nada de novo pode escapar depois.
+  const isInputBlocked = windowStatus === "closed" || leadBlocked;
   useEffect(() => {
     setOptimisticMessages([]);
     setShowTemplateModal(false);
     setDispatchSuccess(false);
     setQuickSendPhone(null);
     setReplyingTo(null);
+    setBlockOverride(null);
     setMediaState('idle');
     setMediaBlob(null);
     setMediaFilename("");
@@ -175,29 +187,80 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
     }
   }, [conversation.id]);
 
-  async function handleOptOut() {
-    if (optOutLoading) return;
+  /**
+   * Bloqueio do lead (hard opt-out). Substitui o antigo "Parar mensagens", que
+   * chamava /optout e NÃO gravava `opt_out` — o bloqueio dependia só de haver
+   * card na Blacklist e evaporava se alguém arrastasse o card no Kanban.
+   *
+   * A confirmação enumera os efeitos porque três deles são invisíveis na tela:
+   * o descarte do inbound, o corte dos disparos e o cancelamento dos follow-ups.
+   */
+  async function handleBlock() {
+    if (blockLoading) return;
     const confirmed = window.confirm(
-      "Parar mensagens para este lead?\n\nIsso irá:\n• Desativar a IA (Valéria)\n• Mover os deals para a Blacklist\n• Cancelar follow-ups pendentes\n\nEsta ação não pode ser desfeita automaticamente."
+      "Bloquear este lead?\n" +
+        "• Os cards vão para o funil Blacklist\n" +
+        "• As mensagens dele param de chegar no CRM (as recebidas durante o bloqueio são descartadas)\n" +
+        "• Ele não recebe mais nenhum disparo\n" +
+        "• A Valéria é desativada e os follow-ups são cancelados\n\n" +
+        'Reversível pelo botão "Desbloquear lead".'
     );
     if (!confirmed) return;
 
     const leadId = lead?.id;
     if (!leadId) return;
 
-    setOptOutLoading(true);
+    setBlockLoading(true);
     try {
-      const res = await fetch(`/api/leads/${leadId}/optout`, { method: "POST" });
+      const res = await fetch(`/api/leads/${leadId}/block`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || "Falha ao parar mensagens. Tente novamente.");
+        alert(data.error || "Falha ao bloquear o lead. Tente novamente.");
         return;
       }
-      await onToggleAi();
+      // Trava o composer já — a conversa costuma sumir da lista logo em seguida
+      // (o /block marca `conversations.status='blocked'` e o realtime remove a
+      // linha), mas quem chegou aqui por busca/deep-link continua com o chat na
+      // tela e não pode voltar a digitar. A IA já foi desativada no servidor.
+      setBlockOverride(true);
     } catch {
       alert("Erro ao conectar ao servidor. Tente novamente.");
     } finally {
-      setOptOutLoading(false);
+      setBlockLoading(false);
+    }
+  }
+
+  async function handleUnblock() {
+    if (blockLoading) return;
+    const leadId = lead?.id;
+    if (!leadId) return;
+
+    setBlockLoading(true);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/unblock`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Falha ao desbloquear o lead. Tente novamente.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setBlockOverride(false);
+      // Cards sem origem registrada (lead bloqueado antes desta entrega) NÃO são
+      // adivinhados pelo servidor. Enquanto ficarem na Blacklist o lead segue
+      // bloqueado para disparos, então o operador precisa saber que o trabalho
+      // não acabou — silêncio aqui viraria "desbloqueei e não enviou".
+      const pendentes = Number(data?.deals_pendentes ?? 0);
+      if (pendentes > 0) {
+        alert(
+          `Lead desbloqueado, mas ${pendentes} card(s) continuam na Blacklist: ` +
+            "não há registro de onde vieram, então é preciso movê-los à mão no Kanban. " +
+            "Enquanto estiverem lá, o lead segue bloqueado para disparos."
+        );
+      }
+    } catch {
+      alert("Erro ao conectar ao servidor. Tente novamente.");
+    } finally {
+      setBlockLoading(false);
     }
   }
 
@@ -483,6 +546,10 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
 
   async function handleSendMedia() {
     if (!mediaBlob || !mediaMessageType || !mediaObjectUrl) return;
+    // Corrida: a mídia pode ter sido escolhida ANTES do bloqueio. O card de
+    // bloqueado já substitui a pré-visualização na próxima renderização, mas o
+    // clique em voo chegaria aqui com o payload pronto.
+    if (isInputBlocked) return;
 
     setMediaState('sendingMedia');
 
@@ -559,7 +626,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
         onMarkRead={onMarkRead}
         onBack={onBack}
         onOpenContact={onOpenContact}
-        onOptOut={handleOptOut}
+        blocked={leadBlocked}
+        onBlock={handleBlock}
+        onUnblock={handleUnblock}
       />
 
       {/* Sibling-conversation indicator: same lead, different channel */}
@@ -619,13 +688,26 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
       <WhatsappWindowIndicator
         expiresAt={conversation.whatsapp_window_expires_at}
         variant="banner"
-        onReactivate={() => setShowTemplateModal(true)}
+        // "Reativar conversa" abre o modal de TEMPLATE — disparo ativo, o pior
+        // envio possível para quem pediu para sair. Some junto com o composer.
+        onReactivate={leadBlocked ? undefined : () => setShowTemplateModal(true)}
       />
 
       {/* Input or locked dispatch card */}
       {isInputBlocked ? (
         <div className="border-t border-[#dedbd6] bg-[#faf9f6] p-4 flex-shrink-0">
-          {dispatchSuccess ? (
+          {leadBlocked ? (
+            // Bloqueio vence a janela de 24h: sem "Iniciar disparo" aqui, que é
+            // exatamente o envio que não pode acontecer com o lead bloqueado.
+            <div
+              className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] px-4 py-3 flex items-center gap-3"
+              role="status"
+            >
+              <p className="text-[13px] text-[#111111]">
+                🚫 Lead bloqueado — envio desabilitado. Desbloqueie para voltar a conversar.
+              </p>
+            </div>
+          ) : dispatchSuccess ? (
             <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] px-4 py-3 flex items-center gap-3">
               <span className="inline-block h-2 w-2 rounded-full bg-[#5aad65] flex-shrink-0" />
               <p className="text-[13px] text-[#111111]">
