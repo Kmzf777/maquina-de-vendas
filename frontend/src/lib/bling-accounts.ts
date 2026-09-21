@@ -18,6 +18,19 @@ export type ContaBling = {
  */
 export const CONTA_PADRAO = "default";
 
+/**
+ * Slug da conta PREFERIDA ao abrir um seletor. Decisao de negocio — o volume
+ * de emissao esta no Cafe Rural — e nao de identidade, por isso mora numa
+ * constante propria em vez de deslocar `CONTA_PADRAO`.
+ *
+ * A distincao e o nucleo do desenho: `CONTA_PADRAO` e o slug gravado em todo
+ * registro anterior a segunda conta e o prefixo das env vars sem sufixo, entao
+ * move-lo reescreveria a historia (venda emitida no CNPJ 1 passaria a se dizer
+ * do Cafe Rural). Trocar ESTA constante nao toca em registro nenhum: muda so
+ * qual opcao ja vem marcada, e o vendedor sempre pode escolher outra.
+ */
+export const CONTA_PREFERIDA = "secundaria";
+
 /** So conta conectada pode emitir: sem refresh_token nao ha como falar com o ERP. */
 export function contasDisponiveis(contas: ContaBling[]): ContaBling[] {
   return contas.filter((c) => c.configured && c.connected);
@@ -37,17 +50,25 @@ export function precisaSeletor(contas: ContaBling[], skipBling = false): boolean
 }
 
 /**
- * Conta pre-selecionada quando o seletor aparece: prefere a `CONTA_PADRAO` (e
- * a que todo mundo ja conhece) e cai para a primeira conectada quando a
- * default nao estiver disponivel. `null` so quando nao ha nenhuma conta
- * conectada — o que fazer nesse caso (bloquear? cair no legado?) e decisao do
- * `blingGate`, nao deste modulo.
+ * Conta pre-selecionada quando o seletor aparece, sempre restrita as
+ * CONECTADAS. Escada de quatro degraus:
+ *
+ *   1. `CONTA_PREFERIDA` (Cafe Rural) — onde o volume de emissao esta hoje
+ *   2. `CONTA_PADRAO` (Cafe Canastra) — se a preferida perdeu a autorizacao,
+ *      volta para a conta que todo mundo conhece, e nao para uma terceira
+ *      qualquer que o BLING_ACCOUNTS tenha listado antes
+ *   3. a primeira disponivel
+ *   4. `null` — nenhuma conta conectada. O que fazer nesse caso (bloquear?
+ *      cair no legado?) e decisao do `blingGate`, nao deste modulo.
  */
 export function contaPadrao(contas: ContaBling[]): string | null {
   const disponiveis = contasDisponiveis(contas);
   if (disponiveis.length === 0) return null;
-  const padrao = disponiveis.find((c) => c.account === CONTA_PADRAO);
-  return (padrao ?? disponiveis[0]).account;
+  const escolhida =
+    disponiveis.find((c) => c.account === CONTA_PREFERIDA) ??
+    disponiveis.find((c) => c.account === CONTA_PADRAO) ??
+    disponiveis[0];
+  return escolhida.account;
 }
 
 /**

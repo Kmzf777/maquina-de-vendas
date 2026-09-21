@@ -18,6 +18,17 @@ TOKEN_URL = "https://api.bling.com.br/Api/v3/oauth/token"
 
 DEFAULT_ACCOUNT = "default"
 
+# Nome de negocio de cada conta, por slug. Consultado ANTES do env de proposito:
+# BLING_LABEL e BLING_SECUNDARIA_LABEL ja estao preenchidas na VPS com os nomes
+# antigos ("CNPJ 1"/"CNPJ 2"), entao respeitar o env aqui faria este mapa nao ter
+# efeito nenhum em producao. Um slug FORA deste mapa continua lendo
+# BLING_<CONTA>_LABEL normalmente — o escape hatch sobrevive para a terceira
+# conta que ainda nao existe.
+ROTULOS_PADRAO = {
+    "default": "Bling Café Canastra (1)",
+    "secundaria": "Bling Café Rural (2)",
+}
+
 # Limites publicados pelo Bling (developer.bling.com.br/limites), por CONTA.
 REQUESTS_PER_SECOND = 3
 DAILY_LIMIT = 120_000
@@ -164,9 +175,10 @@ def account(key: str = DEFAULT_ACCOUNT) -> BlingAccount:
         raise BlingUnknownAccount(f"conta Bling desconhecida: {key!r}")
     return BlingAccount(
         key=key,
+        # Rotulo das contas conhecidas vem do codigo (ver ROTULOS_PADRAO).
         # LABEL nao usa _env_for de proposito: nao faz sentido a conta 2 herdar
         # o rotulo da conta 1 — o rotulo existe justamente para distingui-las.
-        label=_env(_suffixed("LABEL", key)) or key,
+        label=ROTULOS_PADRAO.get(key) or _env(_suffixed("LABEL", key)) or key,
         client_id=_env_for("CLIENT_ID", key),
         client_secret=_env_for("CLIENT_SECRET", key),
         store_id=_env_int_for("STORE_ID", key),

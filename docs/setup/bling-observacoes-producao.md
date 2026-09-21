@@ -449,6 +449,20 @@ BLING_SECUNDARIA_STORE_ID=...
 BLING_SECUNDARIA_ORDER_SITUACAO_ID=...
 ```
 
+> ⚠️ **`BLING_LABEL` e `BLING_SECUNDARIA_LABEL` estão ignoradas desde
+> 17/09/2026.** O rótulo das duas contas conhecidas passou a vir do código
+> (`ROTULOS_PADRAO` em `backend/app/bling/config.py`): "Bling Café Canastra (1)"
+> e "Bling Café Rural (2)". Editar essas variáveis na VPS **não muda mais nada
+> na tela** — para renomear, mude o mapa e suba. Um slug fora do mapa (uma
+> terceira conta) continua lendo `BLING_<CONTA>_LABEL` normalmente.
+>
+> A conta pré-selecionada em todo seletor do CRM é o **Café Rural**
+> (`CONTA_PREFERIDA` em `frontend/src/lib/bling-accounts.ts`). O slug `default`
+> continua sendo o Café Canastra e continua sendo o dono de todo registro sem
+> `bling_account` — as duas coisas são independentes de propósito, e é isso que
+> impede a troca de preferência de reescrever a história. Spec:
+> `docs/superpowers/specs/2026-09-17-bling-rotulos-conta-preferida-design.md`.
+
 O fallback para a variável global resolve as duas topologias sem decidir por
 antecipação: se vocês autorizarem **o mesmo aplicativo Bling** nas duas contas
 (caminho natural do OAuth), `client_id` e `client_secret` são compartilhados e só
