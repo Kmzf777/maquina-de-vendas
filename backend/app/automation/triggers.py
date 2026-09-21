@@ -19,6 +19,11 @@ from app.leads.service import is_lead_blacklisted
 # Reusar a funcao do follow_up (em vez de reimplementar o `metadata.get(...)` aqui)
 # mantem a esteira acoplada a esse ciclo de vida.
 from app.follow_up.service import lead_marked_wrong_number
+# Motor de follow-up do vendedor Joao (spec 2026-09-18). O AGENDADOR vive em
+# follow_up/service.py, junto do resto do motor de follow-up; este modulo so o LIGA no
+# tick que ja existe — e liga a resposta do lead no gancho de inbound que ja existe.
+# Ver o cabecalho da secao "AGENDADOR DAS CADENCIAS DO JOAO" naquele arquivo.
+from app.follow_up.service import agendar_cadencias_joao, processar_resposta_joao
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +124,25 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
             ensure_reposicao_deal(lead_id, deal_id=data.get("deal_id"))
 
         if event_type == "message_received":
+            # RESPOSTA DO LEAD ÀS CADÊNCIAS DO JOÃO (ata 41:40): "ainda tenho estoque"
+            # adia 60 dias sem recomeçar; o botão de saída vira opt-out real.
+            #
+            # O GANCHO É REUSADO, não inventado. `buffer/processor.py` dispara este
+            # `fire_trigger('message_received')` em TODO inbound, com o texto do lead em
+            # `data['body']` — e o faz ANTES do gate de canal humano, que é exatamente
+            # onde o público do João fica (mode='human', ai_enabled=False). É o mesmo
+            # ponto do fluxo em que `handle_campaign_reply` recebe a resposta das
+            # cadências do builder, duas linhas acima na mesma função.
+            #
+            # `processar_resposta_joao` sai em None antes de qualquer consulta quando o
+            # texto não é um dos dois rótulos — o caminho quente do inbound não paga
+            # nada por isto.
+            try:
+                processar_resposta_joao(lead_id, data.get("body"))
+            except Exception as exc:
+                logger.error(
+                    "[JOAO_CADENCIA] resposta do lead %s não processada: %s", lead_id, exc)
+
             message_body = (data.get("body") or "").lower()
             for tn in get_campaigns_with_trigger_type("keyword_received"):
                 cfg = tn.get("config") or {}
@@ -189,6 +213,19 @@ async def check_polling_triggers(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     sb = get_supabase()
     env_tag = _get_env_tag()
+
+    # ── cadências do João (spec 2026-09-18) ───────────────────────────────────
+    # O motor do vendedor NÃO é um segundo motor: os jobs nascem em `follow_up_jobs` e o
+    # scheduler que já existe os despacha. O que falta é quem os CRIA — o agendador, que
+    # vive em `follow_up/service.py` e reusa a mesma RPC `get_deals_stage_stagnant` dos
+    # gatilhos abaixo. Fica aqui porque este é o tick de polling que já varre funil.
+    #
+    # FAIL-SOFT, e no topo: uma falha nas cadências do João não pode derrubar as
+    # esteiras que já rodam em produção, e o inverso também não.
+    try:
+        agendar_cadencias_joao(now)
+    except Exception as exc:
+        logger.error("[JOAO_CADENCIA] varredura falhou: %s", exc, exc_info=True)
 
     # ── no_message ────────────────────────────────────────────────────────────
     for tn in get_campaigns_with_trigger_type("no_message"):

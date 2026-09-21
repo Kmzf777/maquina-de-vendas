@@ -67,6 +67,57 @@ JOAO_TEMPLATE_LANG = "en"
 # Nome do vendedor injetado no template (param nomeado nome_do_vendedor).
 JOAO_VENDEDOR_NAME = "João"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MOTOR DE FOLLOW-UP DO JOÃO — spec 2026-09-18, §3
+#
+# As cadências do vendedor NÃO são um segundo motor: são novos `job_type` no mesmo
+# `follow_up_jobs`, despachados por `process_due_followups` para um handler autocontido
+# (`_process_joao_touch`), exatamente como `lp_welcome`/`handoff_rescue`/`ai_reengage`.
+#
+# A diferença de fundo com o caminho da ValerIA: ela gera o texto por LLM porque a janela
+# de 24h está ABERTA. O lead do João está em silêncio POR DEFINIÇÃO (é o que o gatilho
+# mede) — janela fechada — então só TEMPLATE APROVADO sai. Nenhuma linha deste ramo chama
+# o LLM: free-text com a janela fechada seria rejeitado pela Meta (#131047).
+#
+# O despacho aceita qualquer tipo com o prefixo `joao_` justamente porque a FORMA da
+# cadência (um tipo só, ou um por cadência) é definida em `follow_up/cadence_joao.py` e
+# pelo agendador — este handler não pode depender de qual das duas eles escolherem.
+# ─────────────────────────────────────────────────────────────────────────────
+JOAO_JOB_TYPE = "joao_touch"
+JOAO_JOB_TYPE_PREFIX = "joao_"
+# Os tipos nomeados (um por cadência da ata) — redundantes com o prefixo, e declarados
+# para que o contrato apareça por extenso em log/teste/leitura.
+JOAO_JOB_TYPES: frozenset[str] = frozenset({
+    JOAO_JOB_TYPE, "joao_novo", "joao_em_conversa", "joao_reposicao", "joao_em_atencao",
+})
+
+# Os 24 templates das esteiras do João foram APROVADOS em pt_BR com UM param POSICIONAL
+# ({{1}} = primeiro nome) — ver scripts/create_templates_esteiras_joao.py. O default abaixo
+# é o mesmo mapeamento que o modal de disparo grava em `broadcasts.template_variables`,
+# para que `_build_template_components` (reusado de broadcast/worker.py) resolva o nome do
+# lead pelo MESMO caminho do disparo manual. Job que precise de outra forma manda
+# `metadata.template_variables`.
+JOAO_TOUCH_TEMPLATE_LANGUAGE = "pt_BR"
+JOAO_TOUCH_TEMPLATE_VARIABLES: dict = {"__params_type__": "positional", "1": "{{primeiro_nome}}"}
+
+# Funis do João em produção (medidos na reunião de 10/09/2026). A LINHA (Atacado x Private
+# Label) decide o TEXTO do toque: mandar o texto de Atacado a um lead de Private Label é o
+# pior erro possível desta cadência, e o funil é a única fonte confiável dessa distinção.
+PIPELINE_JOAO_ATACADO = "9706a14a-3d9a-413b-bceb-26838fc2cc45"
+PIPELINE_JOAO_PRIVATE_LABEL = "24fb6ce8-6b7b-4612-970d-8debb8c041b7"
+PIPELINE_JOAO_REPOSICAO_ATACADO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"
+PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL = "9c027143-72f6-42d6-861f-a494ba5bbb4f"
+
+LINHA_ATACADO = "atacado"
+LINHA_PRIVATE_LABEL = "private_label"
+
+_LINHA_POR_PIPELINE: dict[str, str] = {
+    PIPELINE_JOAO_ATACADO: LINHA_ATACADO,
+    PIPELINE_JOAO_REPOSICAO_ATACADO: LINHA_ATACADO,
+    PIPELINE_JOAO_PRIVATE_LABEL: LINHA_PRIVATE_LABEL,
+    PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL: LINHA_PRIVATE_LABEL,
+}
+
 # Task C-4 (higiene de nome): fallback neutro para {{primeiro_nome}}/nome_do_lead quando
 # não há nome real — nem antes (lead_name vazio), nem depois de strip_greeting_prefix
 # remover uma saudação que tinha vazado pro campo nome ("Olá, boa tarde", "Boa tarde.").
@@ -642,6 +693,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
             await _process_ai_scheduled_return(job, now)
             continue
 
+        # Cadências do VENDEDOR (spec 2026-09-18): template aprovado, sem LLM. Casa por
+        # prefixo `joao_` — ver _is_joao_job_type para o porquê. Precisa vir ANTES do
+        # caminho `standard`: o canal do João é `mode='human'`, e lá embaixo o guard de
+        # canal humano cancelaria o toque em silêncio.
+        if _is_joao_job_type(job.get("job_type")):
+            await _process_joao_touch(job, now)
+            continue
+
         conversation_id = job["conversation_id"]
         lead = job["leads"]
         channel = job["channels"]
@@ -924,6 +983,17 @@ def _stop_reason_applies(reason: str | None, job_type: str | None) -> bool:
     o resgate seria mentir sobre o estado do lead.
     """
     if not reason:
+        return False
+    # Cadências do João x `ai_disabled`: MESMA circularidade do handoff_rescue, e pelo mesmo
+    # motivo — o lead só está no funil do vendedor porque a IA foi desligada nele (é o que
+    # `encaminhar_humano` faz no handoff). Sem esta isenção TODO job do João nasceria
+    # condenado, repetindo o custo já medido no resgate: 144 jobs criados entre 22 e 27/07,
+    # 144 cancelados com `ai_disabled`, ZERO enviados.
+    # A isenção é SÓ de `ai_disabled`: `opt_out`, `blacklisted` e `wrong_number` continuam
+    # cancelando o toque do João, que são exatamente as paradas que o spec §9 exige.
+    # Fora da tabela `_STOP_REASON_EXEMPT_JOB_TYPES` porque o casamento do João é por
+    # PREFIXO (ver _is_joao_job_type), não por lista fechada de tipos.
+    if reason == "ai_disabled" and _is_joao_job_type(job_type):
         return False
     return job_type not in _STOP_REASON_EXEMPT_JOB_TYPES.get(reason, frozenset())
 
@@ -1582,6 +1652,276 @@ async def _process_ai_scheduled_return(job: dict, now: datetime) -> None:
 
     _mark_sent(job["id"])
     logger.info("[AI_SCHEDULED_RETURN] Valéria retornou lead=%s conv=%s", phone, conversation_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Toque das cadências do João (spec 2026-09-18). Handler AUTOCONTIDO: o único ponto
+# compartilhado com o caminho `standard` da ValerIA é o despacho por `job_type` em
+# `process_due_followups`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _is_joao_job_type(job_type: str | None) -> bool:
+    """True para qualquer `job_type` das cadências do João.
+
+    Reconhece pelo PREFIXO (`joao_`), não por uma lista fechada, de propósito: a forma da
+    cadência — um tipo único (`joao_touch` + `metadata.cadencia`) ou um tipo por cadência
+    (`joao_reposicao`, `joao_em_atencao`, …) — é decidida em `cadence_joao.py`/agendador,
+    e o despacho não pode ficar refém dessa escolha. Um tipo do João que NÃO casasse aqui
+    cairia no caminho `standard`, onde o canal humano do vendedor o cancelaria em silêncio
+    (`human_channel`) — cadência que inscreve, não envia, e caminha até o fim.
+    """
+    if not job_type:
+        return False
+    return job_type in JOAO_JOB_TYPES or job_type.startswith(JOAO_JOB_TYPE_PREFIX)
+
+
+def _normalize_joao_linha(value: str | None) -> str | None:
+    """'Private Label' / 'privatelabel' / 'private-label' → 'private_label'. Função pura.
+
+    O nome da linha chega de três origens (metadata do job, tabela de sobreposição, nome
+    de funil), cada uma com a sua grafia; o handler compara UMA forma só.
+    """
+    if not value:
+        return None
+    v = _strip_accents(str(value)).strip().lower().replace("-", "_").replace(" ", "_")
+    if "private" in v or "pl" == v:
+        return LINHA_PRIVATE_LABEL
+    if "atacado" in v:
+        return LINHA_ATACADO
+    return None
+
+
+def _resolve_joao_linha(job: dict) -> str | None:
+    """Linha comercial (Atacado x Private Label) deste toque, ou None se indeterminável.
+
+    Ordem: `metadata.linha` (já resolvida pelo agendador) → `metadata.pipeline_id` → o
+    funil do deal (`metadata.deal_id`, senão o deal mais recente do lead num dos quatro
+    funis do João). Fail-soft: qualquer erro de leitura → None; quem chama decide (com
+    `template_name` explícito o toque segue; sem ele, o job é cancelado em vez de mandar
+    o texto da linha errada).
+    """
+    metadata = job.get("metadata") or {}
+
+    linha = _normalize_joao_linha(metadata.get("linha"))
+    if linha:
+        return linha
+
+    linha = _LINHA_POR_PIPELINE.get(str(metadata.get("pipeline_id") or ""))
+    if linha:
+        return linha
+
+    deal_id = metadata.get("deal_id")
+    lead_id = job.get("lead_id")
+    if not deal_id and not lead_id:
+        return None
+
+    try:
+        sb = get_supabase()
+        if deal_id:
+            res = (
+                sb.table("deals").select("id, pipeline_id").eq("id", deal_id).limit(1).execute()
+            )
+        else:
+            res = (
+                sb.table("deals").select("id, pipeline_id")
+                .eq("lead_id", lead_id)
+                .in_("pipeline_id", list(_LINHA_POR_PIPELINE))
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        rows = res.data if isinstance(res.data, list) else []
+        if rows:
+            return _LINHA_POR_PIPELINE.get(str(rows[0].get("pipeline_id") or ""))
+    except Exception as exc:
+        logger.warning(
+            "[JOAO_TOUCH] falha ao resolver a linha pelo funil (deal=%s lead=%s): %s",
+            deal_id, lead_id, exc,
+        )
+    return None
+
+
+def _joao_template_name(metadata: dict, linha: str | None) -> str | None:
+    """Template APROVADO deste toque.
+
+    Duas formas aceitas, nesta ordem — o agendador escolhe a que lhe for natural:
+      * `metadata.template_name`: já resolvido por linha na hora de criar o job;
+      * `metadata.template_por_linha`: {"atacado": ..., "private_label": ...}, resolvido
+        aqui contra a linha do funil.
+    Nenhuma das duas → None, e o toque é cancelado: nunca improvisamos template.
+    """
+    nome = (metadata.get("template_name") or "").strip()
+    if nome:
+        return nome
+    por_linha = metadata.get("template_por_linha") or {}
+    if isinstance(por_linha, dict) and linha:
+        nome = (por_linha.get(linha) or "").strip()
+        if nome:
+            return nome
+    return None
+
+
+def _resolve_joao_channel(metadata: dict) -> dict | None:
+    """Canal do VENDEDOR (não o da ValerIA), pelo mesmo caminho de `_process_handoff_rescue`.
+
+    Resolver pelo `phone_number_id` — e não pelo `channels` joinado do job — é deliberado:
+    o toque da cadência do vendedor tem de sair do NÚMERO DELE. Um job criado com o
+    channel_id errado mandaria o texto assinado "João" pelo número da ValerIA.
+    """
+    phone_number_id = metadata.get("phone_number_id") or JOAO_PHONE_NUMBER_ID
+    return get_channel_by_provider_config("phone_number_id", phone_number_id, "meta_cloud")
+
+
+async def _persist_joao_touch_message(
+    job: dict, channel: dict, template_name: str, template_variables: dict, send_result: dict | None
+) -> None:
+    """Grava na conversa do canal do João o texto RENDERIZADO do template enviado.
+
+    Mesmo motivo de `_persist_joao_handoff_message`: sem isto o disparo sai pela Meta mas
+    não entra em `messages`, e quando o lead responde o CRM mostra só a resposta dele,
+    como se tivesse iniciado do nada. Reusa o renderizador do broadcast
+    (`_render_template_body`) — import tardio porque `broadcast/worker.py` importa ESTE
+    módulo (`process_due_followups`), e o import no topo fecharia o ciclo.
+
+    Nunca levanta e nunca grava o placeholder "[Template: x]" que o renderizador devolve
+    quando não acha o corpo: gravar o placeholder como fala do vendedor envenena o
+    histórico do CRM (decisão já tomada no disparo de LP, Eixo 2a).
+    """
+    try:
+        from app.broadcast.worker import _render_template_body
+
+        rendered = await _render_template_body(
+            template_name, template_variables, job.get("leads") or {}, channel
+        )
+        if not rendered or rendered.startswith("[Template:"):
+            logger.warning(
+                "[JOAO_TOUCH] corpo do template '%s' não renderizado — mensagem não persistida",
+                template_name,
+            )
+            return
+        conv = get_or_create_conversation(job["lead_id"], channel["id"])
+        save_message_conv(
+            conversation_id=conv["id"],
+            lead_id=job["lead_id"],
+            role="assistant",
+            content=rendered,
+            sent_by="followup",
+            wamid=extract_wamid(send_result),
+            metadata=dispatch_metadata(template_name),
+        )
+    except Exception as exc:
+        logger.error(
+            "[JOAO_TOUCH] falha ao persistir a mensagem do toque (lead %s): %s",
+            job.get("lead_id"), exc, exc_info=True,
+        )
+
+
+async def _process_joao_touch(job: dict, now: datetime) -> None:
+    """Um toque de cadência do vendedor: TEMPLATE APROVADO, sem LLM.
+
+    O lead está em silêncio por definição (é o que o gatilho da cadência mede), então a
+    janela de 24h da Meta está fechada e free-text seria rejeitado (#131047). Por isso
+    este handler não tem nenhum ramo de geração de texto — ele resolve a linha do funil,
+    monta os componentes do template, resolve o canal do vendedor, envia e marca.
+
+    Espelha `_process_lp_welcome`/`_process_handoff_rescue` no tratamento de erro da Meta:
+    4xx e rejeição embutida (HTTP 200 com erro) são PERMANENTES e cancelam o job; 5xx e
+    falha de rede não marcam estado terminal e são retentados no próximo tick.
+    """
+    metadata = job.get("metadata") or {}
+    lead = job.get("leads") or {}
+    conversation = job.get("conversations") or {}
+
+    # Guard: conversa finalizada pelo vendedor em /conversas. Mesma parada do caminho
+    # `standard` (e do gatilho SQL, `get_deals_stage_stagnant`): quando o João encerra o
+    # atendimento na tela, a cadência dele não pode continuar atrás.
+    if not conversation.get("followup_enabled", True):
+        _cancel_job(job["id"], "followup_disabled")
+        logger.info(
+            "[JOAO_TOUCH] followup_enabled=false — cancelando job %s conv=%s",
+            job["id"], job.get("conversation_id"),
+        )
+        return
+
+    lead_phone = metadata.get("lead_phone") or lead.get("phone") or ""
+    if not lead_phone:
+        _cancel_job(job["id"], "missing_lead_phone")
+        logger.error("[JOAO_TOUCH] job %s sem telefone do lead", job["id"])
+        return
+
+    linha = _resolve_joao_linha(job)
+    template_name = _joao_template_name(metadata, linha)
+    if not template_name:
+        _cancel_job(job["id"], "missing_template_name")
+        logger.error(
+            "[JOAO_TOUCH] job %s sem template (cadencia=%s linha=%s toque=%s) — nada a enviar",
+            job["id"], metadata.get("cadencia"), linha, metadata.get("toque"),
+        )
+        return
+
+    channel = _resolve_joao_channel(metadata)
+    if not channel:
+        _cancel_job(job["id"], "joao_channel_not_found")
+        logger.error(
+            "[JOAO_TOUCH] canal do vendedor (phone_number_id=%s) não encontrado — job %s",
+            metadata.get("phone_number_id") or JOAO_PHONE_NUMBER_ID, job["id"],
+        )
+        return
+
+    language_code = metadata.get("language_code") or JOAO_TOUCH_TEMPLATE_LANGUAGE
+    template_variables = metadata.get("template_variables") or JOAO_TOUCH_TEMPLATE_VARIABLES
+    # Import tardio: broadcast/worker.py importa process_due_followups deste módulo, e o
+    # import no topo fecharia o ciclo. Reusar o montador do broadcast (em vez de montar os
+    # componentes à mão aqui) é o que mantém UMA única regra de resolução de {{1}}/nome.
+    from app.broadcast.worker import _build_template_components
+
+    components = _build_template_components(template_variables, lead)
+    # Destino entregável: wa_id real quando houver (evita 131026 em número sem o 9º dígito).
+    send_to = resolve_send_target(lead, lead_phone)
+
+    try:
+        provider = MetaCloudClient(channel["provider_config"])
+        send_result = await provider.send_template(
+            send_to, template_name, components=components, language_code=language_code
+        )
+        logger.info(
+            "[JOAO_TOUCH] template '%s' (%s) enviado p/ %s — cadencia=%s linha=%s toque=%s",
+            template_name, language_code, send_to,
+            metadata.get("cadencia"), linha, metadata.get("toque"),
+        )
+    except httpx.HTTPStatusError as http_exc:
+        status = http_exc.response.status_code
+        if 400 <= status < 500:
+            _cancel_job(job["id"], f"meta_permanent_error_{status}")
+            logger.error(
+                "[JOAO_TOUCH] erro permanente Meta HTTP %s para %s — job %s cancelado",
+                status, send_to, job["id"],
+            )
+        else:
+            logger.error(
+                "[JOAO_TOUCH] erro transitório Meta HTTP %s para %s — será retentado",
+                status, send_to, exc_info=True,
+            )
+        return
+    except RuntimeError as exc:
+        # HTTP 200 COM erro embutido = rejeição PERMANENTE. Sem cancelar, o job ficaria
+        # pending e seria retentado a cada tick para sempre.
+        _cancel_job(job["id"], "meta_rejected")
+        logger.error(
+            "[JOAO_TOUCH] rejeição permanente Meta p/ %s — job %s cancelado: %s",
+            send_to, job["id"], exc,
+        )
+        return
+    except Exception as exc:
+        logger.error(
+            "[JOAO_TOUCH] falha ao enviar template p/ %s: %s", send_to, exc, exc_info=True
+        )
+        return  # transitório (rede etc.) → retry no próximo tick
+
+    # Idempotência: wamid no job ANTES do estado terminal (ver _save_followup_wamid).
+    _save_followup_wamid(job["id"], extract_wamid(send_result))
+    await _persist_joao_touch_message(job, channel, template_name, template_variables, send_result)
+    _mark_sent(job["id"])
 
 
 def _cancel_job(job_id: str, reason: str) -> None:

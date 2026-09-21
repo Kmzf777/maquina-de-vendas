@@ -142,19 +142,40 @@ def test_todos_marketing_para_o_optout_ser_consistente():
     assert {t["category"] for t in tpls.TEMPLATES} == {"MARKETING"}
 
 
-def test_os_nomes_batem_com_o_mapa_do_seed():
-    """Se o mapa do seed e o script divergirem, o envio falha em producao, nao aqui.
+# Os 24 nomes APROVADOS na Meta em 13/09/2026. Ficam fixados aqui, como dado
+# literal, porque um template aprovado e um objeto que vive FORA do repo: renomear
+# um no script nao quebra nada na suite, mas faz o envio real morrer com o erro
+# #132001 ("template name does not exist") no primeiro disparo em producao.
+#
+# Ate 18/09/2026 este invariante era checado por cruzamento com `TEMPLATE_POR_TOQUE`
+# (o mapa toque->template que vivia no seed das esteiras-campanha do Joao). O seed foi
+# apagado quando as cadencias do Joao deixaram de ser campanhas do builder e viraram
+# `job_type` em `follow_up_jobs` — ver
+# docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md. O mapa renasce em
+# `follow_up/cadence_joao.py`, e o cruzamento com ELE e teste da task que o criar; o
+# que nao podia acontecer e o intervalo entre as duas coisas deixar os 24 nomes sem
+# guarda nenhuma.
+NOMES_APROVADOS_NA_META = {
+    "joao_novo_atacado_t1",
+    "joao_novo_privatelabel_t1",
+    *(f"joao_conversa_atacado_t{n}" for n in range(1, 8)),
+    *(f"joao_conversa_privatelabel_t{n}" for n in range(1, 8)),
+    *(f"joao_reposicao_atacado_t{n}" for n in range(1, 5)),
+    *(f"joao_reposicao_privatelabel_t{n}" for n in range(1, 5)),
+}
 
-    As esteiras sobem DESARMADAS (`template_name` vazio no banco), entao a checagem e
-    contra `TEMPLATE_POR_TOQUE` — o mapa que a tela usa para armar. Um nome errado ali
-    so apareceria no primeiro disparo real, como erro #132001 da Meta.
+
+def test_os_nomes_do_script_sao_os_24_aprovados_na_meta():
+    """Renomear um template no script nao renomeia o objeto aprovado na Meta.
+
+    O script e a nossa unica copia do que foi submetido; se ele passar a dizer outro
+    nome, quem quer que monte o envio (hoje o motor de follow-up do Joao) pedira a
+    Meta um template que nao existe, e o erro so aparece no primeiro disparo real.
     """
-    from app.campaigns.esteiras_joao import TEMPLATE_POR_TOQUE
-    no_mapa = set(TEMPLATE_POR_TOQUE.values())
     no_script = {t["name"] for t in tpls.TEMPLATES}
-    assert no_mapa == no_script, (
-        f"so no mapa: {sorted(no_mapa - no_script)}; "
-        f"so no script: {sorted(no_script - no_mapa)}")
+    assert no_script == NOMES_APROVADOS_NA_META, (
+        f"so no script: {sorted(no_script - NOMES_APROVADOS_NA_META)}; "
+        f"so entre os aprovados: {sorted(NOMES_APROVADOS_NA_META - no_script)}")
 
 
 def test_rotulos_que_parecem_saida_mas_nao_sao():
