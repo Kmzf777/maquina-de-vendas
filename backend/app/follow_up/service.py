@@ -13,15 +13,14 @@ from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
 from app.follow_up.cadence_joao import (
     ADIAMENTO_ESTOQUE,
-    CADENCIAS,
-    CODIGOS,
+    FUNIS,
     JOB_TYPES as JOAO_JOB_TYPES,
-    LINHAS as JOAO_LINHAS,
     RESPOSTA_ADIAR,
     RESPOSTA_OPTOUT,
     CadenciaResolvida,
     Touch,
     adiar_toques,
+    cadencia_do_funil,
     classificar_resposta,
     resolver,
 )
@@ -816,11 +815,17 @@ def _job_toque(job: Mapping[str, Any]) -> int:
 
 # ── A sobreposição do banco ───────────────────────────────────────────────────
 def carregar_overrides_joao() -> dict[str, dict]:
-    """As duas tabelas de sobreposição viram `{codigo: {gatilho_dias, ativa, linhas}}`.
+    """As duas tabelas de sobreposição viram `{funil: {codigo: {gatilho_dias, ativa, toques}}}`.
+
+    A PK das duas tabelas mudou no Lote 1 (spec 2026-09-21 §4/§7): `followup_joao_cadencia`
+    agora é `(funil, cadencia)`, `followup_joao_toque` é `(funil, cadencia, toque)` — sem
+    coluna `linha`. `gatilho_dias`/`ativa` descem para o nível `(funil, cadencia)`, porque
+    cada funil liga/desliga e define prazo independente do seu irmão (Atacado e Private
+    Label deixaram de estar acoplados).
 
     FAIL-CLOSED, e essa é a decisão de projeto mais importante desta função: a migration
     `20260918_followup_joao_config.sql` NÃO é aplicada pelo deploy (é a decisão da Task
-    J1 — um humano a roda à mão). Até lá a leitura falha, e falhar para o lado de
+    J1/F1 — um humano a roda à mão). Até lá a leitura falha, e falhar para o lado de
     "desligado" é a única falha segura: o outro lado seriam 888 templates saindo por uma
     tabela que ninguém criou.
 
@@ -831,7 +836,7 @@ def carregar_overrides_joao() -> dict[str, dict]:
     sb = get_supabase()
     try:
         linhas_cadencia = sb.table("followup_joao_cadencia").select(
-            "cadencia, gatilho_dias, ativa"
+            "funil, cadencia, gatilho_dias, ativa"
         ).execute().data or []
     except Exception as exc:
         if not _joao_overrides_aviso_dado:
@@ -846,62 +851,58 @@ def carregar_overrides_joao() -> dict[str, dict]:
 
     overrides: dict[str, dict] = {}
     for row in linhas_cadencia:
-        codigo = row.get("cadencia")
-        if codigo not in CADENCIAS:
+        funil_codigo, codigo = row.get("funil"), row.get("cadencia")
+        if cadencia_do_funil(funil_codigo, codigo) is None:
             continue
-        overrides[codigo] = {
+        overrides.setdefault(funil_codigo, {})[codigo] = {
             "gatilho_dias": row.get("gatilho_dias"),
             "ativa": row.get("ativa"),
-            "linhas": {},
+            "toques": {},
         }
 
     try:
         linhas_toque = sb.table("followup_joao_toque").select(
-            "cadencia, linha, toque, dias, template_name"
+            "funil, cadencia, toque, dias, template_name"
         ).execute().data or []
     except Exception as exc:
         logger.warning("[JOAO_CADENCIA] toques não lidos (%s) — vale o código", exc)
         linhas_toque = []
 
     for row in linhas_toque:
-        codigo, linha = row.get("cadencia"), row.get("linha")
-        if codigo not in CADENCIAS or linha not in JOAO_LINHAS:
+        funil_codigo, codigo = row.get("funil"), row.get("cadencia")
+        if cadencia_do_funil(funil_codigo, codigo) is None:
             continue
         try:
             toque = int(row.get("toque"))
         except (TypeError, ValueError):
             continue
-        # Toque gravado sem a cadência correspondente é legítimo: editar os dias não
-        # exige tocar no liga/desliga. Sem esta linha a edição seria descartada em
-        # silêncio — o pior modo de falha de uma tela de configuração.
-        alvo = overrides.setdefault(
-            codigo, {"gatilho_dias": None, "ativa": None, "linhas": {}})
-        da_linha = alvo["linhas"].setdefault(linha, {"toques": {}})
-        da_linha["toques"][toque] = {
+        # Toque gravado sem a linha de cadência correspondente é legítimo: editar os
+        # dias não exige tocar no liga/desliga. Sem este setdefault a edição seria
+        # descartada em silêncio — o pior modo de falha de uma tela de configuração.
+        do_funil = overrides.setdefault(funil_codigo, {})
+        da_cadencia = do_funil.setdefault(
+            codigo, {"gatilho_dias": None, "ativa": None, "toques": {}})
+        da_cadencia["toques"][toque] = {
             "dias": row.get("dias"), "template_name": row.get("template_name"),
         }
     return overrides
 
 
 def resolver_para_agendar(
-    codigo: str, linha: str, overrides_da_cadencia: Mapping[str, Any] | None = None,
+    funil: str, codigo: str, overrides_do_par: Mapping[str, Any] | None = None,
 ) -> CadenciaResolvida:
-    """`cadence_joao.resolver` com a sobreposição já achatada para UMA linha. PURA.
+    """`cadence_joao.resolver` — funil primeiro, overrides já achatado. PURA.
 
-    `carregar_overrides_joao` devolve os toques aninhados por linha
-    (`linhas.atacado.toques`), porque uma cadência tem duas; `resolver` consome UMA linha
-    por vez. Aceita também o formato achatado (`toques` direto) para que quem já tem a
-    sobreposição de uma linha na mão — a API da Task J4, um teste — não precise
-    reconstruir o aninhamento.
+    `carregar_overrides_joao` já devolve o par `(funil, codigo)` resolvido — sem o
+    aninhamento `linhas.X.toques` de antes, que só existia porque uma cadência vivia em
+    duas linhas ao mesmo tempo. Com funil como eixo essa ambiguidade não existe mais:
+    quem chama já sabe de qual funil está falando.
     """
-    ov = dict(overrides_da_cadencia or {})
-    toques = ov.get("toques")
-    if toques is None:
-        toques = ((ov.get("linhas") or {}).get(linha) or {}).get("toques")
-    return resolver(codigo, linha, {
+    ov = dict(overrides_do_par or {})
+    return resolver(funil, codigo, {
         "gatilho_dias": ov.get("gatilho_dias"),
         "ativa": ov.get("ativa"),
-        "toques": toques or {},
+        "toques": ov.get("toques") or {},
     })
 
 
@@ -948,6 +949,12 @@ def _jobs_do_card(jobs: list[dict], lead_id: str, deal_id: str | None) -> list[d
     return do_card
 
 
+# `job_type` só depende do código da cadência, não do funil (cadence_joao.Cadencia.job_type)
+# — "reposicao_atacado" é só o funil que serve de ponto de entrada para pegar o objeto;
+# "reposicao_private_label" devolveria o mesmo `job_type`.
+_REPOSICAO_JOB_TYPE = cadencia_do_funil("reposicao_atacado", "reposicao").job_type
+
+
 def _reposicao_concluida(jobs_do_card: list[dict]) -> bool:
     """True quando a régua de Reposição se ESGOTOU neste card.
 
@@ -956,7 +963,7 @@ def _reposicao_concluida(jobs_do_card: list[dict]) -> bool:
     dias e o código pode mudar a forma da cadência, e a contagem mentiria nos dois casos.
     """
     return any(
-        job.get("job_type") == CADENCIAS["reposicao"].job_type
+        job.get("job_type") == _REPOSICAO_JOB_TYPE
         and job.get("status") == "sent"
         and _job_metadata(job).get("ultimo_toque")
         for job in jobs_do_card
@@ -1081,7 +1088,7 @@ def _montar_jobs_da_matricula(
             "job_type": cadencia.job_type,
             "metadata": {
                 "cadencia": cadencia.codigo,
-                "linha": cadencia.linha,
+                "funil": cadencia.funil,
                 "toque": toque.sequence,
                 "template_name": toque.template_name,
                 "aceita_adiamento": toque.aceita_adiamento,
@@ -1106,7 +1113,7 @@ def _varrer_cadencia_joao(
     sb, cadencia: CadenciaResolvida, canal: Mapping[str, Any],
     now: datetime, teto: int,
 ) -> int:
-    """Uma passagem de UMA (cadência, linha). Devolve quantos jobs foram criados."""
+    """Uma passagem de UMA (cadência, funil). Devolve quantos jobs foram criados."""
     args = {
         # Por KEY e não por id: a etapa é a mesma em todo funil do João, e um id
         # hardcoded morreria na primeira reestruturação de funil (Arthur reestruturou os
@@ -1128,7 +1135,7 @@ def _varrer_cadencia_joao(
     except Exception as exc:
         logger.error(
             "[JOAO_CADENCIA] RPC falhou p/ %s/%s: %s",
-            cadencia.codigo, cadencia.linha, exc)
+            cadencia.codigo, cadencia.funil, exc)
         return 0
     if not linhas:
         return 0
@@ -1155,7 +1162,7 @@ def _varrer_cadencia_joao(
         if motivo:
             logger.debug(
                 "[JOAO_CADENCIA] %s/%s pula card %s: %s",
-                cadencia.codigo, cadencia.linha, deal_id, motivo)
+                cadencia.codigo, cadencia.funil, deal_id, motivo)
             continue
         # Defesa em profundidade: a mesma condição já está no WHERE da RPC. Barata (no
         # máximo `teto` leituras) e é a última linha antes de um template sair para quem
@@ -1182,11 +1189,11 @@ def _varrer_cadencia_joao(
     except Exception as exc:
         logger.error(
             "[JOAO_CADENCIA] falha ao inserir %d jobs de %s/%s: %s",
-            len(rows), cadencia.codigo, cadencia.linha, exc)
+            len(rows), cadencia.codigo, cadencia.funil, exc)
         return 0
     logger.info(
         "[JOAO_CADENCIA] %s/%s: %d card(s) matriculado(s), %d toque(s) agendado(s)",
-        cadencia.codigo, cadencia.linha, matriculados, len(rows))
+        cadencia.codigo, cadencia.funil, matriculados, len(rows))
     return len(rows)
 
 
@@ -1209,10 +1216,14 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
     canal_resolvido = False
     sb = None
 
-    for codigo in CODIGOS:
-        ov = overrides.get(codigo) or {}
-        for linha in JOAO_LINHAS:
-            cadencia = resolver_para_agendar(codigo, linha, ov)
+    # Cada FUNIL pergunta só as SUAS PRÓPRIAS cadências — `funil.cadencias` é `()` para
+    # "recuperacao", então o laço interno não roda nenhuma vez para ela: zero iteração,
+    # zero job, sem `if` especial (spec 2026-09-21 §7).
+    for f in FUNIS:
+        overrides_do_funil = overrides.get(f.codigo) or {}
+        for cadencia_do_codigo in f.cadencias:
+            ov = overrides_do_funil.get(cadencia_do_codigo.codigo) or {}
+            cadencia = resolver_para_agendar(f.codigo, cadencia_do_codigo.codigo, ov)
             if not cadencia.ativa:
                 continue
             # Defesa em profundidade da trava da Task J4 ("ligar exige template aprovado
@@ -1223,7 +1234,7 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
             if faltando:
                 logger.warning(
                     "[JOAO_CADENCIA] %s/%s ativa SEM template nos toques %s — "
-                    "nenhum job criado", codigo, linha, faltando)
+                    "nenhum job criado", cadencia.codigo, f.codigo, faltando)
                 continue
             if not canal_resolvido:
                 canal_resolvido = True

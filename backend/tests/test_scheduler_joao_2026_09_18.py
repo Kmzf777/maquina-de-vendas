@@ -8,18 +8,19 @@ O caminho `standard` da ValerIA é o único follow-up que funciona em produção
 na história). O ponto de contato do ramo novo é só o despacho por `job_type` — os testes
 de regressão aqui existem para que qualquer desvio do caminho dela fique vermelho.
 
-FORMA DO JOB (contrato com a Task J1/J3):
+FORMA DO JOB (contrato com a Task F1/F3, spec 2026-09-21):
     job_type: "joao_touch" (ou qualquer "joao_*" — o despacho é por prefixo)
     metadata: {
         "cadencia": "novo"|"em_conversa"|"reposicao"|"em_atencao",
-        "linha": "atacado"|"private_label",      # opcional — cai p/ o funil do deal
+        "funil": "atacado"|"private_label"|"reposicao_atacado"|"reposicao_private_label",
+                                                   # opcional — cai p/ o funil do deal
         "toque": 1,                               # 1-based
-        "template_name": "joao_reposicao_atacado_t1",   # OU "template_por_linha"
-        "template_por_linha": {"atacado": "...", "private_label": "..."},
+        "template_name": "joao_reposicao_atacado_t1",   # OU "template_por_funil"
+        "template_por_funil": {"atacado": "...", "private_label": "...", ...},
         "language_code": "pt_BR",                # default
         "template_variables": {...},             # default: {{1}} = primeiro nome
         "lead_phone": "...",                     # opcional — cai p/ leads.phone
-        "deal_id": "...", "pipeline_id": "...",  # opcionais, p/ resolver a linha
+        "deal_id": "...", "pipeline_id": "...",  # opcionais, p/ resolver o funil
     }
 """
 from datetime import datetime, timezone
@@ -43,7 +44,7 @@ def _joao_job(**over):
     """Job de toque do João no formato que `get_due_followups` devolve (joins inclusos)."""
     metadata = {
         "cadencia": "reposicao",
-        "linha": "atacado",
+        "funil": "atacado",
         "toque": 1,
         "template_name": "joao_reposicao_atacado_t1",
         "lead_phone": "5534988861441",
@@ -207,43 +208,61 @@ def test_handler_nao_persiste_placeholder_de_template_nao_renderizado():
     calls["sent"].assert_called_once()
 
 
-# ─── a linha do funil (Atacado / Private Label) ──────────────────────────────
+# ─── o funil do card (Atacado / Private Label / Reposição Atacado / Reposição PL) ─────
 
-def test_linha_vem_do_metadata_quando_declarada():
-    assert S._resolve_joao_linha(_joao_job()) == "atacado"
+def test_funil_vem_do_metadata_quando_declarado():
+    assert S._resolve_joao_funil(_joao_job()) == "atacado"
 
 
-def test_linha_aceita_as_grafias_de_private_label():
+def test_funil_aceita_as_grafias_de_private_label():
     for grafia in ("private_label", "privatelabel", "Private Label", "PRIVATE-LABEL"):
-        job = _joao_job(metadata={"linha": grafia})
-        assert S._resolve_joao_linha(job) == "private_label", grafia
+        job = _joao_job(metadata={"funil": grafia})
+        assert S._resolve_joao_funil(job) == "private_label", grafia
 
 
-def test_linha_vem_do_pipeline_do_deal_quando_o_metadata_nao_traz():
-    """O toque do João é por LINHA: mandar o texto de Atacado a um lead de Private Label
-    é o pior erro possível desta cadência."""
+def test_funil_por_pipeline_e_1_para_1_sem_colisao():
+    """Bug fix da spec 2026-09-21 §1/§6: o dicionário antigo (`_LINHA_POR_PIPELINE`)
+    mapeava o Atacado normal E a Reposição Atacado para a MESMA string "atacado" (e o
+    mesmo para Private Label x Reposição Private Label) — os quatro pipelines do João
+    colapsavam em só duas linhas. `_FUNIL_POR_PIPELINE` é 1:1, quatro valores distintos."""
+    valores = list(S._FUNIL_POR_PIPELINE.values())
+    assert len(valores) == len(set(valores)) == 4
+    assert S._FUNIL_POR_PIPELINE[S.PIPELINE_JOAO_ATACADO] == "atacado"
+    assert S._FUNIL_POR_PIPELINE[S.PIPELINE_JOAO_PRIVATE_LABEL] == "private_label"
+    assert S._FUNIL_POR_PIPELINE[S.PIPELINE_JOAO_REPOSICAO_ATACADO] == "reposicao_atacado"
+    assert (
+        S._FUNIL_POR_PIPELINE[S.PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL]
+        == "reposicao_private_label"
+    )
+
+
+def test_funil_vem_do_pipeline_do_deal_quando_o_metadata_nao_traz():
+    """O toque do João é por FUNIL: mandar o texto de Atacado a um lead de Reposição
+    Atacado é o mesmo erro que mandar o texto de Atacado a um lead de Private Label —
+    e é exatamente o bug que a colisão antiga permitia (deal de Reposição Atacado
+    resolvia, incorretamente, para o funil "atacado" normal)."""
     job = _joao_job()
-    job["metadata"].pop("linha")
+    job["metadata"].pop("funil")
     job["metadata"]["deal_id"] = "deal-1"
     sb = MagicMock()
     sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-        {"id": "deal-1", "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL}
+        {"id": "deal-1", "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO}
     ]
     with patch("app.follow_up.scheduler.get_supabase", return_value=sb):
-        assert S._resolve_joao_linha(job) == "private_label"
+        assert S._resolve_joao_funil(job) == "reposicao_atacado"
 
 
-def test_linha_do_pipeline_declarado_no_metadata():
+def test_funil_do_pipeline_declarado_no_metadata():
     job = _joao_job()
-    job["metadata"].pop("linha")
-    job["metadata"]["pipeline_id"] = S.PIPELINE_JOAO_ATACADO
-    assert S._resolve_joao_linha(job) == "atacado"
+    job["metadata"].pop("funil")
+    job["metadata"]["pipeline_id"] = S.PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL
+    assert S._resolve_joao_funil(job) == "reposicao_private_label"
 
 
-def test_template_por_linha_escolhe_o_texto_da_linha_resolvida():
+def test_template_por_funil_escolhe_o_texto_do_funil_resolvido():
     job = _joao_job(metadata={
-        "linha": "private_label",
-        "template_por_linha": {"atacado": "joao_novo_atacado_t1",
+        "funil": "private_label",
+        "template_por_funil": {"atacado": "joao_novo_atacado_t1",
                                "private_label": "joao_novo_privatelabel_t1"},
     })
     job["metadata"].pop("template_name")
@@ -251,10 +270,10 @@ def test_template_por_linha_escolhe_o_texto_da_linha_resolvida():
     assert calls["meta"].send_template.await_args.args[1] == "joao_novo_privatelabel_t1"
 
 
-def test_linha_indefinida_nao_derruba_o_toque_com_template_explicito():
-    """Sem deal e sem linha declarada, o template já resolvido no metadata vale."""
+def test_funil_indefinido_nao_derruba_o_toque_com_template_explicito():
+    """Sem deal e sem funil declarado, o template já resolvido no metadata vale."""
     job = _joao_job()
-    job["metadata"].pop("linha")
+    job["metadata"].pop("funil")
     calls = _run_handler(job)
     calls["meta"].send_template.assert_awaited_once()
 

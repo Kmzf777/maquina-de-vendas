@@ -151,9 +151,23 @@ def _linha_rpc(n=1, deal=None, lead=None):
     }
 
 
-def _overrides(**por_cadencia):
-    """`{"reposicao": {"ativa": True}}` → o formato que o agendador consome."""
-    return dict(por_cadencia)
+def _overrides(**por_codigo):
+    """`{"reposicao": {"ativa": True}}` → liga a cadência deste CÓDIGO em TODOS os
+    funis-irmãos que a possuem — o equivalente, no eixo funil-primeiro, ao "liga nas
+    duas linhas" de antes (ex. `novo` liga em `atacado` E `private_label`; `reposicao`
+    liga em `reposicao_atacado` E `reposicao_private_label`). Devolve a forma nova que
+    `carregar_overrides_joao` produz: `{funil: {codigo: {...}}}`.
+
+    Para ligar um funil só (provar que eles não vazam um para o outro), monte o dict
+    `{funil: {codigo: {...}}}` na mão — ver
+    `test_cadencia_ativa_so_num_funil_nao_vaza_para_o_outro`.
+    """
+    resultado: dict[str, dict] = {}
+    for codigo, valores in por_codigo.items():
+        for f in C.FUNIS:
+            if any(c.codigo == codigo for c in f.cadencias):
+                resultado.setdefault(f.codigo, {})[codigo] = valores
+    return resultado
 
 
 def _rodar(fake, overrides, *, teto=None, now=NOW, canal=JOAO_CHANNEL,
@@ -197,10 +211,59 @@ def test_cadencia_desligada_nao_cria_job_nenhum():
 
 
 def test_todas_as_cadencias_nascem_desligadas_no_codigo():
-    """A trava a montante: sem linha no banco, `resolver(...).ativa` é False em todas."""
-    for codigo in C.CODIGOS:
-        for linha in C.LINHAS:
-            assert C.resolver(codigo, linha).ativa is False
+    """A trava a montante: sem override no banco, `resolver(...).ativa` é False em toda
+    cadência de todo funil — inclusive `recuperacao`, que não tem cadência nenhuma
+    (`cadencias == ()`, o laço abaixo não roda para ele)."""
+    for f in C.FUNIS:
+        for cadencia in f.cadencias:
+            assert C.resolver(f.codigo, cadencia.codigo).ativa is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1b. Funil é o eixo — isolamento entre funis-irmãos, e Recuperação vazia
+# ═══════════════════════════════════════════════════════════════════════════════
+def test_cadencia_ativa_so_num_funil_nao_vaza_para_o_outro():
+    """Atacado e Private Label deixaram de estar acoplados (spec 2026-09-21 §2,
+    decisão 1): ligar o `novo` só no funil Atacado não liga o irmão Private Label —
+    cada `(funil, cadência)` tem seu próprio liga/desliga."""
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
+    _rodar(fake, {"atacado": {"novo": {"ativa": True}}})  # só um dos dois funis
+
+    pipelines = {a["p_pipeline_id"] for _, a in fake.rpcs}
+    assert pipelines == {C.PIPELINE_ATACADO}  # NUNCA C.PIPELINE_PRIVATE_LABEL
+
+
+def test_recuperacao_nunca_gera_job_mesmo_que_o_banco_tente_ligar():
+    """`João - Recuperação` não tem cadência (spec 2026-09-21 §1, `Funil.cadencias ==
+    ()`). Provado pelo COMPORTAMENTO, não por um `if` especial no agendador: mesmo que
+    a tabela de overrides traga uma linha teimosa para `funil="recuperacao"` com
+    códigos de cadência que nem existem nela, o laço `for cadencia in funil.cadencias`
+    do agendador não roda nenhuma vez para este funil — zero RPC, zero job.
+    """
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
+    overrides = {"recuperacao": {
+        "novo": {"ativa": True}, "reposicao": {"ativa": True},
+        "em_conversa": {"ativa": True}, "em_atencao": {"ativa": True},
+    }}
+    assert _rodar(fake, overrides) == 0
+    assert fake.rpcs == []
+    assert fake.inserts == []
+
+
+def test_teto_e_por_par_funil_cadencia_nao_um_teto_global():
+    """O teto é aplicado a CADA passagem de `(funil, cadência)`, não a uma varredura
+    global: duas cadências "novo" (uma por funil-irmão) com POOLS DIFERENTES de cards
+    cada uma respeita o SEU teto — uma não rouba cota da outra."""
+    def rpc_rows(_nome, args):
+        prefixo = "atacado" if args["p_pipeline_id"] == C.PIPELINE_ATACADO else "pl"
+        return [_linha_rpc(i, lead=f"{prefixo}-lead-{i}") for i in range(1, 6)]
+
+    fake = _FakeSupabase(rpc_rows=rpc_rows)
+    _rodar(fake, _overrides(novo={"ativa": True}), teto=2)
+
+    leads = {j["lead_id"] for j in _jobs_criados(fake)}
+    # 2 do funil Atacado + 2 do funil Private Label — cada passagem respeitou o SEU teto
+    assert leads == {"atacado-lead-1", "atacado-lead-2", "pl-lead-1", "pl-lead-2"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -262,11 +325,11 @@ def test_cria_um_job_por_toque_de_uma_vez():
     _rodar(fake, _overrides(em_conversa={"ativa": True}))
 
     jobs = _jobs_criados(fake)
-    # 7 toques (ata 41:02) × 2 linhas — mas o mesmo card volta em cada varredura de
-    # linha porque o dublê devolve a mesma linha para os dois funis.
-    da_linha = [j for j in jobs if j["metadata"]["linha"] == C.LINHA_ATACADO]
-    assert len(da_linha) == 7
-    assert [j["metadata"]["toque"] for j in da_linha] == [1, 2, 3, 4, 5, 6, 7]
+    # 7 toques (ata 41:02) × 2 funis-irmãos — mas o mesmo card volta em cada varredura
+    # de funil porque o dublê devolve a mesma linha de RPC para os dois.
+    do_atacado = [j for j in jobs if j["metadata"]["funil"] == "atacado"]
+    assert len(do_atacado) == 7
+    assert [j["metadata"]["toque"] for j in do_atacado] == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_metadata_do_job_cumpre_o_contrato_do_handler():
@@ -283,7 +346,9 @@ def test_metadata_do_job_cumpre_o_contrato_do_handler():
     assert job["lead_id"] == "lead-1"
     assert job["sequence"] == md["toque"] == 1
     assert md["cadencia"] == "reposicao"
-    assert md["linha"] in C.LINHAS
+    # "reposicao_atacado" é o primeiro funil-irmão em `cj.FUNIS` a ter a cadência
+    # "reposicao" — é dele que sai o job[0] desta passagem.
+    assert md["funil"] == "reposicao_atacado"
     assert md["template_name"] == "joao_reposicao_atacado_t1"
     assert md["deal_id"] == "deal-1"
     assert md["phone_number_id"] == S.JOAO_PHONE_NUMBER_ID
@@ -297,18 +362,18 @@ def test_ultimo_toque_e_marcado_e_so_ele():
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
     _rodar(fake, _overrides(reposicao={"ativa": True}))
 
-    da_linha = [j for j in _jobs_criados(fake)
-                if j["metadata"]["linha"] == C.LINHA_ATACADO]
-    assert [j["metadata"]["ultimo_toque"] for j in da_linha] == [False, False, False, True]
+    do_funil = [j for j in _jobs_criados(fake)
+                if j["metadata"]["funil"] == "reposicao_atacado"]
+    assert [j["metadata"]["ultimo_toque"] for j in do_funil] == [False, False, False, True]
 
 
 def test_fire_at_sai_dos_offsets_e_respeita_a_janela_comercial():
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
     _rodar(fake, _overrides(em_conversa={"ativa": True}))
 
-    da_linha = [j for j in _jobs_criados(fake)
-                if j["metadata"]["linha"] == C.LINHA_ATACADO]
-    fire = [datetime.fromisoformat(j["fire_at"]) for j in da_linha]
+    do_atacado = [j for j in _jobs_criados(fake)
+                  if j["metadata"]["funil"] == "atacado"]
+    fire = [datetime.fromisoformat(j["fire_at"]) for j in do_atacado]
     offsets = C._EM_CONVERSA_OFFSETS
 
     assert fire[0] == NOW                       # offset 0, já dentro da janela
@@ -324,9 +389,9 @@ def test_dias_do_banco_sobrepoem_os_offsets_do_codigo():
         "ativa": True, "toques": {2: {"dias": 30}},
     }))
 
-    da_linha = [j for j in _jobs_criados(fake)
-                if j["metadata"]["linha"] == C.LINHA_ATACADO]
-    assert datetime.fromisoformat(da_linha[1]["fire_at"]) == NOW + timedelta(days=30)
+    do_funil = [j for j in _jobs_criados(fake)
+                if j["metadata"]["funil"] == "reposicao_atacado"]
+    assert datetime.fromisoformat(do_funil[1]["fire_at"]) == NOW + timedelta(days=30)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -488,9 +553,9 @@ def test_os_dois_gatilhos_nunca_disparam_para_o_mesmo_card(jobs):
     fica vermelho — é o estado em que o cooldown já expirou e SÓ a partição separa as
     duas.
     """
-    rep = S.resolver_para_agendar("reposicao", C.LINHA_ATACADO,
+    rep = S.resolver_para_agendar("reposicao_atacado", "reposicao",
                                   {"ativa": True})
-    ate = S.resolver_para_agendar("em_atencao", C.LINHA_ATACADO,
+    ate = S.resolver_para_agendar("reposicao_atacado", "em_atencao",
                                   {"ativa": True})
     motivo_rep = S.motivo_para_pular_joao(rep, jobs, NOW)
     motivo_ate = S.motivo_para_pular_joao(ate, jobs, NOW)
@@ -503,17 +568,17 @@ def test_os_dois_gatilhos_nunca_disparam_para_o_mesmo_card(jobs):
 def test_em_atencao_ignora_card_que_nunca_passou_pela_reposicao():
     """"90 dias parado" isolado NÃO é "Em atenção": a ata (38:08) descreve o estado
     de quem já esgotou a régua de Reposição, não de quem nunca entrou nela."""
-    ate = S.resolver_para_agendar("em_atencao", C.LINHA_ATACADO, {"ativa": True})
+    ate = S.resolver_para_agendar("reposicao_atacado", "em_atencao", {"ativa": True})
     assert S.motivo_para_pular_joao(ate, [], NOW) == "reposicao_nao_concluida"
 
 
 def test_em_atencao_pega_o_card_que_esgotou_a_reposicao():
-    ate = S.resolver_para_agendar("em_atencao", C.LINHA_ATACADO, {"ativa": True})
+    ate = S.resolver_para_agendar("reposicao_atacado", "em_atencao", {"ativa": True})
     assert S.motivo_para_pular_joao(ate, _REPOSICAO_CONCLUIDA_ONTEM, NOW) is None
 
 
 def test_reposicao_nao_volta_ao_card_que_ja_a_esgotou():
-    rep = S.resolver_para_agendar("reposicao", C.LINHA_ATACADO, {"ativa": True})
+    rep = S.resolver_para_agendar("reposicao_atacado", "reposicao", {"ativa": True})
     assert (S.motivo_para_pular_joao(rep, _REPOSICAO_CONCLUIDA_HA_MUITO, NOW)
             == "reposicao_ja_concluida")
 
@@ -521,7 +586,7 @@ def test_reposicao_nao_volta_ao_card_que_ja_a_esgotou():
 def test_em_atencao_repete_respeitando_o_intervalo():
     """Ata 38:08: "uma mensagem a cada três dias até ele falar que não quer"."""
     base = list(_REPOSICAO_CONCLUIDA_ONTEM)
-    ate = S.resolver_para_agendar("em_atencao", C.LINHA_ATACADO, {"ativa": True})
+    ate = S.resolver_para_agendar("reposicao_atacado", "em_atencao", {"ativa": True})
 
     recente = base + [_job_existente(
         "em_atencao", 1, "sent", sent_at=(NOW - timedelta(days=1)).isoformat(),
@@ -547,10 +612,10 @@ def test_em_atencao_cria_um_job_por_vez():
     _rodar(fake, _overrides(em_atencao={
         "ativa": True, "toques": {1: {"template_name": "joao_em_atencao_atacado_t1"}},
     }))
-    da_linha = [j for j in _jobs_criados(fake)
-                if j["metadata"]["linha"] == C.LINHA_ATACADO]
-    assert len(da_linha) == 1
-    assert da_linha[0]["metadata"]["ultimo_toque"] is False  # nunca termina
+    do_funil = [j for j in _jobs_criados(fake)
+                if j["metadata"]["funil"] == "reposicao_atacado"]
+    assert len(do_funil) == 1
+    assert do_funil[0]["metadata"]["ultimo_toque"] is False  # nunca termina
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -698,19 +763,45 @@ def test_overrides_ausentes_valem_o_codigo():
 
 
 def test_overrides_montam_a_forma_que_resolver_consome():
+    """A PK das duas tabelas mudou no Lote 1: `(funil, cadencia)` e
+    `(funil, cadencia, toque)` — sem coluna `linha`. A forma devolvida acompanha:
+    `{funil: {codigo: {gatilho_dias, ativa, toques}}}`."""
     fake = _FakeSupabase(rows={
         "followup_joao_cadencia": [
-            {"cadencia": "reposicao", "gatilho_dias": 60, "ativa": True}],
+            {"funil": "reposicao_atacado", "cadencia": "reposicao",
+             "gatilho_dias": 60, "ativa": True}],
         "followup_joao_toque": [
-            {"cadencia": "reposicao", "linha": "atacado", "toque": 2,
+            {"funil": "reposicao_atacado", "cadencia": "reposicao", "toque": 2,
              "dias": 20, "template_name": None}],
     })
     with patch("app.follow_up.service.get_supabase", return_value=fake):
         overrides = S.carregar_overrides_joao()
 
-    assert overrides["reposicao"]["gatilho_dias"] == 60
-    assert overrides["reposicao"]["ativa"] is True
-    assert overrides["reposicao"]["linhas"]["atacado"]["toques"][2]["dias"] == 20
+    assert overrides["reposicao_atacado"]["reposicao"]["gatilho_dias"] == 60
+    assert overrides["reposicao_atacado"]["reposicao"]["ativa"] is True
+    assert overrides["reposicao_atacado"]["reposicao"]["toques"][2]["dias"] == 20
+
+
+def test_overrides_de_par_invalido_sao_ignorados():
+    """`(funil, cadencia)` que não existe em `cj.FUNIS` (ex. `atacado`/`reposicao`, ou
+    qualquer par com `funil="recuperacao"`) é descartado — mesma trava que o CHECK do
+    banco impõe, replicada aqui para o caso de a tabela ser editada por fora do CRM."""
+    fake = _FakeSupabase(rows={
+        "followup_joao_cadencia": [
+            {"funil": "atacado", "cadencia": "reposicao",  # par inválido
+             "gatilho_dias": 10, "ativa": True},
+            {"funil": "recuperacao", "cadencia": "novo",  # recuperacao não tem par
+             "gatilho_dias": 5, "ativa": True},
+        ],
+        "followup_joao_toque": [
+            {"funil": "atacado", "cadencia": "reposicao", "toque": 1,
+             "dias": 1, "template_name": "x"},
+        ],
+    })
+    with patch("app.follow_up.service.get_supabase", return_value=fake):
+        overrides = S.carregar_overrides_joao()
+
+    assert overrides == {}
 
 
 def test_tabela_ausente_desliga_tudo_em_vez_de_ligar():

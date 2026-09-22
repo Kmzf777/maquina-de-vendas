@@ -100,23 +100,29 @@ JOAO_JOB_TYPES: frozenset[str] = frozenset({
 JOAO_TOUCH_TEMPLATE_LANGUAGE = "pt_BR"
 JOAO_TOUCH_TEMPLATE_VARIABLES: dict = {"__params_type__": "positional", "1": "{{primeiro_nome}}"}
 
-# Funis do João em produção (medidos na reunião de 10/09/2026). A LINHA (Atacado x Private
-# Label) decide o TEXTO do toque: mandar o texto de Atacado a um lead de Private Label é o
-# pior erro possível desta cadência, e o funil é a única fonte confiável dessa distinção.
+# Funis do João em produção (medidos na reunião de 10/09/2026). O FUNIL decide o TEXTO
+# do toque: mandar o texto de Atacado a um lead de Private Label é o pior erro possível
+# desta cadência, e o funil é a única fonte confiável dessa distinção.
 PIPELINE_JOAO_ATACADO = "9706a14a-3d9a-413b-bceb-26838fc2cc45"
 PIPELINE_JOAO_PRIVATE_LABEL = "24fb6ce8-6b7b-4612-970d-8debb8c041b7"
 PIPELINE_JOAO_REPOSICAO_ATACADO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"
 PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL = "9c027143-72f6-42d6-861f-a494ba5bbb4f"
 
-LINHA_ATACADO = "atacado"
-LINHA_PRIVATE_LABEL = "private_label"
-
-_LINHA_POR_PIPELINE: dict[str, str] = {
-    PIPELINE_JOAO_ATACADO: LINHA_ATACADO,
-    PIPELINE_JOAO_REPOSICAO_ATACADO: LINHA_ATACADO,
-    PIPELINE_JOAO_PRIVATE_LABEL: LINHA_PRIVATE_LABEL,
-    PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL: LINHA_PRIVATE_LABEL,
+# 1:1, sem colisão — spec 2026-09-21 §1/§6: o dicionário antigo (`_LINHA_POR_PIPELINE`)
+# mapeava o Atacado normal E a Reposição Atacado para a MESMA string "atacado" (e o
+# mesmo valia para Private Label x Reposição Private Label). Era um bug de identidade
+# latente no fallback por pipeline_id de `_resolve_joao_funil`: um job de Reposição sem
+# `metadata.funil` explícito resolvia para o funil normal, não o de Reposição. Os
+# códigos aqui são os mesmos `Funil.codigo` de `cadence_joao.py` (duplicados aqui de
+# propósito — este módulo já mantém sua própria cópia das constantes de pipeline, fora
+# do escopo deste rename).
+_FUNIL_POR_PIPELINE: dict[str, str] = {
+    PIPELINE_JOAO_ATACADO: "atacado",
+    PIPELINE_JOAO_PRIVATE_LABEL: "private_label",
+    PIPELINE_JOAO_REPOSICAO_ATACADO: "reposicao_atacado",
+    PIPELINE_JOAO_REPOSICAO_PRIVATE_LABEL: "reposicao_private_label",
 }
+_FUNIL_CODIGOS_CONHECIDOS: tuple[str, ...] = tuple(dict.fromkeys(_FUNIL_POR_PIPELINE.values()))
 
 # Task C-4 (higiene de nome): fallback neutro para {{primeiro_nome}}/nome_do_lead quando
 # não há nome real — nem antes (lead_name vazio), nem depois de strip_greeting_prefix
@@ -1675,40 +1681,48 @@ def _is_joao_job_type(job_type: str | None) -> bool:
     return job_type in JOAO_JOB_TYPES or job_type.startswith(JOAO_JOB_TYPE_PREFIX)
 
 
-def _normalize_joao_linha(value: str | None) -> str | None:
-    """'Private Label' / 'privatelabel' / 'private-label' → 'private_label'. Função pura.
+def _funil_key(value: str) -> str:
+    """Forma canônica p/ comparar códigos de funil: sem acento, minúsculo, só alfanumérico."""
+    return "".join(ch for ch in _strip_accents(value).strip().lower() if ch.isalnum())
 
-    O nome da linha chega de três origens (metadata do job, tabela de sobreposição, nome
-    de funil), cada uma com a sua grafia; o handler compara UMA forma só.
+
+def _normalize_joao_funil(value: str | None) -> str | None:
+    """'Reposição Private Label' / 'reposicao-private-label' → 'reposicao_private_label'.
+
+    Compara por IGUALDADE contra os códigos conhecidos (`_FUNIL_CODIGOS_CONHECIDOS`),
+    nunca por substring: é a correção do bug descrito junto de `_FUNIL_POR_PIPELINE` —
+    com substring, "atacado" casava tanto com o funil "atacado" quanto com
+    "reposicao_atacado" (a substring aparece dentro dos dois), reintroduzindo a mesma
+    colisão pela porta dos fundos. Função pura.
     """
     if not value:
         return None
-    v = _strip_accents(str(value)).strip().lower().replace("-", "_").replace(" ", "_")
-    if "private" in v or "pl" == v:
-        return LINHA_PRIVATE_LABEL
-    if "atacado" in v:
-        return LINHA_ATACADO
+    chave = _funil_key(str(value))
+    for codigo in _FUNIL_CODIGOS_CONHECIDOS:
+        if chave == _funil_key(codigo):
+            return codigo
     return None
 
 
-def _resolve_joao_linha(job: dict) -> str | None:
-    """Linha comercial (Atacado x Private Label) deste toque, ou None se indeterminável.
+def _resolve_joao_funil(job: dict) -> str | None:
+    """Funil (Atacado, Private Label, Reposição Atacado, Reposição Private Label) deste
+    toque, ou None se indeterminável.
 
-    Ordem: `metadata.linha` (já resolvida pelo agendador) → `metadata.pipeline_id` → o
+    Ordem: `metadata.funil` (já resolvido pelo agendador) → `metadata.pipeline_id` → o
     funil do deal (`metadata.deal_id`, senão o deal mais recente do lead num dos quatro
     funis do João). Fail-soft: qualquer erro de leitura → None; quem chama decide (com
     `template_name` explícito o toque segue; sem ele, o job é cancelado em vez de mandar
-    o texto da linha errada).
+    o texto do funil errado).
     """
     metadata = job.get("metadata") or {}
 
-    linha = _normalize_joao_linha(metadata.get("linha"))
-    if linha:
-        return linha
+    funil = _normalize_joao_funil(metadata.get("funil"))
+    if funil:
+        return funil
 
-    linha = _LINHA_POR_PIPELINE.get(str(metadata.get("pipeline_id") or ""))
-    if linha:
-        return linha
+    funil = _FUNIL_POR_PIPELINE.get(str(metadata.get("pipeline_id") or ""))
+    if funil:
+        return funil
 
     deal_id = metadata.get("deal_id")
     lead_id = job.get("lead_id")
@@ -1725,37 +1739,37 @@ def _resolve_joao_linha(job: dict) -> str | None:
             res = (
                 sb.table("deals").select("id, pipeline_id")
                 .eq("lead_id", lead_id)
-                .in_("pipeline_id", list(_LINHA_POR_PIPELINE))
+                .in_("pipeline_id", list(_FUNIL_POR_PIPELINE))
                 .order("created_at", desc=True)
                 .limit(1)
                 .execute()
             )
         rows = res.data if isinstance(res.data, list) else []
         if rows:
-            return _LINHA_POR_PIPELINE.get(str(rows[0].get("pipeline_id") or ""))
+            return _FUNIL_POR_PIPELINE.get(str(rows[0].get("pipeline_id") or ""))
     except Exception as exc:
         logger.warning(
-            "[JOAO_TOUCH] falha ao resolver a linha pelo funil (deal=%s lead=%s): %s",
+            "[JOAO_TOUCH] falha ao resolver o funil do card (deal=%s lead=%s): %s",
             deal_id, lead_id, exc,
         )
     return None
 
 
-def _joao_template_name(metadata: dict, linha: str | None) -> str | None:
+def _joao_template_name(metadata: dict, funil: str | None) -> str | None:
     """Template APROVADO deste toque.
 
     Duas formas aceitas, nesta ordem — o agendador escolhe a que lhe for natural:
-      * `metadata.template_name`: já resolvido por linha na hora de criar o job;
-      * `metadata.template_por_linha`: {"atacado": ..., "private_label": ...}, resolvido
-        aqui contra a linha do funil.
+      * `metadata.template_name`: já resolvido por funil na hora de criar o job;
+      * `metadata.template_por_funil`: {"atacado": ..., "private_label": ..., ...},
+        resolvido aqui contra o funil do card.
     Nenhuma das duas → None, e o toque é cancelado: nunca improvisamos template.
     """
     nome = (metadata.get("template_name") or "").strip()
     if nome:
         return nome
-    por_linha = metadata.get("template_por_linha") or {}
-    if isinstance(por_linha, dict) and linha:
-        nome = (por_linha.get(linha) or "").strip()
+    por_funil = metadata.get("template_por_funil") or {}
+    if isinstance(por_funil, dict) and funil:
+        nome = (por_funil.get(funil) or "").strip()
         if nome:
             return nome
     return None
@@ -1821,7 +1835,7 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
 
     O lead está em silêncio por definição (é o que o gatilho da cadência mede), então a
     janela de 24h da Meta está fechada e free-text seria rejeitado (#131047). Por isso
-    este handler não tem nenhum ramo de geração de texto — ele resolve a linha do funil,
+    este handler não tem nenhum ramo de geração de texto — ele resolve o funil do card,
     monta os componentes do template, resolve o canal do vendedor, envia e marca.
 
     Espelha `_process_lp_welcome`/`_process_handoff_rescue` no tratamento de erro da Meta:
@@ -1849,13 +1863,13 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
         logger.error("[JOAO_TOUCH] job %s sem telefone do lead", job["id"])
         return
 
-    linha = _resolve_joao_linha(job)
-    template_name = _joao_template_name(metadata, linha)
+    funil = _resolve_joao_funil(job)
+    template_name = _joao_template_name(metadata, funil)
     if not template_name:
         _cancel_job(job["id"], "missing_template_name")
         logger.error(
-            "[JOAO_TOUCH] job %s sem template (cadencia=%s linha=%s toque=%s) — nada a enviar",
-            job["id"], metadata.get("cadencia"), linha, metadata.get("toque"),
+            "[JOAO_TOUCH] job %s sem template (cadencia=%s funil=%s toque=%s) — nada a enviar",
+            job["id"], metadata.get("cadencia"), funil, metadata.get("toque"),
         )
         return
 
@@ -1885,9 +1899,9 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
             send_to, template_name, components=components, language_code=language_code
         )
         logger.info(
-            "[JOAO_TOUCH] template '%s' (%s) enviado p/ %s — cadencia=%s linha=%s toque=%s",
+            "[JOAO_TOUCH] template '%s' (%s) enviado p/ %s — cadencia=%s funil=%s toque=%s",
             template_name, language_code, send_to,
-            metadata.get("cadencia"), linha, metadata.get("toque"),
+            metadata.get("cadencia"), funil, metadata.get("toque"),
         )
     except httpx.HTTPStatusError as http_exc:
         status = http_exc.response.status_code

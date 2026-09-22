@@ -1,6 +1,12 @@
 # backend/tests/test_api_definicao_joao_2026_09_18.py
 """A API da definição das cadências — GET /api/cadence/definition e PUT /api/cadence/joao.
 
+Adaptada em 2026-09-21 (spec `2026-09-21-followup-funil-por-funil-design.md`) para o
+João virar funil-primeiro: o payload troca `cadencias: [...]` por `funis: [...]`, e o
+PUT passa a exigir `funil` (não mais `linha?` opcional com fallback "aplica nas
+duas"). Os casos originais não foram descartados — foram RENOMEADOS e reescopados
+para (funil, cadência) no lugar de (cadência, linha).
+
 O que esta suíte trava, em ordem de importância:
 
 1. **A ValerIA não muda uma vírgula.** `followup-board.tsx` lê HOJE quatro chaves no
@@ -21,12 +27,16 @@ O que esta suíte trava, em ordem de importância:
    banco. Sem ela, um toque 9 em "Em conversa" seria gravado, apareceria na tela e
    seria ignorado em silêncio pelo motor.
 
-4. **Ligar exige template aprovado em TODO toque das DUAS linhas.** É a guarda mais
-   cara do projeto, e a razão: template que não envia não impede a MATRÍCULA, só o
-   envio — a cadência inscreve o card, não manda nada e caminha até o fim, registrando
-   "não teve resposta" para quem nunca foi contatado. "Em atenção" hoje não tem NENHUM
-   template (os 24 aprovados cobrem só Novo + Em conversa + Reposição), então ligá-la é
-   sempre recusado — e isso é uma declaração, não um bug.
+4. **Ligar exige template aprovado em TODO toque do par (funil, cadência).** É a
+   guarda mais cara do projeto, e a razão: template que não envia não impede a
+   MATRÍCULA, só o envio — a cadência inscreve o card, não manda nada e caminha até o
+   fim, registrando "não teve resposta" para quem nunca foi contatado. "Em atenção"
+   hoje não tem NENHUM template (os 24 aprovados cobrem só Novo + Em conversa +
+   Reposição), então ligá-la é sempre recusado — e isso é uma declaração, não um bug.
+
+5. **Atacado e Private Label deixaram de estar acoplados** (spec §2, decisão 1):
+   ligar/desligar/configurar um funil não pode vazar para o funil-irmão que
+   compartilha o mesmo código de cadência.
 
 Sem banco na suíte: as duas tabelas de sobreposição e `message_templates` vêm do
 `_Banco` deste arquivo, no mesmo estilo do `_BancoDeTemplates` de
@@ -50,8 +60,11 @@ client = TestClient(app)
 GET_URL = "/api/cadence/definition"
 PUT_URL = "/api/cadence/joao"
 
-ATACADO = cj.LINHA_ATACADO
-PRIVATE = cj.LINHA_PRIVATE_LABEL
+ATACADO = "atacado"
+PRIVATE_LABEL = "private_label"
+REPOSICAO_ATACADO = "reposicao_atacado"
+REPOSICAO_PRIVATE_LABEL = "reposicao_private_label"
+RECUPERACAO = "recuperacao"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -129,18 +142,19 @@ class _Banco:
                 for linha in e["linhas"]]
 
 
-def _toque(cadencia, linha, toque, *, dias=None, template_name=None,
-           atualizado_por=None):
-    """Uma linha de `followup_joao_toque` como o PostgREST devolve."""
-    return {"cadencia": cadencia, "linha": linha, "toque": toque, "dias": dias,
+def _toque(funil, cadencia, toque, *, dias=None, template_name=None,
+          atualizado_por=None):
+    """Uma linha de `followup_joao_toque` como o PostgREST devolve (PK nova:
+    funil, cadencia, toque)."""
+    return {"funil": funil, "cadencia": cadencia, "toque": toque, "dias": dias,
             "template_name": template_name, "atualizado_por": atualizado_por,
             "updated_at": "2026-09-18T12:00:00+00:00"}
 
 
-def _cad(cadencia, *, gatilho_dias=None, ativa=None, atualizado_por=None):
-    """Uma linha de `followup_joao_cadencia`."""
-    return {"cadencia": cadencia, "gatilho_dias": gatilho_dias, "ativa": ativa,
-            "atualizado_por": atualizado_por,
+def _cad(funil, cadencia, *, gatilho_dias=None, ativa=None, atualizado_por=None):
+    """Uma linha de `followup_joao_cadencia` (PK nova: funil, cadencia)."""
+    return {"funil": funil, "cadencia": cadencia, "gatilho_dias": gatilho_dias,
+            "ativa": ativa, "atualizado_por": atualizado_por,
             "updated_at": "2026-09-18T12:00:00+00:00"}
 
 
@@ -155,27 +169,21 @@ def _banco(tabelas=None, erros=None):
         yield b
 
 
-def _nomes_de_em_conversa(linha) -> list[str]:
-    return [t.template_name for t in cj.CADENCIAS["em_conversa"].linhas[linha].touches]
-
-
-def _todos_os_templates_de(codigo) -> list[str]:
-    return [t.template_name
-            for linha in cj.LINHAS
-            for t in cj.CADENCIAS[codigo].linhas[linha].touches
-            if t.template_name]
+def _todos_os_templates_de(funil_codigo, codigo) -> list[str]:
+    cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+    return [t.template_name for t in cadencia.touches if t.template_name]
 
 
 def _joao(payload) -> dict:
     return payload["joao"]
 
 
-def _cadencia(payload, codigo) -> dict:
-    return next(c for c in _joao(payload)["cadencias"] if c["codigo"] == codigo)
+def _funil(payload, codigo) -> dict:
+    return next(f for f in _joao(payload)["funis"] if f["codigo"] == codigo)
 
 
-def _linha(cadencia_payload, linha) -> dict:
-    return next(l for l in cadencia_payload["linhas"] if l["linha"] == linha)
+def _cadencia(funil_payload, codigo) -> dict:
+    return next(c for c in funil_payload["cadencias"] if c["codigo"] == codigo)
 
 
 def _problemas(resposta) -> list[dict]:
@@ -230,7 +238,7 @@ class TestRegressaoValeria:
     def test_o_joao_nao_vaza_para_dentro_do_bloco_da_valeria(self):
         payload = build_cadence_definition()
         assert "joao" not in payload["valeria"]
-        assert "cadencias" not in payload
+        assert "funis" not in payload
 
     def test_http_devolve_o_mesmo_que_a_funcao_pura(self):
         with _banco():
@@ -242,67 +250,92 @@ class TestRegressaoValeria:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. GET: a definição do João
+# 2. GET: a definição do João — funil é o eixo
 # ═══════════════════════════════════════════════════════════════════════════════
 class TestGetJoao:
 
-    def test_traz_as_quatro_cadencias_na_ordem_do_codigo(self):
+    def test_traz_os_cinco_funis_na_ordem_do_codigo(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        assert [c["codigo"] for c in _joao(payload)["cadencias"]] == list(cj.CODIGOS)
+        assert [f["codigo"] for f in _joao(payload)["funis"]] == list(cj.FUNIL_CODIGOS)
+        assert len(cj.FUNIL_CODIGOS) == 5
 
-    def test_cada_cadencia_traz_as_duas_linhas(self):
+    def test_cada_funil_traz_rotulo_completo_e_pipeline_id(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        for c in _joao(payload)["cadencias"]:
-            assert [l["linha"] for l in c["linhas"]] == list(cj.LINHAS)
+        for f in _joao(payload)["funis"]:
+            esperado = cj.funil(f["codigo"])
+            assert f["rotulo"] == esperado.rotulo
+            assert f["pipeline_id"] == esperado.pipeline_id
+        # Nomes completos, não os rótulos genéricos "Atacado"/"Private Label" de antes.
+        assert _funil(payload, ATACADO)["rotulo"] == "João - Atacado"
+        assert _funil(payload, REPOSICAO_ATACADO)["rotulo"] == "João - Reposição Atacado"
 
-    @pytest.mark.parametrize("codigo", cj.CODIGOS)
-    def test_sem_override_os_dias_e_templates_sao_os_do_codigo(self, codigo):
+    def test_recuperacao_aparece_como_funil_de_verdade_com_cadencias_vazias(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        c = _cadencia(payload, codigo)
-        assert c["gatilho_dias"] == cj.CADENCIAS[codigo].gatilho_dias
-        assert c["gatilho_stage_key"] == cj.CADENCIAS[codigo].gatilho_stage_key
-        for linha in cj.LINHAS:
-            do_codigo = cj.CADENCIAS[codigo].linhas[linha].touches
-            toques = _linha(c, linha)["toques"]
-            assert [t["sequence"] for t in toques] == [t.sequence for t in do_codigo]
-            assert [t["dias"] for t in toques] == [t.offset.days for t in do_codigo]
-            assert [t["template_name"] for t in toques] == [
-                t.template_name for t in do_codigo]
+        recuperacao = _funil(payload, RECUPERACAO)
+        assert recuperacao["rotulo"] == "João - Recuperação"
+        assert recuperacao["pipeline_id"] == cj.PIPELINE_RECUPERACAO
+        assert recuperacao["cadencias"] == []
+
+    @pytest.mark.parametrize("funil_codigo,codigo", [
+        (ATACADO, "novo"), (ATACADO, "em_conversa"),
+        (PRIVATE_LABEL, "novo"), (PRIVATE_LABEL, "em_conversa"),
+        (REPOSICAO_ATACADO, "reposicao"), (REPOSICAO_ATACADO, "em_atencao"),
+        (REPOSICAO_PRIVATE_LABEL, "reposicao"), (REPOSICAO_PRIVATE_LABEL, "em_atencao"),
+    ])
+    def test_sem_override_os_dias_e_templates_sao_os_do_codigo(self, funil_codigo, codigo):
+        with _banco():
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, funil_codigo), codigo)
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert c["gatilho_dias"] == cadencia.gatilho_dias
+        assert c["gatilho_stage_key"] == cadencia.gatilho_stage_key
+        assert c["gatilho_stage_rotulo"] == cadencia.gatilho_stage_rotulo
+        toques = c["toques"]
+        assert [t["sequence"] for t in toques] == [t.sequence for t in cadencia.touches]
+        assert [t["dias"] for t in toques] == [t.offset.days for t in cadencia.touches]
+        assert [t["template_name"] for t in toques] == [
+            t.template_name for t in cadencia.touches]
 
     def test_tudo_nasce_desligado(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        assert [c["ativa"] for c in _joao(payload)["cadencias"]] == [False] * 4
+        for f in _joao(payload)["funis"]:
+            for c in f["cadencias"]:
+                assert c["ativa"] is False
 
-    def test_o_override_do_banco_vence_o_codigo(self):
+    def test_o_override_do_banco_vence_o_codigo_e_nao_vaza_pro_funil_irmao(self):
         tabelas = {
-            "followup_joao_cadencia": [_cad("reposicao", gatilho_dias=60, ativa=True)],
+            "followup_joao_cadencia": [_cad(REPOSICAO_ATACADO, "reposicao",
+                                            gatilho_dias=60, ativa=True)],
             "followup_joao_toque": [
-                _toque("reposicao", ATACADO, 2, dias=20,
+                _toque(REPOSICAO_ATACADO, "reposicao", 2, dias=20,
                        template_name="joao_reposicao_atacado_t2_v2"),
             ],
         }
         with _banco(tabelas):
             payload = client.get(GET_URL).json()
-        c = _cadencia(payload, "reposicao")
+        c = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")
         assert c["gatilho_dias"] == 60
         assert c["ativa"] is True
-        t2 = _linha(c, ATACADO)["toques"][1]
+        t2 = c["toques"][1]
         assert t2["dias"] == 20
         assert t2["template_name"] == "joao_reposicao_atacado_t2_v2"
-        # A outra linha não foi tocada: a sobreposição é por (cadência, linha, toque).
-        assert _linha(c, PRIVATE)["toques"][1]["dias"] == 15
+        # O funil-irmão não foi tocado: a sobreposição é por (funil, cadência, toque).
+        irmao = _cadencia(_funil(payload, REPOSICAO_PRIVATE_LABEL), "reposicao")
+        assert irmao["gatilho_dias"] == 45
+        assert irmao["ativa"] is False
+        assert irmao["toques"][1]["dias"] == 15
 
     def test_override_parcial_nao_apaga_o_resto(self):
         """Gravar só os dias não pode apagar o template — é a regra que o
         `resolver_cadencia` implementa campo a campo, e que a API tem de preservar."""
-        tabelas = {"followup_joao_toque": [_toque("novo", ATACADO, 1, dias=4)]}
+        tabelas = {"followup_joao_toque": [_toque(ATACADO, "novo", 1, dias=4)]}
         with _banco(tabelas):
             payload = client.get(GET_URL).json()
-        t1 = _linha(_cadencia(payload, "novo"), ATACADO)["toques"][0]
+        t1 = _cadencia(_funil(payload, ATACADO), "novo")["toques"][0]
         assert t1["dias"] == 4
         assert t1["template_name"] == "joao_novo_atacado_t1"
 
@@ -310,35 +343,53 @@ class TestGetJoao:
         """A tela precisa mostrar "padrão 45" ao lado do 60 gravado, senão ninguém
         descobre o que a configuração mudou nem como voltar."""
         tabelas = {
-            "followup_joao_cadencia": [_cad("reposicao", gatilho_dias=60)],
-            "followup_joao_toque": [_toque("reposicao", ATACADO, 1, dias=7)],
+            "followup_joao_cadencia": [_cad(REPOSICAO_ATACADO, "reposicao",
+                                            gatilho_dias=60)],
+            "followup_joao_toque": [_toque(REPOSICAO_ATACADO, "reposicao", 1, dias=7)],
         }
         with _banco(tabelas):
             payload = client.get(GET_URL).json()
-        c = _cadencia(payload, "reposicao")
+        c = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")
         assert c["gatilho_dias_codigo"] == 45
-        assert _linha(c, ATACADO)["toques"][0]["dias_codigo"] == 0
+        assert c["toques"][0]["dias_codigo"] == 0
 
     def test_diz_quais_toques_estao_sem_template(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        em_atencao = _cadencia(payload, "em_atencao")
-        for linha in cj.LINHAS:
-            assert _linha(em_atencao, linha)["toques_sem_template"] == [1]
-        novo = _cadencia(payload, "novo")
-        assert _linha(novo, ATACADO)["toques_sem_template"] == []
+        em_atencao_atacado = _cadencia(_funil(payload, REPOSICAO_ATACADO), "em_atencao")
+        assert em_atencao_atacado["toques_sem_template"] == [1]
+        em_atencao_private = _cadencia(_funil(payload, REPOSICAO_PRIVATE_LABEL),
+                                       "em_atencao")
+        assert em_atencao_private["toques_sem_template"] == [1]
+        novo_atacado = _cadencia(_funil(payload, ATACADO), "novo")
+        assert novo_atacado["toques_sem_template"] == []
 
     def test_diz_que_em_atencao_ainda_nao_pode_ser_ligada(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        assert _cadencia(payload, "em_atencao")["pode_ligar"] is False
-        assert _cadencia(payload, "em_conversa")["pode_ligar"] is True
+        assert _cadencia(_funil(payload, REPOSICAO_ATACADO),
+                         "em_atencao")["pode_ligar"] is False
+        assert _cadencia(_funil(payload, ATACADO), "em_conversa")["pode_ligar"] is True
 
     def test_repete_ultimo_viaja_no_payload(self):
         with _banco():
             payload = client.get(GET_URL).json()
-        assert _cadencia(payload, "em_atencao")["repete_ultimo"] is True
-        assert _cadencia(payload, "reposicao")["repete_ultimo"] is False
+        assert _cadencia(_funil(payload, REPOSICAO_ATACADO),
+                         "em_atencao")["repete_ultimo"] is True
+        assert _cadencia(_funil(payload, REPOSICAO_ATACADO),
+                         "reposicao")["repete_ultimo"] is False
+
+    def test_gatilho_stage_rotulo_de_em_atencao_e_cliente_ativo_nunca_em_atencao(self):
+        """Armadilha da spec §2: as cadências "reposicao" e "em_atencao" vigiam a
+        MESMA etapa ("Cliente Ativo", key `novo`) — usar o nome da cadência como
+        rótulo da etapa reintroduziria a confusão que funil-primeiro corrige."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        em_atencao = _cadencia(_funil(payload, REPOSICAO_ATACADO), "em_atencao")
+        assert em_atencao["gatilho_stage_key"] == "novo"
+        assert em_atencao["gatilho_stage_rotulo"] == "Cliente Ativo"
+        reposicao = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")
+        assert reposicao["gatilho_stage_rotulo"] == "Cliente Ativo"
 
     def test_migration_nao_aplicada_nao_derruba_o_get(self):
         """A migration roda À MÃO: em produção o endpoint vai encontrar as tabelas
@@ -349,62 +400,59 @@ class TestGetJoao:
         with _banco(erros={"followup_joao_cadencia": erro, "followup_joao_toque": erro}):
             r = client.get(GET_URL)
         assert r.status_code == 200, r.text
-        c = _cadencia(r.json(), "reposicao")
+        payload = r.json()
+        c = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")
         assert c["gatilho_dias"] == 45
         assert c["ativa"] is False
-        assert r.json()["touches"] == build_cadence_definition()["touches"]
+        assert payload["touches"] == build_cadence_definition()["touches"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 3. PUT: grava a sobreposição (merge, nunca replace)
+# 3. PUT: grava a sobreposição de UM (funil, cadência) — merge, nunca replace
 # ═══════════════════════════════════════════════════════════════════════════════
 class TestPutGravacao:
 
-    def test_grava_os_dias_de_um_toque_nas_duas_linhas(self):
-        """Sem `linha` no corpo o `dias` vale para a cadência inteira — os offsets são
-        simétricos entre Atacado e Private Label no código, e a tela edita "o toque 2",
-        não "o toque 2 do Atacado"."""
+    def test_grava_os_dias_de_um_toque_so_no_funil_pedido(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
                                           "toques": {"2": {"dias": 3}}})
         assert r.status_code == 200, r.text
         linhas = b.escritas_em("followup_joao_toque")
-        assert sorted((x["linha"], x["toque"], x["dias"]) for x in linhas) == [
-            (ATACADO, 2, 3), (PRIVATE, 2, 3)]
+        assert [(x["funil"], x["cadencia"], x["toque"], x["dias"]) for x in linhas] == [
+            (ATACADO, "em_conversa", 2, 3)]
 
-    def test_template_exige_a_linha_explicita(self):
-        """O template é específico da linha (o texto do Atacado não serve para Private
-        Label). Gravar o mesmo nome nas duas mandaria o texto errado para metade da
-        base — e ninguém descobriria pela tela."""
+    def test_template_nao_exige_mais_campo_separado_de_linha(self):
+        """O `funil` do corpo já identifica a linha de produto de forma única — não
+        existe mais "informe `linha` porque o template é específico dela"."""
         with _banco() as b:
             r = client.put(PUT_URL, json={
-                "cadencia": "em_conversa",
+                "funil": ATACADO, "cadencia": "em_conversa",
                 "toques": {"2": {"template_name": "joao_conversa_atacado_t2"}},
             })
-        assert r.status_code == 400, r.text
-        assert "linha" in _texto(r).lower()
-        assert b.escritas == []
+        assert r.status_code == 200, r.text
+        linhas = b.escritas_em("followup_joao_toque")
+        assert linhas[0]["template_name"] == "joao_conversa_atacado_t2"
 
-    def test_com_linha_grava_so_naquela_linha(self):
+    def test_grava_so_no_funil_pedido_nao_no_irmao(self):
         with _banco() as b:
             r = client.put(PUT_URL, json={
-                "cadencia": "em_conversa", "linha": ATACADO,
+                "funil": ATACADO, "cadencia": "em_conversa",
                 "toques": {"2": {"template_name": "outro_t2", "dias": 3}},
             })
         assert r.status_code == 200, r.text
         linhas = b.escritas_em("followup_joao_toque")
-        assert [(x["linha"], x["toque"]) for x in linhas] == [(ATACADO, 2)]
+        assert [(x["funil"], x["toque"]) for x in linhas] == [(ATACADO, 2)]
         assert linhas[0]["template_name"] == "outro_t2"
 
     def test_merge_nao_apaga_o_que_ja_estava_gravado(self):
         """O corpo com só `dias` não pode derrubar o `template_name` já configurado —
         é a diferença entre merge e replace, e um upsert ingênuo faz replace."""
         tabelas = {"followup_joao_toque": [
-            _toque("novo", ATACADO, 1, dias=9, template_name="ja_configurado",
+            _toque(ATACADO, "novo", 1, dias=9, template_name="ja_configurado",
                    atualizado_por="joao"),
         ]}
         with _banco(tabelas) as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo", "linha": ATACADO,
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                           "toques": {"1": {"dias": 5}}})
         assert r.status_code == 200, r.text
         gravada = b.escritas_em("followup_joao_toque")[0]
@@ -416,81 +464,84 @@ class TestPutGravacao:
         """Ausente e `null` não são a mesma coisa: ausente é "não mexe", `null` é
         "apaga a sobreposição e volta a valer o código" — é o botão de desfazer."""
         tabelas = {"followup_joao_toque": [
-            _toque("novo", ATACADO, 1, dias=9, template_name="ja_configurado")]}
+            _toque(ATACADO, "novo", 1, dias=9, template_name="ja_configurado")]}
         with _banco(tabelas) as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo", "linha": ATACADO,
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                           "toques": {"1": {"dias": None}}})
         assert r.status_code == 200, r.text
         gravada = b.escritas_em("followup_joao_toque")[0]
         assert gravada["dias"] is None
         assert gravada["template_name"] == "ja_configurado"
-        t1 = _linha(r.json(), ATACADO)["toques"][0]
+        t1 = r.json()["toques"][0]
         assert t1["dias"] == 0          # o valor do código voltou a valer
 
     def test_grava_o_prazo_do_gatilho(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "reposicao", "gatilho_dias": 60})
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "reposicao", "gatilho_dias": 60})
         assert r.status_code == 200, r.text
         assert b.escritas_em("followup_joao_cadencia") == [
-            {"cadencia": "reposicao", "gatilho_dias": 60}]
+            {"funil": REPOSICAO_ATACADO, "cadencia": "reposicao", "gatilho_dias": 60}]
         assert r.json()["gatilho_dias"] == 60
 
     def test_o_upsert_usa_a_chave_primaria_das_tabelas(self):
         """`on_conflict` errado transforma edição em linha duplicada — e a segunda
         linha nunca é lida, então a tela mostra o valor novo e o motor usa o velho."""
         with _banco() as b:
-            client.put(PUT_URL, json={"cadencia": "novo", "gatilho_dias": 3,
-                                      "toques": {"1": {"dias": 1}}})
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                      "gatilho_dias": 3, "toques": {"1": {"dias": 1}}})
         por_tabela = {e["tabela"]: e["on_conflict"] for e in b.escritas}
-        assert por_tabela["followup_joao_cadencia"] == "cadencia"
-        assert por_tabela["followup_joao_toque"] == "cadencia,linha,toque"
+        assert por_tabela["followup_joao_cadencia"] == "funil,cadencia"
+        assert por_tabela["followup_joao_toque"] == "funil,cadencia,toque"
 
     def test_corpo_sem_nada_a_gravar_nao_toca_o_banco(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo"})
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo"})
         assert r.status_code == 200, r.text
         assert b.escritas == []
 
     def test_updated_at_nunca_e_reescrito_a_mao(self):
         """O `updated_at` é do trigger. Reenviar o valor lido faria a coluna congelar
         na data da primeira gravação."""
-        tabelas = {"followup_joao_toque": [_toque("novo", ATACADO, 1, dias=9)]}
+        tabelas = {"followup_joao_toque": [_toque(ATACADO, "novo", 1, dias=9)]}
         with _banco(tabelas) as b:
-            client.put(PUT_URL, json={"cadencia": "novo", "linha": ATACADO,
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                       "toques": {"1": {"dias": 5}}})
         assert "updated_at" not in b.escritas_em("followup_joao_toque")[0]
 
     def test_a_resposta_e_a_cadencia_ja_resolvida(self):
         with _banco():
-            r = client.put(PUT_URL, json={"cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
                                           "toques": {"3": {"dias": 6}}})
         corpo = r.json()
         assert corpo["codigo"] == "em_conversa"
-        assert [l["linha"] for l in corpo["linhas"]] == list(cj.LINHAS)
-        assert _linha(corpo, ATACADO)["toques"][2]["dias"] == 6
+        assert corpo["toques"][2]["dias"] == 6
 
     def test_grava_quem_editou_quando_o_corpo_diz(self):
         with _banco() as b:
-            client.put(PUT_URL, json={"cadencia": "novo", "gatilho_dias": 3,
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                      "gatilho_dias": 3,
                                       "atualizado_por": "joao@canastra"})
         assert b.escritas_em("followup_joao_cadencia")[0]["atualizado_por"] == \
             "joao@canastra"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. PUT: a forma da cadência NÃO é editável (spec §5)
+# 4. PUT: a forma da cadência NÃO é editável, e `funil` é obrigatório (spec §5)
 # ═══════════════════════════════════════════════════════════════════════════════
 class TestPutTravasDeForma:
 
-    @pytest.mark.parametrize("codigo,fora", [("novo", 2), ("em_conversa", 8),
-                                             ("reposicao", 5), ("em_atencao", 2)])
-    def test_sequence_fora_do_intervalo_e_recusada(self, codigo, fora):
+    @pytest.mark.parametrize("funil_codigo,codigo,fora", [
+        (ATACADO, "novo", 2), (ATACADO, "em_conversa", 8),
+        (REPOSICAO_ATACADO, "reposicao", 5), (REPOSICAO_ATACADO, "em_atencao", 2),
+    ])
+    def test_sequence_fora_do_intervalo_e_recusada(self, funil_codigo, codigo, fora):
         """A TRAVA. Sem ela a tela volta a ser um builder: o toque extra é gravado,
         aparece configurado e o motor o ignora em silêncio (`resolver_cadencia`
         descarta sequence que não existe). Mesma regra do CHECK
         `followup_joao_toque_dentro_da_cadencia`."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": codigo,
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "toques": {str(fora): {"dias": 3}}})
         assert r.status_code == 400, r.text
         assert str(fora) in _texto(r)
@@ -498,42 +549,72 @@ class TestPutTravasDeForma:
 
     def test_a_recusa_diz_quais_toques_existem(self):
         with _banco():
-            r = client.put(PUT_URL, json={"cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
                                           "toques": {"9": {"dias": 3}}})
         assert "1" in _texto(r) and "7" in _texto(r)
         assert _problemas(r)[0]["codigo"] == "toque_inexistente"
 
     def test_sequence_zero_ou_negativa_e_recusada(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                           "toques": {"0": {"dias": 1}}})
         assert r.status_code == 400, r.text
         assert b.escritas == []
 
     def test_sequence_que_nao_e_numero_e_recusada(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                           "toques": {"t1": {"dias": 1}}})
         assert r.status_code == 400, r.text
         assert b.escritas == []
 
-    def test_cadencia_desconhecida_e_404(self):
+    def test_funil_ausente_e_404(self):
+        """Não existe mais "aplica nas duas" — `funil` é obrigatório."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "inventada",
+            r = client.put(PUT_URL, json={"cadencia": "novo",
                                           "toques": {"1": {"dias": 1}}})
         assert r.status_code == 404, r.text
         assert b.escritas == []
 
-    def test_linha_desconhecida_e_404(self):
+    def test_funil_desconhecido_e_404(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo", "linha": "varejo",
+            r = client.put(PUT_URL, json={"funil": "inventado", "cadencia": "novo",
                                           "toques": {"1": {"dias": 1}}})
         assert r.status_code == 404, r.text
+        assert "inventado" in r.json()["detail"]
+        assert b.escritas == []
+
+    def test_cadencia_desconhecida_e_404(self):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "inventada",
+                                          "toques": {"1": {"dias": 1}}})
+        assert r.status_code == 404, r.text
+        assert b.escritas == []
+
+    def test_par_funil_cadencia_invalido_nomeia_as_cadencias_daquele_funil(self):
+        """`funil=atacado, cadencia=reposicao` não é um par válido — a recusa nomeia
+        as cadências de "João - Atacado" (novo, em_conversa), não a lista genérica
+        dos 4 códigos, que confundiria mais do que ajudaria (spec §5)."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "reposicao",
+                                          "toques": {"1": {"dias": 1}}})
+        assert r.status_code == 404, r.text
+        detalhe = r.json()["detail"]
+        assert "novo" in detalhe and "em_conversa" in detalhe
+        assert "em_atencao" not in detalhe  # não é cadência de "João - Atacado"
+        assert b.escritas == []
+
+    def test_par_invalido_no_funil_recuperacao_diz_que_nao_tem_cadencia(self):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": RECUPERACAO, "cadencia": "novo",
+                                          "toques": {"1": {"dias": 1}}})
+        assert r.status_code == 404, r.text
+        assert "nenhuma cadência" in r.json()["detail"]
         assert b.escritas == []
 
     def test_dias_negativo_e_recusado(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                           "toques": {"1": {"dias": -1}}})
         assert r.status_code == 400, r.text
         assert b.escritas == []
@@ -542,7 +623,7 @@ class TestPutTravasDeForma:
         """Toque 3 antes do toque 2 não quebra nada visível no banco — aparece lá na
         frente, como o lead recebendo a despedida antes da oferta."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
                                           "toques": {"3": {"dias": 1}}})
         assert r.status_code == 400, r.text
         assert b.escritas == []
@@ -552,13 +633,14 @@ class TestPutTravasDeForma:
         o card no instante em que ele entra na etapa, e a cadência inteira perde o
         sentido de "parado há N dias"."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "reposicao", "gatilho_dias": 0})
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "reposicao", "gatilho_dias": 0})
         assert r.status_code == 400, r.text
         assert b.escritas == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. PUT: a trava de ativação
+# 5. PUT: a trava de ativação — agora escopada a UM (funil, cadência) por vez
 # ═══════════════════════════════════════════════════════════════════════════════
 class TestTravaDeAtivacao:
 
@@ -567,61 +649,79 @@ class TestTravaDeAtivacao:
         Reposição. "Em atenção" nasceu depois do lote e não tem texto aprovado — então
         ligá-la é recusado até alguém configurar o template pela tela."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao", "ativa": True})
         assert r.status_code == 400, r.text
         assert b.escritas == [], "ligou (ou gravou) uma cadência sem template"
         assert {p["codigo"] for p in _problemas(r)} == {"toque_sem_template"}
 
-    def test_a_recusa_nomeia_a_linha_e_a_sequencia_de_cada_toque_sem_template(self):
+    def test_a_recusa_nomeia_o_funil_e_a_sequencia_de_cada_toque_sem_template(self):
         with _banco():
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao", "ativa": True})
         problemas = _problemas(r)
-        assert {(p["linha"], p["sequence"]) for p in problemas} == {
-            (ATACADO, 1), (PRIVATE, 1)}
-        texto = _texto(r)
-        assert "Atacado" in texto and "Private Label" in texto
-        assert "toque 1" in texto
+        assert [(p["funil"], p["cadencia"], p["sequence"]) for p in problemas] == [
+            (REPOSICAO_ATACADO, "em_atencao", 1)]
+        assert "toque 1" in _texto(r)
 
-    def test_a_recusa_olha_as_DUAS_linhas(self):
-        """Metade configurada é o caso perigoso: a tela mostraria o Atacado inteiro
-        verde e o Private Label não receberia nada."""
-        tabelas = {"followup_joao_toque": [
-            _toque("em_atencao", ATACADO, 1, template_name="joao_atencao_atacado_t1")]}
-        templates = {"message_templates": _templates("joao_atencao_atacado_t1")}
-        with _banco({**tabelas, **templates}):
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao", "ativa": True})
-        assert r.status_code == 400, r.text
-        assert [(p["linha"], p["sequence"]) for p in _problemas(r)] == [(PRIVATE, 1)]
-
-    def test_ligar_com_tudo_aprovado_nas_duas_linhas_passa(self):
-        nomes = _todos_os_templates_de("em_conversa")
-        with _banco({"message_templates": _templates(*nomes)}) as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_conversa", "ativa": True})
+    def test_a_recusa_nao_vaza_para_o_funil_irmao(self):
+        """Ativar 'Em atenção' do Reposição Atacado não olha o Reposição Private
+        Label — os dois funis deixaram de estar acoplados (spec §2, decisão 1)."""
+        nome = "joao_atencao_atacado_t1"
+        tabelas = {
+            "followup_joao_toque": [_toque(REPOSICAO_ATACADO, "em_atencao", 1,
+                                           template_name=nome)],
+            "message_templates": _templates(nome),
+        }
+        with _banco(tabelas) as b:
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao", "ativa": True})
         assert r.status_code == 200, r.text
         assert b.escritas_em("followup_joao_cadencia") == [
-            {"cadencia": "em_conversa", "ativa": True}]
+            {"funil": REPOSICAO_ATACADO, "cadencia": "em_atencao", "ativa": True}]
+
+    def test_ligar_com_tudo_aprovado_passa(self):
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        with _banco({"message_templates": _templates(*nomes)}) as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                          "ativa": True})
+        assert r.status_code == 200, r.text
+        assert b.escritas_em("followup_joao_cadencia") == [
+            {"funil": ATACADO, "cadencia": "em_conversa", "ativa": True}]
         assert r.json()["ativa"] is True
+
+    def test_ligar_um_funil_nao_consulta_templates_do_irmao(self):
+        """Ligar 'Em conversa' do Atacado não pede os templates do Private Label —
+        cada funil é uma linha própria de liga/desliga agora."""
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        with _banco({"message_templates": _templates(*nomes)}) as b:
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                      "ativa": True})
+        nomes_privados = _todos_os_templates_de(PRIVATE_LABEL, "em_conversa")
+        assert not (set(nomes_privados) & set(b.nomes_consultados[0]))
 
     def test_template_pendente_bloqueia_e_a_recusa_diz_o_status(self):
         """PENDING existe e está certo — a ação é ESPERAR, e é isso que a mensagem tem
         de dizer. "Não está aprovado" devolve a pessoa para a Meta sem saber o que
         procurar."""
-        nomes = _todos_os_templates_de("novo")
-        linhas = _templates(nomes[0]) + _templates(nomes[1], status="PENDING")
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        linhas = _templates(*nomes[:-1]) + _templates(nomes[-1], status="PENDING")
         with _banco({"message_templates": linhas}) as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                          "ativa": True})
         assert r.status_code == 400, r.text
         assert b.escritas == []
         assert _problemas(r)[0]["codigo"] == "template_nao_aprovado"
         texto = _texto(r)
-        assert nomes[1] in texto and "PENDING" in texto
+        assert nomes[-1] in texto and "PENDING" in texto
         assert "aprovação" in texto.lower()
 
     def test_template_rejeitado_manda_corrigir_e_ressubmeter(self):
-        nomes = _todos_os_templates_de("novo")
-        linhas = _templates(nomes[0]) + _templates(nomes[1], status="REJECTED")
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        linhas = _templates(*nomes[:-1]) + _templates(nomes[-1], status="REJECTED")
         with _banco({"message_templates": linhas}):
-            r = client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                          "ativa": True})
         assert r.status_code == 400, r.text
         assert "REJECTED" in _texto(r)
         assert "submeta" in _texto(r).lower()
@@ -629,29 +729,32 @@ class TestTravaDeAtivacao:
     def test_template_ausente_da_meta_diz_que_ele_nao_existe(self):
         """Ausente pede CRIAR, não esperar: é o estado em que um nome digitado errado
         na tela cai, e dizer "não aprovado" mandaria a pessoa procurar o que não há."""
-        nomes = _todos_os_templates_de("novo")
-        with _banco({"message_templates": _templates(nomes[0])}):
-            r = client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        with _banco({"message_templates": _templates(*nomes[:-1])}):
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                          "ativa": True})
         assert r.status_code == 400, r.text
-        assert nomes[1] in _texto(r)
+        assert nomes[-1] in _texto(r)
         assert "NÃO EXISTE" in _texto(r)
 
     def test_espelho_por_canal_com_um_aprovado_basta(self):
         """`message_templates` tem uma linha-espelho POR CANAL e o sync tem buracos —
         ficar com a última linha reprovaria template que a Meta aprovou. Mesmo critério
         de `campaigns/router.api_activate_campaign`."""
-        nomes = _todos_os_templates_de("novo")
-        linhas = (_templates(nomes[0]) + _templates(nomes[1])
-                  + _templates(nomes[1], status="PENDING"))
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        linhas = (_templates(*nomes[:-1]) + _templates(nomes[-1])
+                  + _templates(nomes[-1], status="PENDING"))
         with _banco({"message_templates": linhas}):
-            r = client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                          "ativa": True})
         assert r.status_code == 200, r.text
 
     def test_mapa_vazio_reprova(self):
         """`{}` é uma RESPOSTA ("a Meta não conhece nenhum desses nomes") e reprova —
         estado inicial de qualquer template que nunca foi submetido."""
         with _banco({"message_templates": []}):
-            r = client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                          "ativa": True})
         assert r.status_code == 400, r.text
         assert "NÃO EXISTE" in _texto(r)
 
@@ -662,17 +765,19 @@ class TestTravaDeAtivacao:
         `if not templates: templates = None`."""
         erro = Exception("timeout")
         with _banco({"followup_joao_toque": []}, erros={"message_templates": erro}) as b:
-            r = client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                          "ativa": True})
         assert r.status_code == 200, r.text
         assert b.escritas_em("followup_joao_cadencia") == [
-            {"cadencia": "novo", "ativa": True}]
+            {"funil": ATACADO, "cadencia": "novo", "ativa": True}]
 
     def test_fail_open_nao_anistia_o_toque_sem_template(self):
         """Oscilação de banco não é anistia para a metade da regra que não depende da
         Meta: toque SEM NOME continua reprovando."""
         erro = Exception("timeout")
         with _banco(erros={"message_templates": erro}) as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao", "ativa": True})
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao", "ativa": True})
         assert r.status_code == 400, r.text
         assert b.escritas == []
 
@@ -680,31 +785,27 @@ class TestTravaDeAtivacao:
         """Desligar tem de funcionar sempre — inclusive (e principalmente) numa
         cadência quebrada."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao", "ativa": False})
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao", "ativa": False})
         assert r.status_code == 200, r.text
         assert b.escritas_em("followup_joao_cadencia") == [
-            {"cadencia": "em_atencao", "ativa": False}]
+            {"funil": REPOSICAO_ATACADO, "cadencia": "em_atencao", "ativa": False}]
 
     def test_gravar_dias_sem_ligar_nao_exige_template(self):
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao",
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao",
                                           "toques": {"1": {"dias": 5}}})
         assert r.status_code == 200, r.text
-        assert len(b.escritas_em("followup_joao_toque")) == 2
+        assert len(b.escritas_em("followup_joao_toque")) == 1
 
     def test_o_template_do_proprio_corpo_conta_na_trava(self):
         """Configurar o template e ligar no MESMO PUT tem de funcionar: a trava olha a
         configuração RESULTANTE, não a que estava no banco antes."""
         nome = "joao_atencao_atacado_t1"
-        outro = "joao_atencao_privatelabel_t1"
-        tabelas = {
-            "followup_joao_toque": [_toque("em_atencao", PRIVATE, 1,
-                                           template_name=outro)],
-            "message_templates": _templates(nome, outro),
-        }
-        with _banco(tabelas) as b:
+        with _banco({"message_templates": _templates(nome)}) as b:
             r = client.put(PUT_URL, json={
-                "cadencia": "em_atencao", "linha": ATACADO, "ativa": True,
+                "funil": REPOSICAO_ATACADO, "cadencia": "em_atencao", "ativa": True,
                 "toques": {"1": {"template_name": nome}},
             })
         assert r.status_code == 200, r.text
@@ -716,19 +817,22 @@ class TestTravaDeAtivacao:
         deixa a configuração num estado que ninguém pediu — e a tela mostra erro em
         cima de dado já alterado."""
         with _banco() as b:
-            r = client.put(PUT_URL, json={"cadencia": "em_atencao", "ativa": True,
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "em_atencao", "ativa": True,
                                           "gatilho_dias": 120,
                                           "toques": {"1": {"dias": 5}}})
         assert r.status_code == 400, r.text
         assert b.escritas == []
 
     def test_a_consulta_a_meta_leva_so_os_templates_da_cadencia(self):
-        nomes = _todos_os_templates_de("novo")
+        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
         with _banco({"message_templates": _templates(*nomes)}) as b:
-            client.put(PUT_URL, json={"cadencia": "novo", "ativa": True})
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+                                      "ativa": True})
         assert b.nomes_consultados == [sorted(nomes)]
 
     def test_nao_consulta_a_meta_quando_nao_esta_ligando(self):
         with _banco({"message_templates": []}) as b:
-            client.put(PUT_URL, json={"cadencia": "novo", "gatilho_dias": 3})
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                      "gatilho_dias": 3})
         assert "message_templates" not in b.tabelas_tocadas

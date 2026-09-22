@@ -1,4 +1,5 @@
-"""API da DEFINIÇÃO das cadências de follow-up — a da ValerIA e as quatro do João.
+"""API da DEFINIÇÃO das cadências de follow-up — a da ValerIA e as dos cinco funis do
+João.
 
 O painel de Follow-up (aba em /campanhas) renderiza a esteira de toques a partir
 deste endpoint, mantendo `follow_up/cadence.py` e `follow_up/cadence_joao.py` como
@@ -19,13 +20,16 @@ definição atual em `{"valeria": ...}` e remover as chaves do topo apagaria a e
 da tela em produção, no mesmo deploy, sem um erro sequer no log.
 
 ──────────────────────────────────────────────────────────────────────────────
-O BANCO SOBREPÕE, O CÓDIGO É A ORIGEM
+FUNIL É O EIXO (spec 2026-09-21) — O BANCO SOBREPÕE, O CÓDIGO É A ORIGEM
 ──────────────────────────────────────────────────────────────────────────────
-`followup_joao_cadencia` e `followup_joao_toque` (migration 20260918) nascem VAZIAS,
-e vazio quer dizer "vale o código". A migration é aplicada À MÃO: até lá as tabelas
-NÃO EXISTEM e o PostgREST responde PGRST205 — por isso toda leitura aqui é
-fail-open para o código. Um GET que quebrasse nesse erro deixaria a aba inteira
-(inclusive a metade da ValerIA) vazia por causa de uma tabela que ainda não existe.
+O João não é mais "cadência → {linha: pipeline}", é "funil → [cadências deste
+funil]" (`cadence_joao.FUNIS`). `followup_joao_cadencia` e `followup_joao_toque`
+(migration 20260918, editada em 2026-09-21 para a chave `funil, cadencia[, toque]`)
+nascem VAZIAS, e vazio quer dizer "vale o código". A migration é aplicada À MÃO: até
+lá as tabelas NÃO EXISTEM e o PostgREST responde PGRST205 — por isso toda leitura
+aqui é fail-open para o código. Um GET que quebrasse nesse erro deixaria a aba
+inteira (inclusive a metade da ValerIA) vazia por causa de uma tabela que ainda não
+existe.
 
 A GRAVAÇÃO é MERGE, nunca replace: o corpo com só `dias` não pode derrubar o
 `template_name` já configurado. E a FORMA da cadência não é editável — `sequence`
@@ -34,16 +38,20 @@ fora do que o código declara é recusada, mesma regra do CHECK
 ser um builder: o toque extra é gravado, aparece configurado e o motor o ignora em
 silêncio (`resolver_cadencia` descarta sequence que não existe).
 
+Cada PUT é sempre UM funil e UMA cadência — não existe mais "aplicar nas duas
+linhas" (Atacado e Private Label deixaram de estar acoplados, spec §2 decisão 1):
+`funil` é campo OBRIGATÓRIO do corpo.
+
 ──────────────────────────────────────────────────────────────────────────────
 A TRAVA DE ATIVAÇÃO
 ──────────────────────────────────────────────────────────────────────────────
-Ligar exige template com status APPROVED em TODO toque das DUAS linhas. É a guarda
-mais cara do projeto, e a razão é a mesma de `campaigns/validation.py` (regra 12):
-template que não envia não impede a MATRÍCULA, só o envio — a cadência inscreve o
-card, não manda nada e caminha até o fim, registrando "não teve resposta" para quem
-nunca foi contatado. A mensagem diz NOME e STATUS de cada um porque a ação muda com
-o status: PENDING é esperar, REJECTED é corrigir e ressubmeter, e ausente da Meta é
-criar do zero.
+Ligar exige template com status APPROVED em TODO toque do par (funil, cadência). É
+a guarda mais cara do projeto, e a razão é a mesma de `campaigns/validation.py`
+(regra 12): template que não envia não impede a MATRÍCULA, só o envio — a cadência
+inscreve o card, não manda nada e caminha até o fim, registrando "não teve
+resposta" para quem nunca foi contatado. A mensagem diz NOME e STATUS de cada um
+porque a ação muda com o status: PENDING é esperar, REJECTED é corrigir e
+ressubmeter, e ausente da Meta é criar do zero.
 
 "Em atenção" hoje não tem NENHUM template (os 24 aprovados em 13/09/2026 cobrem só
 Novo + Em conversa + Reposição), então ligá-la é sempre recusado — e isso é uma
@@ -132,16 +140,11 @@ def build_cadence_definition() -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# A definição do João — código + sobreposição do banco
+# A definição do João — código + sobreposição do banco, funil como eixo
 # ═══════════════════════════════════════════════════════════════════════════════
 _TABELA_CADENCIA = "followup_joao_cadencia"
 _TABELA_TOQUE = "followup_joao_toque"
 _TABELA_TEMPLATES = "message_templates"
-
-_ROTULO_DA_LINHA: Mapping[str, str] = {
-    cj.LINHA_ATACADO: "Atacado",
-    cj.LINHA_PRIVATE_LABEL: "Private Label",
-}
 
 # `message_templates.status`: o sync local grava minúsculo, o payload cru da Meta vem
 # 'APPROVED'. Comparamos normalizado, como `campaigns/validation.py`.
@@ -174,15 +177,19 @@ _ENVIO_MUDO = (
 class Problema:
     """Um motivo para o PUT ser recusado.
 
-    `linha` e `sequence` viajam junto com a mensagem porque a tela destaca o toque
+    `funil` e `sequence` viajam junto com a mensagem porque a tela destaca o toque
     culpado — um 400 com string solta obrigaria o frontend a adivinhar qual é. O
     `codigo` existe para ela agrupar/estilizar; o texto é o que a pessoa lê.
+
+    Campo `funil` (antes `linha`): cada PUT é sempre um funil só (spec 2026-09-21),
+    então o problema aponta o funil do próprio pedido — não mais uma entre duas
+    linhas acopladas.
     """
 
     codigo: str
     mensagem: str
     cadencia: str | None = None
-    linha: str | None = None
+    funil: str | None = None
     sequence: int | None = None
 
 
@@ -198,7 +205,8 @@ def _supabase():
     return get_supabase()
 
 
-def _ler_linhas(tabela: str, codigo: str | None = None) -> list[dict]:
+def _ler_linhas(tabela: str, funil_codigo: str | None = None,
+                codigo: str | None = None) -> list[dict]:
     """As linhas de uma tabela de sobreposição — [] quando não dá para ler.
 
     A migration 20260918 é aplicada À MÃO: até que alguém a rode, estas tabelas não
@@ -207,6 +215,8 @@ def _ler_linhas(tabela: str, codigo: str | None = None) -> list[dict]:
     """
     try:
         consulta = _supabase().table(tabela).select("*")
+        if funil_codigo:
+            consulta = consulta.eq("funil", funil_codigo)
         if codigo:
             consulta = consulta.eq("cadencia", codigo)
         return list(consulta.execute().data or [])
@@ -219,19 +229,22 @@ def _ler_linhas(tabela: str, codigo: str | None = None) -> list[dict]:
         return []
 
 
-def _sobreposicao(codigo: str | None = None) -> tuple[dict, dict]:
-    """(por cadência, por toque) — as duas tabelas indexadas pela chave primária."""
-    por_cadencia: dict[str, dict] = {}
-    for linha in _ler_linhas(_TABELA_CADENCIA, codigo):
-        chave = str(linha.get("cadencia") or "")
-        if chave:
-            por_cadencia[chave] = dict(linha)
+def _sobreposicao(funil_codigo: str | None = None,
+                  codigo: str | None = None) -> tuple[dict, dict]:
+    """(por cadência, por toque) — as duas tabelas indexadas pela chave primária
+    NOVA (`funil, cadencia[, toque]`, spec 2026-09-21 §4)."""
+    por_cadencia: dict[tuple[str, str], dict] = {}
+    for linha in _ler_linhas(_TABELA_CADENCIA, funil_codigo, codigo):
+        chave_funil = str(linha.get("funil") or "")
+        chave_cad = str(linha.get("cadencia") or "")
+        if chave_funil and chave_cad:
+            por_cadencia[(chave_funil, chave_cad)] = dict(linha)
 
     por_toque: dict[tuple[str, str, int], dict] = {}
-    for linha in _ler_linhas(_TABELA_TOQUE, codigo):
+    for linha in _ler_linhas(_TABELA_TOQUE, funil_codigo, codigo):
         try:
-            chave_toque = (str(linha.get("cadencia") or ""),
-                           str(linha.get("linha") or ""),
+            chave_toque = (str(linha.get("funil") or ""),
+                           str(linha.get("cadencia") or ""),
                            int(linha.get("toque")))
         except (TypeError, ValueError):
             continue
@@ -239,58 +252,40 @@ def _sobreposicao(codigo: str | None = None) -> tuple[dict, dict]:
     return por_cadencia, por_toque
 
 
-def _overrides(codigo: str, linha: str, por_cadencia: dict, por_toque: dict) -> dict:
+def _overrides(funil_codigo: str, codigo: str, por_cadencia: dict,
+               por_toque: dict) -> dict:
     """A sobreposição no formato que `cadence_joao.resolver` já sabe ler.
 
     Uma segunda forma de override seria uma segunda regra de precedência, e as duas
     divergiriam no primeiro ajuste.
     """
-    da_cadencia = por_cadencia.get(codigo) or {}
+    da_cadencia = por_cadencia.get((funil_codigo, codigo)) or {}
     return {
         "gatilho_dias": da_cadencia.get("gatilho_dias"),
         "ativa": da_cadencia.get("ativa"),
         "toques": {
             seq: {"dias": r.get("dias"), "template_name": r.get("template_name")}
-            for (c, l, seq), r in por_toque.items() if c == codigo and l == linha
+            for (f, c, seq), r in por_toque.items() if f == funil_codigo and c == codigo
         },
     }
 
 
-def _cadencia_payload(codigo: str, por_cadencia: dict, por_toque: dict) -> dict:
-    """Uma cadência RESOLVIDA (o efetivo + o que o código manda por baixo).
+def _cadencia_payload(funil_codigo: str, cadencia: cj.Cadencia, por_cadencia: dict,
+                      por_toque: dict) -> dict:
+    """Uma cadência RESOLVIDA de UM funil (o efetivo + o que o código manda por
+    baixo).
 
     `*_codigo` viaja junto porque a tela precisa mostrar "padrão 45" ao lado do 60
     gravado — sem isso ninguém descobre o que a configuração mudou nem como voltar.
+    `gatilho_stage_rotulo` vem SEMPRE de `cadencia` (o código de `cadence_joao.py`),
+    nunca do banco — é o rótulo hardcoded que a decisão 2 da spec 2026-09-21 exige.
     """
-    cadencia = cj.CADENCIAS[codigo]
-    linhas: list[dict] = []
-    sem_template = 0
+    ov = _overrides(funil_codigo, cadencia.codigo, por_cadencia, por_toque)
+    do_codigo = cadencia.touches
+    resolvidos = cj.resolver_cadencia(funil_codigo, cadencia.codigo, ov)
+    faltando = list(cj.toques_sem_template(funil_codigo, cadencia.codigo, ov))
 
-    for nome_linha in cj.LINHAS:
-        ov = _overrides(codigo, nome_linha, por_cadencia, por_toque)
-        do_codigo = cadencia.linhas[nome_linha].touches
-        resolvidos = cj.resolver_cadencia(codigo, nome_linha, ov)
-        faltando = list(cj.toques_sem_template(codigo, nome_linha, ov))
-        sem_template += len(faltando)
-        linhas.append({
-            "linha": nome_linha,
-            "rotulo": _ROTULO_DA_LINHA[nome_linha],
-            "pipeline_id": cadencia.linhas[nome_linha].pipeline_id,
-            "toques": [
-                {
-                    "sequence": efetivo.sequence,
-                    "dias": efetivo.offset.days,
-                    "dias_codigo": original.offset.days,
-                    "template_name": efetivo.template_name,
-                    "template_name_codigo": original.template_name,
-                    "aceita_adiamento": efetivo.aceita_adiamento,
-                }
-                for efetivo, original in zip(resolvidos, do_codigo)
-            ],
-            "toques_sem_template": faltando,
-        })
-
-    da_cadencia = por_cadencia.get(codigo) or {}
+    da_cadencia = por_cadencia.get((funil_codigo, cadencia.codigo)) or {}
     gatilho_dias = da_cadencia.get("gatilho_dias")
     ativa = da_cadencia.get("ativa")
     return {
@@ -298,6 +293,7 @@ def _cadencia_payload(codigo: str, por_cadencia: dict, por_toque: dict) -> dict:
         "rotulo": cadencia.rotulo,
         "job_type": cadencia.job_type,
         "gatilho_stage_key": cadencia.gatilho_stage_key,
+        "gatilho_stage_rotulo": cadencia.gatilho_stage_rotulo,
         "gatilho_dias": cadencia.gatilho_dias if gatilho_dias is None else gatilho_dias,
         "gatilho_dias_codigo": cadencia.gatilho_dias,
         "ativa": cadencia.ativa if ativa is None else bool(ativa),
@@ -305,8 +301,31 @@ def _cadencia_payload(codigo: str, por_cadencia: dict, por_toque: dict) -> dict:
         # Só a metade que NÃO depende da Meta: "todo toque tem NOME de template". O
         # status APPROVED é conferido na hora de LIGAR, que é quando há uma ação
         # humana esperando a resposta.
-        "pode_ligar": sem_template == 0,
-        "linhas": linhas,
+        "pode_ligar": not faltando,
+        "toques": [
+            {
+                "sequence": efetivo.sequence,
+                "dias": efetivo.offset.days,
+                "dias_codigo": original.offset.days,
+                "template_name": efetivo.template_name,
+                "template_name_codigo": original.template_name,
+                "aceita_adiamento": efetivo.aceita_adiamento,
+            }
+            for efetivo, original in zip(resolvidos, do_codigo)
+        ],
+        "toques_sem_template": faltando,
+    }
+
+
+def _funil_payload(f: cj.Funil, por_cadencia: dict, por_toque: dict) -> dict:
+    """Um funil e as cadências resolvidas dele — `[]` para "recuperacao" (espaço
+    reservado, spec 2026-09-21 §1)."""
+    return {
+        "codigo": f.codigo,
+        "rotulo": f.rotulo,
+        "pipeline_id": f.pipeline_id,
+        "cadencias": [_cadencia_payload(f.codigo, c, por_cadencia, por_toque)
+                     for c in f.cadencias],
     }
 
 
@@ -314,8 +333,7 @@ def build_joao_definition(por_cadencia: dict | None = None,
                           por_toque: dict | None = None) -> dict:
     if por_cadencia is None or por_toque is None:
         por_cadencia, por_toque = _sobreposicao()
-    return {"cadencias": [_cadencia_payload(c, por_cadencia, por_toque)
-                          for c in cj.CODIGOS]}
+    return {"funis": [_funil_payload(f, por_cadencia, por_toque) for f in cj.FUNIS]}
 
 
 @router.get("/definition")
@@ -326,10 +344,10 @@ async def get_cadence_definition() -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PUT: grava a sobreposição
+# PUT: grava a sobreposição de UM (funil, cadência)
 # ═══════════════════════════════════════════════════════════════════════════════
 def _toques_validos(cadencia: cj.Cadencia) -> list[int]:
-    return sorted({t.sequence for l in cadencia.linhas.values() for t in l.touches})
+    return sorted(t.sequence for t in cadencia.touches)
 
 
 def _descricao_dos_toques(validos: list[int]) -> str:
@@ -348,10 +366,6 @@ def _toque_inexistente(cadencia: cj.Cadencia, pedido: Any,
         f"toque, nunca a forma da cadência.",
         cadencia=cadencia.codigo,
     )
-
-
-def _ident(linha: str, sequence: int) -> str:
-    return f"O toque {sequence} da linha {_ROTULO_DA_LINHA.get(linha, linha)}"
 
 
 def _status_dos_templates(nomes: list[str]) -> dict[str, str] | None:
@@ -389,7 +403,7 @@ def _status_dos_templates(nomes: list[str]) -> dict[str, str] | None:
     return mapa
 
 
-def _problema_de_template(codigo: str, linha: str, sequence: int, nome: str,
+def _problema_de_template(funil_codigo: str, codigo: str, sequence: int, nome: str,
                           status: dict[str, str]) -> list[Problema]:
     """As três situações que um conjunto de aprovados fundiria numa só.
 
@@ -400,11 +414,11 @@ def _problema_de_template(codigo: str, linha: str, sequence: int, nome: str,
     if nome not in status:
         return [Problema(
             "template_nao_aprovado",
-            f"{_ident(linha, sequence)} usa o template `{nome}`, que NÃO EXISTE na "
-            f"Meta — nunca foi submetido, ou foi criado com outro nome. {_ENVIO_MUDO} "
-            f"Crie o template com esse nome exato, espere a aprovação e ligue a "
-            f"cadência depois.",
-            cadencia=codigo, linha=linha, sequence=sequence,
+            f"O toque {sequence} usa o template `{nome}`, que NÃO EXISTE na Meta — "
+            f"nunca foi submetido, ou foi criado com outro nome. {_ENVIO_MUDO} Crie "
+            f"o template com esse nome exato, espere a aprovação e ligue a cadência "
+            f"depois.",
+            cadencia=codigo, funil=funil_codigo, sequence=sequence,
         )]
 
     bruto = str(status[nome] or "")
@@ -415,37 +429,36 @@ def _problema_de_template(codigo: str, linha: str, sequence: int, nome: str,
     como_esta = f"está {bruto} na Meta" if bruto else "está sem status na Meta"
     return [Problema(
         "template_nao_aprovado",
-        f"{_ident(linha, sequence)} usa o template `{nome}`, que {como_esta}. "
+        f"O toque {sequence} usa o template `{nome}`, que {como_esta}. "
         f"{_ENVIO_MUDO} {acao}",
-        cadencia=codigo, linha=linha, sequence=sequence,
+        cadencia=codigo, funil=funil_codigo, sequence=sequence,
     )]
 
 
-def _problemas_de_ativacao(codigo: str, por_cadencia: dict,
+def _problemas_de_ativacao(funil_codigo: str, codigo: str, por_cadencia: dict,
                            por_toque: dict) -> list[Problema]:
-    """A trava: template APROVADO em todo toque das DUAS linhas.
+    """A trava: template APROVADO em todo toque do par (funil, cadência).
 
     Olha a configuração RESULTANTE (banco + o que este PUT grava), não a que estava
     no banco antes — configurar o template e ligar no MESMO PUT tem de funcionar.
-    Metade configurada é o caso perigoso: a tela mostraria o Atacado inteiro verde e
-    o Private Label não receberia nada.
+    Escopada a UM funil por vez (spec 2026-09-21): Atacado e Private Label deixaram
+    de estar acoplados, então ligar um não depende mais do outro.
     """
     problemas: list[Problema] = []
-    onde: dict[str, list[tuple[str, int]]] = {}
+    onde: dict[str, list[int]] = {}
 
-    for linha in cj.LINHAS:
-        ov = _overrides(codigo, linha, por_cadencia, por_toque)
-        for sequence in cj.toques_sem_template(codigo, linha, ov):
-            problemas.append(Problema(
-                "toque_sem_template",
-                f"{_ident(linha, sequence)} não tem template configurado. "
-                f"{_ENVIO_MUDO} Escolha um template aprovado para esse toque antes "
-                f"de ligar a cadência.",
-                cadencia=codigo, linha=linha, sequence=sequence,
-            ))
-        for toque in cj.resolver_cadencia(codigo, linha, ov):
-            if toque.template_name:
-                onde.setdefault(toque.template_name, []).append((linha, toque.sequence))
+    ov = _overrides(funil_codigo, codigo, por_cadencia, por_toque)
+    for sequence in cj.toques_sem_template(funil_codigo, codigo, ov):
+        problemas.append(Problema(
+            "toque_sem_template",
+            f"O toque {sequence} não tem template configurado. {_ENVIO_MUDO} "
+            f"Escolha um template aprovado para esse toque antes de ligar a "
+            f"cadência.",
+            cadencia=codigo, funil=funil_codigo, sequence=sequence,
+        ))
+    for toque in cj.resolver_cadencia(funil_codigo, codigo, ov):
+        if toque.template_name:
+            onde.setdefault(toque.template_name, []).append(toque.sequence)
 
     if not onde:
         return problemas
@@ -457,18 +470,26 @@ def _problemas_de_ativacao(codigo: str, por_cadencia: dict,
         return problemas
 
     for nome in sorted(onde):
-        for linha, sequence in onde[nome]:
+        for sequence in onde[nome]:
             problemas.extend(
-                _problema_de_template(codigo, linha, sequence, nome, status))
+                _problema_de_template(funil_codigo, codigo, sequence, nome, status))
     return problemas
 
 
 @router.put("/joao")
 async def put_joao_definition(request: Request) -> dict:
-    """Grava a sobreposição de UMA cadência do João e devolve ela já resolvida.
+    """Grava a sobreposição de UM par (funil, cadência) do João e devolve ele já
+    resolvido.
 
-    Corpo: `{cadencia, linha?, gatilho_dias?, ativa?, atualizado_por?,
-             toques: {sequence: {dias?, template_name?}}}`.
+    Corpo: `{funil, cadencia, gatilho_dias?, ativa?, atualizado_por?,
+             toques?: {sequence: {dias?, template_name?}}}`.
+
+    `funil` é OBRIGATÓRIO (spec 2026-09-21 §5) — não existe mais "aplicar nas duas
+    linhas": cada funil tem seu próprio liga/desliga e seu próprio prazo de
+    gatilho. `funil` ausente ou fora de `cj.FUNIL_CODIGOS` é 404. Um par
+    `(funil, cadencia)` que não existe (ex. `funil=atacado, cadencia=reposicao`) é
+    404 nomeando as cadências VÁLIDAS DAQUELE funil, não a lista genérica de 4
+    códigos — a lista genérica confundiria mais do que ajudaria.
 
     AUSENTE e `null` não são a mesma coisa: ausente é "não mexe", `null` é "apaga a
     sobreposição e volta a valer o código" — é o botão de desfazer da tela.
@@ -480,25 +501,31 @@ async def put_joao_definition(request: Request) -> dict:
     if not isinstance(corpo, dict):
         raise _recusa([Problema("corpo_invalido", "O corpo precisa ser um objeto.")])
 
-    codigo = str(corpo.get("cadencia") or "").strip()
-    cadencia = cj.CADENCIAS.get(codigo)
-    if cadencia is None:
+    funil_codigo = str(corpo.get("funil") or "").strip()
+    f = cj.funil(funil_codigo)
+    if f is None:
         raise HTTPException(
             404,
-            f"cadência '{codigo}' não existe — as do João são "
-            f"{', '.join(cj.CODIGOS)}.",
+            f"funil '{funil_codigo}' não existe — os do João são "
+            f"{', '.join(cj.FUNIL_CODIGOS)}.",
         )
 
-    linha_pedida = corpo.get("linha")
-    if linha_pedida is not None:
-        linha_pedida = str(linha_pedida).strip()
-        if linha_pedida not in cj.LINHAS:
+    codigo = str(corpo.get("cadencia") or "").strip()
+    cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+    if cadencia is None:
+        validas = [c.codigo for c in f.cadencias]
+        if validas:
             raise HTTPException(
                 404,
-                f"linha '{linha_pedida}' não existe — as do João são "
-                f"{', '.join(cj.LINHAS)}.",
+                f"cadência '{codigo}' não existe em \"{f.rotulo}\" — as cadências "
+                f"desse funil são {', '.join(validas)}.",
             )
-    alvos: tuple[str, ...] = (linha_pedida,) if linha_pedida else tuple(cj.LINHAS)
+        raise HTTPException(
+            404,
+            f"cadência '{codigo}' não existe em \"{f.rotulo}\" — esse funil ainda "
+            f"não tem nenhuma cadência configurada.",
+        )
+
     atualizado_por = corpo.get("atualizado_por")
     atualizado_por = str(atualizado_por).strip() if atualizado_por else None
 
@@ -510,7 +537,7 @@ async def put_joao_definition(request: Request) -> dict:
         problemas.append(Problema(
             "toques_invalidos",
             "`toques` precisa ser um objeto {sequence: {dias, template_name}}.",
-            cadencia=codigo,
+            cadencia=codigo, funil=funil_codigo,
         ))
         bruto = {}
 
@@ -529,7 +556,7 @@ async def put_joao_definition(request: Request) -> dict:
                 "toque_invalido",
                 f"O toque {sequence} precisa ser um objeto com `dias` e/ou "
                 f"`template_name`.",
-                cadencia=codigo, sequence=sequence,
+                cadencia=codigo, funil=funil_codigo, sequence=sequence,
             ))
             continue
 
@@ -542,23 +569,11 @@ async def put_joao_definition(request: Request) -> dict:
                     "dias_invalido",
                     f"O toque {sequence} recebeu `dias` que não é um número inteiro "
                     f"({dias!r}).",
-                    cadencia=codigo, sequence=sequence,
+                    cadencia=codigo, funil=funil_codigo, sequence=sequence,
                 ))
                 continue
             campos["dias"] = dias
         if "template_name" in valor:
-            if not linha_pedida:
-                # O texto do Atacado não serve para Private Label: gravar o mesmo
-                # nome nas duas mandaria a mensagem errada para metade da base, e
-                # ninguém descobriria pela tela.
-                problemas.append(Problema(
-                    "linha_obrigatoria",
-                    f"O toque {sequence} pede `template_name`, mas o corpo não diz a "
-                    f"linha. O template é específico da linha — informe `linha` "
-                    f"(\"{cj.LINHA_ATACADO}\" ou \"{cj.LINHA_PRIVATE_LABEL}\").",
-                    cadencia=codigo, sequence=sequence,
-                ))
-                continue
             nome = valor["template_name"]
             nome = str(nome).strip() if nome is not None else None
             campos["template_name"] = nome or None
@@ -576,7 +591,7 @@ async def put_joao_definition(request: Request) -> dict:
                 "gatilho_invalido",
                 f"`gatilho_dias` precisa ser um inteiro de 1 dia para cima (veio "
                 f"{gatilho_dias!r}).",
-                cadencia=codigo,
+                cadencia=codigo, funil=funil_codigo,
             ))
 
     grava_ativa = "ativa" in corpo
@@ -588,26 +603,26 @@ async def put_joao_definition(request: Request) -> dict:
         raise _recusa(problemas)
 
     # ── 2. O MERGE: banco + corpo, em memória, ANTES de gravar ────────────────
-    por_cadencia, por_toque = _sobreposicao(codigo)
+    por_cadencia, por_toque = _sobreposicao(funil_codigo, codigo)
 
     novos_toques: list[dict] = []
-    for linha in alvos:
-        for sequence, campos in sorted(pedidos.items()):
-            atual = dict(por_toque.get((codigo, linha, sequence)) or {})
-            # `updated_at` é do trigger: reenviar o valor lido congelaria a coluna na
-            # data da primeira gravação.
-            atual.pop("updated_at", None)
-            atual.update({"cadencia": codigo, "linha": linha, "toque": sequence})
-            atual.update(campos)
-            if atualizado_por:
-                atual["atualizado_por"] = atualizado_por
-            novos_toques.append(atual)
-            por_toque[(codigo, linha, sequence)] = atual
+    for sequence, campos in sorted(pedidos.items()):
+        atual = dict(por_toque.get((funil_codigo, codigo, sequence)) or {})
+        # `updated_at` é do trigger: reenviar o valor lido congelaria a coluna na
+        # data da primeira gravação.
+        atual.pop("updated_at", None)
+        atual.update({"funil": funil_codigo, "cadencia": codigo, "toque": sequence})
+        atual.update(campos)
+        if atualizado_por:
+            atual["atualizado_por"] = atualizado_por
+        novos_toques.append(atual)
+        por_toque[(funil_codigo, codigo, sequence)] = atual
 
     nova_cadencia: dict | None = None
     if grava_gatilho or grava_ativa:
-        atual = dict(por_cadencia.get(codigo) or {})
+        atual = dict(por_cadencia.get((funil_codigo, codigo)) or {})
         atual.pop("updated_at", None)
+        atual["funil"] = funil_codigo
         atual["cadencia"] = codigo
         if grava_gatilho:
             atual["gatilho_dias"] = gatilho_dias
@@ -616,23 +631,23 @@ async def put_joao_definition(request: Request) -> dict:
         if atualizado_por:
             atual["atualizado_por"] = atualizado_por
         nova_cadencia = atual
-        por_cadencia[codigo] = atual
+        por_cadencia[(funil_codigo, codigo)] = atual
 
     # ── 3. As regras que só a configuração RESULTANTE responde ────────────────
     if pedidos:
-        for linha in alvos:
-            ov = _overrides(codigo, linha, por_cadencia, por_toque)
-            for texto in cj.validar_toques(cj.resolver_cadencia(codigo, linha, ov)):
-                problemas.append(Problema(
-                    "dias_invalido",
-                    f"Linha {_ROTULO_DA_LINHA[linha]}: {texto}. Ordem invertida não "
-                    f"quebra nada visível no banco — aparece lá na frente, como o "
-                    f"lead recebendo a despedida antes da oferta.",
-                    cadencia=codigo, linha=linha,
-                ))
+        ov = _overrides(funil_codigo, codigo, por_cadencia, por_toque)
+        for texto in cj.validar_toques(cj.resolver_cadencia(funil_codigo, codigo, ov)):
+            problemas.append(Problema(
+                "dias_invalido",
+                f"{texto}. Ordem invertida não quebra nada visível no banco — "
+                f"aparece lá na frente, como o lead recebendo a despedida antes da "
+                f"oferta.",
+                cadencia=codigo, funil=funil_codigo,
+            ))
 
     if grava_ativa and ativa is True:
-        problemas.extend(_problemas_de_ativacao(codigo, por_cadencia, por_toque))
+        problemas.extend(
+            _problemas_de_ativacao(funil_codigo, codigo, por_cadencia, por_toque))
 
     # Recusa não grava NADA — nem o gatilho, nem os dias, nem o `ativa`. Gravar
     # metade deixaria a configuração num estado que ninguém pediu, com a tela
@@ -645,9 +660,9 @@ async def put_joao_definition(request: Request) -> dict:
         sb = _supabase()
         if nova_cadencia:
             sb.table(_TABELA_CADENCIA).upsert(
-                [nova_cadencia], on_conflict="cadencia").execute()
+                [nova_cadencia], on_conflict="funil,cadencia").execute()
         if novos_toques:
             sb.table(_TABELA_TOQUE).upsert(
-                novos_toques, on_conflict="cadencia,linha,toque").execute()
+                novos_toques, on_conflict="funil,cadencia,toque").execute()
 
-    return _cadencia_payload(codigo, por_cadencia, por_toque)
+    return _cadencia_payload(funil_codigo, cadencia, por_cadencia, por_toque)
