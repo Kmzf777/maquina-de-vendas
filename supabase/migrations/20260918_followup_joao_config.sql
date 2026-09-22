@@ -6,14 +6,31 @@
 --
 -- ── O QUE FAZ ───────────────────────────────────────────────────────────────
 -- Cria as DUAS tabelas de sobreposicao da configuracao das cadencias de follow-up do
--- vendedor Joao. Spec: docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md
--- (§5). A definicao continua vivendo no codigo (`app/follow_up/cadence_joao.py`); o
--- banco so sobrepoe o que o dono do funil tem direito de editar.
+-- vendedor Joao, chaveadas por FUNIL (nao por "linha" generica). Spec:
+-- docs/superpowers/specs/2026-09-21-followup-funil-por-funil-design.md (§4), que
+-- reformula docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md (§5) para
+-- funil-primeiro. A definicao continua vivendo no codigo
+-- (`app/follow_up/cadence_joao.py`); o banco so sobrepoe o que o dono do funil tem
+-- direito de editar.
 --
---   followup_joao_cadencia   cadencia                 -> gatilho_dias, ativa
---   followup_joao_toque      (cadencia, linha, toque) -> dias, template_name
+--   followup_joao_cadencia   (funil, cadencia)        -> gatilho_dias, ativa
+--   followup_joao_toque      (funil, cadencia, toque) -> dias, template_name
 --
--- ── POR QUE ─────────────────────────────────────────────────────────────────
+-- ── POR QUE FUNIL, E NAO "LINHA" ────────────────────────────────────────────
+-- A chave antiga era so `cadencia`, com uma "linha" generica (`atacado` /
+-- `private_label`) dentro da tabela de toque. Essa string colidia de significado
+-- entre cadencias diferentes: "atacado" apontava para o funil `Joao - Atacado` em
+-- Novo/Em conversa, e para `Joao - Reposicao Atacado` em Reposicao/Em atencao — dois
+-- pipelines DIFERENTES atras da mesma palavra. `funil` e o codigo estavel de UM dos
+-- cinco funis (`atacado`, `private_label`, `reposicao_atacado`,
+-- `reposicao_private_label`, `recuperacao`) — nunca ambiguo.
+--
+-- Consequencia direta: cada FUNIL agora tem seu proprio liga/desliga e seu proprio
+-- prazo de gatilho em `followup_joao_cadencia`. Antes uma linha so (chave `cadencia`)
+-- ligava/desligava Atacado e Private Label ao mesmo tempo; isso deixou de existir —
+-- nao ha mais "as duas linhas" para tratar em conjunto.
+--
+-- ── POR QUE (as tabelas em si) ──────────────────────────────────────────────
 -- Ata da reuniao de 10/09/2026, 33:28: "45 dias, mas opcao do Joao editar o numero de
 -- dias." O caminho anterior (as cadencias como campanhas do builder) nunca entregou
 -- isso, e o caminho oposto — deixar tudo no codigo — obrigaria um deploy para cada
@@ -34,7 +51,10 @@
 -- `followup_joao_toque_dentro_da_cadencia`: cada cadencia so aceita os numeros de
 -- toque que ela realmente tem (Novo 1, Em conversa 1-7, Reposicao 1-4, Em atencao 1).
 -- Sem ele, um INSERT com toque=9 seria aceito pelo banco e ignorado em silencio pelo
--- codigo — configuracao que a tela mostra e o motor nao executa.
+-- codigo — configuracao que a tela mostra e o motor nao executa. Do mesmo jeito, o
+-- CHECK `followup_joao_cadencia_par_valido` so aceita os pares (funil, cadencia) que
+-- `cadence_joao.FUNIS` realmente declara — `recuperacao` nao aceita NENHUM par, porque
+-- ainda nao tem cadencia nenhuma (zero cadencia = zero linha aceita).
 --
 -- ── O QUE ESTA MIGRATION NAO TOCA ──────────────────────────────────────────
 -- Nada do que ja existe. Em especial, nao encosta na tabela de jobs do follow-up nem
@@ -42,32 +62,42 @@
 -- producao (8.140 jobs na historia) e nao pode ser afetado por este ramo.
 --
 -- ── ESTADO INICIAL ─────────────────────────────────────────────────────────
--- Tudo nasce DESLIGADO (spec §7): sem linha em `followup_joao_cadencia`, `ativa` cai
--- no default do codigo, que e false nas quatro cadencias. Medido em 16/09/2026: no
--- instante em que uma cadencia liga, 888 cards ficam elegiveis de uma vez.
+-- Tudo nasce DESLIGADO: sem linha em `followup_joao_cadencia`, `ativa` cai no default
+-- do codigo, que e false em todas as cadencias. Medido em 16/09/2026: no instante em
+-- que uma cadencia liga, 888 cards ficam elegiveis de uma vez.
 --
 -- Reexecutar e seguro: tabelas com IF NOT EXISTS, policies recriadas com DROP antes,
 -- trigger idempotente. Nenhuma instrucao apaga ou altera linha existente.
 
 -- ===========================================================================
--- 1. followup_joao_cadencia — o que e editavel POR CADENCIA
+-- 1. followup_joao_cadencia — o que e editavel POR (FUNIL, CADENCIA)
 -- ===========================================================================
--- Uma linha por cadencia (nao por linha de negocio): o prazo do gatilho e o mesmo nas
--- duas linhas (Atacado e Private Label), e ligar uma cadencia liga o desenho inteiro.
--- Ligar so metade seria uma quinta alavanca, fora do que o spec §5 autoriza.
+-- Uma linha por (funil, cadencia): o prazo do gatilho e o liga/desliga sao proprios
+-- de CADA FUNIL — Atacado e Private Label deixaram de estar acoplados (ver "POR QUE
+-- FUNIL" acima). Ligar a Reposicao do Atacado nao liga a do Private Label.
 --
 -- `gatilho_dias` e `ativa` sao NULLABLE porque NULL e "nao sobreposto", nunca "false".
 -- Um NOT NULL DEFAULT false aqui faria a ausencia de configuracao ser indistinguivel
 -- de um desligamento deliberado.
 CREATE TABLE IF NOT EXISTS followup_joao_cadencia (
-  cadencia       text PRIMARY KEY,
+  funil          text NOT NULL,
+  cadencia       text NOT NULL,
   gatilho_dias   integer,
   ativa          boolean,
   atualizado_por text,
   updated_at     timestamptz NOT NULL DEFAULT now(),
 
-  CONSTRAINT followup_joao_cadencia_codigo_valido
-    CHECK (cadencia IN ('novo', 'em_conversa', 'reposicao', 'em_atencao')),
+  PRIMARY KEY (funil, cadencia),
+
+  -- Espelha `cadence_joao.FUNIS`: cada funil so aceita as cadencias que ele de fato
+  -- declara. `recuperacao` nao aparece em nenhum ramo do OR — zero cadencia hoje.
+  CONSTRAINT followup_joao_cadencia_par_valido CHECK (
+       (funil = 'atacado'                 AND cadencia IN ('novo', 'em_conversa'))
+    OR (funil = 'private_label'           AND cadencia IN ('novo', 'em_conversa'))
+    OR (funil = 'reposicao_atacado'       AND cadencia IN ('reposicao', 'em_atencao'))
+    OR (funil = 'reposicao_private_label' AND cadencia IN ('reposicao', 'em_atencao'))
+    -- 'recuperacao' nao tem par valido ainda: zero cadencia = zero linha aceita.
+  ),
   -- Zero dia no gatilho pegaria o card no instante em que ele entra na etapa — a
   -- cadencia inteira perderia o sentido de "parado ha N dias".
   CONSTRAINT followup_joao_cadencia_gatilho_positivo
@@ -86,19 +116,20 @@ CREATE TABLE IF NOT EXISTS followup_joao_cadencia (
 -- `template_name` guarda o nome do template APROVADO na Meta. Quem valida se ele
 -- existe e esta APPROVED e a API, na hora de LIGAR a cadencia — o banco so guarda o
 -- texto.
+--
+-- Nao ha coluna `linha`: `funil` ja carrega essa distincao (Atacado x Private Label
+-- viram funis DIFERENTES, nao uma segunda coluna dizendo a mesma coisa).
 CREATE TABLE IF NOT EXISTS followup_joao_toque (
+  funil          text    NOT NULL,
   cadencia       text    NOT NULL,
-  linha          text    NOT NULL,
   toque          integer NOT NULL,
   dias           integer,
   template_name  text,
   atualizado_por text,
   updated_at     timestamptz NOT NULL DEFAULT now(),
 
-  PRIMARY KEY (cadencia, linha, toque),
+  PRIMARY KEY (funil, cadencia, toque),
 
-  CONSTRAINT followup_joao_toque_linha_valida
-    CHECK (linha IN ('atacado', 'private_label')),
   CONSTRAINT followup_joao_toque_numero_positivo
     CHECK (toque >= 1),
   CONSTRAINT followup_joao_toque_dias_positivo

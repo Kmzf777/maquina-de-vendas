@@ -1,8 +1,11 @@
-"""Config-as-code das quatro cadências de follow-up do vendedor João.
+"""Config-as-code das cadências de follow-up do vendedor João, por FUNIL.
 
-Spec: docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md (§4 e §5).
-Fonte dos números: a ata da reunião de 10/09/2026 (`Reuniao-Decisao-Funil-Joao.txt`),
-com o timestamp citado em cada decisão abaixo.
+Spec: docs/superpowers/specs/2026-09-21-followup-funil-por-funil-design.md (a forma
+deste módulo — funil como eixo) e
+docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md (§4 e §5, a fonte dos
+NÚMEROS — dias, toques, templates — que NÃO mudam entre os dois specs). Fonte dos
+números: a ata da reunião de 10/09/2026 (`Reuniao-Decisao-Funil-Joao.txt`), com o
+timestamp citado em cada decisão abaixo.
 
 Mesma FORMA de `follow_up/cadence.py` (a cadência da ValerIA): dataclass congelada +
 tupla de toques, funções puras, zero I/O. Uma diferença, e é ela que justifica um
@@ -11,12 +14,31 @@ módulo separado:
     ValerIA  →  Touch.objective_prompt  (a janela de 24h está ABERTA: o texto sai do LLM)
     João     →  Touch.template_name     (o lead está em SILÊNCIO: só template aprovado sai)
 
-Este módulo só DECLARA. Quem envia é o handler (Task J2); quem cria os jobs é o
-agendador (Task J3); quem grava a sobreposição é a API (Task J4).
+Este módulo só DECLARA. Quem envia é o handler dos jobs; quem cria os jobs é o
+agendador (`service.py`); quem grava a sobreposição é a API (`api.py`).
 
 ──────────────────────────────────────────────────────────────────────────────
-AS QUATRO CADÊNCIAS
+FUNIL É O EIXO, CADÊNCIA É O QUE EXISTE DENTRO DELE
 ──────────────────────────────────────────────────────────────────────────────
+
+Cinco funis. Quatro têm cadência; o quinto é espaço reservado:
+
+  funil                            pipeline_id (produção, 10/09/2026)   cadências
+  ──────────────────────────────────────────────────────────────────────────────
+  João - Atacado                   9706a14a-3d9a-...                   Novo, Em conversa
+  João - Private Label             24fb6ce8-6b7b-...                   Novo, Em conversa
+  João - Reposição Atacado         79e35e6b-01d1-...                   Reposição, Em atenção
+  João - Reposição Private Label   9c027143-72f6-...                   Reposição, Em atenção
+  João - Recuperação               fa94029b-d524-...                   (nenhuma — de propósito)
+
+Cada CÓDIGO de cadência (`novo`, `em_conversa`, `reposicao`, `em_atencao`) existe em
+DOIS funis-irmãos (Atacado/Private Label, ou Reposição Atacado/Reposição Private
+Label) — mas cada ocorrência é um objeto `Cadencia` PRÓPRIO, com sua PRÓPRIA tupla de
+`touches` (templates diferentes). Não existe mais um mapa achatado só por código: antes
+existia (`CADENCIAS: Mapping[str, Cadencia]`) e era o bug — a MESMA string "atacado"
+apontava para pipelines DIFERENTES dependendo de qual cadência estava por cima (spec
+2026-09-21 §1). Agora o funil é sempre a primeira metade da chave — `resolver(funil,
+codigo, overrides)`, funil primeiro.
 
   código        gatilho                            toques                ata
   ─────────────────────────────────────────────────────────────────────────────
@@ -25,9 +47,6 @@ AS QUATRO CADÊNCIAS
   reposicao     45 dias em "Cliente Ativo"         4, de 15 em 15        26:35, 34:24
   em_atencao    90 dias sem comprar                1 a cada 3 dias       38:08, 41:12
 
-Cada uma existe em DUAS LINHAS — Atacado e Private Label — porque o funil e o texto
-do template diferem entre elas.
-
 `offset` é contado a partir da MATRÍCULA (o instante em que o gatilho disparou), nunca
 do toque anterior — é como `cadence.py` conta, e é o número que a tela edita. Por isso
 "Em conversa" aparece aqui como 0/2/5/10/16/22/28 e não como o D+2/4/7/12/18/24/30 da
@@ -35,27 +54,41 @@ ata: aqueles são contados da ENTRADA na etapa, e o gatilho já consumiu os 2 pr
 dias.
 
 ──────────────────────────────────────────────────────────────────────────────
-DUAS DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
+TRÊS DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
 ──────────────────────────────────────────────────────────────────────────────
 
 1. **"Em atenção" não tem template, e isso é uma declaração.**
    Os 24 templates aprovados na Meta em 13/09/2026
    (`scripts/create_templates_esteiras_joao.py`) cobrem Novo (2), Em conversa (14) e
    Reposição (8) — a quarta cadência nasceu depois do lote e não tem texto aprovado.
-   `template_name=None` é o que faz a trava de ativação (Task J4, "ligar exige
-   template aprovado em todo toque") RECUSAR ligar "Em atenção". Inventar um nome de
-   template aqui trocaria essa recusa por um envio que morre em runtime, no meio da
-   cadência, sem ninguém olhando.
+   `template_name=None` é o que faz a trava de ativação (API, "ligar exige template
+   aprovado em todo toque") RECUSAR ligar "Em atenção". Inventar um nome de template
+   aqui trocaria essa recusa por um envio que morre em runtime, no meio da cadência,
+   sem ninguém olhando.
 
-2. **O gatilho de "Em atenção" é a mesma etapa do de "Reposição".**
+2. **O gatilho de "Em atenção" é a mesma etapa do de "Reposição" — e o RÓTULO desse
+   gatilho é "Cliente Ativo", nunca "Em atenção".**
    A ata diz "90 dias que ele não compra" (38:08). Dias sem comprar são, no CRM, dias
-   na coluna "Cliente Ativo" do funil de Reposição (key `novo`) — o card nasce ali
-   quando a venda fecha. É a mesma etapa que "Reposição" vigia aos 45.
-   CONSEQUÊNCIA, nomeada para quem for escrever o agendador (Task J3): um card no dia
-   90 casa os DOIS gatilhos. No desenho antigo isso não acontecia porque a esteira
-   movia o card para "Em atenção" ao terminar; o handler novo não move card nenhum.
-   Enquanto "Em atenção" não tiver template ela não liga, então a sobreposição é
-   inerte — mas ela precisa ser resolvida ANTES de alguém criar os templates.
+   na coluna "Cliente Ativo" do funil de Reposição (key `novo`; label real em
+   `pipeline_stages`, confirmado em `20260910_contrato_etapas_joao.sql:131`) — o card
+   nasce ali quando a venda fecha. É a MESMA etapa que "Reposição" vigia aos 45 dias.
+   As duas cadências (`reposicao` e `em_atencao`) moram no MESMO par de funis
+   (Reposição Atacado / Reposição Private Label) e apontam para o MESMO
+   `gatilho_stage_key="novo"` / `gatilho_stage_rotulo="Cliente Ativo"`.
+   Existe também, nos quatro funis, uma etapa DE VERDADE chamada `em_atencao` / "Em
+   atenção" — a cadência "Em atenção" NÃO a vigia. Usar o nome da cadência como se
+   fosse o nome da etapa reintroduziria a mesma classe de confusão que a mudança para
+   funil-primeiro corrige (spec 2026-09-21 §2, "Armadilha a evitar").
+   CONSEQUÊNCIA, nomeada para quem lê o agendador (`service.py`): um card no dia 90
+   casa os DOIS gatilhos. Enquanto "Em atenção" não tiver template ela não liga, então
+   a sobreposição é inerte — mas precisa ser resolvida antes de alguém criar os
+   templates.
+
+3. **João - Recuperação existe no código, sem cadência nenhuma.**
+   É um funil manual do vendedor (Entrada de Inativos → Em Follow-UP → Recuperado →
+   Perdido Churn) que este motor ainda não sabe operar. `cadencias=()` é deliberado —
+   não é um TODO, é o estado real: zero gatilho, zero toque, pronto para ganhar uma
+   cadência quando alguém definir os dois (spec 2026-09-21 §1).
 
 ──────────────────────────────────────────────────────────────────────────────
 O BANCO SOBREPÕE, O CÓDIGO É A ORIGEM (ata 33:28)
@@ -66,23 +99,23 @@ O BANCO SOBREPÕE, O CÓDIGO É A ORIGEM (ata 33:28)
 `supabase/migrations/20260918_followup_joao_config.sql` cria duas tabelas de
 SOBREPOSIÇÃO, que nascem VAZIAS — e vazio significa "vale o código":
 
-    followup_joao_toque     (cadencia, linha, toque) → dias, template_name
-    followup_joao_cadencia   cadencia               → gatilho_dias, ativa
+    followup_joao_toque      (funil, cadencia, toque) → dias, template_name
+    followup_joao_cadencia   (funil, cadencia)         → gatilho_dias, ativa
 
-Quatro botões, e nada além disso. Adicionar ou remover TOQUE continua sendo mudança de
-código: é o que impede a tela de virar builder de novo, que é o erro que este desenho
-corrige. O lado do banco tem a mesma trava, num CHECK por cadência.
+Cada FUNIL tem seu próprio liga/desliga e seu próprio prazo de gatilho — Atacado e
+Private Label deixaram de estar acoplados (spec 2026-09-21 §2, decisão 1): ligar só
+metade não é mais uma alavanca escondida, é o comportamento normal de duas chaves
+independentes.
+
+Adicionar ou remover TOQUE continua sendo mudança de código: é o que impede a tela de
+virar builder de novo, que é o erro que este desenho corrige. O lado do banco tem a
+mesma trava, num CHECK por (funil, cadência).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, Mapping
-
-# ── Linhas ─────────────────────────────────────────────────────────────────────
-LINHA_ATACADO = "atacado"
-LINHA_PRIVATE_LABEL = "private_label"
-LINHAS: tuple[str, ...] = (LINHA_ATACADO, LINHA_PRIVATE_LABEL)
 
 # ── Funis do João (UUIDs de produção, medidos em 10/09/2026) ───────────────────
 # Mesma fonte de supabase/migrations/20260910_contrato_etapas_joao.sql, e a suíte
@@ -92,6 +125,11 @@ PIPELINE_ATACADO = "9706a14a-3d9a-413b-bceb-26838fc2cc45"
 PIPELINE_PRIVATE_LABEL = "24fb6ce8-6b7b-4612-970d-8debb8c041b7"
 PIPELINE_REPOSICAO_ATACADO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"
 PIPELINE_REPOSICAO_PRIVATE_LABEL = "9c027143-72f6-42d6-861f-a494ba5bbb4f"
+# João - Recuperação: funil manual do vendedor (Entrada de Inativos → Em Follow-UP →
+# Recuperado → Perdido Churn). Entra nesta versão só como espaço reservado — zero
+# cadência (ver FUNIS abaixo) — pronto para ganhar uma quando alguém definir o gatilho
+# e os toques (spec 2026-09-21 §1). Mesma fonte das quatro constantes acima.
+PIPELINE_RECUPERACAO = "fa94029b-d524-4550-919e-67233dfe3a94"
 
 # ── Respostas do lead (ata 41:40) ──────────────────────────────────────────────
 RESPOSTA_ADIAR = "adiar"
@@ -116,9 +154,9 @@ class Touch:
     - `template_name`: nome do template APROVADO na Meta; `None` = ainda não existe
       texto aprovado, e a cadência não pode ser ligada enquanto for assim.
     - `aceita_adiamento`: o template deste toque traz o botão "Ainda tenho estoque".
-      Não é decoração: é o que diz ao agendador (Task J3) que a resposta pode adiar
-      em 60 dias em vez de cancelar. A suíte cruza este campo com os BOTÕES REAIS do
-      template, para que ele nunca prometa um botão que não existe.
+      Não é decoração: é o que diz ao agendador (`service.py`) que a resposta pode
+      adiar em 60 dias em vez de cancelar. A suíte cruza este campo com os BOTÕES
+      REAIS do template, para que ele nunca prometa um botão que não existe.
     """
 
     sequence: int
@@ -128,28 +166,25 @@ class Touch:
 
 
 @dataclass(frozen=True)
-class Linha:
-    """A metade da cadência que é específica de um funil."""
-
-    linha: str
-    pipeline_id: str
-    touches: tuple[Touch, ...]
-
-
-@dataclass(frozen=True)
 class Cadencia:
-    """Uma cadência inteira: o gatilho (comum às duas linhas) + as duas linhas.
+    """Uma cadência DENTRO de um funil (antes vivia sozinha, com duas "linhas").
 
-    `ativa` é SEMPRE False no código (spec §7, "tudo nasce desligado"). Ligar é ato
-    humano, gravado na tabela de sobreposição — nunca um redeploy. Medido em
-    16/09/2026: no instante em que uma cadência liga, 888 cards ficam elegíveis.
+    `ativa` é SEMPRE False no código (spec §7 do design de 18/09, "tudo nasce
+    desligado"). Ligar é ato humano, gravado na tabela de sobreposição — nunca um
+    redeploy. Medido em 16/09/2026: no instante em que uma cadência liga, 888 cards
+    ficam elegíveis.
     """
 
     codigo: str
     rotulo: str
     gatilho_stage_key: str
+    # O nome da etapa que o gatilho vigia — hardcoded aqui, nunca lido do banco
+    # (`pipeline_stages.label` é editável por qualquer operador no CRM e não é
+    # contrato estável). Ver a decisão 2 no cabeçalho: para "Em atenção" isto TEM que
+    # ser "Cliente Ativo", nunca "Em atenção".
+    gatilho_stage_rotulo: str
     gatilho_dias: int
-    linhas: Mapping[str, Linha]
+    touches: tuple[Touch, ...]
     # Só "Em atenção" repete: a ata pede "uma mensagem a cada três dias ATÉ ele falar
     # que não quer mais" (38:08) — uma cadência sem fim declarado. As outras três
     # terminam no último toque.
@@ -165,8 +200,28 @@ class Cadencia:
         ÚNICO ponto de contato entre o ramo do João e o caminho da ValerIA, que é o
         único follow-up que funciona em produção hoje (8.140 jobs na história).
         O prefixo `joao_` garante que nenhum job do João caia no handler dela.
+
+        Continua ambíguo entre funis-irmãos que compartilham código (ex. os dois
+        funis de Reposição compartilham `job_type="joao_reposicao"`) — é assim desde
+        sempre (Atacado e Private Label já compartilhavam `joao_novo`). Quem resolve
+        o funil certo é o `metadata` do job, nunca o `job_type` sozinho.
         """
         return f"joao_{self.codigo}"
+
+
+@dataclass(frozen=True)
+class Funil:
+    """Um funil do João — a entidade de topo (spec 2026-09-21 §2/§3).
+
+    Identificado pelo `pipeline_id` (o mesmo contrato estável que `PIPELINE_ATACADO`
+    etc. já usam), não pelo nome digitável na tela do CRM. `cadencias` é `()` para
+    "recuperacao" — vazio de propósito, não ausência de dado.
+    """
+
+    codigo: str
+    rotulo: str
+    pipeline_id: str
+    cadencias: tuple[Cadencia, ...]
 
 
 @dataclass(frozen=True)
@@ -174,10 +229,11 @@ class CadenciaResolvida:
     """A cadência DEPOIS da sobreposição do banco — o que o agendador consome."""
 
     codigo: str
-    linha: str
+    funil: str
     job_type: str
     pipeline_id: str
     gatilho_stage_key: str
+    gatilho_stage_rotulo: str
     gatilho_dias: int
     ativa: bool
     repete_ultimo: bool
@@ -191,7 +247,7 @@ class CadenciaResolvida:
         penúltimo, ou o próprio offset quando a cadência tem um toque só. É de
         propósito que ele NÃO seja um campo à parte: assim "a cada quantos dias" já é
         editável pelos mesmos `dias` do toque, sem abrir uma quinta coluna fora do que
-        o spec §5 permite editar.
+        o spec permite editar.
 
         Intervalo <= 0 devolve None: um zero gravado na tela faria o motor reenviar em
         laço. Parar a cadência é a falha segura; bombardear o cliente não é.
@@ -206,11 +262,11 @@ class CadenciaResolvida:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# As cadências
+# Os funis e suas cadências
 # ═══════════════════════════════════════════════════════════════════════════════
 def _toques(offsets_em_dias: tuple[int, ...], templates: tuple[str | None, ...],
             adiamento: tuple[int, ...] = ()) -> tuple[Touch, ...]:
-    """Monta os toques de uma linha. `adiamento` lista as sequences com o botão."""
+    """Monta os toques de uma cadência. `adiamento` lista as sequences com o botão."""
     return tuple(
         Touch(
             sequence=i,
@@ -228,21 +284,21 @@ def _toques(offsets_em_dias: tuple[int, ...], templates: tuple[str | None, ...],
 # único gatilho do sistema com as guardas completas (blacklist, número errado, conversa
 # finalizada) e só entende dias inteiros (`p_stage_days int`). Ganhar 36h custaria um
 # gatilho novo, sem essas guardas.
-_NOVO = Cadencia(
+_NOVO_ATACADO = Cadencia(
     codigo="novo",
     rotulo="Novo",
     gatilho_stage_key="novo",
+    gatilho_stage_rotulo="Novo",
     gatilho_dias=2,
-    linhas={
-        LINHA_ATACADO: Linha(
-            LINHA_ATACADO, PIPELINE_ATACADO,
-            _toques((0,), ("joao_novo_atacado_t1",)),
-        ),
-        LINHA_PRIVATE_LABEL: Linha(
-            LINHA_PRIVATE_LABEL, PIPELINE_PRIVATE_LABEL,
-            _toques((0,), ("joao_novo_privatelabel_t1",)),
-        ),
-    },
+    touches=_toques((0,), ("joao_novo_atacado_t1",)),
+)
+_NOVO_PRIVATE_LABEL = Cadencia(
+    codigo="novo",
+    rotulo="Novo",
+    gatilho_stage_key="novo",
+    gatilho_stage_rotulo="Novo",
+    gatilho_dias=2,
+    touches=_toques((0,), ("joao_novo_privatelabel_t1",)),
 )
 
 # ── "Em conversa" — 41:02, "deve durar uns 30 dias". 7 toques. ────────────────
@@ -253,23 +309,23 @@ _NOVO = Cadencia(
 # motivo concreto → despedida digna.
 _EM_CONVERSA_OFFSETS = (0, 2, 5, 10, 16, 22, 28)
 
-_EM_CONVERSA = Cadencia(
+_EM_CONVERSA_ATACADO = Cadencia(
     codigo="em_conversa",
     rotulo="Em conversa",
     gatilho_stage_key="respondeu",
+    gatilho_stage_rotulo="Em conversa",
     gatilho_dias=2,
-    linhas={
-        LINHA_ATACADO: Linha(
-            LINHA_ATACADO, PIPELINE_ATACADO,
-            _toques(_EM_CONVERSA_OFFSETS,
-                    tuple(f"joao_conversa_atacado_t{n}" for n in range(1, 8))),
-        ),
-        LINHA_PRIVATE_LABEL: Linha(
-            LINHA_PRIVATE_LABEL, PIPELINE_PRIVATE_LABEL,
-            _toques(_EM_CONVERSA_OFFSETS,
-                    tuple(f"joao_conversa_privatelabel_t{n}" for n in range(1, 8))),
-        ),
-    },
+    touches=_toques(_EM_CONVERSA_OFFSETS,
+                     tuple(f"joao_conversa_atacado_t{n}" for n in range(1, 8))),
+)
+_EM_CONVERSA_PRIVATE_LABEL = Cadencia(
+    codigo="em_conversa",
+    rotulo="Em conversa",
+    gatilho_stage_key="respondeu",
+    gatilho_stage_rotulo="Em conversa",
+    gatilho_dias=2,
+    touches=_toques(_EM_CONVERSA_OFFSETS,
+                     tuple(f"joao_conversa_privatelabel_t{n}" for n in range(1, 8))),
 )
 
 # ── "Reposição" — 34:24, "o dia 45 ele vai receber uma mensagem... de 15 em 15" ─
@@ -286,27 +342,27 @@ _REPOSICAO_OFFSETS = (0, 15, 30, 45)
 # e não tem o que adiar.
 _REPOSICAO_ADIAMENTO = (1, 2, 3)
 
-_REPOSICAO = Cadencia(
+# "Cliente Ativo" é a key `novo` do funil de Reposição — o card nasce ali quando a
+# venda fecha, então dias na etapa == dias desde a compra (decisão 2 no cabeçalho).
+_REPOSICAO_ATACADO = Cadencia(
     codigo="reposicao",
     rotulo="Reposição",
-    # "Cliente Ativo" é a key `novo` do funil de Reposição — o card nasce ali quando a
-    # venda fecha, então dias na etapa == dias desde a compra.
     gatilho_stage_key="novo",
+    gatilho_stage_rotulo="Cliente Ativo",
     gatilho_dias=45,
-    linhas={
-        LINHA_ATACADO: Linha(
-            LINHA_ATACADO, PIPELINE_REPOSICAO_ATACADO,
-            _toques(_REPOSICAO_OFFSETS,
-                    tuple(f"joao_reposicao_atacado_t{n}" for n in range(1, 5)),
-                    _REPOSICAO_ADIAMENTO),
-        ),
-        LINHA_PRIVATE_LABEL: Linha(
-            LINHA_PRIVATE_LABEL, PIPELINE_REPOSICAO_PRIVATE_LABEL,
-            _toques(_REPOSICAO_OFFSETS,
-                    tuple(f"joao_reposicao_privatelabel_t{n}" for n in range(1, 5)),
-                    _REPOSICAO_ADIAMENTO),
-        ),
-    },
+    touches=_toques(_REPOSICAO_OFFSETS,
+                     tuple(f"joao_reposicao_atacado_t{n}" for n in range(1, 5)),
+                     _REPOSICAO_ADIAMENTO),
+)
+_REPOSICAO_PRIVATE_LABEL = Cadencia(
+    codigo="reposicao",
+    rotulo="Reposição",
+    gatilho_stage_key="novo",
+    gatilho_stage_rotulo="Cliente Ativo",
+    gatilho_dias=45,
+    touches=_toques(_REPOSICAO_OFFSETS,
+                     tuple(f"joao_reposicao_privatelabel_t{n}" for n in range(1, 5)),
+                     _REPOSICAO_ADIAMENTO),
 )
 
 # ── "Em atenção" — 38:08, "uma mensagem a cada três dias até ele falar que não" ──
@@ -319,49 +375,72 @@ _REPOSICAO = Cadencia(
 # 41:40 é literal sobre esta fase ("essa mensagem pode ser com o botão: ainda tenho
 # estoque") — quem criar o template tem de incluir o botão, e a suíte cobra isso no
 # instante em que o template aparecer.
-_EM_ATENCAO = Cadencia(
+_EM_ATENCAO_ATACADO = Cadencia(
     codigo="em_atencao",
     rotulo="Em atenção",
     gatilho_stage_key="novo",
+    gatilho_stage_rotulo="Cliente Ativo",
     gatilho_dias=90,
     repete_ultimo=True,
-    linhas={
-        LINHA_ATACADO: Linha(
-            LINHA_ATACADO, PIPELINE_REPOSICAO_ATACADO,
-            _toques((3,), (None,), (1,)),
-        ),
-        LINHA_PRIVATE_LABEL: Linha(
-            LINHA_PRIVATE_LABEL, PIPELINE_REPOSICAO_PRIVATE_LABEL,
-            _toques((3,), (None,), (1,)),
-        ),
-    },
+    touches=_toques((3,), (None,), (1,)),
+)
+_EM_ATENCAO_PRIVATE_LABEL = Cadencia(
+    codigo="em_atencao",
+    rotulo="Em atenção",
+    gatilho_stage_key="novo",
+    gatilho_stage_rotulo="Cliente Ativo",
+    gatilho_dias=90,
+    repete_ultimo=True,
+    touches=_toques((3,), (None,), (1,)),
 )
 
-CADENCIAS: Mapping[str, Cadencia] = {
-    c.codigo: c for c in (_NOVO, _EM_CONVERSA, _REPOSICAO, _EM_ATENCAO)
-}
+FUNIS: tuple[Funil, ...] = (
+    Funil("atacado", "João - Atacado", PIPELINE_ATACADO,
+          (_NOVO_ATACADO, _EM_CONVERSA_ATACADO)),
+    Funil("private_label", "João - Private Label", PIPELINE_PRIVATE_LABEL,
+          (_NOVO_PRIVATE_LABEL, _EM_CONVERSA_PRIVATE_LABEL)),
+    Funil("reposicao_atacado", "João - Reposição Atacado", PIPELINE_REPOSICAO_ATACADO,
+          (_REPOSICAO_ATACADO, _EM_ATENCAO_ATACADO)),
+    Funil("reposicao_private_label", "João - Reposição Private Label",
+          PIPELINE_REPOSICAO_PRIVATE_LABEL,
+          (_REPOSICAO_PRIVATE_LABEL, _EM_ATENCAO_PRIVATE_LABEL)),
+    # Espaço reservado — decisão 3 no cabeçalho. Zero cadência, de propósito.
+    Funil("recuperacao", "João - Recuperação", PIPELINE_RECUPERACAO, ()),
+)
 
-CODIGOS: tuple[str, ...] = tuple(CADENCIAS)
+# Só depende de `codigo`, não de funil — os quatro `job_type` continuam sendo os
+# mesmos de sempre (`joao_novo`, `joao_em_conversa`, `joao_reposicao`,
+# `joao_em_atencao`), mesmo que cada código agora exista em dois objetos `Cadencia`
+# distintos (um por funil-irmão). O frozenset dedupa sozinho.
+JOB_TYPES: frozenset[str] = frozenset(
+    cadencia.job_type for f in FUNIS for cadencia in f.cadencias
+)
 
-JOB_TYPES: frozenset[str] = frozenset(c.job_type for c in CADENCIAS.values())
+FUNIL_CODIGOS: tuple[str, ...] = tuple(f.codigo for f in FUNIS)
+_POR_FUNIL: Mapping[str, Funil] = {f.codigo: f for f in FUNIS}
 
-_POR_JOB_TYPE: Mapping[str, Cadencia] = {c.job_type: c for c in CADENCIAS.values()}
+
+def funil(codigo: str) -> Funil | None:
+    """O funil pelo código, ou None. Usa `.cadencias` para saber o que ele tem."""
+    return _POR_FUNIL.get(codigo)
 
 
-def cadencia_por_job_type(job_type: str | None) -> Cadencia | None:
-    """A cadência de um `job_type`, ou None se o tipo não é do João.
-
-    O None importa: é ele que deixa o despacho perguntar "este job é meu?" sem ter de
-    conhecer os cinco tipos que já existem.
-    """
-    return _POR_JOB_TYPE.get(job_type or "")
+def cadencia_do_funil(funil_codigo: str, cadencia_codigo: str) -> Cadencia | None:
+    """A cadência de UM funil, ou None se o par não existe (ex. qualquer par com
+    `funil_codigo="recuperacao"`, ou `funil_codigo="atacado"` com
+    `cadencia_codigo="reposicao"`). É o `cj.CADENCIAS[codigo]` de antes, com o funil
+    como parte obrigatória da chave — o mesmo motivo do cabeçalho deste módulo."""
+    f = _POR_FUNIL.get(funil_codigo)
+    if not f:
+        return None
+    return next((c for c in f.cadencias if c.codigo == cadencia_codigo), None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # A sobreposição do banco
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# FORMA do `overrides` — é o contrato entre este módulo, a API (J4) e o agendador (J3):
+# FORMA do `overrides` — é o contrato entre este módulo, a API e o agendador:
 #
 #     {
 #       "gatilho_dias": 60 | None,          # linha de followup_joao_cadencia
@@ -396,15 +475,22 @@ def _toques_override(overrides: Mapping[str, Any] | None) -> dict[int, Mapping[s
 
 
 def resolver_cadencia(
-    codigo: str, linha: str, overrides: Mapping[str, Any] | None = None,
+    funil: str, codigo: str, overrides: Mapping[str, Any] | None = None,
 ) -> tuple[Touch, ...]:
-    """Os toques de (cadência, linha) com a sobreposição do banco aplicada. PURA.
+    """Os toques de (funil, cadência) com a sobreposição do banco aplicada. PURA.
 
     Sem override, vale o código. Com override, vale o banco — toque a toque, campo a
     campo. Uma sequence que não existe na cadência é IGNORADA: a tabela sobrepõe, não
-    acrescenta nem remove toque (spec §5). O banco tem a mesma trava, num CHECK.
+    acrescenta nem remove toque. O banco tem a mesma trava, num CHECK.
+
+    `(funil, codigo)` que não formam um par válido levanta `KeyError` — mesmo
+    comportamento de antes (`CADENCIAS[codigo].linhas[linha]`), só que agora a chave
+    é (funil, código) em vez de (código, linha).
     """
-    do_codigo = CADENCIAS[codigo].linhas[linha].touches
+    cadencia = cadencia_do_funil(funil, codigo)
+    if cadencia is None:
+        raise KeyError((funil, codigo))
+    do_codigo = cadencia.touches
     por_sequence = _toques_override(overrides)
     if not por_sequence:
         return do_codigo
@@ -424,40 +510,45 @@ def resolver_cadencia(
 
 
 def resolver(
-    codigo: str, linha: str, overrides: Mapping[str, Any] | None = None,
+    funil: str, codigo: str, overrides: Mapping[str, Any] | None = None,
 ) -> CadenciaResolvida:
-    """A cadência inteira resolvida — o que o agendador (Task J3) consome. PURA."""
-    cadencia = CADENCIAS[codigo]
-    da_linha = cadencia.linhas[linha]
+    """A cadência inteira resolvida — o que o agendador (`service.py`) consome. PURA."""
+    f = _POR_FUNIL.get(funil)
+    if f is None:
+        raise KeyError(funil)
+    cadencia = cadencia_do_funil(funil, codigo)
+    if cadencia is None:
+        raise KeyError((funil, codigo))
     overrides = overrides or {}
 
     gatilho_dias = overrides.get("gatilho_dias")
     ativa = overrides.get("ativa")
     return CadenciaResolvida(
         codigo=cadencia.codigo,
-        linha=da_linha.linha,
+        funil=f.codigo,
         job_type=cadencia.job_type,
-        pipeline_id=da_linha.pipeline_id,
+        pipeline_id=f.pipeline_id,
         gatilho_stage_key=cadencia.gatilho_stage_key,
+        gatilho_stage_rotulo=cadencia.gatilho_stage_rotulo,
         gatilho_dias=cadencia.gatilho_dias if gatilho_dias is None else gatilho_dias,
         ativa=cadencia.ativa if ativa is None else bool(ativa),
         repete_ultimo=cadencia.repete_ultimo,
-        touches=resolver_cadencia(codigo, linha, overrides),
+        touches=resolver_cadencia(funil, codigo, overrides),
     )
 
 
 def toques_sem_template(
-    codigo: str, linha: str, overrides: Mapping[str, Any] | None = None,
+    funil: str, codigo: str, overrides: Mapping[str, Any] | None = None,
 ) -> tuple[int, ...]:
     """As sequences que ainda não têm template — vazio significa "pode ligar".
 
-    É a metade que este módulo sabe responder da trava da Task J4 ("ligar exige
-    template aprovado em todo toque"). A outra metade — se o template EXISTE e está
-    APPROVED na Meta — é da API, que tem como perguntar.
+    É a metade que este módulo sabe responder da trava da API ("ligar exige template
+    aprovado em todo toque"). A outra metade — se o template EXISTE e está APPROVED
+    na Meta — é da API, que tem como perguntar.
     """
     return tuple(
         t.sequence
-        for t in resolver_cadencia(codigo, linha, overrides)
+        for t in resolver_cadencia(funil, codigo, overrides)
         if not t.template_name
     )
 
