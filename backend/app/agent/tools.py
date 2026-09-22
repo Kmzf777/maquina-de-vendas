@@ -43,8 +43,43 @@ from app.follow_up.service import (
     schedule_handoff_rescue, cancel_followups_by_phone, schedule_ai_return,
     find_pending_ai_return,
 )
+from app.lead_score.repository import save_score_evidence
 
 logger = logging.getLogger(__name__)
+
+
+def _normalized_evidence_text(value: str) -> str:
+    normalized = _unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
+    return " ".join(normalized.split())
+
+
+def _validated_score_evidence(updates: dict[str, Any], evidence: Any, conversation_id: str) -> dict:
+    """Bind every known score criterion to a literal inbound message excerpt."""
+    if not isinstance(evidence, dict):
+        raise ValueError("Score criteria require evidence from a lead message")
+    history = get_conversation_history(conversation_id, limit=500)
+    user_messages = [row for row in history if row.get("role") == "user" and row.get("content")]
+    validated = {}
+    for field, value in updates.items():
+        if value is None:
+            continue
+        item = evidence.get(field)
+        excerpt = item.get("text") if isinstance(item, dict) else None
+        if not isinstance(excerpt, str) or not excerpt.strip():
+            raise ValueError(f"Score criterion {field} requires a literal excerpt")
+        normalized_excerpt = _normalized_evidence_text(excerpt)
+        if not normalized_excerpt:
+            raise ValueError(f"Score excerpt for {field} has no searchable text")
+        source = next((row for row in user_messages if normalized_excerpt in _normalized_evidence_text(row["content"])), None)
+        if source is None:
+            raise ValueError(f"Score excerpt for {field} is not in a lead message")
+        item = {"text": excerpt.strip()}
+        for key in ("id", "wamid", "created_at"):
+            if source.get(key):
+                item["message_id" if key == "id" else key] = source[key]
+        item["message_ref"] = item.get("message_id") or item.get("wamid") or item.get("created_at")
+        validated[field] = item
+    return validated
 
 _TZ_BR = timezone(timedelta(hours=-3))
 
@@ -650,6 +685,7 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
         "volume": (args.get("volume") or "").strip(),
         "urgencia": (args.get("urgencia") or "").strip(),
     }
+    _cur = {}
     try:
         _cur = get_lead(lead_id) or {}
         _meta = dict(_cur.get("metadata") or {})
@@ -662,6 +698,23 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
     except Exception as _q_exc:
         logger.error("qualificar_lead: falha ao persistir âncoras p/ lead %s: %s", lead_id, _q_exc)
         _anchors = {k: v for k, v in _q_in.items() if v}
+
+    # Score only applies to wholesale leads and never changes the September
+    # qualification gates below. Omitted criteria remain unknown.
+    _score_fields = (
+        "segment", "monthly_volume_kg", "supplier_reason", "purchase_timing", "purchase_intent",
+    )
+    _score_updates = {key: args[key] for key in _score_fields if key in args}
+    if _score_updates and _cur.get("stage") == "atacado":
+        try:
+            save_score_evidence(
+                lead_id,
+                updates=_score_updates,
+                evidence=_validated_score_evidence(_score_updates, args.get("evidence"), conversation_id),
+                source="live",
+            )
+        except Exception as _score_exc:
+            logger.error("qualificar_lead: falha ao registrar score p/ lead %s: %s", lead_id, _score_exc)
     save_message(
         lead_id, "system",
         f"[qualificar_lead] finalidade={_anchors.get('finalidade')} "
@@ -2005,6 +2058,12 @@ REGISTRY.register(Tool(
             "finalidade": {"type": "string", "description": "Para que o lead quer o cafe (revenda, cafeteria, restaurante, marca propria, etc.)"},
             "volume": {"type": "string", "description": "Volume/quantidade pretendida, com NUMERO (ex: '100 unidades', '5kg/mes', '10 pacotes'). Se o lead ainda nao disse quanto, OMITA este campo — nao preencha com 'a definir', 'pouco' ou 'a combinar', que nao sao quantidades."},
             "urgencia": {"type": "string", "description": "Prazo/urgencia da compra ou decisao (opcional)"},
+            "segment": {"type": "string", "enum": ["cafeteria", "emporio", "specialty_store", "wine_shop", "cheese_shop", "natural_products_store", "bulk_store", "artisan_store", "colonial_store", "rural_store", "supermarket", "hotel", "restaurant", "bakery", "other"], "description": "Segmento declarado pelo lead"},
+            "monthly_volume_kg": {"type": "number", "minimum": 0, "description": "Volume mensal em kg, somente quando o lead informar um número concreto"},
+            "supplier_reason": {"type": "string", "enum": ["replace", "second_supplier", "expand_mix", "start_specialty_coffee", "research", "other"], "description": "Motivo declarado sobre fornecedor"},
+            "purchase_timing": {"type": "string", "enum": ["within_15_days", "days_16_30", "months_1_3", "more_than_3_months", "no_timeline"], "description": "Prazo declarado da compra"},
+            "purchase_intent": {"type": "string", "enum": ["clear", "unclear"], "description": "Intenção normalizada de compra, cotação ou proposta, somente se explícita"},
+            "evidence": {"type": "object", "description": "Evidência por critério com trecho literal e referência da mensagem do lead, quando disponível"},
         },
         "required": [],
     },

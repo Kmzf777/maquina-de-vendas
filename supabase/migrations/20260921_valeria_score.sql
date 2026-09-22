@@ -144,6 +144,13 @@ select
   s.normal_score,
   s.final_score,
   s.priority,
+  case s.priority
+    when 'maximum' then 4
+    when 'high' then 3
+    when 'moderate' then 2
+    when 'low' then 1
+    else 0
+  end as priority_rank,
   s.is_provisional,
   s.updated_at as score_updated_at
 from public.leads l
@@ -155,6 +162,12 @@ left join lateral (
   where conversations.lead_id = l.id
 ) c on true
 where l.stage = 'atacado';
+
+create or replace view public.valeria_score_campaign_options
+with (security_invoker = true) as
+select distinct campaign_name
+from public.valeria_score_directory
+where campaign_name is not null;
 
 -- Collection/backfill eligibility is based on actual conversation activity,
 -- not the legacy lead timestamp which can remain stale after new messages.
