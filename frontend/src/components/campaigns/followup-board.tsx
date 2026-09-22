@@ -36,26 +36,35 @@ type JoaoTouch = {
   aceita_adiamento: boolean;
 };
 
-type JoaoLinha = {
-  linha: string;
-  rotulo: string;
-  pipeline_id: string;
-  toques: JoaoTouch[];
-  toques_sem_template: number[];
-};
-
-type JoaoCadencia = {
+/** Uma cadência DENTRO de um funil — fusão do que antes era `JoaoCadencia` (topo:
+ * gatilho, `ativa`, `pode_ligar`) com o que antes era `JoaoLinha` (`toques`,
+ * `toques_sem_template`), menos `pipeline_id`, que sobe para `JoaoFunil` (spec
+ * 2026-09-21 §8). Cadência deixa de ser navegável sozinha — vive sempre dentro de um
+ * funil. */
+type JoaoCadenciaDoFunil = {
   codigo: string;
   rotulo: string;
   job_type: string;
   gatilho_stage_key: string;
+  /** Rótulo hardcoded em `cadence_joao.py` (decisão 2 da spec) — NUNCA lido do banco. */
+  gatilho_stage_rotulo: string;
   gatilho_dias: number;
   gatilho_dias_codigo: number;
   ativa: boolean;
   repete_ultimo: boolean;
   /** Só a metade que não depende da Meta: "todo toque tem NOME de template". */
   pode_ligar: boolean;
-  linhas: JoaoLinha[];
+  toques: JoaoTouch[];
+  toques_sem_template: number[];
+};
+
+/** Um dos cinco funis do João. `cadencias: []` para "João - Recuperação" — espaço
+ * reservado de propósito (spec §1), não um erro de carregamento. */
+type JoaoFunil = {
+  codigo: string;
+  rotulo: string;
+  pipeline_id: string;
+  cadencias: JoaoCadenciaDoFunil[];
 };
 
 /**
@@ -72,19 +81,22 @@ type CadenceDefinition = {
   outbound_nudge: DefinitionTouch;
   min_gap_hours: number;
   business_window: { start: string; end: string; days: string; timezone: string };
-  joao?: { cadencias: JoaoCadencia[] } | null;
+  joao?: { funis: JoaoFunil[] } | null;
 };
 
-/** Um motivo de recusa do PUT — `linha`/`sequence` dizem QUAL toque é o culpado. */
+/** Um motivo de recusa do PUT — `funil`/`sequence` dizem QUAL toque é o culpado.
+ *
+ * Campo `funil` (antes `linha`): cada PUT agora é sempre um funil só (spec
+ * 2026-09-21), então o problema aponta o funil do próprio pedido. */
 type Problema = {
   codigo: string;
   mensagem: string;
   cadencia?: string | null;
-  linha?: string | null;
+  funil?: string | null;
   sequence?: number | null;
 };
 
-/** O que o operador mudou e ainda não salvou, por cadência.
+/** O que o operador mudou e ainda não salvou, de UM par (funil, cadência).
  *
  * Guardar só o que MUDOU é o que faz o PUT ser MERGE de verdade: o backend trata
  * campo ausente como "não mexe" e `null` como "volta a valer o código". Mandar o
@@ -95,11 +107,18 @@ type ToqueEditado = { dias?: number | null; template_name?: string | null };
 type Rascunho = {
   gatilho_dias?: number | null;
   ativa?: boolean;
-  /** linha → sequence → campos editados */
-  toques: Record<string, Record<number, ToqueEditado>>;
+  /** sequence → campos editados — já é de UMA cadência de UM funil só, sem
+   * aninhamento por linha. */
+  toques: Record<number, ToqueEditado>;
 };
 
 const RASCUNHO_VAZIO: Rascunho = { toques: {} };
+
+/** A chave composta do estado de rascunho — evita um segundo nível de `Record`
+ * só para separar cadência de funil (spec §8). */
+function chaveRascunho(funilCodigo: string, cadenciaCodigo: string): string {
+  return `${funilCodigo}:${cadenciaCodigo}`;
+}
 
 type Summary = {
   pending: number;
@@ -222,9 +241,9 @@ function extrairProblemas(corpo: unknown, status: number): Problema[] {
   ];
 }
 
-function rotuloDaLinha(cadencia: JoaoCadencia, linha: string | null | undefined): string {
-  if (!linha) return "";
-  return cadencia.linhas.find((l) => l.linha === linha)?.rotulo ?? linha;
+function rotuloDoFunil(funis: JoaoFunil[], funil: string | null | undefined): string {
+  if (!funil) return "";
+  return funis.find((f) => f.codigo === funil)?.rotulo ?? funil;
 }
 
 const CAMPO =
@@ -232,24 +251,32 @@ const CAMPO =
 const ROTULO_CAMPO = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
 
 /**
- * O editor das cadências do João.
+ * O editor das cadências do João, navegado por FUNIL primeiro (spec 2026-09-21).
  *
- * Quatro botões, e nada além deles (spec §5): dias de cada toque, template de cada
- * toque, prazo do gatilho, liga/desliga. NÃO existe "adicionar toque" — mudar a forma
- * da cadência é mudança de código, e é isso que impede esta tela de virar um builder
- * de novo. O backend recusa `sequence` fora do que o código declara, então um botão
- * aqui só produziria uma recusa.
+ * Nível 1: os cinco funis (`funil.rotulo` — nome completo, ex. "João - Reposição
+ * Atacado"). Nível 2, dentro do funil selecionado: as cadências dele (no máximo 2).
+ * Recuperação (`cadencias: []`) é espaço reservado de propósito — mostra um estado
+ * vazio em vez de tentar renderizar um editor sem nada para editar.
+ *
+ * Dentro de uma cadência: dias de cada toque, template de cada toque, prazo do
+ * gatilho, liga/desliga. NÃO existe "adicionar toque" — mudar a forma da cadência é
+ * mudança de código, e é isso que impede esta tela de virar um builder de novo. O
+ * backend recusa `sequence` fora do que o código declara, então um botão aqui só
+ * produziria uma recusa.
  */
-function JoaoEditor({ cadencias: iniciais }: { cadencias: JoaoCadencia[] }) {
-  const [cadencias, setCadencias] = useState<JoaoCadencia[]>(iniciais);
-  const [codigo, setCodigo] = useState<string>(iniciais[0]?.codigo ?? "");
+function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
+  const [funis, setFunis] = useState<JoaoFunil[]>(iniciais);
+  const [funilCodigo, setFunilCodigo] = useState<string>(iniciais[0]?.codigo ?? "");
+  const [cadenciaCodigo, setCadenciaCodigo] = useState<string>(
+    iniciais[0]?.cadencias[0]?.codigo ?? "",
+  );
   const [rascunhos, setRascunhos] = useState<Record<string, Rascunho>>({});
   const [templates, setTemplates] = useState<{ name: string; status: string }[] | null>(null);
   const [problemas, setProblemas] = useState<Problema[] | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
-  useEffect(() => setCadencias(iniciais), [iniciais]);
+  useEffect(() => setFunis(iniciais), [iniciais]);
 
   // A MESMA fonte de templates do builder de campanhas (`/api/templates`, que lê
   // `message_templates` e já colapsa a linha-espelho por canal). Uma segunda fonte
@@ -275,109 +302,120 @@ function JoaoEditor({ cadencias: iniciais }: { cadencias: JoaoCadencia[] }) {
     return Array.from(nomes).sort();
   }, [templates]);
 
-  const cadencia = cadencias.find((c) => c.codigo === codigo) ?? cadencias[0];
-  const rascunho = rascunhos[cadencia.codigo] ?? RASCUNHO_VAZIO;
+  const funil = funis.find((f) => f.codigo === funilCodigo) ?? funis[0];
+  const cadencia =
+    funil?.cadencias.find((c) => c.codigo === cadenciaCodigo) ?? funil?.cadencias[0] ?? null;
+  const chave = chaveRascunho(funil?.codigo ?? "", cadencia?.codigo ?? "");
+  const rascunho = rascunhos[chave] ?? RASCUNHO_VAZIO;
 
-  const editado = (linha: string, sequence: number): ToqueEditado =>
-    rascunho.toques[linha]?.[sequence] ?? {};
-  const diasEfetivo = (linha: string, t: JoaoTouch): number | null => {
-    const e = editado(linha, t.sequence);
+  const editado = (sequence: number): ToqueEditado => rascunho.toques[sequence] ?? {};
+  const diasEfetivo = (t: JoaoTouch): number | null => {
+    const e = editado(t.sequence);
     return "dias" in e ? (e.dias ?? null) : t.dias;
   };
-  const templateEfetivo = (linha: string, t: JoaoTouch): string | null => {
-    const e = editado(linha, t.sequence);
+  const templateEfetivo = (t: JoaoTouch): string | null => {
+    const e = editado(t.sequence);
     return "template_name" in e ? (e.template_name ?? null) : t.template_name;
   };
   const gatilhoEfetivo =
-    "gatilho_dias" in rascunho ? (rascunho.gatilho_dias ?? null) : cadencia.gatilho_dias;
-  const ativaEfetiva = "ativa" in rascunho ? !!rascunho.ativa : cadencia.ativa;
+    "gatilho_dias" in rascunho ? (rascunho.gatilho_dias ?? null) : (cadencia?.gatilho_dias ?? null);
+  const ativaEfetiva = "ativa" in rascunho ? !!rascunho.ativa : !!cadencia?.ativa;
 
   const limparAvisos = () => {
     setProblemas(null);
     setSucesso(null);
   };
 
-  const editarToque = (linha: string, sequence: number, campos: ToqueEditado) => {
+  const selecionarFunil = (codigo: string) => {
+    setFunilCodigo(codigo);
+    const alvo = funis.find((f) => f.codigo === codigo);
+    setCadenciaCodigo(alvo?.cadencias[0]?.codigo ?? "");
+    limparAvisos();
+  };
+
+  const selecionarCadencia = (codigo: string) => {
+    setCadenciaCodigo(codigo);
+    limparAvisos();
+  };
+
+  const editarToque = (sequence: number, campos: ToqueEditado) => {
     limparAvisos();
     setRascunhos((prev) => {
-      const atual = prev[cadencia.codigo] ?? RASCUNHO_VAZIO;
-      const daLinha = { ...(atual.toques[linha] ?? {}) };
-      daLinha[sequence] = { ...(daLinha[sequence] ?? {}), ...campos };
-      return {
-        ...prev,
-        [cadencia.codigo]: { ...atual, toques: { ...atual.toques, [linha]: daLinha } },
-      };
+      const atual = prev[chave] ?? RASCUNHO_VAZIO;
+      const novosToques = { ...atual.toques, [sequence]: { ...(atual.toques[sequence] ?? {}), ...campos } };
+      return { ...prev, [chave]: { ...atual, toques: novosToques } };
     });
   };
 
   const editarCadencia = (campos: Partial<Rascunho>) => {
     limparAvisos();
     setRascunhos((prev) => {
-      const atual = prev[cadencia.codigo] ?? RASCUNHO_VAZIO;
-      return { ...prev, [cadencia.codigo]: { ...atual, ...campos } };
+      const atual = prev[chave] ?? RASCUNHO_VAZIO;
+      return { ...prev, [chave]: { ...atual, ...campos } };
     });
   };
 
   const salvar = async () => {
     limparAvisos();
-    const pedidos: Record<string, unknown>[] = [];
+    if (!funil || !cadencia) return;
 
-    // Um PUT POR LINHA, e sempre com `linha`: o template é específico dela (o texto do
-    // Atacado não serve para Private Label), e o backend recusa `template_name` sem
-    // linha justamente para impedir que metade da base receba a mensagem errada.
-    for (const l of cadencia.linhas) {
-      const toques = rascunho.toques[l.linha];
-      if (toques && Object.keys(toques).length > 0) {
-        pedidos.push({ cadencia: cadencia.codigo, linha: l.linha, toques });
-      }
+    // SEMPRE 1 PUT por rascunho: já não existe "aplicar nas duas linhas" (Atacado e
+    // Private Label deixaram de estar acoplados, spec §2 decisão 1) — cada par
+    // (funil, cadência) é uma entidade só sua.
+    const corpo: Record<string, unknown> = { funil: funil.codigo, cadencia: cadencia.codigo };
+    let temAlgo = false;
+    if (Object.keys(rascunho.toques).length > 0) {
+      corpo.toques = rascunho.toques;
+      temAlgo = true;
     }
-
-    const daCadencia: Record<string, unknown> = { cadencia: cadencia.codigo };
-    let temCadencia = false;
     if ("gatilho_dias" in rascunho) {
-      daCadencia.gatilho_dias = rascunho.gatilho_dias;
-      temCadencia = true;
+      corpo.gatilho_dias = rascunho.gatilho_dias;
+      temAlgo = true;
     }
     if ("ativa" in rascunho) {
-      daCadencia.ativa = rascunho.ativa;
-      temCadencia = true;
+      corpo.ativa = rascunho.ativa;
+      temAlgo = true;
     }
-    // Os toques vão ANTES do liga/desliga: a trava de ativação olha a configuração
-    // RESULTANTE, então "escolher o template e ligar no mesmo Salvar" só funciona se o
-    // template já estiver gravado quando o `ativa: true` chegar.
-    if (temCadencia) pedidos.push(daCadencia);
 
-    if (pedidos.length === 0) {
+    if (!temAlgo) {
       setSucesso("Nada mudou para salvar.");
       return;
     }
 
     setSalvando(true);
     try {
-      for (const corpo of pedidos) {
-        const res = await fetch("/api/cadence/joao", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(corpo),
-        });
-        const body = await res.json().catch(() => null);
-        // A recusa TEM que aparecer. Seguir em frente aqui — ou tratar 400 como
-        // sucesso — é literalmente o bug de 16/09/2026 no builder de campanhas: o
-        // backend recusava certo e a interface ficava muda.
-        if (!res.ok) {
-          setProblemas(extrairProblemas(body, res.status));
-          return;
-        }
-        if (body && typeof body === "object" && "codigo" in (body as object)) {
-          const atualizada = body as JoaoCadencia;
-          setCadencias((prev) =>
-            prev.map((c) => (c.codigo === atualizada.codigo ? atualizada : c)),
-          );
-        }
+      const res = await fetch("/api/cadence/joao", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpo),
+      });
+      const body = await res.json().catch(() => null);
+      // A recusa TEM que aparecer. Seguir em frente aqui — ou tratar 400 como
+      // sucesso — é literalmente o bug de 16/09/2026 no builder de campanhas: o
+      // backend recusava certo e a interface ficava muda.
+      if (!res.ok) {
+        setProblemas(extrairProblemas(body, res.status));
+        return;
+      }
+      if (body && typeof body === "object" && "codigo" in (body as object)) {
+        const atualizada = body as JoaoCadenciaDoFunil;
+        const funilAlvo = funil;
+        setFunis((prev) =>
+          prev.map((f) =>
+            f.codigo === funilAlvo.codigo
+              ? {
+                  ...f,
+                  cadencias: f.cadencias.map((c) =>
+                    c.codigo === atualizada.codigo ? atualizada : c,
+                  ),
+                }
+              : f,
+          ),
+        );
       }
       setRascunhos((prev) => {
         const copia = { ...prev };
-        delete copia[cadencia.codigo];
+        delete copia[chave];
         return copia;
       });
       setSucesso("Configuração salva.");
@@ -393,179 +431,202 @@ function JoaoEditor({ cadencias: iniciais }: { cadencias: JoaoCadencia[] }) {
   return (
     <>
       <div className="flex flex-wrap gap-2 mb-4">
-        {cadencias.map((c) => (
+        {funis.map((f) => (
           <button
-            key={c.codigo}
-            onClick={() => {
-              setCodigo(c.codigo);
-              limparAvisos();
-            }}
-            aria-pressed={c.codigo === cadencia.codigo}
+            key={f.codigo}
+            onClick={() => selecionarFunil(f.codigo)}
+            aria-pressed={f.codigo === funil?.codigo}
             className={`px-3 py-1.5 rounded-[4px] text-[13px] border transition-colors ${
-              c.codigo === cadencia.codigo
+              f.codigo === funil?.codigo
                 ? "bg-[#111111] text-white border-[#111111]"
                 : "bg-transparent text-[#7b7b78] border-[#dedbd6] hover:text-[#111111]"
             }`}
           >
-            {c.rotulo}
+            {f.rotulo}
           </button>
         ))}
       </div>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h4 className="text-[15px] font-medium text-[#111111]">{cadencia.rotulo}</h4>
-          <p className="text-[12px] text-[#7b7b78] mt-0.5">
-            Dispara com o card parado {gatilhoEfetivo ?? cadencia.gatilho_dias_codigo} dia(s)
-            na etapa <code>{cadencia.gatilho_stage_key}</code>
-            {cadencia.repete_ultimo && " · o último toque se repete até o lead pedir para parar"}
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-[13px] text-[#111111]">
-          <input
-            type="checkbox"
-            aria-label="Ligar cadência"
-            checked={ativaEfetiva}
-            onChange={(e) => editarCadencia({ ativa: e.target.checked })}
-          />
-          <span>{ativaEfetiva ? "Ativa" : "Desligada"}</span>
-        </label>
-      </div>
+      {funil && funil.cadencias.length === 0 && (
+        <p className="text-[13px] text-[#7b7b78]">
+          Nenhuma cadência configurada ainda para este funil.
+        </p>
+      )}
 
-      <div className="flex items-center gap-2 mt-3">
-        <span className={ROTULO_CAMPO}>Prazo do gatilho (dias)</span>
-        <input
-          type="number"
-          min={1}
-          aria-label="Prazo do gatilho (dias)"
-          value={gatilhoEfetivo ?? ""}
-          placeholder={String(cadencia.gatilho_dias_codigo)}
-          onChange={(e) => editarCadencia({ gatilho_dias: numeroOuNulo(e.target.value) })}
-          className={`${CAMPO} w-[84px]`}
-        />
-        <span className="text-[11px] text-[#7b7b78]">
-          padrão {cadencia.gatilho_dias_codigo} · vazio volta ao padrão
-        </span>
-      </div>
+      {funil && cadencia && (
+        <>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {funil.cadencias.map((c) => (
+              <button
+                key={c.codigo}
+                onClick={() => selecionarCadencia(c.codigo)}
+                aria-pressed={c.codigo === cadencia.codigo}
+                className={`px-3 py-1.5 rounded-[4px] text-[13px] border transition-colors ${
+                  c.codigo === cadencia.codigo
+                    ? "bg-[#111111] text-white border-[#111111]"
+                    : "bg-transparent text-[#7b7b78] border-[#dedbd6] hover:text-[#111111]"
+                }`}
+              >
+                {c.rotulo}
+              </button>
+            ))}
+          </div>
 
-      {cadencia.linhas.map((l) => (
-        <div key={l.linha} className="border-t border-[#f0ede8] mt-4 pt-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[13px] font-medium text-[#111111]">{l.rotulo}</p>
-            {l.toques_sem_template.length > 0 && (
-              <span className="text-[11px] text-[#c41c1c]">
-                {l.toques_sem_template.length} toque(s) sem template — não dá para ligar
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 className="text-[15px] font-medium text-[#111111]">{cadencia.rotulo}</h4>
+              <p className="text-[12px] text-[#7b7b78] mt-0.5">
+                Dispara com o card parado {gatilhoEfetivo ?? cadencia.gatilho_dias_codigo} dia(s)
+                na etapa {cadencia.gatilho_stage_rotulo}
+                {cadencia.repete_ultimo && " · o último toque se repete até o lead pedir para parar"}
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-[13px] text-[#111111]">
+              <input
+                type="checkbox"
+                aria-label="Ligar cadência"
+                checked={ativaEfetiva}
+                onChange={(e) => editarCadencia({ ativa: e.target.checked })}
+              />
+              <span>{ativaEfetiva ? "Ativa" : "Desligada"}</span>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2 mt-3">
+            <span className={ROTULO_CAMPO}>Prazo do gatilho (dias)</span>
+            <input
+              type="number"
+              min={1}
+              aria-label="Prazo do gatilho (dias)"
+              value={gatilhoEfetivo ?? ""}
+              placeholder={String(cadencia.gatilho_dias_codigo)}
+              onChange={(e) => editarCadencia({ gatilho_dias: numeroOuNulo(e.target.value) })}
+              className={`${CAMPO} w-[84px]`}
+            />
+            <span className="text-[11px] text-[#7b7b78]">
+              padrão {cadencia.gatilho_dias_codigo} · vazio volta ao padrão
+            </span>
+          </div>
+
+          <div className="border-t border-[#f0ede8] mt-4 pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[13px] font-medium text-[#111111]">Toques</p>
+              {cadencia.toques_sem_template.length > 0 && (
+                <span className="text-[11px] text-[#c41c1c]">
+                  {cadencia.toques_sem_template.length} toque(s) sem template — não dá para ligar
+                </span>
+              )}
+            </div>
+            <div className="mt-2 space-y-2">
+              {cadencia.toques.map((t) => {
+                const dias = diasEfetivo(t);
+                const template = templateEfetivo(t);
+                return (
+                  <div key={t.sequence} className="flex flex-wrap items-center gap-2">
+                    <span className="text-[12px] font-medium text-[#111111] w-[28px]">
+                      T{t.sequence}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      aria-label={`Dias do toque ${t.sequence}`}
+                      value={dias ?? ""}
+                      placeholder={String(t.dias_codigo)}
+                      onChange={(e) =>
+                        editarToque(t.sequence, { dias: numeroOuNulo(e.target.value) })
+                      }
+                      className={`${CAMPO} w-[74px]`}
+                    />
+                    <span className="text-[11px] text-[#7b7b78]">dias · padrão {t.dias_codigo}</span>
+                    {templates === null ? (
+                      <span className="text-[12px] text-[#7b7b78]">carregando templates…</span>
+                    ) : (
+                      <select
+                        aria-label={`Template do toque ${t.sequence}`}
+                        value={template ?? ""}
+                        onChange={(e) =>
+                          editarToque(t.sequence, {
+                            template_name: e.target.value || null,
+                          })
+                        }
+                        className={`${CAMPO} min-w-[230px]`}
+                      >
+                        <option value="">— sem template —</option>
+                        {/* O que está gravado, mas não está entre os aprovados, continua
+                            visível: esconder trocaria o valor do banco por um vazio no
+                            primeiro clique em Salvar, sem ninguém pedir. */}
+                        {template && !aprovados.includes(template) && (
+                          <option value={template}>{template} (fora dos aprovados)</option>
+                        )}
+                        {aprovados.map((nome) => (
+                          <option key={nome} value={nome}>
+                            {nome}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {t.aceita_adiamento && (
+                      <span
+                        title={
+                          'O template deste toque traz o botão "Ainda tenho estoque": a ' +
+                          "resposta adia 60 dias sem recomeçar a cadência. É config do " +
+                          "código, não da tela."
+                        }
+                        className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] px-1.5 py-0.5"
+                      >
+                        Aceita adiamento
+                      </span>
+                    )}
+                    {!template && (
+                      <span className="text-[11px] text-[#c41c1c]">sem template</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {problemas && problemas.length > 0 && (
+            <div
+              role="alert"
+              className="mt-4 border border-[#c41c1c]/30 bg-[#c41c1c]/5 rounded-[6px] p-3"
+            >
+              <p className="text-[13px] font-medium text-[#c41c1c]">
+                O backend recusou — nada foi gravado:
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {problemas.map((p, i) => (
+                  <li key={`${p.codigo}-${i}`} className="text-[12px] text-[#111111]">
+                    {p.sequence != null ? (
+                      <strong className="font-medium">
+                        Toque {p.sequence}
+                        {p.funil ? ` · ${rotuloDoFunil(funis, p.funil)}` : ""} —{" "}
+                      </strong>
+                    ) : null}
+                    {p.mensagem}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 mt-4">
+            <button
+              onClick={salvar}
+              disabled={salvando}
+              className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] disabled:opacity-50"
+            >
+              {salvando ? "Salvando..." : "Salvar"}
+            </button>
+            {sucesso && <span className="text-[13px] text-[#0f9d43]">{sucesso}</span>}
+            {!cadencia.pode_ligar && (
+              <span className="text-[12px] text-[#7b7b78]">
+                Ligar exige template aprovado em todo toque desta cadência.
               </span>
             )}
           </div>
-          <div className="mt-2 space-y-2">
-            {l.toques.map((t) => {
-              const dias = diasEfetivo(l.linha, t);
-              const template = templateEfetivo(l.linha, t);
-              return (
-                <div key={t.sequence} className="flex flex-wrap items-center gap-2">
-                  <span className="text-[12px] font-medium text-[#111111] w-[28px]">
-                    T{t.sequence}
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    aria-label={`Dias do toque ${t.sequence} (${l.rotulo})`}
-                    value={dias ?? ""}
-                    placeholder={String(t.dias_codigo)}
-                    onChange={(e) =>
-                      editarToque(l.linha, t.sequence, { dias: numeroOuNulo(e.target.value) })
-                    }
-                    className={`${CAMPO} w-[74px]`}
-                  />
-                  <span className="text-[11px] text-[#7b7b78]">dias · padrão {t.dias_codigo}</span>
-                  {templates === null ? (
-                    <span className="text-[12px] text-[#7b7b78]">carregando templates…</span>
-                  ) : (
-                    <select
-                      aria-label={`Template do toque ${t.sequence} (${l.rotulo})`}
-                      value={template ?? ""}
-                      onChange={(e) =>
-                        editarToque(l.linha, t.sequence, {
-                          template_name: e.target.value || null,
-                        })
-                      }
-                      className={`${CAMPO} min-w-[230px]`}
-                    >
-                      <option value="">— sem template —</option>
-                      {/* O que está gravado, mas não está entre os aprovados, continua
-                          visível: esconder trocaria o valor do banco por um vazio no
-                          primeiro clique em Salvar, sem ninguém pedir. */}
-                      {template && !aprovados.includes(template) && (
-                        <option value={template}>{template} (fora dos aprovados)</option>
-                      )}
-                      {aprovados.map((nome) => (
-                        <option key={nome} value={nome}>
-                          {nome}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {t.aceita_adiamento && (
-                    <span
-                      title={
-                        'O template deste toque traz o botão "Ainda tenho estoque": a ' +
-                        "resposta adia 60 dias sem recomeçar a cadência. É config do " +
-                        "código, não da tela."
-                      }
-                      className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] px-1.5 py-0.5"
-                    >
-                      Aceita adiamento
-                    </span>
-                  )}
-                  {!template && (
-                    <span className="text-[11px] text-[#c41c1c]">sem template</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-
-      {problemas && problemas.length > 0 && (
-        <div
-          role="alert"
-          className="mt-4 border border-[#c41c1c]/30 bg-[#c41c1c]/5 rounded-[6px] p-3"
-        >
-          <p className="text-[13px] font-medium text-[#c41c1c]">
-            O backend recusou — nada foi gravado:
-          </p>
-          <ul className="mt-2 space-y-1.5">
-            {problemas.map((p, i) => (
-              <li key={`${p.codigo}-${i}`} className="text-[12px] text-[#111111]">
-                {p.sequence != null && p.linha ? (
-                  <strong className="font-medium">
-                    Toque {p.sequence} · {rotuloDaLinha(cadencia, p.linha)} —{" "}
-                  </strong>
-                ) : null}
-                {p.mensagem}
-              </li>
-            ))}
-          </ul>
-        </div>
+        </>
       )}
-
-      <div className="flex flex-wrap items-center gap-3 mt-4">
-        <button
-          onClick={salvar}
-          disabled={salvando}
-          className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] disabled:opacity-50"
-        >
-          {salvando ? "Salvando..." : "Salvar"}
-        </button>
-        {sucesso && <span className="text-[13px] text-[#0f9d43]">{sucesso}</span>}
-        {!cadencia.pode_ligar && (
-          <span className="text-[12px] text-[#7b7b78]">
-            Ligar exige template aprovado em todo toque das duas linhas.
-          </span>
-        )}
-      </div>
     </>
   );
 }
@@ -588,8 +649,8 @@ export function DefinitionStrip({ definition }: { definition: CadenceDefinition 
     );
   }
 
-  const cadenciasJoao = definition.joao?.cadencias ?? [];
-  const temJoao = cadenciasJoao.length > 0;
+  const funisJoao = definition.joao?.funis ?? [];
+  const temJoao = funisJoao.length > 0;
   const noJoao = temJoao && motor === "joao";
 
   return (
@@ -613,7 +674,7 @@ export function DefinitionStrip({ definition }: { definition: CadenceDefinition 
         </div>
       )}
       {noJoao ? (
-        <JoaoEditor cadencias={cadenciasJoao} />
+        <JoaoEditor funis={funisJoao} />
       ) : (
         <ValeriaStrip definition={definition} />
       )}

@@ -1,7 +1,8 @@
 /**
  * @vitest-environment jsdom
  *
- * O editor de cadências da aba Follow-up — DOIS motores num painel só.
+ * O editor de cadências da aba Follow-up — DOIS motores num painel só, e o motor do
+ * João navegado por FUNIL primeiro (spec 2026-09-21).
  *
  * A regra que estes testes existem para travar é a de 16/09/2026: uma validação de
  * ativação idêntica a esta já existiu no builder de campanhas, recusava CERTO no
@@ -74,77 +75,88 @@ function toque(
   };
 }
 
-function linha(nome: string, rotulo: string, toques: ReturnType<typeof toque>[]) {
+function cadenciaDoFunil(
+  codigo: string,
+  rotulo: string,
+  gatilhoStageRotulo: string,
+  gatilhoDias: number,
+  toques: ReturnType<typeof toque>[],
+  extra: Partial<{ repete_ultimo: boolean; pode_ligar: boolean }> = {},
+) {
   return {
-    linha: nome,
+    codigo,
     rotulo,
-    pipeline_id: `pipe-${nome}`,
+    job_type: `joao_${codigo}`,
+    gatilho_stage_key: "novo",
+    gatilho_stage_rotulo: gatilhoStageRotulo,
+    gatilho_dias: gatilhoDias,
+    gatilho_dias_codigo: gatilhoDias,
+    ativa: false,
+    repete_ultimo: extra.repete_ultimo ?? false,
+    pode_ligar: extra.pode_ligar ?? true,
     toques,
     toques_sem_template: toques.filter((t) => !t.template_name).map((t) => t.sequence),
   };
 }
 
-/** O payload REAL de `GET /api/cadence/definition` (backend/app/follow_up/api.py). */
+function funil(codigo: string, rotulo: string, cadencias: ReturnType<typeof cadenciaDoFunil>[]) {
+  return { codigo, rotulo, pipeline_id: `pipe-${codigo}`, cadencias };
+}
+
+/** O payload REAL de `GET /api/cadence/definition` (backend/app/follow_up/api.py):
+ * `joao.funis`, cinco funis, "Recuperação" com `cadencias: []` de propósito. */
 function definicao() {
   return {
     ...VALERIA,
     valeria: VALERIA,
     joao: {
-      cadencias: [
-        {
-          codigo: "novo",
-          rotulo: "Novo",
-          job_type: "joao_novo",
-          gatilho_stage_key: "novo",
-          gatilho_dias: 2,
-          gatilho_dias_codigo: 2,
-          ativa: false,
-          repete_ultimo: false,
-          pode_ligar: true,
-          linhas: [
-            linha("atacado", "Atacado", [toque(1, 0, "joao_novo_atacado_t1")]),
-            linha("private_label", "Private Label", [toque(1, 0, "joao_novo_privatelabel_t1")]),
-          ],
-        },
-        {
-          codigo: "reposicao",
-          rotulo: "Reposição",
-          job_type: "joao_reposicao",
-          gatilho_stage_key: "novo",
-          gatilho_dias: 45,
-          gatilho_dias_codigo: 45,
-          ativa: false,
-          repete_ultimo: false,
-          pode_ligar: true,
-          linhas: [
-            linha("atacado", "Atacado", [
-              toque(1, 0, "joao_reposicao_atacado_t1", true),
-              toque(2, 15, "joao_reposicao_atacado_t2", true),
-            ]),
-            linha("private_label", "Private Label", [
-              toque(1, 0, "joao_reposicao_privatelabel_t1", true),
-              toque(2, 15, "joao_reposicao_privatelabel_t2", true),
-            ]),
-          ],
-        },
-        {
-          // Os 24 templates aprovados em 13/09/2026 cobrem Novo + Em conversa +
-          // Reposição. "Em atenção" nasceu depois do lote e NÃO tem texto aprovado —
-          // ligá-la é sempre recusado, e isso é declaração de `cadence_joao.py`.
-          codigo: "em_atencao",
-          rotulo: "Em atenção",
-          job_type: "joao_em_atencao",
-          gatilho_stage_key: "novo",
-          gatilho_dias: 90,
-          gatilho_dias_codigo: 90,
-          ativa: false,
-          repete_ultimo: true,
-          pode_ligar: false,
-          linhas: [
-            linha("atacado", "Atacado", [toque(1, 3, null, true)]),
-            linha("private_label", "Private Label", [toque(1, 3, null, true)]),
-          ],
-        },
+      funis: [
+        funil("atacado", "João - Atacado", [
+          cadenciaDoFunil("novo", "Novo", "Novo", 2, [toque(1, 0, "joao_novo_atacado_t1")]),
+          cadenciaDoFunil("em_conversa", "Em conversa", "Novo", 5, [
+            toque(1, 0, "joao_em_conversa_atacado_t1"),
+          ]),
+        ]),
+        funil("private_label", "João - Private Label", [
+          cadenciaDoFunil("novo", "Novo", "Novo", 2, [
+            toque(1, 0, "joao_novo_privatelabel_t1"),
+          ]),
+          cadenciaDoFunil("em_conversa", "Em conversa", "Novo", 5, [
+            toque(1, 0, "joao_em_conversa_privatelabel_t1"),
+          ]),
+        ]),
+        funil("reposicao_atacado", "João - Reposição Atacado", [
+          cadenciaDoFunil("reposicao", "Reposição", "Cliente Ativo", 45, [
+            toque(1, 0, "joao_reposicao_atacado_t1", true),
+            toque(2, 15, "joao_reposicao_atacado_t2", true),
+          ]),
+          cadenciaDoFunil(
+            "em_atencao",
+            "Em atenção",
+            // Armadilha da spec §2: a cadência "Em atenção" vigia a etapa "novo", o
+            // rótulo do gatilho tem que ser "Cliente Ativo", NUNCA "Em atenção".
+            "Cliente Ativo",
+            90,
+            [toque(1, 3, null, true)],
+            { repete_ultimo: true, pode_ligar: false },
+          ),
+        ]),
+        funil("reposicao_private_label", "João - Reposição Private Label", [
+          cadenciaDoFunil("reposicao", "Reposição", "Cliente Ativo", 45, [
+            toque(1, 0, "joao_reposicao_privatelabel_t1", true),
+            toque(2, 15, "joao_reposicao_privatelabel_t2", true),
+          ]),
+          cadenciaDoFunil(
+            "em_atencao",
+            "Em atenção",
+            "Cliente Ativo",
+            90,
+            [toque(1, 3, null, true)],
+            { repete_ultimo: true, pode_ligar: false },
+          ),
+        ]),
+        // Espaço reservado (spec §1): funil de verdade, zero cadências.
+        funil("recuperacao", "João - Recuperação", []),
       ],
     },
   };
@@ -157,17 +169,9 @@ const RECUSA_EM_ATENCAO = {
       {
         codigo: "toque_sem_template",
         mensagem:
-          "O toque 1 da linha Atacado não tem template configurado. Escolha um template aprovado para esse toque antes de ligar a cadência.",
+          "O toque 1 não tem template configurado. Escolha um template aprovado para esse toque antes de ligar a cadência.",
         cadencia: "em_atencao",
-        linha: "atacado",
-        sequence: 1,
-      },
-      {
-        codigo: "toque_sem_template",
-        mensagem:
-          "O toque 1 da linha Private Label não tem template configurado. Escolha um template aprovado para esse toque antes de ligar a cadência.",
-        cadencia: "em_atencao",
-        linha: "private_label",
+        funil: "reposicao_atacado",
         sequence: 1,
       },
     ],
@@ -180,17 +184,9 @@ const RECUSA_TEMPLATE_PENDENTE = {
       {
         codigo: "template_nao_aprovado",
         mensagem:
-          "O toque 2 da linha Atacado usa o template `joao_reposicao_atacado_t2`, que está PENDING na Meta. Espere a aprovação da Meta e ligue a cadência depois.",
+          "O toque 2 usa o template `joao_reposicao_atacado_t2`, que está PENDING na Meta. Espere a aprovação da Meta e ligue a cadência depois.",
         cadencia: "reposicao",
-        linha: "atacado",
-        sequence: 2,
-      },
-      {
-        codigo: "template_nao_aprovado",
-        mensagem:
-          "O toque 2 da linha Private Label usa o template `joao_reposicao_privatelabel_t2`, que NÃO EXISTE na Meta — nunca foi submetido, ou foi criado com outro nome.",
-        cadencia: "reposicao",
-        linha: "private_label",
+        funil: "reposicao_atacado",
         sequence: 2,
       },
     ],
@@ -229,8 +225,9 @@ beforeEach(() => {
       if (url === "/api/cadence/joao") {
         const next = putRespostas.shift();
         if (next) return resposta(next);
-        // Sucesso padrão: o backend devolve a cadência já RESOLVIDA.
-        return resposta({ body: definicao().joao.cadencias[1] });
+        // Sucesso padrão: o backend devolve a cadência já RESOLVIDA (do funil
+        // "reposicao_atacado", cadência "reposicao" — o par mais usado nos testes).
+        return resposta({ body: definicao().joao.funis[2].cadencias[0] });
       }
       throw new Error(`fetch inesperado: ${url}`);
     }),
@@ -245,9 +242,15 @@ afterEach(() => {
 async function abrirJoao(def: ReturnType<typeof definicao> = definicao()) {
   const utils = render(<DefinitionStrip definition={def as never} />);
   fireEvent.click(screen.getByRole("button", { name: "João" }));
-  // O <select> de template só existe depois que /api/templates responde.
-  await screen.findByLabelText("Template do toque 1 (Atacado)");
+  // O primeiro funil (Atacado) é selecionado por padrão — espera o <select> de
+  // template dele responder antes de prosseguir.
+  await screen.findByLabelText("Template do toque 1");
   return utils;
+}
+
+async function abrirFunil(rotulo: string) {
+  fireEvent.click(screen.getByRole("button", { name: rotulo }));
+  await waitFor(() => expect(screen.getByLabelText("Prazo do gatilho (dias)")).toBeTruthy());
 }
 
 async function abrirCadencia(rotulo: string) {
@@ -271,11 +274,13 @@ describe("DefinitionStrip — o seletor de motor", () => {
     expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
   });
 
-  it("troca para o João e mostra as cadências dele", async () => {
+  it("troca para o João e mostra os cinco funis pelo nome completo", async () => {
     await abrirJoao();
-    expect(screen.getByRole("button", { name: "Novo" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Reposição" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Em atenção" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "João - Atacado" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "João - Private Label" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "João - Reposição Atacado" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "João - Reposição Private Label" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "João - Recuperação" })).toBeTruthy();
   });
 
   it("volta para a ValerIA sem deixar campo editável para trás", async () => {
@@ -286,12 +291,41 @@ describe("DefinitionStrip — o seletor de motor", () => {
   });
 });
 
+describe("DefinitionStrip — navegação por funil, depois por cadência", () => {
+  it("dentro de um funil, lista só as cadências dele (no máximo 2)", async () => {
+    await abrirJoao();
+    // Funil Atacado começa selecionado: Novo + Em conversa.
+    expect(screen.getByRole("button", { name: "Novo" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Em conversa" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reposição" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Em atenção" })).toBeNull();
+  });
+
+  it("trocar de funil troca as cadências oferecidas", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    expect(screen.getByRole("button", { name: "Reposição" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Em atenção" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Novo" })).toBeNull();
+  });
+
+  it("funil Recuperação (vazio) mostra o estado vazio, sem quebrar a tela", async () => {
+    await abrirJoao();
+    fireEvent.click(screen.getByRole("button", { name: "João - Recuperação" }));
+    expect(naTela()).toContain("Nenhuma cadência configurada ainda para este funil.");
+    // Nada de editor para uma cadência que não existe.
+    expect(screen.queryByLabelText("Prazo do gatilho (dias)")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
+  });
+});
+
 describe("DefinitionStrip — edição dos toques do João", () => {
   it("só oferece template APROVADO no <select>", async () => {
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
 
-    const select = screen.getByLabelText("Template do toque 1 (Atacado)") as HTMLSelectElement;
+    const select = screen.getByLabelText("Template do toque 1") as HTMLSelectElement;
     const nomes = Array.from(select.options).map((o) => o.value);
     expect(nomes).toContain("joao_reposicao_atacado_t1");
     expect(nomes).toContain("joao_reposicao_atacado_t2");
@@ -299,24 +333,23 @@ describe("DefinitionStrip — edição dos toques do João", () => {
     expect(nomes).not.toContain("joao_ainda_pendente");
   });
 
-  it("grava MERGE: o PUT leva só o toque e o campo que mudaram", async () => {
+  it("grava MERGE: 1 PUT só, com funil + cadência + o que mudou", async () => {
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
 
-    fireEvent.change(screen.getByLabelText("Dias do toque 2 (Atacado)"), {
+    fireEvent.change(screen.getByLabelText("Dias do toque 2"), {
       target: { value: "20" },
     });
-    fireEvent.change(screen.getByLabelText("Template do toque 1 (Atacado)"), {
+    fireEvent.change(screen.getByLabelText("Template do toque 1"), {
       target: { value: "joao_reposicao_atacado_t2" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() => expect(corposDoPut().length).toBe(1));
     expect(corposDoPut()[0]).toEqual({
+      funil: "reposicao_atacado",
       cadencia: "reposicao",
-      // `template_name` é específico da LINHA: sem ela o backend recusa
-      // (linha_obrigatoria) e o texto do Atacado iria para o Private Label.
-      linha: "atacado",
       toques: {
         "1": { template_name: "joao_reposicao_atacado_t2" },
         "2": { dias: 20 },
@@ -324,8 +357,9 @@ describe("DefinitionStrip — edição dos toques do João", () => {
     });
   });
 
-  it("grava o prazo do gatilho num PUT de cadência, sem toques", async () => {
+  it("grava o prazo do gatilho num PUT sem toques", async () => {
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
 
     fireEvent.change(screen.getByLabelText("Prazo do gatilho (dias)"), {
@@ -334,17 +368,39 @@ describe("DefinitionStrip — edição dos toques do João", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() => expect(corposDoPut().length).toBe(1));
-    expect(corposDoPut()[0]).toEqual({ cadencia: "reposicao", gatilho_dias: 60 });
+    expect(corposDoPut()[0]).toEqual({
+      funil: "reposicao_atacado",
+      cadencia: "reposicao",
+      gatilho_dias: 60,
+    });
   });
 
   it("mostra o que o CÓDIGO manda por baixo da sobreposição", async () => {
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
     expect(naTela()).toContain("padrão 45");
   });
 
+  it("mostra o rótulo da etapa do gatilho, não a chave crua", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain("na etapa Cliente Ativo");
+  });
+
+  it('a cadência "Em atenção" mostra o gatilho como "Cliente Ativo", nunca "Em atenção"', async () => {
+    // Armadilha da spec §2: "Em atenção" vigia a etapa `novo` ("Cliente Ativo"), não a
+    // etapa DE VERDADE chamada "Em atenção" que as quatro pipelines também têm.
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Em atenção");
+    expect(naTela()).toContain("na etapa Cliente Ativo");
+  });
+
   it("informa o botão 'Ainda tenho estoque' sem deixar editá-lo", async () => {
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
     expect(naTela()).toContain("Aceita adiamento");
     expect(screen.queryByLabelText(/Aceita adiamento do toque/)).toBeNull();
@@ -352,9 +408,10 @@ describe("DefinitionStrip — edição dos toques do João", () => {
 });
 
 describe("DefinitionStrip — A RECUSA APARECE (o erro de 16/09/2026)", () => {
-  it("lista template por template quando o backend recusa ligar", async () => {
+  it("lista o toque recusado quando o backend recusa ligar", async () => {
     putRespostas = [{ ok: false, status: 400, body: RECUSA_TEMPLATE_PENDENTE }];
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
 
     fireEvent.click(screen.getByLabelText("Ligar cadência"));
@@ -362,17 +419,16 @@ describe("DefinitionStrip — A RECUSA APARECE (o erro de 16/09/2026)", () => {
 
     const alerta = await screen.findByRole("alert");
     const texto = alerta.textContent ?? "";
-    // O NOME de cada template, e a linha + o toque de cada um: é isso que diz ao
-    // operador o que fazer sem abrir o console.
+    // O NOME do template e o toque: é isso que diz ao operador o que fazer sem abrir
+    // o console.
     expect(texto).toContain("joao_reposicao_atacado_t2");
-    expect(texto).toContain("joao_reposicao_privatelabel_t2");
-    expect(texto).toContain("Toque 2 · Atacado");
-    expect(texto).toContain("Toque 2 · Private Label");
+    expect(texto).toContain("Toque 2");
   });
 
   it("não deixa a tela dizer que salvou quando o backend recusou", async () => {
     putRespostas = [{ ok: false, status: 400, body: RECUSA_TEMPLATE_PENDENTE }];
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
 
     fireEvent.click(screen.getByLabelText("Ligar cadência"));
@@ -387,9 +443,10 @@ describe("DefinitionStrip — A RECUSA APARECE (o erro de 16/09/2026)", () => {
   it("recusa sem `problemas` ainda diz alguma coisa", async () => {
     putRespostas = [{ ok: false, status: 502, body: { error: "backend respondeu 502" } }];
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
 
-    fireEvent.change(screen.getByLabelText("Dias do toque 2 (Atacado)"), {
+    fireEvent.change(screen.getByLabelText("Dias do toque 2"), {
       target: { value: "20" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
@@ -402,13 +459,15 @@ describe("DefinitionStrip — A RECUSA APARECE (o erro de 16/09/2026)", () => {
 describe("DefinitionStrip — Em atenção", () => {
   it("mostra 'sem template' antes mesmo de tentar ligar", async () => {
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Em atenção");
     expect(naTela().toLowerCase()).toContain("sem template");
   });
 
-  it("recusa ligar, nomeando os dois toques sem template", async () => {
+  it("recusa ligar, nomeando o toque sem template", async () => {
     putRespostas = [{ ok: false, status: 400, body: RECUSA_EM_ATENCAO }];
     await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Em atenção");
 
     fireEvent.click(screen.getByLabelText("Ligar cadência"));
@@ -416,26 +475,34 @@ describe("DefinitionStrip — Em atenção", () => {
 
     const alerta = await screen.findByRole("alert");
     const texto = alerta.textContent ?? "";
-    expect(texto).toContain("Toque 1 · Atacado");
-    expect(texto).toContain("Toque 1 · Private Label");
-    expect(corposDoPut()).toEqual([{ cadencia: "em_atencao", ativa: true }]);
+    expect(texto).toContain("Toque 1");
+    expect(corposDoPut()).toEqual([
+      { funil: "reposicao_atacado", cadencia: "em_atencao", ativa: true },
+    ]);
   });
 });
 
 describe("DefinitionStrip — desligar sempre funciona", () => {
   it("manda ativa:false e não mostra recusa nenhuma", async () => {
     const def = definicao();
-    def.joao.cadencias[1].ativa = true;
-    putRespostas = [{ ok: true, status: 200, body: { ...def.joao.cadencias[1], ativa: false } }];
+    def.joao.funis[2].cadencias[0].ativa = true;
+    putRespostas = [
+      { ok: true, status: 200, body: { ...def.joao.funis[2].cadencias[0], ativa: false } },
+    ];
 
     await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
     expect((screen.getByLabelText("Ligar cadência") as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(screen.getByLabelText("Ligar cadência"));
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
-    await waitFor(() => expect(corposDoPut()).toEqual([{ cadencia: "reposicao", ativa: false }]));
+    await waitFor(() =>
+      expect(corposDoPut()).toEqual([
+        { funil: "reposicao_atacado", cadencia: "reposicao", ativa: false },
+      ]),
+    );
     await waitFor(() => expect(naTela()).toContain("Configuração salva"));
     expect(screen.queryByRole("alert")).toBeNull();
   });
