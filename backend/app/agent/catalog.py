@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 # setor — não há tabela de preços separada por perfil.
 _KNOWN_FUNNELS = frozenset({"atacado", "private_label", "exportacao", "consumo"})
 
-# Cache em memória: {funnel_normalizado: (timestamp, markdown)}. TTL curto porque
-# ops pode atualizar o CSV a qualquer momento; 5 min é um bom equilíbrio entre
-# frescor e não martelar o banco a cada mensagem.
-_CACHE_TTL_SECONDS = 300
+# Cache em memória: {funnel_normalizado: (timestamp, markdown)}. O admin edita os
+# preços no CRM (/produtos -> "Preços da ValerIA") e a tela promete que a ValerIA
+# obedece em até 1 minuto — por isso 60 s. Custo: uma leitura de ~32 linhas por
+# minuto por processo.
+_CACHE_TTL_SECONDS = 60
 _cache: dict[str, tuple[float, str]] = {}
 
 
