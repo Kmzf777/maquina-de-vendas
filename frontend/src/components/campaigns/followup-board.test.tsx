@@ -81,8 +81,18 @@ function cadenciaDoFunil(
   gatilhoStageRotulo: string,
   gatilhoDias: number,
   toques: ReturnType<typeof toque>[],
-  extra: Partial<{ repete_ultimo: boolean; pode_ligar: boolean }> = {},
+  extra: Partial<{
+    repete_ultimo: boolean;
+    pode_ligar: boolean;
+    /** Os três SÓ-LEITURA de 23/09/2026. Os defaults aqui são os do backend
+     * (`Cadencia`): silêncio 0, sem etapa de destino — e `dias_ate_mover: 1` MESMO
+     * assim, que é exatamente a armadilha que os testes abaixo travam. */
+    gatilho_silencio_dias: number;
+    etapa_final_rotulo: string | null;
+    dias_ate_mover: number;
+  }> = {},
 ) {
+  const semTemplate = toques.filter((t) => !t.template_name).map((t) => t.sequence);
   return {
     codigo,
     rotulo,
@@ -91,12 +101,49 @@ function cadenciaDoFunil(
     gatilho_stage_rotulo: gatilhoStageRotulo,
     gatilho_dias: gatilhoDias,
     gatilho_dias_codigo: gatilhoDias,
+    gatilho_silencio_dias: extra.gatilho_silencio_dias ?? 0,
+    etapa_final_rotulo: extra.etapa_final_rotulo ?? null,
+    dias_ate_mover: extra.dias_ate_mover ?? 1,
     ativa: false,
     repete_ultimo: extra.repete_ultimo ?? false,
-    pode_ligar: extra.pode_ligar ?? true,
+    pode_ligar: extra.pode_ligar ?? semTemplate.length === 0,
     toques,
-    toques_sem_template: toques.filter((t) => !t.template_name).map((t) => t.sequence),
+    toques_sem_template: semTemplate,
   };
+}
+
+/** Uma das três cadências de prospecção (Atacado / Private Label) como o backend as
+ * declara desde 23/09/2026: TODO toque sem template (spec §2, decisão do dono) e
+ * sempre com destino "Em atenção" 1 dia depois do último toque. */
+function prospeccao(
+  codigo: string,
+  rotulo: string,
+  gatilhoStageRotulo: string,
+  gatilhoDias: number,
+  silencioDias: number,
+  diasDosToques: number[],
+) {
+  return cadenciaDoFunil(
+    codigo,
+    rotulo,
+    gatilhoStageRotulo,
+    gatilhoDias,
+    diasDosToques.map((d, i) => toque(i + 1, d, null)),
+    {
+      gatilho_silencio_dias: silencioDias,
+      etapa_final_rotulo: "Em atenção",
+      dias_ate_mover: 1,
+    },
+  );
+}
+
+/** As TRÊS cadências que Atacado e Private Label passaram a ter (spec §1). */
+function cadenciasDeProspeccao() {
+  return [
+    prospeccao("novo", "Novo", "Novo", 2, 2, [0, 2, 4]),
+    prospeccao("em_conversa", "Em conversa", "Em conversa", 2, 2, [0, 2, 4, 9]),
+    prospeccao("proposta", "Proposta Enviada", "Proposta Enviada", 1, 0, [0, 1, 4, 8]),
+  ];
 }
 
 function funil(codigo: string, rotulo: string, cadencias: ReturnType<typeof cadenciaDoFunil>[]) {
@@ -104,27 +151,19 @@ function funil(codigo: string, rotulo: string, cadencias: ReturnType<typeof cade
 }
 
 /** O payload REAL de `GET /api/cadence/definition` (backend/app/follow_up/api.py):
- * `joao.funis`, cinco funis, "Recuperação" com `cadencias: []` de propósito. */
+ * `joao.funis`, cinco funis, "Recuperação" com `cadencias: []` de propósito.
+ *
+ * Desde 23/09/2026, Atacado e Private Label têm TRÊS cadências (Novo, Em conversa e a
+ * nova Proposta Enviada), todas sem template em toque nenhum — e os de Reposição
+ * seguem com duas, `gatilho_silencio_dias: 0` e `etapa_final_rotulo: null`. */
 function definicao() {
   return {
     ...VALERIA,
     valeria: VALERIA,
     joao: {
       funis: [
-        funil("atacado", "João - Atacado", [
-          cadenciaDoFunil("novo", "Novo", "Novo", 2, [toque(1, 0, "joao_novo_atacado_t1")]),
-          cadenciaDoFunil("em_conversa", "Em conversa", "Novo", 5, [
-            toque(1, 0, "joao_em_conversa_atacado_t1"),
-          ]),
-        ]),
-        funil("private_label", "João - Private Label", [
-          cadenciaDoFunil("novo", "Novo", "Novo", 2, [
-            toque(1, 0, "joao_novo_privatelabel_t1"),
-          ]),
-          cadenciaDoFunil("em_conversa", "Em conversa", "Novo", 5, [
-            toque(1, 0, "joao_em_conversa_privatelabel_t1"),
-          ]),
-        ]),
+        funil("atacado", "João - Atacado", cadenciasDeProspeccao()),
+        funil("private_label", "João - Private Label", cadenciasDeProspeccao()),
         funil("reposicao_atacado", "João - Reposição Atacado", [
           cadenciaDoFunil("reposicao", "Reposição", "Cliente Ativo", 45, [
             toque(1, 0, "joao_reposicao_atacado_t1", true),
@@ -292,13 +331,42 @@ describe("DefinitionStrip — o seletor de motor", () => {
 });
 
 describe("DefinitionStrip — navegação por funil, depois por cadência", () => {
-  it("dentro de um funil, lista só as cadências dele (no máximo 2)", async () => {
+  it("dentro de um funil, lista só as cadências dele", async () => {
     await abrirJoao();
-    // Funil Atacado começa selecionado: Novo + Em conversa.
+    // Funil Atacado começa selecionado: Novo + Em conversa + Proposta Enviada.
     expect(screen.getByRole("button", { name: "Novo" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Em conversa" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reposição" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Em atenção" })).toBeNull();
+  });
+
+  it("o funil Atacado mostra as TRÊS cadências, com a nova Proposta Enviada", async () => {
+    // Nenhum código de navegação foi escrito para isto (spec §6): este nível renderiza
+    // `funil.cadencias` inteiro, então a terceira aparece sozinha. O teste existe para
+    // provar que aparece MESMO, e não porque alguém a listou à mão.
+    await abrirJoao();
+    const cadencias = ["Novo", "Em conversa", "Proposta Enviada"];
+    for (const nome of cadencias) {
+      expect(screen.getByRole("button", { name: nome })).toBeTruthy();
+    }
+    // E ela abre como qualquer outra: 4 toques editáveis.
+    await abrirCadencia("Proposta Enviada");
+    expect(screen.getByLabelText("Dias do toque 4")).toBeTruthy();
+    expect(screen.queryByLabelText("Dias do toque 5")).toBeNull();
+  });
+
+  it("Private Label também tem as três", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Private Label");
+    expect(screen.getByRole("button", { name: "Proposta Enviada" })).toBeTruthy();
+  });
+
+  it("os funis de Reposição continuam com duas cadências", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    expect(screen.getByRole("button", { name: "Reposição" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Em atenção" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Proposta Enviada" })).toBeNull();
   });
 
   it("trocar de funil troca as cadências oferecidas", async () => {
@@ -316,6 +384,70 @@ describe("DefinitionStrip — navegação por funil, depois por cadência", () =
     // Nada de editor para uma cadência que não existe.
     expect(screen.queryByLabelText("Prazo do gatilho (dias)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// O cabeçalho da cadência — DUAS frases condicionais (spec 2026-09-23 §5 e §6)
+//
+// A tentação é montar a frase inteira sempre, com os números que vierem. Os dois
+// testes negativos deste bloco são o que impede isso: a tela mentiria sobre o gatilho
+// das cadências de Reposição ("0 dia(s) sem conversa", quando elas disparam só por
+// tempo de etapa) e inventaria um destino que não existe ("move o card para null",
+// porque `dias_ate_mover` chega 1 até quando não há para onde mover).
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("DefinitionStrip — o relógio completo no cabeçalho", () => {
+  it("Novo: mostra OS DOIS números do gatilho e o destino do card", async () => {
+    await abrirJoao(); // abre em Atacado / Novo
+    expect(naTela()).toContain("Dispara com o card parado 2 dia(s) na etapa Novo");
+    expect(naTela()).toContain("2 dia(s) sem conversa");
+    expect(naTela()).toContain("espera 1 dia e move o card para Em atenção");
+  });
+
+  it("Proposta Enviada: SEM frase de silêncio, COM frase do move", async () => {
+    // O caso misto, e o que prova que as duas frases são independentes: silêncio 0
+    // (o dono pediu "24h depois da proposta", não "24h sem conversar") mas o card
+    // vai para "Em atenção" igual.
+    await abrirJoao();
+    await abrirCadencia("Proposta Enviada");
+    expect(naTela()).toContain(
+      "Dispara com o card parado 1 dia(s) na etapa Proposta Enviada",
+    );
+    expect(naTela()).not.toContain("sem conversa");
+    expect(naTela()).toContain("espera 1 dia e move o card para Em atenção");
+  });
+
+  it("Reposição: nem frase de silêncio, nem frase de move", async () => {
+    // `gatilho_silencio_dias: 0` E `etapa_final_rotulo: null` — mas
+    // `dias_ate_mover: 1` (default da dataclass). Se a tela olhasse o NÚMERO em vez
+    // do rótulo, este teste ficaria vermelho.
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain("Dispara com o card parado 45 dia(s) na etapa Cliente Ativo");
+    expect(naTela()).not.toContain("sem conversa");
+    expect(naTela()).not.toContain("move o card para");
+  });
+
+  it("dias_ate_mover sozinho NUNCA basta: sem rótulo, sem frase", async () => {
+    // A mutação explícita: um payload com `dias_ate_mover: 3` e destino nulo. Quem
+    // condicionar a frase ao número escreve "move o card para null" aqui.
+    const def = definicao();
+    def.joao.funis[2].cadencias[0].dias_ate_mover = 3;
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).not.toContain("move o card para");
+    expect(naTela()).not.toContain("null");
+    expect(naTela()).not.toContain("undefined");
+  });
+
+  it('"Em atenção" mantém a frase do repete_ultimo e não ganha frase de move', async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Em atenção");
+    expect(naTela()).toContain("o último toque se repete até o lead pedir para parar");
+    expect(naTela()).not.toContain("move o card para");
   });
 });
 
@@ -355,6 +487,33 @@ describe("DefinitionStrip — edição dos toques do João", () => {
         "2": { dias: 20 },
       },
     });
+  });
+
+  it("na cadência nova, `toques` vai como MAPA e `ativa` não vai sem clique", async () => {
+    // Os dois jeitos de o PUT dar errado, e nenhum deles aparece na tela:
+    //  1. `toques` é LISTA no GET e MAPA `{sequence: {...}}` no PUT — ecoar o objeto
+    //     do GET devolve 400 `toques_invalidos`;
+    //  2. `ativa` ecoado do GET é GRAVADO — uma tela que devolve o objeto inteiro
+    //     desliga a cadência sem ninguém ter clicado em desligar.
+    // Por isso o corpo é conferido por igualdade EXATA: campo a mais reprova.
+    const def = definicao();
+    putRespostas = [{ ok: true, status: 200, body: def.joao.funis[0].cadencias[2] }];
+    await abrirJoao(def);
+    await abrirCadencia("Proposta Enviada");
+
+    fireEvent.change(screen.getByLabelText("Dias do toque 3"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    const corpo = corposDoPut()[0];
+    expect(corpo).toEqual({
+      funil: "atacado",
+      cadencia: "proposta",
+      toques: { "3": { dias: 5 } },
+    });
+    // Explícito, porque a igualdade acima é fácil de afrouxar num refactor:
+    expect(Array.isArray(corpo.toques)).toBe(false);
+    expect("ativa" in corpo).toBe(false);
   });
 
   it("grava o prazo do gatilho num PUT sem toques", async () => {

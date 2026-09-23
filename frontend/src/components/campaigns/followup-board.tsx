@@ -50,6 +50,16 @@ type JoaoCadenciaDoFunil = {
   gatilho_stage_rotulo: string;
   gatilho_dias: number;
   gatilho_dias_codigo: number;
+  /** O SEGUNDO relógio do gatilho: dias sem NENHUMA conversa, em AND com
+   * `gatilho_dias`. Só leitura — vem do código, não tem coluna em tabela nenhuma e
+   * por isso não ganha par `*_codigo`. `0` = sem filtro de silêncio. */
+  gatilho_silencio_dias: number;
+  /** Para onde o card vai quando a cadência termina sem resposta. `null` = esta
+   * cadência NÃO move card (é o caso das duas de Reposição). Só leitura. */
+  etapa_final_rotulo: string | null;
+  /** Dias entre o último toque e o move. Vem `1` MESMO quando `etapa_final_rotulo`
+   * é nulo (é o default da dataclass do backend) — sozinho ele não significa nada. */
+  dias_ate_mover: number;
   ativa: boolean;
   repete_ultimo: boolean;
   /** Só a metade que não depende da Meta: "todo toque tem NOME de template". */
@@ -246,6 +256,34 @@ function rotuloDoFunil(funis: JoaoFunil[], funil: string | null | undefined): st
   return funis.find((f) => f.codigo === funil)?.rotulo ?? funil;
 }
 
+/**
+ * A segunda metade do relógio do gatilho — CONDICIONAL, e é aqui que se erra fácil.
+ *
+ * Silêncio `0` NÃO vira frase: as duas cadências de Reposição disparam só por tempo de
+ * ETAPA, e escrever "0 dia(s) sem conversa" seria mentir sobre o que a RPC filtra. A
+ * frase aparece em AND com a de etapa ("...parado 2 dia(s) na etapa Novo E 2 dia(s)
+ * sem conversa") porque é assim que `get_deals_stage_stagnant` combina os dois
+ * parâmetros. Os dois números aparecem, só o de etapa é editável (spec §5).
+ */
+function fraseDoSilencio(c: JoaoCadenciaDoFunil): string {
+  if (!c.gatilho_silencio_dias) return "";
+  return ` e ${c.gatilho_silencio_dias} dia(s) sem conversa`;
+}
+
+/**
+ * O destino do card no fim da cadência — CONDICIONAL, e a condição é o RÓTULO.
+ *
+ * Quem decide se a frase existe é `etapa_final_rotulo`, NUNCA `dias_ate_mover`: o
+ * backend manda `dias_ate_mover: 1` mesmo sem destino (é o default da dataclass), então
+ * olhar o número escreveria "move o card para null" nas cadências de Reposição, que não
+ * movem card nenhum.
+ */
+function fraseDoMove(c: JoaoCadenciaDoFunil): string {
+  if (!c.etapa_final_rotulo) return "";
+  const espera = c.dias_ate_mover === 1 ? "1 dia" : `${c.dias_ate_mover} dias`;
+  return ` · depois do último toque, espera ${espera} e move o card para ${c.etapa_final_rotulo}`;
+}
+
 const CAMPO =
   "border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[13px] text-[#111111] bg-white";
 const ROTULO_CAMPO = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
@@ -254,9 +292,11 @@ const ROTULO_CAMPO = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
  * O editor das cadências do João, navegado por FUNIL primeiro (spec 2026-09-21).
  *
  * Nível 1: os cinco funis (`funil.rotulo` — nome completo, ex. "João - Reposição
- * Atacado"). Nível 2, dentro do funil selecionado: as cadências dele (no máximo 2).
- * Recuperação (`cadencias: []`) é espaço reservado de propósito — mostra um estado
- * vazio em vez de tentar renderizar um editor sem nada para editar.
+ * Atacado"). Nível 2, dentro do funil selecionado: as cadências dele — TRÊS em Atacado
+ * e Private Label desde 23/09/2026 ("Proposta Enviada" entrou sozinha, sem código de
+ * navegação novo, porque este nível renderiza `funil.cadencias` inteiro), duas nos de
+ * Reposição. Recuperação (`cadencias: []`) é espaço reservado de propósito — mostra
+ * um estado vazio em vez de tentar renderizar um editor sem nada para editar.
  *
  * Dentro de uma cadência: dias de cada toque, template de cada toque, prazo do
  * gatilho, liga/desliga. NÃO existe "adicionar toque" — mudar a forma da cadência é
@@ -478,7 +518,9 @@ function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
               <p className="text-[12px] text-[#7b7b78] mt-0.5">
                 Dispara com o card parado {gatilhoEfetivo ?? cadencia.gatilho_dias_codigo} dia(s)
                 na etapa {cadencia.gatilho_stage_rotulo}
+                {fraseDoSilencio(cadencia)}
                 {cadencia.repete_ultimo && " · o último toque se repete até o lead pedir para parar"}
+                {fraseDoMove(cadencia)}
               </p>
             </div>
             <label className="flex items-center gap-2 text-[13px] text-[#111111]">
