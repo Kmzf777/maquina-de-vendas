@@ -57,6 +57,8 @@ data/
 TREE.md
 frontend/build_output.log
 frontend/tsconfig.tsbuildinfo
+.valeria-score-backfill.cursor
 
 # Worktrees isolados de sessoes de agente (nunca versionar)
 .claude/worktrees/
+.superpowers/sdd/

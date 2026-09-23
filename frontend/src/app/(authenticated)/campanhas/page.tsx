@@ -12,6 +12,7 @@ import { CreateBroadcastModal } from "@/components/campaigns/create-broadcast-mo
 import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
 import { FollowupBoard } from "@/components/campaigns/followup-board";
+import { ValeriaScoreModal } from "@/components/campaigns/valeria-score-modal";
 import { campaignNodeCount } from "@/lib/campaign-node-count";
 import { isSystemCampaign } from "@/lib/system-campaign";
 
@@ -55,6 +56,7 @@ function CampanhasPageInner() {
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [showCadenceModal, setShowCadenceModal] = useState(false);
   const [showQuickSendModal, setShowQuickSendModal] = useState(false);
+  const [showValeriaScoreModal, setShowValeriaScoreModal] = useState(false);
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
   const [channelId, setChannelId] = useState("");
@@ -190,6 +192,12 @@ function CampanhasPageInner() {
           <p className="text-[13px] md:text-[14px] text-[#7b7b78] mt-0.5">Disparos e cadências de follow-up</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setShowValeriaScoreModal(true)}
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+          >
+            Valeria Score
+          </button>
           <button
             onClick={() => setShowQuickSendModal(true)}
             className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
@@ -335,6 +343,11 @@ function CampanhasPageInner() {
         open={showQuickSendModal}
         onClose={() => setShowQuickSendModal(false)}
         onSuccess={handleQuickSendSuccess}
+      />
+
+      <ValeriaScoreModal
+        open={showValeriaScoreModal}
+        onClose={() => setShowValeriaScoreModal(false)}
       />
 
       {quickSendToast && (
