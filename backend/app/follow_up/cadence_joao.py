@@ -25,13 +25,14 @@ Cinco funis. Quatro têm cadência; o quinto é espaço reservado:
 
   funil                            pipeline_id (produção, 10/09/2026)   cadências
   ──────────────────────────────────────────────────────────────────────────────
-  João - Atacado                   9706a14a-3d9a-...                   Novo, Em conversa
-  João - Private Label             24fb6ce8-6b7b-...                   Novo, Em conversa
-  João - Reposição Atacado         79e35e6b-01d1-...                   Reposição, Em atenção
-  João - Reposição Private Label   9c027143-72f6-...                   Reposição, Em atenção
-  João - Recuperação               fa94029b-d524-...                   (nenhuma — de propósito)
+  João - Atacado                   9706a14a-3d9a-...    Novo, Em conversa, Proposta Enviada
+  João - Private Label             24fb6ce8-6b7b-...    Novo, Em conversa, Proposta Enviada
+  João - Reposição Atacado         79e35e6b-01d1-...    Reposição, Em atenção
+  João - Reposição Private Label   9c027143-72f6-...    Reposição, Em atenção
+  João - Recuperação               fa94029b-d524-...    (nenhuma — de propósito)
 
-Cada CÓDIGO de cadência (`novo`, `em_conversa`, `reposicao`, `em_atencao`) existe em
+Cada CÓDIGO de cadência (`novo`, `em_conversa`, `proposta`, `reposicao`,
+`em_atencao`) existe em
 DOIS funis-irmãos (Atacado/Private Label, ou Reposição Atacado/Reposição Private
 Label) — mas cada ocorrência é um objeto `Cadencia` PRÓPRIO, com sua PRÓPRIA tupla de
 `touches` (templates diferentes). Não existe mais um mapa achatado só por código: antes
@@ -40,21 +41,26 @@ apontava para pipelines DIFERENTES dependendo de qual cadência estava por cima 
 2026-09-21 §1). Agora o funil é sempre a primeira metade da chave — `resolver(funil,
 codigo, overrides)`, funil primeiro.
 
-  código        gatilho                            toques                ata
-  ─────────────────────────────────────────────────────────────────────────────
-  novo          2 dias na etapa `novo`             1                     01:07:10
-  em_conversa   2 dias na etapa `respondeu`        7 em ~30 dias         41:02
-  reposicao     45 dias em "Cliente Ativo"         4, de 15 em 15        26:35, 34:24
-  em_atencao    90 dias sem comprar                1 a cada 3 dias       38:08, 41:12
+  código        gatilho                                 toques              fonte
+  ─────────────────────────────────────────────────────────────────────────────────
+  novo          2 dias em `novo` E 2 de silêncio        3: 0, 2, 4          23/09 §1
+  em_conversa   2 dias em `respondeu` E 2 de silêncio   4: 0, 2, 4, 9       23/09 §1
+  proposta      1 dia em `proposta_enviada`             4: 0, 1, 4, 8       23/09 §1
+  reposicao     45 dias em "Cliente Ativo"              4, de 15 em 15      ata 26:35, 34:24
+  em_atencao    90 dias sem comprar                     1 a cada 3 dias     ata 38:08, 41:12
 
 `offset` é contado a partir da MATRÍCULA (o instante em que o gatilho disparou), nunca
-do toque anterior — é como `cadence.py` conta, e é o número que a tela edita. Por isso
-"Em conversa" aparece aqui como 0/2/5/10/16/22/28 e não como o D+2/4/7/12/18/24/30 da
-ata: aqueles são contados da ENTRADA na etapa, e o gatilho já consumiu os 2 primeiros
-dias.
+do toque anterior — é como `cadence.py` conta, e é o número que a tela edita. O gatilho
+já consumiu os dias de espera, então o toque 1 de toda cadência é sempre o dia 0.
+
+As três primeiras são as cadências de PROSPECÇÃO, reformuladas em 23/09/2026
+(`docs/superpowers/specs/2026-09-23-esteiras-joao-v2-design.md`). Elas eram duas
+(Novo com 1 toque, Em conversa com 7 ao longo de ~30 dias) e viraram três, mais curtas
+e com uma saída explícita para quem nunca responde (decisão 5 abaixo). As duas de
+Reposição NÃO foram tocadas — os números delas continuam sendo os da ata de 10/09/2026.
 
 ──────────────────────────────────────────────────────────────────────────────
-TRÊS DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
+CINCO DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
 ──────────────────────────────────────────────────────────────────────────────
 
 1. **"Em atenção" não tem template, e isso é uma declaração.**
@@ -89,6 +95,34 @@ TRÊS DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
    Perdido Churn) que este motor ainda não sabe operar. `cadencias=()` é deliberado —
    não é um TODO, é o estado real: zero gatilho, zero toque, pronto para ganhar uma
    cadência quando alguém definir os dois (spec 2026-09-21 §1).
+
+4. **TODOS os toques de Novo, Em conversa e Proposta Enviada nascem SEM template —
+   inclusive os que já tinham um APROVADO na Meta. NÃO "conserte" isto.**
+   É decisão explícita do dono do funil em 23/09/2026 (spec 2026-09-23 §2): os textos
+   das três cadências passam a ser preenchidos pela TELA, sem deploy. Os 16 templates
+   que este arquivo referenciava até ontem (`joao_novo_atacado_t1`,
+   `joao_novo_privatelabel_t1` e os 14 `joao_conversa_*`) continuam aprovados na Meta
+   e ficaram DESCONECTADOS de propósito: a forma da cadência mudou (7 toques viraram
+   4), e escolher quais 4 dos 7 sobreviveriam seria uma decisão de TEXTO tomada por
+   quem não escreve o texto.
+   Consequência, e ela é o ponto: **nenhuma das três pode ser ligada** enquanto
+   ninguém preencher os textos — é a mesma trava de "Em atenção" da decisão 1, agora
+   valendo para as cinco cadências menos `reposicao`. A recusa é o comportamento
+   desejado, não um bug a corrigir reconectando os nomes antigos.
+   Os 8 templates de Reposição (`joao_reposicao_*`) seguem conectados: aquela cadência
+   não mudou.
+
+5. **As três cadências de prospecção MOVEM o card no fim — e é a única exceção ao
+   "o motor nunca move card" do spec de 18/09.**
+   Passado o último toque, se o lead nunca respondeu, o card vai para a etapa
+   `em_atencao` ("Em atenção") — que existe nos quatro funis com cadência
+   (`20260910_contrato_etapas_joao.sql:146`). Aqui isto é só DECLARAÇÃO: os campos
+   `etapa_final_key`, `etapa_final_rotulo` e `dias_ate_mover` dizem o quê e quando;
+   quem cria o job de mover é o agendador (`service.py`) e quem o executa é o handler.
+   Cuidado com a ambiguidade de nome, irmã da decisão 2: `em_atencao` é, ao mesmo
+   tempo, o código de uma CADÊNCIA (a dos funis de Reposição) e a key de uma ETAPA
+   (nos funis de prospecção). `etapa_final_key` é sempre a ETAPA — as cadências de
+   Reposição têm `etapa_final_key=None` e não movem card nenhum.
 
 ──────────────────────────────────────────────────────────────────────────────
 O BANCO SOBREPÕE, O CÓDIGO É A ORIGEM (ata 33:28)
@@ -185,8 +219,24 @@ class Cadencia:
     gatilho_stage_rotulo: str
     gatilho_dias: int
     touches: tuple[Touch, ...]
+    # O SEGUNDO relógio do gatilho, e ele é um AND com `gatilho_dias`: dias sem
+    # NENHUMA conversa (`p_silence_days` da RPC `get_deals_stage_stagnant`; 0 desliga
+    # o filtro). O dono escreveu "2 dias sem conversar" para Novo e Em conversa
+    # (spec 2026-09-23 §5); Proposta Enviada dispara só por tempo de etapa ("24h
+    # depois"), e as duas de Reposição também — o relógio delas é mesmo o da etapa
+    # ("45 dias em Cliente Ativo"). Por isso o default é 0: ele preserva exatamente o
+    # que as cadências de Reposição já faziam.
+    gatilho_silencio_dias: int = 0
+    # Para onde o card vai quando a cadência termina sem o lead responder, e quanto
+    # tempo depois do ÚLTIMO toque (decisão 5 no cabeçalho). `None` = esta cadência
+    # não move card — o comportamento de sempre, e o das duas de Reposição.
+    # O rótulo é hardcoded aqui pelo mesmo motivo de `gatilho_stage_rotulo`:
+    # `pipeline_stages.label` é editável por qualquer operador do CRM.
+    etapa_final_key: str | None = None
+    etapa_final_rotulo: str | None = None
+    dias_ate_mover: int = 1
     # Só "Em atenção" repete: a ata pede "uma mensagem a cada três dias ATÉ ele falar
-    # que não quer mais" (38:08) — uma cadência sem fim declarado. As outras três
+    # que não quer mais" (38:08) — uma cadência sem fim declarado. As outras
     # terminam no último toque.
     repete_ultimo: bool = False
     ativa: bool = False
@@ -238,6 +288,14 @@ class CadenciaResolvida:
     ativa: bool
     repete_ultimo: bool
     touches: tuple[Touch, ...]
+    # Os quatro campos de 23/09/2026. Não são sobrepostos pelo banco nesta entrega
+    # (spec §5: "o de silêncio fica só no código"; a tela MOSTRA os dois números e
+    # edita só o de etapa) — vêm direto da `Cadencia`. Ficam aqui porque o agendador
+    # consome a RESOLVIDA e não deve ter que voltar ao código para buscá-los.
+    gatilho_silencio_dias: int = 0
+    etapa_final_key: str | None = None
+    etapa_final_rotulo: str | None = None
+    dias_ate_mover: int = 1
 
     @property
     def intervalo_repeticao(self) -> timedelta | None:
@@ -278,55 +336,131 @@ def _toques(offsets_em_dias: tuple[int, ...], templates: tuple[str | None, ...],
     )
 
 
-# ── "Novo" — 01:07:10, "é de dois dias". Um toque, e o card não se move. ───────
+# ═══════════════════════════════════════════════════════════════════════════════
+# As TRÊS cadências de prospecção (spec 2026-09-23) — Atacado e Private Label
+# ═══════════════════════════════════════════════════════════════════════════════
 #
-# Dois dias e não as "36 horas" que a ata também cita: `get_deals_stage_stagnant` é o
-# único gatilho do sistema com as guardas completas (blacklist, número errado, conversa
-# finalizada) e só entende dias inteiros (`p_stage_days int`). Ganhar 36h custaria um
-# gatilho novo, sem essas guardas.
-_NOVO_ATACADO = Cadencia(
-    codigo="novo",
-    rotulo="Novo",
-    gatilho_stage_key="novo",
-    gatilho_stage_rotulo="Novo",
-    gatilho_dias=2,
-    touches=_toques((0,), ("joao_novo_atacado_t1",)),
+# A etapa de destino das três, e o prazo. "Em atenção" aqui é ETAPA, nunca o código da
+# cadência de mesmo nome que vive nos funis de Reposição (decisão 5 no cabeçalho).
+ETAPA_FINAL_KEY = "em_atencao"
+ETAPA_FINAL_ROTULO = "Em atenção"
+DIAS_ATE_MOVER = 1
+
+
+def _cadencia_de_prospeccao(
+    *,
+    codigo: str,
+    rotulo: str,
+    gatilho_stage_key: str,
+    gatilho_stage_rotulo: str,
+    gatilho_dias: int,
+    gatilho_silencio_dias: int,
+    offsets: tuple[int, ...],
+) -> Cadencia:
+    """Uma das três cadências de prospecção, SEM template em nenhum toque.
+
+    ⚠️  `template_name=None` em TODOS os toques é deliberado (decisão 4 no cabeçalho,
+    spec 2026-09-23 §2). Não é esquecimento e não há o que reconectar: os 16 templates
+    que estas cadências usavam até 22/09/2026 seguem aprovados na Meta e foram
+    DESCONECTADOS por decisão do dono do funil — os textos passam a ser preenchidos
+    pela tela, sem deploy. Enquanto ninguém preencher, `toques_sem_template` devolve
+    todas as sequences e a API RECUSA ligar as três. Essa recusa é o efeito desejado.
+
+    A fábrica existe porque, sem template, Atacado e Private Label ficaram idênticas —
+    era o nome do template a única coisa que as distinguia. Continuam sendo objetos
+    `Cadencia` SEPARADOS, um por funil (a forma funil-primeiro do spec 2026-09-21), e
+    cada funil segue com seu próprio liga/desliga e sua própria linha de sobreposição.
+    """
+    return Cadencia(
+        codigo=codigo,
+        rotulo=rotulo,
+        gatilho_stage_key=gatilho_stage_key,
+        gatilho_stage_rotulo=gatilho_stage_rotulo,
+        gatilho_dias=gatilho_dias,
+        gatilho_silencio_dias=gatilho_silencio_dias,
+        touches=_toques(offsets, (None,) * len(offsets)),
+        etapa_final_key=ETAPA_FINAL_KEY,
+        etapa_final_rotulo=ETAPA_FINAL_ROTULO,
+        dias_ate_mover=DIAS_ATE_MOVER,
+    )
+
+
+# ── "Novo" — 3 toques nos dias 0, 2 e 4 (spec 2026-09-23 §1) ──────────────────
+#
+# Dois dias na etapa E dois dias de silêncio, em AND. Dois dias e não as "36 horas"
+# que a ata de 10/09 também citava: `get_deals_stage_stagnant` é o único gatilho do
+# sistema com as guardas completas (blacklist, número errado, conversa finalizada) e só
+# entende dias inteiros (`p_stage_days int`). Ganhar 36h custaria um gatilho novo, sem
+# essas guardas.
+#
+# Era UM toque até 22/09/2026. Se o lead responder no meio, `advance_deal_on_reply`
+# tira o card de "Novo" sozinho e "Em conversa" assume — as duas esteiras se emendam,
+# em vez de a primeira se repetir (spec 2026-09-23 §4).
+_NOVO_OFFSETS = (0, 2, 4)
+
+_NOVO_ATACADO = _cadencia_de_prospeccao(
+    codigo="novo", rotulo="Novo",
+    gatilho_stage_key="novo", gatilho_stage_rotulo="Novo",
+    gatilho_dias=2, gatilho_silencio_dias=2, offsets=_NOVO_OFFSETS,
 )
-_NOVO_PRIVATE_LABEL = Cadencia(
-    codigo="novo",
-    rotulo="Novo",
-    gatilho_stage_key="novo",
-    gatilho_stage_rotulo="Novo",
-    gatilho_dias=2,
-    touches=_toques((0,), ("joao_novo_privatelabel_t1",)),
+_NOVO_PRIVATE_LABEL = _cadencia_de_prospeccao(
+    codigo="novo", rotulo="Novo",
+    gatilho_stage_key="novo", gatilho_stage_rotulo="Novo",
+    gatilho_dias=2, gatilho_silencio_dias=2, offsets=_NOVO_OFFSETS,
 )
 
-# ── "Em conversa" — 41:02, "deve durar uns 30 dias". 7 toques. ────────────────
+# ── "Em conversa" — 4 toques nos dias 0, 2, 4 e 9 (spec 2026-09-23 §1) ────────
+#
+# Eram 7 toques ao longo de ~30 dias (0/2/5/10/16/22/28) até 22/09/2026. O dono pediu
+# mais curta: quatro toques e uma saída em 10 dias.
 #
 # A etapa é `respondeu`, não `em_conversa`: é a key que 20260910_contrato_etapas_joao
 # atribuiu à coluna "Em conversa" (e que `advance_deal_on_reply` já procura).
-# Arco dos 7 textos: dúvida → valor → prova social → tirar atrito → pergunta direta →
-# motivo concreto → despedida digna.
-_EM_CONVERSA_OFFSETS = (0, 2, 5, 10, 16, 22, 28)
+_EM_CONVERSA_OFFSETS = (0, 2, 4, 9)
 
-_EM_CONVERSA_ATACADO = Cadencia(
-    codigo="em_conversa",
-    rotulo="Em conversa",
-    gatilho_stage_key="respondeu",
-    gatilho_stage_rotulo="Em conversa",
-    gatilho_dias=2,
-    touches=_toques(_EM_CONVERSA_OFFSETS,
-                     tuple(f"joao_conversa_atacado_t{n}" for n in range(1, 8))),
+_EM_CONVERSA_ATACADO = _cadencia_de_prospeccao(
+    codigo="em_conversa", rotulo="Em conversa",
+    gatilho_stage_key="respondeu", gatilho_stage_rotulo="Em conversa",
+    gatilho_dias=2, gatilho_silencio_dias=2, offsets=_EM_CONVERSA_OFFSETS,
 )
-_EM_CONVERSA_PRIVATE_LABEL = Cadencia(
-    codigo="em_conversa",
-    rotulo="Em conversa",
-    gatilho_stage_key="respondeu",
-    gatilho_stage_rotulo="Em conversa",
-    gatilho_dias=2,
-    touches=_toques(_EM_CONVERSA_OFFSETS,
-                     tuple(f"joao_conversa_privatelabel_t{n}" for n in range(1, 8))),
+_EM_CONVERSA_PRIVATE_LABEL = _cadencia_de_prospeccao(
+    codigo="em_conversa", rotulo="Em conversa",
+    gatilho_stage_key="respondeu", gatilho_stage_rotulo="Em conversa",
+    gatilho_dias=2, gatilho_silencio_dias=2, offsets=_EM_CONVERSA_OFFSETS,
 )
+
+# ── "Proposta Enviada" — NOVA, 4 toques nos dias 0, 1, 4 e 8 ──────────────────
+#
+# A única das três que dispara SÓ por tempo de etapa: `gatilho_silencio_dias=0`. O dono
+# escreveu "24h depois" da proposta, e não "24h sem conversar" (spec 2026-09-23 §5) —
+# a proposta recém-enviada é justamente o momento em que houve conversa, e exigir
+# silêncio calaria a cadência inteira.
+#
+# O card chega à etapa `proposta_enviada` sozinho, quando a proposta é criada no
+# /orcamento (`quotes/router.py`). E não precisa de regra para "só se não fechou": um
+# card que virou Fechado Ganho não está mais na etapa que esta cadência vigia.
+_PROPOSTA_OFFSETS = (0, 1, 4, 8)
+
+_PROPOSTA_ATACADO = _cadencia_de_prospeccao(
+    codigo="proposta", rotulo="Proposta Enviada",
+    gatilho_stage_key="proposta_enviada", gatilho_stage_rotulo="Proposta Enviada",
+    gatilho_dias=1, gatilho_silencio_dias=0, offsets=_PROPOSTA_OFFSETS,
+)
+_PROPOSTA_PRIVATE_LABEL = _cadencia_de_prospeccao(
+    codigo="proposta", rotulo="Proposta Enviada",
+    gatilho_stage_key="proposta_enviada", gatilho_stage_rotulo="Proposta Enviada",
+    gatilho_dias=1, gatilho_silencio_dias=0, offsets=_PROPOSTA_OFFSETS,
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# As duas cadências dos funis de Reposição — INTACTAS em 23/09/2026
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# O spec de 23/09 reformula só a prospecção (§7, "o que NÃO muda"). Daqui para baixo
+# tudo segue como estava: os números são os da ata de 10/09/2026, os 8 templates de
+# Reposição continuam conectados, e os quatro campos novos ficam nos defaults — que
+# foram escolhidos exatamente para isso: `gatilho_silencio_dias=0` (o relógio destas
+# duas é mesmo o da ETAPA) e `etapa_final_key=None` (estas não movem card nenhum).
 
 # ── "Reposição" — 34:24, "o dia 45 ele vai receber uma mensagem... de 15 em 15" ─
 #
@@ -396,9 +530,9 @@ _EM_ATENCAO_PRIVATE_LABEL = Cadencia(
 
 FUNIS: tuple[Funil, ...] = (
     Funil("atacado", "João - Atacado", PIPELINE_ATACADO,
-          (_NOVO_ATACADO, _EM_CONVERSA_ATACADO)),
+          (_NOVO_ATACADO, _EM_CONVERSA_ATACADO, _PROPOSTA_ATACADO)),
     Funil("private_label", "João - Private Label", PIPELINE_PRIVATE_LABEL,
-          (_NOVO_PRIVATE_LABEL, _EM_CONVERSA_PRIVATE_LABEL)),
+          (_NOVO_PRIVATE_LABEL, _EM_CONVERSA_PRIVATE_LABEL, _PROPOSTA_PRIVATE_LABEL)),
     Funil("reposicao_atacado", "João - Reposição Atacado", PIPELINE_REPOSICAO_ATACADO,
           (_REPOSICAO_ATACADO, _EM_ATENCAO_ATACADO)),
     Funil("reposicao_private_label", "João - Reposição Private Label",
@@ -408,10 +542,11 @@ FUNIS: tuple[Funil, ...] = (
     Funil("recuperacao", "João - Recuperação", PIPELINE_RECUPERACAO, ()),
 )
 
-# Só depende de `codigo`, não de funil — os quatro `job_type` continuam sendo os
-# mesmos de sempre (`joao_novo`, `joao_em_conversa`, `joao_reposicao`,
-# `joao_em_atencao`), mesmo que cada código agora exista em dois objetos `Cadencia`
-# distintos (um por funil-irmão). O frozenset dedupa sozinho.
+# Só depende de `codigo`, não de funil — `joao_novo`, `joao_em_conversa`,
+# `joao_proposta` (novo em 23/09/2026), `joao_reposicao` e `joao_em_atencao`, mesmo
+# que cada código exista em dois objetos `Cadencia` distintos (um por funil-irmão).
+# O frozenset dedupa sozinho. `joao_proposta` entra aqui SOZINHO, por ser derivado de
+# `FUNIS` — mas a lista hardcoded do handler dos jobs é outra, e precisa dele à mão.
 JOB_TYPES: frozenset[str] = frozenset(
     cadencia.job_type for f in FUNIS for cadencia in f.cadencias
 )
@@ -534,6 +669,13 @@ def resolver(
         ativa=cadencia.ativa if ativa is None else bool(ativa),
         repete_ultimo=cadencia.repete_ultimo,
         touches=resolver_cadencia(funil, codigo, overrides),
+        # Sem sobreposição de banco, de propósito (spec 2026-09-23 §5): o prazo
+        # editável na tela é o de ETAPA (`gatilho_dias`). Estes quatro vêm do código
+        # e a tela só os MOSTRA.
+        gatilho_silencio_dias=cadencia.gatilho_silencio_dias,
+        etapa_final_key=cadencia.etapa_final_key,
+        etapa_final_rotulo=cadencia.etapa_final_rotulo,
+        dias_ate_mover=cadencia.dias_ate_mover,
     )
 
 

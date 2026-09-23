@@ -4,6 +4,25 @@
 --    MAO no SQL editor do Supabase, depois de lida e revisada por um humano.
 --    Nenhum agente de IA deve aplica-la.
 --
+-- ⚠️ PRE-CONDICAO MEDIDA EM 23/09/2026 — LEIA ANTES DE APLICAR
+--    As duas tabelas JA EXISTEM em producao, e na FORMA ANTIGA (a deste arquivo
+--    antes da reescrita funil-primeiro de 21/09): `followup_joao_cadencia` com
+--    PRIMARY KEY (cadencia) so, e `followup_joao_toque` com a coluna `linha` e PK
+--    (cadencia, linha, toque). Ou seja: a versao de 18/09 foi aplicada, a de 21/09
+--    nunca foi.
+--    As duas estao VAZIAS — 0 linhas nas duas, conferido em 23/09/2026 — entao nao
+--    ha dado nenhum a migrar.
+--    O PROBLEMA: todo CREATE deste arquivo e IF NOT EXISTS, entao aplica-lo assim
+--    seria um NO-OP SILENCIOSO. As tabelas antigas continuariam no lugar, sem a
+--    coluna `funil`, e a API (que grava e le por funil) quebraria em runtime com
+--    "column funil does not exist" — sem nenhum erro na hora de aplicar.
+--    O QUE O HUMANO PRECISA FAZER: remover as duas tabelas vazias antes de rodar
+--    este arquivo. Elas nao tem linha nenhuma, entao nao ha perda:
+--        DROP TABLE IF EXISTS followup_joao_toque;
+--        DROP TABLE IF EXISTS followup_joao_cadencia;
+--    (Fora do corpo desta migration de proposito: este arquivo nao executa comando
+--    destrutivo nenhum, e a suite cobra isso.)
+--
 -- ── O QUE FAZ ───────────────────────────────────────────────────────────────
 -- Cria as DUAS tabelas de sobreposicao da configuracao das cadencias de follow-up do
 -- vendedor Joao, chaveadas por FUNIL (nao por "linha" generica). Spec:
@@ -49,7 +68,8 @@
 -- continua sendo mudanca de codigo — e o que impede a tela de virar builder de novo,
 -- que e o erro que este desenho corrige. A trava e estrutural, no CHECK
 -- `followup_joao_toque_dentro_da_cadencia`: cada cadencia so aceita os numeros de
--- toque que ela realmente tem (Novo 1, Em conversa 1-7, Reposicao 1-4, Em atencao 1).
+-- toque que ela realmente tem (Novo 1-3, Em conversa 1-4, Proposta 1-4, Reposicao
+-- 1-4, Em atencao 1 — a forma de 23/09/2026).
 -- Sem ele, um INSERT com toque=9 seria aceito pelo banco e ignorado em silencio pelo
 -- codigo — configuracao que a tela mostra e o motor nao executa. Do mesmo jeito, o
 -- CHECK `followup_joao_cadencia_par_valido` so aceita os pares (funil, cadencia) que
@@ -68,6 +88,36 @@
 --
 -- Reexecutar e seguro: tabelas com IF NOT EXISTS, policies recriadas com DROP antes,
 -- trigger idempotente. Nenhuma instrucao apaga ou altera linha existente.
+
+-- ===========================================================================
+-- 0. A TRAVA DA PRE-CONDICAO — falha ALTO em vez de nao fazer nada
+-- ===========================================================================
+-- O cabecalho acima explica que as tabelas na forma ANTIGA precisam sair antes.
+-- Este bloco existe porque um aviso em comentario depende de alguem le-lo: se o
+-- passo for pulado, todo CREATE deste arquivo e IF NOT EXISTS e a aplicacao vira
+-- um NO-OP SILENCIOSO — o SQL editor diz "Success", o schema continua errado, e o
+-- estrago so aparece muito depois, em runtime, quando a tela tenta gravar.
+--
+-- Erro na cara e a falha segura aqui. Este bloco NAO APAGA NADA: ele so recusa
+-- continuar enquanto a forma antiga estiver no lugar.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'followup_joao_cadencia'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'followup_joao_cadencia'
+       AND column_name = 'funil'
+  ) THEN
+    RAISE EXCEPTION
+      'followup_joao_* ainda estao na forma ANTIGA (sem a coluna "funil").'
+      USING HINT =
+        'As duas tabelas estao VAZIAS: apague followup_joao_toque e '
+        'followup_joao_cadencia (o comando exato esta no cabecalho deste arquivo) '
+        'e aplique este arquivo de novo.';
+  END IF;
+END $$;
 
 -- ===========================================================================
 -- 1. followup_joao_cadencia — o que e editavel POR (FUNIL, CADENCIA)
@@ -91,9 +141,11 @@ CREATE TABLE IF NOT EXISTS followup_joao_cadencia (
 
   -- Espelha `cadence_joao.FUNIS`: cada funil so aceita as cadencias que ele de fato
   -- declara. `recuperacao` nao aparece em nenhum ramo do OR — zero cadencia hoje.
+  -- 'proposta' entrou em 23/09/2026, so nos dois funis de prospeccao: os de
+  -- Reposicao nao ganharam a terceira cadencia (spec 2026-09-23 §7).
   CONSTRAINT followup_joao_cadencia_par_valido CHECK (
-       (funil = 'atacado'                 AND cadencia IN ('novo', 'em_conversa'))
-    OR (funil = 'private_label'           AND cadencia IN ('novo', 'em_conversa'))
+       (funil = 'atacado'                 AND cadencia IN ('novo', 'em_conversa', 'proposta'))
+    OR (funil = 'private_label'           AND cadencia IN ('novo', 'em_conversa', 'proposta'))
     OR (funil = 'reposicao_atacado'       AND cadencia IN ('reposicao', 'em_atencao'))
     OR (funil = 'reposicao_private_label' AND cadencia IN ('reposicao', 'em_atencao'))
     -- 'recuperacao' nao tem par valido ainda: zero cadencia = zero linha aceita.
@@ -138,9 +190,12 @@ CREATE TABLE IF NOT EXISTS followup_joao_toque (
   -- A TRAVA. Espelha a contagem de toques de `app/follow_up/cadence_joao.py`, e a
   -- suite cruza os dois numeros: mudar a forma de uma cadencia no codigo sem mudar
   -- este CHECK deixa a suite vermelha antes de chegar no banco.
+  -- Novo (1 -> 3) e Em conversa (7 -> 4) mudaram de forma em 23/09/2026, e
+  -- 'proposta' nasceu ali. Reposicao e Em atencao nao foram tocadas.
   CONSTRAINT followup_joao_toque_dentro_da_cadencia CHECK (
-       (cadencia = 'novo'        AND toque = 1)
-    OR (cadencia = 'em_conversa' AND toque BETWEEN 1 AND 7)
+       (cadencia = 'novo'        AND toque BETWEEN 1 AND 3)
+    OR (cadencia = 'em_conversa' AND toque BETWEEN 1 AND 4)
+    OR (cadencia = 'proposta'    AND toque BETWEEN 1 AND 4)
     OR (cadencia = 'reposicao'   AND toque BETWEEN 1 AND 4)
     OR (cadencia = 'em_atencao'  AND toque = 1)
   )

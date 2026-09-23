@@ -12,15 +12,20 @@ Reescrito em 21/09/2026 (spec
 `docs/superpowers/specs/2026-09-21-followup-funil-por-funil-design.md`) para
 funil-primeiro: o eixo deixou de ser a cadência (com duas "linhas" genéricas dentro)
 e passou a ser o FUNIL (`Funil{codigo, rotulo, pipeline_id, cadencias}`) — cada
-cadência mora dentro de UM funil, identificado pelo par `(funil, codigo)`. Os
-NÚMEROS (dias, toques, templates) são os mesmos do arquivo de 18/09/2026; só a
-estrutura de dados que os guarda mudou.
+cadência mora dentro de UM funil, identificado pelo par `(funil, codigo)`.
+
+Reformulado em 23/09/2026 (spec
+`docs/superpowers/specs/2026-09-23-esteiras-joao-v2-design.md`): as cadências de
+PROSPECÇÃO (Atacado e Private Label) passaram de duas para TRÊS, mais curtas, com
+uma saída explícita para o lead que nunca responde. As duas cadências dos funis de
+REPOSIÇÃO não foram tocadas — os números delas continuam sendo os da ata de
+10/09/2026, e é por isso que este arquivo ainda cita a ata em metade dos casos.
 
 O que este arquivo trava:
 
-  1. os números são os da ata de 10/09/2026, não os da memória de quem editar
-     (spec 18/09 §4: docs/superpowers/specs/2026-09-18-motor-followup-joao-design.md);
-  2. os nomes de template são os 24 REAIS, cruzados contra
+  1. os números: os da ata de 10/09/2026 na Reposição, os da decisão de 23/09/2026
+     na prospecção — nunca os da memória de quem editar;
+  2. os nomes de template são os REAIS, cruzados contra
      `scripts/create_templates_esteiras_joao.py` — o script que os submeteu à Meta
      e que sobreviveu ao rollback do caminho do builder. Nome de template inventado
      é envio que morre em runtime, no meio da cadência, sem ninguém olhando;
@@ -29,10 +34,15 @@ O que este arquivo trava:
      ADICIONAR ou REMOVER toque — isso continua sendo mudança de código;
   4. as duas regras de resposta da ata: "ainda tenho estoque" adia 60 dias SEM
      recomeçar a contagem (41:40) e o botão de saída é opt-out real;
-  5. NOVO (21/09): cada par (funil, cadência) é único — a mesma string de cadência
+  5. (21/09) cada par (funil, cadência) é único — a mesma string de cadência
      ("novo", "reposicao", ...) nunca aponta para dois pipelines diferentes; e o
      rótulo do gatilho de "Em atenção" é sempre "Cliente Ativo", nunca "Em atenção"
-     (a armadilha nomeada na spec §2).
+     (a armadilha nomeada na spec §2);
+  6. (23/09) que os 16 templates de prospecção continuem DESCONECTADOS. É o teste
+     mais contraintuitivo deste arquivo: ele exige que toques com template aprovado
+     na Meta apontem para `None`. É decisão do dono do funil (spec 23/09 §2) — os
+     textos passam a ser preenchidos pela tela, sem deploy — e o teste existe
+     justamente para que a próxima pessoa não "conserte" o que não está quebrado.
 
 A suíte não tem banco: sobre a migration o único guarda-rail possível é o TEXTO do
 arquivo — mesmo padrão de `test_sql_apaga_esteiras_joao_2026_09_18.py`.
@@ -84,11 +94,14 @@ def _campos_de_dataclass(caminho: Path, nome_classe: str) -> set:
 # par (Atacado/Private Label, Reposição Atacado/Reposição Private Label) usam os
 # mesmos offsets — só o template muda.
 OFFSETS = {
-    # 01:07:10 "é de dois dias" — um toque só, no disparo do gatilho.
-    "novo": [0],
-    # 41:02 "deve durar uns 30 dias": D+2/4/7/12/18/24/30 contados da ENTRADA na
-    # etapa; o gatilho come os 2 primeiros dias, então da matrícula são estes.
-    "em_conversa": [0, 2, 5, 10, 16, 22, 28],
+    # ── Prospecção: spec 2026-09-23 §1 (a tabela da reunião de 23/09). ──────────
+    # Novo: 3 toques, dias 0/2/4 (era 1 toque só).
+    "novo": [0, 2, 4],
+    # Em conversa: 4 toques, dias 0/2/4/9 (eram 7, até o dia 28).
+    "em_conversa": [0, 2, 4, 9],
+    # Proposta Enviada: cadência NOVA, 4 toques, dias 0/1/4/8.
+    "proposta": [0, 1, 4, 8],
+    # ── Reposição: intocada, os números são os da ata de 10/09/2026. ───────────
     # 34:24 "o dia 45 ele vai receber uma mensagem... de 15 em 15".
     "reposicao": [0, 15, 30, 45],
     # 38:08/41:12 "uma mensagem a cada três dias até ele falar que não quer mais".
@@ -96,15 +109,38 @@ OFFSETS = {
 }
 
 GATILHO_DIAS = {
-    "novo": 2,          # 01:07:10
-    "em_conversa": 2,   # 01:07:10
+    "novo": 2,          # 23/09 §1 (e 01:07:10, "é de dois dias")
+    "em_conversa": 2,   # 23/09 §1
+    "proposta": 1,      # 23/09 §1 — "24h depois" da proposta
     "reposicao": 45,    # 26:35, 33:28, 34:24
     "em_atencao": 90,   # 38:08, 41:12
+}
+
+# O SEGUNDO relógio do gatilho (spec 23/09 §5): dias sem NENHUMA conversa, em AND
+# com o de etapa. 0 = filtro desligado, e é o que as duas de Reposição sempre
+# fizeram — o relógio delas é mesmo o da etapa ("45 dias em Cliente Ativo").
+GATILHO_SILENCIO_DIAS = {
+    "novo": 2,
+    "em_conversa": 2,
+    "proposta": 0,      # a proposta recém-enviada É o momento em que houve conversa
+    "reposicao": 0,
+    "em_atencao": 0,
+}
+
+# Para onde o card vai 24h depois do último toque, quando o lead nunca respondeu
+# (spec 23/09 §3). Só as três de prospecção movem card; as de Reposição, nenhuma.
+ETAPA_FINAL_KEY = {
+    "novo": "em_atencao",
+    "em_conversa": "em_atencao",
+    "proposta": "em_atencao",
+    "reposicao": None,
+    "em_atencao": None,
 }
 
 GATILHO_STAGE_KEY = {
     "novo": "novo",
     "em_conversa": "respondeu",
+    "proposta": "proposta_enviada",
     "reposicao": "novo",
     "em_atencao": "novo",
 }
@@ -117,11 +153,20 @@ GATILHO_STAGE_KEY = {
 GATILHO_STAGE_ROTULO = {
     "novo": "Novo",
     "em_conversa": "Em conversa",
+    "proposta": "Proposta Enviada",
     "reposicao": "Cliente Ativo",
     "em_atencao": "Cliente Ativo",
 }
 
-CODIGOS = ("novo", "em_conversa", "reposicao", "em_atencao")
+CODIGOS = ("novo", "em_conversa", "proposta", "reposicao", "em_atencao")
+
+# As três cadências de prospecção — as que mudaram em 23/09/2026 e as únicas que
+# movem card no fim. `PROSPECCAO` é o par (funil, código) de cada uma.
+CODIGOS_PROSPECCAO = ("novo", "em_conversa", "proposta")
+FUNIS_PROSPECCAO = ("atacado", "private_label")
+PROSPECCAO = tuple(
+    (f, c) for f in FUNIS_PROSPECCAO for c in CODIGOS_PROSPECCAO
+)
 
 # Os cinco funis (spec §1). "recuperacao" não tem par válido em CODIGOS — cadência
 # vazia, de propósito.
@@ -149,13 +194,27 @@ PIPELINES = {
 PARES = (
     ("atacado", "novo"),
     ("atacado", "em_conversa"),
+    ("atacado", "proposta"),
     ("private_label", "novo"),
     ("private_label", "em_conversa"),
+    ("private_label", "proposta"),
     ("reposicao_atacado", "reposicao"),
     ("reposicao_atacado", "em_atencao"),
     ("reposicao_private_label", "reposicao"),
     ("reposicao_private_label", "em_atencao"),
 )
+
+PARES_REPOSICAO = tuple(p for p in PARES if p[0].startswith("reposicao_"))
+
+# Quantas cadências cada funil tem. A assimetria é o desenho: só a prospecção ganhou
+# a terceira cadência em 23/09 (spec §7, "o que NÃO muda").
+CADENCIAS_POR_FUNIL = {
+    "atacado": 3,
+    "private_label": 3,
+    "reposicao_atacado": 2,
+    "reposicao_private_label": 2,
+    "recuperacao": 0,
+}
 
 
 @pytest.fixture(scope="module")
@@ -259,11 +318,28 @@ class TestOsCincoFunis:
         # dado, é o estado real: nenhum gatilho, nenhum toque definido ainda.
         assert cj.funil("recuperacao").cadencias == ()
 
-    @pytest.mark.parametrize("funil_codigo", ("atacado", "private_label",
-                                               "reposicao_atacado",
+    @pytest.mark.parametrize("funil_codigo", FUNIL_CODIGOS)
+    def test_cada_funil_tem_a_quantidade_de_cadencias_do_desenho(self, funil_codigo):
+        # 3 na prospecção (Novo, Em conversa, Proposta Enviada — spec 23/09 §1) e
+        # 2 na Reposição, que não foi tocada.
+        assert len(cj.funil(funil_codigo).cadencias) == \
+            CADENCIAS_POR_FUNIL[funil_codigo]
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_PROSPECCAO)
+    def test_a_prospeccao_tem_as_tres_cadencias_na_ordem_do_funil(self, funil_codigo):
+        # A ordem é a do funil (Novo → Em conversa → Proposta Enviada) e a tela
+        # renderiza `funil.cadencias` inteiro, na ordem em que estão aqui.
+        assert [c.codigo for c in cj.funil(funil_codigo).cadencias] == \
+            list(CODIGOS_PROSPECCAO)
+
+    @pytest.mark.parametrize("funil_codigo", ("reposicao_atacado",
                                                "reposicao_private_label"))
-    def test_os_outros_quatro_funis_tem_cadencia(self, funil_codigo):
-        assert len(cj.funil(funil_codigo).cadencias) == 2
+    def test_a_reposicao_nao_ganhou_a_cadencia_de_proposta(self, funil_codigo):
+        # spec 23/09 §7: os funis de Reposição não mudam. Só Atacado e Private
+        # Label ganharam a terceira cadência.
+        assert cj.cadencia_do_funil(funil_codigo, "proposta") is None
+        assert [c.codigo for c in cj.funil(funil_codigo).cadencias] == \
+            ["reposicao", "em_atencao"]
 
 
 class TestParesFunilCadencia:
@@ -326,17 +402,190 @@ class TestParesFunilCadencia:
     def test_novo_vigia_a_etapa_novo_e_em_conversa_a_etapa_respondeu(self):
         # `respondeu` e não `em_conversa`: é a key que 20260910_contrato_etapas_joao
         # atribuiu à coluna "Em conversa" (e que `advance_deal_on_reply` já procura).
-        for funil_codigo in ("atacado", "private_label"):
+        for funil_codigo in FUNIS_PROSPECCAO:
             assert cj.cadencia_do_funil(funil_codigo, "novo").gatilho_stage_key == \
                 "novo"
             assert cj.cadencia_do_funil(funil_codigo, "em_conversa").gatilho_stage_key \
                 == "respondeu"
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_PROSPECCAO)
+    def test_proposta_vigia_a_etapa_proposta_enviada(self, funil_codigo):
+        # A etapa para onde `quotes/router.py` já move o card sozinho quando a
+        # proposta é criada no /orcamento, e que existe nos dois funis de
+        # prospecção (20260910_contrato_etapas_joao.sql:123).
+        cadencia = cj.cadencia_do_funil(funil_codigo, "proposta")
+        assert cadencia.gatilho_stage_key == "proposta_enviada"
+        assert cadencia.gatilho_stage_rotulo == "Proposta Enviada"
+        assert cadencia.rotulo == "Proposta Enviada"
+
+    def test_a_etapa_proposta_enviada_existe_na_migration_dos_funis(self):
+        # Mesmo cruzamento dos UUIDs: uma key que não existe em `pipeline_stages`
+        # faria a RPC do gatilho não achar card nenhum, em silêncio.
+        fonte = MIGRATION_FUNIS.read_text(encoding="utf-8")
+        assert "'proposta_enviada'" in fonte
+
+    # ── O segundo relógio do gatilho (spec 23/09 §5) ──────────────────────────
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_o_gatilho_de_silencio_e_o_do_desenho(self, funil_codigo, codigo):
+        assert cj.cadencia_do_funil(funil_codigo, codigo).gatilho_silencio_dias == \
+            GATILHO_SILENCIO_DIAS[codigo]
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES_REPOSICAO)
+    def test_reposicao_continua_sem_filtro_de_silencio(self, funil_codigo, codigo):
+        # O default do campo novo foi escolhido para PRESERVAR o comportamento
+        # destas duas: o relógio delas é o da etapa, não o da conversa. Um 2 aqui
+        # mudaria silenciosamente quem a Reposição pega.
+        assert cj.cadencia_do_funil(funil_codigo, codigo).gatilho_silencio_dias == 0
+
+    def test_so_novo_e_em_conversa_exigem_silencio(self):
+        com_silencio = {
+            (f.codigo, c.codigo)
+            for f in cj.FUNIS for c in f.cadencias if c.gatilho_silencio_dias
+        }
+        assert com_silencio == {
+            (f, c) for f in FUNIS_PROSPECCAO for c in ("novo", "em_conversa")
+        }
+
+    # ── A saída para "Em atenção" (spec 23/09 §3) ─────────────────────────────
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_as_tres_de_prospeccao_movem_o_card_para_em_atencao(
+        self, funil_codigo, codigo,
+    ):
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert cadencia.etapa_final_key == "em_atencao"
+        assert cadencia.etapa_final_rotulo == "Em atenção"
+        assert cadencia.dias_ate_mover == 1
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES_REPOSICAO)
+    def test_as_de_reposicao_nao_movem_card_nenhum(self, funil_codigo, codigo):
+        # "O motor nunca moveu card" continua valendo para elas — a exceção de
+        # 23/09 é estreita e só alcança a prospecção.
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert cadencia.etapa_final_key is None
+        assert cadencia.etapa_final_rotulo is None
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_etapa_final_bate_com_a_tabela_do_desenho(self, funil_codigo, codigo):
+        assert cj.cadencia_do_funil(funil_codigo, codigo).etapa_final_key == \
+            ETAPA_FINAL_KEY[codigo]
+
+    def test_a_etapa_de_destino_existe_na_migration_dos_funis(self):
+        # "Em atenção" foi CRIADA em Atacado e Private Label pela migration de
+        # 10/09 (linha 146, "CRIAR Em atencao onde falta"). Sem a etapa, o move
+        # não teria para onde ir.
+        fonte = MIGRATION_FUNIS.read_text(encoding="utf-8")
+        assert "'em_atencao'" in fonte
+
+    def test_etapa_final_nunca_e_a_etapa_que_a_propria_cadencia_vigia(self):
+        # Mover o card para a etapa que a cadência vigia recolocaria o lead na fila
+        # da própria esteira — laço.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                if cadencia.etapa_final_key is None:
+                    continue
+                assert cadencia.etapa_final_key != cadencia.gatilho_stage_key
+
+    def test_em_atencao_como_ETAPA_nao_se_confunde_com_em_atencao_como_CADENCIA(self):
+        # A ambiguidade nomeada na decisão 5 do módulo: a MESMA string é o código de
+        # uma cadência (nos funis de Reposição) e a key de uma etapa (nos de
+        # prospecção). Quem tem a cadência não tem a etapa final, e vice-versa.
+        for f in cj.FUNIS:
+            codigos = {c.codigo for c in f.cadencias}
+            finais = {c.etapa_final_key for c in f.cadencias}
+            assert not ("em_atencao" in codigos and "em_atencao" in finais)
 
     def test_atacado_e_reposicao_atacado_nao_compartilham_pipeline(self):
         # O bug de identidade que a mudança para funil-primeiro corrige (spec §1):
         # "atacado" não é mais uma string ambígua entre dois pipelines diferentes —
         # agora são dois FUNIS diferentes, cada um com seu próprio pipeline_id.
         assert cj.funil("atacado").pipeline_id != cj.funil("reposicao_atacado").pipeline_id
+
+
+class TestATabelaDePrazosDaReuniao:
+    """A tabela do spec 2026-09-23 §1, redigitada à mão e conferida célula a célula.
+
+    É de propósito que ela NÃO seja derivada de `OFFSETS`: este é o teste que existe
+    para brigar com o código quando alguém mexer nos dias, e um teste que deriva do
+    mesmo dicionário que o resto do arquivo usa concordaria com qualquer mudança.
+    Cada linha é (funil, cadência, toque, dia desde a matrícula).
+    """
+
+    #  funil           cadência        toque  dia
+    TABELA = [
+        ("atacado",       "novo",        1,  0),
+        ("atacado",       "novo",        2,  2),
+        ("atacado",       "novo",        3,  4),
+        ("atacado",       "em_conversa", 1,  0),
+        ("atacado",       "em_conversa", 2,  2),
+        ("atacado",       "em_conversa", 3,  4),
+        ("atacado",       "em_conversa", 4,  9),
+        ("atacado",       "proposta",    1,  0),
+        ("atacado",       "proposta",    2,  1),
+        ("atacado",       "proposta",    3,  4),
+        ("atacado",       "proposta",    4,  8),
+        ("private_label", "novo",        1,  0),
+        ("private_label", "novo",        2,  2),
+        ("private_label", "novo",        3,  4),
+        ("private_label", "em_conversa", 1,  0),
+        ("private_label", "em_conversa", 2,  2),
+        ("private_label", "em_conversa", 3,  4),
+        ("private_label", "em_conversa", 4,  9),
+        ("private_label", "proposta",    1,  0),
+        ("private_label", "proposta",    2,  1),
+        ("private_label", "proposta",    3,  4),
+        ("private_label", "proposta",    4,  8),
+    ]
+
+    @pytest.mark.parametrize("funil_codigo,codigo,toque,dia", TABELA)
+    def test_o_toque_cai_no_dia_da_reuniao(self, funil_codigo, codigo, toque, dia):
+        toques = cj.cadencia_do_funil(funil_codigo, codigo).touches
+        assert toques[toque - 1].sequence == toque
+        assert toques[toque - 1].offset == timedelta(days=dia)
+
+    def test_a_tabela_cobre_TODOS_os_toques_da_prospeccao(self):
+        # Sem isto, apagar um toque do código passaria despercebido: as linhas que
+        # sobraram continuariam batendo.
+        do_codigo = [
+            (f.codigo, c.codigo, t.sequence)
+            for f in cj.FUNIS if f.codigo in FUNIS_PROSPECCAO
+            for c in f.cadencias
+            for t in c.touches
+        ]
+        assert do_codigo == [(f, c, t) for f, c, t, _ in self.TABELA]
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_o_card_se_move_24h_depois_do_ultimo_toque(self, funil_codigo, codigo):
+        # O outro número da tabela: o dia em que o card vai para "Em atenção".
+        # Novo termina no dia 4 e move no 5; Em conversa no 9 e move no 10;
+        # Proposta no 8 e move no 9.
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        dia_do_move = cadencia.touches[-1].offset.days + cadencia.dias_ate_mover
+        assert dia_do_move == {"novo": 5, "em_conversa": 10, "proposta": 9}[codigo]
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_o_primeiro_toque_sai_no_disparo_do_gatilho(self, funil_codigo, codigo):
+        # O gatilho já consumiu a espera (2 dias na etapa, ou 1 em Proposta), então
+        # o toque 1 é sempre o dia 0 — um offset maior seria a espera contada duas
+        # vezes.
+        assert cj.cadencia_do_funil(funil_codigo, codigo).touches[0].offset == \
+            timedelta(0)
+
+    def test_atacado_e_private_label_tem_os_MESMOS_prazos(self):
+        # "Idêntico nos dois funis" (spec §1). Continuam sendo objetos separados,
+        # um por funil — mas os números são os mesmos.
+        for codigo in CODIGOS_PROSPECCAO:
+            a = cj.cadencia_do_funil("atacado", codigo)
+            b = cj.cadencia_do_funil("private_label", codigo)
+            assert [t.offset for t in a.touches] == [t.offset for t in b.touches]
+            assert a.gatilho_dias == b.gatilho_dias
+            assert a.gatilho_silencio_dias == b.gatilho_silencio_dias
+
+    def test_os_prazos_da_reposicao_nao_foram_tocados(self):
+        # O contraponto: a metade do desenho que 23/09 NÃO mexeu.
+        for funil_codigo, codigo in PARES_REPOSICAO:
+            esperado = {"reposicao": [0, 15, 30, 45], "em_atencao": [3]}[codigo]
+            toques = cj.cadencia_do_funil(funil_codigo, codigo).touches
+            assert [t.offset.days for t in toques] == esperado
 
 
 class TestHelpersDeFunil:
@@ -408,9 +657,15 @@ class TestJobType:
     def test_o_job_type_e_derivado_do_codigo(self, funil_codigo, codigo):
         assert cj.cadencia_do_funil(funil_codigo, codigo).job_type == f"joao_{codigo}"
 
-    def test_os_job_types_sao_quatro_e_distintos(self):
+    def test_os_job_types_sao_cinco_e_distintos(self):
         assert cj.JOB_TYPES == frozenset(f"joao_{c}" for c in CODIGOS)
-        assert len(cj.JOB_TYPES) == 4
+        assert len(cj.JOB_TYPES) == 5
+
+    def test_joao_proposta_entra_sozinho_em_job_types(self):
+        # `JOB_TYPES` é derivado de `FUNIS`, então a cadência nova aparece aqui sem
+        # ninguém digitar o nome. A lista hardcoded do handler dos jobs
+        # (`JOAO_JOB_TYPES`) é outra história, e é de outro lote.
+        assert "joao_proposta" in cj.JOB_TYPES
 
     def test_nenhum_job_type_colide_com_os_cinco_que_ja_existem(self):
         # `follow_up_jobs` já é executor multi-tipo. Colidir com um tipo existente
@@ -442,6 +697,17 @@ def _templates_declarados():
     ]
 
 
+# Os 16 templates que as cadências de prospecção usavam até 22/09/2026. Continuam
+# APROVADOS na Meta e ficaram DESCONECTADOS de propósito em 23/09 (spec §2) — a forma
+# das cadências mudou (7 toques viraram 4) e escolher quais 4 dos 7 sobreviveriam
+# seria uma decisão de TEXTO tomada por quem não escreve o texto.
+TEMPLATES_DESCONECTADOS = frozenset(
+    {"joao_novo_atacado_t1", "joao_novo_privatelabel_t1"}
+    | {f"joao_conversa_atacado_t{n}" for n in range(1, 8)}
+    | {f"joao_conversa_privatelabel_t{n}" for n in range(1, 8)}
+)
+
+
 class TestOsTemplatesSaoOsReais:
     def test_o_script_ainda_declara_24_templates(self, nomes_reais):
         assert len(nomes_reais) == 24
@@ -450,10 +716,25 @@ class TestOsTemplatesSaoOsReais:
         declarados = set(_templates_declarados())
         assert declarados <= nomes_reais, declarados - nomes_reais
 
-    def test_os_24_templates_estao_todos_em_uso(self, nomes_reais):
-        # O outro lado: template aprovado e esquecido é toque que a ata pediu e a
-        # cadência não entrega.
-        assert nomes_reais - set(_templates_declarados()) == set()
+    def test_so_os_8_da_reposicao_seguem_conectados(self, nomes_reais):
+        # A inversão de 23/09, e o teste mais contraintuitivo deste arquivo: dos 24
+        # aprovados, só os 8 de Reposição continuam sendo referenciados pelo código.
+        declarados = set(_templates_declarados())
+        assert len(declarados) == 8
+        assert all("_reposicao_" in nome for nome in declarados), declarados
+
+    def test_os_16_de_prospeccao_estao_desconectados_DE_PROPOSITO(self, nomes_reais):
+        # ⚠️ Este teste falha se alguém "consertar" o código reconectando os nomes
+        # antigos. Não é esquecimento (spec 2026-09-23 §2): os textos das três
+        # cadências passam a ser preenchidos pela TELA, sem deploy. Se o dono do
+        # funil mudar de ideia, muda-se o spec e ESTE teste junto — nunca só o
+        # código.
+        assert nomes_reais - set(_templates_declarados()) == TEMPLATES_DESCONECTADOS
+
+    def test_os_16_desconectados_continuam_existindo_na_meta(self, nomes_reais):
+        # Desconectado não é apagado: eles seguem aprovados, prontos para serem
+        # escolhidos pela tela.
+        assert TEMPLATES_DESCONECTADOS <= nomes_reais
 
     def test_nenhum_template_se_repete_entre_toques(self):
         # `broadcast/worker.py::_template_dedup_guardrail` não vale aqui: reusar um
@@ -462,47 +743,86 @@ class TestOsTemplatesSaoOsReais:
         assert len(declarados) == len(set(declarados))
 
     @pytest.mark.parametrize("funil_codigo,codigo",
-                              [p for p in PARES if p[1] != "em_atencao"])
+                              [p for p in PARES_REPOSICAO if p[1] == "reposicao"])
     def test_o_toque_n_usa_o_template_terminado_em_tn(self, funil_codigo, codigo):
         for toque in cj.cadencia_do_funil(funil_codigo, codigo).touches:
             assert toque.template_name.endswith(f"_t{toque.sequence}"), toque
 
-    @pytest.mark.parametrize("codigo", ("novo", "em_conversa", "reposicao"))
-    def test_o_funil_do_template_bate_com_o_funil_da_cadencia(self, codigo):
+    def test_o_funil_do_template_bate_com_o_funil_da_cadencia(self):
         # Trocar Atacado por Private Label mandaria a cadência inteira com o texto
-        # da linha errada, sem erro em lugar nenhum.
+        # da linha errada, sem erro em lugar nenhum. Só sobra a Reposição para
+        # conferir — é a única cadência com template no código.
         for funil_codigo in FUNIS_ATACADO:
-            cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+            cadencia = cj.cadencia_do_funil(funil_codigo, "reposicao")
             if cadencia is None:
                 continue
             for toque in cadencia.touches:
                 assert "_atacado_" in toque.template_name
         for funil_codigo in FUNIS_PRIVATE_LABEL:
-            cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+            cadencia = cj.cadencia_do_funil(funil_codigo, "reposicao")
             if cadencia is None:
                 continue
             for toque in cadencia.touches:
                 assert "_privatelabel_" in toque.template_name
 
     def test_em_atencao_ainda_nao_tem_template(self):
-        # Os 24 aprovados cobrem Novo, Em conversa e Reposição — a 4ª cadência
-        # nasceu depois do lote e NÃO tem texto aprovado na Meta. `None` aqui é
-        # declaração, não esquecimento: é o que faz a trava de ativação (API)
-        # recusar ligar "Em atenção".
+        # A 4ª cadência nasceu depois do lote de 13/09 e NÃO tem texto aprovado na
+        # Meta. `None` aqui é declaração, não esquecimento: é o que faz a trava de
+        # ativação (API) recusar ligar "Em atenção".
         for funil_codigo in ("reposicao_atacado", "reposicao_private_label"):
             for toque in cj.cadencia_do_funil(funil_codigo, "em_atencao").touches:
                 assert toque.template_name is None
 
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_TODOS_os_toques_da_prospeccao_nascem_sem_template(
+        self, funil_codigo, codigo,
+    ):
+        # O mesmo de cima, do lado do toque: nenhum dos 22 (3+4+4, vezes dois
+        # funis) referencia template.
+        for toque in cj.cadencia_do_funil(funil_codigo, codigo).touches:
+            assert toque.template_name is None, toque
+
+    def test_sao_22_toques_sem_template_na_prospeccao(self):
+        total = sum(
+            len(cj.cadencia_do_funil(f, c).touches) for f, c in PROSPECCAO
+        )
+        assert total == 22
+
     @pytest.mark.parametrize("funil_codigo", ("reposicao_atacado",
                                                "reposicao_private_label"))
-    def test_em_atencao_e_a_unica_cadencia_que_nao_pode_ser_ligada(self, funil_codigo):
-        assert cj.toques_sem_template(funil_codigo, "em_atencao") == (1,)
+    def test_reposicao_e_a_unica_cadencia_que_PODE_ser_ligada_hoje(self, funil_codigo):
         assert cj.toques_sem_template(funil_codigo, "reposicao") == ()
+        assert cj.toques_sem_template(funil_codigo, "em_atencao") == (1,)
 
-    @pytest.mark.parametrize("funil_codigo", ("atacado", "private_label"))
-    def test_novo_e_em_conversa_podem_ser_ligadas(self, funil_codigo):
-        assert cj.toques_sem_template(funil_codigo, "novo") == ()
-        assert cj.toques_sem_template(funil_codigo, "em_conversa") == ()
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_nenhuma_das_tres_pode_ser_ligada_e_a_recusa_nomeia_todo_toque(
+        self, funil_codigo, codigo,
+    ):
+        # `toques_sem_template` devolve TODAS as sequences — é o que a API usa para
+        # recusar `ativa:true` nomeando cada toque vazio, em vez de recusar em
+        # silêncio.
+        toques = cj.cadencia_do_funil(funil_codigo, codigo).touches
+        assert cj.toques_sem_template(funil_codigo, codigo) == \
+            tuple(range(1, len(toques) + 1))
+
+    def test_preencher_a_tela_destrava_a_cadencia_sem_deploy(self):
+        # O outro lado da decisão: a sobreposição do banco (o que a tela grava) é o
+        # caminho previsto para os textos. Preenchidos os 3 toques, a trava abre.
+        faltando = cj.toques_sem_template(
+            "atacado", "novo",
+            {"toques": {
+                1: {"template_name": "joao_novo_atacado_t1"},
+                2: {"template_name": "um_template_novo_t2"},
+                3: {"template_name": "um_template_novo_t3"},
+            }},
+        )
+        assert faltando == ()
+
+    def test_preencher_so_uma_parte_nao_destrava(self):
+        faltando = cj.toques_sem_template(
+            "atacado", "proposta", {"toques": {1: {"template_name": "x"}}},
+        )
+        assert faltando == (2, 3, 4)
 
     def test_override_de_template_fecha_o_buraco_de_em_atencao(self):
         faltando = cj.toques_sem_template(
@@ -601,6 +921,14 @@ class TestAdiamentoDeSessentaDias:
         ultimo = cj.cadencia_do_funil("reposicao_atacado", "reposicao").touches[-1]
         assert ultimo.aceita_adiamento is False
 
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_a_prospeccao_nao_promete_botao_de_adiamento(self, funil_codigo, codigo):
+        # Sem template, não há botão — e prometer um botão que não existe é
+        # exatamente o modo de falha que o teste acima protege. "Em atenção" é a
+        # única exceção, e ela tem a ata (41:40) mandando incluir o botão.
+        for toque in cj.cadencia_do_funil(funil_codigo, codigo).touches:
+            assert toque.aceita_adiamento is False, toque
+
     def test_em_atencao_aceita_adiamento_mesmo_sem_template(self):
         # 41:40 é literal sobre a fase de atenção: "essa mensagem pode ser com o
         # botão: ainda tenho estoque". Quem for criar o template tem de incluí-lo.
@@ -677,11 +1005,13 @@ class TestResolverCadencia:
         assert toques[3] == codigo[3]
 
     def test_override_so_de_template_nao_mexe_nos_dias(self):
+        # O caminho normal da prospecção depois de 23/09: a tela preenche o TEXTO
+        # de um toque, e os prazos continuam sendo os do código.
         codigo = cj.cadencia_do_funil("atacado", "em_conversa").touches
         toques = cj.resolver_cadencia(
-            "atacado", "em_conversa", {"toques": {5: {"template_name": "outro"}}}
+            "atacado", "em_conversa", {"toques": {3: {"template_name": "outro"}}}
         )
-        assert toques[4].template_name == "outro"
+        assert toques[2].template_name == "outro"
         assert [t.offset for t in toques] == [t.offset for t in codigo]
 
     def test_valor_nulo_no_banco_vale_o_codigo(self):
@@ -704,10 +1034,13 @@ class TestResolverCadencia:
     def test_nao_da_para_adicionar_toque_pelo_banco(self):
         # "Não editável: adicionar ou remover toques". É o que impede a tela de
         # virar builder de novo.
+        # "Novo" tem 3 toques desde 23/09 — o toque 4 não existe, e gravá-lo não o
+        # cria. O banco tem a mesma trava, no CHECK.
         toques = cj.resolver_cadencia(
-            "atacado", "novo", {"toques": {2: {"dias": 5, "template_name": "x"}}}
+            "atacado", "novo", {"toques": {4: {"dias": 5, "template_name": "x"}}}
         )
-        assert len(toques) == 1
+        assert len(toques) == 3
+        assert [t.sequence for t in toques] == [1, 2, 3]
 
     def test_nao_da_para_remover_toque_pelo_banco(self):
         toques = cj.resolver_cadencia(
@@ -767,6 +1100,48 @@ class TestResolverCadenciaCompleta:
         assert r.gatilho_stage_key == "novo"
         assert r.gatilho_stage_rotulo == "Cliente Ativo"
         assert r.touches == cj.cadencia_do_funil("reposicao_private_label", "reposicao").touches
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_a_resolvida_carrega_os_quatro_campos_de_23_09(self, funil_codigo, codigo):
+        # O agendador consome a RESOLVIDA, não a `Cadencia` do código: se os campos
+        # não descerem até aqui, o job de mover nunca é criado e o filtro de
+        # silêncio nunca chega na RPC — os dois em silêncio absoluto.
+        r = cj.resolver(funil_codigo, codigo, {})
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert r.gatilho_silencio_dias == cadencia.gatilho_silencio_dias
+        assert r.etapa_final_key == cadencia.etapa_final_key
+        assert r.etapa_final_rotulo == cadencia.etapa_final_rotulo
+        assert r.dias_ate_mover == cadencia.dias_ate_mover
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PROSPECCAO)
+    def test_a_resolvida_da_prospeccao_sabe_para_onde_mover(self, funil_codigo, codigo):
+        r = cj.resolver(funil_codigo, codigo, {})
+        assert r.etapa_final_key == "em_atencao"
+        assert r.etapa_final_rotulo == "Em atenção"
+        assert r.dias_ate_mover == 1
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES_REPOSICAO)
+    def test_a_resolvida_da_reposicao_nao_move_card(self, funil_codigo, codigo):
+        assert cj.resolver(funil_codigo, codigo, {}).etapa_final_key is None
+
+    def test_os_quatro_campos_novos_nao_sao_sobrepostos_pelo_banco(self):
+        # spec §5: o prazo editável na tela é o de ETAPA (`gatilho_dias`). O de
+        # silêncio e o destino do move ficam só no código nesta entrega — um corpo
+        # que os traga é ignorado, nunca gravado por acidente.
+        r = cj.resolver("atacado", "novo", {
+            "gatilho_silencio_dias": 99,
+            "etapa_final_key": "perdido",
+            "etapa_final_rotulo": "Perdido",
+            "dias_ate_mover": 99,
+        })
+        assert r.gatilho_silencio_dias == 2
+        assert r.etapa_final_key == "em_atencao"
+        assert r.etapa_final_rotulo == "Em atenção"
+        assert r.dias_ate_mover == 1
+
+    def test_o_gatilho_de_etapa_continua_sobreposto_normalmente(self):
+        # O contraste com o teste acima: `gatilho_dias` É editável, e continua sendo.
+        assert cj.resolver("atacado", "proposta", {"gatilho_dias": 3}).gatilho_dias == 3
 
     def test_a_resolvida_e_congelada(self):
         with pytest.raises(FrozenInstanceError):
@@ -865,6 +1240,28 @@ class TestMigrationCabecalho:
     def test_diz_que_reexecutar_e_seguro(self, sql):
         assert "Reexecutar" in sql
 
+    def test_avisa_que_as_tabelas_antigas_ja_existem_em_producao(self, sql):
+        """Medido em 23/09/2026: as duas tabelas EXISTEM em produção, VAZIAS, na
+        forma ANTIGA (pré funil-primeiro — PK só `cadencia`, coluna `linha`).
+
+        Ou seja: a versão de 18/09 deste arquivo foi aplicada; a reescrita de 21/09
+        nunca foi. Como todo CREATE aqui é `IF NOT EXISTS`, aplicá-lo sem remover as
+        tabelas antes seria um NO-OP silencioso — as tabelas velhas ficariam no
+        lugar, sem a coluna `funil`, e a API quebraria em runtime sem nenhum erro na
+        hora de aplicar. O aviso precisa estar no cabeçalho, onde o humano lê antes
+        de colar no SQL editor.
+        """
+        cabecalho = sql[:2000]
+        assert "PRE-CONDICAO" in cabecalho
+        assert "JA EXISTEM" in cabecalho
+        assert "NO-OP SILENCIOSO" in cabecalho.upper()
+        assert "linha" in cabecalho  # a coluna que denuncia a forma antiga
+
+    def test_o_aviso_diz_que_as_tabelas_antigas_estao_vazias(self, sql):
+        # É o que torna a remoção segura — e o que um humano precisa saber antes de
+        # apagar qualquer coisa em produção.
+        assert "0 linhas" in sql[:2000]
+
 
 class TestMigrationCriaAsDuasTabelas:
     def test_cria_a_tabela_de_toques(self, sql_codigo):
@@ -920,16 +1317,48 @@ class TestMigrationNaoDeixaAdicionarToque:
     builder. Sem o CHECK, um INSERT com toque=9 na cadência "Novo" seria aceito
     pelo banco e ignorado em silêncio pelo código."""
 
+    @staticmethod
+    def _teto_do_check(sql_codigo: str, codigo: str) -> int:
+        """O maior número de toque que o CHECK aceita para esta cadência.
+
+        Lê o SQL de verdade em vez de procurar um dígito solto: `BETWEEN 1 AND 4`
+        e `toque = 1` são as duas formas usadas, e um `in` de string diria "passou"
+        para `BETWEEN 1 AND 14` também.
+        """
+        trecho = re.search(rf"cadencia = '{codigo}'\s+AND\s+([^)]*)", sql_codigo)
+        assert trecho, codigo
+        corpo = trecho.group(1)
+        entre = re.search(r"toque\s+BETWEEN\s+1\s+AND\s+(\d+)", corpo, re.I)
+        if entre:
+            return int(entre.group(1))
+        igual = re.search(r"toque\s*=\s*(\d+)", corpo)
+        assert igual, (codigo, corpo)
+        return int(igual.group(1))
+
     @pytest.mark.parametrize("codigo", CODIGOS)
     def test_o_check_limita_o_numero_do_toque_ao_que_a_cadencia_tem(self, sql_codigo, codigo):
-        n = len(OFFSETS[codigo])
-        trecho = re.search(rf"cadencia = '{codigo}'[^)]*", sql_codigo)
-        assert trecho, codigo
-        assert str(n) in trecho.group(0), (codigo, trecho.group(0))
+        assert self._teto_do_check(sql_codigo, codigo) == len(OFFSETS[codigo])
 
-    def test_o_check_lista_as_quatro_cadencias(self, sql_codigo):
+    @pytest.mark.parametrize("codigo", CODIGOS)
+    def test_o_teto_do_check_bate_com_FUNIS_de_verdade(self, sql_codigo, codigo):
+        # O cruzamento que impede código e banco de divergir em silêncio: o teto do
+        # CHECK contra a contagem REAL de toques em `cadence_joao.FUNIS` (e não
+        # contra a tabela `OFFSETS` deste arquivo, que é uma terceira cópia).
+        do_codigo = {
+            len(c.touches) for f in cj.FUNIS for c in f.cadencias if c.codigo == codigo
+        }
+        assert len(do_codigo) == 1, (codigo, do_codigo)  # funis-irmãos são iguais
+        assert self._teto_do_check(sql_codigo, codigo) == do_codigo.pop()
+
+    def test_o_check_lista_as_cinco_cadencias(self, sql_codigo):
         for codigo in CODIGOS:
             assert f"'{codigo}'" in sql_codigo
+
+    def test_o_check_nao_tem_cadencia_a_mais_nem_a_menos(self, sql_codigo):
+        # O outro lado: uma cadência apagada do código e esquecida no CHECK deixaria
+        # o banco aceitando linha que o motor nunca lê.
+        no_sql = set(re.findall(r"cadencia = '(\w+)'", sql_codigo))
+        assert no_sql == {c.codigo for f in cj.FUNIS for c in f.cadencias}
 
     def test_o_check_lista_os_funis_com_cadencia(self, sql_codigo):
         for funil_codigo in ("atacado", "private_label", "reposicao_atacado",
@@ -973,6 +1402,37 @@ class TestMigrationParFunilCadenciaBateComOCodigo:
         # cadência, o teste acima muda de comportamento sozinho (o `if f.cadencias`
         # passa a incluí-la) — só falha aqui se o par não existir também no SQL.
         assert cj.funil("recuperacao").cadencias == ()
+
+
+class TestMigrationRecusaAFormaAntiga:
+    """A trava da pré-condição (bloco 0 da migration).
+
+    Medido em 23/09/2026: as duas tabelas JÁ EXISTEM em produção na forma antiga
+    (sem a coluna `funil`), vazias. Como todo CREATE do arquivo é IF NOT EXISTS,
+    aplicá-lo sem apagá-las antes é um NO-OP SILENCIOSO — "Success" no editor,
+    schema errado no banco, e o estrago aparecendo muito depois, em runtime.
+    Um aviso em comentário não basta: ele depende de alguém lê-lo.
+    """
+
+    def test_tem_guarda_que_levanta_excecao(self, sql_codigo):
+        assert re.search(r"RAISE\s+EXCEPTION", sql_codigo, re.I), (
+            "a migration precisa RECUSAR a forma antiga, não passar por cima dela"
+        )
+
+    def test_a_guarda_olha_a_coluna_funil(self, sql_codigo):
+        # É a coluna `funil` que distingue as duas formas — checar só a existência
+        # da tabela não veria a diferença, que é justamente o buraco.
+        bloco = sql_codigo[:sql_codigo.upper().find("CREATE TABLE")]
+        assert "information_schema.columns" in bloco.lower()
+        assert "funil" in bloco
+
+    def test_a_guarda_nao_apaga_nada(self, sql_codigo):
+        # A trava RECUSA; quem apaga é o humano, com as tabelas vazias à vista.
+        # (`test_nao_tem_comando_destrutivo` já cobre o arquivo inteiro; aqui o
+        # ponto é que o bloco NOVO não abriu exceção a essa regra.)
+        bloco = sql_codigo[:sql_codigo.upper().find("CREATE TABLE")]
+        for proibido in (r"DROP\s+TABLE", r"TRUNCATE", r"DELETE\s+FROM"):
+            assert not re.search(proibido, bloco, re.I), proibido
 
 
 class TestMigrationNasceVazia:
