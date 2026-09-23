@@ -9,10 +9,13 @@ import { getServiceSupabase } from "@/lib/supabase/api";
 
 type Result = { data: unknown; error: { message: string } | null };
 
-/** Fake mínimo do query builder: cada tabela devolve um Result fixo. */
+/** Fake mínimo do query builder: cada tabela devolve um Result fixo; `calls` registra as tabelas consultadas. */
 function fakeSupabase(tables: Record<string, Result>) {
+  const calls: string[] = [];
   return {
+    calls,
     from(table: string) {
+      calls.push(table);
       const result = tables[table] ?? { data: null, error: null };
       const builder: Record<string, unknown> = {};
       for (const m of ["select", "eq", "in", "order", "limit", "lte"]) builder[m] = () => builder;
@@ -53,7 +56,7 @@ describe("GET /api/leads/[id]/origin", () => {
     }) as never);
     const res = await call();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ kind: "pago", channel: "Meta Ads", detail: "CTWA Atacado", page: null });
+    expect(await res.json()).toEqual({ kind: "pago", channel: "Meta Ads", detail: "CTWA Atacado", funnel: null });
   });
 
   it("Meta: falha no lookup não derruba — Campanha não identificada", async () => {
@@ -72,6 +75,30 @@ describe("GET /api/leads/[id]/origin", () => {
       ad_spend: { data: [{ campaign_name: "Search | Marca Própria" }, { campaign_name: "PMAX | Atacado" }], error: null },
     }) as never);
     expect((await (await call()).json()).detail).toBe("Search | Marca Própria");
+  });
+
+  it("Meta (fbclid) com utm_campaign que bateria no Google não credita a campanha Google — detail é o utm_campaign cru", async () => {
+    const fake = fakeSupabase({
+      leads: { data: leadRow({ fbclid: "f", utm_campaign: "atacado" }), error: null },
+      ad_spend: { data: [{ campaign_name: "PMAX | Atacado" }], error: null },
+    });
+    vi.mocked(getServiceSupabase).mockResolvedValue(fake as never);
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ kind: "pago", channel: "Meta Ads", detail: "atacado" });
+    expect(fake.calls).not.toContain("ad_spend");
+  });
+
+  it("lead orgânico com utm_campaign não consulta ad_spend", async () => {
+    const fake = fakeSupabase({
+      leads: { data: leadRow({ utm_source: "instagram", utm_campaign: "promo" }), error: null },
+    });
+    vi.mocked(getServiceSupabase).mockResolvedValue(fake as never);
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(fake.calls).not.toContain("ad_spend");
+    expect(fake.calls).not.toContain("meta_ad_campaigns");
   });
 
   it("500 se a leitura do lead falhar", async () => {

@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/supabase/pipeline-access";
 import {
   LEAD_ORIGIN_COLUMNS,
   describeLeadOrigin,
+  paidPlatform,
   resolveGoogleCampaignName,
   type LeadOriginInput,
 } from "@/lib/lead-origin";
@@ -31,16 +32,17 @@ export async function GET(
   if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
   const lead = data as unknown as LeadOriginInput;
 
+  const platform = paidPlatform(lead);
   let campaignName: string | null = null;
   try {
-    if (lead.meta_ad_id) {
+    if (platform === "meta" && lead.meta_ad_id) {
       const { data: mac } = await sb
         .from("meta_ad_campaigns")
         .select("campaign_name")
         .eq("ad_id", lead.meta_ad_id)
         .maybeSingle();
       campaignName = (mac as { campaign_name?: string | null } | null)?.campaign_name ?? null;
-    } else if (lead.gclid || lead.utm_campaign) {
+    } else if (platform === "google" && lead.utm_campaign) {
       // ad_spend tem uma linha por campanha por dia e o PostgREST corta em
       // 1.000 linhas: do mais recente para trás, para as campanhas ativas
       // entrarem (a UTM do lead é last-touch). Sem casar, a UI mostra o slug.

@@ -40,7 +40,7 @@ export function LeadOriginBlock({ leadId }: { leadId: string }) {
               {origin.detail}
             </p>
           )}
-          {origin.page && <p className="text-[11px] text-[#7b7b78]">via página {origin.page}</p>}
+          {origin.funnel && <p className="text-[11px] text-[#7b7b78]">Funil: {origin.funnel}</p>}
         </div>
       )}
     </div>

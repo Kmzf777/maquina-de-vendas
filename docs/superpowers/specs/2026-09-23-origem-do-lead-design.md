@@ -8,15 +8,16 @@ Data: 23/09/2026 · Status: aprovado pelo usuário
   "Pago · utm_source" / "Orgânico · utm_source" — nunca a campanha.
 - `/leads` (modal `lead-detail-modal.tsx`, aba "Dados Gerais") não mostra origem nenhuma.
 - O banco já guarda muito mais: `meta_ad_id` (→ `meta_ad_campaigns.campaign_name`), `gclid`,
-  `fbclid`, `ctwa_clid`, UTMs completas, `metadata.origem` (página de LP / importação),
-  `metadata.referral` (indicação), `metadata.lote`, `channel`.
+  `fbclid`, `ctwa_clid`, UTMs completas, `metadata.origem` (funil de LP / importação),
+  `metadata.lote`, `channel`.
 
 ## Decisões do usuário
 
 - Nível de detalhe: **canal + campanha** (sem nome do anúncio — não é guardado; sem UTMs cruas).
-- Sub-origens orgânicas: WhatsApp direto · Landing page (nome da página) · Instagram/Facebook
-  orgânico (via UTM) · Indicação de <nome> · Bling · Reativação Bling · Cadastro manual /
-  importação · Sem rastreio.
+- Sub-origens orgânicas: WhatsApp direto · Landing page (label do funil) · Instagram/Facebook
+  orgânico (via UTM) · Bling · Reativação Bling · Cadastro manual / importação · Sem rastreio.
+  (`metadata.referral`, gravado no lead que indicou — não no indicado —, não é usado como sinal
+  de origem; ver "Regras" abaixo.)
 
 ## Arquitetura (abordagem A)
 
@@ -34,7 +35,7 @@ Data: 23/09/2026 · Status: aprovado pelo usuário
    404 se o lead não existe. Resposta: `LeadOrigin`.
 3. **`useLeadOrigin(leadId)`** — hook no padrão de `use-lead-quotes.ts` (fetch + loading).
 4. **`<LeadOriginBlock leadId />`** — bloco "Origem": badge (tipo · canal) + linha de detalhe
-   (campanha / página / indicador / lote) + linha "via página X" quando pago e veio de LP.
+   (campanha / label do funil / lote) + linha "Funil: X" quando pago e veio de um funil de LP.
 5. Integração: substitui os dois badges em `crm-perfil-tab.tsx`; entra no topo da aba
    "Dados Gerais" do `lead-detail-modal.tsx`.
 
@@ -47,8 +48,8 @@ type LeadOriginKind = "pago" | "organico" | "importado" | "sem_rastreio";
 interface LeadOrigin {
   kind: LeadOriginKind;
   channel: string;        // "Meta Ads", "Google Ads", "WhatsApp direto", "Landing page", ...
-  detail: string | null;  // campanha, nome da página, "de Fulano", "Lote 3"
-  page: string | null;    // página de LP quando o lead é pago e passou por LP
+  detail: string | null;  // campanha, nome da página, "Lote 3"
+  funnel: string | null;  // funil (metadata.origem) que o lead passou, quando o lead é pago
 }
 ```
 
@@ -59,19 +60,29 @@ interface LeadOrigin {
 | 1 | `gclid`, ou utm_source ∈ fontes Google e utm_medium ∈ meios pagos | pago · Google Ads | campanha resolvida ?? utm_campaign ?? "Campanha não identificada" |
 | 2 | `fbclid`/`ctwa_clid`/`meta_ad_id`, ou utm_source ∈ fontes Meta | pago · Meta Ads | idem |
 | 3 | `traffic_type='paid'` sem casar acima | pago · utm_source capitalizado ou "Anúncio" | utm_campaign ?? "Campanha não identificada" |
-| 4 | `metadata.referral.nome` | organico · Indicação | "de {nome}" |
-| 5 | `metadata.origem='reativacao_bling'` | importado · Reativação Bling | "Lote {lote}" ou null |
-| 6 | `channel='bling'` ou `metadata.origem='bling_webhook'` | importado · Bling | null |
-| 7 | utm_source instagram/facebook | organico · Instagram / Facebook | utm_campaign ?? utm_medium ?? null |
-| 8 | outro utm_source (não pago) | organico · utm_source capitalizado | utm_campaign ?? null |
-| 9 | `metadata.origem` string (LP) | organico · Landing page | label de `LP_ORIGINS` ou o próprio valor |
-| 10 | `channel='manual'` | importado · Cadastro manual | null |
-| 11 | `channel='campaign'` | importado · Importação de campanha | null |
-| 12 | `channel` whatsapp/evolution | organico · WhatsApp direto | null |
-| 13 | nada | sem_rastreio · Sem rastreio | null |
+| 4 | `metadata.origem='reativacao_bling'` | importado · Reativação Bling | "Lote {lote}" ou null |
+| 5 | `channel='bling'` ou `metadata.origem='bling_webhook'` | importado · Bling | null |
+| 6 | utm_source instagram/facebook | organico · Instagram / Facebook | utm_campaign ?? utm_medium ?? null |
+| 7 | outro utm_source (não pago) | organico · utm_source capitalizado | utm_campaign ?? null |
+| 8 | `metadata.origem` string (LP/funil) | organico · Landing page | label de `LP_ORIGINS` ou o próprio valor |
+| 9 | `channel='manual'` | importado · Cadastro manual | null |
+| 10 | `channel='campaign'` | importado · Importação de campanha | null |
+| 11 | `channel='whatsapp'` (exato — `evolution` não conta: é o default legado do schema, inclusive de disparos em massa, não evidência de contato inbound) | organico · WhatsApp direto | null |
+| 12 | nada | sem_rastreio · Sem rastreio | null |
 
-`page` = label de LP de `metadata.origem` nos casos 1-3 (quando existir e não for origem de
-importação), senão null. Para 7/8 com LP, `page` também é preenchido.
+`metadata.referral` (gravado por `registrar_indicacao`) fica no lead que FEZ a indicação, não no
+indicado — não é sinal de origem e é ignorado por `describeLeadOrigin`.
+
+`funnel` = label de LP/funil de `metadata.origem` nos casos 1-3 (quando existir e não for origem
+de importação), senão null. Para 6/7 com funil, `funnel` também é preenchido. CTWA e outros
+anúncios também gravam `metadata.origem` ("atacado"/"terceirizacao"): é o funil que o lead passou,
+não necessariamente uma landing page — daí o campo se chamar `funnel`, e a UI mostrar
+"Funil: {funnel}" em vez de "via página {page}".
+
+A detecção de plataforma (regras 1-2) usa `paidPlatform(lead)`, exportado de `lead-origin.ts`, e a
+rota consulta `meta_ad_campaigns`/`ad_spend` apenas quando essa plataforma bate — nunca os dois,
+mesmo quando o lead tem `fbclid` E `utm_campaign` que também caça um nome em `ad_spend` (evita
+"Meta Ads / <nome de campanha Google>").
 
 ## Erros
 
@@ -81,8 +92,11 @@ importação), senão null. Para 7/8 com LP, `page` também é preenchido.
 
 ## Testes
 
-- `lead-origin.test.ts`: cada linha da tabela + precedências (gclid vence meta_ad_id; referral
-  vence LP; campanha resolvida vence utm_campaign; page em lead pago via LP) +
+- `lead-origin.test.ts`: cada linha da tabela + precedências (gclid vence meta_ad_id; referral no
+  metadata é ignorado; campanha resolvida vence utm_campaign; funnel em lead pago via LP;
+  `channel='evolution'` não é WhatsApp direto) + `paidPlatform` (mesma ordem, isolado) +
   `resolveGoogleCampaignName` (idêntico, subconjunto único, empate → null, vazio → null).
 - `route.test.ts`: 401 sem sessão; 404; Meta resolve nome; falha em `meta_ad_campaigns` → 200
-  com "Campanha não identificada".
+  com "Campanha não identificada"; Meta com utm_campaign que bateria no Google não credita a
+  campanha Google (nem consulta `ad_spend`); lead orgânico com utm_campaign não consulta
+  `ad_spend`.
