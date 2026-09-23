@@ -2,12 +2,18 @@
 
 /**
  * Catalogo de produtos do Bling — leitura do ESPELHO local (`bling_products`
- * via GET /api/bling/catalog), nunca da API do Bling. Somente leitura: a
- * fonte de verdade e o Bling, o sync mantem o espelho atualizado.
+ * via GET /api/bling/catalog), nunca da API do Bling. A tabela do Bling segue
+ * SOMENTE LEITURA: a fonte de verdade e o Bling, o sync mantem o espelho.
+ *
+ * O botao "Preços da ValerIA" (so admin) e outra coisa: abre um modal que
+ * edita a tabela `products` — o catalogo que a ValerIA oferta aos leads —
+ * via /api/admin/valeria-catalog. Nada ali escreve no Bling.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useBlingStatus } from "@/hooks/use-bling-status";
+import { useCurrentRole } from "@/hooks/use-current-role";
+import { ValeriaPrecosModal } from "@/components/produtos/valeria-precos-modal";
 import {
   CONTA_PREFERIDA,
   contaPadrao,
@@ -52,6 +58,15 @@ export default function ProdutosPage() {
   const mostrarSeletorConta = precisaSeletor(blingStatus.accounts);
   const [conta, setConta] = useState(CONTA_PREFERIDA);
   const [page, setPage] = useState(1);
+  const { role } = useCurrentRole();
+  const [precosAberto, setPrecosAberto] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!aviso) return;
+    const t = setTimeout(() => setAviso(null), 4000);
+    return () => clearTimeout(t);
+  }, [aviso]);
 
   // A semente acima e sincrona (a tela pinta antes de `/api/bling/status`
   // responder) e nao tem como saber se a conta preferida esta conectada.
@@ -119,10 +134,34 @@ export default function ProdutosPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#faf9f6]">
       <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
-        <div>
-          <h1 className="text-[22px] font-semibold text-[#111111] tracking-tight">Produtos</h1>
-          <p className="text-[13px] text-[#7b7b78] mt-0.5">Catálogo sincronizado do Bling</p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-[22px] font-semibold text-[#111111] tracking-tight">Produtos</h1>
+            <p className="text-[13px] text-[#7b7b78] mt-0.5">Catálogo sincronizado do Bling</p>
+          </div>
+          {role === "admin" && (
+            <button
+              type="button"
+              onClick={() => setPrecosAberto(true)}
+              className="shrink-0 px-3 py-2 text-[13px] bg-[#111111] text-white rounded-[4px] hover:bg-[#333333] transition-colors whitespace-nowrap"
+            >
+              Preços da ValerIA
+            </button>
+          )}
         </div>
+        {aviso && (
+          <p role="status" className="text-[13px] text-[#1f9d57]">
+            {aviso}
+          </p>
+        )}
+        {precosAberto && (
+          <ValeriaPrecosModal
+            onClose={() => setPrecosAberto(false)}
+            onSaved={(n) =>
+              setAviso(`${n} ${n === 1 ? "preço atualizado" : "preços atualizados"} — a ValerIA usa em até 1 minuto.`)
+            }
+          />
+        )}
 
         <div className="bg-white border border-[#dedbd6] rounded-[8px] p-5 space-y-5">
           <div className="flex flex-wrap gap-3 items-end">
