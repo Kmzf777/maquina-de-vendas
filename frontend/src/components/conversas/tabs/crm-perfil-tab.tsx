@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { FileTextIcon, Pencil, Trash2 } from "lucide-react";
 import { EditableField } from "../editable-field";
 import type { Lead, Tag, Quote, Sale } from "@/lib/types";
-import { Badge } from "@/components/ui/badge";
 import { CadenceTimeline } from "@/components/conversas/cadence-timeline";
 import { DealStageRow } from "@/components/conversas/deal-stage-row";
 import { buildDealRows, distinctPipelineIds, type LeadDeal } from "@/lib/deal-rows";
@@ -15,6 +14,7 @@ import {
   quotePdfHref,
   quoteStatusView,
 } from "@/lib/quote-modal-state";
+import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
 
 interface CrmPerfilTabProps {
   lead: Lead;
@@ -211,24 +211,8 @@ export function CrmPerfilTab({
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Identificacao</h4>
-          {lead.traffic_type === "paid" && (
-            <Badge
-              className="h-[18px] px-1.5 text-[10px] font-medium rounded-[4px] border-0 bg-[#111111] text-white"
-            >
-              Pago{lead.utm_source ? ` · ${lead.utm_source}` : ""}
-            </Badge>
-          )}
-          {lead.traffic_type === "organic" && (
-            <Badge
-              variant="outline"
-              className="h-[18px] px-1.5 text-[10px] font-normal rounded-[4px] border-[#dedbd6] text-[#7b7b78]"
-            >
-              Orgânico{lead.utm_source ? ` · ${lead.utm_source}` : ""}
-            </Badge>
-          )}
-        </div>
+        <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Identificacao</h4>
+        <LeadOriginBlock leadId={lead.id} />
         <EditableField
           label="Nome"
           value={lead.name}
