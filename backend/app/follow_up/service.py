@@ -1022,18 +1022,50 @@ def motivo_para_pular_joao(
             return "intervalo_da_repeticao"
         return None
 
-    # 3b. Cadência com fim: cooldown de reentrada.
+    # 3b. Cadência com fim: cooldown de reentrada, POR MATRÍCULA (spec 2026-09-23 §4).
+    #
+    # A unidade do cooldown é a MATRÍCULA, não o job. A regra antiga já ignorava job
+    # `cancelled` — a intenção sempre foi "cadência que morreu não segura reentrada" —
+    # mas olhava um job por vez, e quando o lead responde no meio só os PENDENTES são
+    # cancelados: os toques que JÁ SAÍRAM ficam `sent`, e eram eles que disparavam o
+    # cooldown. O lead que respondia no T2 e voltava a sumir ficava 90 dias sem esteira
+    # nenhuma — exatamente o oposto de "se responder, reinicia".
+    #
+    #   matrícula com ALGUM job `cancelled`  -> INTERROMPIDA, não conta
+    #   matrícula sem nenhum cancelado       -> rodou até o fim, conta
+    #
+    # É a distinção entre "a esteira terminou o trabalho dela" e "o lead respondeu no
+    # meio". `JOAO_COOLDOWN_DIAS` continua 90: muda O QUE conta, não por quanto tempo.
     corte = now - timedelta(days=JOAO_COOLDOWN_DIAS)
+    por_matricula: dict[str, list[dict]] = {}
+    avulsos = 0
     for job in jobs_do_card:
         if job.get("job_type") != cadencia.job_type:
             continue
-        # `cancelled` não é cadência que rodou — é cadência que MORREU (número errado,
-        # conversa finalizada, template ausente). Segurar a reentrada por causa dela
-        # deixaria o card preso por 90 dias por um erro já corrigido.
-        if job.get("status") == "cancelled":
+        matricula_id = _job_metadata(job).get("matricula_id")
+        if matricula_id:
+            chave = f"matricula:{matricula_id}"
+        else:
+            # Job sem `matricula_id` (nenhum criado por este agendador; um criado à mão
+            # teria) é tratado como matrícula PRÓPRIA — conservador: ele conta sozinho,
+            # em vez de ser absorvido por um bloco cancelado que não é dele.
+            avulsos += 1
+            chave = f"avulso:{job.get('id') or avulsos}"
+        por_matricula.setdefault(chave, []).append(job)
+
+    for jobs_da_matricula in por_matricula.values():
+        if any(job.get("status") == "cancelled" for job in jobs_da_matricula):
             continue
-        nascimento = _parse_ts(job.get("created_at")) or _parse_ts(job.get("fire_at"))
-        if nascimento and nascimento > corte:
+        nascimentos = [
+            dt for dt in (
+                _parse_ts(job.get("created_at")) or _parse_ts(job.get("fire_at"))
+                for job in jobs_da_matricula
+            ) if dt
+        ]
+        # O job MAIS ANTIGO da matrícula é a data de nascimento dela. Na prática todos
+        # nascem no mesmo INSERT; o `min` é o que mantém isso verdadeiro se um dia não
+        # nascerem.
+        if nascimentos and min(nascimentos) > corte:
             return "cooldown"
     return None
 
@@ -1057,6 +1089,10 @@ def _montar_jobs_da_matricula(
     que não quer" não tem fim declarado, então "todos os toques de uma vez" é
     literalmente impossível nela. Ela cria UM job por passagem, e a passagem seguinte
     cria o próximo depois do intervalo.
+
+    E MAIS UM JOB, que não é toque: quando a cadência declara `etapa_final_key`, o
+    último job da matrícula é o de MOVER o card (spec 2026-09-23 §3) — ver
+    `_job_de_mover` logo abaixo.
     """
     matricula_id = str(uuid.uuid4())
     matricula_em = now.isoformat()
@@ -1106,7 +1142,82 @@ def _montar_jobs_da_matricula(
                 "phone_number_id": JOAO_PHONE_NUMBER_ID,
             },
         })
+
+    mover = _job_de_mover(
+        cadencia, linha_rpc, canal=canal, conversation_id=conversation_id, now=now,
+        matricula_id=matricula_id, matricula_em=matricula_em)
+    if mover is not None:
+        rows.append(mover)
     return rows
+
+
+def _job_de_mover(
+    cadencia: CadenciaResolvida, linha_rpc: Mapping[str, Any], *,
+    canal: Mapping[str, Any], conversation_id: str, now: datetime,
+    matricula_id: str, matricula_em: str,
+) -> dict | None:
+    """O job que MOVE o card para a etapa final — ou None se esta cadência não move.
+
+    A única exceção ao "o motor nunca move card" do spec de 18/09, e ela é estreita
+    (spec 2026-09-23 §3): passado o último toque, se o lead nunca respondeu, o card vai
+    para "Em atenção". Quem executa é `scheduler._process_joao_touch`, pela MARCA
+    `metadata.acao == "mover_etapa"` — a única condição de leitura combinada entre os
+    dois lados. Sem template, sem canal, sem envio.
+
+    POR QUE UM JOB, e não uma varredura à parte: a resposta do lead já cancela todos os
+    jobs `pending` da matrícula (`cancel_followups_by_phone`, motivo `client_replied`,
+    disparado no `webhook/meta_router.py`). Sendo um job, o "mover" é cancelado JUNTO —
+    lead que responde não recebe mais nada E não tem o card movido, sem uma única regra
+    nova. Uma varredura separada precisaria reimplementar essa condição, e divergiria
+    dela no primeiro ajuste. Pelo mesmo motivo ele carrega o `matricula_id` dos toques:
+    é por ele que o adiamento de 60 dias ("ainda tenho estoque") desliza o bloco INTEIRO,
+    o move incluído, em vez de mover o card no meio de uma cadência adiada.
+
+    Duas guardas, nesta ordem:
+
+      · `etapa_final_key` ausente -> esta cadência não move nada (as duas de Reposição);
+      · `repete_ultimo` -> cadência SEM FIM declarado ("Em atenção", uma mensagem a cada
+        três dias até o lead dizer que não quer). Não existe "depois do último toque"
+        para agendar, e o job nasceria a cada passagem.
+
+    `sequence` é a do último toque + 1: `follow_up_jobs` tem `sequence` NOT NULL e
+    reusar a do último toque criaria dois jobs com a mesma sequence na mesma matrícula —
+    e é `sequence` que `_adiar_matriculas_joao` usa como chave do bloco.
+    """
+    if not cadencia.etapa_final_key or cadencia.repete_ultimo or not cadencia.touches:
+        return None
+
+    ultimo = cadencia.touches[-1]
+    base = now + ultimo.offset + timedelta(days=cadencia.dias_ate_mover)
+    return {
+        "conversation_id": conversation_id,
+        "lead_id": linha_rpc.get("lead_id"),
+        "channel_id": canal["id"],
+        "sequence": ultimo.sequence + 1,
+        # Mesmo clamp dos toques. Um move empurrado das 2h para as 8h é invisível para
+        # o lead, e a alternativa seria um ramo a mais no laço (spec 2026-09-23 §3).
+        "fire_at": _clamp_to_business_window(base).isoformat(),
+        "status": "pending",
+        "env_tag": _ENV_TAG,
+        "job_type": cadencia.job_type,
+        "metadata": {
+            # A MARCA. Ausente = job de toque normal. Nada de inferir pelo template
+            # nulo: job de TOQUE sem template também existe (e é o estado atual das
+            # três cadências de prospecção).
+            "acao": "mover_etapa",
+            "etapa_final_key": cadencia.etapa_final_key,
+            "cadencia": cadencia.codigo,
+            "funil": cadencia.funil,
+            "matricula_id": matricula_id,
+            "matricula_em": matricula_em,
+            "deal_id": linha_rpc.get("deal_id"),
+            "stage_id": linha_rpc.get("stage_id"),
+            "pipeline_id": cadencia.pipeline_id,
+            # Explicitamente nulo: este job nunca manda mensagem.
+            "template_name": None,
+            "phone_number_id": JOAO_PHONE_NUMBER_ID,
+        },
+    }
 
 
 def _varrer_cadencia_joao(
@@ -1123,9 +1234,15 @@ def _varrer_cadencia_joao(
         "p_pipeline_id": cadencia.pipeline_id,
         "p_channel_id": canal["id"],
         "p_stage_days": int(cadencia.gatilho_dias or 0),
-        # O relógio da ata é o da ETAPA ("dois dias em Novo", "45 dias em Cliente
-        # Ativo"), não o do silêncio. 0 desliga o filtro de silêncio na RPC.
-        "p_silence_days": 0,
+        # O SEGUNDO relógio, e ele é um AND com o de etapa dentro da RPC: dias sem
+        # NENHUMA conversa. Era fixo em 0 ("o relógio da ata é o da ETAPA") até
+        # 22/09/2026; o dono escreveu "2 dias SEM CONVERSAR" para Novo e Em conversa
+        # (spec 2026-09-23 §5), e agora o número vem da cadência. 0 continua
+        # DESLIGANDO o filtro — é o que Proposta Enviada e as duas de Reposição pedem,
+        # e é o default de `Cadencia.gatilho_silencio_dias`.
+        "p_silence_days": int(cadencia.gatilho_silencio_dias or 0),
+        # Continua "qualquer" em todas: um lead calado há 2 dias merece follow-up
+        # tanto se a última palavra foi dele quanto se foi nossa.
         "p_last_speaker": "qualquer",
         "p_audience": JOAO_CADENCIA_AUDIENCIA,
         "p_limit": teto,
@@ -1192,7 +1309,9 @@ def _varrer_cadencia_joao(
             len(rows), cadencia.codigo, cadencia.funil, exc)
         return 0
     logger.info(
-        "[JOAO_CADENCIA] %s/%s: %d card(s) matriculado(s), %d toque(s) agendado(s)",
+        "[JOAO_CADENCIA] %s/%s: %d card(s) matriculado(s), %d job(s) agendado(s)",
+        # "job(s)" e não "toque(s)": desde 23/09 a matrícula de uma cadência que move
+        # termina num job que não é toque (`acao=mover_etapa`).
         cadencia.codigo, cadencia.funil, matriculados, len(rows))
     return len(rows)
 
