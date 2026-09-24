@@ -6,6 +6,7 @@ As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 import logging
 import re
 import unicodedata
+from statistics import median
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -305,6 +306,126 @@ def build_campaign_report(
             "channel_subtotals": channel_subtotals}
 
 
+# --- Relatório geral (bloco acima da tabela) -------------------------------------------
+_PAID_CHANNELS = ("Google Ads", "Meta Ads")
+_CHANNEL_ORDER = ("Google Ads", "Meta Ads", "Orgânico", "Sem rastreio")
+_FUNNEL_STAGES = ("conversa", "closer", "cliente")
+_COUNT_KEYS = ("leads", "conversas", "closer", "clientes")
+
+
+def _ratio(num: float, den: float, nd: int = 4) -> float | None:
+    return round(num / den, nd) if den else None
+
+
+def _parse_iso(v: Any) -> datetime | None:
+    if not isinstance(v, str) or not v:
+        return None
+    try:
+        dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _stage_rates(c: dict[str, int]) -> dict[str, float | None]:
+    return {
+        "taxa_conversa": _ratio(c["conversas"], c["leads"]),
+        "taxa_closer": _ratio(c["closer"], c["conversas"]),
+        "taxa_cliente": _ratio(c["clientes"], c["closer"]),
+        "taxa_total": _ratio(c["clientes"], c["leads"]),
+    }
+
+
+def _counts(d: dict[str, Any]) -> dict[str, int]:
+    return {k: int(d.get(k, 0) or 0) for k in _COUNT_KEYS}
+
+
+def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
+                         sales_by_lead: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Relatório geral do período — puro, deriva tudo do relatório já montado.
+
+    Custo por etapa divide o gasto SÓ pelas contagens dos canais pagos: dividir pelo total
+    (orgânico incluso) faria o CPL parecer mais barato do que é. Os dias até a 1ª compra
+    descartam valores negativos — os 1.208 leads importados do Bling têm created_at = data
+    da importação e compras anteriores a ela, e puxariam a mediana para baixo de zero.
+    """
+    total = report.get("total") or {}
+    subtotals = report.get("channel_subtotals") or {}
+    rows = report.get("rows") or []
+
+    counts = _counts(total)
+    rates = _stage_rates(counts)
+    candidates = [(rates["taxa_" + s], i, s) for i, s in enumerate(_FUNNEL_STAGES)
+                  if rates["taxa_" + s] is not None]
+    funnel = {**counts, **rates, "gargalo": min(candidates)[2] if candidates else None}
+
+    paid = dict.fromkeys(_COUNT_KEYS, 0)
+    inv = rec = 0.0
+    for ch in _PAID_CHANNELS:
+        sub = subtotals.get(ch)
+        if not sub:
+            continue
+        for k, v in _counts(sub).items():
+            paid[k] += v
+        inv += float(sub.get("investimento", 0) or 0)
+        rec += float(sub.get("receita", 0) or 0)
+
+    def _cost(den: int) -> float | None:
+        return round(inv / den, 2) if inv and den else None
+
+    cost = {"investimento": round(inv, 2), "receita": round(rec, 2),
+            "roas": round(rec / inv, 2) if inv else None, **paid,
+            "cpl": _cost(paid["leads"]), "custo_conversa": _cost(paid["conversas"]),
+            "custo_closer": _cost(paid["closer"]), "cac": _cost(paid["clientes"])}
+
+    order = [c for c in _CHANNEL_ORDER if c in subtotals]
+    order += sorted(c for c in subtotals if c not in _CHANNEL_ORDER)
+    channels: list[dict[str, Any]] = []
+    for ch in order:
+        sub = subtotals[ch]
+        c = _counts(sub)
+        inv_ch = round(float(sub.get("investimento", 0) or 0), 2)
+        if c["leads"] == 0 and inv_ch == 0:
+            continue
+        rec_ch = round(float(sub.get("receita", 0) or 0), 2)
+        channels.append({"channel": ch, **c, "receita": rec_ch, "investimento": inv_ch,
+                         "roas": round(rec_ch / inv_ch, 2) if inv_ch else None,
+                         **_stage_rates(c)})
+
+    dias: list[float] = []
+    recompradores = 0
+    for lead in leads:
+        sale = sales_by_lead.get(lead.get("id"))
+        if not sale:
+            continue
+        if int(sale.get("count", 0) or 0) > 1:
+            recompradores += 1
+        created = _parse_iso(lead.get("created_at"))
+        first = _parse_iso(sale.get("first_sold_at"))
+        if created is None or first is None:
+            continue
+        d = (first - created).total_seconds() / 86400
+        if d >= 0:
+            dias.append(d)
+
+    clientes = counts["clientes"]
+    pedidos = int(total.get("pedidos", 0) or 0)
+    nao_atribuido = sum(int(r.get("leads", 0) or 0) for r in rows
+                        if r.get("channel") in _PAID_CHANNELS
+                        and str(r.get("campaign", "")).startswith(_UNATTRIBUTED))
+    sem_rastreio = int((subtotals.get("Sem rastreio") or {}).get("leads", 0) or 0)
+    timing_quality = {
+        "dias_ate_compra_mediana": round(median(dias), 1) if dias else None,
+        "amostra_dias": len(dias),
+        "pedidos_por_cliente": _ratio(pedidos, clientes, 2),
+        "recompra_pct": _ratio(recompradores, clientes),
+        "sem_rastreio_pct": _ratio(sem_rastreio, counts["leads"]),
+        "nao_atribuido_pct": _ratio(nao_atribuido, paid["leads"]),
+    }
+    return {"funnel": funnel, "cost": cost, "channels": channels,
+            "timing_quality": timing_quality}
+
+
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 _LEAD_COLS = ("id, name, phone, created_at, gclid, fbclid, ctwa_clid, "
               "utm_source, utm_medium, utm_campaign, traffic_type")
@@ -463,7 +584,8 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
             lid = r.get("lead_id")
             if not lid:
                 continue
-            agg = out.setdefault(lid, {"count": 0, "value": 0.0, "last_sold_at": None})
+            agg = out.setdefault(lid, {"count": 0, "value": 0.0, "last_sold_at": None,
+                                        "first_sold_at": None})
             agg["count"] += 1
             try:
                 agg["value"] += float(r.get("value") or 0.0)
@@ -475,13 +597,18 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
                 prev = agg["last_sold_at"]
                 if prev is None or sold_at > prev:
                     agg["last_sold_at"] = sold_at
+                first = agg["first_sold_at"]
+                if first is None or sold_at < first:
+                    agg["first_sold_at"] = sold_at
     return out
 
 
 def _empty_report(mode: str, period: str) -> dict[str, Any]:
-    return {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
-            "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
-                      "receita": 0.0, "investimento": 0.0, "roas": None}}
+    report = {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
+              "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
+                        "receita": 0.0, "investimento": 0.0, "roas": None}}
+    report["summary"] = build_report_summary(report, [], {})
+    return report
 
 
 def _spend_by_campaign(sb, lo: str | None, hi: str | None, platform: str = "google") -> list[dict[str, Any]]:
@@ -687,11 +814,13 @@ def traffic_report(period: str = "30d", mode: str = "lead",
         conversed = _conversed_ids(sb, lead_ids)
         closers = _closer_ids(sb, lead_ids)
         sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
-        return build_campaign_report(
+        report = build_campaign_report(
             leads, conversed, closers, sales, mode, period,
             spend_by_channel=_spend_by_channel(sb, lo, hi),
             campaign_id_by_lead=_meta_campaign_by_lead(sb, leads),
         )
+        report["summary"] = build_report_summary(report, leads, sales)
+        return report
     except Exception as exc:
         logger.error("traffic_report(%s,%s) falhou: %s", period, mode, exc, exc_info=True)
         return _empty_report(mode, period)
