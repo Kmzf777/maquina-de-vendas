@@ -24,7 +24,7 @@ const fmtRoas = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("
 const TH = "sticky top-0 z-20 bg-white border-b border-[#dedbd6] text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]";
 
 /** Cores de canal alinhadas à paleta do projeto (laranja p/ pago, verde p/ orgânico, neutro p/ sem rastreio). */
-const CHANNEL_STYLES: Record<string, string> = {
+export const CHANNEL_STYLES: Record<string, string> = {
   "Google Ads": "bg-[#ff5600]/10 text-[#ff5600] border-[#ff5600]/20",
   "Meta Ads": "bg-[#fe4c02]/10 text-[#fe4c02] border-[#fe4c02]/20",
   "Orgânico": "bg-[#0bdf50]/10 text-[#0f9d43] border-[#0bdf50]/20",

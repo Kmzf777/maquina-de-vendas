@@ -8,8 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CampaignReportTable, type CampaignRow, type ReportTotal, type ChannelSubtotals } from "@/components/trafego/campaign-report-table";
+import { ReportSummaryPanel } from "@/components/trafego/report-summary";
+import type { ReportSummary } from "@/lib/traffic-summary";
 
-type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals };
+type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals; summary?: ReportSummary };
 
 export default function TrafegoPage() {
   const { role, loading: roleLoading } = useCurrentRole();
@@ -144,14 +146,23 @@ export default function TrafegoPage() {
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 min-h-0 flex flex-col px-4 md:px-8 py-4 md:py-8 bg-[#faf9f6]">
+      {/* Content — rola como um todo: o resumo expandido não pode espremer a tabela */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 md:px-8 py-4 md:py-8 bg-[#faf9f6]">
         {loading ? (
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 md:p-5 space-y-2">
-            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-          </div>
+          <>
+            <Skeleton className="h-[220px] w-full flex-shrink-0 rounded-[8px]" />
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 md:p-5 space-y-2">
+              {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          </>
         ) : (
-          <div className="bg-white border border-[#dedbd6] rounded-[8px] flex-1 min-h-0 flex flex-col overflow-hidden">
+          <>
+            {report?.summary && (
+              <div className="flex-shrink-0">
+                <ReportSummaryPanel summary={report.summary} mode={mode} />
+              </div>
+            )}
+            <div className="bg-white border border-[#dedbd6] rounded-[8px] flex-1 min-h-[420px] flex flex-col overflow-hidden">
             <CampaignReportTable
               rows={report?.rows ?? []}
               total={report?.total}
@@ -163,7 +174,8 @@ export default function TrafegoPage() {
                 router.push(`/trafego/campanha?${new URLSearchParams(params).toString()}`);
               }}
             />
-          </div>
+            </div>
+          </>
         )}
       </div>
       {toast && (
