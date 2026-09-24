@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { NotificationToast } from "@/components/notification-toast";
+import { SlaReminderPopup } from "@/components/sla-reminder-popup";
 import { PresenceProvider } from "@/hooks/use-presence";
 import { useRealtimeKeepAlive } from "@/hooks/use-realtime-keepalive";
 
@@ -78,6 +79,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
         {children}
       </main>
       <NotificationToast />
+      <SlaReminderPopup />
     </div>
     </PresenceProvider>
   );

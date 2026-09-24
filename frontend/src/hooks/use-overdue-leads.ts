@@ -51,6 +51,9 @@ export interface OverdueLead {
   userId: string;
   vendedorName: string;
   elapsedMinutes: number;
+  /** Janela de atendimento do vendedor (minuto do dia, fuso SP). */
+  windowStartMin: number;
+  windowEndMin: number;
 }
 
 export interface OverdueData {
@@ -143,7 +146,8 @@ interface OverdueCache {
   convById: Map<string, ConvRow>;
 }
 
-export function useOverdueLeads(): OverdueData {
+export function useOverdueLeads(opts: { targetMinutes?: number } = {}): OverdueData {
+  const targetOverride = opts.targetMinutes;
   const [leads, setLeads] = useState<OverdueLead[]>([]);
   const [vendedores, setVendedores] = useState<{ userId: string; name: string }[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -172,6 +176,8 @@ export function useOverdueLeads(): OverdueData {
           userId: cfg.user_id,
           vendedorName: cfg.display_name || "(sem nome)",
           elapsedMinutes: o.elapsedMinutes,
+          windowStartMin: cfg.window_start_minute,
+          windowEndMin: cfg.window_end_minute,
         });
       }
     }
@@ -193,7 +199,7 @@ export function useOverdueLeads(): OverdueData {
 
     const allConfigs = (cfgData ?? []) as SellerConfigRow[];
     const overrides = (ovData ?? []) as OverrideRow[];
-    const target = (settingsData?.target_minutes ?? 20) as number;
+    const target = (targetOverride ?? settingsData?.target_minutes ?? 20) as number;
 
     const configs = admin
       ? allConfigs
@@ -231,7 +237,7 @@ export function useOverdueLeads(): OverdueData {
     cacheRef.current = cache;
     recompute(cache, new Date());
     setLoading(false);
-  }, [supabase, recompute]);
+  }, [supabase, recompute, targetOverride]);
 
   useEffect(() => {
     setLoading(true);
@@ -255,7 +261,7 @@ export function useOverdueLeads(): OverdueData {
     // de recálculo sem o fanout global da tabela `messages` (alto volume) para cada
     // operador conectado — contenção de Egress do Realtime.
     const channel = supabase
-      .channel("overdue-leads-realtime")
+      .channel(`overdue-leads-realtime-${targetOverride ?? "cfg"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, debounced)
       // Re-sincroniza na volta do canal usando o MESMO guard de aba oculta, para
       // não reintroduzir o fetch pesado de 30d em background.

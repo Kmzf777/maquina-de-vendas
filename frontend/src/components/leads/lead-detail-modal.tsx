@@ -9,6 +9,7 @@ import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import type { Lead, Pipeline, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
+import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -304,6 +305,9 @@ export function LeadDetailModal({
           {/* TAB: Dados Gerais */}
           {activeTab === "dados" && (
             <div>
+              <div className="mb-5 pb-5 border-b border-[#dedbd6]">
+                <LeadOriginBlock leadId={lead.id} />
+              </div>
               <div className="grid grid-cols-2 gap-5">
                 {/* Contato */}
                 <div>

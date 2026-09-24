@@ -13,6 +13,7 @@ import { ChatView, type SiblingConversationSummary } from "@/components/conversa
 import { ContactDetail } from "@/components/conversas/contact-detail";
 import { debounce } from "@/lib/debounce";
 import { onResubscribe } from "@/lib/realtime-resync";
+import { setActiveConversation } from "@/lib/active-conversation";
 import {
   applyConversationUpdate,
   isBlockedConversationRow,
@@ -182,6 +183,16 @@ function ConversasContent() {
     if (found) lastSelectedRef.current = found;
     return found ?? (selectedId ? lastSelectedRef.current : null);
   }, [conversations, selectedId]);
+
+  // Publica a conversa aberta para o popup de SLA (shell) não interromper a
+  // resposta a este lead. Só publica seleção não-nula: o popup já grava o lead
+  // antes de navegar pelo "Responder agora", e limpar no mount apagaria isso.
+  const selectedConvId = selectedConversation?.id ?? null;
+  const selectedLeadId = (selectedConversation?.leads as Lead | undefined | null)?.id ?? null;
+  useEffect(() => {
+    if (selectedConvId) setActiveConversation({ conversationId: selectedConvId, leadId: selectedLeadId });
+  }, [selectedConvId, selectedLeadId]);
+  useEffect(() => () => setActiveConversation({ conversationId: null, leadId: null }), []);
 
   // Deep-link: pre-select conversation by lead_id from URL param
   useEffect(() => {
