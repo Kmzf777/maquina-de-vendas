@@ -43,6 +43,23 @@ linhas" (Atacado e Private Label deixaram de estar acoplados, spec §2 decisão 
 `funil` é campo OBRIGATÓRIO do corpo.
 
 ──────────────────────────────────────────────────────────────────────────────
+TRÊS CAMPOS QUE A TELA MOSTRA E NINGUÉM EDITA (spec 2026-09-23 §5 e §6)
+──────────────────────────────────────────────────────────────────────────────
+`gatilho_silencio_dias`, `etapa_final_rotulo` e `dias_ate_mover` entram no payload
+de cada cadência vindos DIRETO do código (`cadence_joao.Cadencia`). Eles NÃO
+existem nas tabelas de sobreposição, então não há o que mesclar: a regra
+"banco vence código" simplesmente não se aplica a eles, e o `_overrides` nem os
+menciona.
+
+O PUT não os aceita. Se o corpo trouxer qualquer um deles, é IGNORADO EM SILÊNCIO
+— não é 400. A alternativa (recusar) transformaria em erro o caso mais provável de
+todos: a tela devolvendo no PUT o mesmo objeto de cadência que recebeu no GET. Um
+campo só-leitura que explode quando ecoado é uma armadilha de integração, não uma
+guarda. O que a tela precisa saber — que editar aquele número exige deploy — ela
+sabe por não haver controle na interface, e está escrito no spec §5 ("a tela mostra
+os dois números, edita um").
+
+──────────────────────────────────────────────────────────────────────────────
 A TRAVA DE ATIVAÇÃO
 ──────────────────────────────────────────────────────────────────────────────
 Ligar exige template com status APPROVED em TODO toque do par (funil, cadência). É
@@ -279,6 +296,9 @@ def _cadencia_payload(funil_codigo: str, cadencia: cj.Cadencia, por_cadencia: di
     gravado — sem isso ninguém descobre o que a configuração mudou nem como voltar.
     `gatilho_stage_rotulo` vem SEMPRE de `cadencia` (o código de `cadence_joao.py`),
     nunca do banco — é o rótulo hardcoded que a decisão 2 da spec 2026-09-21 exige.
+    O mesmo vale para os três campos de 23/09 (ver o cabeçalho do módulo): eles não
+    têm coluna em tabela nenhuma, então não ganham par `*_codigo` — não existe um
+    valor gravado do qual eles pudessem divergir.
     """
     ov = _overrides(funil_codigo, cadencia.codigo, por_cadencia, por_toque)
     do_codigo = cadencia.touches
@@ -296,6 +316,17 @@ def _cadencia_payload(funil_codigo: str, cadencia: cj.Cadencia, por_cadencia: di
         "gatilho_stage_rotulo": cadencia.gatilho_stage_rotulo,
         "gatilho_dias": cadencia.gatilho_dias if gatilho_dias is None else gatilho_dias,
         "gatilho_dias_codigo": cadencia.gatilho_dias,
+        # ── Os três SÓ-LEITURA de 23/09/2026, direto do código ────────────────
+        # O SEGUNDO relógio do gatilho (dias sem NENHUMA conversa, em AND com
+        # `gatilho_dias`), e o destino do card quando a cadência termina sem
+        # resposta. `etapa_final_rotulo` nulo = esta cadência NÃO move card — é o
+        # caso das duas de Reposição, e a tela não pode inventar a frase do move.
+        # `gatilho_silencio_dias` 0 = sem filtro de silêncio, mesma leitura.
+        # `dias_ate_mover` viaja mesmo sem destino (é o default da dataclass): sem
+        # `etapa_final_rotulo` ele não significa nada, e é o rótulo que manda.
+        "gatilho_silencio_dias": cadencia.gatilho_silencio_dias,
+        "etapa_final_rotulo": cadencia.etapa_final_rotulo,
+        "dias_ate_mover": cadencia.dias_ate_mover,
         "ativa": cadencia.ativa if ativa is None else bool(ativa),
         "repete_ultimo": cadencia.repete_ultimo,
         # Só a metade que NÃO depende da Meta: "todo toque tem NOME de template". O
@@ -493,6 +524,12 @@ async def put_joao_definition(request: Request) -> dict:
 
     AUSENTE e `null` não são a mesma coisa: ausente é "não mexe", `null` é "apaga a
     sobreposição e volta a valer o código" — é o botão de desfazer da tela.
+
+    `gatilho_silencio_dias`, `etapa_final_rotulo` e `dias_ate_mover` são SÓ LEITURA
+    e não estão na lista acima: se vierem no corpo são ignorados em silêncio (ver o
+    cabeçalho do módulo — a tela ecoar o objeto que recebeu do GET não pode virar
+    400). Qualquer outra chave desconhecida cai na mesma regra: este handler lê os
+    campos que conhece, nunca varre o corpo.
     """
     try:
         corpo = await request.json()

@@ -30,6 +30,7 @@ reposicao". Depende do RELÓGIO (cooldown, prazos editáveis pela tela) — e os
 justamente o que a ata manda deixar o João editar (33:28). Bastaria ele subir o gatilho
 de Reposição para 120 dias para as duas voltarem a colidir, em silêncio.
 """
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -170,6 +171,49 @@ def _overrides(**por_codigo):
     return resultado
 
 
+def _toques_com_template(codigo: str) -> dict[int, dict]:
+    """Sobreposição que preenche um template em CADA toque da cadência `codigo`.
+
+    Desde 23/09/2026 as TRÊS cadências de prospecção (`novo`, `em_conversa`,
+    `proposta`) nascem sem template em toque nenhum — decisão explícita do dono do
+    funil (spec 2026-09-23 §2), a mesma trava que "Em atenção" já tinha. Com isso, o
+    agendador RECUSA criar job (`test_cadencia_ligada_sem_template_nao_cria_job` prova
+    a recusa), e todo teste do AGENDAMENTO precisa simular a tela já preenchida — que é
+    exatamente o que a Task J5 vai permitir, sem deploy.
+    """
+    quantos = max(
+        (len(c.touches) for f in C.FUNIS for c in f.cadencias if c.codigo == codigo),
+        default=0,
+    )
+    return {i: {"template_name": f"joao_{codigo}_t{i}"} for i in range(1, quantos + 1)}
+
+
+def _ligada(codigo: str, **extras) -> dict:
+    """`_overrides` com os templates preenchidos — a cadência LIGA de verdade.
+
+    `toques` passado em `extras` é mesclado toque a toque (e não substituído): gravar
+    `{2: {"dias": 30}}` apagaria o template do toque 2 e a cadência voltaria a ser
+    recusada, que é o jeito mais silencioso possível de um teste passar por engano.
+    """
+    toques = _toques_com_template(codigo)
+    for sequence, valores in (extras.pop("toques", None) or {}).items():
+        toques[sequence] = {**toques.get(sequence, {}), **valores}
+    return _overrides(**{codigo: {"ativa": True, "toques": toques, **extras}})
+
+
+def _so_toques(jobs: list[dict]) -> list[dict]:
+    """Os jobs de TOQUE — sem o job de mover, que fecha a matrícula e não é toque."""
+    return [j for j in jobs if j["metadata"].get("acao") != "mover_etapa"]
+
+
+def _so_moves(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j["metadata"].get("acao") == "mover_etapa"]
+
+
+def _do_funil(fake, funil: str) -> list[dict]:
+    return [j for j in _jobs_criados(fake) if j["metadata"]["funil"] == funil]
+
+
 def _rodar(fake, overrides, *, teto=None, now=NOW, canal=JOAO_CHANNEL,
            blacklisted=False):
     """Executa uma passagem do agendador com todo o I/O dublado."""
@@ -227,7 +271,8 @@ def test_cadencia_ativa_so_num_funil_nao_vaza_para_o_outro():
     decisão 1): ligar o `novo` só no funil Atacado não liga o irmão Private Label —
     cada `(funil, cadência)` tem seu próprio liga/desliga."""
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
-    _rodar(fake, {"atacado": {"novo": {"ativa": True}}})  # só um dos dois funis
+    so_atacado = {"atacado": _ligada("novo")["atacado"]}  # só um dos dois funis
+    _rodar(fake, so_atacado)
 
     pipelines = {a["p_pipeline_id"] for _, a in fake.rpcs}
     assert pipelines == {C.PIPELINE_ATACADO}  # NUNCA C.PIPELINE_PRIVATE_LABEL
@@ -259,7 +304,7 @@ def test_teto_e_por_par_funil_cadencia_nao_um_teto_global():
         return [_linha_rpc(i, lead=f"{prefixo}-lead-{i}") for i in range(1, 6)]
 
     fake = _FakeSupabase(rpc_rows=rpc_rows)
-    _rodar(fake, _overrides(novo={"ativa": True}), teto=2)
+    _rodar(fake, _ligada("novo"), teto=2)
 
     leads = {j["lead_id"] for j in _jobs_criados(fake)}
     # 2 do funil Atacado + 2 do funil Private Label — cada passagem respeitou o SEU teto
@@ -273,7 +318,7 @@ def test_varredura_usa_a_rpc_get_deals_stage_stagnant():
     """Nenhuma consulta nova: a RPC já traz blacklist, número errado e conversa
     finalizada no próprio WHERE (20260904_esteiras_vendedor.sql)."""
     fake = _FakeSupabase(rpc_rows=[])
-    _rodar(fake, _overrides(novo={"ativa": True}))
+    _rodar(fake, _ligada("novo"))
 
     assert fake.rpcs, "a cadência ligada tem de varrer"
     nomes = {nome for nome, _ in fake.rpcs}
@@ -282,7 +327,7 @@ def test_varredura_usa_a_rpc_get_deals_stage_stagnant():
 
 def test_parametros_da_rpc_saem_da_cadencia_resolvida():
     fake = _FakeSupabase(rpc_rows=[])
-    _rodar(fake, _overrides(novo={"ativa": True}), teto=7)
+    _rodar(fake, _ligada("novo"), teto=7)
 
     args_por_pipeline = {a["p_pipeline_id"]: a for _, a in fake.rpcs}
     assert set(args_por_pipeline) == {C.PIPELINE_ATACADO, C.PIPELINE_PRIVATE_LABEL}
@@ -290,9 +335,39 @@ def test_parametros_da_rpc_saem_da_cadencia_resolvida():
     assert args["p_stage_key"] == "novo"
     assert args["p_stage_id"] is None
     assert args["p_stage_days"] == 2          # gatilho da ata (01:07:10)
+    assert args["p_silence_days"] == 2        # o SEGUNDO relógio (spec 2026-09-23 §5)
+    assert args["p_last_speaker"] == "qualquer"
     assert args["p_limit"] == 7               # o teto vai JUNTO para o banco
     assert args["p_channel_id"] == JOAO_CHANNEL["id"]
     assert args["p_audience"] == S.JOAO_CADENCIA_AUDIENCIA
+
+
+# ── O SEGUNDO relógio do gatilho: `p_silence_days` (spec 2026-09-23 §5) ───────
+@pytest.mark.parametrize("codigo,silencio", [
+    ("novo", 2),          # "2 dias sem conversar" — o dono, 23/09
+    ("em_conversa", 2),   # idem
+    ("proposta", 0),      # "24h DEPOIS da proposta": o relógio é o da ETAPA
+    ("reposicao", 0),     # "45 dias em Cliente Ativo": idem
+    ("em_atencao", 0),    # "90 dias sem comprar": idem
+])
+def test_p_silence_days_vem_da_cadencia_e_nao_e_mais_fixo_em_zero(codigo, silencio):
+    """Era `"p_silence_days": 0` hardcoded, com a justificativa de que "o relógio da
+    ata é o da ETAPA". Vale para quatro das cinco cadências — e não vale para as duas
+    que o dono descreveu em 23/09 como "2 dias SEM CONVERSAR".
+
+    Os dois parâmetros combinam por AND dentro da RPC, e 0 desliga o respectivo filtro.
+    Trocar um pelo outro em `novo` não quebraria nada visível: a esteira só pegaria
+    menos (ou mais) gente, em silêncio. Por isso o número é conferido aqui, na fronteira
+    com o banco, e não só na declaração.
+    """
+    fake = _FakeSupabase(rpc_rows=[])
+    _rodar(fake, _ligada(codigo))
+
+    assert fake.rpcs, "a cadência ligada tem de varrer"
+    assert {a["p_silence_days"] for _, a in fake.rpcs} == {silencio}
+    # Nunca muda: um lead calado há 2 dias merece follow-up tanto se a última palavra
+    # foi dele quanto se foi nossa.
+    assert {a["p_last_speaker"] for _, a in fake.rpcs} == {"qualquer"}
 
 
 def test_gatilho_dias_do_banco_sobrepoe_o_do_codigo():
@@ -322,14 +397,14 @@ def test_cria_um_job_por_toque_de_uma_vez():
     exatamente o que separa este motor do builder que foi abandonado.
     """
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
-    _rodar(fake, _overrides(em_conversa={"ativa": True}))
+    _rodar(fake, _ligada("em_conversa"))
 
-    jobs = _jobs_criados(fake)
-    # 7 toques (ata 41:02) × 2 funis-irmãos — mas o mesmo card volta em cada varredura
-    # de funil porque o dublê devolve a mesma linha de RPC para os dois.
-    do_atacado = [j for j in jobs if j["metadata"]["funil"] == "atacado"]
-    assert len(do_atacado) == 7
-    assert [j["metadata"]["toque"] for j in do_atacado] == [1, 2, 3, 4, 5, 6, 7]
+    # 4 toques (eram 7 até 22/09; spec 2026-09-23 §1) × 2 funis-irmãos — mas o mesmo
+    # card volta em cada varredura de funil porque o dublê devolve a mesma linha de RPC
+    # para os dois.
+    toques = _so_toques(_do_funil(fake, "atacado"))
+    assert len(toques) == 4
+    assert [j["metadata"]["toque"] for j in toques] == [1, 2, 3, 4]
 
 
 def test_metadata_do_job_cumpre_o_contrato_do_handler():
@@ -369,11 +444,10 @@ def test_ultimo_toque_e_marcado_e_so_ele():
 
 def test_fire_at_sai_dos_offsets_e_respeita_a_janela_comercial():
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
-    _rodar(fake, _overrides(em_conversa={"ativa": True}))
+    _rodar(fake, _ligada("em_conversa"))
 
-    do_atacado = [j for j in _jobs_criados(fake)
-                  if j["metadata"]["funil"] == "atacado"]
-    fire = [datetime.fromisoformat(j["fire_at"]) for j in do_atacado]
+    toques = _so_toques(_do_funil(fake, "atacado"))
+    fire = [datetime.fromisoformat(j["fire_at"]) for j in toques]
     offsets = C._EM_CONVERSA_OFFSETS
 
     assert fire[0] == NOW                       # offset 0, já dentro da janela
@@ -392,6 +466,149 @@ def test_dias_do_banco_sobrepoem_os_offsets_do_codigo():
     do_funil = [j for j in _jobs_criados(fake)
                 if j["metadata"]["funil"] == "reposicao_atacado"]
     assert datetime.fromisoformat(do_funil[1]["fire_at"]) == NOW + timedelta(days=30)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3b. O JOB DE MOVER — a matrícula termina empurrando o card para "Em atenção"
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Spec 2026-09-23 §3, e é a ÚNICA exceção ao "o motor nunca move card" do spec de 18/09.
+# O contrato com o handler (`scheduler._process_joao_touch`) é uma marca só:
+#
+#     metadata["acao"] == "mover_etapa"
+#
+# Nada de inferir pelo template nulo — job de TOQUE sem template também existe, e hoje
+# é o estado das três cadências de prospecção inteiras.
+@pytest.mark.parametrize("codigo,offsets", [
+    ("novo", C._NOVO_OFFSETS),
+    ("em_conversa", C._EM_CONVERSA_OFFSETS),
+    ("proposta", C._PROPOSTA_OFFSETS),
+])
+def test_o_job_de_mover_fecha_a_matricula_das_tres_cadencias(codigo, offsets):
+    """Um job a mais, no fim, com a marca — nos dois funis e nas três cadências."""
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
+    _rodar(fake, _ligada(codigo))
+
+    for funil, pipeline in (("atacado", C.PIPELINE_ATACADO),
+                            ("private_label", C.PIPELINE_PRIVATE_LABEL)):
+        do_funil = _do_funil(fake, funil)
+        toques, moves = _so_toques(do_funil), _so_moves(do_funil)
+        assert len(toques) == len(offsets)
+        assert len(moves) == 1, "um move por matrícula, nem zero nem dois"
+
+        mover, ultimo = moves[0], toques[-1]
+        md = mover["metadata"]
+        assert mover["job_type"] == f"joao_{codigo}" == ultimo["job_type"]
+        assert mover["status"] == "pending"
+        # `sequence` é NOT NULL na tabela, e reusar a do último toque daria dois jobs
+        # com a mesma sequence dentro da mesma matrícula.
+        assert mover["sequence"] == ultimo["sequence"] + 1 == len(offsets) + 1
+        assert md["acao"] == "mover_etapa"
+        assert md["etapa_final_key"] == "em_atencao"
+        assert md["template_name"] is None
+        assert md["cadencia"] == codigo and md["funil"] == funil
+        assert md["pipeline_id"] == pipeline
+        assert md["deal_id"] == "deal-1"
+        # MESMO `matricula_id` dos toques: é por ele que a resposta do lead cancela (e
+        # o adiamento de 60 dias desliza) o bloco INTEIRO, o move incluído.
+        assert md["matricula_id"] == ultimo["metadata"]["matricula_id"]
+
+
+@pytest.mark.parametrize("codigo,offsets", [
+    ("novo", C._NOVO_OFFSETS),
+    ("em_conversa", C._EM_CONVERSA_OFFSETS),
+    ("proposta", C._PROPOSTA_OFFSETS),
+])
+def test_o_move_e_agendado_um_dia_depois_do_ultimo_toque(codigo, offsets):
+    """`dias_ate_mover=1` — 24h depois do último toque, e dentro da janela comercial.
+
+    O clamp é o MESMO dos toques (spec §3): um move empurrado das 2h para as 8h é
+    invisível para o lead, e a alternativa seria um ramo a mais no laço. Em `novo` o
+    alvo cai num SÁBADO (dia 5 a partir de uma segunda) — é justamente o caso que
+    prova que o move não escapa da janela.
+    """
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
+    _rodar(fake, _ligada(codigo))
+
+    do_funil = _do_funil(fake, "atacado")
+    ultimo = datetime.fromisoformat(_so_toques(do_funil)[-1]["fire_at"])
+    quando = datetime.fromisoformat(_so_moves(do_funil)[0]["fire_at"])
+
+    assert quando >= ultimo + timedelta(days=1)   # o clamp só empurra para a frente
+    assert quando > ultimo                        # nunca antes do último toque
+    assert S.is_within_business_window(quando)
+
+
+def test_o_move_da_proposta_cai_no_dia_9_da_matricula():
+    """O número da reunião, sem o clamp no meio: toques em 0/1/4/8, move no dia 9."""
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
+    _rodar(fake, _ligada("proposta"))
+
+    mover = _so_moves(_do_funil(fake, "atacado"))[0]
+    assert datetime.fromisoformat(mover["fire_at"]) == NOW + timedelta(days=9)
+
+
+def test_a_cadencia_que_se_repete_nunca_ganha_job_de_mover():
+    """"Em atenção" é `repete_ultimo`: "uma mensagem a cada três dias ATÉ ele falar que
+    não quer" (ata 38:08) — uma cadência SEM FIM declarado."""
+    fake = _FakeSupabase(
+        rpc_rows=[_linha_rpc()],
+        rows={"follow_up_jobs": list(_REPOSICAO_CONCLUIDA_ONTEM)},
+    )
+    _rodar(fake, _ligada("em_atencao"))
+
+    jobs = _jobs_criados(fake)
+    assert jobs, "a cadência ligada tem de matricular"
+    assert _so_moves(jobs) == []
+
+
+def test_repete_ultimo_barra_o_move_mesmo_com_etapa_final_declarada():
+    """A guarda `repete_ultimo` é a SEGUNDA, e hoje nenhuma cadência real a exercita:
+    "Em atenção" já é barrada pela primeira (`etapa_final_key is None`). Ela existe
+    para o dia em que alguém declarar um destino numa cadência que se repete — a
+    tentação é grande, porque "Em atenção" é ao mesmo tempo o código de uma CADÊNCIA e
+    a key de uma ETAPA.
+
+    Sem ela, o move nasceria a CADA passagem (a cadência que se repete cria um job por
+    vez, para sempre): o card seria empurrado para a etapa final no primeiro
+    vencimento, e a esteira continuaria criando moves de um card que já saiu.
+
+    Montada à mão de propósito — um cenário que o código não produz hoje é exatamente
+    o que uma guarda defensiva protege, e testá-lo pelo agendador seria impossível.
+    """
+    ate = S.resolver_para_agendar("reposicao_atacado", "em_atencao", {"ativa": True})
+    assert ate.repete_ultimo and ate.etapa_final_key is None
+    hibrida = replace(ate, etapa_final_key="em_atencao", etapa_final_rotulo="Em atenção")
+
+    rows = S._montar_jobs_da_matricula(
+        hibrida, _linha_rpc(), canal=JOAO_CHANNEL, conversation_id="conv-1",
+        now=NOW, jobs_do_card=[])
+
+    assert len(rows) == 1, "a cadência que se repete cria UM job por passagem"
+    assert _so_moves(rows) == []
+
+
+def test_as_cadencias_de_reposicao_continuam_sem_mover_card():
+    """`etapa_final_key is None` nas duas (spec 2026-09-23 §7, "o que NÃO muda"): o
+    card de Reposição não tem para onde ir — o funil dele é de cliente ativo."""
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()])
+    _rodar(fake, _overrides(reposicao={"ativa": True}))
+
+    jobs = _jobs_criados(fake)
+    assert len(jobs) == 8          # 4 toques × 2 funis-irmãos, e nada além
+    assert _so_moves(jobs) == []
+
+
+def test_o_move_nao_conta_para_a_trava_de_ativacao():
+    """`toques_sem_template` olha `touches`, e o move não é um `Touch` — é uma
+    propriedade da cadência. Se contasse, nenhuma das três poderia ser ligada nem com
+    todos os textos preenchidos (spec 2026-09-23 §3)."""
+    for funil in ("atacado", "private_label"):
+        for codigo in ("novo", "em_conversa", "proposta"):
+            cadencia = C.cadencia_do_funil(funil, codigo)
+            assert cadencia.etapa_final_key == "em_atencao"
+            ov = {"toques": _toques_com_template(codigo)}
+            assert C.toques_sem_template(funil, codigo, ov) == ()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -440,7 +657,7 @@ def test_job_cancelado_nao_barra_a_reentrada():
     antigo = _job_existente(
         "novo", 1, "cancelled", created_at=NOW - timedelta(days=200))
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()], rows={"follow_up_jobs": [antigo]})
-    assert _rodar(fake, _overrides(novo={"ativa": True})) > 0
+    assert _rodar(fake, _ligada("novo")) > 0
 
 
 def test_cooldown_impede_a_cadencia_de_recomecar_sozinha():
@@ -452,7 +669,7 @@ def test_cooldown_impede_a_cadencia_de_recomecar_sozinha():
         sent_at=(NOW - timedelta(days=3)).isoformat(),
         created_at=NOW - timedelta(days=3))
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()], rows={"follow_up_jobs": [concluido]})
-    assert _rodar(fake, _overrides(novo={"ativa": True})) == 0
+    assert _rodar(fake, _ligada("novo")) == 0
 
 
 def test_passado_o_cooldown_o_card_pode_reentrar():
@@ -463,7 +680,125 @@ def test_passado_o_cooldown_o_card_pode_reentrar():
         sent_at=(NOW - timedelta(days=200)).isoformat(),
         created_at=NOW - timedelta(days=200))
     fake = _FakeSupabase(rpc_rows=[_linha_rpc()], rows={"follow_up_jobs": [antigo]})
-    assert _rodar(fake, _overrides(novo={"ativa": True})) > 0
+    assert _rodar(fake, _ligada("novo")) > 0
+
+
+# ── O trinco de 90 dias conta MATRÍCULA, não job (spec 2026-09-23 §4) ─────────
+#
+# A regra antiga já ignorava job `cancelled` — a intenção sempre foi "cadência que
+# morreu não segura reentrada". Mas ela olhava UM JOB POR VEZ, e quando o lead responde
+# no meio só os PENDENTES são cancelados (`cancel_followups_by_phone`, motivo
+# `client_replied`): os toques que JÁ SAÍRAM ficam `sent`, e eram ELES que disparavam o
+# cooldown. Resultado em produção: o lead que responde no T2 e volta a sumir fica 90
+# dias sem esteira nenhuma — o oposto exato de "se responder, reinicia".
+def _matricula_interrompida(dias_atras=3, matricula="m-respondeu"):
+    """O lead respondeu no T2: dois toques SAÍRAM, os dois restantes foram cancelados.
+
+    É o estado mais comum da esteira em produção, e o que a regra antiga lia como
+    "cadência completa".
+    """
+    nasceu = NOW - timedelta(days=dias_atras)
+    return [
+        _job_existente("novo", 1, "sent", sent_at=nasceu.isoformat(),
+                       created_at=nasceu, matricula=matricula),
+        _job_existente("novo", 2, "sent",
+                       sent_at=(nasceu + timedelta(days=2)).isoformat(),
+                       created_at=nasceu, matricula=matricula),
+        _job_existente("novo", 3, "cancelled", created_at=nasceu, matricula=matricula),
+        _job_existente("novo", 4, "cancelled", created_at=nasceu, ultimo=True,
+                       matricula=matricula),
+    ]
+
+
+def _matricula_completa(dias_atras=3, matricula="m-completa"):
+    """A esteira terminou o trabalho dela: todos os toques saíram, nada foi cancelado."""
+    nasceu = NOW - timedelta(days=dias_atras)
+    return [
+        _job_existente("novo", n, "sent",
+                       sent_at=(nasceu + timedelta(days=n)).isoformat(),
+                       created_at=nasceu, ultimo=(n == 3), matricula=matricula)
+        for n in (1, 2, 3)
+    ]
+
+
+def _cadencia_novo():
+    return S.resolver_para_agendar("atacado", "novo", {"ativa": True})
+
+
+def test_lead_que_respondeu_no_meio_reentra_na_esteira():
+    """O TESTE DESTE LOTE. Matrícula INTERROMPIDA (tem job `cancelled`) não segura
+    reentrada, por mais recente que seja — "se responder, reinicia"."""
+    assert S.motivo_para_pular_joao(
+        _cadencia_novo(), _matricula_interrompida(), NOW) is None
+
+
+def test_matricula_completa_segura_a_reentrada_por_90_dias():
+    """O contrapeso, e é o defeito original que o cooldown existe para tampar (a RPC o
+    documenta em 20260904): o card NÃO sai da etapa quando a cadência acaba, então na
+    varredura seguinte ele é elegível de novo — um template a cada poucos dias, para
+    sempre."""
+    assert S.motivo_para_pular_joao(
+        _cadencia_novo(), _matricula_completa(), NOW) == "cooldown"
+
+
+def test_uma_matricula_interrompida_nao_apaga_outra_que_rodou_inteira():
+    """As duas coisas ao mesmo tempo: o card já teve uma esteira COMPLETA há 3 dias e
+    outra interrompida. A completa continua segurando — a interrupção de uma matrícula
+    não é um perdão geral."""
+    jobs = _matricula_completa() + _matricula_interrompida()
+    assert S.motivo_para_pular_joao(_cadencia_novo(), jobs, NOW) == "cooldown"
+
+
+def test_matricula_completa_ha_mais_de_90_dias_libera():
+    """`JOAO_COOLDOWN_DIAS` continua 90: muda O QUE conta, não por quanto tempo."""
+    assert S.JOAO_COOLDOWN_DIAS == 90
+    assert S.motivo_para_pular_joao(
+        _cadencia_novo(), _matricula_completa(dias_atras=91), NOW) is None
+
+
+def test_job_sem_matricula_id_conta_como_matricula_propria():
+    """Nenhum job criado por este agendador é assim — mas um criado à mão seria, e o
+    campo é lido de `metadata`. O lado conservador é ele contar SOZINHO, em vez de ser
+    absorvido por um bloco cancelado que não é dele."""
+    orfao = _job_existente("novo", 1, "sent", created_at=NOW - timedelta(days=3))
+    del orfao["metadata"]["matricula_id"]
+    de_outra = _job_existente("novo", 1, "cancelled", created_at=NOW - timedelta(days=3),
+                              matricula="m-outra")
+
+    assert S.motivo_para_pular_joao(
+        _cadencia_novo(), [orfao, de_outra], NOW) == "cooldown"
+
+
+def test_cooldown_de_outra_cadencia_nao_conta():
+    """O cooldown é por `job_type`: uma matrícula completa de "Em conversa" não segura
+    a entrada em "Novo" (o que segura entre cadências diferentes é a regra 1, "um card,
+    uma cadência por vez", e ela só olha `pending`)."""
+    de_em_conversa = [
+        _job_existente("em_conversa", n, "sent", created_at=NOW - timedelta(days=3),
+                       sent_at=(NOW - timedelta(days=3)).isoformat(),
+                       matricula="m-conversa")
+        for n in (1, 2, 3, 4)
+    ]
+    assert S.motivo_para_pular_joao(_cadencia_novo(), de_em_conversa, NOW) is None
+
+
+def test_reentrada_depois_da_resposta_cria_jobs_de_verdade():
+    """O mesmo cenário, agora ponta a ponta pelo agendador: o card volta a ser
+    matriculado, com a cadência inteira e o job de mover."""
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()],
+                         rows={"follow_up_jobs": _matricula_interrompida()})
+    assert _rodar(fake, _ligada("novo")) > 0
+
+    do_atacado = _do_funil(fake, "atacado")
+    assert len(_so_toques(do_atacado)) == 3
+    assert len(_so_moves(do_atacado)) == 1
+
+
+def test_matricula_completa_recente_nao_reentra_pelo_agendador():
+    fake = _FakeSupabase(rpc_rows=[_linha_rpc()],
+                         rows={"follow_up_jobs": _matricula_completa()})
+    assert _rodar(fake, _ligada("novo")) == 0
+    assert fake.inserts == []
 
 
 def test_jobs_de_outro_card_do_mesmo_lead_nao_barram():
@@ -486,7 +821,7 @@ def test_teto_por_passagem_limita_os_cards():
     só duas viram matrícula.
     """
     fake = _FakeSupabase(rpc_rows=[_linha_rpc(n) for n in range(1, 6)])
-    _rodar(fake, _overrides(novo={"ativa": True}), teto=2)
+    _rodar(fake, _ligada("novo"), teto=2)
 
     leads = {j["lead_id"] for j in _jobs_criados(fake)}
     assert len(leads) == 2
@@ -631,7 +966,12 @@ def _pendentes_e_enviados():
     ]
 
 
-def _responder(texto, jobs, *, optout=MagicMock(return_value=True)):
+def _responder(texto, jobs, *, optout=None):
+    # `optout=None` e não `optout=MagicMock(...)` no default: default mutável é
+    # avaliado UMA vez, na definição da função — o mesmo mock era compartilhado por
+    # todos os testes que não passam o seu, e `assert_not_called` de um passava a
+    # depender da ORDEM em que os outros rodaram.
+    optout = optout if optout is not None else MagicMock(return_value=True)
     fake = _FakeSupabase(rows={"follow_up_jobs": jobs})
     with (
         patch("app.follow_up.service.get_supabase", return_value=fake),
@@ -671,6 +1011,69 @@ def test_ainda_tenho_estoque_adia_60_dias_sem_recomecar():
     assert (datetime.fromisoformat(atualizados["job-reposicao-3-pending"]["fire_at"])
             > datetime.fromisoformat(atualizados["job-reposicao-2-pending"]["fire_at"]))
     assert not fake.inserts, "adiar nunca cria toque novo"
+
+
+def _job_de_mover_existente(cadencia, sequence, status, **kw):
+    """Um job de MOVER já gravado, na forma que o agendador cria."""
+    job = _job_existente(cadencia, sequence, status, **kw)
+    job["id"] = f"job-{cadencia}-mover-{status}"
+    del job["metadata"]["toque"]          # o move não é toque
+    job["metadata"].update({
+        "acao": "mover_etapa", "etapa_final_key": "em_atencao", "template_name": None,
+    })
+    return job
+
+
+def test_o_job_de_mover_desliza_junto_com_a_matricula_adiada():
+    """"Ainda tenho estoque" adia os toques — e o move TEM de ir junto.
+
+    Se ficasse parado, o card seria empurrado para "Em atenção" no meio de uma cadência
+    adiada em 60 dias: a esteira voltaria a falar com um lead que o CRM já tinha
+    marcado como abandonado. Não custa regra nenhuma porque o move carrega o mesmo
+    `matricula_id` e uma `sequence` maior que a do último toque — `adiar_toques` o trata
+    como mais um item do bloco que desliza.
+    """
+    nasceu = NOW
+    jobs = [
+        _job_existente("novo", 1, "sent", sent_at=nasceu.isoformat(), created_at=nasceu),
+        _job_existente("novo", 2, "pending", created_at=nasceu),
+        _job_existente("novo", 3, "pending", created_at=nasceu),
+        _job_de_mover_existente("novo", 4, "pending", created_at=nasceu),
+    ]
+    jobs[1]["fire_at"] = (NOW + timedelta(days=2)).isoformat()
+    jobs[2]["fire_at"] = (NOW + timedelta(days=4)).isoformat()
+    jobs[3]["fire_at"] = (NOW + timedelta(days=5)).isoformat()
+
+    resultado, fake, _ = _responder("Ainda tenho estoque", jobs)
+
+    assert resultado == C.RESPOSTA_ADIAR
+    atualizados = {filtros[0][2]: payload for _, payload, filtros in fake.updates}
+    assert "job-novo-mover-pending" in atualizados, "o move ficou para trás"
+    movido = datetime.fromisoformat(atualizados["job-novo-mover-pending"]["fire_at"])
+    assert movido >= NOW + timedelta(days=5) + C.ADIAMENTO_ESTOQUE
+    # e continua DEPOIS do último toque, que é o que o "mover no fim" significa
+    assert movido > datetime.fromisoformat(atualizados["job-novo-3-pending"]["fire_at"])
+
+
+def test_o_job_de_mover_e_cancelado_com_o_resto_no_optout():
+    """Quem pediu para sair não recebe mais nada E não tem o card mexido.
+
+    É o motivo de o move ser um JOB e não uma varredura à parte (spec 2026-09-23 §3):
+    todo caminho que já cancela os `pending` da matrícula — o opt-out daqui e o
+    `client_replied` do `webhook/meta_router.py` — cancela o move de graça.
+    """
+    mover = _job_de_mover_existente("novo", 4, "pending")
+    jobs = [_job_existente("novo", 1, "sent", sent_at=NOW.isoformat()), mover]
+
+    resultado, fake, _ = _responder("Parar mensagens", jobs)
+
+    assert resultado == C.RESPOSTA_OPTOUT
+    cancelados = [
+        valor
+        for _, payload, filtros in fake.updates if payload.get("status") == "cancelled"
+        for _op, coluna, valor in filtros if coluna == "id"
+    ]
+    assert cancelados and mover["id"] in cancelados[0]
 
 
 def test_botao_de_saida_reusa_handle_optout_reply():

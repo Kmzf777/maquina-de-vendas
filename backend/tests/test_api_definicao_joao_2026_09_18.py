@@ -30,13 +30,26 @@ O que esta suíte trava, em ordem de importância:
 4. **Ligar exige template aprovado em TODO toque do par (funil, cadência).** É a
    guarda mais cara do projeto, e a razão: template que não envia não impede a
    MATRÍCULA, só o envio — a cadência inscreve o card, não manda nada e caminha até o
-   fim, registrando "não teve resposta" para quem nunca foi contatado. "Em atenção"
-   hoje não tem NENHUM template (os 24 aprovados cobrem só Novo + Em conversa +
-   Reposição), então ligá-la é sempre recusado — e isso é uma declaração, não um bug.
+   fim, registrando "não teve resposta" para quem nunca foi contatado.
+
+   Desde 23/09/2026 essa trava vale para QUATRO das cinco cadências, não mais só para
+   "Em atenção": o dono do funil desconectou os 16 templates de Novo, Em conversa e
+   Proposta Enviada (spec `2026-09-23-esteiras-joao-v2-design.md` §2) para que os
+   textos passem a ser preenchidos pela tela, sem deploy. Enquanto ninguém preencher,
+   ligar qualquer uma das três é RECUSADO — e isso é uma declaração do
+   `cadence_joao.py`, não um bug a consertar reconectando os nomes antigos. Só
+   `reposicao` ainda nasce com template no código, e é por isso que os casos de
+   "tudo aprovado" desta suíte migraram para ela (ver `CADENCIA_COM_TEMPLATE`).
 
 5. **Atacado e Private Label deixaram de estar acoplados** (spec §2, decisão 1):
    ligar/desligar/configurar um funil não pode vazar para o funil-irmão que
    compartilha o mesmo código de cadência.
+
+6. **Três campos SÓ-LEITURA no payload da cadência** (spec 2026-09-23 §5/§6):
+   `gatilho_silencio_dias` (o segundo relógio do gatilho), `etapa_final_rotulo` e
+   `dias_ate_mover` (para onde o card vai no fim, e quando). Vêm do código, não têm
+   coluna em tabela nenhuma, e o PUT os ignora EM SILÊNCIO — a tela ecoar no PUT o
+   objeto que recebeu do GET não pode virar 400.
 
 Sem banco na suíte: as duas tabelas de sobreposição e `message_templates` vêm do
 `_Banco` deste arquivo, no mesmo estilo do `_BancoDeTemplates` de
@@ -65,6 +78,16 @@ PRIVATE_LABEL = "private_label"
 REPOSICAO_ATACADO = "reposicao_atacado"
 REPOSICAO_PRIVATE_LABEL = "reposicao_private_label"
 RECUPERACAO = "recuperacao"
+
+# As três de PROSPECÇÃO (spec 2026-09-23): moram em Atacado e Private Label, e desde
+# 23/09/2026 NENHUMA tem template em nenhum toque.
+PROSPECCAO = ("novo", "em_conversa", "proposta")
+
+# A ÚNICA cadência que ainda nasce com template no código — os 4 `joao_reposicao_*`
+# do funil, aprovados na Meta em 13/09/2026. É ela que os casos de "tudo aprovado"
+# usam: com as três de prospecção desconectadas, não sobrou outra que passe na trava
+# sem um override de template inventado pelo próprio teste.
+CADENCIA_COM_TEMPLATE = (REPOSICAO_ATACADO, "reposicao")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -280,8 +303,9 @@ class TestGetJoao:
         assert recuperacao["cadencias"] == []
 
     @pytest.mark.parametrize("funil_codigo,codigo", [
-        (ATACADO, "novo"), (ATACADO, "em_conversa"),
+        (ATACADO, "novo"), (ATACADO, "em_conversa"), (ATACADO, "proposta"),
         (PRIVATE_LABEL, "novo"), (PRIVATE_LABEL, "em_conversa"),
+        (PRIVATE_LABEL, "proposta"),
         (REPOSICAO_ATACADO, "reposicao"), (REPOSICAO_ATACADO, "em_atencao"),
         (REPOSICAO_PRIVATE_LABEL, "reposicao"), (REPOSICAO_PRIVATE_LABEL, "em_atencao"),
     ])
@@ -331,13 +355,18 @@ class TestGetJoao:
 
     def test_override_parcial_nao_apaga_o_resto(self):
         """Gravar só os dias não pode apagar o template — é a regra que o
-        `resolver_cadencia` implementa campo a campo, e que a API tem de preservar."""
-        tabelas = {"followup_joao_toque": [_toque(ATACADO, "novo", 1, dias=4)]}
+        `resolver_cadencia` implementa campo a campo, e que a API tem de preservar.
+
+        Em `reposicao` porque é a única cadência que ainda TEM template no código
+        para ser apagado (23/09/2026): nas três de prospecção o campo já nasce nulo,
+        e o teste passaria por acidente."""
+        tabelas = {"followup_joao_toque": [
+            _toque(REPOSICAO_ATACADO, "reposicao", 1, dias=4)]}
         with _banco(tabelas):
             payload = client.get(GET_URL).json()
-        t1 = _cadencia(_funil(payload, ATACADO), "novo")["toques"][0]
+        t1 = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")["toques"][0]
         assert t1["dias"] == 4
-        assert t1["template_name"] == "joao_novo_atacado_t1"
+        assert t1["template_name"] == "joao_reposicao_atacado_t1"
 
     def test_o_payload_diz_o_que_o_codigo_manda_por_baixo_da_sobreposicao(self):
         """A tela precisa mostrar "padrão 45" ao lado do 60 gravado, senão ninguém
@@ -354,6 +383,8 @@ class TestGetJoao:
         assert c["toques"][0]["dias_codigo"] == 0
 
     def test_diz_quais_toques_estao_sem_template(self):
+        """TODOS os toques das três de prospecção (spec 2026-09-23 §2) e o único de
+        "Em atenção". Só `reposicao` sai limpa."""
         with _banco():
             payload = client.get(GET_URL).json()
         em_atencao_atacado = _cadencia(_funil(payload, REPOSICAO_ATACADO), "em_atencao")
@@ -361,15 +392,29 @@ class TestGetJoao:
         em_atencao_private = _cadencia(_funil(payload, REPOSICAO_PRIVATE_LABEL),
                                        "em_atencao")
         assert em_atencao_private["toques_sem_template"] == [1]
-        novo_atacado = _cadencia(_funil(payload, ATACADO), "novo")
-        assert novo_atacado["toques_sem_template"] == []
+        assert _cadencia(_funil(payload, REPOSICAO_ATACADO),
+                         "reposicao")["toques_sem_template"] == []
+        for funil_codigo in (ATACADO, PRIVATE_LABEL):
+            f = _funil(payload, funil_codigo)
+            assert _cadencia(f, "novo")["toques_sem_template"] == [1, 2, 3]
+            assert _cadencia(f, "em_conversa")["toques_sem_template"] == [1, 2, 3, 4]
+            assert _cadencia(f, "proposta")["toques_sem_template"] == [1, 2, 3, 4]
 
-    def test_diz_que_em_atencao_ainda_nao_pode_ser_ligada(self):
+    def test_so_reposicao_pode_ser_ligada_hoje(self):
+        """Quatro das cinco cadências não podem ser ligadas: "Em atenção" nunca teve
+        template, e as três de prospecção foram DESCONECTADAS dos 16 delas em
+        23/09/2026 (spec §2). É o que o dono pediu, e a tela tem de dizer isso antes
+        de alguém tentar o PUT."""
         with _banco():
             payload = client.get(GET_URL).json()
         assert _cadencia(_funil(payload, REPOSICAO_ATACADO),
                          "em_atencao")["pode_ligar"] is False
-        assert _cadencia(_funil(payload, ATACADO), "em_conversa")["pode_ligar"] is True
+        assert _cadencia(_funil(payload, REPOSICAO_ATACADO),
+                         "reposicao")["pode_ligar"] is True
+        for funil_codigo in (ATACADO, PRIVATE_LABEL):
+            f = _funil(payload, funil_codigo)
+            for codigo in PROSPECCAO:
+                assert _cadencia(f, codigo)["pode_ligar"] is False, codigo
 
     def test_repete_ultimo_viaja_no_payload(self):
         with _banco():
@@ -405,6 +450,105 @@ class TestGetJoao:
         assert c["gatilho_dias"] == 45
         assert c["ativa"] is False
         assert payload["touches"] == build_cadence_definition()["touches"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2b. GET: a TERCEIRA cadência e os três campos só-leitura (spec 2026-09-23)
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestTerceiraCadenciaEOsCamposNovos:
+    """"Proposta Enviada" não precisou de uma linha na API: o endpoint já itera
+    `funil.cadencias` inteiro. Esta classe existe para PROVAR isso — se alguém
+    voltar a achatar o payload por código de cadência, é aqui que quebra."""
+
+    def test_atacado_e_private_label_devolvem_as_TRES_cadencias(self):
+        with _banco():
+            payload = client.get(GET_URL).json()
+        for funil_codigo in (ATACADO, PRIVATE_LABEL):
+            codigos = [c["codigo"] for c in _funil(payload, funil_codigo)["cadencias"]]
+            assert codigos == list(PROSPECCAO), funil_codigo
+
+    def test_os_funis_de_reposicao_continuam_com_DUAS(self):
+        """O spec de 23/09 reformula só a prospecção (§7, "o que NÃO muda"). Uma
+        terceira cadência aparecendo aqui seria vazamento da mudança."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        for funil_codigo in (REPOSICAO_ATACADO, REPOSICAO_PRIVATE_LABEL):
+            codigos = [c["codigo"] for c in _funil(payload, funil_codigo)["cadencias"]]
+            assert codigos == ["reposicao", "em_atencao"], funil_codigo
+
+    def test_recuperacao_continua_com_ZERO(self):
+        with _banco():
+            payload = client.get(GET_URL).json()
+        assert _funil(payload, RECUPERACAO)["cadencias"] == []
+
+    def test_proposta_traz_gatilho_etapa_e_toques_proprios(self):
+        """A cadência nova por inteiro: vigia "Proposta Enviada" (a etapa em que o
+        /orcamento já larga o card sozinho), dispara em 1 dia, 4 toques em 0/1/4/8."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, ATACADO), "proposta")
+        assert c["rotulo"] == "Proposta Enviada"
+        assert c["job_type"] == "joao_proposta"
+        assert c["gatilho_stage_key"] == "proposta_enviada"
+        assert c["gatilho_stage_rotulo"] == "Proposta Enviada"
+        assert c["gatilho_dias"] == 1
+        assert [t["dias"] for t in c["toques"]] == [0, 1, 4, 8]
+        assert [t["template_name"] for t in c["toques"]] == [None] * 4
+
+    @pytest.mark.parametrize("funil_codigo,codigo,silencio,destino,dias_ate_mover", [
+        # As três de prospecção: silêncio 2 em Novo e Em conversa (o dono escreveu
+        # "2 dias sem conversar"), 0 em Proposta ("24h depois" é tempo de ETAPA — a
+        # proposta recém-enviada é justamente o momento em que houve conversa).
+        (ATACADO, "novo", 2, "Em atenção", 1),
+        (ATACADO, "em_conversa", 2, "Em atenção", 1),
+        (ATACADO, "proposta", 0, "Em atenção", 1),
+        (PRIVATE_LABEL, "novo", 2, "Em atenção", 1),
+        (PRIVATE_LABEL, "em_conversa", 2, "Em atenção", 1),
+        (PRIVATE_LABEL, "proposta", 0, "Em atenção", 1),
+        # As duas de Reposição: o relógio delas é mesmo o da etapa, e elas NÃO movem
+        # card nenhum — `etapa_final_rotulo` nulo é o que diz isso à tela.
+        (REPOSICAO_ATACADO, "reposicao", 0, None, 1),
+        (REPOSICAO_ATACADO, "em_atencao", 0, None, 1),
+        (REPOSICAO_PRIVATE_LABEL, "reposicao", 0, None, 1),
+        (REPOSICAO_PRIVATE_LABEL, "em_atencao", 0, None, 1),
+    ])
+    def test_os_tres_campos_so_leitura_no_payload(self, funil_codigo, codigo, silencio,
+                                                  destino, dias_ate_mover):
+        with _banco():
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, funil_codigo), codigo)
+        assert c["gatilho_silencio_dias"] == silencio
+        assert c["etapa_final_rotulo"] == destino
+        assert c["dias_ate_mover"] == dias_ate_mover
+
+    def test_os_tres_campos_vem_do_codigo_e_o_banco_NAO_os_sobrepoe(self):
+        """Eles não têm coluna nas tabelas de sobreposição (spec §5: "o de silêncio
+        fica só no código"). Uma linha gravada com esses nomes — de um PUT ingênuo, ou
+        de alguém editando o banco à mão — não pode vazar para o payload."""
+        tabelas = {"followup_joao_cadencia": [
+            {**_cad(ATACADO, "novo", gatilho_dias=9),
+             "gatilho_silencio_dias": 99, "etapa_final_rotulo": "Perdido",
+             "dias_ate_mover": 77},
+        ]}
+        with _banco(tabelas):
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, ATACADO), "novo")
+        assert c["gatilho_dias"] == 9          # esse SIM é sobreposto
+        assert c["gatilho_silencio_dias"] == 2
+        assert c["etapa_final_rotulo"] == "Em atenção"
+        assert c["dias_ate_mover"] == 1
+
+    def test_o_rotulo_do_destino_e_hardcoded_nunca_o_codigo_da_etapa(self):
+        """`etapa_final_rotulo` é texto para humano ("Em atenção"), não a key
+        (`em_atencao`) — e `pipeline_stages.label` é editável por qualquer operador do
+        CRM, então ele nunca pode vir do banco. Mesma regra de
+        `gatilho_stage_rotulo` (spec 2026-09-21, decisão 2)."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, ATACADO), "novo")
+        assert c["etapa_final_rotulo"] == "Em atenção"
+        assert "etapa_final_key" not in c, (
+            "a key da etapa é contrato do agendador/handler, não da tela")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -453,10 +597,10 @@ class TestPutGravacao:
         ]}
         with _banco(tabelas) as b:
             r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
-                                          "toques": {"1": {"dias": 5}}})
+                                          "toques": {"1": {"dias": 1}}})
         assert r.status_code == 200, r.text
         gravada = b.escritas_em("followup_joao_toque")[0]
-        assert gravada["dias"] == 5
+        assert gravada["dias"] == 1
         assert gravada["template_name"] == "ja_configurado"
         assert gravada["atualizado_por"] == "joao"
 
@@ -506,7 +650,7 @@ class TestPutGravacao:
         tabelas = {"followup_joao_toque": [_toque(ATACADO, "novo", 1, dias=9)]}
         with _banco(tabelas) as b:
             client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
-                                      "toques": {"1": {"dias": 5}}})
+                                      "toques": {"1": {"dias": 1}}})
         assert "updated_at" not in b.escritas_em("followup_joao_toque")[0]
 
     def test_a_resposta_e_a_cadencia_ja_resolvida(self):
@@ -532,7 +676,10 @@ class TestPutGravacao:
 class TestPutTravasDeForma:
 
     @pytest.mark.parametrize("funil_codigo,codigo,fora", [
-        (ATACADO, "novo", 2), (ATACADO, "em_conversa", 8),
+        # Os limites mudaram em 23/09/2026: `novo` foi de 1 para 3 toques,
+        # `em_conversa` de 7 para 4, e `proposta` nasceu com 4.
+        (ATACADO, "novo", 4), (ATACADO, "em_conversa", 5), (ATACADO, "proposta", 5),
+        (PRIVATE_LABEL, "proposta", 0),
         (REPOSICAO_ATACADO, "reposicao", 5), (REPOSICAO_ATACADO, "em_atencao", 2),
     ])
     def test_sequence_fora_do_intervalo_e_recusada(self, funil_codigo, codigo, fora):
@@ -548,10 +695,13 @@ class TestPutTravasDeForma:
         assert b.escritas == [], "gravou um toque que o código não declara"
 
     def test_a_recusa_diz_quais_toques_existem(self):
+        """"Em conversa" tem 1 a 4 desde 23/09/2026 (eram 7 toques ao longo de ~30
+        dias). A recusa tem de citar o intervalo REAL — se citasse o antigo, mandaria
+        a pessoa tentar de novo um toque que não existe mais."""
         with _banco():
             r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
                                           "toques": {"9": {"dias": 3}}})
-        assert "1" in _texto(r) and "7" in _texto(r)
+        assert "os toques 1 a 4" in _texto(r)
         assert _problemas(r)[0]["codigo"] == "toque_inexistente"
 
     def test_sequence_zero_ou_negativa_e_recusada(self):
@@ -681,33 +831,37 @@ class TestTravaDeAtivacao:
             {"funil": REPOSICAO_ATACADO, "cadencia": "em_atencao", "ativa": True}]
 
     def test_ligar_com_tudo_aprovado_passa(self):
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         with _banco({"message_templates": _templates(*nomes)}) as b:
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 200, r.text
         assert b.escritas_em("followup_joao_cadencia") == [
-            {"funil": ATACADO, "cadencia": "em_conversa", "ativa": True}]
+            {"funil": funil_codigo, "cadencia": codigo, "ativa": True}]
         assert r.json()["ativa"] is True
 
     def test_ligar_um_funil_nao_consulta_templates_do_irmao(self):
-        """Ligar 'Em conversa' do Atacado não pede os templates do Private Label —
-        cada funil é uma linha própria de liga/desliga agora."""
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        """Ligar 'Reposição' do Reposição Atacado não pede os templates do Reposição
+        Private Label — cada funil é uma linha própria de liga/desliga agora."""
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         with _banco({"message_templates": _templates(*nomes)}) as b:
-            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                       "ativa": True})
-        nomes_privados = _todos_os_templates_de(PRIVATE_LABEL, "em_conversa")
+        nomes_privados = _todos_os_templates_de(REPOSICAO_PRIVATE_LABEL, codigo)
+        assert nomes_privados, "o funil-irmão perdeu os templates — teste vazio passa"
         assert not (set(nomes_privados) & set(b.nomes_consultados[0]))
 
     def test_template_pendente_bloqueia_e_a_recusa_diz_o_status(self):
         """PENDING existe e está certo — a ação é ESPERAR, e é isso que a mensagem tem
         de dizer. "Não está aprovado" devolve a pessoa para a Meta sem saber o que
         procurar."""
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         linhas = _templates(*nomes[:-1]) + _templates(nomes[-1], status="PENDING")
         with _banco({"message_templates": linhas}) as b:
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 400, r.text
         assert b.escritas == []
@@ -717,10 +871,11 @@ class TestTravaDeAtivacao:
         assert "aprovação" in texto.lower()
 
     def test_template_rejeitado_manda_corrigir_e_ressubmeter(self):
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         linhas = _templates(*nomes[:-1]) + _templates(nomes[-1], status="REJECTED")
         with _banco({"message_templates": linhas}):
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 400, r.text
         assert "REJECTED" in _texto(r)
@@ -729,9 +884,10 @@ class TestTravaDeAtivacao:
     def test_template_ausente_da_meta_diz_que_ele_nao_existe(self):
         """Ausente pede CRIAR, não esperar: é o estado em que um nome digitado errado
         na tela cai, e dizer "não aprovado" mandaria a pessoa procurar o que não há."""
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         with _banco({"message_templates": _templates(*nomes[:-1])}):
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 400, r.text
         assert nomes[-1] in _texto(r)
@@ -741,19 +897,21 @@ class TestTravaDeAtivacao:
         """`message_templates` tem uma linha-espelho POR CANAL e o sync tem buracos —
         ficar com a última linha reprovaria template que a Meta aprovou. Mesmo critério
         de `campaigns/router.api_activate_campaign`."""
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         linhas = (_templates(*nomes[:-1]) + _templates(nomes[-1])
                   + _templates(nomes[-1], status="PENDING"))
         with _banco({"message_templates": linhas}):
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 200, r.text
 
     def test_mapa_vazio_reprova(self):
         """`{}` é uma RESPOSTA ("a Meta não conhece nenhum desses nomes") e reprova —
         estado inicial de qualquer template que nunca foi submetido."""
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
         with _banco({"message_templates": []}):
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 400, r.text
         assert "NÃO EXISTE" in _texto(r)
@@ -763,13 +921,14 @@ class TestTravaDeAtivacao:
         Supabase é pior do que o risco que a guarda cobre (a tela já escolhe entre
         aprovados). O par com o teste acima é o que pega o atalho
         `if not templates: templates = None`."""
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
         erro = Exception("timeout")
         with _banco({"followup_joao_toque": []}, erros={"message_templates": erro}) as b:
-            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                           "ativa": True})
         assert r.status_code == 200, r.text
         assert b.escritas_em("followup_joao_cadencia") == [
-            {"funil": ATACADO, "cadencia": "novo", "ativa": True}]
+            {"funil": funil_codigo, "cadencia": codigo, "ativa": True}]
 
     def test_fail_open_nao_anistia_o_toque_sem_template(self):
         """Oscilação de banco não é anistia para a metade da regra que não depende da
@@ -825,9 +984,10 @@ class TestTravaDeAtivacao:
         assert b.escritas == []
 
     def test_a_consulta_a_meta_leva_so_os_templates_da_cadencia(self):
-        nomes = _todos_os_templates_de(ATACADO, "em_conversa")
+        funil_codigo, codigo = CADENCIA_COM_TEMPLATE
+        nomes = _todos_os_templates_de(funil_codigo, codigo)
         with _banco({"message_templates": _templates(*nomes)}) as b:
-            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "em_conversa",
+            client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
                                       "ativa": True})
         assert b.nomes_consultados == [sorted(nomes)]
 
@@ -836,3 +996,183 @@ class TestTravaDeAtivacao:
             client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                       "gatilho_dias": 3})
         assert "message_templates" not in b.tabelas_tocadas
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. PUT depois de 23/09/2026: as três de prospecção não ligam, e os campos
+#    só-leitura não quebram nada
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestProspeccaoNaoLigaHoje:
+    """O teste que o dono do funil pediu por escrito, e o motivo dele:
+
+    os 22 toques das três cadências nasceram SEM template (spec 2026-09-23 §2). Se a
+    trava não valesse, ligar uma delas inscreveria o card, não mandaria mensagem
+    nenhuma e caminharia até o fim — inclusive movendo o card para "Em atenção" —
+    registrando "não teve resposta" para um lead que nunca foi contatado. É
+    exatamente o estrago que `_ENVIO_MUDO` descreve, e agora ele cabe em 6 das 6
+    cadências de prospecção (3 códigos × 2 funis) em vez de só em "Em atenção"."""
+
+    @pytest.mark.parametrize("funil_codigo", [ATACADO, PRIVATE_LABEL])
+    @pytest.mark.parametrize("codigo", PROSPECCAO)
+    def test_ligar_qualquer_uma_das_tres_e_recusado(self, funil_codigo, codigo):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": funil_codigo, "cadencia": codigo,
+                                          "ativa": True})
+        assert r.status_code == 400, r.text
+        assert b.escritas == [], "ligou uma cadência sem template em nenhum toque"
+        assert {p["codigo"] for p in _problemas(r)} == {"toque_sem_template"}
+
+    @pytest.mark.parametrize("codigo,quantos", [
+        ("novo", 3), ("em_conversa", 4), ("proposta", 4),
+    ])
+    def test_a_recusa_nomeia_TODOS_os_toques_vazios_um_a_um(self, codigo, quantos):
+        """Um problema por toque, com a sequence dentro — a tela destaca o toque
+        culpado, e uma recusa genérica ("faltam templates") obrigaria a pessoa a
+        descobrir quais abrindo um por um."""
+        with _banco():
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": codigo,
+                                          "ativa": True})
+        problemas = _problemas(r)
+        assert [(p["funil"], p["cadencia"], p["sequence"]) for p in problemas] == [
+            (ATACADO, codigo, s) for s in range(1, quantos + 1)]
+        texto = _texto(r)
+        for s in range(1, quantos + 1):
+            assert f"toque {s} não tem template configurado" in texto
+
+    def test_a_recusa_explica_a_CONSEQUENCIA_nao_so_a_falta(self):
+        """O estrago não é "não enviou", é "registrou que não teve resposta"."""
+        with _banco():
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                          "ativa": True})
+        assert "não teve resposta" in _texto(r)
+
+    def test_nem_com_o_template_de_METADE_dos_toques(self):
+        """Preencher só uma parte não libera: a trava é por TODO toque. É o caso mais
+        provável na prática — alguém preenche o primeiro texto e tenta ligar."""
+        nome = "joao_novo_atacado_t1"
+        tabelas = {
+            "followup_joao_toque": [_toque(ATACADO, "novo", 1, template_name=nome)],
+            "message_templates": _templates(nome),
+        }
+        with _banco(tabelas) as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                          "ativa": True})
+        assert r.status_code == 400, r.text
+        assert b.escritas == []
+        assert [p["sequence"] for p in _problemas(r)] == [2, 3]
+
+    def test_preencher_os_tres_pela_TELA_libera_o_liga(self):
+        """O caminho de saída, e ele existe sem deploy: configurar os templates e
+        ligar no MESMO PUT. É o que faz a recusa acima ser uma trava e não um beco."""
+        nomes = [f"joao_novo_atacado_t{n}" for n in (1, 2, 3)]
+        with _banco({"message_templates": _templates(*nomes)}) as b:
+            r = client.put(PUT_URL, json={
+                "funil": ATACADO, "cadencia": "novo", "ativa": True,
+                "toques": {str(i): {"template_name": n}
+                           for i, n in enumerate(nomes, start=1)},
+            })
+        assert r.status_code == 200, r.text
+        assert r.json()["ativa"] is True
+        assert r.json()["pode_ligar"] is True
+        assert b.escritas_em("followup_joao_cadencia") == [
+            {"funil": ATACADO, "cadencia": "novo", "ativa": True}]
+
+    def test_desligar_as_tres_continua_sempre_possivel(self):
+        """Desligar nunca exige template — inclusive (e principalmente) numa cadência
+        que não pode ser ligada."""
+        for codigo in PROSPECCAO:
+            with _banco() as b:
+                r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": codigo,
+                                              "ativa": False})
+            assert r.status_code == 200, r.text
+            assert b.escritas_em("followup_joao_cadencia") == [
+                {"funil": ATACADO, "cadencia": codigo, "ativa": False}]
+
+
+class TestPutIgnoraOsCamposSoLeitura:
+    """A tela ecoa no PUT o objeto de cadência que recebeu do GET — é o caminho mais
+    provável de integração, e um campo só-leitura que explode quando ecoado é uma
+    armadilha, não uma guarda. Os três são IGNORADOS EM SILÊNCIO, nunca 400."""
+
+    @pytest.mark.parametrize("campo,valor", [
+        ("gatilho_silencio_dias", 9),
+        ("etapa_final_rotulo", "Perdido"),
+        ("dias_ate_mover", 30),
+    ])
+    def test_um_campo_so_leitura_no_corpo_nao_recusa_nem_grava(self, campo, valor):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "proposta",
+                                          campo: valor})
+        assert r.status_code == 200, r.text
+        assert b.escritas == [], f"gravou `{campo}`, que não é coluna de sobreposição"
+        assert r.json()[campo] != valor
+
+    def test_a_cadencia_do_GET_volta_inteira_no_PUT(self):
+        """O caso real: a tela devolve a cadência como veio, com um `gatilho_dias`
+        mexido. TODAS as chaves só-leitura viajam junto — os três novos, mas também
+        `rotulo`, `job_type`, `pode_ligar`, `toques_sem_template`, os `*_codigo` — e
+        nenhuma pode estragar a gravação.
+
+        `toques` sai do corpo, e a razão é ANTERIOR a esta entrega: no GET ele é uma
+        LISTA e no PUT é um MAPA {sequence: {...}}. Ecoar a lista dá 400
+        `toques_invalidos` — recusa correta pela regra que já existe, e não é o que
+        este teste mede. Quem consome tem de montar o mapa; está no docstring da rota
+        (`toques?: {sequence: {dias?, template_name?}}`)."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        corpo = dict(_cadencia(_funil(payload, ATACADO), "proposta"))
+        corpo.pop("toques")
+        assert "gatilho_silencio_dias" in corpo and "dias_ate_mover" in corpo
+        corpo.update({"funil": ATACADO, "cadencia": "proposta", "gatilho_dias": 3})
+        with _banco() as b:
+            r = client.put(PUT_URL, json=corpo)
+        assert r.status_code == 200, r.text
+        # `ativa` veio no eco e FOI gravado — e tem de ser assim: `ativa` é campo
+        # EDITÁVEL, não só-leitura, e o valor ecoado (False) é o que o GET acabou de
+        # dizer. O que este teste separa é editável de só-leitura, não "ignore tudo".
+        assert b.escritas_em("followup_joao_cadencia") == [
+            {"funil": ATACADO, "cadencia": "proposta", "gatilho_dias": 3,
+             "ativa": False}]
+        resolvida = r.json()
+        assert resolvida["gatilho_dias"] == 3
+        assert resolvida["gatilho_silencio_dias"] == 0
+        assert resolvida["etapa_final_rotulo"] == "Em atenção"
+        assert resolvida["dias_ate_mover"] == 1
+
+    def test_a_resposta_do_PUT_traz_os_tres_campos(self):
+        """O GET e o PUT devolvem a MESMA forma de cadência — a tela consome os dois
+        com um tipo só, e um campo faltando no PUT quebraria o cabeçalho depois de
+        salvar."""
+        with _banco():
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                          "gatilho_dias": 4})
+        corpo = r.json()
+        assert corpo["gatilho_silencio_dias"] == 2
+        assert corpo["etapa_final_rotulo"] == "Em atenção"
+        assert corpo["dias_ate_mover"] == 1
+
+    def test_gravar_dias_e_template_de_proposta_funciona_normalmente(self):
+        """A cadência nova não é um caso especial do PUT: o par (funil, cadência) é
+        `(atacado, proposta)` e o resto da rota não mudou."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={
+                "funil": ATACADO, "cadencia": "proposta",
+                "toques": {"2": {"dias": 2, "template_name": "joao_proposta_t2"}},
+            })
+        assert r.status_code == 200, r.text
+        gravada = b.escritas_em("followup_joao_toque")[0]
+        assert (gravada["funil"], gravada["cadencia"], gravada["toque"]) == (
+            ATACADO, "proposta", 2)
+        assert gravada["dias"] == 2
+        assert gravada["template_name"] == "joao_proposta_t2"
+        t2 = r.json()["toques"][1]
+        assert t2["dias"] == 2
+        assert t2["dias_codigo"] == 1          # o que o código manda por baixo
+        assert t2["template_name_codigo"] is None
+
+    def test_proposta_do_atacado_nao_vaza_para_o_private_label(self):
+        with _banco() as b:
+            client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "proposta",
+                                      "toques": {"1": {"template_name": "so_atacado"}}})
+        assert [(x["funil"], x["cadencia"]) for x in
+                b.escritas_em("followup_joao_toque")] == [(ATACADO, "proposta")]

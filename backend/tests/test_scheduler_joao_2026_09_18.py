@@ -22,8 +22,20 @@ FORMA DO JOB (contrato com a Task F1/F3, spec 2026-09-21):
         "lead_phone": "...",                     # opcional — cai p/ leads.phone
         "deal_id": "...", "pipeline_id": "...",  # opcionais, p/ resolver o funil
     }
+
+FORMA DO JOB DE MOVER (contrato E2↔E3, spec 2026-09-23 §3) — o ÚNICO job deste handler
+que não manda mensagem nenhuma:
+    job_type: o mesmo da cadência ("joao_novo" | "joao_em_conversa" | "joao_proposta")
+    metadata: {
+        "acao": "mover_etapa",            # A MARCA — ausente = job de toque normal
+        "etapa_final_key": "em_atencao",  # a key da etapa de DESTINO
+        "cadencia": "novo", "funil": "atacado",   # dizem qual etapa é a VIGIADA
+        "matricula_id": "...", "deal_id": "...", "pipeline_id": "...",
+        "template_name": None,
+    }
 """
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -319,16 +331,276 @@ def test_conversa_finalizada_cancela_o_toque_do_joao():
     calls["meta"].send_template.assert_not_awaited()
 
 
+# ─── o job que MOVE o card no fim da cadência (spec 2026-09-23 §3) ───────────
+#
+# CONTRATO com o agendador (Task E2): o job de mover é um job normal da cadência,
+# marcado com `metadata.acao == "mover_etapa"` — e essa marca é a ÚNICA condição do
+# ramo. Inferir pelo template nulo não serve: os 22 toques das três cadências de
+# prospecção nascem TODOS sem template, de propósito.
+
+ETAPA_NOVO_ATACADO = "st-novo-atacado"
+ETAPA_PROPOSTA_ATACADO = "st-proposta-atacado"
+ETAPA_ATENCAO_ATACADO = "st-atencao-atacado"
+ETAPA_ATENCAO_PRIVATE_LABEL = "st-atencao-privatelabel"
+
+# As etapas dos DOIS funis na mesma tabela, com a MESMA key `em_atencao` — `key` só é
+# única por pipeline (`idx_pipeline_stages_key_unique`). A de Private Label vem PRIMEIRO
+# de propósito: sem o filtro por pipeline_id, o `next()` do código pegaria justamente ela
+# e o card do Atacado iria para o funil do outro.
+ETAPAS_DOS_DOIS_FUNIS = [
+    {"id": ETAPA_ATENCAO_PRIVATE_LABEL, "key": "em_atencao",
+     "pipeline_id": S.PIPELINE_JOAO_PRIVATE_LABEL},
+    {"id": "st-novo-privatelabel", "key": "novo",
+     "pipeline_id": S.PIPELINE_JOAO_PRIVATE_LABEL},
+    {"id": ETAPA_NOVO_ATACADO, "key": "novo", "pipeline_id": S.PIPELINE_JOAO_ATACADO},
+    {"id": ETAPA_PROPOSTA_ATACADO, "key": "proposta_enviada",
+     "pipeline_id": S.PIPELINE_JOAO_ATACADO},
+    {"id": ETAPA_ATENCAO_ATACADO, "key": "em_atencao",
+     "pipeline_id": S.PIPELINE_JOAO_ATACADO},
+]
+
+
+class _FakeTable:
+    def __init__(self, db, nome):
+        self.db, self.nome, self.op, self.payload = db, nome, "select", None
+        self.filtros: dict = {}
+
+    def select(self, *a, **k):
+        self.op = "select"
+        return self
+
+    def update(self, payload):
+        self.op, self.payload = "update", payload
+        return self
+
+    def eq(self, coluna, valor):
+        self.filtros[coluna] = valor
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def execute(self):
+        if self.nome == "deals" and self.op == "update":
+            self.db.updates.append((self.filtros.get("id"), self.payload))
+            return SimpleNamespace(data=[{"id": self.filtros.get("id")}])
+        if self.nome == "deals":
+            deal = self.db.deals.get(self.filtros.get("id"))
+            return SimpleNamespace(data=[dict(deal)] if deal else [])
+        if self.nome == "pipeline_stages":
+            pipeline_id = self.filtros.get("pipeline_id")
+            # SEM filtro devolve TUDO — é o que transforma "esqueci o .eq(pipeline_id)"
+            # em teste vermelho, em vez de um card movido para o funil errado.
+            if pipeline_id is None:
+                return SimpleNamespace(data=list(self.db.stages))
+            return SimpleNamespace(
+                data=[e for e in self.db.stages if e["pipeline_id"] == pipeline_id]
+            )
+        return SimpleNamespace(data=[])
+
+
+class _FakeSupabase:
+    """Supabase de mentira com `deals` e `pipeline_stages`, e o filtro por funil de verdade."""
+
+    def __init__(self, deals: dict, stages: list | None = None):
+        self.deals = deals
+        self.stages = stages if stages is not None else ETAPAS_DOS_DOIS_FUNIS
+        self.updates: list = []
+
+    def table(self, nome):
+        return _FakeTable(self, nome)
+
+
+def _db(stage_id=ETAPA_NOVO_ATACADO, pipeline_id=S.PIPELINE_JOAO_ATACADO, stages=None):
+    return _FakeSupabase(
+        deals={"deal-1": {"id": "deal-1", "pipeline_id": pipeline_id, "stage_id": stage_id}},
+        stages=stages,
+    )
+
+
+def _move_job(**over):
+    """O job de mover, no formato EXATO do contrato E2↔E3 (plano de 2026-09-23)."""
+    metadata = {
+        "acao": "mover_etapa",
+        "etapa_final_key": "em_atencao",
+        "cadencia": "novo",
+        "funil": "atacado",
+        "matricula_id": "mat-1",
+        "matricula_em": "2026-09-18T09:00:00+00:00",
+        "deal_id": "deal-1",
+        "stage_id": ETAPA_NOVO_ATACADO,
+        "pipeline_id": S.PIPELINE_JOAO_ATACADO,
+        "template_name": None,
+    }
+    metadata.update(over.pop("metadata", {}))
+    over.setdefault("job_type", "joao_novo")
+    over.setdefault("sequence", 4)
+    job = _joao_job(**over)
+    job["metadata"] = metadata
+    return job
+
+
+def test_job_de_mover_move_o_card_e_nao_envia_nada():
+    """O ramo inteiro: move o card e NÃO toca em template, canal nem provider."""
+    db = _db()
+    calls = _run_handler(_move_job(), sb=db)
+
+    assert db.updates and db.updates[0][0] == "deal-1"
+    assert db.updates[0][1]["stage_id"] == ETAPA_ATENCAO_ATACADO
+    calls["meta"].send_template.assert_not_awaited()
+    calls["save_msg"].assert_not_called()
+    calls["channel"].assert_not_called()   # nem chega a resolver o canal do vendedor
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+
+
+def test_job_de_mover_procura_a_key_dentro_do_pipeline_do_deal():
+    """`em_atencao` existe nos quatro funis do João — `key` só é única POR pipeline
+    (`idx_pipeline_stages_key_unique`). Sem o filtro, o card do Atacado cairia na etapa
+    de Private Label, que é a primeira da lista em `ETAPAS_DOS_DOIS_FUNIS`."""
+    db = _db()
+    _run_handler(_move_job(), sb=db)
+
+    assert db.updates[0][1]["stage_id"] == ETAPA_ATENCAO_ATACADO
+    assert db.updates[0][1]["stage_id"] != ETAPA_ATENCAO_PRIVATE_LABEL
+
+
+def test_job_de_mover_nao_desfaz_o_move_manual_do_vendedor():
+    """Card já FORA da etapa vigiada (`novo`): o fim da cadência não puxa de volta o que
+    o João moveu à mão."""
+    db = _db(stage_id=ETAPA_PROPOSTA_ATACADO)
+    calls = _run_handler(_move_job(), sb=db)
+
+    assert db.updates == []
+    calls["meta"].send_template.assert_not_awaited()
+    calls["sent"].assert_called_once_with("job-joao-1")
+
+
+def test_job_de_mover_com_etapa_de_destino_inexistente_nao_move_e_nao_levanta():
+    """Funil sem `em_atencao` (migration não aplicada, key renomeada à mão): registra e
+    segue — a cadência já acabou, só o card não anda."""
+    db = _db(stages=[{"id": ETAPA_NOVO_ATACADO, "key": "novo",
+                      "pipeline_id": S.PIPELINE_JOAO_ATACADO}])
+    calls = _run_handler(_move_job(), sb=db)
+
+    assert db.updates == []
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+
+
+def test_job_de_mover_de_cadencia_que_vigia_outra_etapa():
+    """A etapa VIGIADA vem da cadência declarada no job, não de um chute: `proposta`
+    vigia `proposta_enviada`, então um card ali AINDA move."""
+    db = _db(stage_id=ETAPA_PROPOSTA_ATACADO)
+    calls = _run_handler(
+        _move_job(job_type="joao_proposta", metadata={"cadencia": "proposta"}), sb=db)
+
+    assert db.updates[0][1]["stage_id"] == ETAPA_ATENCAO_ATACADO
+    calls["sent"].assert_called_once_with("job-joao-1")
+
+
+def test_job_de_mover_com_deal_inexistente_nao_levanta():
+    db = _FakeSupabase(deals={})
+    calls = _run_handler(_move_job(), sb=db)
+
+    assert db.updates == []
+    calls["sent"].assert_called_once_with("job-joao-1")
+
+
+def test_job_de_mover_sem_deal_id_e_cancelado_como_malformado():
+    job = _move_job()
+    job["metadata"].pop("deal_id")
+    calls = _run_handler(job, sb=_db())
+
+    calls["cancel"].assert_called_once_with("job-joao-1", "mover_etapa_sem_alvo")
+    calls["sent"].assert_not_called()
+
+
+def test_job_de_mover_nao_marca_terminal_quando_o_banco_falha():
+    """Soluço de banco é TRANSITÓRIO: nem `sent` nem `cancelled`, o próximo tick tenta
+    de novo. Cancelar por erro de rede seria permanente."""
+    sb = MagicMock()
+    sb.table.side_effect = RuntimeError("conexão caiu")
+    calls = _run_handler(_move_job(), sb=sb)
+
+    calls["sent"].assert_not_called()
+    calls["cancel"].assert_not_called()
+
+
+def test_toque_sem_template_e_sem_a_marca_continua_sendo_toque():
+    """MUTAÇÃO — a condição do ramo é SÓ `metadata.acao`. Se alguém trocar por "template
+    nulo → mover", este job (um toque normal das cadências novas, que nascem todas sem
+    texto) moveria o card em vez de ser cancelado por falta de template."""
+    job = _move_job()
+    job["metadata"].pop("acao")
+    db = _db()
+    calls = _run_handler(job, sb=db)
+
+    assert db.updates == []
+    calls["cancel"].assert_called_once_with("job-joao-1", "missing_template_name")
+
+
+def test_conversa_finalizada_cancela_tambem_o_job_de_mover():
+    """Quando o João encerra o atendimento em /conversas a cadência INTEIRA para —
+    arrastar o card para "Em atenção" depois disso seria continuar a cadência atrás dele."""
+    job = _move_job()
+    job["conversations"]["followup_enabled"] = False
+    db = _db()
+    calls = _run_handler(job, sb=db)
+
+    assert db.updates == []
+    calls["cancel"].assert_called_once_with("job-joao-1", "followup_disabled")
+
+
+# ─── _mover_card_joao direto (sem o handler em volta) ────────────────────────
+
+def test_mover_card_joao_devolve_true_so_quando_o_card_anda():
+    db = _db()
+    with patch("app.follow_up.scheduler.get_supabase", return_value=db):
+        assert S._mover_card_joao("deal-1", "em_atencao", etapa_vigiada="novo") is True
+        assert S._mover_card_joao("deal-1", "em_atencao", etapa_vigiada="respondeu") is False
+        assert S._mover_card_joao("deal-1", "etapa_que_nao_existe", etapa_vigiada="novo") is False
+        assert S._mover_card_joao("deal-fantasma", "em_atencao", etapa_vigiada="novo") is False
+    assert len(db.updates) == 1
+
+
 # ─── _stop_reason_applies: as mesmas paradas da ValerIA ──────────────────────
 
 @pytest.mark.parametrize("job_type", ["joao_touch", "joao_novo", "joao_em_conversa",
-                                      "joao_reposicao", "joao_em_atencao"])
+                                      "joao_proposta", "joao_reposicao", "joao_em_atencao"])
 @pytest.mark.parametrize("reason", ["blacklisted", "wrong_number", "opt_out"])
 def test_joao_para_nas_mesmas_condicoes_da_valeria(reason, job_type):
     assert S._stop_reason_applies(reason, job_type) is True
 
 
-@pytest.mark.parametrize("job_type", ["joao_touch", "joao_reposicao"])
+# ─── a cadência nova: `joao_proposta` (spec 2026-09-23) ──────────────────────
+
+def test_joao_proposta_esta_na_lista_hardcoded_do_handler():
+    """`JOB_TYPES` de `cadence_joao` é derivado de `FUNIS` e ganha `joao_proposta`
+    sozinho; `JOAO_JOB_TYPES` daqui é hardcoded e precisa dele à mão."""
+    from app.follow_up import cadence_joao as cj
+
+    assert "joao_proposta" in S.JOAO_JOB_TYPES
+    assert cj.JOB_TYPES <= S.JOAO_JOB_TYPES
+
+
+def test_joao_proposta_nasce_isento_de_ai_disabled():
+    """O teste que o spec 2026-09-23 §6 manda escrever ANTES de confiar na cadência nova.
+
+    A isenção do João é por PREFIXO (`_is_joao_job_type`), não pela tabela
+    `_STOP_REASON_EXEMPT_JOB_TYPES` — então `joao_proposta` já nasce isento sem que
+    ninguém a atualize. Se este teste ficar vermelho, a cadência nova nasce CONDENADA:
+    é o bug do `handoff_rescue` de 27/07 (144 jobs criados, 144 cancelados com
+    `ai_disabled`, ZERO enviados), e o lead do vendedor tem `ai_enabled=False` por
+    definição."""
+    assert S._is_joao_job_type("joao_proposta") is True
+    assert S._stop_reason_applies("ai_disabled", "joao_proposta") is False
+    assert "joao_proposta" not in S._STOP_REASON_EXEMPT_JOB_TYPES.get(
+        "ai_disabled", frozenset()
+    ), "a isenção do João é por prefixo — não por lista fechada"
+
+
+@pytest.mark.parametrize("job_type", ["joao_touch", "joao_reposicao", "joao_proposta"])
 def test_ai_disabled_nao_para_o_toque_do_joao(job_type):
     """O lead do João tem ai_enabled=False POR DEFINIÇÃO (foi entregue ao humano). Sem
     esta isenção todo job do João nasceria condenado — exatamente o bug do handoff_rescue
@@ -376,8 +648,8 @@ def test_despacho_roteia_o_job_do_joao_para_o_handler_dedicado():
     assert mock_joao.await_args.args[0]["id"] == "job-joao-1"
 
 
-@pytest.mark.parametrize("job_type", ["joao_novo", "joao_em_conversa", "joao_reposicao",
-                                      "joao_em_atencao"])
+@pytest.mark.parametrize("job_type", ["joao_novo", "joao_em_conversa", "joao_proposta",
+                                      "joao_reposicao", "joao_em_atencao"])
 def test_despacho_aceita_qualquer_job_type_do_joao(job_type):
     mock_joao = _drive_tick(_joao_job(job_type=job_type))
     mock_joao.assert_awaited_once()

@@ -14,6 +14,10 @@ from app.follow_up.service import (
     should_proactive_handoff,
     _ENV_TAG,
 )
+# Import de topo, sem risco de ciclo: `cadence_joao` é config-as-code pura (zero I/O,
+# nenhum import de `app.*` no topo). É a autoridade sobre qual ETAPA cada cadência vigia
+# — o que o job de mover precisa saber para não desfazer um move manual do João.
+from app.follow_up.cadence_joao import cadencia_do_funil
 from app.leads.service import (
     resolve_send_target, create_deal, record_dispatch_note,
     strip_greeting_prefix, sanitize_display_name, is_lead_blacklisted,
@@ -88,8 +92,16 @@ JOAO_JOB_TYPE_PREFIX = "joao_"
 # Os tipos nomeados (um por cadência da ata) — redundantes com o prefixo, e declarados
 # para que o contrato apareça por extenso em log/teste/leitura.
 JOAO_JOB_TYPES: frozenset[str] = frozenset({
-    JOAO_JOB_TYPE, "joao_novo", "joao_em_conversa", "joao_reposicao", "joao_em_atencao",
+    JOAO_JOB_TYPE, "joao_novo", "joao_em_conversa", "joao_proposta", "joao_reposicao",
+    "joao_em_atencao",
 })
+
+# A MARCA do job que MOVE o card em vez de mandar mensagem (spec 2026-09-23 §3), gravada
+# pelo agendador em `metadata.acao`. É a ÚNICA condição do ramo: inferir "é move" pelo
+# template nulo moveria o card no lugar de tocar o lead em TODOS os 22 toques das três
+# cadências de prospecção, que hoje nascem sem template de propósito (cadence_joao,
+# decisão 4).
+ACAO_MOVER_ETAPA = "mover_etapa"
 
 # Os 24 templates das esteiras do João foram APROVADOS em pt_BR com UM param POSICIONAL
 # ({{1}} = primeiro nome) — ver scripts/create_templates_esteiras_joao.py. O default abaixo
@@ -1830,6 +1842,82 @@ async def _persist_joao_touch_message(
         )
 
 
+def _cadencia_declarada(metadata: dict, funil: str | None):
+    """A `Cadencia` que criou este job, ou None se o par (funil, cadência) não existe.
+
+    O job de mover só traz o CÓDIGO da cadência e o do funil (`metadata.cadencia` /
+    `metadata.funil`); quem sabe qual ETAPA essa cadência vigia é `cadence_joao`, que é
+    a origem da configuração. Ler de lá (em vez de gravar a etapa vigiada no job) mantém
+    uma única fonte: mudar o gatilho no código muda junto a guarda do move.
+    """
+    codigo = str(metadata.get("cadencia") or "").strip()
+    if not funil or not codigo:
+        return None
+    return cadencia_do_funil(funil, codigo)
+
+
+def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = None) -> bool:
+    """Move o card do João para a etapa `etapa_key`. Defensivo — spec 2026-09-23 §3.
+
+    Mesmo padrão de `quotes/router.py::_move_deal_to_proposal`, com a mesma armadilha
+    nomeada: a `key` da etapa de destino é procurada DENTRO do pipeline do próprio deal.
+    `key` só é única POR PIPELINE (índice `idx_pipeline_stages_key_unique`), e `em_atencao`
+    existe nos quatro funis do João — sem o filtro, o card iria para o funil de outra
+    pessoa.
+
+    Duas guardas, e a primeira é a razão de ser desta função:
+
+    * **`etapa_vigiada`**: só move se o card AINDA estiver na etapa que a cadência vigia.
+      Se o João já o moveu à mão (ou uma automação o moveu), o move do fim da cadência
+      NÃO desfaz o que ele fez. `None` desliga a guarda — quem chama do handler sempre a
+      passa, e sem ela desiste de mover (ver `_process_joao_touch`).
+    * **etapa de destino inexistente no funil**: registra e devolve False, sem levantar.
+
+    Devolve True só quando o card de fato andou. Erro inesperado de banco NÃO é engolido:
+    sobe para quem chama, que o trata como transitório (o job não vira terminal e o
+    próximo tick tenta de novo) — cancelar por um soluço de rede seria permanente.
+    """
+    sb = get_supabase()
+    res = (sb.table("deals").select("pipeline_id, stage_id")
+           .eq("id", deal_id).limit(1).execute())
+    linhas = res.data if isinstance(res.data, list) else []
+    deal = linhas[0] if linhas else {}
+    pipeline_id = deal.get("pipeline_id")
+    if not pipeline_id:
+        logger.info("[JOAO_MOVER] deal %s não encontrado (ou sem funil) — nada a mover", deal_id)
+        return False
+
+    # Uma consulta só para as etapas do funil: precisamos do alvo E da posição atual.
+    etapas_res = (sb.table("pipeline_stages").select("id, key")
+                  .eq("pipeline_id", pipeline_id).execute())
+    etapas = etapas_res.data if isinstance(etapas_res.data, list) else []
+
+    atual = next((e for e in etapas if e.get("id") == deal.get("stage_id")), None)
+    if etapa_vigiada and (atual or {}).get("key") != etapa_vigiada:
+        logger.info(
+            "[JOAO_MOVER] deal %s já saiu da etapa %s (está em %s) — move da cadência não "
+            "desfaz o que o vendedor fez",
+            deal_id, etapa_vigiada, (atual or {}).get("key"),
+        )
+        return False
+
+    alvo = next((e for e in etapas if e.get("key") == etapa_key), None)
+    if not alvo:
+        # Funil sem a etapa (migration não aplicada, ou key renomeada à mão no CRM): a
+        # cadência já terminou de qualquer forma, só o card não anda.
+        logger.warning(
+            "[JOAO_MOVER] funil %s não tem a etapa %s — deal %s fica onde está",
+            pipeline_id, etapa_key, deal_id,
+        )
+        return False
+
+    (sb.table("deals")
+     .update({"stage_id": alvo["id"], "updated_at": datetime.now(timezone.utc).isoformat()})
+     .eq("id", deal_id).execute())
+    logger.info("[JOAO_MOVER] deal %s movido para a etapa %s (%s)", deal_id, etapa_key, alvo["id"])
+    return True
+
+
 async def _process_joao_touch(job: dict, now: datetime) -> None:
     """Um toque de cadência do vendedor: TEMPLATE APROVADO, sem LLM.
 
@@ -1841,6 +1929,9 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
     Espelha `_process_lp_welcome`/`_process_handoff_rescue` no tratamento de erro da Meta:
     4xx e rejeição embutida (HTTP 200 com erro) são PERMANENTES e cancelam o job; 5xx e
     falha de rede não marcam estado terminal e são retentados no próximo tick.
+
+    UM job deste tipo não manda mensagem nenhuma: o do fim da cadência, marcado com
+    `metadata.acao == "mover_etapa"`, que só move o card (spec 2026-09-23 §3).
     """
     metadata = job.get("metadata") or {}
     lead = job.get("leads") or {}
@@ -1855,6 +1946,67 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
             "[JOAO_TOUCH] followup_enabled=false — cancelando job %s conv=%s",
             job["id"], job.get("conversation_id"),
         )
+        return
+
+    # ── O job que MOVE o card, e não envia nada (spec 2026-09-23 §3) ─────────────
+    # A ÚNICA condição é a marca `metadata.acao` — nunca "o template está nulo", porque
+    # job de TOQUE sem template também existe e é hoje a regra, não a exceção (os 22
+    # toques das três cadências de prospecção nascem todos sem texto).
+    #
+    # Vem DEPOIS do guard de `followup_enabled` de propósito: quando o João encerra o
+    # atendimento em /conversas, a cadência inteira para — e arrastar o card para "Em
+    # atenção" depois disso é continuar a cadência atrás dele, que é exatamente o que
+    # aquele guard existe para impedir. Antes de tudo o mais: não resolve template, não
+    # resolve canal, não toca no telefone do lead.
+    if metadata.get("acao") == ACAO_MOVER_ETAPA:
+        funil = _resolve_joao_funil(job)
+        cadencia = _cadencia_declarada(metadata, funil)
+        deal_id = str(metadata.get("deal_id") or "").strip()
+        etapa_final = str(metadata.get("etapa_final_key") or "").strip() or (
+            cadencia.etapa_final_key if cadencia else None
+        )
+        if not deal_id or not etapa_final:
+            # Impossível pelo contrato do job (o agendador grava os dois). Cancelar em vez
+            # de marcar `sent` é deliberado: job malformado é BUG, e `cancel_reason` é onde
+            # ele fica visível numa consulta.
+            _cancel_job(job["id"], "mover_etapa_sem_alvo")
+            logger.error(
+                "[JOAO_MOVER] job %s sem alvo (deal=%s etapa_final=%s cadencia=%s funil=%s)",
+                job["id"], deal_id or None, etapa_final, metadata.get("cadencia"), funil,
+            )
+            return
+
+        etapa_vigiada = cadencia.gatilho_stage_key if cadencia else None
+        if not etapa_vigiada:
+            # Fail-closed: sem saber que etapa a cadência vigia não há como garantir que o
+            # card continua nela, e mover às cegas desfaria um move manual do vendedor.
+            logger.error(
+                "[JOAO_MOVER] cadência (%s, %s) não resolvida — job %s encerrado SEM mover",
+                funil, metadata.get("cadencia"), job["id"],
+            )
+            _mark_sent(job["id"])
+            return
+
+        try:
+            movido = _mover_card_joao(deal_id, etapa_final, etapa_vigiada=etapa_vigiada)
+        except Exception as exc:
+            logger.error(
+                "[JOAO_MOVER] falha ao mover o deal %s para %s: %s — será retentado",
+                deal_id, etapa_final, exc, exc_info=True,
+            )
+            return  # transitório → retry no próximo tick
+
+        # `sent` também quando NÃO moveu, e não `cancelled`: o job rodou até o fim e
+        # decidiu não mexer no card. Marcar `cancelled` aqui mentiria para o cooldown por
+        # matrícula do agendador, que lê job cancelado como "o lead respondeu no meio" e
+        # LIBERA a reentrada — um funil sem a etapa de destino passaria a rematricular o
+        # mesmo card a cada gatilho.
+        logger.info(
+            "[JOAO_MOVER] job %s: deal %s → %s (cadencia=%s funil=%s) — %s",
+            job["id"], deal_id, etapa_final, metadata.get("cadencia"), funil,
+            "movido" if movido else "nada a fazer",
+        )
+        _mark_sent(job["id"])
         return
 
     lead_phone = metadata.get("lead_phone") or lead.get("phone") or ""
