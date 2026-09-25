@@ -1088,14 +1088,43 @@ def test_botao_de_saida_reusa_handle_optout_reply():
     assert cancelados and cancelados[0]["cancel_reason"] == C.RESPOSTA_OPTOUT
 
 
-def test_texto_comum_nao_mexe_em_nada():
-    """IGUALDADE normalizada, nunca substring: "ainda tenho estoque mas quero ver a
-    tabela" é um lead QUENTE, e adiar 60 dias seria perdê-lo."""
+def test_texto_comum_adia_3_dias_em_vez_de_60():
+    """O TERCEIRO ramo (spec 2026-09-25 §3.3). Este teste AFIRMAVA o contrário.
+
+    Até 24/09 ele se chamava `test_texto_comum_nao_mexe_em_nada` e exigia
+    `resultado is None` com zero updates — e estava certo para o desenho de então, em
+    que quem reagia à resposta comum era o `cancel_followups_by_phone` do webhook,
+    MATANDO a esteira. Com a morte fora do caminho, "não fazer nada aqui" viraria "não
+    fazer nada em lugar nenhum": o toque seguinte sairia por cima da conversa em
+    andamento. Por isso a asserção virou do avesso.
+
+    A IGUALDADE normalizada que o teste antigo protegia continua valendo, e é o que
+    este aqui prova de forma mais forte: "ainda tenho estoque mas me manda a tabela" é
+    um lead QUENTE, então ele leva os 3 dias da resposta comum e NÃO os 60 do botão.
+    Se a comparação virasse substring um dia, este lead sumiria por 60 dias — e a
+    asserção de distância abaixo fica vermelha.
+    """
+    jobs = _pendentes_e_enviados()
+    jobs[1]["fire_at"] = (NOW + timedelta(days=1)).isoformat()
+    jobs[2]["fire_at"] = (NOW + timedelta(days=16)).isoformat()
+    antigos = {j["id"]: datetime.fromisoformat(j["fire_at"]) for j in jobs}
+
     resultado, fake, optout = _responder(
-        "ainda tenho estoque mas me manda a tabela", _pendentes_e_enviados())
-    assert resultado is None
-    assert fake.updates == [] and fake.inserts == []
-    optout.assert_not_called()
+        "ainda tenho estoque mas me manda a tabela", jobs)
+
+    assert resultado == C.RESPOSTA_ADIAR
+    optout.assert_not_called()  # texto comum NUNCA vira blacklist
+    assert not fake.inserts, "adiar nunca cria toque novo"
+
+    atualizados = {filtros[0][2]: payload for _, payload, filtros in fake.updates}
+    assert set(atualizados) == {"job-reposicao-2-pending", "job-reposicao-3-pending"},         "só os toques que AINDA NÃO saíram deslizam — o toque 1 já foi lido"
+    for job_id, payload in atualizados.items():
+        novo = datetime.fromisoformat(payload["fire_at"])
+        assert novo >= antigos[job_id] + C.ADIAMENTO_RESPOSTA
+        # a distância do BOTÃO não pode ser aplicada aqui: sobra a folga da janela
+        # comercial (fim de semana), nunca 57 dias a mais.
+        assert novo < antigos[job_id] + C.ADIAMENTO_ESTOQUE
+        assert S.is_within_business_window(novo)
 
 
 def test_lead_sem_matricula_aberta_e_noop():
@@ -1107,6 +1136,403 @@ def test_lead_sem_matricula_aberta_e_noop():
     assert resultado is None
     optout.assert_not_called()
     assert fake.updates == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7.1 O RECORTE DO `client_replied` — e o fim da corrida (spec 2026-09-25 §3.2)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# A seção 7 pergunta "o que `processar_resposta_joao` faz". Esta pergunta outra coisa:
+# **ele chega a ser chamado com alguma coisa na mão?**
+#
+# Até 24/09 a resposta era não, e esse era o defeito C. Dois caminhos reagiam à mesma
+# resposta do lead, e um corria contra o outro:
+#
+#   `cancel_followups_by_phone(reason="client_replied")` — background task registrada
+#       na INGESTÃO do webhook (`meta_router.py`), milissegundos após a resposta HTTP;
+#   `processar_resposta_joao` — alcançado por `fire_trigger("message_received")`
+#       (`buffer/processor.py`), DEPOIS do debounce do buffer e como `create_task`
+#       não aguardado.
+#
+# O primeiro sempre chegava antes. Quando o segundo rodava, todos os jobs já estavam
+# `cancelled`, ele saía no `if not pendentes: return None` e não fazia nada — e foi por
+# isso que o botão "ainda tenho estoque" NUNCA adiou 60 dias em produção. Botão vivo na
+# tela, morto no efeito, a mesma classe de defeito do rótulo que não casa.
+#
+# O recorte não faz o segundo ganhar a corrida. Ele tira o primeiro da pista.
+
+
+class _TabelaDeVerdade:
+    """Uma tabela que APLICA os filtros, em vez de só registrá-los.
+
+    O `_FakeTable` do topo deste arquivo devolve `rows` fixas e guarda o que foi pedido
+    — perfeito para afirmar "o código pediu X", inútil para a pergunta desta seção, que
+    é **o que SOBRA na tabela depois**. Aqui o `not_.in_("job_type", ...)` tem de
+    EXECUTAR: ele é o recorte inteiro, e um dublê que o ignorasse aprovaria alegremente
+    a mutação que preserva em todos os motivos.
+    """
+
+    def __init__(self, banco, nome):
+        self.banco = banco
+        self.nome = nome
+        self.op = "select"
+        self.payload = None
+        self.dentro: list = []   # o que `eq`/`in_` exigem
+        self.fora: list = []     # o que o `not_.in_` exclui
+        self._negando = False
+
+    def select(self, *a, **k):
+        self.op = "select"
+        return self
+
+    def eq(self, col, val):
+        self.dentro.append((col, [val]))
+        self._negando = False
+        return self
+
+    def in_(self, col, vals):
+        (self.fora if self._negando else self.dentro).append((col, list(vals)))
+        self._negando = False
+        return self
+
+    @property
+    def not_(self):
+        self._negando = True
+        return self
+
+    def order(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def gte(self, *a):
+        return self
+
+    def lte(self, *a):
+        return self
+
+    def lt(self, *a):
+        return self
+
+    def single(self):
+        return self
+
+    def insert(self, rows):
+        self.op = "insert"
+        self.payload = rows
+        self.banco.inserts.append((self.nome, rows))
+        return self
+
+    def update(self, payload):
+        self.op = "update"
+        self.payload = payload
+        return self
+
+    def _casa(self, linha):
+        for col, vals in self.dentro:
+            if linha.get(col) not in vals:
+                return False
+        for col, vals in self.fora:
+            if linha.get(col) in vals:
+                return False
+        return True
+
+    def execute(self):
+        if self.op == "insert":
+            return SimpleNamespace(data=self.payload)
+        linhas = self.banco.tabelas.get(self.nome, [])
+        casam = [linha for linha in linhas if self._casa(linha)]
+        if self.op == "update":
+            for linha in casam:
+                linha.update(self.payload)
+        return SimpleNamespace(data=[dict(linha) for linha in casam])
+
+
+class _Banco:
+    """`follow_up_jobs` + `leads` + `conversations` em memória, com estado de verdade."""
+
+    LEAD = "lead-1"
+    PHONE = "5534988861441"
+    CONVERSA = "conv-1"
+
+    def __init__(self, jobs):
+        self.tabelas = {
+            "leads": [{"id": self.LEAD, "phone": self.PHONE, "bsuid": None}],
+            "conversations": [{"id": self.CONVERSA, "lead_id": self.LEAD}],
+            "follow_up_jobs": [dict(j) for j in jobs],
+        }
+        self.inserts: list = []
+
+    def table(self, nome):
+        return _TabelaDeVerdade(self, nome)
+
+    def rpc(self, nome, args):  # pragma: no cover - esta seção não varre funil
+        raise AssertionError(f"esta seção não deveria chamar a RPC {nome}")
+
+    # ── leitura, para as asserções ──────────────────────────────────────
+    def jobs(self):
+        return self.tabelas["follow_up_jobs"]
+
+    def por_id(self, job_id):
+        return next(j for j in self.jobs() if j["id"] == job_id)
+
+    def pendentes(self):
+        return [j for j in self.jobs() if j["status"] == "pending"]
+
+    def pendentes_do_joao(self):
+        return [j for j in self.pendentes() if j["job_type"] in C.JOB_TYPES]
+
+
+def _job_na_conversa(*args, **kwargs):
+    """`_job_existente` + a `conversation_id` — que é por onde o cancelamento por
+    TELEFONE encontra o job (ele vai de leads → conversations → follow_up_jobs)."""
+    job = _job_existente(*args, **kwargs)
+    job["conversation_id"] = _Banco.CONVERSA
+    job["cancel_reason"] = None
+    return job
+
+
+def _job_da_valeria(job_id="job-standard"):
+    """Um toque do caminho `standard` da ValerIA. Não é decoração: metade do recorte é
+    o que ele CONTINUA sofrendo — lá responder cancela mesmo, porque aquela cadência
+    existe justamente porque o lead sumiu."""
+    return {
+        "id": job_id, "lead_id": _Banco.LEAD, "conversation_id": _Banco.CONVERSA,
+        "job_type": "standard", "status": "pending", "sequence": 1,
+        "sent_at": None, "fire_at": (NOW + timedelta(hours=2)).isoformat(),
+        "created_at": NOW.isoformat(), "metadata": {}, "cancel_reason": None,
+    }
+
+
+def _cancelar_por_telefone(banco, reason, *, preserve_scheduled_return=True):
+    with patch("app.follow_up.service.get_supabase", return_value=banco):
+        S.cancel_followups_by_phone(
+            _Banco.PHONE, reason=reason,
+            preserve_scheduled_return=preserve_scheduled_return)
+
+
+def _processar_resposta(banco, texto, *, optout=None):
+    optout = optout if optout is not None else MagicMock(return_value=True)
+    with (
+        patch("app.follow_up.service.get_supabase", return_value=banco),
+        patch("app.campaigns.worker.handle_optout_reply", optout),
+        patch("app.leads.service.get_lead",
+              return_value={"id": _Banco.LEAD, "phone": _Banco.PHONE}),
+        patch("app.follow_up.service.emit_event"),
+    ):
+        return S.processar_resposta_joao(
+            _Banco.LEAD, texto, conversation_id=_Banco.CONVERSA, now=NOW)
+
+
+# ── O teste da corrida ──────────────────────────────────────────────────
+def test_depois_do_client_replied_ainda_HA_pendentes_do_joao():
+    """O defeito C, em uma linha: ontem isto seria ZERO.
+
+    Nenhum mock de ordem, nenhum `assert_called_with` — a pergunta é factual e o banco
+    responde: depois do cancelamento que o webhook registra na ingestão, ainda existe
+    trabalho `pending` para `processar_resposta_joao` encontrar?
+    """
+    banco = _Banco([
+        _job_na_conversa("novo", 1, "sent", sent_at=NOW.isoformat()),
+        _job_na_conversa("novo", 2, "pending"),
+        _job_na_conversa("novo", 3, "pending"),
+    ])
+
+    _cancelar_por_telefone(banco, "client_replied")
+
+    assert len(banco.pendentes_do_joao()) == 2, (
+        "o cancelamento da ingestão esvaziou a esteira do João de novo — "
+        "`processar_resposta_joao` vai chegar e não achar nada para adiar, "
+        "que é exatamente o defeito C")
+
+
+def test_o_botao_ainda_tenho_estoque_volta_a_existir_de_ponta_a_ponta():
+    """Os DOIS caminhos, na ORDEM REAL em que a produção os executa, no mesmo banco.
+
+    É a demonstração de que o botão deixou de ser morto: o cancelamento da ingestão roda
+    primeiro (como sempre rodou) e o handler ainda assim consegue aplicar os 60 dias.
+    Antes do recorte, este teste falharia já no `resultado`, que seria `None`.
+    """
+    fire_2 = NOW + timedelta(days=2)
+    fire_3 = NOW + timedelta(days=4)
+    jobs = [
+        _job_na_conversa("novo", 1, "sent", sent_at=NOW.isoformat()),
+        _job_na_conversa("novo", 2, "pending"),
+        _job_na_conversa("novo", 3, "pending"),
+    ]
+    jobs[1]["fire_at"] = fire_2.isoformat()
+    jobs[2]["fire_at"] = fire_3.isoformat()
+    banco = _Banco(jobs)
+
+    # 1) o que o webhook faz na ingestão, milissegundos depois da resposta HTTP
+    _cancelar_por_telefone(banco, "client_replied")
+    # 2) o que o buffer faz depois do debounce
+    resultado = _processar_resposta(banco, "Ainda tenho estoque")
+
+    assert resultado == C.RESPOSTA_ADIAR
+    assert banco.por_id("job-novo-2-pending")["status"] == "pending"
+    for job_id, antes in (("job-novo-2-pending", fire_2),
+                          ("job-novo-3-pending", fire_3)):
+        novo = datetime.fromisoformat(banco.por_id(job_id)["fire_at"])
+        assert novo >= antes + C.ADIAMENTO_ESTOQUE, (
+            f"{job_id} não foi adiado em 60 dias — o botão continua morto")
+
+
+# ── O teste do recorte ─────────────────────────────────────────────────
+def test_client_replied_preserva_o_joao_e_cancela_o_standard_da_valeria():
+    """As duas metades do recorte na MESMA chamada — porque é junto que elas se provam.
+
+    Um teste que olhasse só o João passaria com um `return` no início da função; um que
+    olhasse só o `standard` passaria sem recorte nenhum.
+    """
+    banco = _Banco([
+        _job_na_conversa("em_conversa", 2, "pending"),
+        _job_da_valeria(),
+    ])
+
+    _cancelar_por_telefone(banco, "client_replied")
+
+    joao = banco.por_id("job-em_conversa-2-pending")
+    valeria = banco.por_id("job-standard")
+    assert joao["status"] == "pending", (
+        "responder deixou de MATAR a esteira do João — quem decide o que uma resposta "
+        "faz com ela é `processar_resposta_joao`, e ele ADIA")
+    assert valeria["status"] == "cancelled", (
+        "o caminho `standard` da ValerIA não muda em linha nenhuma: lá responder "
+        "continua cancelando, porque aquela cadência existe porque o lead sumiu")
+    assert valeria["cancel_reason"] == "client_replied"
+
+
+@pytest.mark.parametrize("reason,preserve", [
+    ("handoff", False),                    # agent/tools.py::encaminhar_humano
+    ("sem_interesse_atual", False),        # agent/tools.py
+    ("cliente_ativo_sem_demanda", False),  # agent/tools.py
+    ("lead_already_served", True),         # agent/tools.py
+    ("optout", False),                     # leads/service.py::apply_optout_side_effects
+    ("optout_botao", False),               # idem, pelo botão do template
+    ("block_manual", False),               # idem, pelo botão "Bloquear" do CRM
+])
+def test_motivo_terminal_continua_cancelando_o_joao(reason, preserve):
+    """O recorte é do `client_replied`, e de mais NENHUM motivo.
+
+    Este é o backstop de 15/07: o cliente pediu ao HUMANO para a IA parar, e os toques
+    seguiram saindo. Transformar o recorte em "preserva sempre" reabriria aquele
+    incidente pela porta dos fundos — e o custo não é um toque a mais, é mensagem de
+    marketing para quem já pediu para sair, com o botão "Bloquear" e a reputação do
+    número na Meta do outro lado.
+    """
+    banco = _Banco([
+        _job_na_conversa("em_conversa", 2, "pending"),
+        _job_na_conversa("em_conversa", 3, "pending"),
+    ])
+
+    _cancelar_por_telefone(banco, reason, preserve_scheduled_return=preserve)
+
+    assert banco.pendentes_do_joao() == [], (
+        f"motivo {reason!r} é uma parada TERMINAL e deixou toque do João vivo")
+    assert all(j["cancel_reason"] == reason for j in banco.jobs())
+
+
+def test_o_handoff_rescue_continua_preservado_no_client_replied():
+    """O recorte ACRESCENTA ao que já era preservado, nunca substitui.
+
+    `handoff_rescue` (aviso ao vendedor) e `ai_scheduled_return` (retorno que a própria
+    IA prometeu) sobreviviam ao `client_replied` desde 30/06. Uma implementação que
+    trocasse a lista em vez de estendê-la passaria em todos os testes acima e quebraria
+    aqueles dois em silêncio.
+    """
+    banco = _Banco([
+        _job_da_valeria("job-rescue"), _job_da_valeria("job-retorno"),
+        _job_na_conversa("novo", 2, "pending"),
+    ])
+    banco.por_id("job-rescue")["job_type"] = "handoff_rescue"
+    banco.por_id("job-retorno")["job_type"] = "ai_scheduled_return"
+
+    _cancelar_por_telefone(banco, "client_replied")
+
+    assert banco.por_id("job-rescue")["status"] == "pending"
+    assert banco.por_id("job-retorno")["status"] == "pending"
+    assert banco.por_id("job-novo-2-pending")["status"] == "pending"
+
+
+def test_o_recorte_cobre_TODAS_as_cadencias_do_joao():
+    """A lista de preservados sai de `cadence_joao.JOB_TYPES`, que é DERIVADA de `FUNIS`.
+
+    Uma lista escrita à mão envelheceria calada: `joao_proposta` nasceu em 23/09 e uma
+    cópia de 18/09 o teria deixado de fora — a esteira de Proposta Enviada seria a única
+    a continuar morrendo quando o lead responde, e ninguém notaria.
+    """
+    preservados = set(S._preserved_job_types(True, "client_replied"))
+    assert C.JOB_TYPES <= preservados, C.JOB_TYPES - preservados
+    assert "standard" not in preservados
+
+
+def test_sem_motivo_declarado_o_joao_NAO_e_preservado():
+    """`reason` ganhou default — e o default cai no lado seguro.
+
+    O único chamador de produção sempre passa o motivo; o default existe para quem
+    chama a função direto (a suíte do backstop de 15/07 é quem faz isso). Se ele
+    preservasse, a mutação proibida — "preserva sempre" — estaria escrita na
+    ASSINATURA, onde nenhum dos testes de motivo terminal acima a pegaria.
+    """
+    assert S._preserved_job_types(True) == ["handoff_rescue", "ai_scheduled_return"]
+    assert not (C.JOB_TYPES & set(S._preserved_job_types(False)))
+
+
+# ── Continuidade: a esteira CONTINUA, não recomeça ────────────────────────────
+def test_lead_que_responde_no_toque_2_mantem_os_toques_3_e_4_da_MESMA_matricula():
+    """O defeito B, medido de ponta a ponta: continuar de onde parou é o que dá TETO.
+
+    O desenho antigo cancelava tudo, e o cooldown por matrícula de 23/09 liberava a
+    reentrada ~2 dias depois — DO TOQUE 1. O lead relia as mesmas mensagens e cada volta
+    reiniciava a contagem, então não havia teto: quem responde a cada 3 dias ficava em
+    laço permanente e nunca chegava a "Em Atenção".
+
+    A asserção que carrega esse peso é a do `matricula_id`: o toque 3 e o toque 4 têm de
+    ser OS MESMOS jobs, da MESMA matrícula. Uma implementação que cancelasse e
+    rematriculasse também deixaria dois `pending` na tabela — e seria o laço de volta.
+    """
+    fire_3 = NOW + timedelta(days=30)
+    fire_4 = NOW + timedelta(days=45)
+    nasceu = NOW - timedelta(days=45)
+    jobs = [
+        _job_na_conversa("reposicao", 1, "sent", matricula="m-unica", created_at=nasceu,
+                         sent_at=(NOW - timedelta(days=30)).isoformat()),
+        _job_na_conversa("reposicao", 2, "sent", matricula="m-unica", created_at=nasceu,
+                         sent_at=NOW.isoformat()),
+        _job_na_conversa("reposicao", 3, "pending", matricula="m-unica",
+                         created_at=nasceu),
+        _job_na_conversa("reposicao", 4, "pending", matricula="m-unica",
+                         created_at=nasceu, ultimo=True),
+    ]
+    jobs[2]["fire_at"] = fire_3.isoformat()
+    jobs[3]["fire_at"] = fire_4.isoformat()
+    banco = _Banco(jobs)
+
+    _cancelar_por_telefone(banco, "client_replied")
+    resultado = _processar_resposta(banco, "opa, me manda a tabela de preços")
+
+    assert resultado == C.RESPOSTA_ADIAR
+    assert not banco.inserts, "matrícula NOVA é o laço de volta — esta CONTINUA"
+
+    sobreviventes = {j["id"]: j for j in banco.pendentes_do_joao()}
+    assert set(sobreviventes) == {"job-reposicao-3-pending", "job-reposicao-4-pending"}
+    assert {j["metadata"]["matricula_id"] for j in sobreviventes.values()} == {"m-unica"}
+
+    for job_id, antes in (("job-reposicao-3-pending", fire_3),
+                          ("job-reposicao-4-pending", fire_4)):
+        novo = datetime.fromisoformat(sobreviventes[job_id]["fire_at"])
+        assert novo >= antes + C.ADIAMENTO_RESPOSTA, f"{job_id} não esperou os 3 dias"
+        assert novo < antes + C.ADIAMENTO_ESTOQUE, (
+            f"{job_id} levou o adiamento do BOTÃO — texto comum não some por 60 dias")
+
+    # e a ordem entre eles — o bloco DESLIZA, ele não é reescrito
+    assert (datetime.fromisoformat(sobreviventes["job-reposicao-4-pending"]["fire_at"])
+            > datetime.fromisoformat(sobreviventes["job-reposicao-3-pending"]["fire_at"]))
+    # e os dois que já saíram não voltam: o lead não relê o que já leu
+    assert banco.por_id("job-reposicao-1-sent")["status"] == "sent"
+    assert banco.por_id("job-reposicao-2-sent")["status"] == "sent"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

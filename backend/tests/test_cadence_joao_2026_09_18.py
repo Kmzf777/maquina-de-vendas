@@ -936,6 +936,57 @@ class TestAdiamentoDeSessentaDias:
         assert toque.aceita_adiamento is True
 
 
+class TestAdiamentoDaRespostaComum:
+    """O TERCEIRO ramo (spec 2026-09-25 §3.3): responder qualquer coisa adia 3 dias.
+
+    Nasce aqui, ao lado do adiamento de 60 dias, porque os dois são o MESMO mecanismo
+    com distâncias diferentes — e porque é só lado a lado que dá para ver a relação que
+    não pode se inverter: o botão tem de pesar MAIS que uma resposta qualquer.
+    """
+
+    def test_o_adiamento_da_resposta_comum_e_de_3_dias(self):
+        assert cj.ADIAMENTO_RESPOSTA == timedelta(days=3)
+
+    def test_o_botao_pesa_mais_que_uma_resposta_qualquer(self):
+        # Se os dois fossem iguais (ou o botão menor), apertá-lo deixaria de significar
+        # alguma coisa — seria a mesma classe de defeito do rótulo que não casa: um
+        # botão vivo na tela e morto no efeito. "Ainda tenho estoque" é uma declaração
+        # de que o lead não precisa de nada tão cedo; "oi, quanto custa?" não é.
+        assert cj.ADIAMENTO_RESPOSTA < cj.ADIAMENTO_ESTOQUE
+
+    def test_o_adiamento_curto_nao_zera_a_espera(self):
+        # 0 dias seria "responder não faz nada", e o toque seguinte sairia por cima da
+        # conversa em andamento.
+        assert cj.ADIAMENTO_RESPOSTA > timedelta(0)
+
+    def test_a_mesma_funcao_pura_serve_os_dois_ramos(self):
+        # `adiar_toques` já recebia a distância como parâmetro; o ramo novo não ganhou
+        # cálculo próprio. Duas implementações de "empurrar o bloco sem recomeçar"
+        # divergiriam, e o sintoma seria o lead relendo o toque 1.
+        toques = cj.resolver_cadencia("reposicao_atacado", "reposicao")
+        adiados = cj.adiar_toques(
+            toques, ultimo_enviado=1, adiamento=cj.ADIAMENTO_RESPOSTA)
+        assert [t.sequence for t in adiados] == [2, 3, 4]
+        assert [t.offset.days for t in adiados] == [15 + 3, 30 + 3, 45 + 3]
+
+    def test_o_adiamento_curto_tambem_preserva_o_espacamento(self):
+        toques = cj.resolver_cadencia("reposicao_atacado", "reposicao")
+        adiados = cj.adiar_toques(
+            toques, ultimo_enviado=1, adiamento=cj.ADIAMENTO_RESPOSTA)
+        gaps_antes = [b.offset - a.offset for a, b in zip(toques[1:], toques[2:])]
+        gaps_depois = [b.offset - a.offset for a, b in zip(adiados, adiados[1:])]
+        assert gaps_antes == gaps_depois
+
+    def test_o_classificador_NAO_mudou(self):
+        # O terceiro ramo mora no SERVIÇO (`processar_resposta_joao`), não aqui.
+        # `classificar_resposta` continua devolvendo None para texto comum, e tem de
+        # continuar: ela é quem separa "apertou um botão" de "escreveu alguma coisa" —
+        # se passasse a devolver um rótulo para tudo, "ainda tenho estoque mas me manda
+        # a tabela" viraria um lead adiado em 60 dias, que é perdê-lo.
+        assert cj.classificar_resposta("quero comprar 50kg") is None
+        assert cj.classificar_resposta("ainda tenho estoque mas me manda a tabela") is None
+
+
 class TestOptOutReal:
     @pytest.mark.parametrize("texto", ["Não tenho interesse", "Parar mensagens",
                                        "nao tenho interesse", "parar mensagens"])

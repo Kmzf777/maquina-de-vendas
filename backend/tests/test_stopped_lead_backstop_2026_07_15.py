@@ -15,6 +15,14 @@ Cobertura:
    preserva BSUID.
 3. `_preserved_job_types` — paradas terminais deixam de preservar `ai_scheduled_return`
    (mas SEMPRE preservam `handoff_rescue`, do qual o handoff depende).
+3b. O RECORTE DE 25/09 NÃO ALCANÇA ESTE BACKSTOP. `_preserved_job_types` ganhou um
+   segundo eixo — o `reason` — e com `client_replied` ele passa a preservar as
+   cadências do João, porque responder deixou de MATÁ-LAS e passou a ADIÁ-LAS
+   (`processar_resposta_joao`, spec 2026-09-25 §3.2). O recorte é SO desse motivo. Se
+   um dia ele virar "preserva sempre", é exatamente este caso de 15/07 que reabre: a
+   cliente pediu ao HUMANO para a IA parar, e o pedido chega aqui como `handoff` ou
+   como opt-out — nunca como `client_replied`. Por isso a cobertura do eixo novo mora
+   NESTE arquivo, e não só no do motor do João.
 4. `process_due_followups` cancela QUALQUER job de lead marcado para parar ANTES de
    despachar — nem toque LLM, nem reopen, nem template de resgate saem.
 """
@@ -25,6 +33,7 @@ import pytest
 
 from app.follow_up import scheduler as S
 from app.follow_up.scheduler import _lead_stop_reason
+from app.follow_up.cadence_joao import JOB_TYPES as JOAO_JOB_TYPES
 from app.follow_up.service import _phone_identity_values, _preserved_job_types
 
 
@@ -79,13 +88,50 @@ def test_phone_variants_bsuid_inalterado():
 # ─── _preserved_job_types: paridade terminal x não-terminal ───────────────────
 
 def test_nao_terminal_preserva_scheduled_return():
+    # A igualdade EXATA é de propósito: ela é o que impede um `job_type` de entrar na
+    # lista de preservados sem ninguém notar — e cada `job_type` preservado a mais é uma
+    # cadência que sobrevive a uma parada. Ela continua valendo em todo motivo que NÃO
+    # seja `client_replied`; o que aquele motivo acrescenta está logo abaixo.
     assert _preserved_job_types(preserve_scheduled_return=True) == ["handoff_rescue", "ai_scheduled_return"]
+    assert _preserved_job_types(True, "handoff") == ["handoff_rescue", "ai_scheduled_return"]
 
 
 def test_terminal_dropa_scheduled_return_mas_preserva_rescue():
     preserved = _preserved_job_types(preserve_scheduled_return=False)
     assert "ai_scheduled_return" not in preserved
     assert "handoff_rescue" in preserved  # handoff depende do rescue sobreviver
+
+
+# ─── O recorte de 25/09 não pode furar este backstop ─────────────────────────
+
+@pytest.mark.parametrize("reason", [
+    "handoff",                    # `encaminhar_humano` — o caminho do caso de 15/07
+    "sem_interesse_atual",
+    "cliente_ativo_sem_demanda",
+    "lead_already_served",
+    "optout",                     # apply_optout_side_effects, pela tool
+    "optout_botao",               # idem, pelo botão do template
+    "block_manual",               # idem, pelo botão "Bloquear" do CRM
+])
+def test_parada_terminal_continua_cancelando_as_cadencias_do_joao(reason):
+    """O caso de 15/07 chega aqui como `handoff` ou como opt-out. NUNCA como
+    `client_replied` — e é só esse que o recorte alcança.
+
+    Quando a cliente pede ao vendedor HUMANO para a IA parar, quem transforma o pedido
+    em estado é o vendedor, por um destes motivos. Se o recorte de 25/09 escorregar para
+    "preserva sempre", os toques do João voltam a sair depois de uma parada explícita —
+    o mesmo incidente, agora pela porta dos fundos.
+    """
+    preservados = set(_preserved_job_types(True, reason))
+    assert not (JOAO_JOB_TYPES & preservados), sorted(JOAO_JOB_TYPES & preservados)
+    preservados_terminal = set(_preserved_job_types(False, reason))
+    assert not (JOAO_JOB_TYPES & preservados_terminal)
+
+
+def test_so_o_client_replied_preserva_as_cadencias_do_joao():
+    """O outro lado do recorte, ancorado aqui para que as duas metades vivam juntas:
+    responder NÃO é uma parada, e por isso é o único motivo que preserva."""
+    assert JOAO_JOB_TYPES <= set(_preserved_job_types(True, "client_replied"))
 
 
 # ─── process_due_followups: backstop no DISPARO ───────────────────────────────

@@ -178,6 +178,25 @@ ADIAMENTO_ESTOQUE = timedelta(days=60)
 # exatamente o destino de "Nao atendo mais" e "Tirar dos contatos" em produção.
 ROTULOS_ADIAMENTO: frozenset[str] = frozenset({"ainda tenho estoque"})
 
+# Qualquer OUTRA resposta do lead → adia 3 dias, também SEM recomeçar a contagem.
+#
+# É a irmã de `ADIAMENTO_ESTOQUE`, e o par só faz sentido junto: o BOTÃO continua
+# valendo 60 dias ("ainda tenho estoque" é um lead que declarou não precisar de nada
+# tão cedo), enquanto responder qualquer outra coisa passa a ser motivo para ESPERAR
+# um pouco, nunca para MATAR a esteira (spec 2026-09-25 §3.3).
+#
+# Antes deste número existir, responder cancelava a cadência inteira — e o cooldown
+# por matrícula de 23/09 a deixava reentrar ~2 dias depois, DO TOQUE 1. O lead relia as
+# mesmas mensagens e a contagem reiniciava a cada volta, então não havia teto: quem
+# responde a cada 3 dias ficava em laço permanente e nunca chegava a "Em Atenção".
+# Adiar consome tempo em vez de reiniciar a contagem — o teto volta pelo lado certo.
+#
+# O número é de CÓDIGO, não da tela — mesmo tratamento dado a `gatilho_silencio_dias`.
+# A tela só o EXIBE (via `adiamento_resposta_dias` no payload da cadência); o PUT não
+# aceita. Escrever "3" à mão no frontend duplicaria a fonte, que é o defeito que esta
+# base já corrigiu duas vezes este mês.
+ADIAMENTO_RESPOSTA = timedelta(days=3)
+
 
 @dataclass(frozen=True)
 class Touch:

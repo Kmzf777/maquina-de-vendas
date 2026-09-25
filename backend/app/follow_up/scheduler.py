@@ -1856,14 +1856,48 @@ def _cadencia_declarada(metadata: dict, funil: str | None):
     return cadencia_do_funil(funil, codigo)
 
 
+def _etapa_atual_do_card(deal_id: str) -> tuple[str | None, str | None, list[dict]]:
+    """Onde o card está AGORA: `(pipeline_id, key da etapa atual, etapas do funil)`.
+
+    Leitura ÚNICA, compartilhada pelas duas guardas de etapa deste módulo — a do toque
+    (`_process_joao_touch`, spec 2026-09-25 §3.1) e a do move do fim da cadência
+    (`_mover_card_joao`, spec 2026-09-23 §3). As duas fazem a MESMA pergunta ("em que
+    coluna este card está?") e devem respondê-la do mesmo jeito; duas leituras
+    divergiriam no primeiro ajuste.
+
+    A armadilha, a mesma de `quotes/router.py::_move_deal_to_proposal`: a `key` é
+    procurada DENTRO do pipeline do próprio deal. `key` só é única POR PIPELINE (índice
+    `idx_pipeline_stages_key_unique`) e `novo`/`em_atencao` existem nos quatro funis do
+    João — sem o filtro, o card seria comparado (ou movido) contra a etapa do funil de
+    outra pessoa.
+
+    `(None, None, [])` = card apagado, ou sem funil. Erro de banco NÃO é engolido: sobe
+    para quem chama, que o trata como transitório.
+    """
+    sb = get_supabase()
+    res = (sb.table("deals").select("pipeline_id, stage_id")
+           .eq("id", deal_id).limit(1).execute())
+    linhas = res.data if isinstance(res.data, list) else []
+    deal = linhas[0] if linhas else {}
+    pipeline_id = deal.get("pipeline_id")
+    if not pipeline_id:
+        return None, None, []
+
+    # Uma consulta só para as etapas do funil: quem move precisa do alvo E da posição
+    # atual, e quem só vigia precisa da posição atual.
+    etapas_res = (sb.table("pipeline_stages").select("id, key")
+                  .eq("pipeline_id", pipeline_id).execute())
+    etapas = etapas_res.data if isinstance(etapas_res.data, list) else []
+
+    atual = next((e for e in etapas if e.get("id") == deal.get("stage_id")), None)
+    return pipeline_id, (atual or {}).get("key"), etapas
+
+
 def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = None) -> bool:
     """Move o card do João para a etapa `etapa_key`. Defensivo — spec 2026-09-23 §3.
 
-    Mesmo padrão de `quotes/router.py::_move_deal_to_proposal`, com a mesma armadilha
-    nomeada: a `key` da etapa de destino é procurada DENTRO do pipeline do próprio deal.
-    `key` só é única POR PIPELINE (índice `idx_pipeline_stages_key_unique`), e `em_atencao`
-    existe nos quatro funis do João — sem o filtro, o card iria para o funil de outra
-    pessoa.
+    A leitura da posição do card é a de `_etapa_atual_do_card`, com a armadilha da `key`
+    por pipeline nomeada lá.
 
     Duas guardas, e a primeira é a razão de ser desta função:
 
@@ -1877,27 +1911,16 @@ def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = N
     sobe para quem chama, que o trata como transitório (o job não vira terminal e o
     próximo tick tenta de novo) — cancelar por um soluço de rede seria permanente.
     """
-    sb = get_supabase()
-    res = (sb.table("deals").select("pipeline_id, stage_id")
-           .eq("id", deal_id).limit(1).execute())
-    linhas = res.data if isinstance(res.data, list) else []
-    deal = linhas[0] if linhas else {}
-    pipeline_id = deal.get("pipeline_id")
+    pipeline_id, etapa_atual, etapas = _etapa_atual_do_card(deal_id)
     if not pipeline_id:
         logger.info("[JOAO_MOVER] deal %s não encontrado (ou sem funil) — nada a mover", deal_id)
         return False
 
-    # Uma consulta só para as etapas do funil: precisamos do alvo E da posição atual.
-    etapas_res = (sb.table("pipeline_stages").select("id, key")
-                  .eq("pipeline_id", pipeline_id).execute())
-    etapas = etapas_res.data if isinstance(etapas_res.data, list) else []
-
-    atual = next((e for e in etapas if e.get("id") == deal.get("stage_id")), None)
-    if etapa_vigiada and (atual or {}).get("key") != etapa_vigiada:
+    if etapa_vigiada and etapa_atual != etapa_vigiada:
         logger.info(
             "[JOAO_MOVER] deal %s já saiu da etapa %s (está em %s) — move da cadência não "
             "desfaz o que o vendedor fez",
-            deal_id, etapa_vigiada, (atual or {}).get("key"),
+            deal_id, etapa_vigiada, etapa_atual,
         )
         return False
 
@@ -1911,7 +1934,7 @@ def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = N
         )
         return False
 
-    (sb.table("deals")
+    (get_supabase().table("deals")
      .update({"stage_id": alvo["id"], "updated_at": datetime.now(timezone.utc).isoformat()})
      .eq("id", deal_id).execute())
     logger.info("[JOAO_MOVER] deal %s movido para a etapa %s (%s)", deal_id, etapa_key, alvo["id"])
@@ -1932,6 +1955,11 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
 
     UM job deste tipo não manda mensagem nenhuma: o do fim da cadência, marcado com
     `metadata.acao == "mover_etapa"`, que só move o card (spec 2026-09-23 §3).
+
+    E a regra que governa a vida da esteira (spec 2026-09-25 §2): **ela vive enquanto o
+    card estiver na etapa vigiada**. A matrícula agenda todos os toques de uma vez, então
+    a etapa é RELIDA aqui, na hora do envio — card em outra coluna encerra o job em vez
+    de mandar mensagem para quem já saiu do gatilho.
     """
     metadata = job.get("metadata") or {}
     lead = job.get("leads") or {}
@@ -2016,6 +2044,80 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
         return
 
     funil = _resolve_joao_funil(job)
+
+    # ── A esteira vive enquanto o card estiver na ETAPA vigiada (spec 2026-09-25 §3.1) ──
+    #
+    # O defeito que esta guarda fecha, reproduzido contra o motor real: a MATRÍCULA já
+    # respeita a etapa (a RPC filtra pela etapa atual do card e exclui de propósito
+    # `fechado_ganho`), mas ela agenda TODOS os toques de uma vez e o envio nunca relia a
+    # etapa. Card movido para "Fechado Ganho" no dia 1 continuava recebendo os toques 2 e
+    # 3 de "Novo" — até 3 mensagens de marketing, ao longo de 9 dias, para quem acabou de
+    # comprar.
+    #
+    # É a guarda de `automation/engine.py::_guard_broken` ("True se o card saiu da etapa
+    # que originou este enrollment") trazida do motor de campanhas, com UMA diferença
+    # deliberada: lá ela é fail-OPEN (erro de leitura deixa a esteira correr) porque o
+    # custo de errar é um toque a mais numa campanha. AQUI NÃO COPIAMOS ISSO — o custo de
+    # errar é uma mensagem de marketing para quem já comprou, que se paga no botão
+    # "Bloquear" e na reputação do número na Meta. Por isso erro de banco não envia E não
+    # encerra: adia a decisão até dar para tomá-la, o mesmo tratamento que o ramo do move
+    # dá a erro transitório.
+    #
+    # Vem antes de resolver template e canal (nenhum dos dois importa se a esteira acabou)
+    # e depois do ramo `mover_etapa`, que tem a sua própria guarda de etapa.
+    #
+    # A etapa vigiada vem da CONFIG (`cadencia_do_funil`, via `_cadencia_declarada`),
+    # nunca de `metadata.stage_id`: duas fontes divergiriam no dia em que alguém mudasse
+    # o gatilho pela tela. É o mesmo caminho do `etapa_vigiada` do ramo do move.
+    cadencia = _cadencia_declarada(metadata, funil)
+    etapa_vigiada = cadencia.gatilho_stage_key if cadencia else None
+    if not etapa_vigiada:
+        # Fail-closed, igual ao ramo do move: sem saber que etapa a cadência vigia não há
+        # como afirmar que o card continua nela, e enviar às cegas é o próprio defeito.
+        logger.error(
+            "[JOAO_TOUCH] cadência (%s, %s) não resolvida — job %s encerrado SEM enviar",
+            funil, metadata.get("cadencia"), job["id"],
+        )
+        _mark_sent(job["id"])
+        return
+
+    # A etapa vigiada vem da CONFIG (`cadencia_do_funil`), nunca de `metadata.stage_id`:
+    # duas fontes divergiriam no dia em que alguém mudasse o gatilho pela tela. Mesmo
+    # caminho do `etapa_vigiada` do ramo do move.
+    deal_id = str(metadata.get("deal_id") or "").strip()
+    if not deal_id:
+        # Impossível pelo contrato do agendador (ele grava `deal_id` em todo job da
+        # cadência). Ausência é BUG, e job que não dá para verificar não manda mensagem;
+        # `cancel_reason` é onde isso fica visível numa consulta.
+        _cancel_job(job["id"], "toque_sem_deal_para_verificar")
+        logger.error(
+            "[JOAO_TOUCH] job %s sem deal_id (cadencia=%s funil=%s toque=%s) — não dá "
+            "para verificar a etapa, e sem verificar não enviamos",
+            job["id"], metadata.get("cadencia"), funil, metadata.get("toque"),
+        )
+        return
+
+    try:
+        _, etapa_atual, _ = _etapa_atual_do_card(deal_id)
+    except Exception as exc:
+        logger.error(
+            "[JOAO_TOUCH] falha ao reler a etapa do deal %s: %s — toque ADIADO para o "
+            "próximo tick (nem `sent` nem `cancelled`)", deal_id, exc, exc_info=True,
+        )
+        return  # transitório → nada de estado terminal
+
+    if etapa_atual != etapa_vigiada:
+        # Inclui o card APAGADO (`etapa_atual is None`): sem card não há trabalho — a
+        # mesma leitura que `_guard_broken` faz do deal inexistente.
+        _cancel_job(job["id"], "card_mudou_de_etapa")
+        logger.info(
+            "[JOAO_TOUCH] deal %s saiu da etapa %s (está em %s) — esteira %s/%s encerrada "
+            "no toque %s (job %s)",
+            deal_id, etapa_vigiada, etapa_atual or "—", funil, metadata.get("cadencia"),
+            metadata.get("toque"), job["id"],
+        )
+        return
+
     template_name = _joao_template_name(metadata, funil)
     if not template_name:
         _cancel_job(job["id"], "missing_template_name")

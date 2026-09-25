@@ -15,13 +15,20 @@ FORMA DO JOB (contrato com a Task F1/F3, spec 2026-09-21):
         "funil": "atacado"|"private_label"|"reposicao_atacado"|"reposicao_private_label",
                                                    # opcional — cai p/ o funil do deal
         "toque": 1,                               # 1-based
-        "template_name": "joao_reposicao_atacado_t1",   # OU "template_por_funil"
+        "template_name": "joao_novo_atacado_t1",  # OU "template_por_funil"
         "template_por_funil": {"atacado": "...", "private_label": "...", ...},
         "language_code": "pt_BR",                # default
         "template_variables": {...},             # default: {{1}} = primeiro nome
         "lead_phone": "...",                     # opcional — cai p/ leads.phone
-        "deal_id": "...", "pipeline_id": "...",  # opcionais, p/ resolver o funil
+        "deal_id": "...",                        # OBRIGATÓRIO desde 2026-09-25: é por
+                                                 # ele que a etapa é relida no envio
+        "pipeline_id": "...",                    # opcional, p/ resolver o funil
     }
+
+A REGRA QUE GOVERNA A VIDA DA ESTEIRA (spec 2026-09-25 §2): ela vive enquanto o card
+estiver na etapa vigiada. Mudança de etapa ENCERRA o toque, e a etapa vigiada vem da
+CONFIG (`cadence_joao.cadencia_do_funil`), nunca do `metadata` — ver a seção "a esteira
+vive enquanto o card estiver na etapa" no fim deste arquivo.
 
 FORMA DO JOB DE MOVER (contrato E2↔E3, spec 2026-09-23 §3) — o ÚNICO job deste handler
 que não manda mensagem nenhuma:
@@ -53,13 +60,21 @@ JOAO_CHANNEL = {
 
 
 def _joao_job(**over):
-    """Job de toque do João no formato que `get_due_followups` devolve (joins inclusos)."""
+    """Job de toque do João no formato que `get_due_followups` devolve (joins inclusos).
+
+    O par (funil, cadência) do default é REAL — `atacado`/`novo`, que vigia a etapa
+    `novo` — e o `deal_id` está sempre presente, como o agendador grava. Desde a guarda
+    de etapa (spec 2026-09-25 §3.1) isso deixou de ser cosmético: um par inexistente
+    encerraria o toque fail-closed e um job sem `deal_id` seria cancelado, e todo teste
+    de envio daqui viraria um teste de guarda sem que o nome dele dissesse isso.
+    """
     metadata = {
-        "cadencia": "reposicao",
+        "cadencia": "novo",
         "funil": "atacado",
         "toque": 1,
-        "template_name": "joao_reposicao_atacado_t1",
+        "template_name": "joao_novo_atacado_t1",
         "lead_phone": "5534988861441",
+        "deal_id": "deal-1",
     }
     metadata.update(over.pop("metadata", {}))
     job = {
@@ -92,11 +107,16 @@ def _run_handler(job, *, meta=None, channel=JOAO_CHANNEL, sb=None, now=NOW, rend
 
     `_generate_followup_message` é mockado com um side_effect que EXPLODE: nenhuma linha
     do caminho do João pode chamar o LLM.
+
+    O banco default é o `_FakeSupabase` de verdade (definido mais abaixo, junto das
+    etapas dos dois funis), com o card de `_joao_job` parado na etapa que a cadência
+    vigia: desde a guarda de etapa, um MagicMock genérico faria toda leitura de card
+    devolver "card sumiu" e nenhum toque sairia.
     """
     import asyncio
 
     meta = meta or _meta()
-    sb = sb or MagicMock()
+    sb = _db() if sb is None else sb
     calls = {}
 
     def _no_llm(*a, **k):
@@ -129,7 +149,7 @@ def test_handler_envia_template_do_toque_pelo_canal_do_joao():
     kwargs = calls["meta"].send_template.await_args.kwargs
     args = calls["meta"].send_template.await_args.args
     assert args[0] == "5534988861441"
-    assert args[1] == "joao_reposicao_atacado_t1"
+    assert args[1] == "joao_novo_atacado_t1"
     assert kwargs["language_code"] == "pt_BR"
     calls["sent"].assert_called_once_with("job-joao-1")
     calls["cancel"].assert_not_called()
@@ -215,7 +235,7 @@ def test_handler_persiste_a_mensagem_do_template_na_conversa_do_joao():
 def test_handler_nao_persiste_placeholder_de_template_nao_renderizado():
     """`_render_template_body` devolve "[Template: x]" quando não acha o corpo — gravar
     isso envenenaria o histórico do CRM."""
-    calls = _run_handler(_joao_job(), rendered="[Template: joao_reposicao_atacado_t1]")
+    calls = _run_handler(_joao_job(), rendered="[Template: joao_novo_atacado_t1]")
     calls["save_msg"].assert_not_called()
     calls["sent"].assert_called_once()
 
@@ -282,12 +302,33 @@ def test_template_por_funil_escolhe_o_texto_do_funil_resolvido():
     assert calls["meta"].send_template.await_args.args[1] == "joao_novo_privatelabel_t1"
 
 
-def test_funil_indefinido_nao_derruba_o_toque_com_template_explicito():
-    """Sem deal e sem funil declarado, o template já resolvido no metadata vale."""
+def test_funil_vindo_do_deal_mantem_o_toque_vivo():
+    """Sem `metadata.funil`, o funil sai do pipeline do card — e com ele a etapa vigiada.
+    O deal default está no funil Atacado, na etapa `novo`, que é a que "Novo" vigia."""
     job = _joao_job()
     job["metadata"].pop("funil")
     calls = _run_handler(job)
     calls["meta"].send_template.assert_awaited_once()
+
+
+def test_funil_indeterminavel_encerra_o_toque_sem_enviar():
+    """MUDOU em 2026-09-25 (spec §3.1). Antes: "sem funil declarado, o template já
+    resolvido no metadata vale, e o toque sai". Agora o funil é também quem diz QUAL
+    etapa a cadência vigia — sem ele não há como verificar se o card continua lá, e a
+    falha segura é o silêncio (fail-closed, igual ao ramo do move).
+
+    Aqui o card está num pipeline que não é de nenhum funil do João, então nem o
+    metadata nem o card resolvem o funil."""
+    job = _joao_job()
+    job["metadata"].pop("funil")
+    db = _FakeSupabase(
+        deals={"deal-1": {"id": "deal-1", "pipeline_id": "pipe-de-outra-pessoa",
+                          "stage_id": "st-x"}})
+    calls = _run_handler(job, sb=db)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
 
 
 # ─── erros da Meta: espelha lp_welcome / handoff_rescue ──────────────────────
@@ -339,21 +380,32 @@ def test_conversa_finalizada_cancela_o_toque_do_joao():
 # prospecção nascem TODOS sem template, de propósito.
 
 ETAPA_NOVO_ATACADO = "st-novo-atacado"
+ETAPA_RESPONDEU_ATACADO = "st-respondeu-atacado"
 ETAPA_PROPOSTA_ATACADO = "st-proposta-atacado"
+ETAPA_GANHO_ATACADO = "st-ganho-atacado"
 ETAPA_ATENCAO_ATACADO = "st-atencao-atacado"
+ETAPA_NOVO_PRIVATE_LABEL = "st-novo-privatelabel"
 ETAPA_ATENCAO_PRIVATE_LABEL = "st-atencao-privatelabel"
 
-# As etapas dos DOIS funis na mesma tabela, com a MESMA key `em_atencao` — `key` só é
-# única por pipeline (`idx_pipeline_stages_key_unique`). A de Private Label vem PRIMEIRO
-# de propósito: sem o filtro por pipeline_id, o `next()` do código pegaria justamente ela
-# e o card do Atacado iria para o funil do outro.
+# As etapas dos DOIS funis na mesma tabela, com as MESMAS keys `novo` e `em_atencao` —
+# `key` só é única por pipeline (`idx_pipeline_stages_key_unique`). As de Private Label
+# vêm PRIMEIRO de propósito: sem o filtro por pipeline_id, o `next()` do código pegaria
+# justamente elas — o card do Atacado iria para o funil do outro (move), ou um card
+# parado na coluna certa seria lido como card movido (guarda de etapa do toque).
+#
+# As keys são as de `20260910_contrato_etapas_joao.sql`: "Em conversa" é `respondeu`
+# (não `em_conversa`), e quem compra vai para `fechado_ganho`.
 ETAPAS_DOS_DOIS_FUNIS = [
     {"id": ETAPA_ATENCAO_PRIVATE_LABEL, "key": "em_atencao",
      "pipeline_id": S.PIPELINE_JOAO_PRIVATE_LABEL},
-    {"id": "st-novo-privatelabel", "key": "novo",
+    {"id": ETAPA_NOVO_PRIVATE_LABEL, "key": "novo",
      "pipeline_id": S.PIPELINE_JOAO_PRIVATE_LABEL},
     {"id": ETAPA_NOVO_ATACADO, "key": "novo", "pipeline_id": S.PIPELINE_JOAO_ATACADO},
+    {"id": ETAPA_RESPONDEU_ATACADO, "key": "respondeu",
+     "pipeline_id": S.PIPELINE_JOAO_ATACADO},
     {"id": ETAPA_PROPOSTA_ATACADO, "key": "proposta_enviada",
+     "pipeline_id": S.PIPELINE_JOAO_ATACADO},
+    {"id": ETAPA_GANHO_ATACADO, "key": "fechado_ganho",
      "pipeline_id": S.PIPELINE_JOAO_ATACADO},
     {"id": ETAPA_ATENCAO_ATACADO, "key": "em_atencao",
      "pipeline_id": S.PIPELINE_JOAO_ATACADO},
@@ -562,6 +614,197 @@ def test_mover_card_joao_devolve_true_so_quando_o_card_anda():
         assert S._mover_card_joao("deal-1", "etapa_que_nao_existe", etapa_vigiada="novo") is False
         assert S._mover_card_joao("deal-fantasma", "em_atencao", etapa_vigiada="novo") is False
     assert len(db.updates) == 1
+
+
+# ─── a esteira vive enquanto o card estiver na etapa (spec 2026-09-25 §3.1) ──
+#
+# O DEFEITO que esta seção fecha, reproduzido contra o motor real em 24/09/2026: a
+# MATRÍCULA já respeitava a etapa (a RPC filtra pela etapa atual do card e exclui de
+# propósito `fechado_ganho`), mas ela agenda TODOS os toques de uma vez e o envio nunca
+# relia a etapa. Card movido para "Fechado Ganho" no dia 1 continuava recebendo os
+# toques 2 e 3 de "Novo" — até 3 mensagens de marketing, ao longo de 9 dias, para quem
+# acabou de comprar.
+#
+# A guarda é a de `automation/engine.py::_guard_broken` ("True se o card saiu da etapa
+# que originou este enrollment") trazida do motor de campanhas, com UMA diferença: lá
+# ela é fail-OPEN e aqui NÃO é (ver `test_toque_nao_marca_estado_terminal_...`).
+
+def test_toque_nao_sai_com_o_card_em_fechado_ganho():
+    """O DEFEITO, fechado. Card em "Fechado Ganho" e toque 2 de "Novo" na fila: nada sai,
+    e o job é encerrado com `card_mudou_de_etapa`.
+
+    MUTAÇÃO OBRIGATÓRIA (plano 2026-09-25, G2): removida a guarda, ESTE teste tem de
+    ficar vermelho — ele é a única coisa entre um cliente que acabou de comprar e três
+    mensagens de marketing ao longo de nove dias."""
+    db = _db(stage_id=ETAPA_GANHO_ATACADO)
+    calls = _run_handler(_joao_job(metadata={"toque": 2}), sb=db)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+    calls["sent"].assert_not_called()
+    calls["save_msg"].assert_not_called()
+    # A guarda vem ANTES de resolver o canal do vendedor: esteira encerrada não gasta
+    # leitura de canal nem monta componentes de template.
+    calls["channel"].assert_not_called()
+
+
+def test_toque_de_novo_nao_sai_depois_que_o_card_vai_para_em_conversa():
+    """A consequência declarada no spec §2: em "Novo", responder ENCERRA a esteira — não
+    porque a resposta cancela algo, mas porque `advance_deal_on_reply` move o card de
+    `novo` para `respondeu` ("Em conversa") sozinho, e a guarda de etapa encerra o que
+    sobrou. A esteira de "Em conversa" assume depois."""
+    db = _db(stage_id=ETAPA_RESPONDEU_ATACADO)
+    calls = _run_handler(_joao_job(metadata={"toque": 3}), sb=db)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+
+
+def test_toque_sai_normalmente_com_o_card_ainda_na_etapa_vigiada():
+    """O caminho feliz, com a leitura extra no meio: o toque sai igual, e a guarda LÊ a
+    etapa — nunca escreve."""
+    db = _db(stage_id=ETAPA_NOVO_ATACADO)
+    calls = _run_handler(_joao_job(metadata={"toque": 2}), sb=db)
+
+    calls["meta"].send_template.assert_awaited_once()
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+    assert db.updates == []
+
+
+def test_a_guarda_procura_a_etapa_dentro_do_funil_do_card():
+    """`novo` existe nos quatro funis do João e `key` só é única POR pipeline. A etapa
+    `novo` de Private Label vem ANTES da de Atacado em `ETAPAS_DOS_DOIS_FUNIS`: uma
+    guarda que procurasse a key sem filtrar pelo funil do card acharia a do outro funil
+    e trataria este card parado na coluna certa como card movido."""
+    db = _db(stage_id=ETAPA_NOVO_ATACADO, pipeline_id=S.PIPELINE_JOAO_ATACADO)
+    calls = _run_handler(_joao_job(), sb=db)
+
+    calls["meta"].send_template.assert_awaited_once()
+    calls["cancel"].assert_not_called()
+
+
+def test_toque_com_o_card_apagado_e_cancelado():
+    """Sem card não há trabalho — a mesma leitura que `_guard_broken` faz do deal
+    inexistente. O motivo é o mesmo `card_mudou_de_etapa` (spec §3.1)."""
+    db = _FakeSupabase(deals={})
+    calls = _run_handler(_joao_job(), sb=db)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+    calls["sent"].assert_not_called()
+
+
+def test_toque_nao_marca_estado_terminal_quando_o_banco_falha():
+    """A diferença DELIBERADA para `_guard_broken`, que é fail-OPEN: aqui erro de banco
+    não envia E não encerra. Lá o custo de errar é um toque a mais numa campanha; aqui é
+    mensagem de marketing para quem acabou de comprar — o botão "Bloquear" e a reputação
+    do número na Meta. Adiar a decisão até dar para tomá-la é melhor que os dois
+    extremos, e é o mesmo tratamento que o ramo do move dá a erro transitório."""
+    sb = MagicMock()
+    sb.table.side_effect = RuntimeError("conexão caiu")
+    calls = _run_handler(_joao_job(), sb=sb)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["sent"].assert_not_called()
+    calls["cancel"].assert_not_called()
+
+
+def test_a_etapa_vigiada_vem_da_config_e_nao_do_metadata():
+    """MUTAÇÃO: o job leva um `metadata.stage_id` MENTIROSO, apontando para a etapa onde
+    o card está AGORA (Fechado Ganho). Uma guarda que comparasse `deals.stage_id` com
+    `metadata.stage_id` acharia tudo em ordem e mandaria a mensagem.
+
+    A etapa vigiada vem de `cadencia_do_funil(funil, cadencia)` — a config é a fonte, e
+    duas fontes divergiriam no dia em que alguém mudasse o gatilho pela tela. É o mesmo
+    caminho que o ramo do move já usa."""
+    db = _db(stage_id=ETAPA_GANHO_ATACADO)
+    calls = _run_handler(_joao_job(metadata={"stage_id": ETAPA_GANHO_ATACADO}), sb=db)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+
+
+def test_metadata_stage_id_desatualizado_nao_derruba_o_toque_legitimo():
+    """O outro lado da mesma moeda: card parado na etapa vigiada e um `metadata.stage_id`
+    apontando para outra coluna. A config manda, e o toque sai."""
+    db = _db(stage_id=ETAPA_NOVO_ATACADO)
+    calls = _run_handler(_joao_job(metadata={"stage_id": ETAPA_PROPOSTA_ATACADO}), sb=db)
+
+    calls["meta"].send_template.assert_awaited_once()
+    calls["cancel"].assert_not_called()
+
+
+def test_a_etapa_vigiada_e_a_da_CADENCIA_declarada_no_job():
+    """O MESMO card, em `proposta_enviada`, encerra a esteira "Novo" e mantém viva a de
+    "Proposta Enviada" — cada cadência vigia a sua etapa."""
+    calls_novo = _run_handler(
+        _joao_job(), sb=_db(stage_id=ETAPA_PROPOSTA_ATACADO))
+    calls_novo["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+
+    calls_proposta = _run_handler(
+        _joao_job(job_type="joao_proposta", metadata={"cadencia": "proposta"}),
+        sb=_db(stage_id=ETAPA_PROPOSTA_ATACADO))
+    calls_proposta["meta"].send_template.assert_awaited_once()
+    calls_proposta["cancel"].assert_not_called()
+
+
+def test_a_esteira_de_reposicao_vigia_a_coluna_cliente_ativo():
+    """A única cadência que pode ser ligada hoje (é a única com template em todo toque).
+    Ela vive nos funis de Reposição e vigia a key `novo` — a coluna "Cliente Ativo"
+    (decisão 2 de `cadence_joao`). O rótulo muda, a key não."""
+    db = _FakeSupabase(
+        deals={"deal-1": {"id": "deal-1",
+                          "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO,
+                          "stage_id": "st-cliente-ativo"}},
+        stages=[{"id": "st-cliente-ativo", "key": "novo",
+                 "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO}],
+    )
+    job = _joao_job(metadata={"funil": "reposicao_atacado", "cadencia": "reposicao",
+                              "template_name": "joao_reposicao_atacado_t1"})
+    calls = _run_handler(job, sb=db)
+
+    assert calls["meta"].send_template.await_args.args[1] == "joao_reposicao_atacado_t1"
+    calls["sent"].assert_called_once_with("job-joao-1")
+
+
+def test_toque_sem_deal_id_nao_envia_e_e_cancelado():
+    """O agendador grava `deal_id` em todo job da cadência — ausência é BUG. E job que
+    não dá para verificar não manda mensagem: `cancel_reason` é onde o bug fica visível
+    numa consulta, em vez de virar um `sent` silencioso."""
+    job = _joao_job()
+    job["metadata"].pop("deal_id")
+    calls = _run_handler(job)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["cancel"].assert_called_once_with("job-joao-1", "toque_sem_deal_para_verificar")
+    calls["sent"].assert_not_called()
+
+
+def test_toque_de_cadencia_nao_resolvida_encerra_sem_enviar():
+    """Fail-closed, igual ao ramo do move: `reposicao` NÃO é cadência do funil Atacado
+    (ela vive nos dois funis de Reposição), então o par não resolve. Sem saber que etapa
+    vigiar não dá para afirmar que o card continua nela — e o silêncio é a falha segura.
+
+    `_mark_sent` e não `_cancel_job`: job cancelado é lido pelo cooldown por matrícula do
+    agendador como "o lead respondeu no meio", e LIBERARIA a reentrada."""
+    calls = _run_handler(_joao_job(metadata={"cadencia": "reposicao"}))
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+
+
+def test_a_guarda_de_etapa_nao_alcanca_o_job_de_mover():
+    """O ramo do move tem a SUA guarda (`_mover_card_joao`) e sai antes desta — senão um
+    card que saiu da etapa seria `cancelled` em vez de `sent`, e job cancelado mente para
+    o cooldown por matrícula do agendador (ele lê isso como "o lead respondeu")."""
+    db = _db(stage_id=ETAPA_PROPOSTA_ATACADO)
+    calls = _run_handler(_move_job(), sb=db)
+
+    assert db.updates == []
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
 
 
 # ─── _stop_reason_applies: as mesmas paradas da ValerIA ──────────────────────

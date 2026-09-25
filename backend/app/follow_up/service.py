@@ -13,6 +13,7 @@ from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
 from app.follow_up.cadence_joao import (
     ADIAMENTO_ESTOQUE,
+    ADIAMENTO_RESPOSTA,
     FUNIS,
     JOB_TYPES as JOAO_JOB_TYPES,
     RESPOSTA_ADIAR,
@@ -340,7 +341,15 @@ def _phone_identity_values(phone: str) -> tuple[str, list[str]]:
     return "phone", [v for v in values if v]
 
 
-def _preserved_job_types(preserve_scheduled_return: bool) -> list[str]:
+# O motivo com que `webhook/meta_router.py` chama `cancel_followups_by_phone` quando o
+# LEAD RESPONDEU. É o ÚNICO motivo NÃO-TERMINAL que chega lá — todos os outros
+# (`handoff`, `sem_interesse_atual`, `cliente_ativo_sem_demanda`, `lead_already_served`,
+# `optout`/`optout_botao`/`block_manual`) são paradas de verdade. Ver o recorte em
+# `_preserved_job_types`, que é a única coisa no código que olha para este valor.
+MOTIVO_RESPOSTA_DO_LEAD = "client_replied"
+
+
+def _preserved_job_types(preserve_scheduled_return: bool, reason: str = "") -> list[str]:
     """Tipos de job que o cancelamento por telefone NÃO deve tocar.
 
     `handoff_rescue` é SEMPRE preservado: o `encaminhar_humano` cancela a cadência e
@@ -349,10 +358,45 @@ def _preserved_job_types(preserve_scheduled_return: bool) -> list[str]:
     NÃO-terminais (ex.: o cliente respondeu e a cadência é re-armada). Em paradas
     terminais (opt-out, handoff, sem-interesse) ele TAMBÉM é cancelado — um lead que
     pediu para sair não pode receber um retorno proativo mesmo que `ai_enabled` volte.
+
+    ── O RECORTE DO `client_replied` (spec 2026-09-25 §3.2) ────────────────────────
+    As cadências do João (`JOAO_JOB_TYPES`) são preservadas **só quando o motivo é
+    `client_replied`**, e o critério é o MOTIVO — nunca o tipo do job sozinho.
+
+    Por que preservar nesse motivo: responder deixou de MATAR a esteira do João e passou
+    a ADIÁ-LA (`processar_resposta_joao`). As duas coisas rodavam ao mesmo tempo e uma
+    corria contra a outra: este cancelamento é *background task* registrada na INGESTÃO
+    do webhook (`meta_router.py`), milissegundos depois da resposta HTTP, enquanto
+    `processar_resposta_joao` só é alcançado via `fire_trigger("message_received")`,
+    depois do debounce do buffer e como `create_task` não aguardado. Quando o handler
+    chegava, os jobs já estavam `cancelled` e ele não fazia nada — por isso o botão
+    "ainda tenho estoque" NUNCA adiou os 60 dias em produção. Tirar este competidor do
+    caminho acaba com a corrida: não porque alguém ganhou, mas porque deixa de haver
+    dois. `processar_resposta_joao` vira a única autoridade sobre o que uma resposta faz
+    com a cadência do João.
+
+    Por que NÃO virar "preserva sempre": esta mesma função é chamada com motivos
+    TERMINAIS — `handoff`, `sem_interesse_atual`, `cliente_ativo_sem_demanda`,
+    `lead_already_served` e o caminho de blacklist/opt-out de
+    `leads/service.py::apply_optout_side_effects`. Em todos esses os jobs do João DEVEM
+    continuar sendo cancelados, e este é o backstop que cobre o caso de 15/07 (o cliente
+    pediu ao HUMANO para a IA parar e os toques seguiram saindo). Preservar sempre
+    reabriria aquele incidente pela porta dos fundos.
+
+    O caminho `standard` da ValerIA não muda em nenhum motivo: lá responder continua
+    cancelando, porque aquela cadência existe justamente porque o lead sumiu.
+
+    `reason` tem default porque o único chamador de produção sempre o passa, e o default
+    cai no lado SEGURO: sem motivo declarado não há recorte, e os jobs do João são
+    cancelados como sempre foram. Um default que preservasse seria a mutação proibida
+    escrita na assinatura.
     """
+    preservados = ["handoff_rescue"]
     if preserve_scheduled_return:
-        return ["handoff_rescue", "ai_scheduled_return"]
-    return ["handoff_rescue"]
+        preservados.append("ai_scheduled_return")
+    if reason == MOTIVO_RESPOSTA_DO_LEAD:
+        preservados.extend(sorted(JOAO_JOB_TYPES))
+    return preservados
 
 
 def cancel_followups_by_phone(
@@ -366,6 +410,10 @@ def cancel_followups_by_phone(
 
     `preserve_scheduled_return=False` (paradas terminais): também cancela os
     `ai_scheduled_return` — ver `_preserved_job_types`.
+
+    `reason` NÃO é só rótulo de log: com `client_replied` as cadências do João ficam de
+    fora do cancelamento, porque quem decide o que uma resposta faz com elas é
+    `processar_resposta_joao` (adia, não mata). Ver `_preserved_job_types`.
     """
     sb = get_supabase()
     id_col, id_values = _phone_identity_values(phone)
@@ -412,7 +460,7 @@ def cancel_followups_by_phone(
             "status": "cancelled",
             "cancel_reason": reason,
         }).in_("conversation_id", conv_ids).eq("status", "pending").not_.in_(
-            "job_type", _preserved_job_types(preserve_scheduled_return)
+            "job_type", _preserved_job_types(preserve_scheduled_return, reason)
         ).execute()
     except Exception as exc:
         logger.error(
@@ -1378,12 +1426,31 @@ def processar_resposta_joao(
     lead_id: str, texto: str | None, *,
     conversation_id: str | None = None, now: datetime | None = None,
 ) -> str | None:
-    """Aplica as duas regras de resposta da ata às matrículas ABERTAS do João.
+    """O que a resposta do lead faz com as matrículas ABERTAS do João. TRÊS ramos:
 
-        botão "ainda tenho estoque" -> adia 60 dias, SEM recomeçar a contagem (41:40)
         botão de saída              -> opt-out REAL (blacklist), reusando a autoridade
+        botão "ainda tenho estoque" -> adia `ADIAMENTO_ESTOQUE` (60 dias), sem recomeçar
+        qualquer outra resposta     -> adia `ADIAMENTO_RESPOSTA` (3 dias), sem recomeçar
 
-    Devolve a classificação aplicada, ou None quando não havia o que fazer.
+    Nessa ORDEM, que é a precedência: opt-out primeiro, o botão longo depois, e o
+    adiamento curto como o que sobra. Devolve a ação aplicada (`RESPOSTA_OPTOUT` ou
+    `RESPOSTA_ADIAR`), ou None quando não havia o que fazer — os dois adiamentos
+    devolvem `RESPOSTA_ADIAR` porque a AÇÃO é a mesma; só a distância muda, e ela está
+    no log e no `fire_at` gravado.
+
+    O TERCEIRO RAMO é novo (spec 2026-09-25 §3.3) e o `return None` antecipado que existia
+    quando `classificar_resposta` não classificava SAIU: "não é opt-out nem adiamento
+    longo" deixou de ser "nada a fazer" e passou a ter ação própria. Antes, responder
+    MATAVA a esteira (via `cancel_followups_by_phone`) e o cooldown por matrícula a
+    deixava reentrar ~2 dias depois, DO TOQUE 1 — sem teto, porque cada volta reiniciava
+    a contagem. Agora responder ADIA: o lead continua de onde parou, consome os toques e
+    chega a "Em Atenção" como deveria.
+
+    CUSTO NOVO no caminho quente do inbound: este handler passou a consultar
+    `follow_up_jobs` em TODA resposta, e não só nas duas que casavam um rótulo. É uma
+    leitura indexada por `lead_id`, feita fora do caminho da resposta HTTP
+    (`fire_trigger` → `create_task`), e não dá para evitá-la: saber se há matrícula
+    aberta é exatamente a pergunta que decide se há algo a adiar.
 
     ESCOPO — e ele é deliberado: só age quando o lead tem matrícula ABERTA do João.
     `buffer/processor.py` já tem um caminho determinístico de opt-out, e ele é
@@ -1393,8 +1460,6 @@ def processar_resposta_joao(
     banimento. Agir fora da cadência do João aqui reabriria esse buraco por outra porta.
     """
     classificacao = classificar_resposta(texto)
-    if not classificacao:
-        return None
 
     now = now or datetime.now(timezone.utc)
     sb = get_supabase()
@@ -1417,7 +1482,10 @@ def processar_resposta_joao(
         _optout_da_cadencia_joao(lead_id, texto, conversation_id, pendentes, sb)
         return RESPOSTA_OPTOUT
 
-    _adiar_matriculas_joao(jobs, pendentes, sb)
+    adiamento = (
+        ADIAMENTO_ESTOQUE if classificacao == RESPOSTA_ADIAR else ADIAMENTO_RESPOSTA
+    )
+    _adiar_matriculas_joao(jobs, pendentes, sb, adiamento=adiamento)
     return RESPOSTA_ADIAR
 
 
@@ -1480,12 +1548,22 @@ def _chave_matricula(job: Mapping[str, Any]) -> str:
     return str(md.get("matricula_id") or job.get("job_type") or "")
 
 
-def _adiar_matriculas_joao(jobs: list[dict], pendentes: list[dict], sb) -> None:
-    """"Ainda tenho estoque" -> +60 dias nos toques que ainda não saíram (ata 41:40).
+def _adiar_matriculas_joao(
+    jobs: list[dict], pendentes: list[dict], sb, *,
+    adiamento: timedelta = ADIAMENTO_ESTOQUE,
+) -> None:
+    """Empurra os toques que ainda não saíram em `adiamento`, sem recomeçar a contagem.
 
-    Duas coisas ao mesmo tempo, e a segunda é a que costuma se perder: adiar 60 dias, e
-    NÃO recomeçar a contagem. Recomeçar devolveria a cadência ao toque 1, e o lead
-    releria o texto que já leu.
+    Os DOIS ramos de adiamento de `processar_resposta_joao` passam por aqui e só diferem
+    na distância: `ADIAMENTO_ESTOQUE` (60 dias) para quem apertou "ainda tenho estoque"
+    (ata 41:40), `ADIAMENTO_RESPOSTA` (3 dias) para qualquer outra resposta
+    (spec 2026-09-25 §3.3). O default continua sendo o do botão, que é o ramo que esta
+    função serviu sozinha até aqui.
+
+    Duas coisas ao mesmo tempo, e a segunda é a que costuma se perder: adiar, e NÃO
+    recomeçar a contagem. Recomeçar devolveria a cadência ao toque 1, e o lead releria o
+    texto que já leu. É também o que dá TETO a quem responde muito: cada resposta
+    consome espera, nunca devolve toques.
 
     Quem faz o cálculo é `cadence_joao.adiar_toques` — a mesma função pura que a Task J1
     escreveu, com o filtro `sequence > ultimo_enviado` fazendo o trabalho de "os que já
@@ -1519,7 +1597,9 @@ def _adiar_matriculas_joao(jobs: list[dict], pendentes: list[dict], sb) -> None:
                   template_name=_job_metadata(job).get("template_name"))
             for seq, job in sorted(por_sequence.items())
         )
-        for adiado in adiar_toques(touches, ultimo_enviado=ultimo_enviado):
+        for adiado in adiar_toques(
+            touches, ultimo_enviado=ultimo_enviado, adiamento=adiamento,
+        ):
             job = por_sequence.get(adiado.sequence)
             if not job:
                 continue
@@ -1532,4 +1612,4 @@ def _adiar_matriculas_joao(jobs: list[dict], pendentes: list[dict], sb) -> None:
                     "[JOAO_CADENCIA] falha ao adiar o toque %s: %s", job.get("id"), exc)
         logger.info(
             "[JOAO_CADENCIA] matrícula %s adiada em %d dias (%d toque(s) em aberto)",
-            chave, ADIAMENTO_ESTOQUE.days, len(abertos))
+            chave, adiamento.days, len(abertos))
