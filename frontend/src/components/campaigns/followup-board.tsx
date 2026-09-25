@@ -60,6 +60,18 @@ type JoaoCadenciaDoFunil = {
   /** Dias entre o último toque e o move. Vem `1` MESMO quando `etapa_final_rotulo`
    * é nulo (é o default da dataclass do backend) — sozinho ele não significa nada. */
   dias_ate_mover: number;
+  /** Quantos dias os toques restantes deslizam quando o LEAD RESPONDE (spec
+   * 2026-09-25 §4). Só leitura, e o número NUNCA é escrito aqui: ele é
+   * `cadence_joao.ADIAMENTO_RESPOSTA` do backend, e duplicar a fonte é o defeito que
+   * esta base já corrigiu duas vezes este mês.
+   *
+   * OPCIONAL de propósito, ao contrário dos três acima: ele entrou DEPOIS deles, e o
+   * CRM e o FastAPI sobem separados — um frontend novo contra um backend de ontem
+   * recebe a cadência sem esta chave. Marcá-lo obrigatório não faria o campo chegar;
+   * só apagaria o aviso do `tsc` sobre o `undefined` que chega de qualquer jeito, e a
+   * tela escreveria "esperam undefined dias". É o mesmo motivo de `joao?` ser
+   * opcional em `CadenceDefinition`. */
+  adiamento_resposta_dias?: number;
   ativa: boolean;
   repete_ultimo: boolean;
   /** Só a metade que não depende da Meta: "todo toque tem NOME de template". */
@@ -282,6 +294,32 @@ function fraseDoMove(c: JoaoCadenciaDoFunil): string {
   if (!c.etapa_final_rotulo) return "";
   const espera = c.dias_ate_mover === 1 ? "1 dia" : `${c.dias_ate_mover} dias`;
   return ` · depois do último toque, espera ${espera} e move o card para ${c.etapa_final_rotulo}`;
+}
+
+/**
+ * O que a RESPOSTA do lead faz com os toques restantes (spec 2026-09-25 §4).
+ *
+ * Existe porque o comportamento é invisível: desde 25/09/2026 responder não mata mais
+ * a esteira, ela ADIA — e um toque chegando três dias depois de uma conversa, sem nada
+ * no cabeçalho explicando, é lido como atraso do motor. Vale para as CINCO esteiras:
+ * as de Reposição também passaram a adiar em vez de morrer.
+ *
+ * O NÚMERO VEM DO PAYLOAD, sempre. Escrever "3" aqui seria uma segunda fonte de
+ * verdade para uma constante que mora em `cadence_joao.ADIAMENTO_RESPOSTA`, e o dia em
+ * que o motor mudasse para 4 esta frase seguiria dizendo 3 — calada, convincente e
+ * errada. É exatamente a classe de defeito que mandou `{{nome}}` literal para clientes
+ * no WhatsApp em setembro.
+ *
+ * Ausente ou 0 → SEM frase. O CRM e o FastAPI sobem separados, então um backend de
+ * ontem serve este componente sem a chave; calar é melhor que "esperam undefined
+ * dias". Mesma leitura de `fraseDoSilencio` para o silêncio 0.
+ */
+function fraseDaResposta(c: JoaoCadenciaDoFunil): string {
+  const dias = c.adiamento_resposta_dias;
+  if (!dias) return "";
+  return `Se o lead responder, os toques restantes esperam ${
+    dias === 1 ? "1 dia" : `${dias} dias`
+  } e continuam de onde pararam.`;
 }
 
 const CAMPO =
@@ -522,6 +560,16 @@ function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
                 {cadencia.repete_ultimo && " · o último toque se repete até o lead pedir para parar"}
                 {fraseDoMove(cadencia)}
               </p>
+              {/* LINHA PRÓPRIA, não mais um ` · ` na frase de cima: a de cima é o
+                  RELÓGIO da cadência (quando começa, quando termina, para onde o card
+                  vai) e esta é o que o LEAD provoca. Emendar as duas produziria um
+                  parágrafo em que o operador precisa achar onde um assunto vira o
+                  outro — e é o assunto novo que ele ainda não conhece. */}
+              {fraseDaResposta(cadencia) && (
+                <p className="text-[12px] text-[#7b7b78] mt-0.5">
+                  {fraseDaResposta(cadencia)}
+                </p>
+              )}
             </div>
             <label className="flex items-center gap-2 text-[13px] text-[#111111]">
               <input

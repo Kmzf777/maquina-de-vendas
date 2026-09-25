@@ -45,11 +45,21 @@ O que esta suíte trava, em ordem de importância:
    ligar/desligar/configurar um funil não pode vazar para o funil-irmão que
    compartilha o mesmo código de cadência.
 
-6. **Três campos SÓ-LEITURA no payload da cadência** (spec 2026-09-23 §5/§6):
-   `gatilho_silencio_dias` (o segundo relógio do gatilho), `etapa_final_rotulo` e
-   `dias_ate_mover` (para onde o card vai no fim, e quando). Vêm do código, não têm
-   coluna em tabela nenhuma, e o PUT os ignora EM SILÊNCIO — a tela ecoar no PUT o
-   objeto que recebeu do GET não pode virar 400.
+6. **QUATRO campos SÓ-LEITURA no payload da cadência** (spec 2026-09-23 §5/§6 e
+   2026-09-25 §4): `gatilho_silencio_dias` (o segundo relógio do gatilho),
+   `etapa_final_rotulo` e `dias_ate_mover` (para onde o card vai no fim, e quando) —
+   e, desde 25/09/2026, `adiamento_resposta_dias`: quantos dias os toques restantes
+   deslizam quando o LEAD RESPONDE. Vêm do código, não têm coluna em tabela nenhuma,
+   e o PUT os ignora EM SILÊNCIO — a tela ecoar no PUT o objeto que recebeu do GET
+   não pode virar 400.
+
+   O quarto é diferente dos três primeiros: não é campo da `Cadencia`, é a constante
+   de módulo `cadence_joao.ADIAMENTO_RESPOSTA`, então viaja com o MESMO valor nas
+   cadências dos cinco funis. Os testes abaixo exigem `ADIAMENTO_RESPOSTA.days` — não
+   o literal `3` — porque o ponto do campo é justamente a tela não ter o número: um
+   teste que escrevesse `== 3` recriaria aqui a duplicação de fonte que o campo existe
+   para apagar, e o dia em que a constante virar 4 a suíte diria "verde" com o payload
+   mentindo.
 
 Sem banco na suíte: as duas tabelas de sobreposição e `message_templates` vêm do
 `_Banco` deste arquivo, no mesmo estilo do `_BancoDeTemplates` de
@@ -549,6 +559,95 @@ class TestTerceiraCadenciaEOsCamposNovos:
         assert c["etapa_final_rotulo"] == "Em atenção"
         assert "etapa_final_key" not in c, (
             "a key da etapa é contrato do agendador/handler, não da tela")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2c. GET: `adiamento_resposta_dias` — o QUARTO só-leitura (spec 2026-09-25 §4)
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestAdiamentoRespostaNoPayload:
+    """O que a RESPOSTA do lead faz com os toques restantes, dito para a tela.
+
+    Desde 25/09/2026 responder não mata mais a esteira: os toques que faltam deslizam
+    `cadence_joao.ADIAMENTO_RESPOSTA` e continuam de onde pararam. Isso é invisível na
+    tela sem este campo — e um toque chegando 3 dias depois de uma conversa, sem
+    explicação no cabeçalho, é lido como atraso do motor.
+
+    NENHUMA asserção desta classe escreve o número à mão. O contrato é
+    "`ADIAMENTO_RESPOSTA.days`, seja ele qual for": é exatamente a propriedade que
+    permite ao frontend não ter o número, e um `== 3` aqui reintroduziria a segunda
+    fonte de verdade no lugar onde ela é mais difícil de ver.
+    """
+
+    def test_todas_as_cadencias_dos_cinco_funis_trazem_o_campo(self):
+        """Uma varredura, não uma parametrização: a garantia que a tela precisa é
+        "não existe cadência sem este campo", e um `parametrize` só cobre a lista que
+        alguém lembrou de atualizar. Uma cadência nova (como "Proposta Enviada" foi em
+        23/09) entra neste teste sozinha."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        vistas = [(f["codigo"], c["codigo"])
+                  for f in _joao(payload)["funis"] for c in f["cadencias"]]
+        # Trava contra o verde vazio: "Recuperação" tem zero cadências DE PROPÓSITO,
+        # e um payload que viesse com todos os funis vazios passaria no laço abaixo
+        # sem executar nenhuma asserção.
+        assert len(vistas) == 10, vistas
+        for f in _joao(payload)["funis"]:
+            for c in f["cadencias"]:
+                assert c["adiamento_resposta_dias"] == cj.ADIAMENTO_RESPOSTA.days, (
+                    f'{f["codigo"]}/{c["codigo"]}')
+
+    def test_e_o_mesmo_numero_em_todas_elas(self):
+        """Hoje o adiamento é UMA constante do motor, não um campo por cadência. Se
+        um dia virar por-cadência, a FORMA do payload não muda — mas até lá um valor
+        diferente entre duas cadências só pode ser bug de montagem."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        valores = {c["adiamento_resposta_dias"]
+                   for f in _joao(payload)["funis"] for c in f["cadencias"]}
+        assert valores == {cj.ADIAMENTO_RESPOSTA.days}
+
+    def test_e_um_int_de_dias_nunca_o_timedelta(self):
+        """`timedelta` não é serializável por JSON, e `.seconds`/`.total_seconds()`
+        dariam 0 e 259200 — dois números que a tela escreveria como "dias"."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        v = _cadencia(_funil(payload, ATACADO), "novo")["adiamento_resposta_dias"]
+        assert isinstance(v, int) and not isinstance(v, bool)
+        assert v > 0
+
+    def test_as_duas_de_reposicao_tambem_adiam(self):
+        """Elas não movem card (`etapa_final_rotulo` nulo) e por isso são o lugar
+        natural para alguém "otimizar" o campo para fora. Passaram a adiar em vez de
+        morrer igual às outras (spec 2026-09-25 §4), então a frase vale para elas."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        for funil_codigo in (REPOSICAO_ATACADO, REPOSICAO_PRIVATE_LABEL):
+            for codigo in ("reposicao", "em_atencao"):
+                c = _cadencia(_funil(payload, funil_codigo), codigo)
+                assert c["adiamento_resposta_dias"] == cj.ADIAMENTO_RESPOSTA.days
+
+    def test_o_banco_NAO_sobrepoe_o_adiamento(self):
+        """Ele não tem coluna de sobreposição — nem poderia, já que nem é campo da
+        `Cadencia`. Uma linha gravada com esse nome (de um PUT ingênuo, ou de alguém
+        editando o banco à mão) não pode vazar para o payload."""
+        tabelas = {"followup_joao_cadencia": [
+            {**_cad(ATACADO, "novo", gatilho_dias=9), "adiamento_resposta_dias": 99},
+        ]}
+        with _banco(tabelas):
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, ATACADO), "novo")
+        assert c["gatilho_dias"] == 9          # esse SIM é sobreposto
+        assert c["adiamento_resposta_dias"] == cj.ADIAMENTO_RESPOSTA.days
+
+    def test_o_adiamento_do_BOTAO_nao_entra_no_payload(self):
+        """`ADIAMENTO_ESTOQUE` (60 dias, "ainda tenho estoque") continua só no motor.
+        A tela mostra UMA frase, sobre a resposta comum; dois números de adiamento no
+        mesmo cabeçalho é o tipo de detalhe que faz o operador ler o errado."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, ATACADO), "novo")
+        assert "adiamento_estoque_dias" not in c
+        assert c["adiamento_resposta_dias"] != cj.ADIAMENTO_ESTOQUE.days
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1092,12 +1191,15 @@ class TestProspeccaoNaoLigaHoje:
 class TestPutIgnoraOsCamposSoLeitura:
     """A tela ecoa no PUT o objeto de cadência que recebeu do GET — é o caminho mais
     provável de integração, e um campo só-leitura que explode quando ecoado é uma
-    armadilha, não uma guarda. Os três são IGNORADOS EM SILÊNCIO, nunca 400."""
+    armadilha, não uma guarda. Os QUATRO são IGNORADOS EM SILÊNCIO, nunca 400."""
 
     @pytest.mark.parametrize("campo,valor", [
         ("gatilho_silencio_dias", 9),
         ("etapa_final_rotulo", "Perdido"),
         ("dias_ate_mover", 30),
+        # O de 25/09: 30 é escolhido de propósito longe de 3 e de 60 — perto de
+        # `ADIAMENTO_ESTOQUE` o `!=` abaixo passaria por coincidência.
+        ("adiamento_resposta_dias", 30),
     ])
     def test_um_campo_so_leitura_no_corpo_nao_recusa_nem_grava(self, campo, valor):
         with _banco() as b:
@@ -1123,6 +1225,7 @@ class TestPutIgnoraOsCamposSoLeitura:
         corpo = dict(_cadencia(_funil(payload, ATACADO), "proposta"))
         corpo.pop("toques")
         assert "gatilho_silencio_dias" in corpo and "dias_ate_mover" in corpo
+        assert "adiamento_resposta_dias" in corpo
         corpo.update({"funil": ATACADO, "cadencia": "proposta", "gatilho_dias": 3})
         with _banco() as b:
             r = client.put(PUT_URL, json=corpo)
@@ -1138,11 +1241,13 @@ class TestPutIgnoraOsCamposSoLeitura:
         assert resolvida["gatilho_silencio_dias"] == 0
         assert resolvida["etapa_final_rotulo"] == "Em atenção"
         assert resolvida["dias_ate_mover"] == 1
+        assert resolvida["adiamento_resposta_dias"] == cj.ADIAMENTO_RESPOSTA.days
 
-    def test_a_resposta_do_PUT_traz_os_tres_campos(self):
+    def test_a_resposta_do_PUT_traz_os_quatro_campos(self):
         """O GET e o PUT devolvem a MESMA forma de cadência — a tela consome os dois
         com um tipo só, e um campo faltando no PUT quebraria o cabeçalho depois de
-        salvar."""
+        salvar. Foi o que quase aconteceu com os três de 23/09, e o quarto entra pela
+        mesma porta: `_cadencia_payload` monta a resposta dos dois verbos."""
         with _banco():
             r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
                                           "gatilho_dias": 4})
@@ -1150,6 +1255,7 @@ class TestPutIgnoraOsCamposSoLeitura:
         assert corpo["gatilho_silencio_dias"] == 2
         assert corpo["etapa_final_rotulo"] == "Em atenção"
         assert corpo["dias_ate_mover"] == 1
+        assert corpo["adiamento_resposta_dias"] == cj.ADIAMENTO_RESPOSTA.days
 
     def test_gravar_dias_e_template_de_proposta_funciona_normalmente(self):
         """A cadência nova não é um caso especial do PUT: o par (funil, cadência) é

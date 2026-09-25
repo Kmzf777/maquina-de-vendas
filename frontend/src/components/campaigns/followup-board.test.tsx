@@ -90,6 +90,12 @@ function cadenciaDoFunil(
     gatilho_silencio_dias: number;
     etapa_final_rotulo: string | null;
     dias_ate_mover: number;
+    /** O QUARTO só-leitura (spec 2026-09-25 §4): quantos dias os toques restantes
+     * deslizam quando o lead responde. O backend manda
+     * `cadence_joao.ADIAMENTO_RESPOSTA.days` — hoje 3 — o MESMO valor em todas as
+     * cadências dos cinco funis, e é isso que o default abaixo imita. Os testes que
+     * mexem neste número provam que a tela lê o payload. */
+    adiamento_resposta_dias: number;
   }> = {},
 ) {
   const semTemplate = toques.filter((t) => !t.template_name).map((t) => t.sequence);
@@ -104,6 +110,7 @@ function cadenciaDoFunil(
     gatilho_silencio_dias: extra.gatilho_silencio_dias ?? 0,
     etapa_final_rotulo: extra.etapa_final_rotulo ?? null,
     dias_ate_mover: extra.dias_ate_mover ?? 1,
+    adiamento_resposta_dias: extra.adiamento_resposta_dias ?? 3,
     ativa: false,
     repete_ultimo: extra.repete_ultimo ?? false,
     pode_ligar: extra.pode_ligar ?? semTemplate.length === 0,
@@ -448,6 +455,105 @@ describe("DefinitionStrip — o relógio completo no cabeçalho", () => {
     await abrirCadencia("Em atenção");
     expect(naTela()).toContain("o último toque se repete até o lead pedir para parar");
     expect(naTela()).not.toContain("move o card para");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// O que a RESPOSTA do lead faz — a frase de 25/09/2026 (spec §4)
+//
+// Desde 25/09 responder não mata mais a esteira: os toques restantes DESLIZAM e
+// continuam de onde pararam. Sem esta frase o comportamento é invisível, e um toque
+// chegando três dias depois de uma conversa é lido como atraso do motor.
+//
+// O que estes testes existem para travar não é a frase, é a FONTE do número. Ele mora
+// em `cadence_joao.ADIAMENTO_RESPOSTA` e chega por `adiamento_resposta_dias`; um "3"
+// digitado no componente passaria em qualquer teste que usasse o payload padrão — por
+// isso o teste da mutação abaixo troca o valor e exige que a TELA mude junto. Escrever
+// o número à mão é a classe de defeito que mandou `{{nome}}` literal para clientes no
+// WhatsApp em setembro.
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("DefinitionStrip — a resposta do lead adia os toques restantes", () => {
+  it("Novo: a frase aparece com o número que veio no payload", async () => {
+    await abrirJoao(); // abre em Atacado / Novo
+    expect(naTela()).toContain(
+      "Se o lead responder, os toques restantes esperam 3 dias e continuam de onde pararam.",
+    );
+  });
+
+  it("vale para as CINCO esteiras, inclusive as de Reposição", async () => {
+    // As de Reposição são o caso que mudou de comportamento nesta entrega (antes a
+    // resposta matava; agora adia igual às outras) e são também as que NÃO movem card
+    // — ou seja, o lugar natural para alguém condicionar a frase ao
+    // `etapa_final_rotulo` por engano.
+    await abrirJoao();
+    for (const c of ["Novo", "Em conversa", "Proposta Enviada"]) {
+      await abrirCadencia(c);
+      expect(naTela()).toContain("os toques restantes esperam 3 dias");
+    }
+    await abrirFunil("João - Reposição Atacado");
+    for (const c of ["Reposição", "Em atenção"]) {
+      await abrirCadencia(c);
+      expect(naTela()).toContain("os toques restantes esperam 3 dias");
+    }
+  });
+
+  it("MUTAÇÃO: payload com 7 → a tela diz 7, nunca o 3 do motor de hoje", async () => {
+    // O teste que separa "lê o payload" de "tem um 3 escrito à mão". Com um literal no
+    // componente, os dois testes acima ficariam VERDES e só este fica vermelho.
+    const def = definicao();
+    def.joao.funis[0].cadencias[0].adiamento_resposta_dias = 7;
+    await abrirJoao(def);
+    expect(naTela()).toContain("os toques restantes esperam 7 dias");
+    expect(naTela()).not.toContain("esperam 3 dias");
+  });
+
+  it("MUTAÇÃO: payload com 1 → singular, sem o (s) preguiçoso", async () => {
+    const def = definicao();
+    def.joao.funis[0].cadencias[0].adiamento_resposta_dias = 1;
+    await abrirJoao(def);
+    expect(naTela()).toContain("os toques restantes esperam 1 dia e continuam");
+    expect(naTela()).not.toContain("esperam 1 dias");
+  });
+
+  it("campo AUSENTE (backend antigo): sem frase, e sem 'undefined' na tela", async () => {
+    // O CRM e o FastAPI sobem separados — um frontend novo contra o backend de ontem
+    // recebe a cadência sem a chave. Calar é a única saída honesta: a tela não tem
+    // como saber o prazo, e "esperam undefined dias" é pior que silêncio.
+    const def = definicao();
+    const cadencias = def.joao.funis[0].cadencias as Partial<
+      ReturnType<typeof cadenciaDoFunil>
+    >[];
+    delete cadencias[0].adiamento_resposta_dias;
+    await abrirJoao(def);
+    expect(naTela()).not.toContain("os toques restantes");
+    expect(naTela()).not.toContain("undefined");
+    // O resto do cabeçalho continua inteiro: a frase que falta não derruba as outras.
+    expect(naTela()).toContain("Dispara com o card parado 2 dia(s) na etapa Novo");
+  });
+
+  it("campo 0: sem frase (mesma leitura do silêncio 0)", async () => {
+    // `0` não é "adia zero dias", é "não sei" — e "esperam 0 dias" descreveria um
+    // motor que dispara em cima da resposta do lead, que é o oposto da regra.
+    const def = definicao();
+    def.joao.funis[0].cadencias[0].adiamento_resposta_dias = 0;
+    await abrirJoao(def);
+    expect(naTela()).not.toContain("os toques restantes");
+    expect(naTela()).not.toContain("esperam 0");
+  });
+
+  it("a frase sobrevive ao salvar (o PUT devolve a cadência com o campo)", async () => {
+    // Depois de salvar, o componente substitui a cadência pela que o PUT devolveu. Se
+    // essa resposta perdesse o campo, a frase sumiria da tela sem erro nenhum — que é
+    // exatamente como um campo só-leitura costuma desaparecer.
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    fireEvent.change(screen.getByLabelText("Prazo do gatilho (dias)"), {
+      target: { value: "50" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    expect(naTela()).toContain("os toques restantes esperam 3 dias");
   });
 });
 
