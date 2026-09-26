@@ -60,7 +60,7 @@ e com uma saída explícita para quem nunca responde (decisão 5 abaixo). As dua
 Reposição NÃO foram tocadas — os números delas continuam sendo os da ata de 10/09/2026.
 
 ──────────────────────────────────────────────────────────────────────────────
-CINCO DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
+SEIS DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
 ──────────────────────────────────────────────────────────────────────────────
 
 1. **"Em atenção" não tem template, e isso é uma declaração.**
@@ -112,8 +112,8 @@ CINCO DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
    Os 8 templates de Reposição (`joao_reposicao_*`) seguem conectados: aquela cadência
    não mudou.
 
-5. **As três cadências de prospecção MOVEM o card no fim — e é a única exceção ao
-   "o motor nunca move card" do spec de 18/09.**
+5. **As cadências MOVEM o card no fim — e é a única exceção ao "o motor nunca move
+   card" do spec de 18/09.**
    Passado o último toque, se o lead nunca respondeu, o card vai para a etapa
    `em_atencao` ("Em atenção") — que existe nos quatro funis com cadência
    (`20260910_contrato_etapas_joao.sql:146`). Aqui isto é só DECLARAÇÃO: os campos
@@ -121,8 +121,40 @@ CINCO DECISÕES QUE PARECEM ARBITRÁRIAS E NÃO SÃO
    quem cria o job de mover é o agendador (`service.py`) e quem o executa é o handler.
    Cuidado com a ambiguidade de nome, irmã da decisão 2: `em_atencao` é, ao mesmo
    tempo, o código de uma CADÊNCIA (a dos funis de Reposição) e a key de uma ETAPA
-   (nos funis de prospecção). `etapa_final_key` é sempre a ETAPA — as cadências de
-   Reposição têm `etapa_final_key=None` e não movem card nenhum.
+   (nos funis de prospecção E nos de Reposição). `etapa_final_key` é sempre a ETAPA.
+   Em 26/09/2026 as duas cadências de `reposicao` entraram nessa regra (decisão 6);
+   só `em_atencao`, que não termina (`repete_ultimo`), segue sem destino final.
+
+6. **A esteira de Reposição ENTRA numa etapa e VIVE em duas — e é por isso que
+   `gatilho_stage_key` e `etapas_vivas` são campos diferentes (spec 26/09 §2.1).**
+   A jornada pedida pelo dono: o card nasce em "Cliente Ativo" quando a venda fecha;
+   45 dias parado ali disparam o toque 1, que ALÉM de enviar **move o card para "Já
+   chamado"** (`Touch.move_para`); os toques 2, 3 e 4 saem de lá mesmo; e no fim o
+   card vai para "Em atenção".
+   Sem `etapas_vivas` isso se mataria no toque 1: a guarda de 25/09 cancela todo
+   toque cujo card saiu da etapa vigiada, e a etapa vigiada da Reposição é `novo`.
+   Mover no toque 1 cancelaria os toques 2, 3 e 4 — pela guarda que existe
+   justamente para proteger o funil. É a mesma parede que matou a abordagem do
+   builder em setembro (`_guard_broken`).
+   Então são DUAS perguntas distintas, e cada uma tem seu campo:
+
+       gatilho_stage_key  → onde o card ENTRA      (sempre UMA; é o que a RPC filtra)
+       etapas_vivas       → onde o card CONTINUA   (um CONJUNTO; pertencimento)
+
+   `etapas_vivas=()` é o default e significa "só a de entrada" — é ele que mantém as
+   quatro cadências de prospecção com exatamente o comportamento de hoje. A
+   propriedade `etapas_vivas_efetivas` resolve o vazio; ninguém deve ler o campo cru.
+   Consequência de graça, e ela é metade do desenho: como a MATRÍCULA continua
+   acontecendo só a partir de `novo`, card parado em "Já chamado" **não é varrido de
+   novo** — o segundo ciclo só começa quando alguém o devolve a "Cliente Ativo".
+
+   Três invariantes que a suíte cobra, e cada uma é um jeito conhecido de quebrar:
+     · o gatilho tem de estar entre as etapas vivas — senão a esteira morre no
+       primeiro toque, antes de sair do lugar;
+     · todo `move_para` tem de estar entre as etapas vivas — senão o toque que move
+       cancela os toques seguintes, que é exatamente o defeito descrito acima;
+     · `etapa_final_key` NUNCA pode estar entre elas — o card movido para o destino
+       final tem de sair do alcance da esteira, ou o fim vira laço.
 
 ──────────────────────────────────────────────────────────────────────────────
 O BANCO SOBREPÕE, O CÓDIGO É A ORIGEM (ata 33:28)
@@ -168,9 +200,22 @@ PIPELINE_RECUPERACAO = "fa94029b-d524-4550-919e-67233dfe3a94"
 # ── Respostas do lead (ata 41:40) ──────────────────────────────────────────────
 RESPOSTA_ADIAR = "adiar"
 RESPOSTA_OPTOUT = "optout"
+# NOVO em 26/09/2026 (spec §2.3): o botão POSITIVO dos templates de Reposição.
+# "Preciso repor" é o sinal mais quente que existe nesta esteira, e até ontem ele
+# caía no ramo genérico — adiava 3 dias e mandava outro "ainda tem estoque?"
+# depois, possivelmente enquanto o João já negociava. Encerra a matrícula: o
+# objetivo foi alcançado, o vendedor assume. Não é opt-out e não vira blacklist.
+RESPOSTA_INTERESSE = "interesse"
 
-# "Ainda tenho estoque" → adia 60 dias, SEM recomeçar a contagem.
-ADIAMENTO_ESTOQUE = timedelta(days=60)
+# "Ainda tenho estoque" → adia 30 dias, SEM recomeçar a contagem.
+#
+# Era 60 até 26/09/2026. O número passou a ser EDITÁVEL pelo dono do funil
+# (`followup_joao_ajustes.adiamento_estoque_dias`, migration 20260926) e este
+# passou a ser só o DEFAULT DE CÓDIGO — quem lê o banco é `service.py`
+# (`carregar_ajustes_joao`), fail-closed para cá quando a tabela não existe.
+# Continua sendo o piso do desenho: 30 dias é a metade do ciclo de reposição,
+# e tem de seguir MAIOR que `ADIAMENTO_RESPOSTA` (ver abaixo).
+ADIAMENTO_ESTOQUE = timedelta(days=30)
 
 # O rótulo é literal da ata E literal dos templates aprovados, já normalizado
 # (minúsculas, sem acento, sem pontuação) para bater com `_normalize_reply`. Um
@@ -178,12 +223,45 @@ ADIAMENTO_ESTOQUE = timedelta(days=60)
 # exatamente o destino de "Nao atendo mais" e "Tirar dos contatos" em produção.
 ROTULOS_ADIAMENTO: frozenset[str] = frozenset({"ainda tenho estoque"})
 
+# O VOCABULÁRIO do botão positivo, mesma disciplina de `ROTULOS_ADIAMENTO`:
+# normalizado, e comparado por IGUALDADE — nunca substring. A regra da igualdade
+# não é preferência de estilo, é cicatriz: `"atacado"` é substring de
+# `"reposicao_atacado"`, e foi assim que a ambiguidade de funil voltou uma vez
+# (spec 2026-09-21 §1). Aqui o custo do substring seria outro e igualmente caro:
+# "preciso repor mas só mês que vem" encerraria a esteira de um lead que ainda
+# não quer comprar.
+#
+# As três frases são os botões positivos REAIS dos templates de Reposição já
+# APROVADOS na Meta (`scripts/create_templates_esteiras_joao.py`), e a suíte cruza
+# as duas listas — declarar aqui uma frase que nenhum template traz é prometer um
+# botão que ninguém consegue apertar.
+#
+# ⚠️ COBERTURA MEDIDA EM 26/09/2026, E ELA NÃO É TOTAL: estas três cobrem os
+#    O conjunto cobre os OITO templates de Reposição — os quatro de Atacado e os
+#    quatro de Private Label. São CINCO frases e não três porque o Private Label
+#    escreve os toques 3 e 4 com palavras próprias ("Quero os números", "Quero
+#    programar"): a spec de 26/09 listou só as do Atacado, e a H1 pegou a lacuna
+#    cruzando o conjunto com os botões REAIS dos templates. Deixar as duas de fora
+#    faria o cliente do Private Label apertar o botão mais quente do fluxo e cair
+#    no ramo genérico — a classe de botão morto que este conjunto existe para
+#    impedir, e que já chegou a produção duas vezes nesta base.
+#
+#    As cinco significam a mesma coisa em termos de AÇÃO: o lead quer seguir, e a
+#    esteira sai da frente para o João assumir.
+ROTULOS_INTERESSE: frozenset[str] = frozenset({
+    "preciso repor",      # Atacado t1 e t2, Private Label t1 e t2
+    "quero a tabela",     # Atacado t3
+    "quero repor agora",  # Atacado t4
+    "quero os numeros",   # Private Label t3
+    "quero programar",    # Private Label t4
+})
+
 # Qualquer OUTRA resposta do lead → adia 3 dias, também SEM recomeçar a contagem.
 #
-# É a irmã de `ADIAMENTO_ESTOQUE`, e o par só faz sentido junto: o BOTÃO continua
-# valendo 60 dias ("ainda tenho estoque" é um lead que declarou não precisar de nada
-# tão cedo), enquanto responder qualquer outra coisa passa a ser motivo para ESPERAR
-# um pouco, nunca para MATAR a esteira (spec 2026-09-25 §3.3).
+# É a irmã de `ADIAMENTO_ESTOQUE`, e o par só faz sentido junto: o BOTÃO vale muito
+# mais ("ainda tenho estoque" é um lead que declarou não precisar de nada tão cedo),
+# enquanto responder qualquer outra coisa passa a ser motivo para ESPERAR um pouco,
+# nunca para MATAR a esteira (spec 2026-09-25 §3.3).
 #
 # Antes deste número existir, responder cancelava a cadência inteira — e o cooldown
 # por matrícula de 23/09 a deixava reentrar ~2 dias depois, DO TOQUE 1. O lead relia as
@@ -208,18 +286,112 @@ class Touch:
       texto aprovado, e a cadência não pode ser ligada enquanto for assim.
     - `aceita_adiamento`: o template deste toque traz o botão "Ainda tenho estoque".
       Não é decoração: é o que diz ao agendador (`service.py`) que a resposta pode
-      adiar em 60 dias em vez de cancelar. A suíte cruza este campo com os BOTÕES
-      REAIS do template, para que ele nunca prometa um botão que não existe.
+      adiar `ADIAMENTO_ESTOQUE` em vez de cancelar. A suíte cruza este campo com os
+      BOTÕES REAIS do template, para que ele nunca prometa um botão que não existe.
+    - `move_para`: a key da etapa para onde o card vai DEPOIS deste toque sair
+      (26/09/2026, spec §3.2). `None` = o toque não move nada, que é o caso de 21
+      dos 22 toques declarados aqui.
+
+      A ORDEM É OBRIGATÓRIA, e quem a cumpre é o handler dos jobs: **envia → marca `sent`
+      → move**. Se o move falhar, o toque permanece `sent` e NÃO é retentado — a
+      mensagem já saiu, e reenviá-la seria pior que o card ficar na etapa antiga.
+      É o mesmo raciocínio que faz `_mover_card_joao` marcar `sent` em vez de
+      `cancelled` quando não consegue mover.
+
+      Um `move_para` fora de `etapas_vivas` da cadência é um defeito, não uma
+      configuração: o toque que move mataria os toques seguintes pela guarda de
+      etapa (decisão 6 no cabeçalho). A suíte cobra isso.
     """
 
     sequence: int
     offset: timedelta
     template_name: str | None
     aceita_adiamento: bool = False
+    move_para: str | None = None
+
+
+# A key e o rótulo da etapa intermediária da Reposição ("Já chamado"). Ficam aqui,
+# hardcoded, pelo MESMO motivo de `gatilho_stage_rotulo`: `pipeline_stages.label` é
+# editável por qualquer operador no CRM e não é contrato estável. A key é
+# `chamado_reposicao`, e NÃO `ja_chamado` — a diferença está registrada em
+# `20260910_contrato_etapas_joao.sql:34`, e errá-la faz o move não achar a etapa.
+ETAPA_CHAMADO_REPOSICAO_KEY = "chamado_reposicao"
+ETAPA_CHAMADO_REPOSICAO_ROTULO = "Já chamado"
+
+
+class _VidaNaEtapa:
+    """O conjunto de etapas em que a esteira segue viva — decisão 6 no cabeçalho.
+
+    Mixin de COMPORTAMENTO, sem campo nenhum: `Cadencia` e `CadenciaResolvida`
+    declaram `etapas_vivas` cada uma (são dataclasses distintas e é assim que a
+    resolvida carrega o dado até o agendador), e as quatro perguntas que se fazem
+    sobre esse conjunto moram aqui, uma vez só. Duas cópias divergiriam, e o
+    sintoma seria a guarda do envio e a do move discordando sobre o mesmo card.
+
+    Nenhum campo é anotado aqui de propósito: `@dataclass` só herda campos de bases
+    que TAMBÉM são dataclasses, então anotar `etapas_vivas` neste mixin não criaria
+    campo — só daria a impressão de que criou.
+    """
+
+    @property
+    def etapas_vivas_efetivas(self) -> tuple[str, ...]:
+        """As etapas vivas de verdade — `(gatilho_stage_key,)` quando o campo é ().
+
+        É SEMPRE esta a propriedade a consultar, nunca o campo cru: o default vazio
+        é o que mantém as quatro cadências de prospecção com o comportamento de
+        etapa única que elas sempre tiveram, e ler o campo direto veria `()` e
+        concluiria "não vive em lugar nenhum".
+        """
+        return self.etapas_vivas or (self.gatilho_stage_key,)
+
+    def vive_na_etapa(self, etapa_key: str | None) -> bool:
+        """A esteira segue viva com o card nesta etapa? PERTENCIMENTO, não igualdade.
+
+        `None` (card sem etapa legível — sumiu, ou a etapa perdeu a `key` no CRM)
+        devolve False: falha fechada. Não saber onde o card está é razão para NÃO
+        mandar template para quem talvez já tenha saído do funil.
+        """
+        if not etapa_key:
+            return False
+        return etapa_key in self.etapas_vivas_efetivas
+
+    def rotulo_da_etapa(self, etapa_key: str | None) -> str | None:
+        """O rótulo humano de uma etapa desta cadência, ou None.
+
+        Existe para a API não voltar a vazar chave crua na tela — é a regra da
+        entrega de 21/09, e o motivo de os rótulos serem hardcoded neste módulo e
+        não lidos de `pipeline_stages.label`. A mesma key significa coisas
+        diferentes em funis diferentes (`novo` é "Novo" na prospecção e "Cliente
+        Ativo" na Reposição), então a tradução é POR CADÊNCIA — um mapa global
+        key→rótulo reintroduziria exatamente a ambiguidade que este módulo corrige.
+        """
+        if not etapa_key:
+            return None
+        if etapa_key == self.gatilho_stage_key:
+            return self.gatilho_stage_rotulo
+        if etapa_key == self.etapa_final_key:
+            return self.etapa_final_rotulo
+        if etapa_key == ETAPA_CHAMADO_REPOSICAO_KEY:
+            return ETAPA_CHAMADO_REPOSICAO_ROTULO
+        return None
+
+    @property
+    def etapas_vivas_rotulos(self) -> tuple[str, ...]:
+        """Os rótulos das etapas vivas, na ordem declarada. Nunca a key crua.
+
+        Uma etapa viva sem rótulo declarado cai fora da tupla em vez de aparecer
+        como key na tela — e a suíte exige que isso nunca aconteça, para que o
+        silêncio aqui não vire um campo faltando na interface.
+        """
+        return tuple(
+            rotulo
+            for etapa in self.etapas_vivas_efetivas
+            if (rotulo := self.rotulo_da_etapa(etapa)) is not None
+        )
 
 
 @dataclass(frozen=True)
-class Cadencia:
+class Cadencia(_VidaNaEtapa):
     """Uma cadência DENTRO de um funil (antes vivia sozinha, com duas "linhas").
 
     `ativa` é SEMPRE False no código (spec §7 do design de 18/09, "tudo nasce
@@ -246,6 +418,10 @@ class Cadencia:
     # ("45 dias em Cliente Ativo"). Por isso o default é 0: ele preserva exatamente o
     # que as cadências de Reposição já faziam.
     gatilho_silencio_dias: int = 0
+    # O CONJUNTO de etapas em que a esteira segue viva (decisão 6 no cabeçalho).
+    # `()` = "só a de entrada", e é o que mantém as quatro de prospecção idênticas
+    # ao que sempre foram. Leia sempre por `etapas_vivas_efetivas`.
+    etapas_vivas: tuple[str, ...] = ()
     # Para onde o card vai quando a cadência termina sem o lead responder, e quanto
     # tempo depois do ÚLTIMO toque (decisão 5 no cabeçalho). `None` = esta cadência
     # não move card — o comportamento de sempre, e o das duas de Reposição.
@@ -294,7 +470,7 @@ class Funil:
 
 
 @dataclass(frozen=True)
-class CadenciaResolvida:
+class CadenciaResolvida(_VidaNaEtapa):
     """A cadência DEPOIS da sobreposição do banco — o que o agendador consome."""
 
     codigo: str
@@ -315,6 +491,11 @@ class CadenciaResolvida:
     etapa_final_key: str | None = None
     etapa_final_rotulo: str | None = None
     dias_ate_mover: int = 1
+    # O quinto campo que vem direto do código (26/09/2026). Desce até aqui porque
+    # quem faz a pergunta "o card ainda está numa etapa viva?" é o HANDLER, na hora
+    # do envio, e ele só tem a resolvida na mão — ter que voltar ao código para
+    # buscá-la seria a segunda fonte que a decisão 6 existe para evitar.
+    etapas_vivas: tuple[str, ...] = ()
 
     @property
     def intervalo_repeticao(self) -> timedelta | None:
@@ -342,14 +523,22 @@ class CadenciaResolvida:
 # Os funis e suas cadências
 # ═══════════════════════════════════════════════════════════════════════════════
 def _toques(offsets_em_dias: tuple[int, ...], templates: tuple[str | None, ...],
-            adiamento: tuple[int, ...] = ()) -> tuple[Touch, ...]:
-    """Monta os toques de uma cadência. `adiamento` lista as sequences com o botão."""
+            adiamento: tuple[int, ...] = (),
+            move: Mapping[int, str] | None = None) -> tuple[Touch, ...]:
+    """Monta os toques de uma cadência.
+
+    `adiamento` lista as sequences com o botão "Ainda tenho estoque"; `move` mapeia
+    sequence → key da etapa para onde o card vai depois daquele toque sair (hoje só
+    o toque 1 das duas cadências de Reposição).
+    """
+    move = move or {}
     return tuple(
         Touch(
             sequence=i,
             offset=timedelta(days=dias),
             template_name=template,
             aceita_adiamento=i in adiamento,
+            move_para=move.get(i),
         )
         for i, (dias, template) in enumerate(zip(offsets_em_dias, templates), start=1)
     )
@@ -361,6 +550,8 @@ def _toques(offsets_em_dias: tuple[int, ...], templates: tuple[str | None, ...],
 #
 # A etapa de destino das três, e o prazo. "Em atenção" aqui é ETAPA, nunca o código da
 # cadência de mesmo nome que vive nos funis de Reposição (decisão 5 no cabeçalho).
+# Desde 26/09/2026 as duas cadências de `reposicao` usam as MESMAS três constantes —
+# por isso elas ficam aqui em cima, e não dentro da fábrica de prospecção.
 ETAPA_FINAL_KEY = "em_atencao"
 ETAPA_FINAL_ROTULO = "Em atenção"
 DIAS_ATE_MOVER = 1
@@ -472,14 +663,18 @@ _PROPOSTA_PRIVATE_LABEL = _cadencia_de_prospeccao(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# As duas cadências dos funis de Reposição — INTACTAS em 23/09/2026
+# As duas cadências dos funis de Reposição
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# O spec de 23/09 reformula só a prospecção (§7, "o que NÃO muda"). Daqui para baixo
-# tudo segue como estava: os números são os da ata de 10/09/2026, os 8 templates de
-# Reposição continuam conectados, e os quatro campos novos ficam nos defaults — que
-# foram escolhidos exatamente para isso: `gatilho_silencio_dias=0` (o relógio destas
-# duas é mesmo o da ETAPA) e `etapa_final_key=None` (estas não movem card nenhum).
+# Os PRAZOS são os da ata de 10/09/2026 e não mudaram nenhuma vez: gatilho 45,
+# toques 0/15/30/45. O spec de 23/09 não as tocou (§7, "o que NÃO muda"); o de
+# 26/09 mexeu só no CAMINHO DO CARD, nunca nos números:
+#
+#   · `etapas_vivas` — entra por "Cliente Ativo", vive também em "Já chamado";
+#   · `move_para` no toque 1 — o primeiro toque move o card para "Já chamado";
+#   · `etapa_final_key` — no fim o card vai para "Em atenção" (era None).
+#
+# `gatilho_silencio_dias` continua 0: o relógio destas duas é mesmo o da ETAPA.
 
 # ── "Reposição" — 34:24, "o dia 45 ele vai receber uma mensagem... de 15 em 15" ─
 #
@@ -495,6 +690,15 @@ _REPOSICAO_OFFSETS = (0, 15, 30, 45)
 # e não tem o que adiar.
 _REPOSICAO_ADIAMENTO = (1, 2, 3)
 
+# Onde a esteira de Reposição segue viva (decisão 6 no cabeçalho). A ordem é a da
+# jornada — entrada primeiro —, porque é ela que a tela mostra.
+_REPOSICAO_ETAPAS_VIVAS = ("novo", ETAPA_CHAMADO_REPOSICAO_KEY)
+# O toque 1, e SÓ ele, move o card para "Já chamado" depois de enviar. Os 698 cards
+# que já estavam nessa coluna em 26/09/2026 foram postos lá por gente/importação,
+# sem disparo nenhum — é o backfill `scripts/backfill_reposicao_ja_chamado.sql` que
+# os devolve a "Cliente Ativo" (spec §2.2 e §5), não este mapa.
+_REPOSICAO_MOVE = {1: ETAPA_CHAMADO_REPOSICAO_KEY}
+
 # "Cliente Ativo" é a key `novo` do funil de Reposição — o card nasce ali quando a
 # venda fecha, então dias na etapa == dias desde a compra (decisão 2 no cabeçalho).
 _REPOSICAO_ATACADO = Cadencia(
@@ -505,7 +709,11 @@ _REPOSICAO_ATACADO = Cadencia(
     gatilho_dias=45,
     touches=_toques(_REPOSICAO_OFFSETS,
                      tuple(f"joao_reposicao_atacado_t{n}" for n in range(1, 5)),
-                     _REPOSICAO_ADIAMENTO),
+                     _REPOSICAO_ADIAMENTO, _REPOSICAO_MOVE),
+    etapas_vivas=_REPOSICAO_ETAPAS_VIVAS,
+    etapa_final_key=ETAPA_FINAL_KEY,
+    etapa_final_rotulo=ETAPA_FINAL_ROTULO,
+    dias_ate_mover=DIAS_ATE_MOVER,
 )
 _REPOSICAO_PRIVATE_LABEL = Cadencia(
     codigo="reposicao",
@@ -515,7 +723,11 @@ _REPOSICAO_PRIVATE_LABEL = Cadencia(
     gatilho_dias=45,
     touches=_toques(_REPOSICAO_OFFSETS,
                      tuple(f"joao_reposicao_privatelabel_t{n}" for n in range(1, 5)),
-                     _REPOSICAO_ADIAMENTO),
+                     _REPOSICAO_ADIAMENTO, _REPOSICAO_MOVE),
+    etapas_vivas=_REPOSICAO_ETAPAS_VIVAS,
+    etapa_final_key=ETAPA_FINAL_KEY,
+    etapa_final_rotulo=ETAPA_FINAL_ROTULO,
+    dias_ate_mover=DIAS_ATE_MOVER,
 )
 
 # ── "Em atenção" — 38:08, "uma mensagem a cada três dias até ele falar que não" ──
@@ -689,12 +901,15 @@ def resolver(
         repete_ultimo=cadencia.repete_ultimo,
         touches=resolver_cadencia(funil, codigo, overrides),
         # Sem sobreposição de banco, de propósito (spec 2026-09-23 §5): o prazo
-        # editável na tela é o de ETAPA (`gatilho_dias`). Estes quatro vêm do código
-        # e a tela só os MOSTRA.
+        # editável na tela é o de ETAPA (`gatilho_dias`). Estes cinco vêm do código
+        # e a tela só os MOSTRA. `etapas_vivas` em especial NÃO é editável: é a
+        # topologia do funil, não um prazo — mudá-la pela tela seria dar ao operador
+        # a chave de matar a esteira no toque que move (decisão 6 no cabeçalho).
         gatilho_silencio_dias=cadencia.gatilho_silencio_dias,
         etapa_final_key=cadencia.etapa_final_key,
         etapa_final_rotulo=cadencia.etapa_final_rotulo,
         dias_ate_mover=cadencia.dias_ate_mover,
+        etapas_vivas=cadencia.etapas_vivas,
     )
 
 
@@ -739,15 +954,27 @@ def validar_toques(touches: tuple[Touch, ...]) -> tuple[str, ...]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# As duas regras de resposta da ata (41:40)
+# As regras de resposta (ata 41:40, e o botão positivo de 26/09/2026)
 # ═══════════════════════════════════════════════════════════════════════════════
 def classificar_resposta(texto: str | None) -> str | None:
-    """`RESPOSTA_OPTOUT`, `RESPOSTA_ADIAR` ou None. PURA.
+    """`RESPOSTA_OPTOUT`, `RESPOSTA_INTERESSE`, `RESPOSTA_ADIAR` ou None. PURA.
 
-    As duas regras que a ata dá para a resposta do lead, e nada além delas:
+    Os três botões que os templates de Reposição realmente têm, e nada além deles:
 
-      · botão de saída            → opt-out REAL (blacklist, não só "para de tocar")
-      · botão "ainda tenho estoque" → adia `ADIAMENTO_ESTOQUE` (60 dias), sem recomeçar
+      · botão de saída              → opt-out REAL (blacklist, não só "para de tocar")
+      · botão positivo              → o lead quer repor: encerra a esteira e o João
+                                      assume (spec 26/09 §2.3)
+      · botão "ainda tenho estoque" → adia `ADIAMENTO_ESTOQUE`, sem recomeçar
+
+    A PRECEDÊNCIA é saída → interesse → adiamento → None, e ela não é arbitrária:
+
+      · saída primeiro porque é a única irreversível. Um texto que casasse com dois
+        ramos tem de cair no que protege o lead, nunca no que continua falando com
+        quem pediu para parar;
+      · interesse antes de adiamento porque o custo de errar é assimétrico. Tratar
+        "quero repor agora" como adiamento cala a esteira por 30 dias em cima do
+        sinal mais quente que ela produz; o inverso apenas encerra cedo uma esteira
+        que o vendedor pode retomar à mão.
 
     O opt-out é DELEGADO a `campaigns/worker.py::is_optout_reply`, a única autoridade
     sobre o que conta como botão de saída (frozenset de duas frases, igualdade
@@ -755,11 +982,14 @@ def classificar_resposta(texto: str | None) -> str | None:
     desvio é um lead quente virar blacklist permanente, ou um "parar mensagens" que o
     sistema não honra.
 
-    A comparação do adiamento é IGUALDADE normalizada pelo mesmo `_normalize_reply`,
-    nunca substring: "ainda tenho estoque mas quero ver a tabela" é um lead QUENTE, e
-    adiar 60 dias seria perdê-lo. O parser da Meta achata o clique de QUICK_REPLY em
-    texto, então botão e digitação chegam aqui indistinguíveis — a igualdade é o que
-    faz só a frase exata contar.
+    As outras duas comparações são IGUALDADE normalizada pelo mesmo `_normalize_reply`,
+    NUNCA substring — e a igualdade é o ponto, nos dois sentidos: "ainda tenho estoque
+    mas quero ver a tabela" é um lead QUENTE que o adiamento perderia, e "preciso repor
+    mas só mês que vem" é um lead que ainda não compra e que o encerramento largaria
+    cedo demais. (A mesma doutrina que impediu `"atacado" in "reposicao_atacado"` de
+    voltar.) O parser da Meta achata o clique de QUICK_REPLY em texto, então botão e
+    digitação chegam aqui indistinguíveis — a igualdade é o que faz só a frase exata
+    contar.
 
     Import tardio de propósito: mantém este módulo de configuração sem dependência de
     import sobre o de campanhas (e deixa o teste substituir a autoridade para provar
@@ -769,7 +999,10 @@ def classificar_resposta(texto: str | None) -> str | None:
 
     if is_optout_reply(texto):
         return RESPOSTA_OPTOUT
-    if _normalize_reply(texto) in ROTULOS_ADIAMENTO:
+    normalizado = _normalize_reply(texto)
+    if normalizado in ROTULOS_INTERESSE:
+        return RESPOSTA_INTERESSE
+    if normalizado in ROTULOS_ADIAMENTO:
         return RESPOSTA_ADIAR
     return None
 
@@ -781,7 +1014,7 @@ def adiar_toques(
     """Os toques que AINDA NÃO saíram, cada um empurrado `adiamento` para a frente.
 
     A ata (41:40) pede duas coisas ao mesmo tempo, e a segunda é a que costuma se
-    perder: adiar 60 dias, **sem recomeçar a contagem**. Recomeçar seria devolver a
+    perder: adiar, **sem recomeçar a contagem**. Recomeçar seria devolver a
     cadência inteira a partir do toque 1 — o lead que disse "ainda tenho estoque"
     receberia de novo o texto que já leu. Por isso os toques até `ultimo_enviado`
     simplesmente não voltam, e o espaçamento entre os que sobraram é preservado: o

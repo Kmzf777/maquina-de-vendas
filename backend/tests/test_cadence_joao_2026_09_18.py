@@ -60,6 +60,11 @@ from app.follow_up import cadence_joao as cj
 
 RAIZ = Path(__file__).resolve().parents[2]
 SQL_PATH = RAIZ / "supabase" / "migrations" / "20260918_followup_joao_config.sql"
+# Os dois SQL de 26/09/2026. A migration dos ajustes globais é INDEPENDENTE da de
+# 18/09 (nenhuma referência nas duas direções); o backfill não é migration nenhuma —
+# é correção pontual de DADO, descartável depois de aplicada uma única vez.
+SQL_AJUSTES = RAIZ / "supabase" / "migrations" / "20260926_followup_joao_ajustes.sql"
+SQL_BACKFILL = RAIZ / "scripts" / "backfill_reposicao_ja_chamado.sql"
 SCRIPT_TEMPLATES = RAIZ / "scripts" / "create_templates_esteiras_joao.py"
 MIGRATION_FUNIS = RAIZ / "supabase" / "migrations" / "20260910_contrato_etapas_joao.sql"
 MODULO = RAIZ / "backend" / "app" / "follow_up" / "cadence_joao.py"
@@ -128,13 +133,36 @@ GATILHO_SILENCIO_DIAS = {
 }
 
 # Para onde o card vai 24h depois do último toque, quando o lead nunca respondeu
-# (spec 23/09 §3). Só as três de prospecção movem card; as de Reposição, nenhuma.
+# (spec 23/09 §3). As três de prospecção sempre moveram; `reposicao` passou a mover
+# em 26/09/2026 (spec §1, "fim, sem ter ido para Proposta Enviada → Em atenção").
+# Só `em_atencao` não move: ela não TERMINA (`repete_ultimo`), então não há "fim".
 ETAPA_FINAL_KEY = {
     "novo": "em_atencao",
     "em_conversa": "em_atencao",
     "proposta": "em_atencao",
-    "reposicao": None,
+    "reposicao": "em_atencao",
     "em_atencao": None,
+}
+
+# O CONJUNTO de etapas em que cada esteira segue viva (spec 26/09 §3.1) — o campo
+# CRU, com `()` significando "só a de entrada". É o default vazio que mantém as
+# quatro cadências antigas com o comportamento de etapa única que sempre tiveram.
+ETAPAS_VIVAS = {
+    "novo": (),
+    "em_conversa": (),
+    "proposta": (),
+    "reposicao": ("novo", "chamado_reposicao"),
+    "em_atencao": (),
+}
+
+# O toque que MOVE o card depois de enviar (spec 26/09 §3.2), por código de
+# cadência: {sequence: etapa de destino}. Só a Reposição tem um, e é o toque 1.
+MOVE_POR_TOQUE = {
+    "novo": {},
+    "em_conversa": {},
+    "proposta": {},
+    "reposicao": {1: "chamado_reposicao"},
+    "em_atencao": {},
 }
 
 GATILHO_STAGE_KEY = {
@@ -164,6 +192,8 @@ CODIGOS = ("novo", "em_conversa", "proposta", "reposicao", "em_atencao")
 # movem card no fim. `PROSPECCAO` é o par (funil, código) de cada uma.
 CODIGOS_PROSPECCAO = ("novo", "em_conversa", "proposta")
 FUNIS_PROSPECCAO = ("atacado", "private_label")
+# Os dois funis de Reposição — o par que a entrega de 26/09/2026 mexe.
+FUNIS_REPOSICAO = ("reposicao_atacado", "reposicao_private_label")
 PROSPECCAO = tuple(
     (f, c) for f in FUNIS_PROSPECCAO for c in CODIGOS_PROSPECCAO
 )
@@ -254,11 +284,42 @@ def sql() -> str:
     return SQL_PATH.read_text(encoding="utf-8")
 
 
+def _sem_comentarios(texto: str) -> str:
+    """O SQL sem comentários `--`, linha a linha.
+
+    Os cabeçalhos destes arquivos explicam o desenho em português e citam os mesmos
+    termos que os testes de comando destrutivo procuram — um `in sql` cru leria a
+    explicação como se fosse o comando. Mesma receita de
+    `test_sql_cards_extraviados_2026_09_16.py`.
+    """
+    return "\n".join(linha.split("--", 1)[0] for linha in texto.splitlines())
+
+
 @pytest.fixture(scope="module")
 def sql_codigo(sql) -> str:
-    """O SQL sem comentários — o cabeçalho explica o desenho em português e cita
-    os mesmos termos que os testes de comando destrutivo procuram."""
-    return "\n".join(linha.split("--", 1)[0] for linha in sql.splitlines())
+    return _sem_comentarios(sql)
+
+
+@pytest.fixture(scope="module")
+def sql_ajustes() -> str:
+    assert SQL_AJUSTES.exists(), f"migration não encontrada em {SQL_AJUSTES}"
+    return SQL_AJUSTES.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def sql_ajustes_codigo(sql_ajustes) -> str:
+    return _sem_comentarios(sql_ajustes)
+
+
+@pytest.fixture(scope="module")
+def sql_backfill() -> str:
+    assert SQL_BACKFILL.exists(), f"backfill não encontrado em {SQL_BACKFILL}"
+    return SQL_BACKFILL.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def sql_backfill_codigo(sql_backfill) -> str:
+    return _sem_comentarios(sql_backfill)
 
 
 @pytest.fixture(autouse=True)
@@ -456,11 +517,25 @@ class TestParesFunilCadencia:
         assert cadencia.etapa_final_rotulo == "Em atenção"
         assert cadencia.dias_ate_mover == 1
 
-    @pytest.mark.parametrize("funil_codigo,codigo", PARES_REPOSICAO)
-    def test_as_de_reposicao_nao_movem_card_nenhum(self, funil_codigo, codigo):
-        # "O motor nunca moveu card" continua valendo para elas — a exceção de
-        # 23/09 é estreita e só alcança a prospecção.
-        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_a_reposicao_passou_a_mover_para_em_atencao_no_fim(self, funil_codigo):
+        # Mudou em 26/09/2026: era `None` (a metade do desenho que 23/09 não tocou)
+        # e virou "Em atenção", o mesmo destino das três de prospecção. Os PRAZOS
+        # não mudaram junto — ver `test_os_prazos_da_reposicao_nao_foram_tocados`.
+        cadencia = cj.cadencia_do_funil(funil_codigo, "reposicao")
+        assert cadencia.etapa_final_key == "em_atencao"
+        assert cadencia.etapa_final_rotulo == "Em atenção"
+        assert cadencia.dias_ate_mover == 1
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_em_atencao_continua_sem_destino_final(self, funil_codigo):
+        # A cadência que NÃO terminou de mudar, e o motivo é estrutural: ela
+        # `repete_ultimo`, ou seja não tem fim declarado — "uma mensagem a cada três
+        # dias até ele falar que não quer mais" (ata 38:08). Sem fim não há "para
+        # onde ir depois do fim", e um destino aqui seria um job de mover agendado
+        # para um dia que nunca chega.
+        cadencia = cj.cadencia_do_funil(funil_codigo, "em_atencao")
+        assert cadencia.repete_ultimo is True
         assert cadencia.etapa_final_key is None
         assert cadencia.etapa_final_rotulo is None
 
@@ -486,13 +561,36 @@ class TestParesFunilCadencia:
                 assert cadencia.etapa_final_key != cadencia.gatilho_stage_key
 
     def test_em_atencao_como_ETAPA_nao_se_confunde_com_em_atencao_como_CADENCIA(self):
-        # A ambiguidade nomeada na decisão 5 do módulo: a MESMA string é o código de
-        # uma cadência (nos funis de Reposição) e a key de uma etapa (nos de
-        # prospecção). Quem tem a cadência não tem a etapa final, e vice-versa.
+        """A ambiguidade da decisão 5, agora convivendo DENTRO do mesmo funil.
+
+        Até 25/09 a separação era geográfica e o teste podia exigi-la: quem tinha a
+        CADÊNCIA `em_atencao` (os funis de Reposição) não tinha nenhuma etapa final
+        `em_atencao`, e vice-versa. Em 26/09 a Reposição passou a mover para a ETAPA
+        `em_atencao`, no MESMO funil onde mora a CADÊNCIA de mesmo nome — a
+        separação por funil acabou, e fingir que ela continua seria o teste mentindo.
+
+        O que continua verdade, e é o que importa de fato, é que as duas coisas
+        nunca são a MESMA coisa dentro de uma cadência: nenhuma cadência tem como
+        destino final a etapa que ela própria vigia, e a cadência `em_atencao` não
+        tem destino final nenhum. A etapa `em_atencao` do funil de Reposição existe
+        de verdade (criada por 20260910:151) e é para lá que a Reposição manda o
+        card — a CADÊNCIA `em_atencao`, por sua vez, vigia `novo`/"Cliente Ativo".
+        """
         for f in cj.FUNIS:
-            codigos = {c.codigo for c in f.cadencias}
-            finais = {c.etapa_final_key for c in f.cadencias}
-            assert not ("em_atencao" in codigos and "em_atencao" in finais)
+            for cadencia in f.cadencias:
+                if cadencia.codigo == "em_atencao":
+                    assert cadencia.etapa_final_key is None
+                    assert cadencia.gatilho_stage_key == "novo"
+                assert cadencia.etapa_final_key != cadencia.gatilho_stage_key
+
+    def test_a_etapa_em_atencao_existe_nos_funis_de_reposicao(self):
+        # O destino novo da Reposição. Sem esta etapa no funil, `_mover_card_joao`
+        # registra e devolve False — a cadência termina e o card não anda, em
+        # silêncio. Ela foi criada em Reposição Private Label pela migration de
+        # 10/09 (linha 151) e já existia em Reposição Atacado (linha 119).
+        fonte = MIGRATION_FUNIS.read_text(encoding="utf-8")
+        assert "'em_atencao'" in fonte
+        assert "repos_pl_id" in fonte  # o funil que ganhou a etapa no passo 5
 
     def test_atacado_e_reposicao_atacado_nao_compartilham_pipeline(self):
         # O bug de identidade que a mudança para funil-primeiro corrige (spec §1):
@@ -835,9 +933,21 @@ class TestOsTemplatesSaoOsReais:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. As duas regras de resposta da ata
 # ═══════════════════════════════════════════════════════════════════════════════
-class TestAdiamentoDeSessentaDias:
-    def test_o_adiamento_e_de_60_dias(self):
-        assert cj.ADIAMENTO_ESTOQUE == timedelta(days=60)
+class TestAdiamentoDoBotaoDeEstoque:
+    def test_o_adiamento_e_de_30_dias(self):
+        # Era 60 até 26/09/2026 (spec §3.4). Virou 30 E virou EDITÁVEL: este é
+        # agora o DEFAULT DE CÓDIGO, e `followup_joao_ajustes.adiamento_estoque_dias`
+        # o sobrepõe. A leitura do banco é do `service.py` (outra task) e é
+        # fail-closed para este valor.
+        assert cj.ADIAMENTO_ESTOQUE == timedelta(days=30)
+
+    def test_o_default_de_codigo_e_positivo_e_maior_que_a_resposta_comum(self):
+        # As duas invariantes que sobrevivem a qualquer número que o dono escolher:
+        # zero faria o botão não adiar nada (o toque seguinte sairia por cima de
+        # quem acabou de dizer que não precisa), e um valor <= ADIAMENTO_RESPOSTA
+        # faria apertar o botão valer o mesmo que responder qualquer coisa.
+        assert cj.ADIAMENTO_ESTOQUE > timedelta(0)
+        assert cj.ADIAMENTO_ESTOQUE > cj.ADIAMENTO_RESPOSTA
 
     @pytest.mark.parametrize("texto", [
         "Ainda tenho estoque",
@@ -857,7 +967,7 @@ class TestAdiamentoDeSessentaDias:
     ])
     def test_e_igualdade_e_nunca_substring(self, texto):
         # Mesma doutrina de `is_optout_reply`: "ainda tenho estoque mas quero ver a
-        # tabela" é um lead QUENTE — adiar 60 dias seria perdê-lo.
+        # tabela" é um lead QUENTE — adiá-lo seria perdê-lo.
         assert cj.classificar_resposta(texto) != cj.RESPOSTA_ADIAR
 
     def test_o_rotulo_do_adiamento_e_o_que_esta_nos_templates(self, botoes_por_template):
@@ -870,14 +980,18 @@ class TestAdiamentoDeSessentaDias:
         }
         assert cj.ROTULOS_ADIAMENTO <= rotulos
 
-    def test_adiar_empurra_os_toques_restantes_em_60_dias(self):
+    def test_adiar_empurra_os_toques_restantes_pelo_adiamento_do_botao(self):
+        # O número é lido de `ADIAMENTO_ESTOQUE`, não redigitado: este teste prova
+        # o MECANISMO (o bloco inteiro desliza), e `test_o_adiamento_e_de_30_dias`
+        # prova o NÚMERO. Separados, mudar o prazo não exige tocar nos dois.
+        dias = cj.ADIAMENTO_ESTOQUE.days
         toques = cj.resolver_cadencia("reposicao_atacado", "reposicao")
         adiados = cj.adiar_toques(toques, ultimo_enviado=1)
         assert [t.sequence for t in adiados] == [2, 3, 4]
-        assert [t.offset.days for t in adiados] == [15 + 60, 30 + 60, 45 + 60]
+        assert [t.offset.days for t in adiados] == [15 + dias, 30 + dias, 45 + dias]
 
     def test_adiar_nao_recomeca_a_contagem(self):
-        # 41:40: "adia 60 dias, sem recomeçar". Recomeçar seria devolver a cadência
+        # 41:40: "adia, sem recomeçar". Recomeçar seria devolver a cadência
         # inteira a partir do toque 1 — o lead receberia de novo o texto que já leu.
         toques = cj.resolver_cadencia("reposicao_atacado", "reposicao")
         adiados = cj.adiar_toques(toques, ultimo_enviado=2)
@@ -952,6 +1066,7 @@ class TestAdiamentoDaRespostaComum:
         # alguma coisa — seria a mesma classe de defeito do rótulo que não casa: um
         # botão vivo na tela e morto no efeito. "Ainda tenho estoque" é uma declaração
         # de que o lead não precisa de nada tão cedo; "oi, quanto custa?" não é.
+        # A relação tem de sobreviver ao número novo: 3 < 30 como era 3 < 60.
         assert cj.ADIAMENTO_RESPOSTA < cj.ADIAMENTO_ESTOQUE
 
     def test_o_adiamento_curto_nao_zera_a_espera(self):
@@ -977,14 +1092,16 @@ class TestAdiamentoDaRespostaComum:
         gaps_depois = [b.offset - a.offset for a, b in zip(adiados, adiados[1:])]
         assert gaps_antes == gaps_depois
 
-    def test_o_classificador_NAO_mudou(self):
-        # O terceiro ramo mora no SERVIÇO (`processar_resposta_joao`), não aqui.
-        # `classificar_resposta` continua devolvendo None para texto comum, e tem de
-        # continuar: ela é quem separa "apertou um botão" de "escreveu alguma coisa" —
-        # se passasse a devolver um rótulo para tudo, "ainda tenho estoque mas me manda
-        # a tabela" viraria um lead adiado em 60 dias, que é perdê-lo.
+    def test_o_classificador_continua_devolvendo_None_para_texto_comum(self):
+        # O ramo do adiamento curto mora no SERVIÇO (`processar_resposta_joao`), não
+        # aqui. `classificar_resposta` ganhou um quarto retorno em 26/09
+        # (`RESPOSTA_INTERESSE`), mas o None para texto comum é justamente o que ela
+        # NÃO pode perder: ela é quem separa "apertou um botão" de "escreveu alguma
+        # coisa" — se passasse a devolver um rótulo para tudo, "ainda tenho estoque
+        # mas me manda a tabela" viraria um lead adiado, que é perdê-lo.
         assert cj.classificar_resposta("quero comprar 50kg") is None
         assert cj.classificar_resposta("ainda tenho estoque mas me manda a tabela") is None
+        assert cj.classificar_resposta("preciso repor mas so mes que vem") is None
 
 
 class TestOptOutReal:
@@ -1015,6 +1132,356 @@ class TestOptOutReal:
         from app.campaigns.worker import is_optout_reply
         for nome, botoes in botoes_por_template.items():
             assert botoes and is_optout_reply(botoes[-1]), nome
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3b. O BOTÃO POSITIVO (spec 2026-09-26 §2.3 e §3.3)
+# ═══════════════════════════════════════════════════════════════════════════════
+def _positivos(botoes_por_template, prefixo: str) -> set:
+    """Os botões dos templates com este prefixo que NÃO são saída nem adiamento.
+
+    Normalizados por `_normalize_reply` — a MESMA função que o runtime usa para
+    comparar a resposta do lead, não uma imitação. Uma segunda receita de
+    normalização aqui faria o teste concordar consigo mesmo e não com o motor.
+    """
+    from app.campaigns.worker import _normalize_reply, is_optout_reply
+    return {
+        _normalize_reply(b)
+        for nome, botoes in botoes_por_template.items() if nome.startswith(prefixo)
+        for b in botoes
+        if not is_optout_reply(b) and _normalize_reply(b) not in cj.ROTULOS_ADIAMENTO
+    }
+
+
+class TestOBotaoPositivoEncerraAEsteira:
+    """O sinal mais quente da esteira de Reposição, e ele não tinha ramo nenhum.
+
+    Até 25/09 o motor conhecia dois botões: "ainda tenho estoque" (adia) e as duas
+    frases de saída. "Preciso repor" caía no ramo genérico — adiava 3 dias e mandava
+    outro "ainda tem estoque?" depois, possivelmente enquanto o João já negociava.
+    É a mesma classe de botão morto que já apareceu duas vezes nesta base ("Nao
+    atendo mais", "Tirar dos contatos").
+    """
+
+    def test_o_rotulo_de_resposta_e_distinto_dos_outros_dois(self):
+        assert cj.RESPOSTA_INTERESSE not in (cj.RESPOSTA_ADIAR, cj.RESPOSTA_OPTOUT)
+
+    @pytest.mark.parametrize("texto", [
+        "Preciso repor", "preciso repor", "PRECISO REPOR", "  Preciso   repor. ",
+        "Quero a tabela", "quero a tabela",
+        "Quero repor agora", "QUERO REPOR AGORA",
+    ])
+    def test_o_botao_positivo_e_reconhecido_em_qualquer_caixa(self, texto):
+        assert cj.classificar_resposta(texto) == cj.RESPOSTA_INTERESSE
+
+    @pytest.mark.parametrize("texto", [
+        "preciso repor mas so mes que vem",
+        "acho que nao preciso repor agora",
+        "repor",
+        "quero a tabela de precos do concorrente",
+        "",
+        None,
+    ])
+    def test_e_igualdade_e_nunca_substring(self, texto):
+        # A regra que existe porque `"atacado"` é substring de `"reposicao_atacado"`
+        # e isso já reabriu um bug aqui. O custo neste ramo é outro e igualmente
+        # caro: "preciso repor mas só mês que vem" encerraria a esteira de um lead
+        # que ainda não vai comprar — e a esteira é o que o traria de volta.
+        assert cj.classificar_resposta(texto) != cj.RESPOSTA_INTERESSE
+
+    # ── A precedência: saída → interesse → adiamento → None ──────────────────
+    def test_a_saida_pesa_mais_que_o_interesse(self, monkeypatch):
+        # Um texto que casasse com os dois tem de cair no ramo que PROTEGE o lead.
+        # Opt-out é a única classificação irreversível (vira blacklist): continuar
+        # falando com quem pediu para parar é o erro que não se desfaz.
+        from app.campaigns import worker
+        monkeypatch.setattr(worker, "is_optout_reply", lambda t: t == "preciso repor")
+        assert cj.classificar_resposta("preciso repor") == cj.RESPOSTA_OPTOUT
+
+    def test_o_interesse_pesa_mais_que_o_adiamento(self, monkeypatch):
+        # O custo de errar é assimétrico: tratar "quero repor agora" como adiamento
+        # cala a esteira por semanas em cima do sinal mais quente que ela produz.
+        monkeypatch.setattr(cj, "ROTULOS_ADIAMENTO", frozenset({"preciso repor"}))
+        assert cj.classificar_resposta("preciso repor") == cj.RESPOSTA_INTERESSE
+
+    def test_o_adiamento_ainda_vem_antes_do_None(self):
+        assert cj.classificar_resposta("ainda tenho estoque") == cj.RESPOSTA_ADIAR
+
+    def test_os_tres_vocabularios_nao_se_sobrepoem(self):
+        # Interseção entre eles seria uma precedência escondida — a mesma frase
+        # significando duas coisas, e o resultado dependendo da ordem dos `if`.
+        from app.campaigns.worker import _OPTOUT_REPLY_LABELS
+        assert not (cj.ROTULOS_INTERESSE & cj.ROTULOS_ADIAMENTO)
+        assert not (cj.ROTULOS_INTERESSE & _OPTOUT_REPLY_LABELS)
+
+    def test_os_rotulos_ja_estao_normalizados(self):
+        # Um rótulo gravado aqui com acento ou maiúscula nunca casaria: a comparação
+        # é contra o texto JÁ normalizado. Seria um botão morto criado pelo próprio
+        # vocabulário que existe para evitá-los.
+        from app.campaigns.worker import _normalize_reply
+        for rotulo in cj.ROTULOS_INTERESSE:
+            assert _normalize_reply(rotulo) == rotulo
+
+    # ── O cruzamento com os botões REAIS dos templates aprovados ─────────────
+    def test_todo_rotulo_de_interesse_e_um_botao_real_de_reposicao(
+        self, botoes_por_template,
+    ):
+        """Nenhuma frase inventada: as três estão nos templates APROVADOS na Meta.
+
+        Mesmo espírito de `test_o_rotulo_do_adiamento_e_o_que_esta_nos_templates`.
+        Declarar aqui uma frase que nenhum template traz é prometer um ramo que
+        ninguém consegue acionar — e a suíte passaria, porque o código concordaria
+        consigo mesmo.
+        """
+        reais = _positivos(botoes_por_template, "joao_reposicao_")
+        assert cj.ROTULOS_INTERESSE <= reais, cj.ROTULOS_INTERESSE - reais
+
+    def test_no_atacado_todo_botao_positivo_tem_ramo(self, botoes_por_template):
+        # A direção que importa de verdade, e é a que pega BOTÃO MORTO: todo botão
+        # positivo que o cliente vê tem de ter efeito. Nos 4 templates de Reposição
+        # Atacado a cobertura é total, e não pode regredir.
+        sem_ramo = _positivos(botoes_por_template, "joao_reposicao_atacado_") - \
+            cj.ROTULOS_INTERESSE
+        assert sem_ramo == set(), sem_ramo
+
+    def test_todo_botao_positivo_de_reposicao_tem_ramo(self, botoes_por_template):
+        """NENHUM botão positivo de Reposição pode cair no ramo genérico.
+
+        É a trava contra botão morto, e ela olha para os OITO templates — não só
+        para os quatro do Atacado. A spec de 26/09 listou três frases porque foi
+        escrita lendo só o Atacado; o cruzamento com os botões REAIS mostrou que o
+        Private Label escreve os toques 3 e 4 com palavras próprias ("Quero os
+        números", "Quero programar"). As duas entraram em `ROTULOS_INTERESSE`: em
+        termos de AÇÃO significam o mesmo que "Preciso repor" — o lead quer seguir,
+        e a esteira sai da frente.
+
+        Deixá-las de fora faria o cliente apertar o botão mais quente do fluxo e o
+        motor responder com outro "ainda tem estoque?" dias depois. Essa classe de
+        defeito já chegou a produção duas vezes nesta base (rótulos de opt-out que
+        não casavam, e o próprio botão "ainda tenho estoque", inalcançável até
+        25/09) — por isso a trava é um teste, não um comentário.
+        """
+        sem_ramo = _positivos(botoes_por_template, "joao_reposicao_") - \
+            cj.ROTULOS_INTERESSE
+        assert sem_ramo == set(), (
+            f"botão positivo sem ramo (o cliente aperta e cai no genérico): {sem_ramo}"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3c. `etapas_vivas` e o toque que move (spec 2026-09-26 §3.1 e §3.2)
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestEtapasVivas:
+    """Onde o card ENTRA e onde ele CONTINUA VIVO são perguntas diferentes.
+
+    A guarda de 25/09 cancela todo toque cujo card saiu da etapa vigiada. A esteira
+    de Reposição vigia `novo` ("Cliente Ativo") e, a partir de 26/09, MOVE o card no
+    toque 1 — então, com um campo só, ela se mataria no primeiro toque, pela guarda
+    que acabou de ser criada para proteger o funil. É a mesma parede que matou a
+    abordagem do builder em setembro.
+    """
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_o_campo_cru_e_o_do_desenho(self, funil_codigo, codigo):
+        assert cj.cadencia_do_funil(funil_codigo, codigo).etapas_vivas == \
+            ETAPAS_VIVAS[codigo]
+
+    @pytest.mark.parametrize("funil_codigo,codigo", [
+        p for p in PARES if p[1] != "reposicao"
+    ])
+    def test_as_quatro_cadencias_antigas_continuam_com_etapa_unica(
+        self, funil_codigo, codigo,
+    ):
+        # O default vazio é o que preserva o comportamento de hoje. Se ele mudar de
+        # significado, TODAS elas mudam de uma vez, em silêncio.
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert cadencia.etapas_vivas == ()
+        assert cadencia.etapas_vivas_efetivas == (cadencia.gatilho_stage_key,)
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_a_reposicao_vive_em_cliente_ativo_e_ja_chamado(self, funil_codigo):
+        cadencia = cj.cadencia_do_funil(funil_codigo, "reposicao")
+        assert cadencia.etapas_vivas_efetivas == ("novo", "chamado_reposicao")
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_o_toque_sobrevive_ao_card_que_foi_para_ja_chamado(self, funil_codigo):
+        # O caso que a entrega inteira existe para permitir: depois do toque 1 o
+        # card está em "Já chamado", e os toques 2, 3 e 4 continuam valendo.
+        cadencia = cj.cadencia_do_funil(funil_codigo, "reposicao")
+        assert cadencia.vive_na_etapa("chamado_reposicao") is True
+
+    @pytest.mark.parametrize("etapa", [
+        "fechado_ganho", "fechado_perdido", "em_atencao", "perdido", "entrada",
+    ])
+    def test_nenhuma_cadencia_vive_numa_etapa_terminal_ou_alheia(self, etapa):
+        # MUTAÇÃO desta regra: se o default virasse "aceita qualquer etapa", este
+        # teste fica vermelho — e tem de ficar. Um `etapas_vivas` permissivo mandaria
+        # template de esteira para quem já comprou, já recusou, ou já saiu do funil.
+        # Nenhuma das cinco etapas acima é declarada viva por cadência nenhuma.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                assert cadencia.vive_na_etapa(etapa) is False, (
+                    f.codigo, cadencia.codigo, etapa)
+
+    @pytest.mark.parametrize("etapa", [
+        "novo", "respondeu", "proposta_enviada", "chamado_reposicao", "fechado_ganho",
+    ])
+    def test_a_pergunta_e_pertencimento_ao_conjunto(self, etapa):
+        # O predicado e o conjunto não podem discordar: são duas leituras da MESMA
+        # regra, e é da divergência entre elas que sai "a guarda do envio deixou
+        # passar e a do move recusou" no mesmo card.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                assert cadencia.vive_na_etapa(etapa) is (
+                    etapa in cadencia.etapas_vivas_efetivas
+                )
+
+    def test_a_reposicao_nao_vive_nas_etapas_terminais(self):
+        cadencia = cj.cadencia_do_funil("reposicao_atacado", "reposicao")
+        for etapa in ("fechado_ganho", "fechado_perdido", "em_atencao"):
+            assert cadencia.vive_na_etapa(etapa) is False, etapa
+
+    @pytest.mark.parametrize("etapa", [None, ""])
+    def test_etapa_ilegivel_falha_fechada(self, etapa):
+        # Card sumido, ou etapa que perdeu a `key` no CRM. Não saber onde o card
+        # está é razão para NÃO mandar template — pode ser alguém que já saiu.
+        assert cj.cadencia_do_funil("reposicao_atacado", "reposicao") \
+            .vive_na_etapa(etapa) is False
+
+    # ── As três invariantes do conjunto (decisão 6 no módulo) ────────────────
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_a_etapa_de_entrada_esta_sempre_entre_as_vivas(self, funil_codigo, codigo):
+        # Senão a esteira morre no primeiro toque, antes de sair do lugar: a
+        # matrícula acontece na etapa do gatilho e a guarda de envio a reprovaria.
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert cadencia.gatilho_stage_key in cadencia.etapas_vivas_efetivas
+
+    def test_todo_move_para_esta_entre_as_etapas_vivas(self):
+        # A invariante que impede o defeito original de voltar: um toque que move o
+        # card para FORA do conjunto cancela os toques seguintes.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                for toque in cadencia.touches:
+                    if toque.move_para is None:
+                        continue
+                    assert toque.move_para in cadencia.etapas_vivas_efetivas, (
+                        f.codigo, cadencia.codigo, toque.sequence)
+
+    def test_a_etapa_final_nunca_esta_entre_as_vivas(self):
+        # O contrário da anterior: o card movido para o destino FINAL tem de sair do
+        # alcance da esteira. Se ele continuasse vivo lá, o fim viraria laço.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                if cadencia.etapa_final_key is None:
+                    continue
+                assert cadencia.etapa_final_key not in cadencia.etapas_vivas_efetivas
+
+    # ── Rótulos, nunca chave crua (a regra da entrega de 21/09) ──────────────
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_toda_etapa_viva_tem_rotulo_declarado(self, funil_codigo, codigo):
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert len(cadencia.etapas_vivas_rotulos) == \
+            len(cadencia.etapas_vivas_efetivas)
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_nenhum_rotulo_e_a_chave_crua(self, funil_codigo, codigo):
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        for chave, rotulo in zip(cadencia.etapas_vivas_efetivas,
+                                 cadencia.etapas_vivas_rotulos):
+            assert rotulo != chave, chave
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_os_rotulos_da_reposicao_sao_os_da_tela(self, funil_codigo):
+        cadencia = cj.cadencia_do_funil(funil_codigo, "reposicao")
+        assert cadencia.etapas_vivas_rotulos == ("Cliente Ativo", "Já chamado")
+        assert cadencia.rotulo_da_etapa("em_atencao") == "Em atenção"
+        assert cadencia.rotulo_da_etapa("etapa_que_nao_existe") is None
+
+    def test_a_key_de_ja_chamado_e_a_da_migration_e_nao_ja_chamado(self):
+        # `chamado_reposicao`, e NÃO `ja_chamado` — a diferença está registrada em
+        # 20260910_contrato_etapas_joao.sql:34 e errá-la faz o move não achar a
+        # etapa (`_mover_card_joao` devolve False e o card fica onde está).
+        assert cj.ETAPA_CHAMADO_REPOSICAO_KEY == "chamado_reposicao"
+        fonte = MIGRATION_FUNIS.read_text(encoding="utf-8")
+        assert "'chamado_reposicao'" in fonte
+
+    # ── A resolvida carrega o conjunto até o agendador ───────────────────────
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_a_resolvida_carrega_as_etapas_vivas(self, funil_codigo, codigo):
+        r = cj.resolver(funil_codigo, codigo, {})
+        cadencia = cj.cadencia_do_funil(funil_codigo, codigo)
+        assert r.etapas_vivas == cadencia.etapas_vivas
+        assert r.etapas_vivas_efetivas == cadencia.etapas_vivas_efetivas
+        assert r.vive_na_etapa(cadencia.gatilho_stage_key) is True
+
+    def test_as_etapas_vivas_nao_sao_sobrepostas_pelo_banco(self):
+        # É topologia de funil, não prazo. Editar isso pela tela daria ao operador a
+        # chave de matar a esteira no toque que move.
+        r = cj.resolver("reposicao_atacado", "reposicao",
+                        {"etapas_vivas": ("fechado_ganho",)})
+        assert r.etapas_vivas == ("novo", "chamado_reposicao")
+
+
+class TestOToqueQueMoveOCard:
+    def test_touch_tem_o_campo_e_ele_nasce_vazio(self):
+        assert "move_para" in cj.Touch.__dataclass_fields__
+        assert cj.Touch(sequence=1, offset=timedelta(0),
+                        template_name=None).move_para is None
+
+    @pytest.mark.parametrize("funil_codigo,codigo", PARES)
+    def test_o_mapa_de_move_e_o_do_desenho(self, funil_codigo, codigo):
+        do_codigo = {
+            t.sequence: t.move_para
+            for t in cj.cadencia_do_funil(funil_codigo, codigo).touches
+            if t.move_para is not None
+        }
+        assert do_codigo == MOVE_POR_TOQUE[codigo]
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_so_o_primeiro_toque_da_reposicao_move(self, funil_codigo):
+        toques = cj.cadencia_do_funil(funil_codigo, "reposicao").touches
+        assert toques[0].move_para == "chamado_reposicao"
+        assert [t.move_para for t in toques[1:]] == [None, None, None]
+
+    def test_nenhuma_cadencia_de_prospeccao_move_no_meio(self):
+        # A exceção é estreita: quem move no MEIO é só a Reposição. As três de
+        # prospecção movem uma vez só, no FIM, e por outro campo
+        # (`etapa_final_key`) — são mecanismos diferentes de propósito.
+        for funil_codigo, codigo in PROSPECCAO:
+            for toque in cj.cadencia_do_funil(funil_codigo, codigo).touches:
+                assert toque.move_para is None, (funil_codigo, codigo, toque.sequence)
+
+    def test_o_move_nunca_aponta_para_a_propria_etapa_de_entrada(self):
+        # Mover o card para onde ele já está é um no-op que o handler trataria como
+        # sucesso — e a esteira ficaria contando uma história que não aconteceu.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                for toque in cadencia.touches:
+                    if toque.move_para is None:
+                        continue
+                    assert toque.move_para != cadencia.gatilho_stage_key
+
+    def test_o_move_do_meio_nunca_aponta_para_a_etapa_final(self):
+        # Seria terminar a esteira no toque 1 — os toques 2, 3 e 4 morreriam pela
+        # guarda de etapa, que é exatamente o defeito que `etapas_vivas` corrige.
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                for toque in cadencia.touches:
+                    if toque.move_para is None:
+                        continue
+                    assert toque.move_para != cadencia.etapa_final_key
+
+    def test_o_toque_que_move_continua_mandando_template(self, botoes_por_template):
+        # O move é um EFEITO do toque, não um toque à parte: o toque 1 da Reposição
+        # envia a mensagem E move. Um `move_para` num toque sem template seria um
+        # job que só move card, que é outra coisa (o do fim da cadência).
+        for f in cj.FUNIS:
+            for cadencia in f.cadencias:
+                for toque in cadencia.touches:
+                    if toque.move_para is None:
+                        continue
+                    assert toque.template_name, (f.codigo, cadencia.codigo)
+                    assert toque.template_name in botoes_por_template
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1171,9 +1638,18 @@ class TestResolverCadenciaCompleta:
         assert r.etapa_final_rotulo == "Em atenção"
         assert r.dias_ate_mover == 1
 
-    @pytest.mark.parametrize("funil_codigo,codigo", PARES_REPOSICAO)
-    def test_a_resolvida_da_reposicao_nao_move_card(self, funil_codigo, codigo):
-        assert cj.resolver(funil_codigo, codigo, {}).etapa_final_key is None
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_a_resolvida_da_reposicao_sabe_para_onde_mover(self, funil_codigo):
+        # O agendador consome a RESOLVIDA: se o destino não descer até aqui, o job
+        # de mover nunca é criado e o card fica em "Já chamado" para sempre.
+        r = cj.resolver(funil_codigo, "reposicao", {})
+        assert r.etapa_final_key == "em_atencao"
+        assert r.etapa_final_rotulo == "Em atenção"
+        assert r.dias_ate_mover == 1
+
+    @pytest.mark.parametrize("funil_codigo", FUNIS_REPOSICAO)
+    def test_a_resolvida_de_em_atencao_continua_sem_mover(self, funil_codigo):
+        assert cj.resolver(funil_codigo, "em_atencao", {}).etapa_final_key is None
 
     def test_os_quatro_campos_novos_nao_sao_sobrepostos_pelo_banco(self):
         # spec §5: o prazo editável na tela é o de ETAPA (`gatilho_dias`). O de
@@ -1532,6 +2008,406 @@ class TestMigrationSeguranca:
         # Sem isto o PostgREST responde PGRST205 para tabela nova, e a tela abre
         # vazia sem erro visível.
         assert "NOTIFY pgrst" in sql_codigo
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. A migration dos AJUSTES GLOBAIS (texto — a suíte não tem banco)
+# ═══════════════════════════════════════════════════════════════════════════════
+# As duas chaves que `followup_joao_ajustes` aceita (spec 2026-09-26 §3.5). O motor
+# as lê por `AJUSTES_PADRAO` em `app/follow_up/service.py` (outro lote) — aqui elas
+# são fixadas do lado do BANCO, que é o lado que este arquivo possui. Uma chave que
+# exista de um lado só é configuração que a tela grava e o motor nunca lê.
+CHAVES_DE_AJUSTE = ("teto_diario_disparos", "adiamento_estoque_dias")
+
+
+class TestMigrationDosAjustesCabecalho:
+    def test_o_arquivo_existe_no_lugar_certo(self):
+        assert SQL_AJUSTES.exists()
+        assert SQL_AJUSTES.parent.name == "migrations"
+
+    def test_avisa_que_nao_e_aplicada_pelo_deploy(self, sql_ajustes):
+        cabecalho = sql_ajustes[:2500]
+        assert "NAO E APLICADA PELO DEPLOY" in cabecalho
+        assert "SQL editor do Supabase" in cabecalho
+        assert "revisada por um humano" in cabecalho
+        assert "Nenhum agente de IA" in cabecalho
+
+    def test_aponta_para_o_spec_da_esteira_de_reposicao(self, sql_ajustes):
+        assert "2026-09-26-esteira-reposicao-design.md" in sql_ajustes
+
+    def test_declara_que_a_tabela_nasce_vazia(self, sql_ajustes):
+        assert "vazia" in sql_ajustes.lower()
+
+    def test_diz_que_reexecutar_e_seguro(self, sql_ajustes):
+        assert "Reexecutar" in sql_ajustes
+
+    def test_documenta_os_dois_defaults_de_codigo(self, sql_ajustes):
+        # O humano que aplica precisa saber o que a tabela vazia significa: 100 e 30
+        # são os números que valem enquanto ninguém gravar nada.
+        assert "100" in sql_ajustes and "30" in sql_ajustes
+
+
+class TestMigrationDosAjustesEIndependente:
+    """A independência é o requisito (spec §3.5), e é verificável no texto.
+
+    A outra migration deste motor (18/09) carrega uma pré-condição manual — duas
+    tabelas na forma antiga que precisam ser apagadas antes — e nunca foi aplicada.
+    Acoplar esta àquela faria um número que o dono quer editar esperar por um passo
+    manual sem nenhuma razão técnica. As duas podem ser aplicadas em qualquer ordem.
+    """
+
+    @pytest.mark.parametrize("estranho", [
+        "followup_joao_toque", "followup_joao_cadencia", "20260918",
+    ])
+    def test_nao_referencia_a_outra_migration_nem_as_tabelas_dela(
+        self, sql_ajustes, estranho,
+    ):
+        assert estranho not in sql_ajustes, estranho
+
+    def test_nao_tem_pre_condicao_nem_guarda_que_levante(self, sql_ajustes_codigo):
+        # Sem `RAISE EXCEPTION` de pré-condição: não há forma antiga a recusar, e
+        # uma guarda aqui só poderia recusar por um motivo que não existe.
+        assert "RAISE EXCEPTION" not in sql_ajustes_codigo.upper()
+
+    def test_nao_toca_em_outras_tabelas(self, sql_ajustes_codigo):
+        alvos = set(re.findall(
+            r"(?:CREATE TABLE(?: IF NOT EXISTS)?|ALTER TABLE)\s+(\w+)",
+            sql_ajustes_codigo, re.I,
+        ))
+        assert alvos == {"followup_joao_ajustes"}, alvos
+
+    def test_nao_mexe_em_follow_up_jobs(self, sql_ajustes_codigo):
+        # O caminho `standard` da ValerIA é o único follow-up que funciona em
+        # produção (8.140 jobs). Esta migration não encosta nele.
+        assert "follow_up_jobs" not in sql_ajustes_codigo
+
+
+class TestMigrationDosAjustesCriaATabela:
+    def test_cria_a_tabela(self, sql_ajustes_codigo):
+        assert re.search(r"CREATE TABLE IF NOT EXISTS\s+followup_joao_ajustes",
+                         sql_ajustes_codigo, re.I)
+
+    def test_a_chave_primaria_e_a_coluna_chave(self, sql_ajustes_codigo):
+        assert re.search(r"PRIMARY KEY\s*\(\s*chave\s*\)", sql_ajustes_codigo, re.I)
+
+    def test_chave_e_text_e_valor_e_integer(self, sql_ajustes_codigo):
+        assert re.search(r"\bchave\s+text\s+NOT NULL", sql_ajustes_codigo, re.I)
+        assert re.search(r"\bvalor\s+integer\s+NOT NULL", sql_ajustes_codigo, re.I)
+
+    @pytest.mark.parametrize("coluna", ["atualizado_por", "updated_at"])
+    def test_tem_as_colunas_de_auditoria(self, sql_ajustes_codigo, coluna):
+        # Mesmo par das outras duas tabelas de configuração: quem mexeu e quando.
+        assert re.search(rf"\b{coluna}\b", sql_ajustes_codigo, re.I), coluna
+
+    def test_valor_nao_e_nullable(self, sql_ajustes_codigo):
+        # Diferente das tabelas por-cadência, onde NULL significa "não sobreposto":
+        # aqui quem diz isso é a AUSÊNCIA DA LINHA. Uma linha com valor NULL seria
+        # um terceiro estado sem significado declarado.
+        assert not re.search(r"\bvalor\s+integer\s*,", sql_ajustes_codigo, re.I)
+
+
+class TestMigrationDosAjustesTravaAsChaves:
+    def test_tem_check_de_chave_valida(self, sql_ajustes_codigo):
+        assert re.search(r"CHECK\s*\(\s*\n?\s*chave IN", sql_ajustes_codigo, re.I)
+
+    @pytest.mark.parametrize("chave", CHAVES_DE_AJUSTE)
+    def test_o_check_aceita_a_chave(self, sql_ajustes_codigo, chave):
+        assert f"'{chave}'" in sql_ajustes_codigo, chave
+
+    def test_o_check_nao_aceita_chave_a_mais_nem_a_menos(self, sql_ajustes_codigo):
+        # Uma chave a mais no banco é linha que a tela grava e o motor nunca lê: a
+        # tela mostraria o valor novo e o motor seguiria com o antigo, que é o pior
+        # modo de falha de uma tela de configuração.
+        bloco = re.search(r"chave IN\s*\(([^)]*)\)", sql_ajustes_codigo, re.I)
+        assert bloco, "CHECK de chave válida não encontrado"
+        achadas = set(re.findall(r"'([a-z_]+)'", bloco.group(1)))
+        assert achadas == set(CHAVES_DE_AJUSTE), achadas
+
+    def test_tem_check_de_valor_maior_ou_igual_a_um(self, sql_ajustes_codigo):
+        # Zero tem significados perigosos e DIFERENTES nas duas chaves: teto 0 para
+        # o motor sem avisar ninguém; adiamento 0 faz o botão "Ainda tenho estoque"
+        # não adiar nada, e o toque seguinte sai por cima de quem acabou de dizer
+        # que não precisa.
+        assert re.search(r"CHECK\s*\(\s*valor\s*>=\s*1\s*\)", sql_ajustes_codigo, re.I)
+
+    def test_nao_aceita_zero_por_default_de_coluna(self, sql_ajustes_codigo):
+        assert not re.search(r"valor\s+integer[^,]*DEFAULT\s+0", sql_ajustes_codigo, re.I)
+
+
+class TestMigrationDosAjustesNasceVazia:
+    def test_nao_tem_insert(self, sql_ajustes_codigo):
+        # "Nasce vazia" é literal: semear a tabela com os defaults do código faria o
+        # BANCO virar a origem, e um redeploy passaria a brigar com a tela.
+        assert not re.search(r"\bINSERT\s+INTO\b", sql_ajustes_codigo, re.I)
+
+    @pytest.mark.parametrize("comando", [r"DROP\s+TABLE", r"TRUNCATE", r"DELETE\s+FROM",
+                                         r"UPDATE\s+\w+\s+SET"])
+    def test_nao_tem_comando_destrutivo(self, sql_ajustes_codigo, comando):
+        # `UPDATE ... SET`, e não `\bUPDATE\b`: o arquivo declara legitimamente um
+        # trigger `BEFORE UPDATE ON followup_joao_ajustes`.
+        assert not re.search(comando, sql_ajustes_codigo, re.I), comando
+
+
+class TestMigrationDosAjustesSegurancaEReexecucao:
+    def test_toda_criacao_e_if_not_exists(self, sql_ajustes_codigo):
+        criacoes = re.findall(r"CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+(IF NOT EXISTS)?",
+                              sql_ajustes_codigo, re.I)
+        assert criacoes
+        for tipo, guarda in criacoes:
+            assert guarda, tipo
+
+    def test_as_policies_sao_recriadas_com_drop_antes(self, sql_ajustes_codigo):
+        assert len(re.findall(r"DROP POLICY IF EXISTS", sql_ajustes_codigo, re.I)) == \
+            len(re.findall(r"CREATE POLICY", sql_ajustes_codigo, re.I))
+
+    def test_liga_rls(self, sql_ajustes_codigo):
+        assert re.search(
+            r"ALTER TABLE\s+followup_joao_ajustes\s+ENABLE ROW LEVEL SECURITY",
+            sql_ajustes_codigo, re.I,
+        )
+
+    def test_tem_trigger_de_updated_at_reusando_a_funcao_do_schema(
+        self, sql_ajustes_codigo,
+    ):
+        # `public.set_updated_at()` já existe (002_crm_enrichment.sql) e é usada por
+        # quotes/deals. Uma segunda versão da mesma regra divergiria.
+        assert re.search(r"DROP TRIGGER IF EXISTS\s+followup_joao_ajustes_set_updated_at",
+                         sql_ajustes_codigo, re.I)
+        assert re.search(r"BEFORE UPDATE ON followup_joao_ajustes", sql_ajustes_codigo, re.I)
+        assert "public.set_updated_at()" in sql_ajustes_codigo
+
+    def test_recarrega_o_cache_do_postgrest(self, sql_ajustes_codigo):
+        # Sem isto o PostgREST responde PGRST205 para tabela nova, e a tela abre sem
+        # os campos novos, sem erro visível.
+        assert "NOTIFY pgrst" in sql_ajustes_codigo
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. O backfill dos 672 cards de "Já chamado" (texto — a suíte não tem banco)
+# ═══════════════════════════════════════════════════════════════════════════════
+PIPELINE_REPOSICAO_ATACADO = "79e35e6b-01d1-482a-bdf0-64c733ff1ca4"
+PIPELINE_REPOSICAO_PRIVATE_LABEL = "9c027143-72f6-42d6-861f-a494ba5bbb4f"
+
+
+def _instrucoes_update(codigo: str) -> list:
+    """Os UPDATE executáveis do arquivo, um por instrução, na ordem em que estão.
+
+    Divide por `;` e fica com os pedaços que COMEÇAM em UPDATE. Os blocos `DO $$`
+    também têm `;` dentro e viram pedaços, mas nenhum deles começa em UPDATE — e é
+    justamente isso que se quer contar aqui: as instruções que ESCREVEM.
+    """
+    return [
+        pedaco.strip()
+        for pedaco in codigo.split(";")
+        if re.match(r"^\s*UPDATE\b", pedaco, re.I)
+    ]
+
+
+class TestBackfillAvisoDeSeguranca:
+    def test_o_arquivo_existe_no_lugar_certo(self):
+        assert SQL_BACKFILL.exists()
+        assert SQL_BACKFILL.parent.name == "scripts"
+
+    def test_avisa_que_nao_deve_ser_executado_sem_autorizacao(self, sql_backfill):
+        cabecalho = sql_backfill[:1200]
+        assert "NÃO EXECUTAR SEM AUTORIZAÇÃO EXPLÍCITA DO DONO" in cabecalho
+        assert "PRODUÇÃO" in cabecalho
+        assert "Nenhum" in cabecalho and "agente de IA" in cabecalho
+
+    def test_nao_e_migration(self, sql_backfill_codigo):
+        # Correção pontual de DADO, descartável depois de aplicada uma vez — não
+        # pertence ao histórico permanente de schema que `supabase/migrations/`
+        # registra. A prova no texto: não cria nem altera estrutura NENHUMA. A única
+        # tabela que ele cria é TEMP e morre no COMMIT.
+        assert SQL_BACKFILL.parent.name != "migrations"
+        assert not re.search(r"ALTER\s+TABLE", sql_backfill_codigo, re.I)
+        criacoes = re.findall(r"CREATE\s+(TEMP\s+)?TABLE", sql_backfill_codigo, re.I)
+        assert criacoes and all(c.strip() for c in criacoes), criacoes
+
+    def test_explica_o_trigger_pelo_nome(self, sql_backfill):
+        # É o trigger que obriga as duas instruções a existirem. Quem ler o arquivo
+        # sem entender isso vai "simplificar" para um UPDATE só.
+        assert "trg_update_deal_entered_stage_at" in sql_backfill
+        assert "entered_stage_at" in sql_backfill
+
+
+class TestBackfillSaoDuasInstrucoes:
+    """O coração do arquivo (spec §5): uma instrução só ZERARIA o relógio.
+
+    `trg_update_deal_entered_stage_at` é um BEFORE UPDATE que faz
+    `NEW.entered_stage_at = now()` sempre que `stage_id` OU `stage` muda. Sendo
+    BEFORE, ele sobrescreve o valor que a própria instrução passou — mover e
+    restaurar a data juntos não funciona, e o sintoma seria os 672 esperando mais 45
+    dias numa coluna onde ninguém os procura.
+    """
+
+    def test_sao_exatamente_dois_updates(self, sql_backfill_codigo):
+        assert len(_instrucoes_update(sql_backfill_codigo)) == 2
+
+    def test_a_primeira_move_as_duas_colunas_de_etapa(self, sql_backfill_codigo):
+        # `stage_id` é a verdade do Kanban; `stage` é o texto legado que caminhos
+        # antigos ainda leem (`_ACTIVE_DEAL_STAGES`, leads/service.py). Escrever só
+        # uma deixa as duas discordando sobre onde o card está.
+        primeira = _instrucoes_update(sql_backfill_codigo)[0]
+        assert re.search(r"\bstage_id\s*=", primeira, re.I)
+        assert re.search(r"\bstage\s*=", primeira, re.I)
+
+    def test_a_primeira_manda_o_card_para_cliente_ativo_resolvido_por_key(
+        self, sql_backfill_codigo,
+    ):
+        # Por KEY, nunca por rótulo: `pipeline_stages.label` é editável na tela por
+        # qualquer operador do CRM.
+        primeira = _instrucoes_update(sql_backfill_codigo)[0]
+        assert "'novo'" in primeira
+        assert re.search(r"key\s*=\s*'novo'", primeira, re.I)
+
+    def test_a_segunda_devolve_o_relogio(self, sql_backfill_codigo):
+        segunda = _instrucoes_update(sql_backfill_codigo)[1]
+        assert re.search(r"entered_stage_at\s*=", segunda, re.I)
+
+    def test_a_segunda_NAO_toca_em_etapa_e_e_isso_que_preserva_o_relogio(
+        self, sql_backfill_codigo,
+    ):
+        """A asserção mais importante deste arquivo de teste.
+
+        Acrescentar `stage_id` ou `stage` ao SET da segunda instrução faria o
+        trigger disparar de novo e carimbar `now()` por cima da data restaurada —
+        desfazendo silenciosamente o trabalho inteiro. O arquivo continuaria
+        "rodando com sucesso".
+        """
+        segunda = _instrucoes_update(sql_backfill_codigo)[1]
+        corpo = segunda[:segunda.upper().find("WHERE")] if "WHERE" in segunda.upper() \
+            else segunda
+        assert not re.search(r"\bstage_id\s*=", corpo, re.I)
+        assert not re.search(r"\bstage\s*=", corpo, re.I)
+
+    def test_o_relogio_e_capturado_antes_de_qualquer_escrita(self, sql_backfill_codigo):
+        # Depois do primeiro UPDATE o valor original não existe mais em lugar
+        # nenhum: o trigger já o substituiu. A cópia tem de vir antes.
+        pos_temp = sql_backfill_codigo.upper().find("CREATE TEMP TABLE")
+        pos_update = sql_backfill_codigo.upper().find("UPDATE DEALS")
+        assert pos_temp != -1 and pos_update != -1
+        assert pos_temp < pos_update
+
+    def test_as_duas_rodam_na_mesma_transacao(self, sql_backfill_codigo):
+        # Meio caminho é o pior resultado possível aqui: os cards movidos com o
+        # relógio zerado, esperando 45 dias numa coluna onde ninguém os procura.
+        assert re.search(r"^\s*BEGIN\s*;\s*$", sql_backfill_codigo, re.I | re.M)
+        assert re.search(r"^\s*COMMIT\s*;\s*$", sql_backfill_codigo, re.I | re.M)
+        pos_begin = sql_backfill_codigo.upper().find("\nBEGIN;")
+        pos_commit = sql_backfill_codigo.upper().find("\nCOMMIT;")
+        assert pos_begin != -1 and pos_commit > pos_begin
+        for instrucao in _instrucoes_update(sql_backfill_codigo):
+            pos = sql_backfill_codigo.find(instrucao[:40])
+            assert pos_begin < pos < pos_commit, instrucao[:60]
+
+
+class TestBackfillEscopoGuardado:
+    def test_so_o_funil_de_reposicao_atacado(self, sql_backfill_codigo):
+        assert PIPELINE_REPOSICAO_ATACADO in sql_backfill_codigo
+
+    def test_private_label_nao_entra(self, sql_backfill):
+        # Medido em 26/09/2026: Reposição Private Label tem 0 cards em "Já chamado".
+        # Um UUID dele no arquivo seria escopo que ninguém pediu.
+        assert PIPELINE_REPOSICAO_PRIVATE_LABEL not in sql_backfill
+
+    def test_nenhum_outro_funil_do_joao_aparece(self, sql_backfill):
+        for codigo, uuid in PIPELINES.items():
+            if codigo == "reposicao_atacado":
+                continue
+            assert uuid not in sql_backfill, codigo
+
+    def test_so_cards_hoje_em_ja_chamado(self, sql_backfill_codigo):
+        # Por KEY (`chamado_reposicao`, e NÃO `ja_chamado` — 20260910:34).
+        assert "'chamado_reposicao'" in sql_backfill_codigo
+        assert "'ja_chamado'" not in sql_backfill_codigo
+
+    def test_so_cards_com_45_dias_ou_mais(self, sql_backfill_codigo):
+        assert re.search(r"entered_stage_at\s*<=\s*now\(\)\s*-\s*interval\s*'45 days'",
+                         sql_backfill_codigo, re.I)
+
+    def test_ignora_card_sem_relogio(self, sql_backfill_codigo):
+        # `entered_stage_at IS NULL` é card que nunca teve o relógio preenchido —
+        # não há o que preservar, e o filtro de 45 dias não o alcançaria mesmo.
+        assert re.search(r"entered_stage_at IS NOT NULL", sql_backfill_codigo, re.I)
+
+    def test_o_funil_e_conferido_nas_duas_pontas(self, sql_backfill_codigo):
+        # `deals.pipeline_id` E o `pipeline_id` da etapa: card com etapa de outro
+        # funil existe neste banco, e uma só das duas o moveria para o lugar errado.
+        assert len(re.findall(re.escape(PIPELINE_REPOSICAO_ATACADO),
+                              sql_backfill_codigo)) >= 4
+
+    def test_tem_guarda_que_aborta_se_o_alvo_nao_bater(self, sql_backfill_codigo):
+        assert "RAISE EXCEPTION" in sql_backfill_codigo.upper()
+
+    def test_a_guarda_nao_apaga_nada(self, sql_backfill_codigo):
+        for proibido in (r"DROP\s+TABLE\s+deals", r"TRUNCATE", r"DELETE\s+FROM"):
+            assert not re.search(proibido, sql_backfill_codigo, re.I), proibido
+
+
+class TestBackfillNaoFazMaisDoQueDeve:
+    def test_nao_cria_nem_apaga_card(self, sql_backfill_codigo):
+        assert not re.search(r"INSERT\s+INTO\s+deals", sql_backfill_codigo, re.I)
+        assert not re.search(r"DELETE\s+FROM", sql_backfill_codigo, re.I)
+
+    def test_a_unica_tabela_escrita_e_deals(self, sql_backfill_codigo):
+        alvos = {m.lower() for m in re.findall(r"UPDATE\s+(\w+)",
+                                               sql_backfill_codigo, re.I)}
+        assert alvos == {"deals"}, alvos
+
+    @pytest.mark.parametrize("tabela", ["follow_up_jobs", "campaigns", "leads", "sales"])
+    def test_nao_encosta_nas_tabelas_que_nao_sao_dele(self, sql_backfill_codigo, tabela):
+        # Em especial `follow_up_jobs`: o caminho `standard` da ValerIA é o único
+        # follow-up que funciona em produção (8.140 jobs).
+        assert not re.search(rf"(UPDATE|INSERT INTO|DELETE FROM)\s+{tabela}\b",
+                             sql_backfill_codigo, re.I), tabela
+
+    def test_nao_liga_esteira_nenhuma(self, sql_backfill_codigo):
+        # Tudo continua nascendo desligado: este arquivo move card, não configura
+        # motor. Uma linha em `followup_joao_cadencia` aqui ligaria a esteira junto
+        # com o backfill, e os 672 sairiam de uma vez.
+        assert "followup_joao_cadencia" not in sql_backfill_codigo
+        assert "followup_joao_ajustes" not in sql_backfill_codigo
+
+    def test_a_temporaria_some_no_commit(self, sql_backfill_codigo):
+        assert re.search(r"CREATE TEMP TABLE\s+\w+\s+ON COMMIT DROP",
+                         sql_backfill_codigo, re.I)
+
+
+class TestBackfillConferencia:
+    # Os cabeçalhos das DUAS seções, com o `-- ` que só o banner tem: o bloco "COMO
+    # APLICAR" no topo cita os dois nomes entre aspas, e um `find` solto acharia a
+    # citação em vez da seção — provando a ordem errada e passando por engano.
+    BANNER_ANTES = "-- SELECT DE CONFERÊNCIA — ANTES"
+    BANNER_DEPOIS = "-- SELECT DE CONFERÊNCIA — DEPOIS"
+
+    def test_tem_select_de_conferencia_antes_e_depois(self, sql_backfill):
+        assert self.BANNER_ANTES in sql_backfill
+        assert self.BANNER_DEPOIS in sql_backfill
+
+    def test_o_select_de_antes_vem_antes_do_begin(self, sql_backfill):
+        # Rodar sozinho e LER o resultado é o passo 1 de aplicar este arquivo.
+        assert sql_backfill.find(self.BANNER_ANTES) < \
+            sql_backfill.upper().find("\nBEGIN;")
+
+    def test_o_select_de_depois_vem_depois_do_commit(self, sql_backfill):
+        assert sql_backfill.find(self.BANNER_DEPOIS) > \
+            sql_backfill.upper().find("\nCOMMIT;")
+
+    def test_registra_os_numeros_medidos(self, sql_backfill):
+        # 672 de 698 em Reposição Atacado, medidos em 26/09/2026. Sem o número no
+        # arquivo, quem aplicar daqui a um mês não tem com o que comparar.
+        assert "672" in sql_backfill
+        assert "698" in sql_backfill
+        assert "26/09/2026" in sql_backfill
+
+    def test_confere_que_o_relogio_sobreviveu(self, sql_backfill):
+        # A conferência que importa: se todos entraram na etapa "hoje", o trigger
+        # venceu e a segunda instrução não fez efeito.
+        assert "entraram_hoje_em_cliente_ativo" in sql_backfill
+
+    def test_tem_plano_de_rollback(self, sql_backfill):
+        assert "ROLLBACK" in sql_backfill.upper()
 
 
 class TestNaoInvadeOTerritorioDaOutraTask:
