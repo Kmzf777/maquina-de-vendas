@@ -17,6 +17,7 @@ from app.follow_up.cadence_joao import (
     FUNIS,
     JOB_TYPES as JOAO_JOB_TYPES,
     RESPOSTA_ADIAR,
+    RESPOSTA_INTERESSE,
     RESPOSTA_OPTOUT,
     CadenciaResolvida,
     Touch,
@@ -822,6 +823,13 @@ JOAO_TETO_ENV = "JOAO_CADENCIA_TETO"
 # oportunidade legítima.
 JOAO_COOLDOWN_DIAS = 90
 
+# O `cancel_reason` do ramo do BOTÃO POSITIVO (spec 2026-09-26 §2.3). Ele NÃO é
+# `RESPOSTA_OPTOUT`, e a diferença é lida em dois lugares: nos relatórios (encerrar
+# porque o objetivo foi alcançado não é a mesma coisa que um lead pedindo para sair)
+# e em `_matricula_interrompida`, onde este motivo específico faz a matrícula CONTAR
+# para o cooldown em vez de liberar a rematrícula.
+MOTIVO_INTERESSE = "lead_demonstrou_interesse"
+
 _joao_overrides_aviso_dado = False
 
 
@@ -936,6 +944,199 @@ def carregar_overrides_joao() -> dict[str, dict]:
     return overrides
 
 
+# ── Os AJUSTES GLOBAIS do motor (spec 2026-09-26 §3.5) ────────────────────
+#
+# Dois números que o dono do funil edita na tela e que NÃO são por cadência — são do
+# motor inteiro. Por isso não cabem em `followup_joao_cadencia` (cuja PK é
+# `(funil, cadencia)`): gravá-los ali obrigaria a escolher uma cadência arbitrária
+# para hospedar um valor global, e a próxima leitura teria de saber qual foi.
+#
+# Estes são os DEFAULTS DE CÓDIGO. A tabela `followup_joao_ajustes` (migration
+# 20260926) sobrepõe; ausência de linha, valor ilegível e tabela inexistente valem
+# todos a mesma coisa — vale o código. As chaves são as MESMAS do CHECK da migration,
+# e as duas listas são fixadas pela suíte, cada uma do seu lado: uma chave que exista
+# só de um lado é configuração que a tela grava e o motor nunca lê.
+AJUSTES_PADRAO: dict[str, int] = {
+    # Máximo de TEMPLATES por dia, somando as 5 esteiras do João. A unidade é DISPARO
+    # e não matrícula (spec §4): uma matrícula agenda 4 toques ao longo de 45 dias, e
+    # limitar matrícula não limitaria envio.
+    "teto_diario_disparos": 100,
+    # A espera do botão "Ainda tenho estoque". Era 60 no código até 26/09; o default
+    # virou 30 e o número passou a ser editável. `cadence_joao.ADIAMENTO_ESTOQUE` é o
+    # mesmo valor do outro lado, e a suíte cruza os dois.
+    "adiamento_estoque_dias": 30,
+}
+
+# Sentinela de LEITURA FALHA de `disparos_de_hoje`. Ver a docstring da função: o valor
+# é maior que qualquer teto que o CHECK da tabela aceite, para que tanto
+# `disparos >= teto` quanto `teto - disparos` leiam "sem saldo" sem um segundo ramo.
+DISPAROS_ILEGIVEIS = 10 ** 6
+
+_joao_ajustes_aviso_dado = False
+
+
+def carregar_ajustes_joao() -> dict[str, int]:
+    """`followup_joao_ajustes` sobreposto em `AJUSTES_PADRAO`. FAIL-CLOSED para o código.
+
+    Mesma disciplina de `carregar_overrides_joao`, pelo mesmo motivo: a migration
+    `20260926_followup_joao_ajustes.sql` NÃO é aplicada pelo deploy — um humano a roda
+    à mão no SQL editor. Até lá a leitura falha, e falhar para os defaults é a falha
+    segura: o teto de 100/dia continua valendo, e o adiamento do botão continua em 30
+    dias. O outro lado (tratar "não li" como "sem teto") seria exatamente o incidente
+    de 16/09 — 888 templates em 6 minutos — por uma tabela que ninguém criou.
+
+    O aviso sai UMA VEZ POR PROCESSO. O tick do agendador roda a cada 30s; repetir este
+    erro em todo tick afogaria o log de verdade, e ele é ESPERADO enquanto a migration
+    não for aplicada.
+
+    Sempre devolve as DUAS chaves: quem chama indexa direto (`[...]`), sem `.get` com
+    default espalhado por três arquivos. Linha com chave desconhecida, valor não
+    inteiro ou valor < 1 é descartada — o CHECK do banco já barra os três, e esta
+    segunda cópia existe para o caso de a tabela ser editada por fora do CRM.
+    """
+    global _joao_ajustes_aviso_dado
+    ajustes = dict(AJUSTES_PADRAO)
+    try:
+        linhas = get_supabase().table("followup_joao_ajustes").select(
+            "chave, valor"
+        ).execute().data or []
+    except Exception as exc:
+        if not _joao_ajustes_aviso_dado:
+            logger.warning(
+                "[JOAO_CADENCIA] ajustes globais não lidos (%s) — valem os defaults "
+                "de código %s. A migration 20260926 é aplicada à mão.",
+                exc, ajustes,
+            )
+            _joao_ajustes_aviso_dado = True
+        return ajustes
+
+    for row in linhas:
+        chave = row.get("chave")
+        if chave not in AJUSTES_PADRAO:
+            continue
+        try:
+            valor = int(row.get("valor"))
+        except (TypeError, ValueError):
+            continue
+        if valor < 1:
+            # Zero tem significado perigoso e DIFERENTE em cada chave (teto 0 pararia
+            # o motor em silêncio; adiamento 0 reenviaria no mesmo dia), e em nenhuma
+            # das duas é um valor útil. Mesmo CHECK da migration.
+            continue
+        ajustes[chave] = valor
+    return ajustes
+
+
+def _dia_em_sao_paulo(now: datetime) -> tuple[str, str]:
+    """`[início, fim)` do dia corrente em America/Sao_Paulo, em ISO UTC.
+
+    O dia do TETO é o dia do calendário de quem opera o funil, não o de UTC. São Paulo
+    está em UTC-3 o ano inteiro (o horário de verão acabou em 2019), então das 21h à
+    meia-noite BRT o relógio UTC JÁ ESTÁ no dia seguinte: contar por UTC viraria a
+    conta às 21h e daria um segundo orçamento de 100 disparos em cima do primeiro,
+    todo santo dia — e justamente na faixa em que um atraso de fila empurra os toques.
+    """
+    local = now.astimezone(_SP_TZ)
+    inicio_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    fim_local = inicio_local + timedelta(days=1)
+    return (
+        inicio_local.astimezone(timezone.utc).isoformat(),
+        fim_local.astimezone(timezone.utc).isoformat(),
+    )
+
+
+def disparos_de_hoje(sb, *, now: datetime | None = None) -> int:
+    """Quantos TEMPLATES do João já saíram hoje (dia de America/Sao_Paulo).
+
+    UMA consulta, e ela é do TICK — nunca uma por job (spec §4). Quem chama guarda o
+    número e desconta dele; recontar por job seria N idas ao banco a cada 30 segundos.
+
+    O ESCOPO é `JOAO_JOB_TYPES`, as 5 esteiras do vendedor. O caminho `standard` da
+    ValerIA fica de FORA de propósito: lá é texto livre do LLM dentro de uma janela de
+    24h que o lead abriu, dirigido por resposta, e é o único follow-up que roda de
+    verdade em produção (8.140 jobs). Um teto ali quebraria o que funciona sem reduzir
+    o risco que motiva esta regra.
+
+    O JOB DE MOVER NÃO CONTA. Ele é um job do João, é marcado `sent` e ganha `sent_at`
+    como qualquer outro — mas não manda mensagem nenhuma (`metadata.acao ==
+    "mover_etapa"`, sem template, sem canal). Contá-lo gastaria orçamento de disparo
+    com uma escrita em `deals`, e a unidade declarada é TEMPLATE. A marca é a mesma que
+    `scheduler._process_joao_touch` lê para decidir o que o job é.
+
+    FAIL-CLOSED: erro de leitura devolve `DISPAROS_ILEGIVEIS`, que é "sem saldo". Não
+    saber quantos templates já saíram hoje não é razão para mandar mais — é a mesma
+    escolha de `carregar_overrides_joao` e de `_jobs_joao_dos_leads`, e o custo do
+    outro lado é a avalanche que este teto existe para impedir. O sintoma da falha é
+    visível (zero disparos), e a consulta é um select indexado na mesma tabela que o
+    scheduler lê a cada tick: se ela falha de forma permanente, o motor já está morto.
+    """
+    now = now or datetime.now(timezone.utc)
+    inicio, fim = _dia_em_sao_paulo(now)
+    try:
+        linhas = sb.table("follow_up_jobs").select(
+            "id, metadata"
+        ).eq("status", "sent").in_(
+            "job_type", sorted(JOAO_JOB_TYPES)
+        ).gte("sent_at", inicio).lt("sent_at", fim).execute().data or []
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] não consegui contar os disparos de hoje (%s) — "
+            "tratando como orçamento ESGOTADO", exc)
+        return DISPAROS_ILEGIVEIS
+    return sum(
+        1 for linha in linhas
+        if _job_metadata(linha).get("acao") != "mover_etapa"
+    )
+
+
+def _inicio_da_janela_de_amanha(now: datetime) -> datetime:
+    """As 09h do PRÓXIMO DIA ÚTIL em America/Sao_Paulo, em UTC.
+
+    Reusa `_clamp_to_business_window` em vez de repetir a regra de fim de semana: a
+    meia-noite local de amanhã está sempre ANTES da janela, então o clamp devolve as
+    09h do mesmo dia quando amanhã é dia útil, e pula para segunda quando cai no fim
+    de semana. Duas cópias da regra divergiriam, e o sintoma seria um template saindo
+    num sábado.
+    """
+    local = now.astimezone(_SP_TZ)
+    amanha = (local + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    return _clamp_to_business_window(amanha.astimezone(timezone.utc))
+
+
+def adiar_job_para_amanha(job_id: str, sb, *, now: datetime | None = None) -> None:
+    """Empurra `fire_at` para o início da janela comercial de amanhã. NUNCA cancela.
+
+    É o que o teto diário faz com um toque que estourou o orçamento do dia (spec §4), e
+    a escolha entre ADIAR e CANCELAR não é estilo:
+
+      · cancelar jogaria o toque no lixo — o lead pularia do toque 2 para o 4 sem que
+        ninguém registrasse que houve um buraco;
+      · e, pior, `motivo_para_pular_joao` lê job `cancelled` como "o lead respondeu no
+        meio" e por isso NÃO deixa aquela matrícula segurar o cooldown. O card voltaria
+        a ser elegível na varredura seguinte, seria rematriculado do toque 1, estouraria
+        o teto de novo, seria cancelado de novo: laço. É o mesmo raciocínio que faz
+        `_mover_card_joao` marcar `sent` em vez de `cancelled` quando não consegue mover.
+
+    Falha de escrita é logada e engolida: quem chama está no meio de um tick de envio, e
+    a alternativa (propagar) derrubaria os jobs seguintes da mesma passagem. O job segue
+    `pending` com o `fire_at` antigo e volta a ser avaliado no próximo tick — onde o
+    mesmo teto o barra de novo.
+    """
+    alvo = _inicio_da_janela_de_amanha(now or datetime.now(timezone.utc))
+    try:
+        sb.table("follow_up_jobs").update(
+            {"fire_at": alvo.isoformat()}).eq("id", job_id).execute()
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] falha ao adiar o job %s para %s: %s",
+            job_id, alvo.isoformat(), exc)
+        return
+    logger.info(
+        "[JOAO_CADENCIA] teto diário atingido — job %s adiado para %s",
+        job_id, alvo.isoformat())
+
+
 def resolver_para_agendar(
     funil: str, codigo: str, overrides_do_par: Mapping[str, Any] | None = None,
 ) -> CadenciaResolvida:
@@ -969,7 +1170,10 @@ def _jobs_joao_dos_leads(sb, lead_ids: list[str]) -> list[dict] | None:
         return []
     try:
         return sb.table("follow_up_jobs").select(
-            "id, lead_id, job_type, status, sequence, fire_at, sent_at, created_at, metadata"
+            "id, lead_id, job_type, status, sequence, fire_at, sent_at, created_at, "
+            # `cancel_reason` entrou em 26/09: `motivo_para_pular_joao` precisa
+            # distinguir "o lead respondeu no meio" de "o lead disse que quer repor".
+            "cancel_reason, metadata"
         ).in_("lead_id", lead_ids).in_(
             "job_type", sorted(JOAO_JOB_TYPES)
         ).execute().data or []
@@ -1028,6 +1232,32 @@ def _ultimo_envio(jobs_do_card: list[dict], job_type: str) -> datetime | None:
     return max(validos) if validos else None
 
 
+def _matricula_interrompida(jobs_da_matricula: list[dict]) -> bool:
+    """Esta matrícula MORREU no meio (e por isso não segura o cooldown)?
+
+    A regra base é de 23/09: matrícula com algum job `cancelled` foi interrompida — o
+    lead respondeu, a esteira não terminou o trabalho dela, e 90 dias de silêncio seriam
+    o oposto de "se responder, reinicia".
+
+    A EXCEÇÃO é de 26/09 e ela é estreita: `MOTIVO_INTERESSE`. O botão positivo também
+    cancela os `pending`, mas pelo motivo contrário — a esteira alcançou o objetivo e
+    saiu da frente para o vendedor assumir. Sem esta exceção, o cancelamento faria o
+    card voltar a ser elegível no tick seguinte (30s) e a esteira o rematricularia do
+    toque 1, em cima de uma negociação em andamento: laço, e cada volta custa um
+    template de marketing. É o mesmo laço que `adiar_job_para_amanha` existe para
+    evitar do outro lado.
+
+    Na Reposição o laço já estaria fechado pelo move do toque 1 (o card sai de "Cliente
+    Ativo", que é a única etapa de ENTRADA da esteira). Esta trava cobre o resto: as
+    três cadências de prospecção não movem card no meio, e "quero a tabela" é uma frase
+    perfeitamente natural para um lead de Atacado DIGITAR.
+    """
+    cancelados = [j for j in jobs_da_matricula if j.get("status") == "cancelled"]
+    if not cancelados:
+        return False
+    return not all(j.get("cancel_reason") == MOTIVO_INTERESSE for j in cancelados)
+
+
 def motivo_para_pular_joao(
     cadencia: CadenciaResolvida, jobs_do_card: list[dict], now: datetime,
 ) -> str | None:
@@ -1084,6 +1314,8 @@ def motivo_para_pular_joao(
     #
     # É a distinção entre "a esteira terminou o trabalho dela" e "o lead respondeu no
     # meio". `JOAO_COOLDOWN_DIAS` continua 90: muda O QUE conta, não por quanto tempo.
+    # A ÚNICA exceção a "cancelada = interrompida" é o botão positivo — ver
+    # `_matricula_interrompida`.
     corte = now - timedelta(days=JOAO_COOLDOWN_DIAS)
     por_matricula: dict[str, list[dict]] = {}
     avulsos = 0
@@ -1102,7 +1334,7 @@ def motivo_para_pular_joao(
         por_matricula.setdefault(chave, []).append(job)
 
     for jobs_da_matricula in por_matricula.values():
-        if any(job.get("status") == "cancelled" for job in jobs_da_matricula):
+        if _matricula_interrompida(jobs_da_matricula):
             continue
         nascimentos = [
             dt for dt in (
@@ -1218,8 +1450,9 @@ def _job_de_mover(
     lead que responde não recebe mais nada E não tem o card movido, sem uma única regra
     nova. Uma varredura separada precisaria reimplementar essa condição, e divergiria
     dela no primeiro ajuste. Pelo mesmo motivo ele carrega o `matricula_id` dos toques:
-    é por ele que o adiamento de 60 dias ("ainda tenho estoque") desliza o bloco INTEIRO,
-    o move incluído, em vez de mover o card no meio de uma cadência adiada.
+    é por ele que o adiamento do botão "ainda tenho estoque" (30 dias no código desde
+    26/09, e editável em `followup_joao_ajustes`) desliza o bloco INTEIRO, o move
+    incluído, em vez de mover o card no meio de uma cadência adiada.
 
     Duas guardas, nesta ordem:
 
@@ -1270,9 +1503,30 @@ def _job_de_mover(
 
 def _varrer_cadencia_joao(
     sb, cadencia: CadenciaResolvida, canal: Mapping[str, Any],
-    now: datetime, teto: int,
-) -> int:
-    """Uma passagem de UMA (cadência, funil). Devolve quantos jobs foram criados."""
+    now: datetime, teto: int, *, orcamento: int | None = None,
+) -> tuple[int, int]:
+    """Uma passagem de UMA (cadência, funil). Devolve `(jobs criados, cards matriculados)`.
+
+    DOIS tetos, e eles são COISAS DIFERENTES (spec 2026-09-26 §4):
+
+      · `teto`     — POR PASSAGEM. "Quantos cards por vez", para que uma varredura não
+                      matricule a base inteira numa consulta. É o `JOAO_TETO_PADRAO`
+                      (20), o mesmo de `automation/triggers.py`, e ele se renova a cada
+                      tick de 30s — por isso sozinho ele não limita VOLUME: 20 a cada
+                      30s são até 2.400 matrículas por hora.
+      · `orcamento` — o saldo do DIA, já descontado do que saiu, calculado UMA vez por
+                      passagem do agendador e repartido entre as cadências na ordem em
+                      que elas aparecem. `None` = sem orçamento (o comportamento
+                      histórico; nenhum chamador de produção passa None).
+
+    Matrícula gasta orçamento porque o toque 1 sai praticamente na hora (offset 0,
+    clampado para a janela comercial): matricular N cards é disparar N templates. É o
+    que faz o teto se autoequilibrar sem uma segunda regra.
+
+    Devolver os DOIS números é o que permite descontar o orçamento certo: `len(rows)`
+    conta jobs (4 toques + o move), e descontar isso do orçamento cobraria 5 disparos
+    por uma matrícula que manda 1 template hoje.
+    """
     args = {
         # Por KEY e não por id: a etapa é a mesma em todo funil do João, e um id
         # hardcoded morreria na primeira reestruturação de funil (Arthur reestruturou os
@@ -1301,13 +1555,13 @@ def _varrer_cadencia_joao(
         logger.error(
             "[JOAO_CADENCIA] RPC falhou p/ %s/%s: %s",
             cadencia.codigo, cadencia.funil, exc)
-        return 0
+        return 0, 0
     if not linhas:
-        return 0
+        return 0, 0
 
     jobs = _jobs_joao_dos_leads(sb, [l["lead_id"] for l in linhas if l.get("lead_id")])
     if jobs is None:
-        return 0
+        return 0, 0
 
     from app.leads.service import is_lead_blacklisted
 
@@ -1318,6 +1572,16 @@ def _varrer_cadencia_joao(
         # a defesa não pode depender de o banco honrar o LIMIT — e não dependeu, no
         # incidente de 16/09, de a tela honrar a validação.
         if matriculados >= teto:
+            break
+        # ORÇAMENTO DO DIA, que é outra coisa (ver a docstring). Ele para a matrícula
+        # ANTES do insert, e não depois: um card que não entrou hoje continua parado na
+        # etapa e será varrido amanhã, com a régua inteira começando do zero. Matricular
+        # e só depois segurar o envio construiria fila que nunca drena — o toque do dia
+        # 15 chegaria no dia 40, corrompendo a cadência em silêncio (spec §4).
+        if orcamento is not None and matriculados >= orcamento:
+            logger.info(
+                "[JOAO_CADENCIA] %s/%s: orçamento do dia esgotado em %d matrícula(s)",
+                cadencia.codigo, cadencia.funil, matriculados)
             break
         lead_id, deal_id = linha_rpc.get("lead_id"), linha_rpc.get("deal_id")
         if not lead_id:
@@ -1348,27 +1612,35 @@ def _varrer_cadencia_joao(
         matriculados += 1
 
     if not rows:
-        return 0
+        return 0, 0
     try:
         sb.table("follow_up_jobs").insert(rows).execute()
     except Exception as exc:
         logger.error(
             "[JOAO_CADENCIA] falha ao inserir %d jobs de %s/%s: %s",
             len(rows), cadencia.codigo, cadencia.funil, exc)
-        return 0
+        # Insert que falhou não gastou orçamento: nenhum template vai sair por ele.
+        return 0, 0
     logger.info(
         "[JOAO_CADENCIA] %s/%s: %d card(s) matriculado(s), %d job(s) agendado(s)",
         # "job(s)" e não "toque(s)": desde 23/09 a matrícula de uma cadência que move
         # termina num job que não é toque (`acao=mover_etapa`).
         cadencia.codigo, cadencia.funil, matriculados, len(rows))
-    return len(rows)
+    return len(rows), matriculados
 
 
 def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None) -> int:
     """Uma passagem do agendador sobre as cadências ATIVAS. Devolve os jobs criados.
 
     Chamada pelo tick de automação (`automation/triggers.py::check_polling_triggers`).
-    Cadência desligada não varre NADA — nem chega a perguntar ao banco.
+    Cadência desligada não varre NADA — nem chega a perguntar ao banco, e isso vale
+    também para o orçamento do dia: ele só é calculado quando a PRIMEIRA cadência
+    elegível aparece, junto da resolução do canal.
+
+    O ORÇAMENTO DIÁRIO (spec 2026-09-26 §4) é UM número por passagem, repartido entre
+    as cadências na ordem dos funis — UMA contagem por tick, nunca uma por card. Ele
+    NÃO substitui o teto por passagem (`teto`, 20): esse protege contra varrer a base
+    inteira numa consulta, e continua existindo.
     """
     if os.environ.get("REHEARSAL_MODE") == "true":
         logger.info("[JOAO_CADENCIA] REHEARSAL_MODE ativo — varredura ignorada")
@@ -1382,11 +1654,18 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
     canal: dict | None = None
     canal_resolvido = False
     sb = None
+    # O saldo de DISPAROS do dia. `None` = ainda não calculado (preguiçoso de
+    # propósito: passagem sem cadência ativa não paga as duas consultas).
+    saldo: int | None = None
+    teto_diario = 0
+    esgotou_o_dia = False
 
     # Cada FUNIL pergunta só as SUAS PRÓPRIAS cadências — `funil.cadencias` é `()` para
     # "recuperacao", então o laço interno não roda nenhuma vez para ela: zero iteração,
     # zero job, sem `if` especial (spec 2026-09-21 §7).
     for f in FUNIS:
+        if esgotou_o_dia:
+            break
         overrides_do_funil = overrides.get(f.codigo) or {}
         for cadencia_do_codigo in f.cadencias:
             ov = overrides_do_funil.get(cadencia_do_codigo.codigo) or {}
@@ -1414,7 +1693,22 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
                 return criados
             if sb is None:
                 sb = get_supabase()
-            criados += _varrer_cadencia_joao(sb, cadencia, canal, now, teto)
+            if saldo is None:
+                teto_diario = carregar_ajustes_joao()["teto_diario_disparos"]
+                saldo = max(0, teto_diario - disparos_de_hoje(sb, now=now))
+            if saldo <= 0:
+                # O log sai UMA vez por passagem, e não uma por cadência: o tick roda a
+                # cada 30s e o orçamento fica em zero pelo resto do dia — uma linha por
+                # cadência por tick seriam ~10 mil linhas até a meia-noite.
+                logger.info(
+                    "[JOAO_CADENCIA] teto diário de %d disparo(s) já consumido — "
+                    "nenhuma matrícula nova nesta passagem", teto_diario)
+                esgotou_o_dia = True
+                break
+            novos, matriculados = _varrer_cadencia_joao(
+                sb, cadencia, canal, now, teto, orcamento=saldo)
+            criados += novos
+            saldo -= matriculados
 
     if criados:
         emit_event("followups")  # wake-up do worker (fail-open; o tick cobre)
@@ -1426,17 +1720,23 @@ def processar_resposta_joao(
     lead_id: str, texto: str | None, *,
     conversation_id: str | None = None, now: datetime | None = None,
 ) -> str | None:
-    """O que a resposta do lead faz com as matrículas ABERTAS do João. TRÊS ramos:
+    """O que a resposta do lead faz com as matrículas ABERTAS do João. QUATRO ramos:
 
         botão de saída              -> opt-out REAL (blacklist), reusando a autoridade
-        botão "ainda tenho estoque" -> adia `ADIAMENTO_ESTOQUE` (60 dias), sem recomeçar
+        botão positivo              -> ENCERRA a matrícula (o João assume), sem blacklist
+        botão "ainda tenho estoque" -> adia `adiamento_estoque_dias`, sem recomeçar
         qualquer outra resposta     -> adia `ADIAMENTO_RESPOSTA` (3 dias), sem recomeçar
 
-    Nessa ORDEM, que é a precedência: opt-out primeiro, o botão longo depois, e o
-    adiamento curto como o que sobra. Devolve a ação aplicada (`RESPOSTA_OPTOUT` ou
-    `RESPOSTA_ADIAR`), ou None quando não havia o que fazer — os dois adiamentos
-    devolvem `RESPOSTA_ADIAR` porque a AÇÃO é a mesma; só a distância muda, e ela está
-    no log e no `fire_at` gravado.
+    Nessa ORDEM, que é a precedência: saída → interesse → adiamento → comum. Devolve a
+    ação aplicada (`RESPOSTA_OPTOUT`, `RESPOSTA_INTERESSE` ou `RESPOSTA_ADIAR`), ou None
+    quando não havia o que fazer — os dois adiamentos devolvem `RESPOSTA_ADIAR` porque a
+    AÇÃO é a mesma; só a distância muda, e ela está no log e no `fire_at` gravado.
+
+    O RAMO DO BOTÃO POSITIVO é de 26/09 (spec §2.3). "Preciso repor" é o sinal mais
+    quente que a esteira de Reposição produz e até ontem caía no ramo genérico: adiava
+    3 dias e mandava outro "ainda tem estoque?" depois, possivelmente enquanto o João já
+    negociava. Ele ENCERRA e não notifica ninguém — o lead respondeu no número do
+    vendedor, e o /conversas já mostra.
 
     O TERCEIRO RAMO é novo (spec 2026-09-25 §3.3) e o `return None` antecipado que existia
     quando `classificar_resposta` não classificava SAIU: "não é opt-out nem adiamento
@@ -1482,11 +1782,56 @@ def processar_resposta_joao(
         _optout_da_cadencia_joao(lead_id, texto, conversation_id, pendentes, sb)
         return RESPOSTA_OPTOUT
 
-    adiamento = (
-        ADIAMENTO_ESTOQUE if classificacao == RESPOSTA_ADIAR else ADIAMENTO_RESPOSTA
-    )
+    if classificacao == RESPOSTA_INTERESSE:
+        _encerrar_por_interesse(lead_id, pendentes, sb)
+        return RESPOSTA_INTERESSE
+
+    if classificacao == RESPOSTA_ADIAR:
+        # O NÚMERO vem do banco, não da constante: `ADIAMENTO_ESTOQUE` virou o DEFAULT
+        # DE CÓDIGO em 26/09 e o dono do funil edita o valor efetivo na tela
+        # (spec §3.4/§3.5). A leitura é fail-closed para os 30 dias do código, e só
+        # acontece NESTE ramo — uma resposta comum não paga uma consulta a mais.
+        adiamento = timedelta(
+            days=carregar_ajustes_joao()["adiamento_estoque_dias"])
+    else:
+        adiamento = ADIAMENTO_RESPOSTA
     _adiar_matriculas_joao(jobs, pendentes, sb, adiamento=adiamento)
     return RESPOSTA_ADIAR
+
+
+def _encerrar_por_interesse(lead_id: str, pendentes: list[dict], sb) -> None:
+    """O botão positivo encerra a matrícula. NÃO é blacklist (spec 2026-09-26 §2.3).
+
+    Cancela TODOS os jobs `pending` do João deste lead — os toques que faltavam E o job
+    de `mover_etapa`, que é só mais um `pending` e por isso cai junto sem regra nenhuma
+    (o mesmo motivo pelo qual ele é um JOB e não uma varredura à parte). Mover o card
+    para "Em atenção" depois de o lead dizer que quer repor seria marcar como abandonado
+    exatamente quem levantou a mão.
+
+    O ESCOPO é o mesmo dos outros dois ramos desta função — todas as matrículas abertas
+    do lead, e não só a do card que mandou o último toque. Um lead pode ter card em
+    Atacado e card em Reposição caminhando em paralelo; quem diz "quero repor agora"
+    não deve seguir recebendo template automático pelo outro. O opt-out e o adiamento já
+    tratam o lead inteiro pela mesma razão.
+
+    Sem notificação: decisão do dono (spec §2.3). O lead respondeu no número do João e
+    a conversa aparece em /conversas como qualquer outra.
+    """
+    ids = [j["id"] for j in pendentes if j.get("id")]
+    if not ids:
+        return
+    try:
+        sb.table("follow_up_jobs").update({
+            "status": "cancelled", "cancel_reason": MOTIVO_INTERESSE,
+        }).in_("id", ids).execute()
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] falha ao encerrar %d job(s) do lead %s por interesse: %s",
+            len(ids), lead_id, exc)
+        return
+    logger.info(
+        "[JOAO_CADENCIA] lead %s demonstrou interesse — %d job(s) encerrado(s); "
+        "o vendedor assume", lead_id, len(ids))
 
 
 def _optout_da_cadencia_joao(
@@ -1555,10 +1900,12 @@ def _adiar_matriculas_joao(
     """Empurra os toques que ainda não saíram em `adiamento`, sem recomeçar a contagem.
 
     Os DOIS ramos de adiamento de `processar_resposta_joao` passam por aqui e só diferem
-    na distância: `ADIAMENTO_ESTOQUE` (60 dias) para quem apertou "ainda tenho estoque"
-    (ata 41:40), `ADIAMENTO_RESPOSTA` (3 dias) para qualquer outra resposta
-    (spec 2026-09-25 §3.3). O default continua sendo o do botão, que é o ramo que esta
-    função serviu sozinha até aqui.
+    na distância: quem apertou "ainda tenho estoque" leva
+    `carregar_ajustes_joao()["adiamento_estoque_dias"]` (ata 41:40 — 30 dias no código
+    desde 26/09, e o dono edita o efetivo na tela), e qualquer outra resposta leva
+    `ADIAMENTO_RESPOSTA`, 3 dias de código (spec 2026-09-25 §3.3). O default do
+    parâmetro continua sendo `ADIAMENTO_ESTOQUE`, que é o ramo que esta função serviu
+    sozinha até aqui — mas o caminho de produção SEMPRE passa a distância explícita.
 
     Duas coisas ao mesmo tempo, e a segunda é a que costuma se perder: adiar, e NÃO
     recomeçar a contagem. Recomeçar devolveria a cadência ao toque 1, e o lead releria o
