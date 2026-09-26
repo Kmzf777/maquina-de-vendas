@@ -70,6 +70,27 @@ sabe por não haver controle na interface, e está escrito no spec §5 ("a tela 
 os dois números, edita um").
 
 ──────────────────────────────────────────────────────────────────────────────
+OS AJUSTES GLOBAIS, E POR QUE ELES VIAJAM NO MESMO ENDPOINT (spec 2026-09-26 §3.5)
+──────────────────────────────────────────────────────────────────────────────
+Dois números do MOTOR — `teto_diario_disparos` e `adiamento_estoque_dias` — não são
+por cadência: valem para as cinco esteiras somadas. Por isso não entram no payload de
+cadência nenhuma (seria o mesmo número copiado cinco vezes, e a pergunta "qual delas
+vale?"); entram UMA VEZ em `joao.ajustes`, com o par `*_codigo` no mesmo padrão de
+`gatilho_dias_codigo` — sem ele ninguém descobre o que a configuração mudou nem como
+voltar.
+
+A GRAVAÇÃO deles é o MESMO `PUT /api/cadence/joao`, distinguido pela chave `ajustes`
+no corpo. É decisão, não acidente: o CRM proxia o FastAPI ROTA POR ROTA
+(`frontend/src/app/api/cadence/joao/route.ts`), então cada rota nova custa um arquivo
+de proxy — e um proxy esquecido é um 404 que só aparece quando alguém clica em Salvar
+em produção. Mesma razão que já mantém DOIS MOTORES num endpoint só, ali em cima.
+
+`carregar_ajustes_joao` (service.py) é a ÚNICA leitura, e ela é fail-CLOSED para
+`AJUSTES_PADRAO` — ao contrário do resto deste módulo, que é fail-open para o código.
+Não é inconsistência: aqui "o código" e "o default" são a mesma coisa, e um teto que
+virasse 0 por erro de leitura calaria o motor inteiro sem sintoma.
+
+──────────────────────────────────────────────────────────────────────────────
 A TRAVA DE ATIVAÇÃO
 ──────────────────────────────────────────────────────────────────────────────
 Ligar exige template com status APPROVED em TODO toque do par (funil, cadência). É
@@ -100,6 +121,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.follow_up import cadence_joao as cj
 from app.follow_up.cadence import CADENCE, MIN_GAP, OUTBOUND_NUDGE, Touch
+from app.follow_up.service import AJUSTES_PADRAO, carregar_ajustes_joao
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +193,7 @@ def build_cadence_definition() -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 _TABELA_CADENCIA = "followup_joao_cadencia"
 _TABELA_TOQUE = "followup_joao_toque"
+_TABELA_AJUSTES = "followup_joao_ajustes"
 _TABELA_TEMPLATES = "message_templates"
 
 # `message_templates.status`: o sync local grava minúsculo, o payload cru da Meta vem
@@ -337,6 +360,18 @@ def _cadencia_payload(funil_codigo: str, cadencia: cj.Cadencia, por_cadencia: di
         "gatilho_silencio_dias": cadencia.gatilho_silencio_dias,
         "etapa_final_rotulo": cadencia.etapa_final_rotulo,
         "dias_ate_mover": cadencia.dias_ate_mover,
+        # ── O QUINTO só-leitura, de 26/09/2026 (spec §2.1) ────────────────────
+        # As etapas em que a esteira SEGUE VIVA, em RÓTULO. Uma lista de um
+        # elemento nas quatro de prospecção (o default `etapas_vivas=()` cai na
+        # etapa de entrada) e de dois nas duas de Reposição, que entram por
+        # "Cliente Ativo" e continuam vivas depois do move para "Já chamado".
+        #
+        # A tradução é `cadencia.rotulo_da_etapa`, POR CADÊNCIA, nunca um mapa
+        # global: a key `novo` é "Novo" na prospecção e "Cliente Ativo" na
+        # Reposição, e um mapa único reintroduziria a ambiguidade que a entrega de
+        # 21/09 apagou. Key crua nunca sai daqui — é a mesma regra de
+        # `gatilho_stage_rotulo`.
+        "etapas_vivas_rotulos": list(cadencia.etapas_vivas_rotulos),
         # ── O QUARTO só-leitura, de 25/09/2026 ────────────────────────────────
         # Quantos dias os toques restantes deslizam quando o lead RESPONDE. Vem da
         # constante do motor (`cadence_joao.ADIAMENTO_RESPOSTA`), não da `Cadencia`:
@@ -361,6 +396,12 @@ def _cadencia_payload(funil_codigo: str, cadencia: cj.Cadencia, por_cadencia: di
                 "template_name": efetivo.template_name,
                 "template_name_codigo": original.template_name,
                 "aceita_adiamento": efetivo.aceita_adiamento,
+                # Para onde o card vai DEPOIS deste toque sair (spec 2026-09-26
+                # §3.2) — em RÓTULO, e `None` nos 21 toques que não movem nada.
+                # Vem do toque RESOLVIDO porque é dele que a tela fala, mas o campo
+                # não é sobreposto pelo banco: `move_para` é topologia do funil, não
+                # prazo, e `resolver_cadencia` o carrega intacto.
+                "move_para_rotulo": cadencia.rotulo_da_etapa(efetivo.move_para),
             }
             for efetivo, original in zip(resolvidos, do_codigo)
         ],
@@ -380,11 +421,34 @@ def _funil_payload(f: cj.Funil, por_cadencia: dict, por_toque: dict) -> dict:
     }
 
 
+def _ajustes_payload() -> dict:
+    """Os ajustes GLOBAIS do motor: o efetivo e o default de código, lado a lado.
+
+    Montado A PARTIR de `AJUSTES_PADRAO`, nunca de uma lista de chaves escrita aqui:
+    uma segunda lista é exatamente o modo de falha que o CHECK da migration 20260926
+    existe para impedir do lado do banco — chave que só existe de um lado é
+    configuração que a tela grava e o motor nunca lê.
+
+    O par `*_codigo` segue o padrão de `gatilho_dias_codigo`: sem ele a tela mostra
+    "250" e ninguém descobre que o padrão era 100, nem como voltar.
+    """
+    efetivos = carregar_ajustes_joao()
+    payload: dict[str, int] = {}
+    for chave, padrao in AJUSTES_PADRAO.items():
+        payload[chave] = efetivos[chave]
+        payload[f"{chave}_codigo"] = padrao
+    return payload
+
+
 def build_joao_definition(por_cadencia: dict | None = None,
                           por_toque: dict | None = None) -> dict:
     if por_cadencia is None or por_toque is None:
         por_cadencia, por_toque = _sobreposicao()
-    return {"funis": [_funil_payload(f, por_cadencia, por_toque) for f in cj.FUNIS]}
+    return {
+        "funis": [_funil_payload(f, por_cadencia, por_toque) for f in cj.FUNIS],
+        # UMA vez, fora das cadências: estes dois números são do motor inteiro.
+        "ajustes": _ajustes_payload(),
+    }
 
 
 @router.get("/definition")
@@ -527,6 +591,98 @@ def _problemas_de_ativacao(funil_codigo: str, codigo: str, por_cadencia: dict,
     return problemas
 
 
+def _ajuste_desconhecido(chave: Any) -> Problema:
+    validas = ", ".join(sorted(AJUSTES_PADRAO))
+    return Problema(
+        "ajuste_desconhecido",
+        f"`{chave}` não é um ajuste do motor: os ajustes globais são {validas}. "
+        f"Uma chave fora dessa lista seria gravada, apareceria configurada na tela e "
+        f"o motor nunca a leria — o pior modo de falha de uma tela de configuração, e "
+        f"o mesmo que o CHECK `followup_joao_ajustes_chave_valida` barra no banco.",
+    )
+
+
+def _ajustes_do_corpo(bruto: Any) -> tuple[dict[str, int | None], list[Problema]]:
+    """Valida o bloco `ajustes` do PUT. `None` num valor = apaga a sobreposição.
+
+    Mesma leitura de `toques`: a FORMA é declarada pelo código, então chave fora de
+    `AJUSTES_PADRAO` é RECUSADA, não ignorada — é o análogo de `sequence` que não
+    existe na cadência. (Os campos só-leitura do TOPO do corpo continuam ignorados em
+    silêncio: lá o caso provável é a tela ecoando o que o GET mandou; aqui, dentro de
+    um objeto cujas duas chaves são ambas editáveis, uma terceira só pode ser erro de
+    digitação.)
+    """
+    problemas: list[Problema] = []
+    if not isinstance(bruto, dict):
+        return {}, [Problema(
+            "ajustes_invalidos",
+            "`ajustes` precisa ser um objeto {chave: valor}.",
+        )]
+
+    pedidos: dict[str, int | None] = {}
+    for chave, valor in bruto.items():
+        if chave not in AJUSTES_PADRAO:
+            problemas.append(_ajuste_desconhecido(chave))
+            continue
+        if valor is None:
+            # `null` é o botão de desfazer, igual ao dos toques: apaga a linha e o
+            # default de código volta a valer. Ausente continua sendo "não mexe".
+            pedidos[chave] = None
+            continue
+        if isinstance(valor, bool) or not isinstance(valor, int) or valor < 1:
+            # Espelha o CHECK `followup_joao_ajustes_valor_positivo`. Zero tem
+            # significado perigoso e DIFERENTE em cada chave: teto 0 para o motor em
+            # silêncio, e adiamento 0 faz o toque seguinte sair por cima de quem
+            # acabou de dizer que não precisa.
+            problemas.append(Problema(
+                "ajuste_invalido",
+                f"`{chave}` precisa ser um inteiro de 1 para cima (veio {valor!r}). "
+                f"Para voltar ao padrão de código ({AJUSTES_PADRAO[chave]}), mande "
+                f"`null`.",
+            ))
+            continue
+        pedidos[chave] = valor
+    return pedidos, problemas
+
+
+async def _put_ajustes_globais(corpo: Mapping[str, Any]) -> dict:
+    """`PUT /api/cadence/joao` com `ajustes` no corpo — os dois números do MOTOR.
+
+    Não leva `funil` nem `cadencia`: o teto diário vale para as cinco esteiras
+    somadas, e o adiamento do botão "Ainda tenho estoque" é uma constante do motor.
+    Pendurá-los na linha de UMA cadência criaria cinco cópias do mesmo número e a
+    pergunta "qual delas vale?".
+
+    Recusa não grava NADA — mesma disciplina do PUT por cadência.
+    """
+    pedidos, problemas = _ajustes_do_corpo(corpo.get("ajustes"))
+    if problemas:
+        raise _recusa(problemas)
+
+    atualizado_por = corpo.get("atualizado_por")
+    atualizado_por = str(atualizado_por).strip() if atualizado_por else None
+
+    linhas: list[dict] = []
+    apagar: list[str] = []
+    for chave, valor in sorted(pedidos.items()):
+        if valor is None:
+            apagar.append(chave)
+            continue
+        linha: dict[str, Any] = {"chave": chave, "valor": valor}
+        if atualizado_por:
+            linha["atualizado_por"] = atualizado_por
+        linhas.append(linha)
+
+    if linhas or apagar:
+        sb = _supabase()
+        if linhas:
+            sb.table(_TABELA_AJUSTES).upsert(linhas, on_conflict="chave").execute()
+        for chave in apagar:
+            sb.table(_TABELA_AJUSTES).delete().eq("chave", chave).execute()
+
+    return _ajustes_payload()
+
+
 @router.put("/joao")
 async def put_joao_definition(request: Request) -> dict:
     """Grava a sobreposição de UM par (funil, cadência) do João e devolve ele já
@@ -534,6 +690,12 @@ async def put_joao_definition(request: Request) -> dict:
 
     Corpo: `{funil, cadencia, gatilho_dias?, ativa?, atualizado_por?,
              toques?: {sequence: {dias?, template_name?}}}`.
+
+    DOIS CORPOS, UMA ROTA: se vier a chave `ajustes`, o pedido é dos ajustes GLOBAIS
+    do motor (`{ajustes: {teto_diario_disparos?, adiamento_estoque_dias?},
+    atualizado_por?}`) e a resposta é o bloco `ajustes`, não uma cadência. `funil` e
+    `cadencia` não entram nesse caminho — os dois números valem para as cinco
+    esteiras somadas. O porquê de ser a mesma rota está no cabeçalho do módulo.
 
     `funil` é OBRIGATÓRIO (spec 2026-09-21 §5) — não existe mais "aplicar nas duas
     linhas": cada funil tem seu próprio liga/desliga e seu próprio prazo de
@@ -557,6 +719,13 @@ async def put_joao_definition(request: Request) -> dict:
         raise _recusa([Problema("corpo_invalido", "O corpo não é um JSON válido.")])
     if not isinstance(corpo, dict):
         raise _recusa([Problema("corpo_invalido", "O corpo precisa ser um objeto.")])
+
+    # Os ajustes GLOBAIS entram pelo MESMO verbo e pela MESMA rota (ver o cabeçalho
+    # do módulo: o CRM proxia rota por rota, e rota nova sem proxy é um 404 que só
+    # aparece em produção). A chave `ajustes` é o que separa os dois caminhos, e ela
+    # NÃO existe no payload de cadência — não há corpo que caia nos dois.
+    if "ajustes" in corpo:
+        return await _put_ajustes_globais(corpo)
 
     funil_codigo = str(corpo.get("funil") or "").strip()
     f = cj.funil(funil_codigo)

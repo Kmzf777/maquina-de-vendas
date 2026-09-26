@@ -12,12 +12,19 @@ from app.follow_up.service import (
     get_due_followups,
     lead_marked_wrong_number,
     should_proactive_handoff,
+    # O CONTRATO do orçamento diário (spec 2026-09-26 §4). Os três moram em
+    # `service.py` porque quem MATRICULA também precisa deles: um teto que só existisse
+    # no envio construiria fila que nunca drena.
+    adiar_job_para_amanha,
+    carregar_ajustes_joao,
+    disparos_de_hoje,
     _ENV_TAG,
 )
 # Import de topo, sem risco de ciclo: `cadence_joao` é config-as-code pura (zero I/O,
 # nenhum import de `app.*` no topo). É a autoridade sobre qual ETAPA cada cadência vigia
-# — o que o job de mover precisa saber para não desfazer um move manual do João.
-from app.follow_up.cadence_joao import cadencia_do_funil
+# — o que o job de mover precisa saber para não desfazer um move manual do João — e,
+# desde 26/09, sobre o CONJUNTO de etapas em que a esteira segue viva.
+from app.follow_up.cadence_joao import Cadencia, Touch, cadencia_do_funil
 from app.leads.service import (
     resolve_send_target, create_deal, record_dispatch_note,
     strip_greeting_prefix, sanitize_display_name, is_lead_blacklisted,
@@ -651,6 +658,12 @@ async def process_due_followups(now: datetime | None = None) -> None:
     await asyncio.to_thread(_recover_stale_followup_jobs, now)
     jobs = await asyncio.to_thread(get_due_followups, now)
 
+    # O ORÇAMENTO DE DISPAROS DO DIA (spec 2026-09-26 §4), resolvido NO MÁXIMO UMA VEZ
+    # por tick e só se algum job do João aparecer. `None` = ainda não perguntamos; o
+    # polling roda a cada 30s, e uma contagem por job seria N idas ao banco a cada meio
+    # minuto para responder sempre a mesma pergunta.
+    orcamento_joao: int | None = None
+
     for job in jobs:
         # Reivindicação atômica (anti-duplicidade multi-worker): só ESTE processo segue
         # com o job. Se outro worker já o pegou (claim perdido), pula sem processar —
@@ -716,6 +729,22 @@ async def process_due_followups(now: datetime | None = None) -> None:
         # caminho `standard`: o canal do João é `mode='human'`, e lá embaixo o guard de
         # canal humano cancelaria o toque em silêncio.
         if _is_joao_job_type(job.get("job_type")):
+            # O TETO DIÁRIO, no ENVIO (spec 2026-09-26 §4). O teto por passagem (20)
+            # continua existindo e resolve outro problema ("varrer a base inteira numa
+            # consulta"); este limita VOLUME DO DIA, que o outro nunca limitou — o
+            # polling de 30s deixava passar até 2.400 matrículas/hora por esteira.
+            if _joao_gasta_orcamento(job):
+                if orcamento_joao is None:
+                    orcamento_joao = _orcamento_joao_do_tick(now)
+                if orcamento_joao <= 0:
+                    _adiar_por_teto_diario(job, now)
+                    continue
+                # Desconto LOCAL, job a job: sem ele, uma contagem no início do tick
+                # liberaria a fila inteira desta passagem. O número é reconstruído do
+                # banco (`sent_at`) no tick seguinte, então um job que acabe cancelado
+                # em vez de enviado só "gasta" saldo até o próximo tick — a conta se
+                # corrige sozinha, e o erro é sempre para o lado de mandar MENOS.
+                orcamento_joao -= 1
             await _process_joao_touch(job, now)
             continue
 
@@ -1893,7 +1922,7 @@ def _etapa_atual_do_card(deal_id: str) -> tuple[str | None, str | None, list[dic
     return pipeline_id, (atual or {}).get("key"), etapas
 
 
-def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = None) -> bool:
+def _mover_card_joao(deal_id: str, etapa_key: str, cadencia: Cadencia | None = None) -> bool:
     """Move o card do João para a etapa `etapa_key`. Defensivo — spec 2026-09-23 §3.
 
     A leitura da posição do card é a de `_etapa_atual_do_card`, com a armadilha da `key`
@@ -1901,10 +1930,17 @@ def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = N
 
     Duas guardas, e a primeira é a razão de ser desta função:
 
-    * **`etapa_vigiada`**: só move se o card AINDA estiver na etapa que a cadência vigia.
-      Se o João já o moveu à mão (ou uma automação o moveu), o move do fim da cadência
-      NÃO desfaz o que ele fez. `None` desliga a guarda — quem chama do handler sempre a
-      passa, e sem ela desiste de mover (ver `_process_joao_touch`).
+    * **`cadencia`**: só move se o card AINDA estiver numa etapa em que a esteira VIVE.
+      Se o João já o moveu para fora (ou uma automação o moveu), o move NÃO desfaz o que
+      ele fez. `None` desliga a guarda — quem chama do handler sempre a passa, e sem ela
+      desiste de mover (ver `_process_joao_touch`).
+
+      A pergunta é PERTENCIMENTO A UM CONJUNTO desde 26/09 (spec §3.1), e quem a responde
+      é a própria cadência (`vive_na_etapa`), nunca uma comparação escrita aqui: a
+      Reposição vive em "Cliente Ativo" E em "Já chamado", porque é o toque 1 dela que
+      leva o card para a segunda. Uma igualdade com `gatilho_stage_key` mataria os toques
+      2, 3 e 4 no instante em que o toque 1 movesse o card — e uma SEGUNDA cópia da regra
+      (aqui e no handler) divergiria dela no primeiro ajuste.
     * **etapa de destino inexistente no funil**: registra e devolve False, sem levantar.
 
     Devolve True só quando o card de fato andou. Erro inesperado de banco NÃO é engolido:
@@ -1916,11 +1952,12 @@ def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = N
         logger.info("[JOAO_MOVER] deal %s não encontrado (ou sem funil) — nada a mover", deal_id)
         return False
 
-    if etapa_vigiada and etapa_atual != etapa_vigiada:
+    if cadencia is not None and not cadencia.vive_na_etapa(etapa_atual):
         logger.info(
-            "[JOAO_MOVER] deal %s já saiu da etapa %s (está em %s) — move da cadência não "
-            "desfaz o que o vendedor fez",
-            deal_id, etapa_vigiada, etapa_atual,
+            "[JOAO_MOVER] deal %s saiu das etapas vivas da esteira %s (%s; está em %s) — "
+            "o move da cadência não desfaz o que o vendedor fez",
+            deal_id, cadencia.codigo, "/".join(cadencia.etapas_vivas_efetivas),
+            etapa_atual or "—",
         )
         return False
 
@@ -1934,11 +1971,79 @@ def _mover_card_joao(deal_id: str, etapa_key: str, etapa_vigiada: str | None = N
         )
         return False
 
+    # AS DUAS COLUNAS DE ETAPA (spec 2026-09-26 §6). O Kanban lê `stage_id`, mas
+    # `deals.stage` — a coluna de TEXTO, que guarda a key — continua viva: caminhos
+    # legados escrevem nela, e `trg_update_deal_entered_stage_at` observa as DUAS
+    # justamente por isso (`20260904_esteiras_vendedor.sql:36`). Escrevendo só o id, a
+    # coluna de texto segue apontando para onde o card ESTAVA.
+    #
+    # Enquanto mover card era a exceção (só o fim da cadência) isso era latente. Com a
+    # Reposição movendo TODO card no toque 1, passa a acontecer sempre — e a divergência
+    # é a que o backfill dos 672 também corrige, com o mesmo vocabulário (a key).
     (get_supabase().table("deals")
-     .update({"stage_id": alvo["id"], "updated_at": datetime.now(timezone.utc).isoformat()})
+     .update({
+         "stage_id": alvo["id"],
+         "stage": etapa_key,
+         "updated_at": datetime.now(timezone.utc).isoformat(),
+     })
      .eq("id", deal_id).execute())
     logger.info("[JOAO_MOVER] deal %s movido para a etapa %s (%s)", deal_id, etapa_key, alvo["id"])
     return True
+
+
+def _toque_declarado(cadencia: Cadencia, metadata: dict) -> Touch | None:
+    """O `Touch` que originou este job, ou None se o número não casa com a config.
+
+    A chave é `metadata.toque` (a `sequence`), o mesmo número que o agendador gravou na
+    matrícula. Quem sabe o que aquele toque FAZ — se move o card e para onde — é
+    `cadence_joao`, e não o job: gravar `move_para` no metadata criaria a segunda fonte
+    que a guarda de etapa existe para evitar, e um job criado antes de uma mudança de
+    config carregaria a regra velha para sempre.
+    """
+    try:
+        sequence = int(metadata.get("toque"))
+    except (TypeError, ValueError):
+        return None
+    return next((t for t in cadencia.touches if t.sequence == sequence), None)
+
+
+def _mover_card_depois_do_toque(
+    job: dict, metadata: dict, cadencia: Cadencia, deal_id: str,
+) -> None:
+    """O move do TOQUE (spec 2026-09-26 §3.2) — o terceiro passo de envia → marca → move.
+
+    Chamado DEPOIS de `_mark_sent`, e isso é a entrega: mover antes de marcar abriria a
+    janela em que o card já andou e o job ainda pode ser retentado, e o lead levaria o
+    mesmo template duas vezes.
+
+    Por isso também nada aqui é propagado. Se o move falhar, o toque permanece `sent` e
+    NÃO é retentado — a mensagem já saiu, e reenviá-la seria pior que o card ficar na
+    etapa antiga. Loga `error` e segue. É o mesmo raciocínio que faz o job de mover
+    marcar `sent` em vez de `cancelled` quando não consegue mover.
+
+    Hoje só o toque 1 das duas cadências de Reposição declara `move_para`; os outros 21
+    toques caem no `return` de cima sem tocar em `deals`.
+    """
+    toque = _toque_declarado(cadencia, metadata)
+    destino = toque.move_para if toque else None
+    if not destino:
+        return
+
+    try:
+        movido = _mover_card_joao(deal_id, destino, cadencia=cadencia)
+    except Exception as exc:
+        logger.error(
+            "[JOAO_TOUCH] template do toque %s JÁ SAIU, mas o move do deal %s para %s "
+            "falhou: %s — o job continua `sent` e NÃO será retentado",
+            metadata.get("toque"), deal_id, destino, exc, exc_info=True,
+        )
+        return
+
+    logger.info(
+        "[JOAO_TOUCH] toque %s da esteira %s/%s: deal %s → %s (%s)",
+        metadata.get("toque"), metadata.get("funil"), cadencia.codigo, deal_id, destino,
+        "movido" if movido else "nada a fazer",
+    )
 
 
 async def _process_joao_touch(job: dict, now: datetime) -> None:
@@ -1956,10 +2061,15 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
     UM job deste tipo não manda mensagem nenhuma: o do fim da cadência, marcado com
     `metadata.acao == "mover_etapa"`, que só move o card (spec 2026-09-23 §3).
 
-    E a regra que governa a vida da esteira (spec 2026-09-25 §2): **ela vive enquanto o
-    card estiver na etapa vigiada**. A matrícula agenda todos os toques de uma vez, então
-    a etapa é RELIDA aqui, na hora do envio — card em outra coluna encerra o job em vez
-    de mandar mensagem para quem já saiu do gatilho.
+    E a regra que governa a vida da esteira (spec 2026-09-25 §2, ampliada pela de
+    2026-09-26 §3.1): **ela vive enquanto o card estiver numa das etapas VIVAS da
+    cadência** — um conjunto, não uma etapa só. A matrícula agenda todos os toques de uma
+    vez, então a etapa é RELIDA aqui, na hora do envio: card fora do conjunto encerra o
+    job em vez de mandar mensagem para quem já saiu.
+
+    E um toque pode MOVER o card depois de sair (`Touch.move_para`, spec 2026-09-26 §3.2)
+    — hoje só o toque 1 da Reposição, que é justamente por que "etapa viva" teve de virar
+    conjunto. A ordem é **envia → marca `sent` → move**, e falha no move não reenvia.
     """
     metadata = job.get("metadata") or {}
     lead = job.get("leads") or {}
@@ -2004,10 +2114,10 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
             )
             return
 
-        etapa_vigiada = cadencia.gatilho_stage_key if cadencia else None
-        if not etapa_vigiada:
-            # Fail-closed: sem saber que etapa a cadência vigia não há como garantir que o
-            # card continua nela, e mover às cegas desfaria um move manual do vendedor.
+        if cadencia is None:
+            # Fail-closed: sem saber em que etapas a esteira vive não há como garantir
+            # que o card continua numa delas, e mover às cegas desfaria um move manual
+            # do vendedor.
             logger.error(
                 "[JOAO_MOVER] cadência (%s, %s) não resolvida — job %s encerrado SEM mover",
                 funil, metadata.get("cadencia"), job["id"],
@@ -2016,7 +2126,7 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
             return
 
         try:
-            movido = _mover_card_joao(deal_id, etapa_final, etapa_vigiada=etapa_vigiada)
+            movido = _mover_card_joao(deal_id, etapa_final, cadencia=cadencia)
         except Exception as exc:
             logger.error(
                 "[JOAO_MOVER] falha ao mover o deal %s para %s: %s — será retentado",
@@ -2045,7 +2155,8 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
 
     funil = _resolve_joao_funil(job)
 
-    # ── A esteira vive enquanto o card estiver na ETAPA vigiada (spec 2026-09-25 §3.1) ──
+    # ── A esteira vive enquanto o card estiver numa ETAPA VIVA (spec 2026-09-25 §3.1,
+    #    ampliada pela de 2026-09-26 §3.1) ────────────────────────────────────────────
     #
     # O defeito que esta guarda fecha, reproduzido contra o motor real: a MATRÍCULA já
     # respeita a etapa (a RPC filtra pela etapa atual do card e exclui de propósito
@@ -2066,14 +2177,25 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
     # Vem antes de resolver template e canal (nenhum dos dois importa se a esteira acabou)
     # e depois do ramo `mover_etapa`, que tem a sua própria guarda de etapa.
     #
-    # A etapa vigiada vem da CONFIG (`cadencia_do_funil`, via `_cadencia_declarada`),
-    # nunca de `metadata.stage_id`: duas fontes divergiriam no dia em que alguém mudasse
-    # o gatilho pela tela. É o mesmo caminho do `etapa_vigiada` do ramo do move.
+    # E a pergunta não é mais "o card está NA etapa do gatilho?", e sim "o card está em
+    # ALGUMA das etapas em que esta esteira vive?" (26/09). A diferença é a esteira de
+    # Reposição: o toque 1 dela MOVE o card para "Já chamado", e sob a igualdade antiga
+    # ela se mataria no próprio primeiro toque — pela guarda que acabou de ser criada
+    # para protegê-la. Separar ONDE O CARD ENTRA (`gatilho_stage_key`, que é o que a RPC
+    # filtra) de ONDE ELE CONTINUA VIVO (`etapas_vivas`) é o que desfaz o nó.
+    #
+    # Quem responde é o PREDICADO da cadência (`vive_na_etapa`), não uma comparação
+    # escrita aqui: esta guarda e a de `_mover_card_joao` fazem a MESMA pergunta, e duas
+    # leituras dela discordariam sobre o mesmo card no primeiro ajuste.
+    #
+    # A cadência vem da CONFIG (`cadencia_do_funil`, via `_cadencia_declarada`), nunca de
+    # `metadata.stage_id`: duas fontes divergiriam no dia em que alguém mudasse o gatilho
+    # pela tela. É o mesmo caminho do ramo do move.
     cadencia = _cadencia_declarada(metadata, funil)
-    etapa_vigiada = cadencia.gatilho_stage_key if cadencia else None
-    if not etapa_vigiada:
-        # Fail-closed, igual ao ramo do move: sem saber que etapa a cadência vigia não há
-        # como afirmar que o card continua nela, e enviar às cegas é o próprio defeito.
+    if cadencia is None:
+        # Fail-closed, igual ao ramo do move: sem saber em que etapas a esteira vive não
+        # há como afirmar que o card continua numa delas, e enviar às cegas é o próprio
+        # defeito.
         logger.error(
             "[JOAO_TOUCH] cadência (%s, %s) não resolvida — job %s encerrado SEM enviar",
             funil, metadata.get("cadencia"), job["id"],
@@ -2081,9 +2203,6 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
         _mark_sent(job["id"])
         return
 
-    # A etapa vigiada vem da CONFIG (`cadencia_do_funil`), nunca de `metadata.stage_id`:
-    # duas fontes divergiriam no dia em que alguém mudasse o gatilho pela tela. Mesmo
-    # caminho do `etapa_vigiada` do ramo do move.
     deal_id = str(metadata.get("deal_id") or "").strip()
     if not deal_id:
         # Impossível pelo contrato do agendador (ele grava `deal_id` em todo job da
@@ -2106,15 +2225,16 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
         )
         return  # transitório → nada de estado terminal
 
-    if etapa_atual != etapa_vigiada:
+    if not cadencia.vive_na_etapa(etapa_atual):
         # Inclui o card APAGADO (`etapa_atual is None`): sem card não há trabalho — a
-        # mesma leitura que `_guard_broken` faz do deal inexistente.
+        # mesma leitura que `_guard_broken` faz do deal inexistente. `vive_na_etapa`
+        # falha fechada em None/"" exatamente por isso.
         _cancel_job(job["id"], "card_mudou_de_etapa")
         logger.info(
-            "[JOAO_TOUCH] deal %s saiu da etapa %s (está em %s) — esteira %s/%s encerrada "
-            "no toque %s (job %s)",
-            deal_id, etapa_vigiada, etapa_atual or "—", funil, metadata.get("cadencia"),
-            metadata.get("toque"), job["id"],
+            "[JOAO_TOUCH] deal %s saiu das etapas vivas %s (está em %s) — esteira %s/%s "
+            "encerrada no toque %s (job %s)",
+            deal_id, "/".join(cadencia.etapas_vivas_efetivas), etapa_atual or "—", funil,
+            metadata.get("cadencia"), metadata.get("toque"), job["id"],
         )
         return
 
@@ -2190,6 +2310,89 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
     _save_followup_wamid(job["id"], extract_wamid(send_result))
     await _persist_joao_touch_message(job, channel, template_name, template_variables, send_result)
     _mark_sent(job["id"])
+    # ENVIA → MARCA `sent` → MOVE, e a ordem é o contrato (spec 2026-09-26 §3.2). Só o
+    # toque 1 das duas cadências de Reposição move alguma coisa; para os outros 21 toques
+    # declarados isto é um `return` imediato.
+    _mover_card_depois_do_toque(job, metadata, cadencia, deal_id)
+
+
+def _joao_gasta_orcamento(job: dict) -> bool:
+    """Este job do João consome uma unidade do teto diário? (spec 2026-09-26 §4)
+
+    A unidade declarada é TEMPLATE, e o job de mover não manda mensagem nenhuma — ele é
+    marcado `sent` e ganha `sent_at` como qualquer outro, mas só escreve em `deals`.
+    Cobrá-lo do orçamento gastaria disparo com uma escrita de banco, e barrá-lo pelo teto
+    deixaria o card parado na etapa intermediária por um limite que não é sobre ele.
+
+    A marca é a MESMA que `_process_joao_touch` lê para decidir o que o job é, e a mesma
+    que `service.disparos_de_hoje` usa para não contá-lo do outro lado.
+    """
+    return (job.get("metadata") or {}).get("acao") != ACAO_MOVER_ETAPA
+
+
+def _orcamento_joao_do_tick(now: datetime) -> int:
+    """Quantos templates do João ainda cabem hoje. Uma consulta, uma vez por tick.
+
+    Os dois números vêm de `service.py` (CONTRATO H2→H3) e cada um já é fail-closed por
+    conta própria: `carregar_ajustes_joao` cai nos defaults de código quando a tabela não
+    existe (a migration 20260926 é aplicada à mão), e `disparos_de_hoje` devolve
+    `DISPAROS_ILEGIVEIS` (10**6) quando não consegue ler — um número maior que qualquer
+    teto que o CHECK aceite, de forma que a subtração aqui já dá negativo sem um segundo
+    ramo.
+
+    O `except` é a terceira camada, para o caso de a própria conexão cair: tratar como
+    orçamento ESGOTADO. Não saber quantos templates já saíram hoje não é razão para
+    mandar mais — o outro lado é o incidente de 16/09 (888 mensagens em 6 minutos).
+    """
+    try:
+        teto = carregar_ajustes_joao()["teto_diario_disparos"]
+        return teto - disparos_de_hoje(get_supabase(), now=now)
+    except Exception as exc:
+        logger.error(
+            "[JOAO_TETO] não consegui apurar o orçamento do dia (%s) — tratando como "
+            "ESGOTADO neste tick", exc, exc_info=True,
+        )
+        return 0
+
+
+def _adiar_por_teto_diario(job: dict, now: datetime) -> None:
+    """Empurra o job para amanhã. NUNCA cancela — spec 2026-09-26 §4.
+
+    Cancelar jogaria o toque no lixo e, pior, `motivo_para_pular_joao` lê job
+    `cancelled` como "o lead respondeu no meio" e por isso NÃO deixa aquela matrícula
+    segurar o cooldown: o card voltaria a ser elegível na varredura seguinte, seria
+    rematriculado do toque 1, estouraria o teto de novo, seria cancelado de novo — laço,
+    e cada volta custa um template de marketing. É o mesmo raciocínio que faz
+    `_mover_card_joao` marcar `sent` em vez de `cancelled` quando não consegue mover.
+
+    Duas escritas, nesta ordem: primeiro o `fire_at` de amanhã, depois desfazer a
+    reivindicação. Se a segunda falhar, o job fica `processing` com o horário JÁ
+    corrigido e a crash-recovery o devolve a `pending` em 5 minutos; a ordem inversa
+    poderia devolvê-lo à fila com o `fire_at` de hoje ainda vencido.
+    """
+    adiar_job_para_amanha(job["id"], get_supabase(), now=now)
+    _devolver_job_a_pending(job["id"])
+
+
+def _devolver_job_a_pending(job_id: str) -> None:
+    """Desfaz a reivindicação: `processing` → `pending`, `claimed_at` de volta a NULL.
+
+    O job foi reivindicado no topo do tick (`_claim_followup_job`) e depois adiado sem
+    ser processado. Sem isto ele ficaria preso em `processing` até a crash-recovery dos 5
+    minutos — visível no watchdog de jobs presos, por uma decisão que é normal.
+
+    Fail-soft: quem chama está no meio de um tick de envio, e propagar derrubaria os jobs
+    seguintes da mesma passagem. No pior caso a crash-recovery resolve.
+    """
+    try:
+        get_supabase().table("follow_up_jobs").update(
+            {"status": "pending", "claimed_at": None}
+        ).eq("id", job_id).execute()
+    except Exception as exc:
+        logger.warning(
+            "[JOAO_TETO] falha ao devolver o job %s para pending (%s) — a crash-recovery "
+            "o resolve em 5 min", job_id, exc,
+        )
 
 
 def _cancel_job(job_id: str, reason: str) -> None:

@@ -34,6 +34,44 @@ type JoaoTouch = {
   template_name: string | null;
   template_name_codigo: string | null;
   aceita_adiamento: boolean;
+  /** Para onde o card vai DEPOIS deste toque sair (spec 2026-09-26 §3.2) — em
+   * RÓTULO ("Já chamado"), nunca a key (`chamado_reposicao`). `null` em 30 dos 32
+   * toques declarados; hoje só o 1º das duas cadências de Reposição move.
+   *
+   * OPCIONAL de propósito: o CRM e o FastAPI sobem separados, e um frontend novo
+   * contra um backend de ontem recebe o toque sem esta chave. Marcá-la obrigatória
+   * não faria o campo chegar — só apagaria o aviso do `tsc` sobre o `undefined`. */
+  move_para_rotulo?: string | null;
+};
+
+/** Os dois ajustes GLOBAIS do motor (spec 2026-09-26 §3.5) — o efetivo e o default de
+ * código, no mesmo padrão de `gatilho_dias`/`gatilho_dias_codigo`.
+ *
+ * Eles NÃO são por cadência: o teto conta os disparos das cinco esteiras somadas, e o
+ * adiamento do botão é uma constante do motor. Por isso chegam UMA vez, ao lado de
+ * `funis`, e a tela os edita fora do bloco de qualquer cadência. */
+type JoaoAjustes = {
+  teto_diario_disparos: number;
+  teto_diario_disparos_codigo: number;
+  adiamento_estoque_dias: number;
+  adiamento_estoque_dias_codigo: number;
+};
+
+/** As duas chaves editáveis — e a ÚNICA lista delas no frontend. */
+const CHAVES_DE_AJUSTE = ["teto_diario_disparos", "adiamento_estoque_dias"] as const;
+type ChaveDeAjuste = (typeof CHAVES_DE_AJUSTE)[number];
+
+/** O rótulo e a explicação de cada ajuste. Texto de interface — nenhum NÚMERO mora
+ * aqui: o valor e o padrão vêm os dois do payload. */
+const AJUSTE_ROTULOS: Record<ChaveDeAjuste, { rotulo: string; ajuda: string }> = {
+  teto_diario_disparos: {
+    rotulo: "Teto diário de disparos",
+    ajuda: "máximo de templates por dia, somando as 5 esteiras do João",
+  },
+  adiamento_estoque_dias: {
+    rotulo: 'Espera do botão "Ainda tenho estoque" (dias)',
+    ajuda: "quanto a esteira adia quando o lead diz que ainda tem estoque",
+  },
 };
 
 /** Uma cadência DENTRO de um funil — fusão do que antes era `JoaoCadencia` (topo:
@@ -72,6 +110,12 @@ type JoaoCadenciaDoFunil = {
    * tela escreveria "esperam undefined dias". É o mesmo motivo de `joao?` ser
    * opcional em `CadenceDefinition`. */
   adiamento_resposta_dias?: number;
+  /** As etapas em que a esteira SEGUE VIVA, em rótulo (spec 2026-09-26 §2.1). Uma só
+   * nas quatro de prospecção e em "Em atenção"; DUAS nas de Reposição, que entram por
+   * "Cliente Ativo" e continuam vivas depois do move para "Já chamado" — sem isso o
+   * toque que move mataria os toques seguintes. Só leitura: é a topologia do funil,
+   * não um prazo. OPCIONAL pelo mesmo motivo de `adiamento_resposta_dias`. */
+  etapas_vivas_rotulos?: string[];
   ativa: boolean;
   repete_ultimo: boolean;
   /** Só a metade que não depende da Meta: "todo toque tem NOME de template". */
@@ -103,7 +147,7 @@ type CadenceDefinition = {
   outbound_nudge: DefinitionTouch;
   min_gap_hours: number;
   business_window: { start: string; end: string; days: string; timezone: string };
-  joao?: { funis: JoaoFunil[] } | null;
+  joao?: { funis: JoaoFunil[]; ajustes?: JoaoAjustes | null } | null;
 };
 
 /** Um motivo de recusa do PUT — `funil`/`sequence` dizem QUAL toque é o culpado.
@@ -297,6 +341,61 @@ function fraseDoMove(c: JoaoCadenciaDoFunil): string {
 }
 
 /**
+ * A JORNADA INTEIRA — só quando a cadência move o card no MEIO dela (spec §7 de
+ * 2026-09-26). Hoje é o caso das duas de Reposição, e de nenhuma outra.
+ *
+ * "Entra em Cliente Ativo · o 1º toque move para Já chamado · no fim move para Em
+ * atenção". A frase existe porque a jornada dessa esteira passa por três etapas, e
+ * contá-la em pedaços ("dispara em X", "no fim vai para Y") esconde justamente o
+ * passo do meio — o que faz o operador procurar no funil errado o card que sumiu de
+ * "Cliente Ativo".
+ *
+ * Os RÓTULOS são todos do payload: `gatilho_stage_rotulo`, `move_para_rotulo` de cada
+ * toque e `etapa_final_rotulo`. Nenhum nome de etapa é escrito aqui — a mesma key
+ * significa coisas diferentes em funis diferentes (`novo` é "Novo" na prospecção e
+ * "Cliente Ativo" na Reposição), e é o backend que faz essa tradução, por cadência.
+ *
+ * Sem toque que move, devolve "" e NADA muda: as outras oito cadências seguem com o
+ * cabeçalho de sempre, incluindo o ` · depois do último toque…` de `fraseDoMove`.
+ */
+function fraseDaJornada(c: JoaoCadenciaDoFunil): string {
+  const movem = c.toques.filter((t) => t.move_para_rotulo);
+  if (movem.length === 0) return "";
+  const passos = [
+    `Entra em ${c.gatilho_stage_rotulo}`,
+    ...movem.map((t) => `o ${t.sequence}º toque move para ${t.move_para_rotulo}`),
+  ];
+  // O destino final entra no MESMO período, e é por isso que `fraseDoMove` sai da
+  // linha de cima quando esta existe: dizer duas vezes para onde o card vai no fim é
+  // o tipo de repetição em que o operador lê uma metade e ignora a outra.
+  if (c.etapa_final_rotulo) passos.push(`no fim move para ${c.etapa_final_rotulo}`);
+  return passos.join(" · ");
+}
+
+/** "a", "a e b", "a, b e c" — a lista humana, sem o "e" solto do `join`. */
+function listar(itens: string[]): string {
+  if (itens.length <= 1) return itens[0] ?? "";
+  return `${itens.slice(0, -1).join(", ")} e ${itens[itens.length - 1]}`;
+}
+
+/**
+ * Onde a esteira SEGUE VIVA — só quando são mais de uma etapa (spec §2.1).
+ *
+ * É a metade não óbvia da jornada: o card indo para "Já chamado" no 1º toque NÃO
+ * cancela os toques 2, 3 e 4. A guarda de 25/09 cancela todo toque cujo card saiu da
+ * etapa vigiada, então sem esta frase o comportamento parece um bug — e é o oposto:
+ * é a correção que permitiu o toque que move existir.
+ *
+ * Lista vazia ou de um elemento (o default `etapas_vivas=()` do backend, e o de um
+ * backend antigo que não manda a chave) → sem frase.
+ */
+function fraseDasEtapasVivas(c: JoaoCadenciaDoFunil): string {
+  const etapas = c.etapas_vivas_rotulos ?? [];
+  if (etapas.length < 2) return "";
+  return `A esteira segue viva em ${listar(etapas)}: sair de ${etapas[0]} não cancela os toques que faltam.`;
+}
+
+/**
  * O que a RESPOSTA do lead faz com os toques restantes (spec 2026-09-25 §4).
  *
  * Existe porque o comportamento é invisível: desde 25/09/2026 responder não mata mais
@@ -322,9 +421,166 @@ function fraseDaResposta(c: JoaoCadenciaDoFunil): string {
   } e continuam de onde pararam.`;
 }
 
+/**
+ * A frase do selo "Aceita adiamento" — e ela deixou de ser texto fixo em 26/09/2026.
+ *
+ * Até então dizia "adia 60 dias" em código, e o motor já adiava 60. Agora o número é
+ * `adiamento_estoque_dias`, editável logo acima nesta mesma tela: um "60" escrito
+ * aqui viraria uma frase calada, convincente e errada no instante em que alguém
+ * salvasse 30 — a mesma classe de defeito que mandou `{{nome}}` literal para clientes
+ * no WhatsApp em setembro.
+ *
+ * Sem o bloco `ajustes` (backend antigo) a frase existe sem o número, em vez de
+ * escrever "adia undefined dias".
+ */
+function fraseDoBotaoEstoque(ajustes: JoaoAjustes | null | undefined): string {
+  const base = 'O template deste toque traz o botão "Ainda tenho estoque".';
+  if (!ajustes) {
+    return `${base} A resposta adia a esteira sem recomeçá-la, pelo prazo configurado no motor.`;
+  }
+  const dias = ajustes.adiamento_estoque_dias;
+  return `${base} A resposta adia ${
+    dias === 1 ? "1 dia" : `${dias} dias`
+  } sem recomeçar a cadência — o prazo é o ajuste global desta tela, não uma escolha deste toque.`;
+}
+
 const CAMPO =
   "border border-[#dedbd6] rounded-[4px] px-2 py-1 text-[13px] text-[#111111] bg-white";
 const ROTULO_CAMPO = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
+
+/**
+ * Os dois ajustes do MOTOR — fora do bloco por-cadência, porque é o que eles são.
+ *
+ * O teto diário conta os disparos das cinco esteiras somadas e o adiamento do botão é
+ * uma constante do motor: pendurá-los dentro de uma cadência criaria cinco cópias do
+ * mesmo número e a pergunta "qual delas vale?" — a ambiguidade que o ramo do João já
+ * pagou caro uma vez.
+ *
+ * NENHUM número é escrito aqui. O valor, o padrão e o rótulo do padrão vêm todos do
+ * payload; o componente sabe apenas que existem duas chaves e como desenhá-las.
+ *
+ * O PUT vai para a MESMA rota do PUT de cadência (`/api/cadence/joao`), distinguido
+ * pela chave `ajustes` no corpo — o CRM proxia o FastAPI rota por rota, e uma rota
+ * nova sem proxy é um 404 que só aparece quando alguém clica em Salvar em produção.
+ */
+function AjustesDoMotor({ ajustes: iniciais }: { ajustes: JoaoAjustes }) {
+  const [ajustes, setAjustes] = useState<JoaoAjustes>(iniciais);
+  const [rascunho, setRascunho] = useState<Partial<Record<ChaveDeAjuste, number | null>>>({});
+  const [problemas, setProblemas] = useState<Problema[] | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => setAjustes(iniciais), [iniciais]);
+
+  const efetivo = (chave: ChaveDeAjuste): number | null =>
+    chave in rascunho ? (rascunho[chave] ?? null) : ajustes[chave];
+
+  const editar = (chave: ChaveDeAjuste, valor: number | null) => {
+    setProblemas(null);
+    setSucesso(null);
+    setRascunho((prev) => ({ ...prev, [chave]: valor }));
+  };
+
+  const salvar = async () => {
+    setProblemas(null);
+    setSucesso(null);
+    if (Object.keys(rascunho).length === 0) {
+      setSucesso("Nada mudou para salvar.");
+      return;
+    }
+    setSalvando(true);
+    try {
+      const res = await fetch("/api/cadence/joao", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ajustes: rascunho }),
+      });
+      const body = await res.json().catch(() => null);
+      // A recusa TEM que aparecer — é o erro de 16/09/2026, e um teto recusado em
+      // silêncio deixa o operador achando que gravou o número que ele digitou.
+      if (!res.ok) {
+        setProblemas(extrairProblemas(body, res.status));
+        return;
+      }
+      // Só aceita a resposta se ela TEM a forma de ajustes: a mesma rota devolve
+      // cadência no outro caminho, e engolir aquele objeto aqui apagaria os campos.
+      if (body && typeof body === "object" && CHAVES_DE_AJUSTE[0] in (body as object)) {
+        setAjustes(body as JoaoAjustes);
+      }
+      setRascunho({});
+      setSucesso("Ajustes salvos.");
+    } catch (e) {
+      setProblemas([
+        { codigo: "rede", mensagem: `Não deu para falar com o servidor: ${e}` },
+      ]);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="border border-[#dedbd6] rounded-[6px] bg-[#faf9f6] p-3 mb-4">
+      <p className="text-[13px] font-medium text-[#111111]">
+        Ajustes do motor
+        <span className="text-[12px] text-[#7b7b78] font-normal">
+          {" "}
+          · valem para as cinco esteiras do João, não para uma cadência
+        </span>
+      </p>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 mt-2">
+        {CHAVES_DE_AJUSTE.map((chave) => {
+          const padrao = ajustes[`${chave}_codigo` as const];
+          return (
+            <div key={chave} className="flex items-center gap-2">
+              <span className={ROTULO_CAMPO}>{AJUSTE_ROTULOS[chave].rotulo}</span>
+              <input
+                type="number"
+                min={1}
+                aria-label={AJUSTE_ROTULOS[chave].rotulo}
+                value={efetivo(chave) ?? ""}
+                placeholder={String(padrao)}
+                onChange={(e) => editar(chave, numeroOuNulo(e.target.value))}
+                className={`${CAMPO} w-[84px]`}
+              />
+              <span className="text-[11px] text-[#7b7b78]">
+                padrão {padrao} · vazio volta ao padrão · {AJUSTE_ROTULOS[chave].ajuda}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {problemas && problemas.length > 0 && (
+        <div
+          role="alert"
+          className="mt-3 border border-[#c41c1c]/30 bg-[#c41c1c]/5 rounded-[6px] p-3"
+        >
+          <p className="text-[13px] font-medium text-[#c41c1c]">
+            O backend recusou — nada foi gravado:
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {problemas.map((p, i) => (
+              <li key={`${p.codigo}-${i}`} className="text-[12px] text-[#111111]">
+                {p.mensagem}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 mt-3">
+        <button
+          onClick={salvar}
+          disabled={salvando}
+          className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-1.5 rounded-[4px] text-[13px] disabled:opacity-50"
+        >
+          {salvando ? "Salvando..." : "Salvar ajustes"}
+        </button>
+        {sucesso && <span className="text-[13px] text-[#0f9d43]">{sucesso}</span>}
+      </div>
+    </div>
+  );
+}
 
 /**
  * O editor das cadências do João, navegado por FUNIL primeiro (spec 2026-09-21).
@@ -342,7 +598,16 @@ const ROTULO_CAMPO = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
  * backend recusa `sequence` fora do que o código declara, então um botão aqui só
  * produziria uma recusa.
  */
-function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
+function JoaoEditor({
+  funis: iniciais,
+  ajustes,
+}: {
+  funis: JoaoFunil[];
+  /** Ausente = backend antigo servindo frontend novo (eles sobem separados). A seção
+   * inteira some, que é melhor que dois campos escrevendo `undefined` em cima de uma
+   * configuração que o operador acha que está editando. */
+  ajustes?: JoaoAjustes | null;
+}) {
   const [funis, setFunis] = useState<JoaoFunil[]>(iniciais);
   const [funilCodigo, setFunilCodigo] = useState<string>(iniciais[0]?.codigo ?? "");
   const [cadenciaCodigo, setCadenciaCodigo] = useState<string>(
@@ -508,6 +773,8 @@ function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
 
   return (
     <>
+      {ajustes && <AjustesDoMotor ajustes={ajustes} />}
+
       <div className="flex flex-wrap gap-2 mb-4">
         {funis.map((f) => (
           <button
@@ -558,8 +825,24 @@ function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
                 na etapa {cadencia.gatilho_stage_rotulo}
                 {fraseDoSilencio(cadencia)}
                 {cadencia.repete_ultimo && " · o último toque se repete até o lead pedir para parar"}
-                {fraseDoMove(cadencia)}
+                {/* O destino final só entra AQUI quando não há jornada: com um move no
+                    meio, ele é o último passo da frase de baixo, e dizer duas vezes
+                    para onde o card vai no fim é repetição em que se lê uma metade. */}
+                {!fraseDaJornada(cadencia) && fraseDoMove(cadencia)}
               </p>
+              {/* A JORNADA — linha própria, e só nas cadências que movem o card no
+                  MEIO delas (hoje as duas de Reposição). As outras oito não ganham
+                  linha nenhuma: o cabeçalho delas é, literalmente, o de antes. */}
+              {fraseDaJornada(cadencia) && (
+                <p className="text-[12px] text-[#7b7b78] mt-0.5">
+                  {fraseDaJornada(cadencia)}
+                </p>
+              )}
+              {fraseDasEtapasVivas(cadencia) && (
+                <p className="text-[12px] text-[#7b7b78] mt-0.5">
+                  {fraseDasEtapasVivas(cadencia)}
+                </p>
+              )}
               {/* LINHA PRÓPRIA, não mais um ` · ` na frase de cima: a de cima é o
                   RELÓGIO da cadência (quando começa, quando termina, para onde o card
                   vai) e esta é o que o LEAD provoca. Emendar as duas produziria um
@@ -657,11 +940,7 @@ function JoaoEditor({ funis: iniciais }: { funis: JoaoFunil[] }) {
                     )}
                     {t.aceita_adiamento && (
                       <span
-                        title={
-                          'O template deste toque traz o botão "Ainda tenho estoque": a ' +
-                          "resposta adia 60 dias sem recomeçar a cadência. É config do " +
-                          "código, não da tela."
-                        }
+                        title={fraseDoBotaoEstoque(ajustes)}
                         className="text-[10px] uppercase tracking-[0.6px] text-[#7b7b78] border border-[#dedbd6] rounded-[4px] px-1.5 py-0.5"
                       >
                         Aceita adiamento
@@ -764,7 +1043,7 @@ export function DefinitionStrip({ definition }: { definition: CadenceDefinition 
         </div>
       )}
       {noJoao ? (
-        <JoaoEditor funis={funisJoao} />
+        <JoaoEditor funis={funisJoao} ajustes={definition.joao?.ajustes} />
       ) : (
         <ValeriaStrip definition={definition} />
       )}

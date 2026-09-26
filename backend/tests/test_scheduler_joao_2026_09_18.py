@@ -102,7 +102,8 @@ def _meta(wamid="wamid.JOAO"):
     return client
 
 
-def _run_handler(job, *, meta=None, channel=JOAO_CHANNEL, sb=None, now=NOW, rendered="Oi Marcella, é o João"):
+def _run_handler(job, *, meta=None, channel=JOAO_CHANNEL, sb=None, now=NOW,
+                 rendered="Oi Marcella, é o João", ordem=None):
     """Executa `_process_joao_touch` com as bordas de I/O mockadas.
 
     `_generate_followup_message` é mockado com um side_effect que EXPLODE: nenhuma linha
@@ -112,8 +113,15 @@ def _run_handler(job, *, meta=None, channel=JOAO_CHANNEL, sb=None, now=NOW, rend
     etapas dos dois funis), com o card de `_joao_job` parado na etapa que a cadência
     vigia: desde a guarda de etapa, um MagicMock genérico faria toda leitura de card
     devolver "card sumiu" e nenhum toque sairia.
+
+    `ordem` (uma lista) grava a SEQUÊNCIA dos três eventos do toque que move o card —
+    "envia", "marca sent", "move" (spec 2026-09-26 §3.2). A ordem é a entrega, não um
+    detalhe: mover antes de marcar deixaria a janela em que o card já andou e o job
+    ainda pode ser retentado, e o lead levaria o mesmo template duas vezes. O espião do
+    move CHAMA a função de verdade — o card precisa andar no banco de mentira.
     """
     import asyncio
+    from unittest import mock as _mock
 
     meta = meta or _meta()
     sb = _db() if sb is None else sb
@@ -121,6 +129,12 @@ def _run_handler(job, *, meta=None, channel=JOAO_CHANNEL, sb=None, now=NOW, rend
 
     def _no_llm(*a, **k):
         raise AssertionError("o caminho do João NUNCA pode chamar o LLM")
+
+    if ordem is not None:
+        def _marca_envio(*a, **k):
+            ordem.append("envia")
+            return _mock.DEFAULT
+        meta.send_template.side_effect = _marca_envio
 
     with patch("app.follow_up.scheduler.get_channel_by_provider_config", return_value=channel) as mock_ch, \
          patch("app.follow_up.scheduler.get_supabase", return_value=sb), \
@@ -136,7 +150,20 @@ def _run_handler(job, *, meta=None, channel=JOAO_CHANNEL, sb=None, now=NOW, rend
             channel=mock_ch, save_msg=mock_save_msg, wamid=mock_wamid,
             sent=mock_sent, cancel=mock_cancel, meta=meta,
         )
-        asyncio.run(S._process_joao_touch(job, now))
+        if ordem is None:
+            asyncio.run(S._process_joao_touch(job, now))
+        else:
+            mock_sent.side_effect = lambda *a, **k: ordem.append("marca sent")
+            mover_de_verdade = S._mover_card_joao
+
+            def _espia_move(*a, **k):
+                ordem.append("move")
+                return mover_de_verdade(*a, **k)
+
+            with patch("app.follow_up.scheduler._mover_card_joao",
+                       side_effect=_espia_move) as mock_mover:
+                calls["mover"] = mock_mover
+                asyncio.run(S._process_joao_touch(job, now))
     return calls
 
 
@@ -607,12 +634,18 @@ def test_conversa_finalizada_cancela_tambem_o_job_de_mover():
 # ─── _mover_card_joao direto (sem o handler em volta) ────────────────────────
 
 def test_mover_card_joao_devolve_true_so_quando_o_card_anda():
+    """A guarda agora é a CADÊNCIA inteira (`vive_na_etapa`), não uma string de etapa:
+    `novo`/atacado vive só em `novo`; `em_conversa`/atacado vive só em `respondeu`."""
+    from app.follow_up import cadence_joao as cj
+
+    novo = cj.cadencia_do_funil("atacado", "novo")
+    em_conversa = cj.cadencia_do_funil("atacado", "em_conversa")
     db = _db()
     with patch("app.follow_up.scheduler.get_supabase", return_value=db):
-        assert S._mover_card_joao("deal-1", "em_atencao", etapa_vigiada="novo") is True
-        assert S._mover_card_joao("deal-1", "em_atencao", etapa_vigiada="respondeu") is False
-        assert S._mover_card_joao("deal-1", "etapa_que_nao_existe", etapa_vigiada="novo") is False
-        assert S._mover_card_joao("deal-fantasma", "em_atencao", etapa_vigiada="novo") is False
+        assert S._mover_card_joao("deal-1", "em_atencao", cadencia=novo) is True
+        assert S._mover_card_joao("deal-1", "em_atencao", cadencia=em_conversa) is False
+        assert S._mover_card_joao("deal-1", "etapa_que_nao_existe", cadencia=novo) is False
+        assert S._mover_card_joao("deal-fantasma", "em_atencao", cadencia=novo) is False
     assert len(db.updates) == 1
 
 
@@ -986,3 +1019,539 @@ async def test_nenhum_job_type_existente_cai_no_handler_do_joao(job_type):
         await S.process_due_followups(now=datetime.now(timezone.utc))
 
     mock_joao.assert_not_awaited()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# A esteira de Reposição (spec 2026-09-26) — Task H3
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Três mudanças no handler, e uma quarta no tick:
+#
+#   §3.1  a guarda de etapa testa PERTENCIMENTO a `etapas_vivas`, não igualdade
+#         com `gatilho_stage_key` — senão o toque 1, que MOVE o card, mataria os
+#         toques 2, 3 e 4 pela guarda criada em 25/09 para proteger o funil;
+#   §3.2  o toque com `move_para` move o card: envia → marca `sent` → move;
+#   §6    o move escreve as DUAS colunas de etapa (`stage_id` e a legada `stage`);
+#   §4    o teto DIÁRIO de disparos ADIA o job que estoura o orçamento do dia.
+#
+# As etapas do funil "João - Reposição Atacado", com as keys de
+# `20260910_contrato_etapas_joao.sql` — `chamado_reposicao` (e NÃO `ja_chamado`,
+# que significa outra coisa em `leads/service.py::_ACTIVE_DEAL_STAGES`).
+
+ETAPA_CLIENTE_ATIVO_REPOSICAO = "st-cliente-ativo-reposicao"
+ETAPA_JA_CHAMADO_REPOSICAO = "st-ja-chamado-reposicao"
+ETAPA_PROPOSTA_REPOSICAO = "st-proposta-reposicao"
+ETAPA_GANHO_REPOSICAO = "st-ganho-reposicao"
+ETAPA_ATENCAO_REPOSICAO = "st-atencao-reposicao"
+
+ETAPAS_REPOSICAO_ATACADO = [
+    {"id": ETAPA_CLIENTE_ATIVO_REPOSICAO, "key": "novo",
+     "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO},
+    {"id": ETAPA_JA_CHAMADO_REPOSICAO, "key": "chamado_reposicao",
+     "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO},
+    {"id": ETAPA_PROPOSTA_REPOSICAO, "key": "proposta_enviada",
+     "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO},
+    {"id": ETAPA_GANHO_REPOSICAO, "key": "fechado_ganho",
+     "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO},
+    {"id": ETAPA_ATENCAO_REPOSICAO, "key": "em_atencao",
+     "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO},
+]
+
+# Os DOIS funis de prospecção vêm ANTES, com as MESMAS keys `novo` e `em_atencao`:
+# é o que transforma "esqueci o filtro por pipeline_id" em teste vermelho.
+ETAPAS_COM_REPOSICAO = ETAPAS_DOS_DOIS_FUNIS + ETAPAS_REPOSICAO_ATACADO
+
+
+def _db_reposicao(stage_id=ETAPA_CLIENTE_ATIVO_REPOSICAO):
+    return _FakeSupabase(
+        deals={"deal-1": {"id": "deal-1",
+                          "pipeline_id": S.PIPELINE_JOAO_REPOSICAO_ATACADO,
+                          "stage_id": stage_id}},
+        stages=ETAPAS_COM_REPOSICAO,
+    )
+
+
+def _reposicao_job(toque=1, **over):
+    """Um toque da esteira de Reposição Atacado, no formato do agendador.
+
+    `move_para` NÃO está no metadata de propósito: quem sabe que o toque 1 move o card
+    é `cadence_joao`, a mesma fonte de onde sai a etapa vigiada. Gravá-lo no job criaria
+    a segunda fonte que a guarda de etapa existe para evitar.
+    """
+    metadata = {
+        "cadencia": "reposicao",
+        "funil": "reposicao_atacado",
+        "toque": toque,
+        "template_name": "joao_reposicao_atacado_t%d" % toque,
+    }
+    metadata.update(over.pop("metadata", {}))
+    over.setdefault("job_type", "joao_reposicao")
+    over.setdefault("sequence", toque)
+    return _joao_job(metadata=metadata, **over)
+
+
+# ─── §3.1 a guarda testa PERTENCIMENTO, não igualdade ────────────────────────
+
+def test_o_toque_da_reposicao_sobrevive_ao_card_em_ja_chamado():
+    """O CORAÇÃO DA ENTREGA. O toque 1 move o card para "Já chamado" — e os toques 2, 3
+    e 4 têm de sair de lá mesmo.
+
+    MUTAÇÃO: com a guarda de 25/09 comparando IGUALDADE com `gatilho_stage_key` (`novo`),
+    este teste fica vermelho e a esteira inteira se mata no primeiro toque. É a mesma
+    parede que matou a abordagem do builder em setembro (`_guard_broken`)."""
+    db = _db_reposicao(stage_id=ETAPA_JA_CHAMADO_REPOSICAO)
+    calls = _run_handler(_reposicao_job(toque=2), sb=db)
+
+    assert calls["meta"].send_template.await_args.args[1] == "joao_reposicao_atacado_t2"
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+
+
+@pytest.mark.parametrize("etapa, nome", [
+    (ETAPA_GANHO_REPOSICAO, "Fechado Ganho"),
+    (ETAPA_PROPOSTA_REPOSICAO, "Proposta Enviada"),
+    (ETAPA_ATENCAO_REPOSICAO, "Em atenção"),
+])
+def test_o_toque_da_reposicao_morre_fora_do_conjunto_de_etapas_vivas(etapa, nome):
+    """O conjunto é `("novo", "chamado_reposicao")` e NADA além disso. Card que foi
+    comprar, que virou proposta, ou que já chegou ao destino final da esteira não recebe
+    mais template — é o defeito de 24/09 (marketing para quem acabou de comprar)."""
+    db = _db_reposicao(stage_id=etapa)
+    calls = _run_handler(_reposicao_job(toque=3), sb=db)
+
+    calls["meta"].send_template.assert_not_awaited()
+    calls["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+    calls["sent"].assert_not_called()
+    calls["channel"].assert_not_called()
+
+
+@pytest.mark.parametrize("cadencia, etapa_viva", [
+    ("novo", ETAPA_NOVO_ATACADO),
+    ("em_conversa", ETAPA_RESPONDEU_ATACADO),
+    ("proposta", ETAPA_PROPOSTA_ATACADO),
+])
+def test_as_cadencias_de_etapa_unica_seguem_com_o_comportamento_de_ontem(cadencia, etapa_viva):
+    """REGRESSÃO da mudança inteira: `etapas_vivas=()` significa "só a de entrada", e é
+    esse default que mantém as cadências de prospecção idênticas ao que sempre foram.
+
+    MUTAÇÃO (spec §9): se o default virar "aceita qualquer etapa", as quatro linhas de
+    baixo ficam verdes por acidente — e cada uma delas é um template de marketing para
+    quem saiu do gatilho."""
+    calls = _run_handler(_joao_job(metadata={"cadencia": cadencia}),
+                         sb=_db(stage_id=etapa_viva))
+    calls["meta"].send_template.assert_awaited_once()
+    calls["cancel"].assert_not_called()
+
+    outras = [ETAPA_NOVO_ATACADO, ETAPA_RESPONDEU_ATACADO, ETAPA_PROPOSTA_ATACADO,
+              ETAPA_GANHO_ATACADO, ETAPA_ATENCAO_ATACADO]
+    for etapa in outras:
+        if etapa == etapa_viva:
+            continue
+        fora = _run_handler(_joao_job(metadata={"cadencia": cadencia}),
+                            sb=_db(stage_id=etapa))
+        fora["meta"].send_template.assert_not_awaited()
+        fora["cancel"].assert_called_once_with("job-joao-1", "card_mudou_de_etapa")
+
+
+def test_a_guarda_do_toque_usa_o_predicado_da_cadencia_e_nao_uma_copia():
+    """Uma SEGUNDA leitura da mesma regra divergiria da primeira no primeiro ajuste — e
+    o sintoma seria a guarda do envio e a do move discordando sobre o mesmo card. Aqui
+    o conjunto declarado e o que o handler honra são comparados lado a lado."""
+    from app.follow_up import cadence_joao as cj
+
+    reposicao = cj.cadencia_do_funil("reposicao_atacado", "reposicao")
+    assert reposicao.etapas_vivas_efetivas == ("novo", "chamado_reposicao")
+    for etapa, vive in [("novo", True), ("chamado_reposicao", True),
+                        ("em_atencao", False), ("fechado_ganho", False), (None, False)]:
+        assert reposicao.vive_na_etapa(etapa) is vive, etapa
+
+
+def test_o_job_de_mover_da_reposicao_alcanca_o_card_parado_em_ja_chamado():
+    """O outro lado da mesma guarda (plano H3, primeiro item): o card foi para "Já
+    chamado" no toque 1, e é DE LÁ que o fim da cadência o leva para "Em atenção".
+
+    Com `etapa_vigiada == gatilho_stage_key` o move nunca aconteceria: todo card de
+    Reposição terminaria parado em "Já chamado", que é a coluna que o vendedor não olha."""
+    db = _db_reposicao(stage_id=ETAPA_JA_CHAMADO_REPOSICAO)
+    job = _move_job(job_type="joao_reposicao",
+                    metadata={"cadencia": "reposicao", "funil": "reposicao_atacado",
+                              "stage_id": ETAPA_CLIENTE_ATIVO_REPOSICAO})
+    calls = _run_handler(job, sb=db)
+
+    assert db.updates[0][1]["stage_id"] == ETAPA_ATENCAO_REPOSICAO
+    calls["sent"].assert_called_once_with("job-joao-1")
+
+
+def test_o_job_de_mover_da_reposicao_nao_alcanca_o_card_que_foi_comprar():
+    """Pertencimento é um CONJUNTO, não "qualquer etapa": card em "Fechado Ganho" não é
+    arrastado para "Em atenção" pelo fim da cadência."""
+    db = _db_reposicao(stage_id=ETAPA_GANHO_REPOSICAO)
+    job = _move_job(job_type="joao_reposicao",
+                    metadata={"cadencia": "reposicao", "funil": "reposicao_atacado"})
+    calls = _run_handler(job, sb=db)
+
+    assert db.updates == []
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+
+
+# ─── §3.2 o toque que MOVE o card ────────────────────────────────────────────
+
+def test_o_toque_1_da_reposicao_envia_marca_e_so_entao_move():
+    """A ORDEM É A ENTREGA: envia → marca `sent` → move.
+
+    Mover antes de marcar abriria a janela em que o card já andou e o job ainda pode ser
+    retentado — o lead levaria o mesmo template duas vezes."""
+    ordem = []
+    db = _db_reposicao()
+    calls = _run_handler(_reposicao_job(toque=1), sb=db, ordem=ordem)
+
+    assert ordem == ["envia", "marca sent", "move"]
+    assert db.updates and db.updates[0][0] == "deal-1"
+    assert db.updates[0][1]["stage_id"] == ETAPA_JA_CHAMADO_REPOSICAO
+    calls["cancel"].assert_not_called()
+
+
+def test_a_falha_no_move_deixa_o_toque_sent_e_nao_reenvia():
+    """A mensagem JÁ SAIU. Reenviá-la seria pior que o card ficar na etapa antiga, então
+    o toque continua `sent` e o job não é retentado — só um `error` no log.
+
+    É o mesmo raciocínio que faz `_mover_card_joao` marcar `sent` em vez de `cancelled`
+    quando não consegue mover."""
+    db = _db_reposicao()
+    with patch("app.follow_up.scheduler._mover_card_joao",
+               side_effect=RuntimeError("conexão caiu")) as mock_mover:
+        calls = _run_handler(_reposicao_job(toque=1), sb=db)
+
+    mock_mover.assert_called_once()
+    calls["meta"].send_template.assert_awaited_once()
+    calls["sent"].assert_called_once_with("job-joao-1")
+    calls["cancel"].assert_not_called()
+
+
+def test_o_toque_que_falha_no_envio_nao_move_o_card():
+    """A ordem também protege o contrário: template rejeitado pela Meta (erro
+    permanente) cancela o job e o card NÃO anda — "Já chamado" significaria uma chamada
+    que nunca houve."""
+    import httpx
+    resp = httpx.Response(400, request=httpx.Request("POST", "https://graph.facebook.com/"))
+    meta = AsyncMock()
+    meta.send_template = AsyncMock(
+        side_effect=httpx.HTTPStatusError("bad", request=resp.request, response=resp))
+    db = _db_reposicao()
+    calls = _run_handler(_reposicao_job(toque=1), sb=db, meta=meta)
+
+    assert db.updates == []
+    calls["cancel"].assert_called_once_with("job-joao-1", "meta_permanent_error_400")
+
+
+@pytest.mark.parametrize("toque", [2, 3, 4])
+def test_os_toques_2_3_e_4_da_reposicao_nao_mexem_no_card(toque):
+    """Só o toque 1 declara `move_para`. Os outros mandam o template e param aí."""
+    db = _db_reposicao(stage_id=ETAPA_JA_CHAMADO_REPOSICAO)
+    calls = _run_handler(_reposicao_job(toque=toque), sb=db)
+
+    calls["meta"].send_template.assert_awaited_once()
+    calls["sent"].assert_called_once_with("job-joao-1")
+    assert db.updates == []
+
+
+def test_o_toque_das_cadencias_de_prospeccao_nunca_move_o_card():
+    """REGRESSÃO: 21 dos 22 toques declarados não têm `move_para`, e nenhum deles pode
+    começar a escrever em `deals` por causa desta entrega."""
+    db = _db()
+    calls = _run_handler(_joao_job(metadata={"toque": 1}), sb=db)
+
+    calls["meta"].send_template.assert_awaited_once()
+    assert db.updates == []
+
+
+def test_o_move_do_toque_1_procura_a_etapa_dentro_do_funil_do_card():
+    """`novo` e `em_atencao` existem nos quatro funis do João e `key` só é única POR
+    pipeline. As etapas dos funis de prospecção vêm ANTES na tabela de mentira: sem o
+    filtro, o card de Reposição iria parar no funil de outra pessoa."""
+    db = _db_reposicao()
+    _run_handler(_reposicao_job(toque=1), sb=db)
+
+    assert db.updates[0][1]["stage_id"] == ETAPA_JA_CHAMADO_REPOSICAO
+
+
+# ─── §6 o move escreve AS DUAS colunas de etapa ──────────────────────────────
+
+def test_mover_card_joao_escreve_stage_id_e_a_coluna_legada_stage():
+    """O achado de brinde (spec §6). `trg_update_deal_entered_stage_at` observa as DUAS
+    colunas — `stage_id` E o texto `stage` — justamente porque caminhos legados escrevem
+    o texto (`20260904_esteiras_vendedor.sql:36`). Escrever só uma deixa as duas
+    divergindo: a coluna de texto continua dizendo onde o card ESTAVA.
+
+    Enquanto mover card era exceção isso era latente; com a Reposição movendo TODO card
+    no toque 1, passa a acontecer sempre. O valor é a KEY da etapa, o mesmo vocabulário
+    que `scripts/backfill_reposicao_ja_chamado.sql` grava."""
+    from app.follow_up import cadence_joao as cj
+
+    db = _db()
+    with patch("app.follow_up.scheduler.get_supabase", return_value=db):
+        assert S._mover_card_joao(
+            "deal-1", "em_atencao", cadencia=cj.cadencia_do_funil("atacado", "novo")) is True
+
+    _, payload = db.updates[0]
+    assert payload["stage_id"] == ETAPA_ATENCAO_ATACADO
+    assert payload["stage"] == "em_atencao"
+
+
+def test_o_move_do_toque_1_tambem_escreve_as_duas_colunas():
+    """Uma única implementação do move — a do toque e a do fim da cadência são a MESMA
+    função, e por isso a correção vale para as duas sem uma segunda linha."""
+    db = _db_reposicao()
+    _run_handler(_reposicao_job(toque=1), sb=db)
+
+    _, payload = db.updates[0]
+    assert payload["stage_id"] == ETAPA_JA_CHAMADO_REPOSICAO
+    assert payload["stage"] == "chamado_reposicao"
+
+
+def test_o_move_do_fim_da_cadencia_tambem_escreve_as_duas_colunas():
+    db = _db()
+    _run_handler(_move_job(), sb=db)
+
+    _, payload = db.updates[0]
+    assert payload["stage_id"] == ETAPA_ATENCAO_ATACADO
+    assert payload["stage"] == "em_atencao"
+
+
+# ─── §4 o teto DIÁRIO de disparos, no ENVIO ──────────────────────────────────
+#
+# `JOAO_TETO_PADRAO = 20` sempre foi POR PASSAGEM, e o polling roda a cada 30s: até
+# 2.400 matrículas/hora numa esteira. Com os 672 cards elegíveis da Reposição, o toque
+# 1 sairia para todos em minutos — a forma já medida em 16/09 ("888 cards em 6
+# minutos"). O teto por passagem continua existindo; ele resolve outro problema.
+#
+# Os três helpers vêm de `service.py` (CONTRATO H2→H3) e são mockados aqui: o que este
+# arquivo prova é o que o TICK faz com os números, não como eles são lidos.
+
+def _explode_llm(*a, **k):
+    raise AssertionError("o caminho do João NUNCA pode chamar o LLM")
+
+
+def _drive_tick_teto(jobs, *, teto=100, disparos=0):
+    """Roda `process_due_followups` com o orçamento do dia sob controle."""
+    import asyncio
+
+    ajustes = {"teto_diario_disparos": teto, "adiamento_estoque_dias": 30}
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=list(jobs)), \
+         patch("app.follow_up.scheduler._recover_stale_followup_jobs", return_value=0), \
+         patch("app.follow_up.scheduler._claim_followup_job", return_value=True), \
+         patch("app.follow_up.scheduler._fetch_lead_for_backstop", return_value=None), \
+         patch("app.follow_up.scheduler.get_supabase", return_value=MagicMock()), \
+         patch("app.follow_up.scheduler.carregar_ajustes_joao", return_value=ajustes) as m_aj, \
+         patch("app.follow_up.scheduler.disparos_de_hoje", return_value=disparos) as m_conta, \
+         patch("app.follow_up.scheduler.adiar_job_para_amanha") as m_adiar, \
+         patch("app.follow_up.scheduler._devolver_job_a_pending") as m_devolve, \
+         patch("app.follow_up.scheduler._cancel_job") as m_cancel, \
+         patch("app.follow_up.scheduler._generate_followup_message",
+               new=AsyncMock(side_effect=_explode_llm)), \
+         patch("app.follow_up.scheduler._process_joao_touch", new=AsyncMock()) as m_joao:
+        asyncio.run(S.process_due_followups(now=NOW))
+    return SimpleNamespace(joao=m_joao, adiar=m_adiar, cancel=m_cancel,
+                           conta=m_conta, devolve=m_devolve, ajustes=m_aj)
+
+
+def test_teto_estourado_ADIA_o_toque_e_NUNCA_o_cancela():
+    """MUTAÇÃO OBRIGATÓRIA (plano H3, último item): trocar `adiar_job_para_amanha` por
+    `_cancel_job` tem de deixar este teste VERMELHO.
+
+    Cancelar não é "perder um toque": `motivo_para_pular_joao` lê job `cancelled` como
+    "o lead respondeu no meio" e por isso NÃO deixa aquela matrícula segurar o cooldown.
+    O card voltaria a ser elegível na varredura seguinte, seria rematriculado do toque 1,
+    estouraria o teto de novo, seria cancelado de novo — laço, e cada volta custa um
+    template de MARKETING (US$ 0,0625 medidos em 15/09, 9,1x o utility)."""
+    r = _drive_tick_teto([_joao_job()], teto=100, disparos=100)
+
+    r.joao.assert_not_awaited()
+    r.adiar.assert_called_once()
+    assert r.adiar.call_args.args[0] == "job-joao-1"
+    r.cancel.assert_not_called()
+
+
+def test_o_job_adiado_volta_para_pending():
+    """Ele foi REIVINDICADO (`processing`) no topo do tick. Sem devolvê-lo, ficaria preso
+    até a crash-recovery dos 5 minutos — e apareceria no watchdog de jobs presos."""
+    r = _drive_tick_teto([_joao_job()], teto=100, disparos=100)
+    r.devolve.assert_called_once_with("job-joao-1")
+
+
+def test_a_contagem_do_teto_e_UMA_por_tick():
+    """Spec §4: "UMA consulta por tick, nunca uma por job". O polling roda a cada 30s;
+    uma contagem por job seria N idas ao banco a cada meio minuto."""
+    jobs = [_joao_job(id="job-%d" % i) for i in range(3)]
+    r = _drive_tick_teto(jobs, teto=100, disparos=0)
+
+    assert r.conta.call_count == 1
+    assert r.ajustes.call_count == 1
+    assert r.joao.await_count == 3
+
+
+def test_o_saldo_do_dia_e_descontado_job_a_job_dentro_do_mesmo_tick():
+    """Com 98 de 100 gastos, só DOIS toques passam nesta passagem; o terceiro é adiado.
+    Sem o desconto local, uma única contagem no início liberaria a fila inteira — que é
+    exatamente a avalanche que o teto existe para impedir."""
+    jobs = [_joao_job(id="job-%d" % i) for i in range(3)]
+    r = _drive_tick_teto(jobs, teto=100, disparos=98)
+
+    assert r.joao.await_count == 2
+    assert [c.args[0]["id"] for c in r.joao.await_args_list] == ["job-0", "job-1"]
+    r.adiar.assert_called_once()
+    assert r.adiar.call_args.args[0] == "job-2"
+    r.cancel.assert_not_called()
+
+
+def test_leitura_ilegivel_dos_disparos_e_tratada_como_orcamento_esgotado():
+    """`disparos_de_hoje` é fail-closed e devolve `DISPAROS_ILEGIVEIS` (10**6) quando não
+    consegue ler. O tick tem de ler isso como "sem saldo" sem um segundo ramo."""
+    from app.follow_up.service import DISPAROS_ILEGIVEIS
+
+    r = _drive_tick_teto([_joao_job()], teto=100, disparos=DISPAROS_ILEGIVEIS)
+
+    r.joao.assert_not_awaited()
+    r.adiar.assert_called_once()
+    r.cancel.assert_not_called()
+
+
+def test_o_job_de_mover_nao_e_barrado_pelo_teto_nem_gasta_orcamento():
+    """Ele é marcado `sent` e ganha `sent_at` como qualquer outro, mas NÃO manda
+    mensagem — só escreve em `deals`. A unidade declarada do teto é TEMPLATE
+    (`disparos_de_hoje` já o exclui da contagem, do lado de lá)."""
+    r = _drive_tick_teto([_move_job()], teto=100, disparos=100)
+
+    r.joao.assert_awaited_once()
+    r.adiar.assert_not_called()
+    r.conta.assert_not_called()   # nem precisa contar: ele não gasta nada
+
+
+def test_o_move_passa_junto_com_o_ultimo_toque_do_orcamento():
+    """Um tick com o move e um toque, e saldo para UM disparo: os dois passam. Se o move
+    gastasse orçamento, o toque seria adiado — e o card andaria sem a mensagem que
+    justifica o move."""
+    jobs = [_move_job(id="job-move"), _joao_job(id="job-toque")]
+    r = _drive_tick_teto(jobs, teto=100, disparos=99)
+
+    assert r.joao.await_count == 2
+    r.adiar.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_o_teto_do_joao_nao_conta_nem_barra_o_caminho_standard_da_valeria():
+    """REGRESSÃO INEGOCIÁVEL (spec §4 e §8). O `standard` é texto livre do LLM dentro de
+    uma janela de 24h que o LEAD abriu, dirigido por resposta, e é o único follow-up que
+    roda de verdade em produção (8.140 jobs). Um teto ali quebraria o que funciona sem
+    reduzir o risco que motiva esta regra.
+
+    Com o orçamento do João ESTOURADO, o job da ValerIA sai igual — e a contagem nem
+    chega a ser feita, porque nenhum job do tick é do João."""
+    job = {
+        "id": "job-std-1", "job_type": "standard", "conversation_id": "conv-1",
+        "lead_id": "lead-1", "sequence": 1,
+        "leads": {"id": "lead-1", "phone": "5511999999999"},
+        "channels": {"id": "ch-1", "mode": "ai", "provider_config": {}},
+        "conversations": {"id": "conv-1", "stage": "atacado", "followup_enabled": True,
+                          "last_customer_message_at": datetime.now(timezone.utc).isoformat()},
+        "metadata": {},
+    }
+    provider = AsyncMock()
+    provider.send_text = AsyncMock(return_value={"messages": [{"id": "wamid.STD"}]})
+    ajustes = {"teto_diario_disparos": 100, "adiamento_estoque_dias": 30}
+
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler._recover_stale_followup_jobs", return_value=0), \
+         patch("app.follow_up.scheduler._claim_followup_job", return_value=True), \
+         patch("app.follow_up.scheduler.get_provider", return_value=provider), \
+         patch("app.follow_up.scheduler.carregar_ajustes_joao", return_value=ajustes), \
+         patch("app.follow_up.scheduler.disparos_de_hoje", return_value=10 ** 6) as m_conta, \
+         patch("app.follow_up.scheduler.adiar_job_para_amanha") as m_adiar, \
+         patch("app.follow_up.scheduler._generate_followup_message",
+               new=AsyncMock(return_value=("Oi, tudo bem?", "stop"))), \
+         patch("app.follow_up.scheduler.save_message_conv"), \
+         patch("app.follow_up.scheduler._save_followup_wamid"), \
+         patch("app.follow_up.scheduler._mark_sent") as m_sent:
+        await S.process_due_followups(now=datetime.now(timezone.utc))
+
+    provider.send_text.assert_awaited_once_with("5511999999999", "Oi, tudo bem?")
+    m_sent.assert_called_once_with("job-std-1")
+    m_conta.assert_not_called()
+    m_adiar.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_type", ["standard", "ai_reengage", "lp_welcome",
+                                      "handoff_rescue", "ai_scheduled_return"])
+async def test_nenhum_job_type_da_valeria_e_adiado_pelo_teto_do_joao(job_type):
+    """Os cinco tipos que já existiam não entram na conta nem são barrados por ela."""
+    job = {
+        "id": "job-x", "job_type": job_type, "conversation_id": "conv-1",
+        "lead_id": "lead-1", "sequence": 1,
+        "leads": {"id": "lead-1", "phone": "5511999999999"},
+        "channels": {"id": "ch-1", "mode": "human", "provider_config": {}},
+        "conversations": {"id": "conv-1", "stage": "atacado", "followup_enabled": False},
+        "metadata": {},
+    }
+    ajustes = {"teto_diario_disparos": 100, "adiamento_estoque_dias": 30}
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[job]), \
+         patch("app.follow_up.scheduler._recover_stale_followup_jobs", return_value=0), \
+         patch("app.follow_up.scheduler._claim_followup_job", return_value=True), \
+         patch("app.follow_up.scheduler._process_handoff_rescue", new=AsyncMock()), \
+         patch("app.follow_up.scheduler._process_lp_welcome", new=AsyncMock()), \
+         patch("app.follow_up.scheduler._process_ai_reengage", new=AsyncMock()), \
+         patch("app.follow_up.scheduler._process_ai_scheduled_return", new=AsyncMock()), \
+         patch("app.follow_up.scheduler.carregar_ajustes_joao", return_value=ajustes), \
+         patch("app.follow_up.scheduler.disparos_de_hoje", return_value=10 ** 6) as m_conta, \
+         patch("app.follow_up.scheduler.adiar_job_para_amanha") as m_adiar, \
+         patch("app.follow_up.scheduler._cancel_job"):
+        await S.process_due_followups(now=datetime.now(timezone.utc))
+
+    m_conta.assert_not_called()
+    m_adiar.assert_not_called()
+
+
+def test_o_teto_nao_alcanca_o_job_que_o_backstop_de_parada_ja_matou():
+    """Ordem: a rede de segurança de parada roda ANTES do teto. Lead na blacklist é
+    CANCELADO (não adiado) — adiar um job que nunca pode sair o traria de volta amanhã."""
+    import asyncio
+
+    ajustes = {"teto_diario_disparos": 100, "adiamento_estoque_dias": 30}
+    with patch("app.follow_up.scheduler.get_due_followups", return_value=[_joao_job()]), \
+         patch("app.follow_up.scheduler._recover_stale_followup_jobs", return_value=0), \
+         patch("app.follow_up.scheduler._claim_followup_job", return_value=True), \
+         patch("app.follow_up.scheduler._fetch_lead_for_backstop",
+               return_value={"id": "lead-1", "metadata": {"blacklisted_at": "2026-09-01"}}), \
+         patch("app.follow_up.scheduler.carregar_ajustes_joao", return_value=ajustes), \
+         patch("app.follow_up.scheduler.disparos_de_hoje", return_value=10 ** 6) as m_conta, \
+         patch("app.follow_up.scheduler.adiar_job_para_amanha") as m_adiar, \
+         patch("app.follow_up.scheduler._cancel_job") as m_cancel, \
+         patch("app.follow_up.scheduler._process_joao_touch", new=AsyncMock()) as m_joao:
+        asyncio.run(S.process_due_followups(now=NOW))
+
+    m_cancel.assert_called_once_with("job-joao-1", "blacklisted")
+    m_adiar.assert_not_called()
+    m_conta.assert_not_called()
+    m_joao.assert_not_awaited()
+
+
+def test_devolver_job_a_pending_limpa_a_reivindicacao():
+    """O UPDATE que desfaz o claim: `processing` → `pending`, e `claimed_at` de volta a
+    NULL para a crash-recovery não o contar como preso."""
+    sb = MagicMock()
+    with patch("app.follow_up.scheduler.get_supabase", return_value=sb):
+        S._devolver_job_a_pending("job-joao-1")
+
+    payload = sb.table.return_value.update.call_args.args[0]
+    assert payload == {"status": "pending", "claimed_at": None}
+    sb.table.assert_called_with("follow_up_jobs")
+
+
+def test_devolver_job_a_pending_nao_derruba_o_tick():
+    """Fail-soft: quem chama está no meio de um tick de envio, e propagar derrubaria os
+    jobs seguintes da mesma passagem."""
+    sb = MagicMock()
+    sb.table.side_effect = RuntimeError("conexão caiu")
+    with patch("app.follow_up.scheduler.get_supabase", return_value=sb):
+        S._devolver_job_a_pending("job-joao-1")   # não levanta

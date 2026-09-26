@@ -289,8 +289,8 @@ class Touch:
       adiar `ADIAMENTO_ESTOQUE` em vez de cancelar. A suíte cruza este campo com os
       BOTÕES REAIS do template, para que ele nunca prometa um botão que não existe.
     - `move_para`: a key da etapa para onde o card vai DEPOIS deste toque sair
-      (26/09/2026, spec §3.2). `None` = o toque não move nada, que é o caso de 21
-      dos 22 toques declarados aqui.
+      (26/09/2026, spec §3.2). `None` = o toque não move nada, que é o caso de 30
+      dos 32 toques declarados aqui — só o toque 1 das duas Reposições move.
 
       A ORDEM É OBRIGATÓRIA, e quem a cumpre é o handler dos jobs: **envia → marca `sent`
       → move**. Se o move falhar, o toque permanece `sent` e NÃO é retentado — a

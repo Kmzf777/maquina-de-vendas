@@ -64,6 +64,9 @@ function toque(
   dias: number,
   template_name: string | null,
   aceita_adiamento = false,
+  /** Para onde o card vai depois DESTE toque sair (spec 2026-09-26 §3.2), em RÓTULO.
+   * `null` em 30 dos 32 toques do motor — hoje só o 1º de cada Reposição move. */
+  move_para_rotulo: string | null = null,
 ) {
   return {
     sequence,
@@ -72,6 +75,19 @@ function toque(
     template_name,
     template_name_codigo: template_name,
     aceita_adiamento,
+    move_para_rotulo,
+  };
+}
+
+/** `joao.ajustes` como o backend o monta: o efetivo e o default de código de cada uma
+ * das duas chaves globais. Os números aqui são os `AJUSTES_PADRAO` do motor em
+ * 26/09/2026 — e todo teste que MEDE se a tela lê o payload troca os dois. */
+function ajustesDoMotor(teto = 100, espera = 30) {
+  return {
+    teto_diario_disparos: teto,
+    teto_diario_disparos_codigo: 100,
+    adiamento_estoque_dias: espera,
+    adiamento_estoque_dias_codigo: 30,
   };
 }
 
@@ -96,6 +112,11 @@ function cadenciaDoFunil(
      * cadências dos cinco funis, e é isso que o default abaixo imita. Os testes que
      * mexem neste número provam que a tela lê o payload. */
     adiamento_resposta_dias: number;
+    /** O QUINTO só-leitura (spec 2026-09-26 §2.1): as etapas em que a esteira segue
+     * viva, em rótulo. O default imita o backend — `etapas_vivas=()` cai na etapa de
+     * ENTRADA, e é ele que mantém as oito cadências de etapa única como sempre
+     * foram. Só as de Reposição declaram duas. */
+    etapas_vivas_rotulos: string[];
   }> = {},
 ) {
   const semTemplate = toques.filter((t) => !t.template_name).map((t) => t.sequence);
@@ -111,6 +132,7 @@ function cadenciaDoFunil(
     etapa_final_rotulo: extra.etapa_final_rotulo ?? null,
     dias_ate_mover: extra.dias_ate_mover ?? 1,
     adiamento_resposta_dias: extra.adiamento_resposta_dias ?? 3,
+    etapas_vivas_rotulos: extra.etapas_vivas_rotulos ?? [gatilhoStageRotulo],
     ativa: false,
     repete_ultimo: extra.repete_ultimo ?? false,
     pode_ligar: extra.pode_ligar ?? semTemplate.length === 0,
@@ -157,25 +179,48 @@ function funil(codigo: string, rotulo: string, cadencias: ReturnType<typeof cade
   return { codigo, rotulo, pipeline_id: `pipe-${codigo}`, cadencias };
 }
 
+/** A cadência "Reposição" como o backend a declara DESDE 26/09/2026 (spec §1): entra
+ * em "Cliente Ativo", o 1º toque MOVE o card para "Já chamado", a esteira segue viva
+ * nas duas etapas e no fim o card vai para "Em atenção".
+ *
+ * Até 25/09 ela era a cadência que NÃO movia card (`etapa_final_rotulo: null`). Quem
+ * procurar esse caso agora tem de olhar "Em atenção", que segue com destino nulo e
+ * `dias_ate_mover: 1` — é ela que protege a tela de escrever "move o card para null". */
+function cadenciaDeReposicao(prefixoDoTemplate: string) {
+  return cadenciaDoFunil(
+    "reposicao",
+    "Reposição",
+    "Cliente Ativo",
+    45,
+    [
+      toque(1, 0, `${prefixoDoTemplate}_t1`, true, "Já chamado"),
+      toque(2, 15, `${prefixoDoTemplate}_t2`, true),
+    ],
+    {
+      etapa_final_rotulo: "Em atenção",
+      dias_ate_mover: 1,
+      etapas_vivas_rotulos: ["Cliente Ativo", "Já chamado"],
+    },
+  );
+}
+
 /** O payload REAL de `GET /api/cadence/definition` (backend/app/follow_up/api.py):
- * `joao.funis`, cinco funis, "Recuperação" com `cadencias: []` de propósito.
+ * `joao.funis`, cinco funis, "Recuperação" com `cadencias: []` de propósito, e o bloco
+ * `joao.ajustes` com os dois números do motor (spec 2026-09-26 §3.5).
  *
  * Desde 23/09/2026, Atacado e Private Label têm TRÊS cadências (Novo, Em conversa e a
- * nova Proposta Enviada), todas sem template em toque nenhum — e os de Reposição
- * seguem com duas, `gatilho_silencio_dias: 0` e `etapa_final_rotulo: null`. */
+ * nova Proposta Enviada), todas sem template em toque nenhum. */
 function definicao() {
   return {
     ...VALERIA,
     valeria: VALERIA,
     joao: {
+      ajustes: ajustesDoMotor(),
       funis: [
         funil("atacado", "João - Atacado", cadenciasDeProspeccao()),
         funil("private_label", "João - Private Label", cadenciasDeProspeccao()),
         funil("reposicao_atacado", "João - Reposição Atacado", [
-          cadenciaDoFunil("reposicao", "Reposição", "Cliente Ativo", 45, [
-            toque(1, 0, "joao_reposicao_atacado_t1", true),
-            toque(2, 15, "joao_reposicao_atacado_t2", true),
-          ]),
+          cadenciaDeReposicao("joao_reposicao_atacado"),
           cadenciaDoFunil(
             "em_atencao",
             "Em atenção",
@@ -188,10 +233,7 @@ function definicao() {
           ),
         ]),
         funil("reposicao_private_label", "João - Reposição Private Label", [
-          cadenciaDoFunil("reposicao", "Reposição", "Cliente Ativo", 45, [
-            toque(1, 0, "joao_reposicao_privatelabel_t1", true),
-            toque(2, 15, "joao_reposicao_privatelabel_t2", true),
-          ]),
+          cadenciaDeReposicao("joao_reposicao_privatelabel"),
           cadenciaDoFunil(
             "em_atencao",
             "Em atenção",
@@ -424,26 +466,30 @@ describe("DefinitionStrip — o relógio completo no cabeçalho", () => {
     expect(naTela()).toContain("espera 1 dia e move o card para Em atenção");
   });
 
-  it("Reposição: nem frase de silêncio, nem frase de move", async () => {
-    // `gatilho_silencio_dias: 0` E `etapa_final_rotulo: null` — mas
-    // `dias_ate_mover: 1` (default da dataclass). Se a tela olhasse o NÚMERO em vez
-    // do rótulo, este teste ficaria vermelho.
+  it("Reposição: sem frase de silêncio, e o destino sai da linha do gatilho", async () => {
+    // `gatilho_silencio_dias: 0` — ela dispara só por tempo de ETAPA. E o destino
+    // final NÃO aparece mais aqui em cima: ele virou o último passo da jornada (o
+    // bloco de baixo), porque dizer duas vezes para onde o card vai é repetição em
+    // que o operador lê uma metade e ignora a outra.
     await abrirJoao();
     await abrirFunil("João - Reposição Atacado");
     await abrirCadencia("Reposição");
     expect(naTela()).toContain("Dispara com o card parado 45 dia(s) na etapa Cliente Ativo");
     expect(naTela()).not.toContain("sem conversa");
-    expect(naTela()).not.toContain("move o card para");
+    expect(naTela()).not.toContain("depois do último toque");
   });
 
   it("dias_ate_mover sozinho NUNCA basta: sem rótulo, sem frase", async () => {
     // A mutação explícita: um payload com `dias_ate_mover: 3` e destino nulo. Quem
     // condicionar a frase ao número escreve "move o card para null" aqui.
+    //
+    // O caso mora em "Em atenção" desde 26/09: ela é a cadência que sobrou sem
+    // destino, depois que "Reposição" ganhou o dela (spec §1).
     const def = definicao();
-    def.joao.funis[2].cadencias[0].dias_ate_mover = 3;
+    def.joao.funis[2].cadencias[1].dias_ate_mover = 3;
     await abrirJoao(def);
     await abrirFunil("João - Reposição Atacado");
-    await abrirCadencia("Reposição");
+    await abrirCadencia("Em atenção");
     expect(naTela()).not.toContain("move o card para");
     expect(naTela()).not.toContain("null");
     expect(naTela()).not.toContain("undefined");
@@ -785,5 +831,304 @@ describe("DefinitionStrip — o payload da ValerIA não pode sumir", () => {
   it("sem definição nenhuma, avisa em vez de quebrar", () => {
     render(<DefinitionStrip definition={null} />);
     expect(naTela()).toContain("indisponível");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A JORNADA da Reposição — o cabeçalho conta as três etapas (spec 2026-09-26 §7)
+//
+// A esteira de Reposição passou a mover o card DUAS vezes: para "Já chamado" no 1º
+// toque e para "Em atenção" no fim. Contar isso em pedaços ("dispara em X", "no fim
+// vai para Y") esconde justamente o passo do meio — e é o passo do meio que faz o
+// operador procurar no funil errado o card que sumiu de "Cliente Ativo".
+//
+// Nenhum rótulo de etapa é escrito no componente: "Cliente Ativo", "Já chamado" e
+// "Em atenção" vêm os três do payload, porque a MESMA key significa coisas diferentes
+// em funis diferentes (`novo` é "Novo" na prospecção). O teste de mutação abaixo é o
+// que separa "lê o payload" de "tem os nomes digitados lá dentro".
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("DefinitionStrip — a jornada completa da Reposição", () => {
+  const JORNADA =
+    "Entra em Cliente Ativo · o 1º toque move para Já chamado · no fim move para Em atenção";
+
+  it("Reposição: a jornada inteira, numa frase só", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain(JORNADA);
+  });
+
+  it("vale igual em Reposição Private Label", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Private Label");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain(JORNADA);
+  });
+
+  it("e diz que a esteira segue viva nas DUAS etapas", async () => {
+    // A metade não óbvia: a guarda de 25/09 cancela todo toque cujo card saiu da
+    // etapa vigiada, então sem esta frase o card indo para "Já chamado" no toque 1
+    // parece matar os toques 2, 3 e 4. É o oposto — é o que permite o move existir.
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain(
+      "A esteira segue viva em Cliente Ativo e Já chamado: sair de Cliente Ativo não cancela os toques que faltam.",
+    );
+  });
+
+  it("as outras cadências NÃO ganham jornada — o texto delas é o de antes", async () => {
+    // O teste que protege as oito que não mudaram. Elas seguem com a frase do move no
+    // fim da linha do gatilho, do jeito que estava em 23/09.
+    await abrirJoao(); // Atacado / Novo
+    expect(naTela()).toContain("espera 1 dia e move o card para Em atenção");
+    expect(naTela()).not.toContain("Entra em");
+    expect(naTela()).not.toContain("move para Já chamado");
+    expect(naTela()).not.toContain("A esteira segue viva");
+  });
+
+  it('"Em atenção" também não: um toque, nenhum move no meio', async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Em atenção");
+    expect(naTela()).not.toContain("Entra em");
+    expect(naTela()).not.toContain("A esteira segue viva");
+  });
+
+  it("MUTAÇÃO: rótulos diferentes no payload → a tela diz os novos", async () => {
+    // O teste que separa "lê o payload" de "tem 'Já chamado' digitado no componente".
+    // Com literais no código, todos os testes acima ficariam VERDES e só este cai.
+    const def = definicao();
+    const reposicao = def.joao.funis[2].cadencias[0];
+    reposicao.gatilho_stage_rotulo = "Cliente VIP";
+    reposicao.toques[0].move_para_rotulo = "Já cutucado";
+    reposicao.etapa_final_rotulo = "Geladeira";
+    reposicao.etapas_vivas_rotulos = ["Cliente VIP", "Já cutucado"];
+
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain(
+      "Entra em Cliente VIP · o 1º toque move para Já cutucado · no fim move para Geladeira",
+    );
+    expect(naTela()).toContain("A esteira segue viva em Cliente VIP e Já cutucado");
+    expect(naTela()).not.toContain("Já chamado");
+    expect(naTela()).not.toContain("Cliente Ativo");
+  });
+
+  it("MUTAÇÃO: o move no toque 2 → a tela diz 2º, não 1º", async () => {
+    // O ordinal vem do `sequence` do toque que move, não de um "1º" fixo.
+    const def = definicao();
+    const reposicao = def.joao.funis[2].cadencias[0];
+    reposicao.toques[0].move_para_rotulo = null;
+    reposicao.toques[1].move_para_rotulo = "Já chamado";
+
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain("o 2º toque move para Já chamado");
+    expect(naTela()).not.toContain("o 1º toque move");
+  });
+
+  it("campo AUSENTE em todo toque (backend antigo): sem jornada, sem 'undefined'", async () => {
+    // O CRM e o FastAPI sobem separados. Sem `move_para_rotulo`, a tela volta ao
+    // cabeçalho de antes — inclusive com a frase do move na linha do gatilho, que é
+    // a única informação de destino que ela tem.
+    const def = definicao();
+    const toques = def.joao.funis[2].cadencias[0].toques as Partial<
+      ReturnType<typeof toque>
+    >[];
+    for (const t of toques) delete t.move_para_rotulo;
+
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).not.toContain("Entra em");
+    expect(naTela()).not.toContain("undefined");
+    expect(naTela()).toContain("espera 1 dia e move o card para Em atenção");
+  });
+
+  it("`etapas_vivas_rotulos` ausente não apaga a jornada", async () => {
+    // As duas frases são independentes: a jornada depende do MOVE, a de etapas vivas
+    // depende da LISTA. Um backend que mandasse uma e não a outra não pode derrubar
+    // as duas.
+    const def = definicao();
+    const cadencias = def.joao.funis[2].cadencias as Partial<
+      ReturnType<typeof cadenciaDoFunil>
+    >[];
+    delete cadencias[0].etapas_vivas_rotulos;
+
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(naTela()).toContain(JORNADA);
+    expect(naTela()).not.toContain("A esteira segue viva");
+    expect(naTela()).not.toContain("undefined");
+  });
+
+  it("a jornada sobrevive ao salvar (o PUT devolve a cadência com os campos)", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    fireEvent.change(screen.getByLabelText("Prazo do gatilho (dias)"), {
+      target: { value: "50" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    expect(naTela()).toContain(JORNADA);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Os dois ajustes do MOTOR — FORA do bloco por-cadência (spec 2026-09-26 §7)
+//
+// O teto diário conta os disparos das cinco esteiras somadas e o adiamento do botão é
+// uma constante do motor: se esses campos morassem dentro de uma cadência, haveria
+// cinco cópias do mesmo número e a pergunta "qual delas vale?".
+//
+// Como em toda a aba, NENHUM número é escrito no componente. O teste de mutação troca
+// os dois valores do payload e exige que a tela mude junto — com um "100" digitado lá
+// dentro, os outros testes ficariam verdes e só ele cairia.
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("DefinitionStrip — os ajustes globais do motor", () => {
+  const TETO = "Teto diário de disparos";
+  const ESPERA = 'Espera do botão "Ainda tenho estoque" (dias)';
+
+  const valorDe = (rotulo: string) =>
+    (screen.getByLabelText(rotulo) as HTMLInputElement).value;
+
+  it("mostra os dois valores efetivos e os dois padrões de código", async () => {
+    await abrirJoao();
+    expect(valorDe(TETO)).toBe("100");
+    expect(valorDe(ESPERA)).toBe("30");
+    expect(naTela()).toContain("padrão 100");
+    expect(naTela()).toContain("padrão 30");
+  });
+
+  it("MUTAÇÃO: payload com 250 e 7 → a tela diz 250 e 7, nunca 100 e 30", async () => {
+    const def = definicao();
+    def.joao.ajustes = ajustesDoMotor(250, 7);
+    await abrirJoao(def);
+    expect(valorDe(TETO)).toBe("250");
+    expect(valorDe(ESPERA)).toBe("7");
+    // E o PADRÃO continua visível ao lado: é o que diz ao operador de onde ele saiu
+    // e como voltar.
+    expect(naTela()).toContain("padrão 100");
+    expect(naTela()).toContain("padrão 30");
+  });
+
+  it("ficam FORA da cadência: aparecem até no funil que não tem cadência nenhuma", async () => {
+    // A prova estrutural de que não são campos por-cadência. "Recuperação" tem zero
+    // cadências de propósito, e os dois ajustes continuam lá.
+    await abrirJoao();
+    fireEvent.click(screen.getByRole("button", { name: "João - Recuperação" }));
+    expect(naTela()).toContain("Nenhuma cadência configurada ainda para este funil.");
+    expect(screen.getByLabelText(TETO)).toBeTruthy();
+    expect(screen.getByLabelText(ESPERA)).toBeTruthy();
+  });
+
+  it("não vazam para o corpo do PUT de cadência", async () => {
+    // O PUT por cadência é conferido por igualdade exata em outros testes; aqui o
+    // ponto é o inverso: mexer no ajuste global não pode entrar naquele corpo.
+    await abrirJoao();
+    fireEvent.change(screen.getByLabelText(TETO), { target: { value: "250" } });
+    fireEvent.change(screen.getByLabelText("Dias do toque 2"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    expect(corposDoPut()[0]).toEqual({
+      funil: "atacado",
+      cadencia: "novo",
+      toques: { "2": { dias: 7 } },
+    });
+  });
+
+  it("editar e salvar manda UM PUT com o corpo `{ajustes}`", async () => {
+    putRespostas = [{ ok: true, status: 200, body: ajustesDoMotor(250, 7) }];
+    await abrirJoao();
+    fireEvent.change(screen.getByLabelText(TETO), { target: { value: "250" } });
+    fireEvent.change(screen.getByLabelText(ESPERA), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ajustes" }));
+
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    expect(corposDoPut()[0]).toEqual({
+      ajustes: { teto_diario_disparos: 250, adiamento_estoque_dias: 7 },
+    });
+    await waitFor(() => expect(naTela()).toContain("Ajustes salvos."));
+  });
+
+  it("manda SÓ o que mudou — ausente é 'não mexe'", async () => {
+    putRespostas = [{ ok: true, status: 200, body: ajustesDoMotor(250, 30) }];
+    await abrirJoao();
+    fireEvent.change(screen.getByLabelText(TETO), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ajustes" }));
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    expect(corposDoPut()[0]).toEqual({ ajustes: { teto_diario_disparos: 250 } });
+  });
+
+  it("campo vazio vira `null` — o botão de desfazer", async () => {
+    putRespostas = [{ ok: true, status: 200, body: ajustesDoMotor() }];
+    await abrirJoao();
+    fireEvent.change(screen.getByLabelText(TETO), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ajustes" }));
+    await waitFor(() => expect(corposDoPut().length).toBe(1));
+    expect(corposDoPut()[0]).toEqual({ ajustes: { teto_diario_disparos: null } });
+  });
+
+  it("A RECUSA APARECE — o erro de 16/09/2026 também vale aqui", async () => {
+    putRespostas = [
+      {
+        ok: false,
+        status: 400,
+        body: {
+          detail: {
+            problemas: [
+              {
+                codigo: "ajuste_invalido",
+                mensagem:
+                  "`teto_diario_disparos` precisa ser um inteiro de 1 para cima (veio 0).",
+              },
+            ],
+          },
+        },
+      },
+    ];
+    await abrirJoao();
+    fireEvent.change(screen.getByLabelText(TETO), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ajustes" }));
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent ?? "").toContain("teto_diario_disparos");
+    expect(naTela()).not.toContain("Ajustes salvos.");
+  });
+
+  it("bloco `ajustes` AUSENTE (backend antigo): a seção some, sem 'undefined'", async () => {
+    // O CRM e o FastAPI sobem separados. Dois campos numéricos escrevendo `undefined`
+    // em cima de uma configuração que o operador acha que está editando é pior que
+    // não oferecer a edição.
+    const def = definicao();
+    const joao = def.joao as Partial<typeof def.joao>;
+    delete joao.ajustes;
+
+    await abrirJoao(def as ReturnType<typeof definicao>);
+    expect(screen.queryByLabelText(TETO)).toBeNull();
+    expect(screen.queryByLabelText(ESPERA)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Salvar ajustes" })).toBeNull();
+    expect(naTela()).not.toContain("undefined");
+    // E o resto da aba continua inteiro: a seção que falta não derruba o editor.
+    expect(naTela()).toContain("Dispara com o card parado 2 dia(s) na etapa Novo");
+  });
+
+  it("o selo 'Aceita adiamento' usa o prazo do payload, nunca um 60 escrito à mão", async () => {
+    // Até 25/09 o texto deste selo dizia "adia 60 dias" em código, e o motor adiava
+    // 60. Agora o número é editável nesta mesma tela: um literal aqui viraria uma
+    // frase calada, convincente e errada no instante em que alguém salvasse outro.
+    const def = definicao();
+    def.joao.ajustes = ajustesDoMotor(250, 7);
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+    expect(screen.getAllByTitle(/adia 7 dias/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByTitle(/adia 60 dias/)).toHaveLength(0);
+    expect(screen.queryAllByTitle(/adia 30 dias/)).toHaveLength(0);
   });
 });

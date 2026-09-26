@@ -76,6 +76,10 @@ from fastapi.testclient import TestClient
 from app.follow_up import cadence_joao as cj
 from app.follow_up.api import build_cadence_definition
 from app.follow_up.cadence import CADENCE, MIN_GAP, OUTBOUND_NUDGE
+# Os defaults de CÓDIGO dos ajustes globais (spec 2026-09-26 §3.5). Importados, nunca
+# escritos à mão: o contrato é "o que o motor diz", e um `100` literal nesta suíte
+# seria a segunda fonte de verdade que o par `*_codigo` do payload existe para apagar.
+from app.follow_up.service import AJUSTES_PADRAO
 from app.main import app
 
 client = TestClient(app)
@@ -111,6 +115,7 @@ class _Consulta:
         self._tabela = tabela
         self._eq: list[tuple[str, object]] = []
         self._in: list[tuple[str, list]] = []
+        self._apagando = False
 
     def select(self, *_a, **_k):
         return self
@@ -125,6 +130,14 @@ class _Consulta:
         return self
 
     def limit(self, _n):
+        return self
+
+    def delete(self):
+        """`sb.table(x).delete().eq(...)` — o `null` dos ajustes globais.
+
+        Marca o modo e deixa o `.eq()` acumular como sempre; quem apaga de verdade é
+        o `execute()`, para que o filtro valha igual ao de uma leitura."""
+        self._apagando = True
         return self
 
     def upsert(self, linhas, on_conflict=None):
@@ -153,6 +166,12 @@ class _Consulta:
             linhas = [x for x in linhas if x.get(coluna) == valor]
         for coluna, valores in self._in:
             linhas = [x for x in linhas if x.get(coluna) in valores]
+        if self._apagando:
+            self._banco.apagadas.append({"tabela": self._tabela,
+                                         "filtros": list(self._eq)})
+            restantes = [x for x in self._banco.tabelas.get(self._tabela, [])
+                         if x not in linhas]
+            self._banco.tabelas[self._tabela] = restantes
         return SimpleNamespace(data=[dict(x) for x in linhas])
 
 
@@ -162,6 +181,7 @@ class _Banco:
                                                for k, v in (tabelas or {}).items()}
         self.erros: dict[str, Exception] = dict(erros or {})
         self.escritas: list[dict] = []
+        self.apagadas: list[dict] = []
         self.tabelas_tocadas: list[str] = []
         self.nomes_consultados: list[list[str]] = []
 
@@ -195,10 +215,25 @@ def _templates(*nomes, status="APPROVED"):
     return [{"name": n, "status": status} for n in nomes]
 
 
+def _ajuste(chave, valor, *, atualizado_por=None):
+    """Uma linha de `followup_joao_ajustes` (migration 20260926, PK `chave`)."""
+    return {"chave": chave, "valor": valor, "atualizado_por": atualizado_por,
+            "updated_at": "2026-09-26T12:00:00+00:00"}
+
+
 @contextlib.contextmanager
 def _banco(tabelas=None, erros=None):
+    """O mesmo banco de mentira para os DOIS jeitos de pedir o cliente.
+
+    A API importa `get_supabase` DENTRO da função (`_supabase()`), então o patch em
+    `app.db.supabase` a alcança. `carregar_ajustes_joao` mora em `follow_up/service.py`,
+    que importou o símbolo no topo — sem o segundo patch ela falaria com o Supabase de
+    verdade, cairia no fail-closed e os testes de ajuste ficariam presos nos defaults,
+    verdes por acidente.
+    """
     b = _Banco(tabelas, erros)
-    with patch("app.db.supabase.get_supabase", return_value=b):
+    with patch("app.db.supabase.get_supabase", return_value=b), \
+         patch("app.follow_up.service.get_supabase", return_value=b):
         yield b
 
 
@@ -515,11 +550,17 @@ class TestTerceiraCadenciaEOsCamposNovos:
         (PRIVATE_LABEL, "novo", 2, "Em atenção", 1),
         (PRIVATE_LABEL, "em_conversa", 2, "Em atenção", 1),
         (PRIVATE_LABEL, "proposta", 0, "Em atenção", 1),
-        # As duas de Reposição: o relógio delas é mesmo o da etapa, e elas NÃO movem
-        # card nenhum — `etapa_final_rotulo` nulo é o que diz isso à tela.
-        (REPOSICAO_ATACADO, "reposicao", 0, None, 1),
+        # As de Reposição: o relógio delas é mesmo o da ETAPA (silêncio 0 nas duas).
+        #
+        # `reposicao` GANHOU destino em 26/09/2026 (spec §1): a jornada pedida pelo
+        # dono termina com o card em "Em atenção" quando a esteira acaba sem o lead
+        # ir para Proposta Enviada. Até 25/09 ela era o caso de "cadência que não
+        # move card" — quem procurar esse caso agora tem de olhar `em_atencao`, que
+        # segue com destino nulo e é quem protege a tela de escrever "move o card
+        # para null" com o `dias_ate_mover: 1` que chega assim mesmo.
+        (REPOSICAO_ATACADO, "reposicao", 0, "Em atenção", 1),
         (REPOSICAO_ATACADO, "em_atencao", 0, None, 1),
-        (REPOSICAO_PRIVATE_LABEL, "reposicao", 0, None, 1),
+        (REPOSICAO_PRIVATE_LABEL, "reposicao", 0, "Em atenção", 1),
         (REPOSICAO_PRIVATE_LABEL, "em_atencao", 0, None, 1),
     ])
     def test_os_tres_campos_so_leitura_no_payload(self, funil_codigo, codigo, silencio,
@@ -616,9 +657,9 @@ class TestAdiamentoRespostaNoPayload:
         assert v > 0
 
     def test_as_duas_de_reposicao_tambem_adiam(self):
-        """Elas não movem card (`etapa_final_rotulo` nulo) e por isso são o lugar
-        natural para alguém "otimizar" o campo para fora. Passaram a adiar em vez de
-        morrer igual às outras (spec 2026-09-25 §4), então a frase vale para elas."""
+        """As de Reposição são as que mais mudaram nas últimas duas semanas, e por
+        isso o lugar natural para alguém "otimizar" o campo para fora. Passaram a
+        adiar em vez de morrer (spec 2026-09-25 §4), então a frase vale para elas."""
         with _banco():
             payload = client.get(GET_URL).json()
         for funil_codigo in (REPOSICAO_ATACADO, REPOSICAO_PRIVATE_LABEL):
@@ -1282,3 +1323,381 @@ class TestPutIgnoraOsCamposSoLeitura:
                                       "toques": {"1": {"template_name": "so_atacado"}}})
         assert [(x["funil"], x["cadencia"]) for x in
                 b.escritas_em("followup_joao_toque")] == [(ATACADO, "proposta")]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2d. GET: a jornada da Reposição — etapas vivas e o toque que MOVE (spec 26/09)
+#
+# Os dois campos que entraram em 26/09/2026 existem para a tela contar a jornada
+# inteira ("Entra em Cliente Ativo · o 1º toque move para Já chamado · no fim move
+# para Em atenção") sem ter uma única key de etapa escrita no frontend. Toda asserção
+# aqui é sobre RÓTULO: `chamado_reposicao`, `novo` ou `em_atencao` aparecendo no
+# payload seria a regressão que a entrega de 21/09 apagou.
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestEtapasVivasEToqueQueMove:
+
+    # Keys de ETAPA que a tela nunca pode receber. `em_atencao` e `proposta_enviada`
+    # entram na lista mesmo sendo também CÓDIGOS de cadência — e é por isso que a
+    # varredura abaixo tira `codigo`/`job_type`/`gatilho_stage_key` antes de olhar:
+    # ali a string é o nome da cadência (contrato de 18/09), não uma etapa vazada.
+    KEYS_CRUAS = ("chamado_reposicao", "em_atencao", "proposta_enviada", "respondeu")
+
+    # Quantos toques o código declara, somando as 10 cadências dos 5 funis:
+    # (3+4+4) em Atacado, os mesmos em Private Label, e (4+1) em cada Reposição.
+    TOTAL_DE_TOQUES = 32
+
+    @pytest.mark.parametrize("funil_codigo", [REPOSICAO_ATACADO,
+                                              REPOSICAO_PRIVATE_LABEL])
+    def test_reposicao_vive_em_DUAS_etapas_e_as_duas_vem_em_rotulo(self, funil_codigo):
+        """A decisão 6 da spec §2.1 dita para a tela: a esteira entra em "Cliente
+        Ativo" e CONTINUA VIVA depois do move para "Já chamado". Uma lista de um
+        elemento aqui significaria que o toque 1 mata os toques 2, 3 e 4."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        c = _cadencia(_funil(payload, funil_codigo), "reposicao")
+        assert c["etapas_vivas_rotulos"] == ["Cliente Ativo", "Já chamado"]
+
+    def test_as_outras_oito_cadencias_vivem_numa_etapa_so(self):
+        """O default `etapas_vivas=()` é o que mantém as quatro de prospecção (e
+        "Em atenção") com o comportamento de etapa única que sempre tiveram. Uma
+        segunda etapa aparecendo aqui é vazamento da mudança de 26/09."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        for f in _joao(payload)["funis"]:
+            for c in f["cadencias"]:
+                if c["codigo"] == "reposicao":
+                    continue
+                assert c["etapas_vivas_rotulos"] == [c["gatilho_stage_rotulo"]], (
+                    f'{f["codigo"]}/{c["codigo"]}')
+
+    def test_a_MESMA_key_vira_rotulos_DIFERENTES_em_funis_diferentes(self):
+        """`novo` é "Novo" na prospecção e "Cliente Ativo" na Reposição. É por isso
+        que a tradução é `cadencia.rotulo_da_etapa` (POR CADÊNCIA) e não um mapa
+        global key→rótulo: o mapa global reintroduziria a ambiguidade que
+        funil-primeiro corrigiu em 21/09."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        novo = _cadencia(_funil(payload, ATACADO), "novo")
+        reposicao = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")
+        assert novo["gatilho_stage_key"] == reposicao["gatilho_stage_key"] == "novo"
+        assert novo["etapas_vivas_rotulos"] == ["Novo"]
+        assert reposicao["etapas_vivas_rotulos"][0] == "Cliente Ativo"
+
+    def test_nenhuma_key_crua_de_etapa_vaza_no_payload_inteiro(self):
+        """A varredura, e ela vale mais que as asserções pontuais: o contrato é
+        "a tela nunca recebe key", não "estes três campos estão certos"."""
+        import json
+        with _banco():
+            payload = client.get(GET_URL).json()
+        for f in _joao(payload)["funis"]:
+            for c in f["cadencias"]:
+                # As três exceções declaradas: `gatilho_stage_key` existe desde 18/09
+                # e a tela não o exibe (ela usa `gatilho_stage_rotulo`); `codigo` e
+                # `job_type` carregam o nome da CADÊNCIA, que por acaso coincide com
+                # uma key de etapa em `em_atencao` e em `proposta`.
+                sem_as_excecoes = {k: v for k, v in c.items()
+                                   if k not in ("gatilho_stage_key", "codigo",
+                                                "job_type")}
+                texto = json.dumps(sem_as_excecoes, ensure_ascii=False)
+                for key in self.KEYS_CRUAS:
+                    assert key not in texto, f'{f["codigo"]}/{c["codigo"]}: {key}'
+
+    @pytest.mark.parametrize("funil_codigo", [REPOSICAO_ATACADO,
+                                              REPOSICAO_PRIVATE_LABEL])
+    def test_so_o_toque_1_da_reposicao_move(self, funil_codigo):
+        with _banco():
+            payload = client.get(GET_URL).json()
+        toques = _cadencia(_funil(payload, funil_codigo), "reposicao")["toques"]
+        assert [t["move_para_rotulo"] for t in toques] == [
+            "Já chamado", None, None, None]
+
+    def test_todos_os_outros_toques_nao_movem_nada(self):
+        """Só DOIS dos 32 toques movem card (o toque 1 de cada Reposição). Um
+        `move_para_rotulo` não-nulo numa cadência de prospecção seria um card saindo
+        da etapa vigiada no meio da esteira — e, sem `etapas_vivas`, a esteira
+        morrendo ali."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        movem = [(f["codigo"], c["codigo"], t["sequence"])
+                 for f in _joao(payload)["funis"] for c in f["cadencias"]
+                 for t in c["toques"] if t["move_para_rotulo"] is not None]
+        assert movem == [(REPOSICAO_ATACADO, "reposicao", 1),
+                         (REPOSICAO_PRIVATE_LABEL, "reposicao", 1)]
+
+    def test_o_campo_existe_em_TODO_toque_mesmo_nulo(self):
+        """Chave ausente e chave nula não são a mesma coisa para a tela: ausente vira
+        `undefined` no TypeScript e escapa do `!== null` de quem escreveu a frase."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        vistos = 0
+        for f in _joao(payload)["funis"]:
+            for c in f["cadencias"]:
+                for t in c["toques"]:
+                    assert "move_para_rotulo" in t
+                    vistos += 1
+        assert vistos == self.TOTAL_DE_TOQUES, vistos
+
+    def test_sobrepor_os_dias_do_toque_1_nao_apaga_o_move(self):
+        """`move_para` é topologia do funil, não prazo: o banco sobrepõe dias e
+        template, e `resolver_cadencia` tem de carregar o resto do toque intacto.
+        Apagar aqui deixaria o card parado em "Cliente Ativo" para sempre, com a
+        esteira rodando por cima dele."""
+        tabelas = {"followup_joao_toque": [
+            _toque(REPOSICAO_ATACADO, "reposicao", 1, dias=2,
+                   template_name="joao_reposicao_atacado_t1")]}
+        with _banco(tabelas):
+            payload = client.get(GET_URL).json()
+        t1 = _cadencia(_funil(payload, REPOSICAO_ATACADO), "reposicao")["toques"][0]
+        assert t1["dias"] == 2
+        assert t1["move_para_rotulo"] == "Já chamado"
+
+    def test_o_PUT_devolve_a_cadencia_com_os_dois_campos_novos(self):
+        """GET e PUT devolvem a MESMA forma — a tela consome os dois com um tipo só,
+        e um campo faltando no PUT apagaria a jornada do cabeçalho depois de salvar."""
+        with _banco():
+            r = client.put(PUT_URL, json={"funil": REPOSICAO_ATACADO,
+                                          "cadencia": "reposicao",
+                                          "gatilho_dias": 50})
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["etapas_vivas_rotulos"] == ["Cliente Ativo", "Já chamado"]
+        assert corpo["toques"][0]["move_para_rotulo"] == "Já chamado"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2e. GET: `joao.ajustes` — os dois números do MOTOR (spec 2026-09-26 §3.5)
+#
+# Eles não são por cadência: valem para as cinco esteiras somadas. Por isso viajam
+# UMA vez, fora dos funis, e com o par `*_codigo` no mesmo padrão de
+# `gatilho_dias_codigo` — sem ele a tela mostra 250 e ninguém descobre que o padrão
+# era 100 nem como voltar.
+#
+# NENHUMA asserção escreve 100 ou 30 à mão: o contrato é `service.AJUSTES_PADRAO`,
+# seja ele qual for. Um literal aqui recriaria, no lugar mais difícil de ver, a
+# segunda fonte de verdade que o par `*_codigo` existe para apagar.
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestAjustesGlobaisNoGet:
+
+    def test_o_bloco_existe_com_os_dois_valores_e_os_dois_defaults(self):
+        with _banco():
+            ajustes = _joao(client.get(GET_URL).json())["ajustes"]
+        for chave, padrao in AJUSTES_PADRAO.items():
+            assert ajustes[chave] == padrao
+            assert ajustes[f"{chave}_codigo"] == padrao
+
+    def test_as_chaves_do_payload_sao_EXATAMENTE_as_do_motor(self):
+        """Uma chave que exista só de um lado é configuração que a tela grava e o
+        motor nunca lê — o pior modo de falha de uma tela de configuração, e o que o
+        CHECK `followup_joao_ajustes_chave_valida` barra do lado do banco."""
+        with _banco():
+            ajustes = _joao(client.get(GET_URL).json())["ajustes"]
+        esperado = set(AJUSTES_PADRAO) | {f"{k}_codigo" for k in AJUSTES_PADRAO}
+        assert set(ajustes) == esperado
+
+    def test_a_linha_do_banco_vence_o_codigo_e_o_codigo_continua_visivel(self):
+        tabelas = {"followup_joao_ajustes": [_ajuste("teto_diario_disparos", 250)]}
+        with _banco(tabelas):
+            ajustes = _joao(client.get(GET_URL).json())["ajustes"]
+        assert ajustes["teto_diario_disparos"] == 250
+        assert ajustes["teto_diario_disparos_codigo"] == \
+            AJUSTES_PADRAO["teto_diario_disparos"]
+        # A outra chave não foi tocada: a tabela é chave/valor, não um objeto único.
+        assert ajustes["adiamento_estoque_dias"] == \
+            AJUSTES_PADRAO["adiamento_estoque_dias"]
+
+    def test_tabela_inexistente_cai_nos_defaults_sem_derrubar_o_GET(self):
+        """A migration 20260926 é aplicada À MÃO: até lá o PostgREST responde
+        PGRST205. Fail-CLOSED para os defaults é o certo — tratar "não li" como "sem
+        teto" seria o incidente de 16/09 (888 templates em 6 minutos) por uma tabela
+        que ninguém criou."""
+        erro = Exception("PGRST205: Could not find the table 'followup_joao_ajustes'")
+        with _banco(erros={"followup_joao_ajustes": erro}):
+            r = client.get(GET_URL)
+        assert r.status_code == 200, r.text
+        assert _joao(r.json())["ajustes"] == {
+            **AJUSTES_PADRAO,
+            **{f"{k}_codigo": v for k, v in AJUSTES_PADRAO.items()},
+        }
+
+    def test_os_ajustes_NAO_entram_no_payload_de_cadencia_nenhuma(self):
+        """Repetir um número global dentro de cinco cadências criaria cinco cópias e
+        a pergunta "qual delas vale?" — a classe de ambiguidade que o ramo do João já
+        pagou caro uma vez."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        for f in _joao(payload)["funis"]:
+            for c in f["cadencias"]:
+                for chave in AJUSTES_PADRAO:
+                    assert chave not in c, f'{f["codigo"]}/{c["codigo"]}: {chave}'
+
+    def test_a_valeria_nao_ganha_bloco_de_ajustes(self):
+        """O teto diário é dos JOB_TYPES do João (spec §4). O caminho `standard` da
+        ValerIA é o único follow-up que roda em produção e não entra nesta regra —
+        nem no payload dela."""
+        with _banco():
+            payload = client.get(GET_URL).json()
+        assert "ajustes" not in payload
+        assert "ajustes" not in payload["valeria"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2f. PUT: gravar os ajustes globais — MESMA rota, corpo com `ajustes`
+#
+# Mesma rota porque o CRM proxia o FastAPI rota por rota: cada rota nova custa um
+# arquivo de proxy no Next, e um proxy esquecido é um 404 que só aparece quando
+# alguém clica em Salvar em produção.
+# ═══════════════════════════════════════════════════════════════════════════════
+class TestPutAjustesGlobais:
+
+    def test_grava_os_dois_de_uma_vez_na_tabela_chave_valor(self):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250,
+                                                      "adiamento_estoque_dias": 7}})
+        assert r.status_code == 200, r.text
+        assert b.escritas_em("followup_joao_ajustes") == [
+            {"chave": "adiamento_estoque_dias", "valor": 7},
+            {"chave": "teto_diario_disparos", "valor": 250},
+        ]
+        assert r.json()["teto_diario_disparos"] == 250
+        assert r.json()["adiamento_estoque_dias"] == 7
+
+    def test_o_upsert_usa_a_chave_primaria_da_tabela(self):
+        """`on_conflict` errado transforma edição em linha duplicada — e a segunda
+        nunca é lida, então a tela mostra o valor novo e o motor usa o velho."""
+        with _banco() as b:
+            client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250}})
+        assert [e["on_conflict"] for e in b.escritas] == ["chave"]
+
+    def test_grava_so_o_que_veio_no_corpo(self):
+        """Ausente é "não mexe": mandar o teto não pode carimbar o adiamento com o
+        default de código, que é como uma tela que ecoa o objeto inteiro congela um
+        número que ninguém escolheu."""
+        with _banco() as b:
+            client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250}})
+        assert [x["chave"] for x in b.escritas_em("followup_joao_ajustes")] == [
+            "teto_diario_disparos"]
+
+    def test_grava_quem_editou_quando_o_corpo_diz(self):
+        with _banco() as b:
+            client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250},
+                                      "atualizado_por": "joao@canastra"})
+        assert b.escritas_em("followup_joao_ajustes")[0]["atualizado_por"] == \
+            "joao@canastra"
+
+    def test_a_resposta_e_o_bloco_de_ajustes_ja_resolvido(self):
+        """A tela substitui o bloco pelo que o PUT devolveu, igual faz com a cadência:
+        forma diferente entre GET e PUT quebraria os campos depois de salvar."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250}})
+        corpo = r.json()
+        assert set(corpo) == set(AJUSTES_PADRAO) | {
+            f"{k}_codigo" for k in AJUSTES_PADRAO}
+        # E o valor que voltou é o que ACABOU de ser gravado, lido de volta da tabela.
+        assert corpo["teto_diario_disparos"] == 250
+        assert b.tabelas["followup_joao_ajustes"] == [
+            {"chave": "teto_diario_disparos", "valor": 250}]
+
+    @pytest.mark.parametrize("chave", ["teto_diario_disparos",
+                                       "adiamento_estoque_dias"])
+    @pytest.mark.parametrize("valor", [0, -1, -100])
+    def test_valor_menor_que_1_e_recusado_nomeando_o_campo(self, chave, valor):
+        """Espelha o CHECK `followup_joao_ajustes_valor_positivo`. Zero tem
+        significado perigoso e DIFERENTE em cada chave: teto 0 para o motor em
+        silêncio; adiamento 0 faz o toque seguinte sair por cima de quem acabou de
+        dizer que não precisa."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {chave: valor}})
+        assert r.status_code == 400, r.text
+        assert _problemas(r)[0]["codigo"] == "ajuste_invalido"
+        assert chave in _texto(r)
+        assert b.escritas == [], "recusou e gravou assim mesmo"
+
+    @pytest.mark.parametrize("valor", ["250", 2.5, True, [250], {"v": 250}])
+    def test_valor_que_nao_e_inteiro_e_recusado(self, valor):
+        """`True` está na lista de propósito: em Python `isinstance(True, int)` é
+        verdadeiro, e um teto de "True" viraria 1 no banco — um disparo por dia, em
+        silêncio."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": valor}})
+        assert r.status_code == 400, r.text
+        assert _problemas(r)[0]["codigo"] == "ajuste_invalido"
+        assert b.escritas == []
+
+    def test_chave_desconhecida_e_recusada_nomeando_as_validas(self):
+        """O erro de digitação da tela ("teto_diario" em vez de
+        "teto_diario_disparos") gravaria uma linha que o código nunca lê: a tela
+        mostraria o valor novo e o motor seguiria com o antigo."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario": 250}})
+        assert r.status_code == 400, r.text
+        assert _problemas(r)[0]["codigo"] == "ajuste_desconhecido"
+        assert "teto_diario_disparos" in _texto(r)
+        assert b.escritas == []
+
+    def test_uma_chave_invalida_nao_grava_a_valida_que_veio_junto(self):
+        """Recusa não grava NADA — gravar metade deixaria a configuração num estado
+        que ninguém pediu, com a tela mostrando erro em cima de dado já alterado.
+        Mesma disciplina do PUT por cadência."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250,
+                                                      "adiamento_estoque_dias": 0}})
+        assert r.status_code == 400, r.text
+        assert b.escritas == []
+
+    def test_ajustes_que_nao_e_objeto_e_recusado(self):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": 250})
+        assert r.status_code == 400, r.text
+        assert _problemas(r)[0]["codigo"] == "ajustes_invalidos"
+        assert b.escritas == []
+
+    def test_null_apaga_a_sobreposicao_e_o_codigo_volta_a_valer(self):
+        """Ausente e `null` não são a mesma coisa — é o mesmo botão de desfazer dos
+        toques. Aqui ele tem de APAGAR a linha: a ausência dela é a única forma de
+        "vale o default de código" numa tabela chave/valor."""
+        tabelas = {"followup_joao_ajustes": [_ajuste("teto_diario_disparos", 250)]}
+        with _banco(tabelas) as b:
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": None}})
+        assert r.status_code == 200, r.text
+        assert b.apagadas == [{"tabela": "followup_joao_ajustes",
+                               "filtros": [("chave", "teto_diario_disparos")]}]
+        assert b.tabelas["followup_joao_ajustes"] == []
+        assert r.json()["teto_diario_disparos"] == \
+            AJUSTES_PADRAO["teto_diario_disparos"]
+
+    def test_corpo_sem_ajuste_nenhum_nao_toca_o_banco(self):
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"ajustes": {}})
+        assert r.status_code == 200, r.text
+        assert b.escritas == [] and b.apagadas == []
+
+    def test_o_caminho_dos_ajustes_nao_pede_funil_nem_cadencia(self):
+        """Eles valem para as CINCO esteiras: exigir um funil obrigaria a tela a
+        escolher um arbitrário para hospedar um número global."""
+        with _banco():
+            r = client.put(PUT_URL, json={"ajustes": {"teto_diario_disparos": 250}})
+        assert r.status_code == 200, r.text
+
+    def test_o_PUT_por_cadencia_continua_intacto_ao_lado(self):
+        """Os dois corpos não se cruzam: o payload de cadência não tem a chave
+        `ajustes`, e o dos ajustes não tem `funil`. Um PUT de cadência que caísse no
+        ramo novo devolveria o bloco de ajustes no lugar da cadência."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                          "gatilho_dias": 3})
+        assert r.status_code == 200, r.text
+        assert r.json()["codigo"] == "novo"
+        assert [e["tabela"] for e in b.escritas] == ["followup_joao_cadencia"]
+
+    def test_a_chave_ajustes_e_quem_DECIDE_a_rota(self):
+        """Ela não é um campo só-leitura que a tela possa ecoar por acidente: o
+        payload de cadência do GET não a contém. Um corpo que trouxesse as duas
+        coisas é tratado como ajuste, e o funil/cadência é ignorado — melhor que
+        gravar os dois e deixar metade sem resposta."""
+        with _banco() as b:
+            r = client.put(PUT_URL, json={"funil": ATACADO, "cadencia": "novo",
+                                          "gatilho_dias": 3,
+                                          "ajustes": {"teto_diario_disparos": 250}})
+        assert r.status_code == 200, r.text
+        assert "codigo" not in r.json()
+        assert [e["tabela"] for e in b.escritas] == ["followup_joao_ajustes"]
