@@ -14,6 +14,17 @@ export type BoardJob = {
   lead_id: string | null;
   lead_name: string | null;
   lead_phone: string | null;
+  // --- contexto das esteiras do João (metadata do job; rota preenche) ---
+  /** `metadata.cadencia`: "novo" | "em_conversa" | "proposta" | "reposicao" | "em_atencao". */
+  cadencia: string | null;
+  /** `metadata.funil`: "atacado" | "private_label" | "reposicao_atacado" | … */
+  funil: string | null;
+  /** `metadata.toque`: número do toque dentro da esteira. */
+  toque: number | null;
+  /** `metadata.acao`: "mover_etapa" quando o job MOVE o card em vez de enviar mensagem. */
+  acao: string | null;
+  /** RÓTULO da etapa em que o card está AGORA — já resolvido pela rota. Nunca uma key. */
+  etapa_atual: string | null;
 };
 
 export const BOARD_STATUSES = ["pending", "awaiting_reopen", "sent", "cancelled"] as const;
@@ -33,13 +44,52 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   ai_scheduled_return: "Retorno agendado",
 };
 
-/** Rótulo do toque: cadência (standard|null) → "T<seq>"; especializado → nome do tipo. */
-export function touchTypeLabel(job: Pick<BoardJob, "job_type" | "sequence">): string {
+/** Todos os job_type das esteiras do João compartilham este prefixo (joao_novo, …). */
+const JOAO_JOB_TYPE_PREFIX = "joao_";
+
+/** `metadata.acao` do job que fecha a esteira movendo o card — não é toque. */
+const ACAO_MOVER_ETAPA = "mover_etapa";
+
+/**
+ * Rótulo do toque, nesta ordem:
+ *  1. job que MOVE o card (`acao === "mover_etapa"`) → "move o card". Vem antes de
+ *     qualquer número: o agendador grava `sequence` = último toque + 1, então sem este
+ *     ramo ele apareceria como um toque que nunca existiu.
+ *  2. job do João (`job_type` começa com "joao_") → "<rótulo da cadência> · <n>º toque",
+ *     com o número vindo de `toque` e `sequence` como reserva. Sem rótulo (a definição
+ *     ainda não carregou) → só "<n>º toque".
+ *  3. o resto — cadência da ValerIA (`standard`|null) → "T<seq>"; tipos especializados →
+ *     rótulo de JOB_TYPE_LABELS.
+ *
+ * `rotuloDaCadencia` vem de `/api/cadence/definition` — NUNCA de um mapa hardcoded aqui.
+ * A chave crua do job_type não sai por nenhum caminho.
+ */
+export function touchTypeLabel(
+  job: Pick<BoardJob, "job_type" | "sequence" | "toque" | "acao">,
+  rotuloDaCadencia?: string | null,
+): string {
+  if (job.acao === ACAO_MOVER_ETAPA) return "move o card";
+
   const jt = job.job_type;
+
+  if (jt != null && jt.startsWith(JOAO_JOB_TYPE_PREFIX)) {
+    const rotulo = rotuloDaCadencia != null && rotuloDaCadencia.trim() !== "" ? rotuloDaCadencia.trim() : null;
+    const numero = job.toque ?? job.sequence;
+    if (numero == null) return rotulo ?? "Toque";
+    return rotulo ? `${rotulo} · ${numero}º toque` : `${numero}º toque`;
+  }
+
   if (jt == null || jt === "standard") {
     return job.sequence != null ? `T${job.sequence}` : "Toque";
   }
-  return JOB_TYPE_LABELS[jt] ?? jt;
+  return JOB_TYPE_LABELS[jt] ?? humanizarJobType(jt);
+}
+
+/** Tipo sem rótulo conhecido: mostra algo legível, nunca a chave crua ("novo_tipo"). */
+function humanizarJobType(jt: string): string {
+  const texto = jt.replace(/[_-]+/g, " ").trim();
+  if (texto === "") return "Toque";
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
 /** Só pending/awaiting_reopen são canceláveis pela operação — nunca sent/processing. */
