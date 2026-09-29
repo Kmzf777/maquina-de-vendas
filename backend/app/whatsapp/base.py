@@ -38,16 +38,35 @@ class WhatsAppProvider(ABC):
         raise NotImplementedError(f"{type(self).__name__} não suporta send_reaction")
 
     async def send_interactive_buttons(
-        self, to: str, body: str, buttons: list[tuple[str, str]]
+        self, to: str, body: str, buttons: list[tuple[str, str]],
+        image_url: str | None = None,
     ) -> dict:
         """Envia uma mensagem interativa com até 3 botões de resposta.
 
-        `buttons` é uma lista de (id, título). Como send_contact/send_reaction:
+        `buttons` é uma lista de (id, título). `image_url` opcional funde foto +
+        texto + botões numa mensagem só (economia desde que a Meta passou a cobrar
+        por mensagem dentro da janela de 24h). Como send_contact/send_reaction:
         método concreto com default não-suportado — só os provedores ativos (Meta)
         e o mock o sobrescrevem; o Evolution (descontinuado) herda este default.
         """
         raise NotImplementedError(
             f"{type(self).__name__} não suporta send_interactive_buttons"
+        )
+
+    async def send_interactive_list(
+        self, to: str, body: str, button: str,
+        rows: list[tuple[str, str, str]], header: str | None = None,
+    ) -> dict:
+        """Envia uma mensagem de lista (até 10 linhas, cada uma id/título/descrição).
+
+        Existe para telas com mais de 3 opções, onde send_interactive_buttons
+        recusa — e para linhas que precisam de descrição, que o botão não tem.
+        Como send_contact/send_reaction: método concreto com default não-suportado
+        — só os provedores ativos (Meta) e o mock o sobrescrevem; o Evolution
+        (descontinuado) herda este default.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} não suporta send_interactive_list"
         )
 
     @abstractmethod

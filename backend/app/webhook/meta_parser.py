@@ -162,9 +162,18 @@ def parse_meta_webhook_payload(payload: dict) -> list[IncomingMessage]:
                             "title": text,
                         }
                     elif interactive_type == "list_reply":
-                        # Listas estão fora do escopo do bot de botões — segue como texto.
-                        text = interactive.get("list_reply", {}).get("title", "")
-                        parsed_type = "text"
+                        # Mensagem de lista NOSSA: o `id` é controlado por nós, igual
+                        # ao button_reply. Isto era `parsed_type = "text"` até
+                        # 29/09/2026, e com as telas de entrada e de destino sendo
+                        # listas o clique viraria texto livre — o motor responderia
+                        # nudge e o fluxo morreria na primeira tela.
+                        reply = interactive.get("list_reply", {})
+                        text = reply.get("title", "")
+                        parsed_type = "button"
+                        metadata_dict = {
+                            "payload": reply.get("id") or text,
+                            "title": text,
+                        }
                     else:
                         logger.info(f"Skipping unsupported interactive sub-type: {interactive_type}")
                         continue

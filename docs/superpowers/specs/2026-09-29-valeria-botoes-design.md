@@ -87,9 +87,17 @@ class No:
     ramo: str                # "entrada" | "atacado" | "private_label" | "consumo" | "exportacao"
 ```
 
-**15 nós de conversa + 5 terminais = 20**, agrupados em 5 ramos. Contagem exata: `N0` (1),
-`N1`–`N5` (5), `P1`–`P4` (4), `C1` (1), `E1`–`E4` (4) = 15; mais os 5 terminais de §5. O
-detalhe de cada nó está em §5.
+**17 nós de conversa + 6 terminais = 23**, agrupados em 5 ramos. Contagem exata: `N0` (1),
+`N1`–`N5` + `N5b` (6), `P1`–`P4` + `P4b` (5), `C1` (1), `E1`–`E4` (4) = 17.
+
+> **Corrigido em 29/09/2026, na execução.** Esta seção dizia 15 + 5 e a conta estava errada
+> duas vezes: omitia `N5b`/`P4b` — que a própria §5 exige como destino de "Ver outras
+> opções" — e omitia o terminal `T_OPTOUT`, que a §6 descreve mas a tabela de terminais não
+> listava. Os dois furos têm a mesma causa: `N5b`, `P4b` e `T_OPTOUT` estão **fora do
+> caminho principal**, então a contagem feita seguindo o caminho felizes não os viu. Os
+> terminais são 6: `T_HANDOFF`, `T_HANDOFF_ARTHUR`, `T_ADIAR`, `T_HUMANO`, `T_FIM`,
+> `T_OPTOUT`. As contagens de MENSAGEM por ramo da §5 seguem corretas, porque elas contam o
+> caminho principal.
 
 **Limites declarados no módulo, porque são limites da Meta e não preferências:**
 `LIMITE_ROTULO_BOTAO = 20`, `LIMITE_TITULO_LISTA = 24`, `LIMITE_DESC_LISTA = 72`,

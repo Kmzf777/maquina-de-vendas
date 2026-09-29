@@ -82,16 +82,36 @@ class MockProvider(WhatsAppProvider):
         })
         return {"status": "mock_ok", "method": "send_reaction"}
 
-    async def send_interactive_buttons(self, to: str, body: str, buttons: list[tuple[str, str]]) -> dict:
-        logger.warning(f"[MOCK] send_interactive_buttons to={to} buttons={len(buttons)}")
+    async def send_interactive_buttons(
+        self, to: str, body: str, buttons: list[tuple[str, str]],
+        image_url: str | None = None,
+    ) -> dict:
+        logger.warning(f"[MOCK] send_interactive_buttons to={to} buttons={len(buttons)} image_url={image_url}")
         _log_entry({
             "method": "send_interactive_buttons",
             "to": to,
             "body": body,
             # Lista de listas: o ensaio é lido de um .jsonl, e tupla não sobrevive ao JSON.
             "buttons": [list(b) for b in buttons],
+            "image_url": image_url,
         })
         return {"status": "mock_ok", "method": "send_interactive_buttons"}
+
+    async def send_interactive_list(
+        self, to: str, body: str, button: str,
+        rows: list[tuple[str, str, str]], header: str | None = None,
+    ) -> dict:
+        logger.warning(f"[MOCK] send_interactive_list to={to} rows={len(rows)}")
+        _log_entry({
+            "method": "send_interactive_list",
+            "to": to,
+            "body": body,
+            "button": button,
+            # Lista de listas: o ensaio é lido de um .jsonl, e tupla não sobrevive ao JSON.
+            "rows": [list(r) for r in rows],
+            "header": header,
+        })
+        return {"status": "mock_ok", "method": "send_interactive_list"}
 
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         _log_entry({"method": "mark_read", "message_id": message_id})

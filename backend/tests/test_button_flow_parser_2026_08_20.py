@@ -49,15 +49,18 @@ def test_template_sem_payload_cai_no_texto_do_botao():
     assert msgs[0].metadata["payload"] == "Não quero mais receber"
 
 
-def test_list_reply_continua_texto():
-    """Listas estão fora do escopo do bot — comportamento atual preservado."""
+def test_list_reply_vira_clique_com_id():
+    """29/09/2026: listas passaram a fazer parte do bot (telas de 4 e 6 opções,
+    acima do teto de 3 do reply button) — o toque tem que virar clique como o
+    button_reply, não mais texto. Ver test_valeria_parser_list_reply_2026_09_29.py.
+    """
     msgs = parse_meta_webhook_payload(_payload({
         "type": "interactive",
         "interactive": {"type": "list_reply",
                         "list_reply": {"id": "x", "title": "Opção A"}},
     }))
-    assert msgs[0].type == "text"
-    assert msgs[0].text == "Opção A"
+    assert msgs[0].type == "button"
+    assert msgs[0].metadata == {"payload": "x", "title": "Opção A"}
 
 
 def test_texto_digitado_igual_ao_rotulo_nao_vira_clique():

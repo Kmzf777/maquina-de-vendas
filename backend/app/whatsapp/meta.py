@@ -315,7 +315,8 @@ class MetaCloudClient(WhatsAppProvider):
         }, request_type="send_reaction")
 
     async def send_interactive_buttons(
-        self, to: str, body: str, buttons: list[tuple[str, str]]
+        self, to: str, body: str, buttons: list[tuple[str, str]],
+        image_url: str | None = None,
     ) -> dict:
         """Mensagem interativa com botões de resposta (máx. 3, título ≤ 20 chars).
 
@@ -327,25 +328,78 @@ class MetaCloudClient(WhatsAppProvider):
             raise ValueError(
                 f"send_interactive_buttons aceita de 1 a 3 botões, recebeu {len(buttons)}"
             )
+        interactive: dict = {
+            "type": "button",
+            "body": {"text": body},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": bid, "title": titulo}}
+                    for bid, titulo in buttons
+                ]
+            },
+        }
+        # Header de imagem é o que funde foto + preço + botões numa mensagem só.
+        # Desde 01/10/2026 a Meta cobra por mensagem enviada inclusive dentro da
+        # janela de 24h, então cada bolha economizada é dinheiro.
+        if image_url:
+            interactive["header"] = {"type": "image", "image": {"link": image_url}}
         result = await self._post({
             "messaging_product": "whatsapp",
             **_recipient_field(to),
             "type": "interactive",
-            "interactive": {
-                "type": "button",
-                "body": {"text": body},
-                "action": {
-                    "buttons": [
-                        {"type": "reply", "reply": {"id": bid, "title": titulo}}
-                        for bid, titulo in buttons
-                    ]
-                },
-            },
+            "interactive": interactive,
         }, request_type="send_interactive_buttons")
         # Mesma defesa de send_text: a Meta devolve HTTP 200 com erro embutido.
         if not isinstance(result, dict) or "messages" not in result:
             raise RuntimeError(
                 f"Meta send_interactive_buttons rejected (missing messages): {result!r}"
+            )
+        return result
+
+    async def send_interactive_list(
+        self, to: str, body: str, button: str,
+        rows: list[tuple[str, str, str]], header: str | None = None,
+    ) -> dict:
+        """Mensagem de lista: até 10 linhas, cada uma com id, título e descrição.
+
+        Existe porque a tela de entrada tem 4 opções e a de destino de exportação
+        tem 6, e o caminho de botões recusa acima de 3. A linha de lista também
+        aceita DESCRIÇÃO, que o botão não tem — é o que deixa a entrada explicar
+        cada setor em uma linha.
+
+        `rows` é (id, titulo, descricao); descrição vazia sai fora do payload,
+        porque a Meta rejeita `description: ""`.
+        """
+        if not 1 <= len(rows) <= 10:
+            raise ValueError(
+                f"send_interactive_list aceita de 1 a 10 linhas, recebeu {len(rows)}"
+            )
+        linhas = []
+        for rid, titulo, descricao in rows:
+            linha = {"id": rid, "title": titulo}
+            if descricao:
+                linha["description"] = descricao
+            linhas.append(linha)
+        interactive: dict = {
+            "type": "list",
+            "body": {"text": body},
+            "action": {"button": button, "sections": [{"rows": linhas}]},
+        }
+        if header:
+            interactive["header"] = {"type": "text", "text": header}
+        result = await self._post({
+            "messaging_product": "whatsapp",
+            **_recipient_field(to),
+            "type": "interactive",
+            "interactive": interactive,
+        }, request_type="send_interactive_list")
+        # Mesmo guarda dos vizinhos (send_text, send_interactive_buttons): resposta
+        # nao-dict acontece quando o decode do JSON falha e o _post devolve um
+        # envelope cru. Sem o isinstance, o .get viraria AttributeError em vez do
+        # RuntimeError que o chamador sabe tratar.
+        if not isinstance(result, dict) or "messages" not in result:
+            raise RuntimeError(
+                f"Meta send_interactive_list rejected (missing messages): {result!r}"
             )
         return result
 

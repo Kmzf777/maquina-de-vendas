@@ -1,0 +1,508 @@
+"""Estrutura do fluxo de botões da ValerIA. Dado puro, zero lógica.
+
+O CONTRATO entre a tela (o modal de /campanhas) e o motor. Mesmo papel do
+campaigns/node_registry.py, e pelo mesmo motivo: o cabeçalho daquele arquivo
+documenta que o builder de cadências "foi construído e NUNCA foi usado — 16
+campanhas, 0 ativas, 0 matrículas na história", e que toda falha medida tinha a
+mesma raiz, a tela gravando uma chave e o motor lendo outra coisa no mesmo nome.
+
+Aqui a tela só pode editar `corpo` e `rotulos`. Quem existe, quantos botões cada
+nó tem e para onde cada botão vai é DECLARADO — não é editável, não vem do banco,
+e é verificado por tests/test_valeria_registry_2026_09_29.py.
+
+Leaf module: não importa nada de `app`, evitando ciclos de import.
+
+── De onde vêm os textos deste arquivo ──────────────────────────────────────
+Todo `corpo` e todo `rotulo` abaixo são TRANSCRITOS de duas fontes, nunca
+escritos aqui:
+  • §5 da spec (docs/superpowers/specs/2026-09-29-valeria-botoes-design.md) —
+    rótulos, destinos e a coluna "Grava";
+  • o artefato "As Telas da ValerIA" que a spec linka, que fecha com "os textos
+    são os definitivos, dentro do limite de 20 caracteres por botão".
+Onde as duas divergem, a §5 vence na ESTRUTURA (é ela que o motor interpreta) e o
+artefato vence no TEXTO. O único caso é o preço do `N5`: o artefato mostra
+"R$28,70" já resolvido e a §5 manda o corpo trazer o marcador `{preco}` —
+resolvido pelo runner contra `products` no instante do envio. Preço no texto
+envelhece em silêncio; cotar de memória foi o que perdeu as 500 unidades da Ritz
+(documentado em flows.py).
+
+Os 3 corpos que NÃO estão em nenhuma das duas fontes estão marcados um a um com
+"COMPOSTO" no lugar. São os dois nós de segundo produto (`N5b`, `P4b`) e o
+reconhecimento de opt-out (`T_OPTOUT`), e cada um cita de onde a frase foi
+copiada.
+
+── Por que 17 nós e não 15 ──────────────────────────────────────────────────
+A §4.1 da spec soma "N0 (1), N1–N5 (5), P1–P4 (4), C1 (1), E1–E4 (4) = 15" e
+esquece os dois nós de segundo produto que a própria §5 exige: `N5b` e `P4b`, os
+destinos de "Ver outras opções". Sem eles o botão não tem para onde ir. São 17
+nós de conversa — a conta da §4.1 é o erro, não o desenho.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+FLOW_ID = "valeria_botoes_v1"
+NO_ENTRADA = "N0"
+
+# ── Limites da Meta (não são preferências: acima deles o envio é RECUSADO) ───
+LIMITE_ROTULO_BOTAO = 20
+LIMITE_TITULO_LISTA = 24
+LIMITE_DESC_LISTA = 72
+MAX_BOTOES = 3
+MAX_LINHAS_LISTA = 10
+
+# ── Tags de desfecho ────────────────────────────────────────────────────────
+# Semeadas por 20260929_valeria_botoes.sql (§10 da spec) e resolvidas POR NOME
+# EXATO: `add_tags_to_lead` procura o nome e devolve em silêncio se não achar,
+# então um acento perdido aqui não levanta nada — só deixa de marcar o lead. É a
+# mesma armadilha que flows.py documenta no seu bloco de tags.
+TAG_QUALIFICADO = "Botões: Qualificado"
+TAG_ADIADO = "Botões: Adiado"
+TAG_HUMANO = "Botões: Atendimento humano"
+TAG_OPTOUT = "Botões: Opt-out"
+
+# Os dois vendedores, como a §5 os escreve no `encaminhar_humano(vendedor=...)`.
+# Não é o nome do CARTÃO de contato: aquele é `agent.tools.SUPERVISOR_NAME`
+# ("João - Café Canastra") e quem o envia é o runner, que pode importar app.
+VENDEDOR_ATACADO = "João Brás"
+VENDEDOR_EXPORTACAO = "Arthur"
+
+
+@dataclass(frozen=True)
+class Botao:
+    """Um botão. `id` é o contrato estável; o rótulo é editável na tela.
+
+    A Meta devolve o `id` no webhook (meta_parser.py:161 grava em `payload`), então
+    editar "Cafeteria" para "Sou cafeteria" NÃO quebra a conversa de quem já
+    recebeu a tela antiga.
+    """
+    id: str
+    rotulo: str
+    destino: str
+    # ((campo_do_score, valor),) — gravado por save_score_evidence no clique.
+    grava: tuple[tuple[str, object], ...] = ()
+    # Só para linhas de lista: a segunda linha, que o botão comum não tem.
+    descricao: str = ""
+
+
+@dataclass(frozen=True)
+class No:
+    id: str
+    rotulo_interno: str          # "N1 · Segmento" — só tela e log
+    tela: str                    # "botoes" | "lista" | "foto_botoes"
+    corpo: str
+    botoes: tuple[Botao, ...]
+    ramo: str                    # "entrada"|"atacado"|"private_label"|"consumo"|"exportacao"
+    foto: str | None = None      # caminho sob backend/app/photos/
+    produto: str | None = None   # SKU declarado; o preço vem do catálogo no envio
+    editaveis: tuple[str, ...] = ("corpo", "rotulos")
+
+
+@dataclass(frozen=True)
+class Terminal:
+    id: str
+    rotulo_interno: str
+    vendedor: str | None = None
+    corpo: str = ""
+    tags: tuple[str, ...] = ()
+    silenciar_ia: bool = False
+    handoff: bool = False
+    optout: bool = False
+    # Quando True, o terminal PERGUNTA o prazo (30/60/90) em vez de encerrar.
+    prazos: bool = False
+
+
+# ─── Os nós ──────────────────────────────────────────────────────────────────
+#
+# `grava` só aparece no ramo ATACADO, e de propósito. `lead_score/model.py` é
+# "wholesale lead scoring": os 5 critérios (segment, monthly_volume_kg,
+# supplier_reason, purchase_timing, purchase_intent) descrevem um revendedor.
+# Gravar `purchase_intent` num lead de private label ou de exportação produziria
+# um score com 4 dos 5 campos vazios — `is_provisional=True` e prioridade "low"
+# para o lead do MAIOR setor da casa (45% dos leads). Melhor não ter score do que
+# ter um score que mente. É o que a §5 declara: só o ramo A "fecha o score".
+
+NOS: dict[str, No] = {
+    "N0": No(
+        id="N0", rotulo_interno="N0 · Setor", tela="lista", ramo="entrada",
+        corpo=(
+            "oi! aqui é a Valéria, do comercial da Café Canastra ☕\n\n"
+            "pra eu já te levar pro que importa e não te encher de coisa que não "
+            "tem a ver com você, me diz: o café é pra qual caso?"
+        ),
+        # Lista e não botões por DOIS motivos, e os dois valem: 4 opções não cabem
+        # no teto de 3 botões da Meta, e a linha de lista aceita descrição — o
+        # botão não. A descrição é o que faz "Pro meu negócio" não precisar de
+        # uma segunda mensagem explicando o que é.
+        botoes=(
+            Botao("negocio", "Pro meu negócio", "N1",
+                  descricao="revenda, cafeteria, restaurante, hotel"),
+            Botao("marca", "Com a minha marca", "P1",
+                  descricao="café embalado com a sua logo"),
+            Botao("consumo", "Pra consumo próprio", "C1",
+                  descricao="em casa ou de presente"),
+            Botao("exportacao", "Pra exportação", "E1",
+                  descricao="mercado externo"),
+        ),
+    ),
+
+    # ── Ramo A · Atacado → João Brás · 8 mensagens · fecha o score ──────────
+    "N1": No(
+        id="N1", rotulo_interno="N1 · Segmento", tela="botoes", ramo="atacado",
+        corpo="boa! e que tipo de negócio você tem?",
+        botoes=(
+            # Os 15 segmentos do score têm só 3 FAIXAS de pontuação
+            # (lead_score/model.py:16-31): cafeteria=2, as 9 lojas
+            # especializadas=1, o resto=0. Por isso 3 botões bastam.
+            Botao("cafeteria", "Cafeteria", "N2", grava=(("segment", "cafeteria"),)),
+            Botao("loja", "Loja ou empório", "N2", grava=(("segment", "emporio"),)),
+            Botao("outro", "Outro tipo", "N2", grava=(("segment", "other"),)),
+        ),
+    ),
+    "N2": No(
+        id="N2", rotulo_interno="N2 · Volume", tela="botoes", ramo="atacado",
+        corpo="e quanto café você usa por mês, mais ou menos?",
+        botoes=(
+            # `monthly_volume_kg` é NÚMERO, não faixa: o score faz
+            # `volume <= 30` (model.py:88). Por isso cada botão grava o
+            # representante da sua faixa — 30 pontua 1, 65 e 150 pontuam 0.
+            # Contraintuitivo de propósito: quem usa pouco é quem a Canastra
+            # atende melhor; volume grande vira negociação do João.
+            Botao("ate30", "Até 30 kg por mês", "N3", grava=(("monthly_volume_kg", 30),)),
+            Botao("ate100", "30 a 100 kg", "N3", grava=(("monthly_volume_kg", 65),)),
+            Botao("mais100", "Mais de 100 kg", "N3", grava=(("monthly_volume_kg", 150),)),
+        ),
+    ),
+    "N3": No(
+        id="N3", rotulo_interno="N3 · Fornecedor", tela="botoes", ramo="atacado",
+        corpo="e hoje, como tá o seu fornecimento de café?",
+        botoes=(
+            # `replace` vale 2 pontos E é metade da regra de score 10
+            # (model.py:95: replace + purchase_intent clear => 10, "maximum",
+            # ignorando o resto). É o clique mais valioso do fluxo inteiro.
+            Botao("trocar", "Quero trocar", "N4", grava=(("supplier_reason", "replace"),)),
+            Botao("segundo", "Quero um segundo", "N4",
+                  grava=(("supplier_reason", "second_supplier"),)),
+            Botao("comecar", "Ainda não vendo café", "N4",
+                  grava=(("supplier_reason", "start_specialty_coffee"),)),
+        ),
+    ),
+    "N4": No(
+        id="N4", rotulo_interno="N4 · Prazo", tela="botoes", ramo="atacado",
+        corpo="última coisa: pra quando você precisa?",
+        botoes=(
+            Botao("dias15", "Próximos 15 dias", "N5",
+                  grava=(("purchase_timing", "within_15_days"),)),
+            # `days_16_30` é o que a §5 declara para "Este mês ou o outro", e não
+            # `months_1_3`, que seria a leitura literal do rótulo. Os dois valem 0
+            # ponto (só `within_15_days` pontua), então a escolha não muda o score —
+            # mas o valor gravado é o que a §5 diz, não o que o rótulo sugere.
+            Botao("mes", "Este mês ou o outro", "N5",
+                  grava=(("purchase_timing", "days_16_30"),)),
+            Botao("sem_data", "Ainda sem data", "N5",
+                  grava=(("purchase_timing", "no_timeline"),)),
+        ),
+    ),
+    "N5": No(
+        id="N5", rotulo_interno="N5 · Entrega + encaminhamento", tela="foto_botoes",
+        ramo="atacado",
+        # Foto + preço + pergunta numa mensagem SÓ. A mensagem interativa da Meta
+        # aceita header de imagem, e é isso que corta 2 mensagens faturadas do ramo
+        # mais caro. Hoje `enviar_fotos("atacado")` manda o catálogo inteiro: 6
+        # arquivos = 6 mensagens.
+        #
+        # `{preco}` é marcador, nunca número. O runner resolve contra `products` no
+        # envio; se o produto declarado não casar com SKU ativo, manda o corpo SEM a
+        # linha de preço, como flows.MSG_QUENTE_SEM_PRECO já faz.
+        # O qualificador "gira em torno de" é obrigatório e fechado
+        # (atacado.py:46-59): "sai por R$" e "é R$" são capturados pelo QA como
+        # compromisso de preço.
+        corpo=(
+            "esse é o Clássico 250g — torra escura, notas de caramelo e chocolate, "
+            "84 pontos, da nossa fazenda na Serra da Canastra.\n\n"
+            "gira em torno de {preco} a unidade no atacado.\n\n"
+            "gostaria de ser encaminhado ao vendedor?"
+        ),
+        foto="atacado/foto_1_classico.jpg",
+        produto="Clássico 250g",
+        botoes=(
+            Botao("sim", "Sim, quero falar", "T_HANDOFF",
+                  grava=(("purchase_intent", "clear"),)),
+            # Não grava nada: "quero ver outro café" não é sinal de intenção em
+            # nenhuma direção. Gravar `unclear` aqui rebaixaria um lead que está
+            # justamente comparando produto.
+            Botao("ver_outras", "Ver outras opções", "N5b"),
+            Botao("nao_agora", "Não agora", "T_ADIAR",
+                  grava=(("purchase_intent", "unclear"),)),
+        ),
+    ),
+    "N5b": No(
+        id="N5b", rotulo_interno="N5b · Segundo produto", tela="foto_botoes",
+        ramo="atacado",
+        # COMPOSTO. Nem a §5 nem o artefato mostram esta tela; o que as duas
+        # declaram é a ESTRUTURA (segundo produto = Suave 250g, sem o botão de
+        # reoferecer). O corpo espelha a forma do N5 e a nota sensorial é copiada
+        # palavra por palavra de `SENSORY_CAPTIONS_ATACADO["suave"]` em
+        # agent/tools.py — fonte de verdade ÚNICA das notas, derivada do banco
+        # `products`. A auditoria QA de 15/07 pegou exatamente esta divergência
+        # (legenda dizia "melaço", que é do Microlote), então a nota se COPIA, não
+        # se parafraseia.
+        corpo=(
+            "esse é o Suave 250g — torra média, notas achocolatadas, mesmo café "
+            "84 pontos da nossa fazenda.\n\n"
+            "gira em torno de {preco} a unidade no atacado.\n\n"
+            "gostaria de ser encaminhado ao vendedor?"
+        ),
+        foto="atacado/foto_2_suave.jpg",
+        produto="Suave 250g",
+        # SEM `ver_outras`: é a TOPOLOGIA que garante "uma vez só". Um contador no
+        # flow_state seria estado a mais para o teste cobrir e para o operador
+        # entender; aqui o reoferecimento simplesmente não existe neste nó.
+        botoes=(
+            Botao("sim", "Sim, quero falar", "T_HANDOFF",
+                  grava=(("purchase_intent", "clear"),)),
+            Botao("nao_agora", "Não agora", "T_ADIAR",
+                  grava=(("purchase_intent", "unclear"),)),
+        ),
+    ),
+
+    # ── Ramo B · Private Label → João Brás · 7 mensagens · 45% dos leads ────
+    "P1": No(
+        id="P1", rotulo_interno="P1 · A marca", tela="botoes", ramo="private_label",
+        corpo="que projeto bom! você já tem uma marca criada ou tá pensando em lançar do zero?",
+        botoes=(
+            Botao("tenho_marca", "Já tenho a marca", "P2"),
+            Botao("criar_zero", "Quero criar do zero", "P2"),
+            # Atalho direto ao vendedor: torra e envase de grão de terceiro é
+            # SERVIÇO, não projeto de marca, e é produto que a casa não faz.
+            # `private_label.py` já trata "Graos de Terceiros" como exceção do
+            # circuit breaker — aqui a exceção vira uma aresta declarada.
+            Botao("tenho_graos", "Já tenho os grãos", "T_HANDOFF"),
+        ),
+    ),
+    "P2": No(
+        id="P2", rotulo_interno="P2 · Lote", tela="botoes", ramo="private_label",
+        corpo="e quantos pacotes você pensa por lote?",
+        botoes=(
+            Botao("ate100", "Até 100 pacotes", "P3"),
+            Botao("ate500", "100 a 500", "P3"),
+            Botao("mais500", "Mais de 500", "P3"),
+        ),
+    ),
+    "P3": No(
+        id="P3", rotulo_interno="P3 · Prazo", tela="botoes", ramo="private_label",
+        corpo="e pra quando você quer lançar?",
+        botoes=(
+            Botao("dias30", "Próximos 30 dias", "P4"),
+            Botao("meses23", "Em 2 ou 3 meses", "P4"),
+            Botao("sem_data", "Ainda sem data", "P4"),
+        ),
+    ),
+    "P4": No(
+        id="P4", rotulo_interno="P4 · Entrega + encaminhamento", tela="foto_botoes",
+        ramo="private_label",
+        # SEM número de preço, e sem `{preco}`: o valor do private label muda por
+        # LOTE e não há SKU fixo para o runner resolver. O corpo diz de onde o
+        # valor sai em vez de dizer quanto é — `private_label.py:29` manda
+        # exatamente isso ("te confirmo no fechamento com o João Brás").
+        corpo=(
+            "assim fica o resultado: embalagem standup com a sua logo, café 84 "
+            "pontos da nossa fazenda, torrado e empacotado por nós e pronto pra "
+            "vender.\n\n"
+            "o valor por pacote sai do catálogo, conforme o lote.\n\n"
+            "gostaria de ser encaminhado ao vendedor?"
+        ),
+        # `foto_2.jpg` é o slug "standup" em CATALOGO_FOTOS["private_label"]
+        # (agent/tools.py) — o mesmo modelo que o corpo nomeia. O vínculo
+        # arquivo↔conteúdo vem do nome do slug, não da posição: a auditoria QA de
+        # 08/09 achou legenda de Microlote colada na foto das cápsulas justamente
+        # porque o vínculo era posicional.
+        foto="private_label/foto_2.jpg",
+        botoes=(
+            Botao("sim", "Sim, quero falar", "T_HANDOFF"),
+            Botao("ver_outras", "Ver outra opção", "P4b"),
+            Botao("nao_agora", "Não agora", "T_ADIAR"),
+        ),
+    ),
+    "P4b": No(
+        id="P4b", rotulo_interno="P4b · Segunda opção", tela="foto_botoes",
+        ramo="private_label",
+        # COMPOSTO, mesma situação do N5b: a estrutura é declarada, o texto não.
+        # A "outra opção" é o silk — `foto_3.jpg`, slug "silk" em
+        # CATALOGO_FOTOS["private_label"], legenda de banco "Exemplo de silk com
+        # logo do cliente". É um modelo de embalagem diferente do standup do P4, e
+        # não uma foto do mesmo produto de outro ângulo.
+        corpo=(
+            "tem também o silk: a sua logo impressa direto na embalagem, mesmo "
+            "café 84 pontos da nossa fazenda.\n\n"
+            "o valor por pacote sai do catálogo, conforme o lote.\n\n"
+            "gostaria de ser encaminhado ao vendedor?"
+        ),
+        foto="private_label/foto_3.jpg",
+        # Sem `ver_outras` — igual ao N5b, "uma vez só" pela topologia.
+        botoes=(
+            Botao("sim", "Sim, quero falar", "T_HANDOFF"),
+            Botao("nao_agora", "Não agora", "T_ADIAR"),
+        ),
+    ),
+
+    # ── Ramo C · Consumo → loja online · 2 mensagens ────────────────────────
+    "C1": No(
+        id="C1", rotulo_interno="C1 · Loja + cupom", tela="botoes", ramo="consumo",
+        # Link e cupom na MESMA mensagem. Hoje o prompt de consumo tem uma "REGRA
+        # ATOMICA DO CUPOM" que manda quebrar isso em 3 bolhas ("nao empilhe \n\n
+        # dentro de nenhuma") porque a falha de 02/07 deixou um lead sem o cupom
+        # prometido. Aqui as 3 viram 1: sem IA no caminho, não existe turno onde a
+        # segunda bolha se perca.
+        #
+        # `*ESPECIAL10*` com asterisco simples é negrito do WhatsApp. O artefato de
+        # desenho mostra `<b>` porque é HTML; no corpo o que vale é a sintaxe da
+        # Meta. Cupom e link conferidos contra consumo.py:36-48.
+        corpo=(
+            "nossa linha completa tá na loja online, e vou te deixar um cupom de "
+            "10% de desconto pra usar lá 🎟️\n\n"
+            "🔗 loja.cafecanastra.com\n"
+            "cupom: *ESPECIAL10*\n\n"
+            "qualquer dúvida sobre os cafés, me chama aqui."
+        ),
+        botoes=(
+            # O único botão do fluxo que MUDA de ramo: consumo que pede quantidade
+            # é atacado, e entra pelo N1 como qualquer outro.
+            Botao("quantidade", "Quero em quantidade", "N1"),
+            Botao("duvida", "Tenho uma dúvida", "T_HUMANO"),
+        ),
+        # Sem clique, encerra em T_FIM — e T_FIM não descarta ninguém. É a regra
+        # "Consumo não é encerramento definitivo" de consumo.py. Por isso nenhum
+        # botão aponta para T_FIM: quem leva o lead até lá é o silêncio, não um
+        # clique, e é o runner que fecha o atendimento.
+    ),
+
+    # ── Ramo D · Exportação → Arthur · 7 mensagens ──────────────────────────
+    "E1": No(
+        id="E1", rotulo_interno="E1 · Destino", tela="lista", ramo="exportacao",
+        corpo="legal! e qual é o mercado de destino?",
+        # Lista pelo mesmo motivo do N0: 6 mercados não cabem em 3 botões. Sem
+        # descrição aqui — nome de mercado não precisa de segunda linha, e linha
+        # vazia na folha de opções fica pior do que sem linha.
+        botoes=(
+            Botao("europa", "Europa", "E2"),
+            Botao("eua", "Estados Unidos", "E2"),
+            Botao("asia", "Ásia", "E2"),
+            Botao("america_latina", "América Latina", "E2"),
+            Botao("oriente_medio", "Oriente Médio", "E2"),
+            Botao("outro", "Outro mercado", "E2"),
+        ),
+    ),
+    "E2": No(
+        id="E2", rotulo_interno="E2 · Estrutura", tela="botoes", ramo="exportacao",
+        # A forma condicional é obrigatória neste ramo: `exportacao.py` tem uma
+        # regra "Anti-premissa" que PROÍBE assumir que o lead já exporta. "você
+        # exporta pelo seu próprio CNPJ ou prefere que a gente cuide" não assume.
+        corpo="e você exporta pelo seu próprio CNPJ ou prefere que a gente cuide dessa parte?",
+        botoes=(
+            Botao("cnpj_proprio", "Pelo meu CNPJ", "E3"),
+            Botao("voces_exportam", "Vocês exportam", "E3"),
+            Botao("nao_sei", "Ainda não sei", "E3"),
+        ),
+    ),
+    "E3": No(
+        id="E3", rotulo_interno="E3 · Objetivo", tela="botoes", ramo="exportacao",
+        corpo="e o seu objetivo é…",
+        # Duas opções, não três: `exportacao.py` coleta exatamente esta dicotomia
+        # (agente/representante vs. comprador revendedor). Um terceiro botão
+        # genérico daria ao Arthur um lead com a pergunta sem resposta.
+        botoes=(
+            Botao("revender", "Comprar e revender", "E4"),
+            Botao("representante", "Ser representante", "E4"),
+        ),
+    ),
+    "E4": No(
+        id="E4", rotulo_interno="E4 · Encaminhamento", tela="botoes", ramo="exportacao",
+        corpo=(
+            "com essas informações o Arthur, nosso responsável de exportação, já "
+            "consegue te atender direto.\n\n"
+            "gostaria de ser encaminhado a ele?"
+        ),
+        botoes=(
+            Botao("sim", "Sim, quero falar", "T_HANDOFF_ARTHUR"),
+            Botao("nao_agora", "Não agora", "T_ADIAR"),
+        ),
+    ),
+}
+
+
+# ─── Os terminais ────────────────────────────────────────────────────────────
+#
+# SEIS, e a §5 lista cinco. O sexto é `T_OPTOUT`, que a §6 descreve sem nomear:
+# "casou → registrar_optout imediato, sem gastar nudge". Ele é destino do MOTOR
+# (nenhum botão aponta para ele — quem chega lá digitou "pare"), e é por isso que
+# escapou da tabela da §5. Sem declaração, o efeito de opt-out ficaria escrito
+# dentro do motor e o desfecho mais delicado do fluxo — o único que a Meta EXIGE
+# honrar — seria o único invisível na tela.
+#
+# `T_FIM` também não é destino de botão nenhum: quem leva o lead até lá é o
+# silêncio depois do C1. Por isso o teste de alcançabilidade cobre só `NOS`.
+
+TERMINAIS: dict[str, Terminal] = {
+    "T_HANDOFF": Terminal(
+        id="T_HANDOFF", rotulo_interno="Handoff · João Brás",
+        vendedor=VENDEDOR_ATACADO,
+        # O cartão de contato NÃO é decidido aqui: é o runner que aplica a regra
+        # `canal_do_vendedor` (engine.py:317) e omite o cartão quando a conversa já
+        # está no número do próprio João. Mandar o cartão dele no número dele é
+        # justamente o degrau que a auditoria do funil mediu em 26% de perda.
+        corpo="perfeito! já chamei o João Brás aqui — ele te responde em instantes 👍",
+        tags=(TAG_QUALIFICADO,),
+        silenciar_ia=True,
+        handoff=True,
+    ),
+    "T_HANDOFF_ARTHUR": Terminal(
+        id="T_HANDOFF_ARTHUR", rotulo_interno="Handoff · Arthur",
+        vendedor=VENDEDOR_EXPORTACAO,
+        corpo="combinado! já passei pro Arthur, ele entra em contato assim que estiver disponível 👍",
+        tags=(TAG_QUALIFICADO,),
+        silenciar_ia=True,
+        handoff=True,
+    ),
+    "T_ADIAR": Terminal(
+        id="T_ADIAR", rotulo_interno="Adiamento · 30/60/90 dias",
+        # PERGUNTA, não encerra: `prazos=True` faz o runner oferecer os três
+        # prazos de `flows.PRAZOS` (Em 30 / 60 / 90 dias) — reusados, não
+        # redeclarados, porque são os mesmos da recuperação e estão calibrados no
+        # intervalo real entre compras desta base (78-122 dias).
+        #
+        # E `optout=False` é o ponto inteiro deste terminal. "Não agora" não é um
+        # não: medido em 9 casos no canal do João, 4 voltaram sozinhos e um fechou
+        # R$ 5.500. Quem pergunta QUANDO guarda o lead; quem pergunta SE o perde.
+        corpo="sem problema! quando faz sentido eu te chamar de novo?",
+        tags=(TAG_ADIADO,),
+        prazos=True,
+    ),
+    "T_HUMANO": Terminal(
+        id="T_HUMANO", rotulo_interno="Atendimento humano",
+        # 0 mensagens: `corpo` vazio é o contrato de "não gasta mensagem". Chega
+        # aqui quem pediu pessoa ("Tenho uma dúvida") e quem digitou 3 vezes — e
+        # esse segundo NÃO é blacklist: quem insiste em digitar é quem quer falar,
+        # e descartá-lo é a perda que a auditoria do funil mediu.
+        corpo="",
+        tags=(TAG_HUMANO,),
+        silenciar_ia=True,
+    ),
+    "T_FIM": Terminal(
+        id="T_FIM", rotulo_interno="Encerrado sem descarte",
+        # Nem mensagem, nem tag, nem opt-out. É o fim do ramo Consumo sem clique:
+        # "Consumo não é encerramento definitivo" (consumo.py). O lead continua na
+        # base, com `opt_out` false, e pode voltar a qualquer momento.
+        corpo="",
+    ),
+    "T_OPTOUT": Terminal(
+        id="T_OPTOUT", rotulo_interno="Opt-out por texto",
+        # COMPOSTO: a frase é copiada de `_OPTOUT_MSG` em agent/tools.py, que é o
+        # texto que a produção já manda quando um lead pede para sair — mesma voz
+        # (minúsculas, sem ponto final), mesmo evento.
+        corpo="sem problema, não te mando mais mensagem por aqui\n\nqualquer coisa, é só chamar",
+        tags=(TAG_OPTOUT,),
+        silenciar_ia=True,
+        optout=True,
+    ),
+}

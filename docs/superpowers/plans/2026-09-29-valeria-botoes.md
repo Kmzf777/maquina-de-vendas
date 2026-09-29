@@ -777,7 +777,7 @@ def test_texto_livre_reenvia_ate_3_e_bloqueia_no_4o(nudges_antes, espera_bloquei
 
 
 def test_contador_de_nudge_e_por_atendimento_nao_por_no():
-    """Por nó, 15 nós dariam 45 nudges em vez de 3."""
+    """Por nó, 17 nós dariam 51 nudges em vez de 3."""
     estado = {"nudges": 3}
     for no in ("N1", "N2", "P1", "E2"):
         d = motor.decidir(no, Texto("oi"), estado, reg.NOS, reg.TERMINAIS)
