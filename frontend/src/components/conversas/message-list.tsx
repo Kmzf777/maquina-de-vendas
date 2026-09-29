@@ -6,6 +6,7 @@ import { DaySeparator } from "@/components/conversas/day-separator";
 import { MessageBubble } from "@/components/conversas/message-bubble";
 import { EventCard } from "@/components/conversas/event-card";
 import { HandoffDivider } from "@/components/conversas/handoff-divider";
+import { shouldHideReactionRow } from "@/lib/message-visible-text";
 
 /**
  * Índice da primeira mensagem que marca o transbordo da IA para o vendedor.
@@ -62,8 +63,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
   ) {
     // Reações cujo alvo está na janela viram badge na bolha alvo (estilo
     // WhatsApp) — a bolha própria da reação sai da thread para não duplicar.
+    // EXCETO quando a linha carrega texto do lead: uma janela do buffer vira UMA linha,
+    // então reagir e digitar em seguida grava as duas coisas no mesmo `content`. Trocar
+    // essa linha por um badge de emoji apagava a frase da tela (bug de 25/09/2026).
     const messages = useMemo(
-      () => rawMessages.filter((m) => !m.reaction_attached),
+      () => rawMessages.filter((m) => !shouldHideReactionRow(m)),
       [rawMessages],
     );
     const containerRef = useRef<HTMLDivElement>(null);
