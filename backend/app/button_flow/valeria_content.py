@@ -20,6 +20,22 @@ Três garantias, na ordem em que a spec as pede:
   3. `validar` é o portão de gravação: um rótulo acima do limite da Meta faz o
      ENVIO falhar, não a leitura, então sem essa checagem no save a ValerIA só
      fica muda depois que o operador já achou que salvou.
+
+── Terminais entram na mesma fresta, não numa nova ──────────────────────────
+`reg.TERMINAIS` (8 desfechos — handoffs, adiamento, humano, fim, opt-out) tinha
+`corpo` gravado só no código: a tela editava os 17 `NOS` e o nudge, mas nenhum
+dos 8 terminais — inclusive o handoff, que a auditoria de 08/07 chama de
+"momento mais frágil" da conversa. `carregar` já lê qualquer `node_id`
+presente na tabela sem distinguir namespace, então terminal usa a MESMA linha
+que nó — só o `aplicar` correspondente muda, porque `Terminal` não tem
+`botoes`: é `aplicar_terminais`, não uma chave nova em `aplicar`.
+
+Blindagem herdada, e reforçada: terminal carrega EFEITO (`vendedor`, `tags`,
+`handoff`, `optout`, `silenciar_ia`, `prazos`) que `Botao.grava` nem sonha em
+ter — errar aqui não rebaixa um score, troca de vendedor ou desliga um
+opt-out. `aplicar_terminais` só lê `corpo` do override, do mesmo jeito que
+`aplicar` só lê `corpo`/`rotulos`: as outras chaves não são filtradas, são
+ignoradas por não existir linha que as leia.
 """
 from __future__ import annotations
 
@@ -112,6 +128,43 @@ def aplicar(nos: dict, overrides: dict) -> dict:
     return resultado
 
 
+def aplicar_terminais(terminais: dict, overrides: dict) -> dict:
+    """Funde `overrides` sobre `terminais`. Pura — devolve um dict NOVO, nunca
+    muta `terminais`. Mesma forma de `aplicar`, adaptada ao formato de
+    `Terminal`.
+
+    Só `corpo` tem efeito. Um `Terminal` não declara `botoes` (a folha do
+    `T_ADIAR` é `reg.BOTOES_PRAZO`, declarada à parte no registry, e não
+    pertence a nenhum terminal individual) — então não existe segunda chave a
+    ler aqui como `rotulos` em `aplicar`. E os campos de EFEITO (`vendedor`,
+    `tags`, `handoff`, `optout`, `silenciar_ia`, `prazos`) não são lidos do
+    override por nenhuma linha deste corpo de função: não é filtro, é
+    ausência de código que os leia — a mesma garantia estrutural que `aplicar`
+    dá pra `destino`/`grava` nos nós.
+
+    Terminal desconhecido no override é ignorado, mesmo motivo de `aplicar`:
+    lixo de um id renomeado ou removido não pode derrubar os que existem.
+
+    Override com `corpo` vazio/ausente não aplica nada — `if corpo:` trata os
+    dois casos igual, o que é seguro aqui porque "não aplicar" e "aplicar
+    branco" só coincidem observavelmente quando o DEFAULT do terminal já é
+    branco (`T_HUMANO`, `T_FIM`); nos outros seis, `validar` nunca deixa um
+    override branco chegar a esta função pela tela — ver o comentário de
+    `validar` sobre a regra do corpo em branco.
+    """
+    resultado = dict(terminais)
+    for terminal_id, override in overrides.items():
+        terminal = resultado.get(terminal_id)
+        if terminal is None:
+            continue
+
+        corpo = override.get("corpo")
+        if corpo:
+            resultado[terminal_id] = replace(terminal, corpo=corpo)
+
+    return resultado
+
+
 def _limite_de_rotulo(no: reg.No) -> int:
     return reg.LIMITE_TITULO_LISTA if no.tela == "lista" else reg.LIMITE_ROTULO_BOTAO
 
@@ -120,11 +173,25 @@ def validar(node_id: str, payload: dict) -> str | None:
     """Valida um override antes de gravar. Devolve a mensagem de erro (PT-BR,
     pra tela mostrar ao operador) ou `None` quando o payload pode ser salvo.
 
-    Este é o portão que `carregar`/`aplicar` não têm como ter: eles só LEEM o
-    que já está gravado, e uma linha inválida ali dentro simplesmente não seria
-    aplicada por `aplicar` (rótulo não bate com nenhum `botao.id`) ou, pior,
-    seria aplicada e a Meta recusaria o envio — a ValerIA fica muda naquele nó
-    até alguém notar. Chamar isto ANTES do INSERT/UPDATE é o que fecha o buraco.
+    Este é o portão que `carregar`/`aplicar`/`aplicar_terminais` não têm como
+    ter: eles só LEEM o que já está gravado, e uma linha inválida ali dentro
+    simplesmente não seria aplicada (rótulo não bate com nenhum `botao.id`)
+    ou, pior, seria aplicada e a Meta recusaria o envio — a ValerIA fica muda
+    naquele nó até alguém notar. Chamar isto ANTES do INSERT/UPDATE é o que
+    fecha o buraco.
+
+    Regra do corpo em branco, que MUDA entre nó e terminal:
+      • Nó: branco é sempre rejeitado. Um nó sem corpo é uma tela da Meta sem
+        texto — não existe leitura em que isso seja intencional.
+      • Terminal: branco só é aceito onde o próprio registry já declara
+        `corpo=""` por CONTRATO — `T_HUMANO` e `T_FIM`, onde vazio significa
+        "não gasta mensagem" (valeria_registry.py). Nos outros seis
+        (handoffs, `T_ADIAR`, `T_ADIADO`, `T_OPTOUT`) o default não é vazio, e
+        aceitar um override vazio ali deixaria o motor em silêncio bem no
+        turno em que o lead acabou de pedir pra ser encaminhado — o mesmo
+        "momento mais frágil" que a auditoria 08/07 mediu para o handoff. Por
+        isso a pergunta não é "este payload está em branco?", é "o DEFAULT
+        deste terminal já era em branco?".
     """
     if node_id == reg.CHAVE_NUDGE:
         corpo = payload.get("corpo")
@@ -133,24 +200,42 @@ def validar(node_id: str, payload: dict) -> str | None:
         return None
 
     no = reg.NOS.get(node_id)
-    if no is None:
-        return f"nó {node_id!r} não existe no registry"
+    if no is not None:
+        corpo = payload.get("corpo")
+        if corpo is not None and not corpo.strip():
+            return "o corpo não pode ficar vazio"
 
-    corpo = payload.get("corpo")
-    if corpo is not None and not corpo.strip():
-        return "o corpo não pode ficar vazio"
+        rotulos = payload.get("rotulos") or {}
+        if rotulos:
+            ids_validos = {botao.id for botao in no.botoes}
+            limite = _limite_de_rotulo(no)
+            for botao_id, rotulo in rotulos.items():
+                if botao_id not in ids_validos:
+                    return f"botão {botao_id!r} não existe no nó {node_id!r}"
+                if len(rotulo) > limite:
+                    return (
+                        f"rótulo de {botao_id!r} tem {len(rotulo)} caracteres, "
+                        f"o limite é {limite}"
+                    )
 
-    rotulos = payload.get("rotulos") or {}
-    if rotulos:
-        ids_validos = {botao.id for botao in no.botoes}
-        limite = _limite_de_rotulo(no)
-        for botao_id, rotulo in rotulos.items():
-            if botao_id not in ids_validos:
-                return f"botão {botao_id!r} não existe no nó {node_id!r}"
-            if len(rotulo) > limite:
-                return (
-                    f"rótulo de {botao_id!r} tem {len(rotulo)} caracteres, "
-                    f"o limite é {limite}"
-                )
+        return None
 
-    return None
+    terminal = reg.TERMINAIS.get(node_id)
+    if terminal is not None:
+        # Terminal não declara `botoes` — nem `T_ADIAR`, cuja folha 30/60/90 é
+        # `reg.BOTOES_PRAZO`, uma tabela à parte no registry, não um campo do
+        # terminal. Um `rotulos` aqui não tem `botao.id` nenhum pra casar, e
+        # silenciar isso (como `aplicar_terminais` silencia chaves de efeito)
+        # deixaria a tela achando que salvou um rótulo que nunca é lido —
+        # override morto e invisível, o problema que o enunciado pede pra
+        # evitar. Por isso REJEITA, não ignora.
+        if payload.get("rotulos"):
+            return f"terminal {node_id!r} não tem botões próprios — rótulo não pode ser editado aqui"
+
+        corpo = payload.get("corpo")
+        if corpo is not None and not corpo.strip() and terminal.corpo != "":
+            return "o corpo não pode ficar vazio"
+
+        return None
+
+    return f"nó {node_id!r} não existe no registry"
