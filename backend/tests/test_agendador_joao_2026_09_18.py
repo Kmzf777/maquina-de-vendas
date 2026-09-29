@@ -2231,3 +2231,104 @@ def test_os_dois_tetos_sao_coisas_diferentes_e_ambos_existem():
     assert por_funil == {"atacado": {"lead-1", "lead-2"},
                          "private_label": {"lead-1", "lead-2"}}, \
         "o teto por passagem é POR (funil, cadência) — e não gastou o saldo do dia"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# O ORÇAMENTO DA MATRÍCULA conta o que está COMPROMETIDO, não o que já saiu
+# ═══════════════════════════════════════════════════════════════════════════════
+# Avaria medida em 29/09/2026, simulando ligar as esteiras de prospecção.
+#
+# `disparos_de_hoje` conta `status='sent'`. A janela comercial é 09h-16h. Ligar a
+# esteira às 03h significa que NADA foi enviado hoje — então, a cada tick de 30s, o
+# agendador via saldo CHEIO e matriculava mais um lote. Em ~11 minutos os ~1.100
+# cards elegíveis estariam matriculados, todos com o toque 1 às 09:00, contra um teto
+# declarado de 50/dia.
+#
+# O teto de ENVIO segurava o estrago (50 sairiam), mas os outros 1.050 ficariam numa
+# fila adiada um dia por vez, com os toques 2 e 3 vencendo enquanto o 1 ainda não
+# saiu — exatamente a "fila que nunca drena" que o comentário de
+# `_varrer_cadencia_joao` diz existir para impedir.
+def _job_agendado(job_type="joao_novo", *, fire_at, lead="lead-agendado",
+                  status="pending", acao=None):
+    """Job JÁ AGENDADO para hoje e ainda NÃO enviado — o que a contagem antiga não via."""
+    return {
+        "id": f"agendado-{fire_at.isoformat()}-{lead}",
+        "lead_id": lead,
+        "job_type": job_type,
+        "status": status,
+        "sequence": 1,
+        "sent_at": None,
+        "fire_at": fire_at.isoformat(),
+        "created_at": fire_at.isoformat(),
+        "metadata": {"acao": acao} if acao else {},
+    }
+
+
+def test_orcamento_conta_job_agendado_para_hoje_que_ainda_nao_saiu():
+    """A REPRODUÇÃO da avaria: 3 toques já agendados para hoje, zero enviados."""
+    fake = _FakeSupabase(rows={"follow_up_jobs": [
+        _job_agendado(fire_at=NOW, lead="a"),
+        _job_agendado(fire_at=NOW, lead="b"),
+        _job_agendado(fire_at=NOW, lead="c"),
+    ]})
+    assert S.disparos_comprometidos_hoje(fake, now=NOW) == 3
+
+
+def test_orcamento_conta_o_que_saiu_junto_com_o_que_esta_agendado():
+    fake = _FakeSupabase(rows={"follow_up_jobs": [
+        _job_disparado(hora_utc=NOW, lead="ja-saiu"),
+        _job_agendado(fire_at=NOW, lead="ainda-nao"),
+    ]})
+    assert S.disparos_comprometidos_hoje(fake, now=NOW) == 2
+
+
+def test_o_move_nao_gasta_orcamento_de_matricula_tambem():
+    """Mesma regra da contagem de envio: a unidade é TEMPLATE, e o move não manda um."""
+    fake = _FakeSupabase(rows={"follow_up_jobs": [
+        _job_agendado(fire_at=NOW, lead="a"),
+        _job_agendado(fire_at=NOW, lead="b", acao="mover_etapa"),
+    ]})
+    assert S.disparos_comprometidos_hoje(fake, now=NOW) == 1
+
+
+def test_o_orcamento_pergunta_por_fire_at_e_nao_por_sent_at():
+    """É o recorte que distingue as duas contagens, e o que conserta a avaria."""
+    fake = _FakeSupabase(rows={"follow_up_jobs": []})
+    S.disparos_comprometidos_hoje(fake, now=NOW)
+    filtros = _filtros_do_select(fake)[0]
+    colunas = {coluna for op, coluna, _ in filtros if op in ("gte", "lt")}
+    assert colunas == {"fire_at"}, filtros
+
+
+def test_orcamento_ilegivel_e_fail_closed():
+    fake = _FakeSupabase(tabelas_quebradas={"follow_up_jobs"})
+    assert S.disparos_comprometidos_hoje(fake, now=NOW) == S.DISPAROS_ILEGIVEIS
+
+
+def test_o_agendador_decide_pelo_que_esta_NA_FILA_e_nao_pelo_que_ja_saiu():
+    """A AVARIA, pelo comportamento do AGENDADOR — este teste prende a FIAÇÃO.
+
+    Cenário real de 29/09/2026: ligar a esteira às 03h. A janela comercial é 09h-16h,
+    então ZERO templates saíram hoje, mas o tick anterior já deixou toques agendados
+    para as 09h. Medindo por `sent_at` o saldo voltaria CHEIO a cada tick de 30s, e a
+    base inteira seria matriculada de madrugada.
+
+    Os dois contadores são forçados a discordar: "já saiu" diz 0 (saldo cheio) e "está
+    comprometido" diz 99 (estourado). O agendador TEM de obedecer ao segundo. O dublê
+    de Supabase não filtra por status, então é aqui — e não no dublê — que a diferença
+    entre as duas contagens pode ser observada.
+    """
+    fake = _FakeSupabase(
+        rows={"follow_up_jobs": [],
+              "followup_joao_ajustes": [
+                  {"chave": "teto_diario_disparos", "valor": 2}]},
+        rpc_rows=[_linha_rpc(n) for n in range(1, 6)],
+    )
+    with patch.object(S, "disparos_de_hoje", return_value=0),          patch.object(S, "disparos_comprometidos_hoje", return_value=99):
+        criados = _rodar(fake, _ligada("novo"))
+
+    assert criados == 0, (
+        "matriculou com a fila do dia cheia — o agendador voltou a decidir por sent_at"
+    )
+    assert fake.rpcs == [], "nem deveria perguntar quem é elegível"
+    assert fake.inserts == []
