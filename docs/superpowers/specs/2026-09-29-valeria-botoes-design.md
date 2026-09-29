@@ -129,7 +129,7 @@ Reusa de `button_flow/engine.py`: `Clique`, `Texto`, `Decisao`, `Mensagem`, `Efe
 próprio repo já pagou.
 
 ```python
-def decidir(no_atual: str, evento: Evento, estado: dict, nos: dict, contexto: Contexto) -> Decisao
+def decidir(no_atual: str, evento: Evento, estado: dict, nos: dict, terminais: dict) -> Decisao
 ```
 
 Ordem de avaliação, e ela importa:
