@@ -195,6 +195,30 @@ type Summary = {
 
 type BoardRow = BoardJob & { conversation_id: string | null };
 
+/**
+ * A célula "Funil / Etapa" (spec 2026-09-29 §3.3): o rótulo do funil em cima, a etapa
+ * em que o card está AGORA embaixo.
+ *
+ * Todo rótulo vem da definição. `rotuloDoFunil` procura o código na lista e, enquanto a
+ * definição não chegou (a tabela carrega antes dela), devolve o próprio código —
+ * mostrar `atacado` por dois segundos é honesto, e não escreve "undefined". Um mapa
+ * local de código → rótulo seria uma segunda fonte de verdade, e é essa divergência que
+ * esta base já pagou três vezes este mês.
+ *
+ * Sem funil (todos os jobs da ValerIA) → um traço, sem segunda linha. Com funil mas sem
+ * `etapa_atual` (a consulta da rota é fail-soft) → o funil e um traço.
+ */
+function FunilEtapaCell({ job, funis }: { job: BoardRow; funis: JoaoFunil[] }) {
+  const funil = rotuloDoFunil(funis, job.funil);
+  if (!funil) return <span className="text-[13px] text-[#7b7b78]">—</span>;
+  return (
+    <>
+      <p className="text-[13px] text-[#111111]">{funil}</p>
+      <p className="text-[12px] text-[#7b7b78]">{job.etapa_atual || "—"}</p>
+    </>
+  );
+}
+
 const STATUS_BADGE_STYLES: Record<string, string> = {
   pending: "bg-[#ff5600]/10 text-[#ff5600] border-[#ff5600]/20",
   awaiting_reopen: "bg-[#f0ede8] text-[#7b7b78] border-[#dedbd6]",
@@ -310,6 +334,28 @@ function extrairProblemas(corpo: unknown, status: number): Problema[] {
 function rotuloDoFunil(funis: JoaoFunil[], funil: string | null | undefined): string {
   if (!funil) return "";
   return funis.find((f) => f.codigo === funil)?.rotulo ?? funil;
+}
+
+/**
+ * A cadência do job DENTRO da definição — casa `metadata.funil` com o código do funil
+ * e `metadata.cadencia` com o da cadência.
+ *
+ * Os dois códigos são necessários: `novo`, `em_conversa` e `proposta` existem nos DOIS
+ * funis de prospecção, e `em_atencao` nos dois de Reposição. Procurar só pela cadência
+ * acharia a homônima do funil errado — que hoje tem o mesmo rótulo, mas é configurada
+ * em separado e nada garante que continue tendo.
+ *
+ * Devolve `null` enquanto a definição não chegou (a tabela carrega antes dela) e
+ * quando o job não é do João. Quem chama trata os dois casos do mesmo jeito: sem
+ * rótulo, e NUNCA um mapa de código → rótulo escrito aqui.
+ */
+function cadenciaDoJob(
+  definition: CadenceDefinition | null,
+  job: Pick<BoardJob, "funil" | "cadencia">,
+): JoaoCadenciaDoFunil | null {
+  if (!definition?.joao || !job.funil || !job.cadencia) return null;
+  const funil = definition.joao.funis.find((f) => f.codigo === job.funil);
+  return funil?.cadencias.find((c) => c.codigo === job.cadencia) ?? null;
 }
 
 /**
@@ -1062,6 +1108,10 @@ export function FollowupBoard() {
   const [cancelling, setCancelling] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  /** Vazio enquanto a definição não chegou — a tabela carrega antes dela, e nesse
+   * intervalo a coluna mostra o CÓDIGO do funil em vez do rótulo. */
+  const funisJoao = definition?.joao?.funis ?? [];
+
   const loadSummary = useCallback(() => {
     fetch("/api/followups/summary")
       .then((r) => r.json())
@@ -1160,11 +1210,16 @@ export function FollowupBoard() {
         )}
         {!loadError && jobs !== null && jobs.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            {/* `min-w` faz o `overflow-x-auto` de cima virar rolagem DE VERDADE: com
+                só `w-full` a tabela nunca passa da largura do container, e a sétima
+                coluna seria espremida em vez de rolada — no celular as duas linhas da
+                célula nova quebrariam letra a letra. */}
+            <table className="w-full min-w-[860px] text-left">
               <thead>
                 <tr className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] border-b border-[#dedbd6]">
                   <th className="px-4 py-3 font-medium">Lead</th>
                   <th className="px-4 py-3 font-medium">Toque</th>
+                  <th className="px-4 py-3 font-medium">Funil / Etapa</th>
                   <th className="px-4 py-3 font-medium">Objetivo</th>
                   <th className="px-4 py-3 font-medium">Situação</th>
                   <th className="px-4 py-3 font-medium">Quando (BRT)</th>
@@ -1186,7 +1241,12 @@ export function FollowupBoard() {
                         <p className="text-[12px] text-[#7b7b78]">{j.lead_phone}</p>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-[14px] text-[#111111]">{touchTypeLabel(j)}</td>
+                    <td className="px-4 py-3 text-[14px] text-[#111111]">
+                      {touchTypeLabel(j, cadenciaDoJob(definition, j)?.rotulo)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <FunilEtapaCell job={j} funis={funisJoao} />
+                    </td>
                     <td className="px-4 py-3 text-[13px] text-[#7b7b78]">{objectiveLabel(j.objetivo)}</td>
                     <td className="px-4 py-3">
                       <span
@@ -1222,7 +1282,7 @@ export function FollowupBoard() {
           <div className="bg-white border border-[#dedbd6] rounded-[8px] w-full max-w-md p-6">
             <h2 className="text-[16px] font-medium text-[#111111] mb-2">Cancelar toque?</h2>
             <p className="text-[14px] text-[#7b7b78] mb-4">
-              {touchTypeLabel(cancelTarget)} de{" "}
+              {touchTypeLabel(cancelTarget, cadenciaDoJob(definition, cancelTarget)?.rotulo)} de{" "}
               <span className="text-[#111111]">
                 {cancelTarget.lead_name || cancelTarget.lead_phone || "lead"}
               </span>{" "}

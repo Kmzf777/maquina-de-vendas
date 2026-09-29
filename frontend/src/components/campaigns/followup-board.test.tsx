@@ -21,7 +21,15 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { DefinitionStrip } from "./followup-board";
+
+// `FollowupBoard` chama useRouter(), que exige o contexto do App Router — ausente fora
+// de `next dev`/`next build`. Só o botão do nome do lead usa `push`; nenhum teste aqui
+// clica nele.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: () => {} }),
+}));
+
+import { DefinitionStrip, FollowupBoard } from "./followup-board";
 
 /** Tudo que está renderizado agora (cleanup() esvazia o body entre testes). */
 function naTela(): string {
@@ -1130,5 +1138,206 @@ describe("DefinitionStrip — os ajustes globais do motor", () => {
     expect(screen.getAllByTitle(/adia 7 dias/).length).toBeGreaterThan(0);
     expect(screen.queryAllByTitle(/adia 60 dias/)).toHaveLength(0);
     expect(screen.queryAllByTitle(/adia 30 dias/)).toHaveLength(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A TABELA DE JOBS (spec 2026-09-29 §3.1 e §3.3)
+//
+// O que estes testes travam é a REGRA DA FONTE ÚNICA: todo rótulo que aparece nas
+// colunas "Toque" e "Funil / Etapa" sai de `/api/cadence/definition`. Por isso a
+// mutação obrigatória troca o rótulo DENTRO da definição e exige que a tela mude
+// junto — se ela continuasse escrevendo "João - Atacado" depois de o payload dizer
+// "Funil XPTO", existiria um mapa hardcoded no componente, que é a divergência que
+// esta base pagou três vezes este mês.
+//
+// O segundo grupo é o estado INTERMEDIÁRIO: a tabela e a definição são dois fetches
+// independentes, e a tabela normalmente ganha a corrida. Nesse intervalo a tela tem
+// de mostrar o código, nunca "undefined" e nunca a chave crua `joao_novo`.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SUMARIO = { pending: 1, awaiting_reopen: 0, sent_today: 0, sent_week: 0 };
+
+/** Um job do João como a rota o devolve depois de J2 (contrato J1 → J2/J3): os quatro
+ * campos de `metadata` mais `etapa_atual`, que já chega como RÓTULO da etapa em que o
+ * card está AGORA — a tela nunca traduz key. */
+function jobDoJoao(over: Record<string, unknown> = {}) {
+  return {
+    id: "job-joao-1",
+    sequence: 2,
+    job_type: "joao_novo",
+    status: "pending",
+    fire_at: "2026-09-29T13:00:00+00:00",
+    sent_at: null,
+    cancel_reason: null,
+    objetivo: null,
+    lead_id: "lead-1",
+    lead_name: "Marcella",
+    lead_phone: "5534988861441",
+    conversation_id: null,
+    cadencia: "novo",
+    funil: "atacado",
+    toque: 2,
+    acao: null,
+    etapa_atual: "Cliente Ativo",
+    ...over,
+  };
+}
+
+/** Um job da cadência da ValerIA: `standard`, sem nada do João. É a metade que NÃO
+ * pode mudar de aparência — o payload dela está em produção. */
+function jobDaValeria(over: Record<string, unknown> = {}) {
+  return {
+    id: "job-valeria-1",
+    sequence: 3,
+    job_type: "standard",
+    status: "pending",
+    fire_at: "2026-09-29T13:00:00+00:00",
+    sent_at: null,
+    cancel_reason: null,
+    objetivo: "reengajar",
+    lead_id: "lead-2",
+    lead_name: "Ana",
+    lead_phone: "5534900000000",
+    conversation_id: null,
+    cadencia: null,
+    funil: null,
+    toque: null,
+    acao: null,
+    etapa_atual: null,
+    ...over,
+  };
+}
+
+/** Renderiza o painel inteiro com os três fetches que ele faz no mount.
+ * `def = null` simula a definição que não chegou (rota fora do ar ou ainda em voo). */
+async function abrirPainel(jobs: Record<string, unknown>[], def: unknown = definicao()) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      chamadas.push({ url });
+      if (url === "/api/cadence/definition")
+        return resposta({ body: def ?? { error: "indisponível" } });
+      if (url === "/api/followups/summary") return resposta({ body: SUMARIO });
+      if (url.startsWith("/api/followups?")) return resposta({ body: jobs });
+      if (url.startsWith("/api/templates")) return resposta({ body: TEMPLATES });
+      throw new Error(`fetch inesperado: ${url}`);
+    }),
+  );
+  const utils = render(<FollowupBoard />);
+  // A tabela só existe depois do fetch dos jobs; o cabeçalho novo é o marco.
+  await screen.findByText("Funil / Etapa");
+  return utils;
+}
+
+/** O texto da LINHA do lead — evita casar com a faixa da definição no topo. */
+function linhaDe(nome: string): string {
+  return screen.getByText(nome).closest("tr")?.textContent ?? "";
+}
+
+describe("FollowupBoard — a coluna Toque e a coluna Funil / Etapa", () => {
+  it("job do João: esteira + número no Toque, funil e etapa ATUAL na coluna nova", async () => {
+    await abrirPainel([jobDoJoao()]);
+    await waitFor(() => expect(linhaDe("Marcella")).toContain("Novo · 2º toque"));
+
+    const linha = linhaDe("Marcella");
+    expect(linha).toContain("João - Atacado");
+    expect(linha).toContain("Cliente Ativo");
+    // A chave crua é o defeito que esta entrega existe para matar.
+    expect(naTela()).not.toContain("joao_novo");
+    expect(naTela()).not.toContain("undefined");
+  });
+
+  it("MUTAÇÃO: trocar o rótulo DENTRO da definição e a tela acompanhar", async () => {
+    // Se algum mapa código → rótulo sobrevivesse no componente, a tela continuaria
+    // escrevendo "João - Atacado" / "Novo" depois desta troca.
+    const def = definicao();
+    def.joao.funis[0].rotulo = "Funil XPTO";
+    def.joao.funis[0].cadencias[0].rotulo = "Cadência XPTO";
+
+    await abrirPainel([jobDoJoao()], def);
+    await waitFor(() => expect(linhaDe("Marcella")).toContain("Funil XPTO"));
+
+    const linha = linhaDe("Marcella");
+    expect(linha).toContain("Cadência XPTO · 2º toque");
+    expect(linha).not.toContain("João - Atacado");
+    expect(linha).not.toContain("Novo · 2º toque");
+  });
+
+  it("casa funil E cadência: o código homônimo do OUTRO funil não vale", async () => {
+    // `novo`, `em_conversa` e `proposta` existem nos dois funis de prospecção. Uma
+    // busca só pela cadência acharia a do funil errado — hoje com o mesmo rótulo, mas
+    // cada uma é configurada em separado e nada garante que continuem iguais.
+    const def = definicao();
+    def.joao.funis[0].cadencias[0].rotulo = "Novo do Atacado";
+    def.joao.funis[1].cadencias[0].rotulo = "Novo do Private Label";
+
+    await abrirPainel([jobDoJoao({ funil: "private_label", etapa_atual: "Novo" })], def);
+    await waitFor(() => expect(linhaDe("Marcella")).toContain("Novo do Private Label · 2º toque"));
+    expect(linhaDe("Marcella")).not.toContain("Novo do Atacado");
+    expect(linhaDe("Marcella")).toContain("João - Private Label");
+  });
+
+  it("job da ValerIA: coluna nova mostra traço e o Toque continua 'T3'", async () => {
+    await abrirPainel([jobDaValeria()]);
+    await waitFor(() => expect(linhaDe("Ana")).toContain("T3"));
+
+    const linha = linhaDe("Ana");
+    expect(linha).toContain("—");
+    // Nenhum funil escapou para a linha da ValerIA.
+    expect(linha).not.toContain("João - ");
+    expect(naTela()).not.toContain("undefined");
+  });
+
+  it("job que MOVE o card não vira um toque que nunca existiu", async () => {
+    // `sequence` = último toque + 1; sem o ramo de `acao` ele apareceria como "3º toque".
+    await abrirPainel([
+      jobDoJoao({
+        id: "job-move",
+        job_type: "joao_reposicao",
+        cadencia: "reposicao",
+        funil: "reposicao_atacado",
+        sequence: 3,
+        toque: 3,
+        acao: "mover_etapa",
+        etapa_atual: "Já chamado",
+      }),
+    ]);
+    await waitFor(() => expect(linhaDe("Marcella")).toContain("move o card"));
+    expect(linhaDe("Marcella")).not.toContain("3º toque");
+    expect(linhaDe("Marcella")).toContain("João - Reposição Atacado");
+    expect(linhaDe("Marcella")).toContain("Já chamado");
+  });
+
+  it("etapa_atual nula (consulta fail-soft da rota): funil em cima, traço embaixo", async () => {
+    await abrirPainel([jobDoJoao({ etapa_atual: null })]);
+    await waitFor(() => expect(linhaDe("Marcella")).toContain("João - Atacado"));
+    expect(linhaDe("Marcella")).toContain("—");
+    expect(naTela()).not.toContain("undefined");
+  });
+});
+
+describe("FollowupBoard — a definição ainda não chegou", () => {
+  it("mostra o CÓDIGO do funil e o número do toque, nunca a chave crua", async () => {
+    // A tabela e a definição são dois fetches independentes e a tabela costuma ganhar
+    // a corrida. Mostrar `atacado` por dois segundos é honesto; `joao_novo` ou
+    // "undefined" não são.
+    await abrirPainel([jobDoJoao()], null);
+    await waitFor(() => expect(linhaDe("Marcella")).toContain("atacado"));
+
+    const linha = linhaDe("Marcella");
+    expect(linha).toContain("2º toque");
+    expect(linha).toContain("Cliente Ativo");
+    expect(naTela()).not.toContain("joao_novo");
+    expect(naTela()).not.toContain("undefined");
+    // E a faixa de cima diz o que aconteceu, em vez de sumir calada.
+    expect(naTela()).toContain("Definição da cadência indisponível");
+  });
+
+  it("job da ValerIA sem definição continua traço, sem quebrar a tabela", async () => {
+    await abrirPainel([jobDaValeria()], null);
+    await waitFor(() => expect(linhaDe("Ana")).toContain("T3"));
+    expect(linhaDe("Ana")).toContain("—");
+    expect(naTela()).not.toContain("undefined");
   });
 });
