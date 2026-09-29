@@ -64,7 +64,13 @@ TAG_OPTOUT = "Botões: Opt-out"
 # Os dois vendedores, como a §5 os escreve no `encaminhar_humano(vendedor=...)`.
 # Não é o nome do CARTÃO de contato: aquele é `agent.tools.SUPERVISOR_NAME`
 # ("João - Café Canastra") e quem o envia é o runner, que pode importar app.
-VENDEDOR_ATACADO = "João Brás"
+# SEM ACENTO de proposito: este valor vai no argumento `vendedor=` de
+# encaminhar_humano, e TODO call site de producao passa "Joao Bras"
+# (prompts/base.py:547, valeria_inbound/atacado.py:15, e outros 6). O nome
+# ACENTUADO aparece na prosa dos terminais, que e o que o lead le — aqui e
+# identificador, e identificador divergente e a classe de bug que
+# campaigns/node_registry.py documenta.
+VENDEDOR_ATACADO = "Joao Bras"
 VENDEDOR_EXPORTACAO = "Arthur"
 
 
@@ -121,6 +127,26 @@ class Terminal:
 # um score com 4 dos 5 campos vazios — `is_provisional=True` e prioridade "low"
 # para o lead do MAIOR setor da casa (45% dos leads). Melhor não ter score do que
 # ter um score que mente. É o que a §5 declara: só o ramo A "fecha o score".
+
+# ── O corpo do nudge ────────────────────────────────────────────────────────
+# Reoferecimento: quando o lead DIGITA em vez de tocar, o motor reenvia o MESMO
+# no com este corpo e os MESMOS botoes daquele no.
+#
+# Mora aqui, e nao no motor, porque a secao 6 da spec declara este texto
+# editavel na tela — e o unico jeito de a tela editar sem inventar um segundo
+# mecanismo de armazenamento e ele ser um override como qualquer outro. A tabela
+# `valeria_flow_content` e chaveada por `node_id`, e o nudge NAO e um no: por
+# isso ele tem a chave reservada abaixo. Sem ela havia dois donos possiveis para
+# uma string (registry e motor), que e exatamente a divergencia que
+# campaigns/node_registry.py documenta.
+CHAVE_NUDGE = "__nudge__"
+
+CORPO_NUDGE = "pra eu te passar o valor certo, é só tocar numa das opções 👇"
+
+# Teto de reenvios por ATENDIMENTO, nao por no. Por no, 17 nos dariam 51 nudges:
+# o desperdicio maximo por lead passaria de 3 para 51 mensagens faturadas.
+TETO_NUDGES = 3
+
 
 NOS: dict[str, No] = {
     "N0": No(
@@ -277,7 +303,7 @@ NOS: dict[str, No] = {
             # SERVIÇO, não projeto de marca, e é produto que a casa não faz.
             # `private_label.py` já trata "Graos de Terceiros" como exceção do
             # circuit breaker — aqui a exceção vira uma aresta declarada.
-            Botao("tenho_graos", "Já tenho os grãos", "T_HANDOFF"),
+            Botao("tenho_graos", "Já tenho os grãos", "T_HANDOFF_PL"),
         ),
     ),
     "P2": No(
@@ -319,7 +345,7 @@ NOS: dict[str, No] = {
         # porque o vínculo era posicional.
         foto="private_label/foto_2.jpg",
         botoes=(
-            Botao("sim", "Sim, quero falar", "T_HANDOFF"),
+            Botao("sim", "Sim, quero falar", "T_HANDOFF_PL"),
             Botao("ver_outras", "Ver outra opção", "P4b"),
             Botao("nao_agora", "Não agora", "T_ADIAR"),
         ),
@@ -341,7 +367,7 @@ NOS: dict[str, No] = {
         foto="private_label/foto_3.jpg",
         # Sem `ver_outras` — igual ao N5b, "uma vez só" pela topologia.
         botoes=(
-            Botao("sim", "Sim, quero falar", "T_HANDOFF"),
+            Botao("sim", "Sim, quero falar", "T_HANDOFF_PL"),
             Botao("nao_agora", "Não agora", "T_ADIAR"),
         ),
     ),
@@ -451,7 +477,28 @@ TERMINAIS: dict[str, Terminal] = {
         # `canal_do_vendedor` (engine.py:317) e omite o cartão quando a conversa já
         # está no número do próprio João. Mandar o cartão dele no número dele é
         # justamente o degrau que a auditoria do funil mediu em 26% de perda.
-        corpo="perfeito! já chamei o João Brás aqui — ele te responde em instantes 👍",
+        # SEM "!" E SEM EMOJI, contra o texto da maquete. A auditoria 08/07
+        # (nota do `_HANDOFF_MSG` em agent/tools.py:239) mediu que os leads
+        # receberam "Perfeito! Seu atendimento agora sera continuado..." e que
+        # maiusculas, "!", emoji e ponto final QUEBRARAM A MASCARA no momento
+        # mais fragil da conversa. O handoff e exatamente esse momento. O texto
+        # segue editavel na tela, entao a decisao e reversivel.
+        corpo="perfeito, já chamei o João Brás aqui\n\nele te responde em instantes",
+        tags=(TAG_QUALIFICADO,),
+        silenciar_ia=True,
+        handoff=True,
+    ),
+    "T_HANDOFF_PL": Terminal(
+        id="T_HANDOFF_PL", rotulo_interno="Handoff · João Brás (marca própria)",
+        vendedor=VENDEDOR_ATACADO,
+        # Terminal SEPARADO do T_HANDOFF, e nao o mesmo com texto trocado: a
+        # maquete aprovada traz duas redacoes distintas de handoff — atacado
+        # ("ele te responde em instantes") e marca propria ("ele te detalha tudo
+        # e da o proximo passo contigo"). Um terminal so nao carrega as duas, e
+        # resolver isso com linha por ramo no `valeria_flow_content` faria a
+        # tabela de CONTEUDO carregar uma diferenca de ESTRUTURA. Mesmo vendedor,
+        # mesma tag, mesmos efeitos: muda so a frase.
+        corpo="show, já chamei o João Brás aqui\n\nele te detalha tudo e dá o próximo passo contigo",
         tags=(TAG_QUALIFICADO,),
         silenciar_ia=True,
         handoff=True,
@@ -459,7 +506,8 @@ TERMINAIS: dict[str, Terminal] = {
     "T_HANDOFF_ARTHUR": Terminal(
         id="T_HANDOFF_ARTHUR", rotulo_interno="Handoff · Arthur",
         vendedor=VENDEDOR_EXPORTACAO,
-        corpo="combinado! já passei pro Arthur, ele entra em contato assim que estiver disponível 👍",
+        # Mesma regra de voz do T_HANDOFF (auditoria 08/07).
+        corpo="combinado, já passei pro Arthur\n\nele entra em contato assim que estiver disponível",
         tags=(TAG_QUALIFICADO,),
         silenciar_ia=True,
         handoff=True,
@@ -474,7 +522,8 @@ TERMINAIS: dict[str, Terminal] = {
         # E `optout=False` é o ponto inteiro deste terminal. "Não agora" não é um
         # não: medido em 9 casos no canal do João, 4 voltaram sozinhos e um fechou
         # R$ 5.500. Quem pergunta QUANDO guarda o lead; quem pergunta SE o perde.
-        corpo="sem problema! quando faz sentido eu te chamar de novo?",
+        # Interrogacao fica: e pergunta, nao exclamacao. O "!" sai (auditoria 08/07).
+        corpo="sem problema, quando faz sentido eu te chamar de novo?",
         tags=(TAG_ADIADO,),
         prazos=True,
     ),
