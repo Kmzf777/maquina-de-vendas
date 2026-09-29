@@ -10,7 +10,13 @@ Aqui a tela só pode editar `corpo` e `rotulos`. Quem existe, quantos botões ca
 nó tem e para onde cada botão vai é DECLARADO — não é editável, não vem do banco,
 e é verificado por tests/test_valeria_registry_2026_09_29.py.
 
-Leaf module: não importa nada de `app`, evitando ciclos de import.
+Do `app` importa UMA coisa: `app.button_flow.flows`, o registry irmão da
+Recuperação, de onde vêm os três prazos de adiamento (`flows.PRAZOS`) e a frase
+de fechamento do adiamento (`flows.MSG_PRAZO_FECHAMENTO`). Não cria ciclo porque
+`flows.py` é ele próprio um leaf — importa só `dataclasses`, nada de `app` — e é
+o único import de `app` que este arquivo tem. O que se reusa é DADO de negócio já
+em produção; o que NÃO se reusa é o vocabulário de desfecho do outro fluxo (veja
+a nota da folha de prazos, no fim do arquivo).
 
 ── De onde vêm os textos deste arquivo ──────────────────────────────────────
 Todo `corpo` e todo `rotulo` abaixo são TRANSCRITOS de duas fontes, nunca
@@ -40,6 +46,8 @@ nós de conversa — a conta da §4.1 é o erro, não o desenho.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from app.button_flow import flows
 
 FLOW_ID = "valeria_botoes_v1"
 NO_ENTRADA = "N0"
@@ -89,6 +97,26 @@ class Botao:
     grava: tuple[tuple[str, object], ...] = ()
     # Só para linhas de lista: a segunda linha, que o botão comum não tem.
     descricao: str = ""
+
+    @property
+    def titulo(self) -> str:
+        """Alias de LEITURA de `rotulo`, para compatibilidade de renderizador.
+
+        `engine.Mensagem.botoes` é anotado `tuple[flows.Botao, ...]` e este fluxo
+        põe `reg.Botao` ali dentro: os dois tipos passam pelo MESMO campo, e o da
+        Recuperação chama o texto de `titulo`. Não há type checker no CI deste
+        repo, então um renderizador que leia `.titulo` não falharia na revisão —
+        falharia em produção, num lead real, no meio da conversa. O alias faz os
+        dois tipos serem estruturalmente intercambiáveis para qualquer
+        renderizador.
+
+        `rotulo` continua sendo o campo REAL e o único editável na tela (é ele que
+        `valeria_content.aplicar` troca por `dataclasses.replace`). `titulo` é
+        derivado de propósito: dois campos graváveis para o mesmo texto é a
+        divergência que campaigns/node_registry.py documenta, agora dentro de uma
+        linha só.
+        """
+        return self.rotulo
 
 
 @dataclass(frozen=True)
@@ -459,15 +487,28 @@ NOS: dict[str, No] = {
 
 # ─── Os terminais ────────────────────────────────────────────────────────────
 #
-# SEIS, e a §5 lista cinco. O sexto é `T_OPTOUT`, que a §6 descreve sem nomear:
+# SETE, e a §5 lista cinco. Os dois que faltam na tabela dela são `T_OPTOUT` e
+# `T_ADIADO`.
+#
+# `T_ADIADO` é o turno seguinte ao `T_ADIAR`: a §5 trata o adiamento como ponta
+# de linha e esquece que ele PERGUNTA, então o que o lead vê depois de tocar "Em
+# 30 dias" não está declarado em lugar nenhum da spec. Sem esse terminal o clique
+# cai num corpo vazio e o adiamento termina em silêncio.
+#
+# O outro é `T_OPTOUT`, que a §6 descreve sem nomear:
 # "casou → registrar_optout imediato, sem gastar nudge". Ele é destino do MOTOR
 # (nenhum botão aponta para ele — quem chega lá digitou "pare"), e é por isso que
 # escapou da tabela da §5. Sem declaração, o efeito de opt-out ficaria escrito
 # dentro do motor e o desfecho mais delicado do fluxo — o único que a Meta EXIGE
 # honrar — seria o único invisível na tela.
 #
-# `T_FIM` também não é destino de botão nenhum: quem leva o lead até lá é o
-# silêncio depois do C1. Por isso o teste de alcançabilidade cobre só `NOS`.
+# `T_FIM` não é destino de clique nenhum: quem leva o lead até lá é o silêncio
+# depois do C1, e é o runner que fecha o atendimento. `T_ADIADO` é o contrário —
+# SÓ se chega nele por clique — mas o clique vem da folha `BOTOES_PRAZO`, que é
+# oferecida por um TERMINAL (`T_ADIAR`) e não por um nó. Ou seja: uma caminhada
+# pelos botões de `NOS` não alcança nem um nem outro, e é por isso que o teste de
+# alcançabilidade cobre só `NOS`. As arestas da folha de prazos têm cobertura
+# própria em tests/test_valeria_adiamento_2026_09_29.py.
 
 TERMINAIS: dict[str, Terminal] = {
     "T_HANDOFF": Terminal(
@@ -514,10 +555,12 @@ TERMINAIS: dict[str, Terminal] = {
     ),
     "T_ADIAR": Terminal(
         id="T_ADIAR", rotulo_interno="Adiamento · 30/60/90 dias",
-        # PERGUNTA, não encerra: `prazos=True` faz o runner oferecer os três
-        # prazos de `flows.PRAZOS` (Em 30 / 60 / 90 dias) — reusados, não
-        # redeclarados, porque são os mesmos da recuperação e estão calibrados no
-        # intervalo real entre compras desta base (78-122 dias).
+        # PERGUNTA, não encerra: `prazos=True` faz o motor oferecer a folha
+        # `BOTOES_PRAZO` declarada no fim deste arquivo (Em 30 / 60 / 90 dias).
+        # Quem responde ao toque é `T_ADIADO` — sem ele este terminal pergunta e
+        # não escuta, que foi o defeito medido: o clique caía em `T_FIM`, de corpo
+        # vazio, e o lead levava SILÊNCIO no turno em que acabou de pedir para ser
+        # chamado de novo.
         #
         # E `optout=False` é o ponto inteiro deste terminal. "Não agora" não é um
         # não: medido em 9 casos no canal do João, 4 voltaram sozinhos e um fechou
@@ -526,6 +569,33 @@ TERMINAIS: dict[str, Terminal] = {
         corpo="sem problema, quando faz sentido eu te chamar de novo?",
         tags=(TAG_ADIADO,),
         prazos=True,
+    ),
+    "T_ADIADO": Terminal(
+        id="T_ADIADO", rotulo_interno="Adiamento confirmado",
+        # A RESPOSTA ao toque em 30/60/90 — o turno que faltava. O destino antigo
+        # era `T_FIM`, de corpo vazio, e corpo vazio é o contrato declarado de "não
+        # manda mensagem": o lead pedia para ser chamado em 30 dias e a ValerIA
+        # não dizia nada.
+        #
+        # O texto é REUSADO de `flows.MSG_PRAZO_FECHAMENTO`, a frase que a
+        # Recuperação já manda em produção exatamente neste turno — não é copiada
+        # para cá. Duas cópias da mesma string são dois donos, e a que ninguém
+        # lembrar de editar é a que fica errada.
+        #
+        # Guarda o MOLDE, não a frase resolvida: `{prazo}` é substituído pelo
+        # runner no instante do envio (`flows.render` com o `rotulo_humano` do
+        # prazo clicado — "em 30 dias"), do mesmo jeito que `{preco}` nos nós de
+        # foto. O motor devolve o corpo como está aqui.
+        #
+        # `optout=False` e `handoff=False` são o ponto do adiamento: quem marcou
+        # data continua na base e continua sendo lead da ValerIA — não foi
+        # descartado nem entregue a vendedor. O agendamento em si sai por
+        # `Efeitos.recontato_dias`, que o motor preenche com `DIAS_POR_PRAZO`.
+        #
+        # `prazos=False`: reoferecer a folha aqui reperguntaria o que o lead
+        # acabou de responder.
+        corpo=flows.MSG_PRAZO_FECHAMENTO,
+        tags=(TAG_ADIADO,),
     ),
     "T_HUMANO": Terminal(
         id="T_HUMANO", rotulo_interno="Atendimento humano",
@@ -555,3 +625,35 @@ TERMINAIS: dict[str, Terminal] = {
         optout=True,
     ),
 }
+
+
+# ─── A folha de prazos (os botões do T_ADIAR) ────────────────────────────────
+#
+# Mora AQUI, e não no motor, pelo mesmo motivo de todo o resto deste arquivo:
+# botão é estrutura, e o motor é intérprete de estrutura, não dono dela. Estes
+# três eram declarados em `valeria_engine.py` — a única aresta do fluxo que a tela
+# não conseguia enxergar no registry.
+#
+# Os 30/60/90 vêm de `flows.PRAZOS`, não são redigitados: estão calibrados no
+# intervalo real entre compras desta base (78-122 dias, nota da própria
+# `flows.PRAZOS`) e a Recuperação é dona desse número. Reusa-se `id`, `titulo` e
+# `dias`.
+#
+# O que NÃO se reusa é `flows.Prazo.tag` ("Recuperação: 30 dias"): aquele é o
+# vocabulário de desfecho do OUTRO fluxo, e aplicá-lo num lead da ValerIA
+# carimbaria como recuperação quem nunca esteve numa onda de recuperação. A tag
+# daqui é `TAG_ADIADO`, aplicada por `T_ADIAR` na ida e por `T_ADIADO` na volta.
+#
+# Os rótulos desta folha NÃO são editáveis na tela, ao contrário dos rótulos de
+# nó: `valeria_flow_content` é chaveada por `node_id` e a folha não é um nó (é
+# oferecida por um terminal). Quem quiser mudar "Em 30 dias" muda em `flows.PRAZOS`,
+# onde o outro fluxo também é servido — e é assim de propósito, porque o número de
+# dias e o rótulo têm de dizer a mesma coisa nos dois fluxos.
+BOTOES_PRAZO: tuple[Botao, ...] = tuple(
+    Botao(id=p.id, rotulo=p.titulo, destino="T_ADIADO") for p in flows.PRAZOS
+)
+
+# Dias de recontato por id de botão. O motor põe isso em `Efeitos.recontato_dias`
+# quando o clique vem DESTA folha — o agendamento é efeito declarado do botão, não
+# regra do motor.
+DIAS_POR_PRAZO: dict[str, int] = {p.id: p.dias for p in flows.PRAZOS}

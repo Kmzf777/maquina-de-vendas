@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from app.button_flow.engine import (
     Clique, Decisao as DecisaoBase, Efeitos, Mensagem, Texto, normalizar,
 )
-from app.button_flow import flows
 from app.button_flow import valeria_registry as reg
 
 
@@ -42,20 +41,11 @@ FRASES_OPTOUT = frozenset(normalizar(f) for f in (
 ID_HUMANO = "T_HUMANO"
 ID_OPTOUT = "T_OPTOUT"
 
-# Os três prazos do adiamento vêm de `flows.PRAZOS`, não são redeclarados: os
-# 30/60/90 estão calibrados no intervalo real entre compras desta base (78-122
-# dias) e a recuperação já é dona deles. Aqui só ganham a forma de `reg.Botao`
-# para que TODO botão que sai deste fluxo tenha o mesmo tipo — o runner da
-# ValerIA renderiza `id`+`rotulo` e não precisa saber de dois formatos.
-#
-# `destino="T_FIM"` porque escolher prazo encerra sem descartar: a tag de
-# adiamento já foi aplicada na chegada ao T_ADIAR, e T_FIM tem corpo vazio (não
-# gasta mensagem faturada). A TAG de `flows.Prazo` NÃO é reusada — ela diz
-# "Recuperação: 30 dias", que é o desfecho do outro fluxo.
-BOTOES_PRAZO: tuple[reg.Botao, ...] = tuple(
-    reg.Botao(id=p.id, rotulo=p.titulo, destino="T_FIM") for p in flows.PRAZOS
-)
-_DIAS_POR_PRAZO: dict[str, int] = {p.id: p.dias for p in flows.PRAZOS}
+# A folha de prazos (os 30/60/90 do adiamento) é declarada em
+# `reg.BOTOES_PRAZO`, junto com `reg.DIAS_POR_PRAZO`, e NÃO aqui: botão é
+# estrutura, e este arquivo interpreta estrutura em vez de declará-la. Ela ficou
+# no motor até 29/09/2026 e era a única aresta do fluxo invisível para quem lesse
+# só o registry.
 
 # Último recurso quando o próprio `terminais` não traz o T_HUMANO (dicionário
 # montado a partir de override de tela). Entregar ao humano tem de funcionar
@@ -109,7 +99,8 @@ def decidir(
                 # Só um clique vindo da folha de prazos agenda recontato: comparar
                 # com a tupla, e não olhar o id solto, impede que um botão de nó
                 # com id homônimo agende um follow-up por acidente.
-                dias=_DIAS_POR_PRAZO.get(botao.id) if botao in BOTOES_PRAZO else None,
+                dias=(reg.DIAS_POR_PRAZO.get(botao.id)
+                      if botao in reg.BOTOES_PRAZO else None),
             )
         # Clique que não casou é tratado como texto livre: reoferece. Um id
         # desconhecido é tela antiga ou toque duplo, não recusa a usar botões.
@@ -139,7 +130,7 @@ def _botoes_declarados(
     terminal = terminais.get(no_atual)
     if terminal is None:
         return None
-    return BOTOES_PRAZO if terminal.prazos else ()
+    return reg.BOTOES_PRAZO if terminal.prazos else ()
 
 
 def _casar(
@@ -201,8 +192,10 @@ def _ir_para(
 
     O corpo sai como está no registry, com `{preco}` e tudo: quem resolve o
     marcador contra `products` é o runner, no instante do envio, porque preço no
-    texto envelhece em silêncio. A `foto` também fica no registry — o runner lê
-    `nos[proximo_no].foto`, já que `Mensagem` (da recuperação) não tem esse campo.
+    texto envelhece em silêncio. Vale igual para o `{prazo}` do `T_ADIADO`, que o
+    runner resolve com o `rotulo_humano` do prazo clicado. A `foto` também fica no
+    registry — o runner lê `nos[proximo_no].foto`, já que `Mensagem` (da
+    recuperação) não tem esse campo.
     """
     no = nos.get(destino)
     if no is not None:
@@ -222,7 +215,7 @@ def _ir_para(
     if terminal.corpo:
         mensagem = Mensagem(
             corpo=terminal.corpo,
-            botoes=BOTOES_PRAZO if terminal.prazos else (),
+            botoes=reg.BOTOES_PRAZO if terminal.prazos else (),
         )
     return Decisao(
         proximo_no=destino,
