@@ -3,6 +3,7 @@ import type { Message, QuotedMessage, ReactionTarget } from "@/lib/types";
 import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
 import { readButtonClick } from "@/lib/button-click";
+import { mediaCaption, reactionExtraText } from "@/lib/message-visible-text";
 
 function DeliveryTick({
   status,
@@ -179,6 +180,12 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
   const isReaction = message.message_type === "reaction";
   // Clique em botão (fluxo de botões / quick reply de template): não é texto digitado.
   const buttonClick = readButtonClick(message);
+
+  // Texto do lead que o ternário de tipo abaixo desenha por cima: a legenda anexada à
+  // mídia e a frase digitada na mesma janela do buffer em que ele reagiu. Ambas moram em
+  // `content` (uma janela = uma linha, um único slot de message_type) e até 25/09/2026
+  // nenhuma das duas chegava à tela.
+  const attachedText = mediaCaption(message) || reactionExtraText(message);
 
   // Contexto de qualificação: card especial, não bolha de chat
   if (message.sent_by === "handoff_context") {
@@ -520,6 +527,10 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
           })()
         ) : isReaction ? (
           (() => {
+            // Alvo na janela ⇒ o emoji já aparece como badge na bolha alvo; repetir
+            // "Reagiu com X" aqui seria eco. A linha só continua na thread porque carrega
+            // texto do lead, impresso logo abaixo (`attachedText`).
+            if (message.reaction_attached) return null;
             const meta = message.metadata as { emoji?: string; target_wamid?: string } | null;
             const emoji = meta?.emoji ?? "?";
             return (
@@ -568,6 +579,9 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
           </div>
         ) : (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        )}
+        {attachedText && (
+          <p className="whitespace-pre-wrap break-words mt-1">{attachedText}</p>
         )}
         <div className={`flex items-center gap-1 mt-1 ${isFromMe ? "justify-end" : "justify-start"}`}>
           <p
