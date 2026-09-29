@@ -44,13 +44,18 @@ _HORAS_JANELA_META = 24
 # é ~300 tokens, contra os 35.565 de input médios de um turno da ValerIA.
 _LINHAS_HISTORICO = 6
 
-# Cache de `agent_profiles.kind` por id. O gate roda em TODO inbound do backend, e
-# resolver o perfil da conversa é uma consulta a mais por mensagem — com o kill
-# switch ligado, sem cache, seria uma ida ao banco por turno de conversa de qualquer
-# número, não só dos do fluxo. TTL curto porque o operador pode trocar o perfil da
-# conversa no meio de um lote.
+# Cache de (`agent_profiles.kind`, `agent_profiles.flow_id`) por id. O gate roda em
+# TODO inbound do backend, e resolver o perfil da conversa é uma consulta a mais por
+# mensagem — com o kill switch ligado, sem cache, seria uma ida ao banco por turno de
+# conversa de qualquer número, não só dos do fluxo. TTL curto porque o operador pode
+# trocar o perfil da conversa no meio de um lote.
+#
+# As duas colunas vêm no MESMO cache porque vêm na mesma linha: cachear só o `kind`
+# faria o `flow_id` custar a consulta que este cache existe para evitar, e as duas
+# expirando em momentos diferentes permitiria a combinação impossível de um `kind`
+# novo com o `flow_id` antigo.
 _KIND_TTL_SEGUNDOS = 300.0
-_kind_cache: dict[str, tuple[float, str]] = {}
+_perfil_cache: dict[str, tuple[float, str, str | None]] = {}
 
 # Setor de `products` do qual este fluxo pode cotar preço, já normalizado por
 # `app.agent.catalog._normalize` (sem acento, minúsculo, espaço -> underscore; hoje
@@ -67,26 +72,47 @@ _SETOR_DA_COORTE = "atacado"
 
 
 def limpar_cache_de_perfis() -> None:
-    """Esvazia o cache de `kind` (uso em teste e em troca manual de perfil)."""
-    _kind_cache.clear()
+    """Esvazia o cache do perfil (uso em teste e em troca manual de perfil)."""
+    _perfil_cache.clear()
 
 
 # ── O gate ──────────────────────────────────────────────────────────────────
-def _kind_do_perfil(profile_id: str) -> str:
+def _perfil_do_id(profile_id: str) -> tuple[str, str | None]:
+    """(`kind`, `flow_id`) do perfil, do cache ou do banco."""
     agora = time.monotonic()
-    em_cache = _kind_cache.get(profile_id)
+    em_cache = _perfil_cache.get(profile_id)
     if em_cache and (agora - em_cache[0]) < _KIND_TTL_SEGUNDOS:
-        return em_cache[1]
+        return em_cache[1], em_cache[2]
     perfil = get_agent_profile(profile_id) or {}
     # Perfil sem `kind` é perfil anterior à migration 20260820: 'llm' é o default da
     # coluna e o default seguro aqui.
     kind = perfil.get("kind") or "llm"
-    _kind_cache[profile_id] = (agora, kind)
-    return kind
+    # `.get` e não `["flow_id"]`: a coluna só existe depois de 20260929, e um perfil
+    # lido antes da migration chega aqui SEM a chave — o mesmo caso do NULL.
+    flow_id = perfil.get("flow_id")
+    _perfil_cache[profile_id] = (agora, kind, flow_id)
+    return kind, flow_id
 
 
-def is_button_flow_conversation(conversation: dict, channel: dict) -> bool:
-    """True quando esta conversa é atendida pelo fluxo de botões, não pela ValerIA.
+def _fluxo_de(kind: str | None, flow_id: str | None) -> str | None:
+    """Fluxo declarado por um perfil, ou None quando o perfil não é de botões.
+
+    `flow_id` NULL (ou coluna ainda não migrada) é `recuperacao_v1`: é o fluxo que
+    JÁ roda em produção, e o default existe para o perfil de lá continuar
+    funcionando sem nenhum UPDATE (`20260929_valeria_botoes.sql`, §2).
+    """
+    if (kind or "llm") != "button_flow":
+        return None
+    return flow_id or flows.FLOW_ID
+
+
+def fluxo_da_conversa(conversation: dict, channel: dict) -> str | None:
+    """Qual fluxo de botões atende esta conversa, ou None para o fluxo normal.
+
+    POR FLUXO, e não um booleano: `kind='button_flow'` sozinho não diz QUAL fluxo, e
+    com dois deles um só switch ligaria os dois juntos — armar a Recuperação (que
+    está desligada, roda no número pessoal do vendedor e tem 3 bloqueantes) só por
+    ligar a ValerIA de botões. Cada fluxo responde à SUA chave (`config.enabled`).
 
     A conversa tem precedência sobre o canal, e isso não é detalhe: o canal do João
     (`a3a607b1`) já aponta para o MESMO `agent_profile_id` do canal da ValerIA
@@ -95,24 +121,48 @@ def is_button_flow_conversation(conversation: dict, channel: dict) -> bool:
     conduz à mão. Quem marca a conversa é o disparo, via
     `get_or_create_conversation(..., agent_profile_id=...)`.
 
-    Fail-OPEN em qualquer erro (perfil ausente, coluna `kind` ainda não migrada,
-    banco fora): devolve False e o inbound segue o fluxo normal do processor. O
-    contrário — fail-closed — sequestraria conversas humanas num erro de leitura.
+    Com TODOS os fluxos desligados sai sem tocar no banco (`algum_fluxo_ligado`),
+    que é o contrato que `buffer/processor.py:1275` e `:1560` documentam.
+
+    Fail-OPEN em qualquer erro (perfil ausente, coluna `kind`/`flow_id` ainda não
+    migrada, banco fora): devolve None e o inbound segue o fluxo normal do
+    processor. O contrário — fail-closed — sequestraria conversas humanas num erro
+    de leitura.
     """
-    if not config.enabled():
-        return False
+    if not config.algum_fluxo_ligado():
+        return None
     try:
         profile_id = (conversation or {}).get("agent_profile_id")
         if profile_id:
-            return _kind_do_perfil(profile_id) == "button_flow"
-        perfil_do_canal = (channel or {}).get("agent_profiles") or {}
-        return (perfil_do_canal.get("kind") or "llm") == "button_flow"
+            kind, flow_id = _perfil_do_id(profile_id)
+            fluxo = _fluxo_de(kind, flow_id)
+        else:
+            perfil_do_canal = (channel or {}).get("agent_profiles") or {}
+            fluxo = _fluxo_de(perfil_do_canal.get("kind"), perfil_do_canal.get("flow_id"))
+        if fluxo and not config.enabled(fluxo):
+            # Perfil aponta para um fluxo que está desligado (ou para um `flow_id`
+            # que não existe no código). Nada a fazer, e sem ruído: é o estado
+            # normal de um fluxo ainda não ligado.
+            return None
+        return fluxo
     except Exception as exc:
         logger.warning(
             "[BUTTON FLOW] falha ao resolver o perfil da conv %s — segue fluxo normal: %s",
             (conversation or {}).get("id"), exc,
         )
-        return False
+        return None
+
+
+def is_button_flow_conversation(conversation: dict, channel: dict) -> bool:
+    """True quando esta conversa é atendida pelo fluxo de RECUPERAÇÃO.
+
+    Responde SÓ pela recuperação de propósito: os dois chamadores em
+    `buffer/processor.py` (o gate do bot e o `_optout_deterministico_cabe`) tratam
+    do fluxo da recuperação, e a ValerIA de botões tem runner e gate próprios. Toda
+    a decisão — precedência da conversa, default de `flow_id` NULL, kill switch por
+    fluxo, fail-open — vive em `fluxo_da_conversa`.
+    """
+    return fluxo_da_conversa(conversation, channel) == flows.FLOW_ID
 
 
 # ── Montagem do evento ──────────────────────────────────────────────────────
@@ -560,7 +610,11 @@ async def _executar_turno(
     conversation_id = conversation.get("id")
     lead_id = lead.get("id")
 
-    if not config.enabled():
+    if not config.enabled(flows.FLOW_ID):
+        # `flows.FLOW_ID` explícito (recuperacao_v1): este runner é o da recuperação —
+        # a ValerIA de botões tem o seu. Passar o fluxo em vez de um default é o que
+        # garante que ligar um não liga o outro.
+        #
         # Redundante com o gate (que já checa o kill switch antes de tocar o banco),
         # de propósito: o runner é público e um chamador novo — worker de recontato,
         # script de rehearsal — não pode ligar o bot sem querer.
