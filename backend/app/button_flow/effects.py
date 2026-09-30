@@ -45,6 +45,39 @@ logger = logging.getLogger(__name__)
 FLUXO_RECUPERACAO = "bot de recuperação"
 FLUXO_VALERIA = "bot de botões da ValerIA"
 
+# ── Quem ASSUME o controle humano no handoff (`leads.human_control=true`) ────
+# `ai_enabled=False` sozinho descreve "a IA está muda"; `human_control=true` descreve
+# "um humano assumiu". São fatos diferentes e três consumidores leem o segundo:
+#   • `buffer/processor._maybe_send_handoff_bridge` EXIGE `human_control is True` — é
+#     como ela distingue o transbordo formal de um órfão (lead com a IA desligada e
+#     ninguém responsável, o caso que o Check 2 do watchdog cobre). Sem o carimbo, o
+#     conserto de 30/09 que fez a ponte resolver o vendedor CERTO a partir de
+#     `metadata.handoff.vendedor` (João no atacado/marca própria, Arthur na
+#     exportação) era código morto para os leads deste fluxo;
+#   • `runner._motivo_para_nao_rodar`, o guarda de "um humano já assumiu". Sem o
+#     carimbo o motor da ValerIA de botões seguia rodando DEPOIS do handoff: o
+#     terminal `T_HANDOFF` tem tupla de botões vazia, `valeria_engine.decidir` cai em
+#     `_ir_para(ID_HUMANO)` e reaplica `T_HUMANO` A CADA mensagem do lead — tag,
+#     observação e mensagem de sistema novas toda vez, em cima da conversa mais
+#     valiosa do funil;
+#   • o CRM: o selo de atendimento humano do card e do chat lê essa coluna.
+# É também a forma que `agent/tools.encaminhar_humano` já grava — o handoff do LLM e o
+# do fluxo de botões no MESMO número não podem produzir leads de formas diferentes.
+#
+# POR FLUXO, e não para todos: a Recuperação roda no número PESSOAL do vendedor
+# (`mode='human'`), onde a ponte nunca é chamada (o gate de canal humano do processor
+# retorna antes dela) e onde o texto dela seria absurdo — o lead já está na thread do
+# vendedor. Lá o carimbo não traria ganho nenhum e traria uma regressão: um disparo
+# novo NÃO o zera em canal humano (`broadcast/worker._build_lead_updates` só zera
+# `human_control` quando `ai_enabled` vai para True, e `_broadcast_ai_enabled` força
+# False em canal humano), enquanto `_seed_flow_state` RESETA o `flow_state` a cada
+# envio de propósito ("um template novo reabre a pergunta"). O guarda de etapa é
+# reversível pelo disparo; o carimbo não seria. Um lead transbordado na onda 1 e
+# reincluído numa onda seguinte receberia o template e ficaria SEM RESPOSTA ao clique.
+# E o motor de lá não tem o ruído acima: depois do handoff o nó é `encerrado` e
+# `engine.decidir` já devolve `ignorar`.
+FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO = frozenset({FLUXO_VALERIA})
+
 
 def _motivo_handoff(fluxo: str) -> str:
     """Motivo do handoff em um lugar só: ele vai para o carimbo `metadata.handoff`
@@ -94,6 +127,11 @@ def aplicar(
     módulo escreve (ver `FLUXO_RECUPERACAO`): a nota é o que o vendedor lê antes de
     abordar o lead, e ela não pode citar o fluxo errado. Default = Recuperação, para
     o chamador em produção não mudar de comportamento.
+
+    E ele decide UMA coisa além do texto: se o handoff assume o controle humano
+    (`leads.human_control`), porque os dois bots rodam em números com naturezas
+    diferentes — ver `FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO`, onde estão os consumidores
+    do carimbo e a razão de a Recuperação ficar de fora.
 
     `evidencia` é o registro cru do turno que originou o opt-out (só é lida quando
     `efeitos.optout`); o contrato está em `_campos_de_evidencia`. Ela alimenta
@@ -337,6 +375,11 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
                      fluxo: str = FLUXO_RECUPERACAO) -> None:
     """Handoff enxuto: sem resumo por LLM (não houve conversa) e sem rescue job.
 
+    Nos fluxos de `FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO` o desligamento da IA vem
+    acompanhado de `human_control=true`, que é o que diz que ALGUÉM assumiu (e não só
+    que a IA calou). É o portão da ponte pós-handoff e do guarda de não-rodar do
+    runner; o porquê de ser por fluxo está na constante.
+
     Dois registros do MESMO handoff, porque quem os lê é diferente:
     - a mensagem de sistema `[encaminhar_humano] ...` é o que o dashboard conta
       (KPI de handoffs, conversão do funil, SLA do vendedor) e o que o CRM usa
@@ -361,8 +404,16 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
     lead_id = lead["id"]
     vendedor = vendedor or SUPERVISOR_NAME
     motivo = _motivo_handoff(fluxo)
+    # Os dois campos no MESMO update: eles descrevem o mesmo fato (um humano assumiu),
+    # e gravá-los em momentos diferentes abriria uma janela em que o lead está mudo e
+    # ninguém consta como responsável — é nela que a ponte recusaria o lead como
+    # "órfão". Quais fluxos carimbam `human_control` está em
+    # `FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO`, com o porquê de a Recuperação ficar fora.
+    colunas: dict = {"ai_enabled": False}
+    if fluxo in FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO:
+        colunas["human_control"] = True
     try:
-        update_lead(lead_id, ai_enabled=False)
+        update_lead(lead_id, **colunas)
     except Exception as exc:
         logger.warning("[BUTTON FLOW] falha ao desligar IA no handoff do lead %s: %s",
                        lead_id, exc)
