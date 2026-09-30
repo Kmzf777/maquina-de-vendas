@@ -78,10 +78,24 @@ def test_terminal_de_adiamento_declarado_com_os_efeitos_certos():
 
 
 def test_a_folha_de_prazos_nao_volta_depois_de_escolhida():
-    """Chegou ao T_ADIADO: nada mais para tocar, então nem nudge nem prazo de novo."""
+    """Chegou ao T_ADIADO: nada mais para tocar, então nem nudge nem prazo de novo.
+
+    ATUALIZADO em 30/09/2026, e a mudança é o conserto do encerramento
+    (tests/test_valeria_encerramento_2026_09_30.py). A INTENÇÃO deste teste — "nada
+    mais para tocar" — é a mesma e continua verificada; o que mudou é o destino: a
+    versão anterior afirmava `proximo_no == "T_HUMANO"`, e aquele `T_HUMANO` era o
+    DEFEITO, não o contrato. Ele vinha da última linha de `decidir` (`_ir_para
+    (ID_HUMANO)`, alcançada porque a tupla de botões do terminal é vazia) e era
+    REAPLICADO a cada mensagem seguinte do lead, para sempre: tag regravada,
+    observação de CRM e mensagem de sistema novas em cada rodada. Agora o fluxo
+    encerrado devolve `ignorar`, como o motor da Recuperação já faz no nó
+    `flows.NO_ENCERRADO`.
+    """
     d = motor.decidir("T_ADIADO", Texto("ok"), {"nudges": 0}, reg.NOS, reg.TERMINAIS)
-    assert d.proximo_no == "T_HUMANO"
+    assert d.ignorar is True
+    assert d.proximo_no == "T_ADIADO", "o adiamento confirmado não se move"
     assert d.marcar_nudge is False
+    assert d.mensagem is None, "reperguntaria o que o lead acabou de responder"
 
 
 def test_nenhum_desfecho_da_valeria_usa_o_vocabulario_da_recuperacao():

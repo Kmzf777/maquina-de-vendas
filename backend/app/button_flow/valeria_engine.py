@@ -7,6 +7,13 @@ destino declarado. É por isso que este arquivo é curto.
 Reusa os eventos e a saída de button_flow/engine.py de propósito — o runner já sabe
 aplicar `Decisao`. NÃO estende `engine.decidir()`, que tem a matriz da recuperação
 embutida (NO_INTERESSE, NO_PRAZO, trilhas) e ficaria ilegível servindo dois fluxos.
+
+E reusa também o DESFECHO do irmão: chegar a um terminal ENCERRA o fluxo, e os
+eventos seguintes voltam como `Decisao(ignorar=True)` — o mesmo campo que
+`engine.decidir` devolve no nó `flows.NO_ENCERRADO`, e que o runner já trata sem
+enviar, sem aplicar efeito e sem gravar estado. A diferença de forma é que ali o
+encerramento tem um nó PRÓPRIO e aqui o próprio terminal é o nó; a guarda está em
+`_encerrado`, e o único terminal que não encerra é `T_ADIAR` (ver o docstring dela).
 """
 from __future__ import annotations
 
@@ -75,9 +82,10 @@ def decidir(
 
     A ORDEM abaixo é o comportamento:
       1. nó desconhecido devolve ao humano (flow_state corrompido nunca estoura);
-      2. opt-out por texto vence o contador de nudges;
-      3. clique casado com botão declarado vai para o destino declarado;
-      4. o resto é nudge até o teto, e depois humano.
+      2. opt-out por texto vence o contador de nudges E o encerramento;
+      3. fluxo já encerrado devolve `ignorar` — turno nenhum acontece;
+      4. clique casado com botão declarado vai para o destino declarado;
+      5. o resto é nudge até o teto, e depois humano.
     """
     est = estado if isinstance(estado, dict) else {}
 
@@ -87,8 +95,40 @@ def decidir(
 
     # Antes do contador e sem gastar nudge: quem pede para sair, sai. É a dívida
     # medida no outro fluxo (52 pessoas clicaram opt-out e seguiram elegíveis).
-    if isinstance(evento, Texto) and normalizar(evento.conteudo) in FRASES_OPTOUT:
+    #
+    # E ACIMA da guarda de encerramento, que é a decisão de ordem deste arquivo: a
+    # Meta EXIGE honrar o pedido de parar, então ele vale depois do handoff, depois
+    # do adiamento e depois do bloqueio. Silenciar um "pare" para economizar uma
+    # mensagem é o pior desfecho disponível — é o mesmo raciocínio que
+    # `engine.decidir` escreve no topo dela ("o opt-out vence TUDO").
+    #
+    # A ÚNICA exceção é quem JÁ está em `T_OPTOUT`, e ela é aritmética, não
+    # preferência: o nó só vira `T_OPTOUT` depois de `effects.aplicar` devolver True
+    # (o runner aborta o turno e NÃO avança o estado quando a gravação do `opt_out`
+    # falha), então estar nele é prova de que o pedido está registrado. Reaplicá-lo
+    # não honra nada que já não esteja honrado e reenvia a confirmação — mandar "não
+    # te mando mais mensagem por aqui" de novo, faturada, para quem acabou de pedir
+    # silêncio é o oposto do pedido.
+    if (isinstance(evento, Texto) and no_atual != ID_OPTOUT
+            and normalizar(evento.conteudo) in FRASES_OPTOUT):
         return _ir_para(ID_OPTOUT, nos, terminais)
+
+    # O FLUXO ACABOU. Terminal que não oferece botão é desfecho, não posição de
+    # espera: o evento seguinte não gera mensagem, tag, observação, nota, mensagem de
+    # sistema nem movimento de nó. Mesmo desenho do irmão, que move o estado para
+    # `flows.NO_ENCERRADO` e devolve `ignorar` dali em diante — aqui o nó de destino
+    # JÁ é o terminal (o runner grava `flow_state.node = "T_HUMANO"`), então o que
+    # faltava era só esta leitura.
+    #
+    # Sem ela, `botoes` vazio deixava a guarda do nudge falsa e o turno caía na
+    # última linha, `_ir_para(ID_HUMANO)`: `T_HUMANO` REAPLICADO a cada mensagem
+    # seguinte, para sempre — tag regravada, observação de CRM e mensagem de sistema
+    # novas em cada rodada. O carimbo de `human_control` de 30/09 corta isso só para
+    # os três terminais de handoff (via `runner._motivo_para_nao_rodar`), e de
+    # propósito: quem chega a `T_HUMANO` sem transbordo formal não é carimbado,
+    # porque não foi entregue a ninguém.
+    if _encerrado(no_atual, nos, terminais):
+        return Decisao(proximo_no=no_atual, ignorar=True)
 
     if isinstance(evento, Clique):
         botao = _casar(no_atual, evento, botoes, est)
@@ -108,10 +148,38 @@ def decidir(
     if botoes and _nudges(est) < reg.TETO_NUDGES:
         return _nudge(no_atual, botoes, corpo_nudge or reg.CORPO_NUDGE)
 
-    # Sem botão para reoferecer (terminal que já encerrou) ou teto estourado. Note
-    # que isto NÃO é blacklist: quem insiste em digitar é quem quer falar, e
-    # descartá-lo é a perda que a auditoria do funil mediu.
+    # Teto estourado, ou nó sem botão para reoferecer (override de tela que esvaziou
+    # um nó — terminal encerrado já saiu acima, por `_encerrado`). Note que isto NÃO é
+    # blacklist: quem insiste em digitar é quem quer falar, e descartá-lo é a perda
+    # que a auditoria do funil mediu.
     return _ir_para(ID_HUMANO, nos, terminais)
+
+
+def _encerrado(
+    no_atual: str, nos: dict[str, reg.No], terminais: dict[str, reg.Terminal],
+) -> bool:
+    """True quando o fluxo já chegou a um desfecho de onde não se clica.
+
+    Lê a DECLARAÇÃO (`Terminal.prazos`), nunca a tupla de botões estar vazia, e a
+    diferença é o defeito original invertido: `T_ADIAR` é terminal E posição de onde
+    se clica — ele PERGUNTA o prazo e espera o toque, então chegar nele não é o fim
+    (clicar um prazo, que leva a `T_ADIADO`, é). Já um NÓ que um override de tela
+    esvaziou tem tupla vazia e NÃO está encerrado: é nó quebrado, e o desfecho seguro
+    desse caso continua sendo entregar ao humano, não silenciar o lead.
+
+    Nó VENCE terminal na mesma chave, exatamente como em `_botoes_declarados`: as duas
+    funções leem a mesma posição e uma precedência diferente entre elas faria a mesma
+    string ser nó para uma e desfecho para a outra — a classe de divergência que
+    `campaigns/node_registry.py` documenta. Hoje os dois dicionários são disjuntos
+    (`N*`/`P*`/`C*`/`E*` contra `T_*`) e nada garante isso por teste.
+
+    Terminal novo entra encerrando por default, que é o lado certo para errar: um
+    desfecho que esquece de encerrar volta a reprocessar cada mensagem do lead.
+    """
+    if no_atual in nos:
+        return False
+    terminal = terminais.get(no_atual)
+    return terminal is not None and not terminal.prazos
 
 
 def _botoes_declarados(
@@ -121,8 +189,8 @@ def _botoes_declarados(
 
     Terminal também é posição válida: `T_ADIAR` é destino E nó de onde se clica
     (os 30/60/90). Os outros terminais devolvem tupla vazia — posição conhecida,
-    nada para tocar — e é isso que manda o evento seguinte para o humano em vez
-    de gastar uma mensagem reoferecendo botão que não existe.
+    nada para tocar — e quem trata isso é `_encerrado`, ACIMA do casamento de
+    clique: a tupla vazia é sintoma do desfecho, não o critério dele.
     """
     no = nos.get(no_atual)
     if no is not None:

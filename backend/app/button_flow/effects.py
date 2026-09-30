@@ -59,7 +59,14 @@ FLUXO_VALERIA = "bot de botões da ValerIA"
 #     terminal `T_HANDOFF` tem tupla de botões vazia, `valeria_engine.decidir` cai em
 #     `_ir_para(ID_HUMANO)` e reaplica `T_HUMANO` A CADA mensagem do lead — tag,
 #     observação e mensagem de sistema novas toda vez, em cima da conversa mais
-#     valiosa do funil;
+#     valiosa do funil.
+#     Desde 30/09/2026 esse loop TAMBÉM é fechado no motor (`valeria_engine._encerrado`
+#     devolve `ignorar` em todo terminal que não oferece botão), e as duas guardas
+#     respondem a perguntas diferentes: o carimbo diz "um humano é o dono desta
+#     conversa" e vale para QUALQUER turno, inclusive um `flow_state` reiniciado; o
+#     encerramento diz "este fluxo acabou" e é o que cobre os desfechos SEM transbordo
+#     formal (`T_HUMANO`, `T_OPTOUT`, `T_FIM`, `T_ADIADO`), que de propósito não
+#     carimbam nada. Nenhuma das duas torna a outra dispensável;
 #   • o CRM: o selo de atendimento humano do card e do chat lê essa coluna.
 # É também a forma que `agent/tools.encaminhar_humano` já grava — o handoff do LLM e o
 # do fluxo de botões no MESMO número não podem produzir leads de formas diferentes.
