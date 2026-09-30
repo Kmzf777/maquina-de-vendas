@@ -293,8 +293,14 @@ def test_aplicar_conhece_todos_os_campos_de_efeitos(lead):
 
     Este teste falha no dia em que Efeitos ganhar um campo que `aplicar` não conhece.
     """
+    # `vendedor` entrou em 30/09/2026 com a ValerIA de botões, que tem DOIS
+    # vendedores: sem ele, `_aplicar_handoff` carimbava o João em 100% dos
+    # handoffs de exportação. É consumido em `aplicar` (repassado a
+    # `_aplicar_handoff`), e é por ESTA linha que o campo novo passa a ter
+    # cobertura — o assert abaixo é o portão que exige isto.
     valores = {"tags": ("X",), "optout": True, "handoff": True, "recontato_dias": 30,
-               "silenciar_ia": True, "pretexto_contestado": True}
+               "silenciar_ia": True, "pretexto_contestado": True,
+               "vendedor": "Arthur"}
     nomes = {f.name for f in dataclasses.fields(Efeitos)}
     assert nomes <= set(valores), f"campo novo em Efeitos sem cobertura aqui: {nomes - set(valores)}"
 

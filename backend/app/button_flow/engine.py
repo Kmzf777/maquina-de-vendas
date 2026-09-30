@@ -95,6 +95,17 @@ class Efeitos:
     # antes de qualquer nova onda — mandar de novo para quem já disse "não fiz
     # pedido nenhum" é o caminho mais curto para um report na Meta.
     pretexto_contestado: bool = False
+    # A QUEM este desfecho entrega o lead. None = o padrão do CRM
+    # (`agent.tools.SUPERVISOR_NAME`, o João), que é o único vendedor da
+    # Recuperação — por isso o campo nasce ausente e o fluxo em produção carimba
+    # exatamente o que carimbava antes de ele existir.
+    #
+    # Existe porque a ValerIA de botões tem DOIS vendedores (João no atacado e na
+    # marca própria, Arthur na exportação) e sem este campo o nome do João era
+    # hardcoded nos dois registros do handoff: o `metadata.handoff` e o marcador
+    # `[encaminhar_humano]` que o KPI de transbordos do dashboard conta. Ou seja,
+    # 100% dos leads de exportação eram atribuídos a quem não os atendeu.
+    vendedor: str | None = None
 
 
 @dataclass(frozen=True)

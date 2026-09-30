@@ -226,6 +226,12 @@ def _ir_para(
             handoff=terminal.handoff,
             silenciar_ia=terminal.silenciar_ia,
             recontato_dias=dias,
+            # O `vendedor` declarado no terminal é a ÚNICA fonte de quem recebe o
+            # lead. Sem esta linha ele morria no registry: `effects._aplicar_handoff`
+            # carimbava o vendedor padrão (o João) e os handoffs de exportação
+            # apareciam no KPI e no `metadata.handoff` como se fossem dele — 100%
+            # deles, porque o ramo E nunca entrega a mais ninguém.
+            vendedor=terminal.vendedor,
         ),
         criterios=dict(criterios),
     )

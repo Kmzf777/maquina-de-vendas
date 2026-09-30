@@ -30,11 +30,16 @@ ou LLM. O fluxo inteiro é máquina de estados sobre `valeria_registry`.
    que não existe dá 404 na Meta — e a Meta recusa a mensagem INTEIRA quando não
    consegue buscar o header, o que deixaria o lead sem a tela de encaminhamento.
    Falha de publicação degrada para tela SEM foto, nunca para turno sem resposta.
-2. SEM CARTÃO DE CONTATO. O irmão manda o vCard do João porque lá a conversa
-   acontece no número dele. Aqui o handoff é na MESMA thread da ValerIA — o
-   vendedor responde nela — então o cartão seria uma segunda mensagem faturada
-   para resolver um degrau que este fluxo não tem. `valeria_engine` nunca liga
-   `Mensagem.enviar_cartao_vendedor`, e é de propósito.
+2. COM CARTÃO DE CONTATO — e a decisão ANTERIOR (não mandar) estava errada. Ela
+   dizia que "o handoff é na MESMA thread da ValerIA, então o vendedor responde
+   nela". Não responde: o João atende em 553491461669 e o Arthur em outro número,
+   os dois FORA do número da ValerIA. A auditoria do funil mediu que essa troca
+   de número perde 26% dos leads (131 de 500) e o cartão é o único degrau que o
+   lead tem para alcançar a pessoa — `agent/tools.py:2012` declara isso como
+   contrato de produção ("O sistema envia a mensagem e, em seguida, o cartão do
+   João — NÃO cole telefone, link ou wa.me"). Sem o cartão o corpo promete "ele
+   te responde em instantes" e não entrega caminho nenhum. Quem manda é o runner
+   (não o motor, que é puro): cartão é I/O e depende do CANAL.
 3. SEM REGRA DE IDADE. O irmão reinicia estado com mais de N dias porque lá o
    estado nasce de um DISPARO (30% dos cliques chegam fora da janela de 24h).
    Aqui o estado nasce do próprio lead falando, e a spec não declara janela
@@ -49,6 +54,12 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.agent.tools import (
+    EXPORTACAO_NAME,
+    EXPORTACAO_PHONE,
+    SUPERVISOR_NAME,
+    SUPERVISOR_PHONE,
+)
 from app.button_flow import config, effects, valeria_content, valeria_registry as reg
 from app.button_flow import valeria_engine as motor
 from app.button_flow import flows
@@ -68,13 +79,20 @@ logger = logging.getLogger(__name__)
 
 _LOG = "[VALERIA BOTOES]"
 
-# Rótulo do botão que ABRE a folha de opções numa mensagem de lista (limite da
-# Meta: 20 chars). Mora aqui e não no registry porque o registry é o contrato da
-# TELA de /campanhas, e `valeria_flow_content` é chaveada por `node_id` — este
-# texto não pertence a nó nenhum, é o mesmo para as duas listas do fluxo (N0 e
-# E1). Se algum dia a tela precisar editá-lo, ele ganha uma chave reservada como
-# a do nudge (`reg.CHAVE_NUDGE`), não um campo por nó.
-ROTULO_BOTAO_LISTA = "Ver opções"
+# ── O cartão de contato (ver decisão 2 no cabeçalho) ────────────────────────
+# (nome do vCard, telefone) por vendedor. A chave é o identificador do registry
+# (`reg.VENDEDOR_*`) e o valor sai de `agent/tools.py`, onde os números dos
+# vendedores já moram e de onde `encaminhar_humano` e a ponte do
+# `buffer/processor.py` já os leem. Reusa, não redeclara: um segundo lugar com o
+# telefone do João é um segundo lugar para ele ficar velho.
+#
+# O nome do cartão NÃO é `reg.VENDEDOR_*`: aqueles são identificadores sem acento
+# ("Joao Bras"), porque vão no argumento `vendedor=` de `encaminhar_humano`. Aqui
+# é o texto que o lead vê na agenda do telefone dele.
+CARTOES: dict[str, tuple[str, str]] = {
+    reg.VENDEDOR_ATACADO: (SUPERVISOR_NAME, SUPERVISOR_PHONE),
+    reg.VENDEDOR_EXPORTACAO: (EXPORTACAO_NAME, EXPORTACAO_PHONE),
+}
 
 # ── A foto (ver decisão 1 no cabeçalho) ─────────────────────────────────────
 _DIR_FOTOS = Path(__file__).resolve().parent.parent / "photos"
@@ -226,19 +244,23 @@ def _pares(botoes) -> list[tuple[str, str]]:
 
 
 async def enviar_no(provider, telefone: str, no: reg.No, contexto: dict | None,
-                    *, corpo: str | None = None) -> dict | None:
+                    *, corpo: str | None = None,
+                    rotulo_lista: str | None = None) -> dict | None:
     """Envia a tela de um nó. UMA mensagem, sempre.
 
     `corpo` sobrescreve `no.corpo` e é por onde o reoferecimento passa: o motor
     devolve o corpo do nudge com os MESMOS botões do nó, então o nudge de um nó
     de foto sai como a mesma tela com outro texto — e continua sendo uma
     mensagem só.
+
+    `rotulo_lista` é o override da chave reservada `reg.CHAVE_ROTULO_LISTA` — o
+    texto do botão que abre a folha de opções. Ausente = o default do registry.
     """
     texto = _resolver(corpo if corpo is not None else no.corpo, contexto)
     if no.tela == "lista":
         linhas = [(b.id, b.titulo, b.descricao) for b in no.botoes]
         return await provider.send_interactive_list(
-            telefone, texto, ROTULO_BOTAO_LISTA, linhas,
+            telefone, texto, rotulo_lista or reg.ROTULO_BOTAO_LISTA, linhas,
         )
     if not no.botoes:
         # Nó sem botão não existe no registry hoje (o teste de alcançabilidade
@@ -400,12 +422,22 @@ async def processar_inbound(
                      exc_info=True)
 
 
-def _carregar_conteudo() -> tuple[dict, dict, str | None]:
-    """(nós, terminais, corpo do nudge) com os overrides da tela aplicados.
+def _carregar_conteudo() -> tuple[dict, dict, str | None, str | None]:
+    """(nós, terminais, corpo do nudge, rótulo da lista) com os overrides da tela.
 
     `valeria_content.carregar` é fail-open (devolve `{}` em qualquer erro), então
     migration pendente ou PostgREST fora produz exatamente os defaults do
     registry — e não uma ValerIA muda.
+
+    Os TERMINAIS passam por `aplicar_terminais`, e não por `aplicar`: `Terminal`
+    não tem `botoes`. Sem essa segunda chamada o operador editava o texto do
+    handoff na tela, salvava, e o lead continuava recebendo o do registry —
+    override morto e invisível justamente no turno que a auditoria 08/07 chama de
+    "momento mais frágil" da conversa.
+
+    As duas chaves RESERVADAS (nudge e rótulo da lista) saem à parte porque não
+    são nó: `valeria_flow_content` é chaveada por `node_id` e elas não têm nó
+    nenhum a que pertencer.
     """
     try:
         overrides = valeria_content.carregar(reg.FLOW_ID)
@@ -413,10 +445,12 @@ def _carregar_conteudo() -> tuple[dict, dict, str | None]:
         logger.warning("%s overrides não lidos — defaults do registry: %s", _LOG, exc)
         overrides = {}
     nudge = (overrides.get(reg.CHAVE_NUDGE) or {}).get("corpo")
+    rotulo_lista = (overrides.get(reg.CHAVE_ROTULO_LISTA) or {}).get("corpo")
     return (
         valeria_content.aplicar(reg.NOS, overrides),
         valeria_content.aplicar_terminais(reg.TERMINAIS, overrides),
         nudge or None,
+        rotulo_lista or None,
     )
 
 
@@ -480,8 +514,9 @@ def _contexto_de_envio(destino: reg.No | None, decisao: motor.Decisao) -> dict:
 
 
 async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
-                  provider, nos: dict, terminais: dict) -> None:
-    """Manda a tela do destino e persiste a mensagem. Fail-soft.
+                  channel: dict | None, provider, nos: dict, terminais: dict,
+                  rotulo_lista: str | None = None) -> None:
+    """Manda a tela do destino, o cartão do vendedor e persiste. Fail-soft.
 
     O corpo vem SEMPRE de `decisao.mensagem`, e não do registry: é o motor que
     sabe se este turno é a tela do nó ou o reoferecimento dele. A ESTRUTURA
@@ -498,7 +533,8 @@ async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
     try:
         if no is not None:
             resultado = await enviar_no(provider, destino, no, contexto,
-                                        corpo=mensagem.corpo)
+                                        corpo=mensagem.corpo,
+                                        rotulo_lista=rotulo_lista)
         elif terminal is not None:
             resultado = await enviar_terminal(provider, destino, terminal,
                                               contexto, corpo=mensagem.corpo)
@@ -514,6 +550,93 @@ async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
     if resultado is None:
         return
     await _persistir_mensagem(conversation, lead, mensagem, contexto, no, resultado)
+    await _enviar_cartao(provider, destino, terminal, channel,
+                         conversation=conversation, lead=lead)
+
+
+def _cartao_do_terminal(terminal: reg.Terminal | None,
+                        channel: dict | None) -> tuple[str, str] | None:
+    """(nome, telefone) do cartão a enviar neste desfecho, ou None.
+
+    Três motivos para não haver cartão, e os três são desfechos normais:
+      • o destino não entrega ninguém (`handoff=False`: adiamento, opt-out, fim);
+      • o terminal não declara vendedor — nada a apresentar;
+      • CANAL DO VENDEDOR: a conversa JÁ está no número dele. Mandar o cartão de
+        quem está do outro lado da conversa é absurdo, e é o mesmo raciocínio que
+        `engine.py:317` implementa para a Recuperação (que roda no número do João).
+
+    A regra do canal é por NÚMERO, não por `mode == "human"` como no irmão, e a
+    diferença importa porque aqui existem DOIS vendedores: no número do João, o
+    cartão do Arthur continua sendo exatamente o que o lead de exportação precisa
+    para alcançá-lo. Comparar o número é o que distingue "o vendedor deste cartão
+    já está aqui" de "algum humano está aqui".
+
+    Quando o canal é humano e não sabemos o número dele, cai na regra do irmão:
+    sem poder provar que não é o número deste vendedor, não manda. É o único caso
+    em que o silêncio é a escolha — e ele nunca acontece no número da ValerIA, que
+    é onde 100% deste fluxo roda hoje.
+    """
+    if terminal is None or not terminal.handoff:
+        return None
+    cartao = CARTOES.get(terminal.vendedor or "")
+    if cartao is None:
+        if terminal.vendedor:
+            # Vendedor declarado no registry sem cartão aqui: erro de DADO, só um
+            # deploy conserta, e o lead fica sem caminho até a pessoa.
+            logger.error("%s terminal %s entrega a %r e não há cartão declarado",
+                         _LOG, terminal.id, terminal.vendedor)
+        return None
+    do_canal = _so_digitos((channel or {}).get("phone"))
+    if do_canal and do_canal == _so_digitos(cartao[1]):
+        return None
+    if not do_canal and (channel or {}).get("mode") == "human":
+        logger.info("%s canal humano sem telefone conhecido — cartão de %s omitido",
+                    _LOG, cartao[0])
+        return None
+    return cartao
+
+
+def _so_digitos(valor: str | None) -> str:
+    """Só os dígitos: `channels.phone` e o número do cartão podem vir formatados."""
+    return re.sub(r"\D", "", valor or "")
+
+
+async def _enviar_cartao(provider, destino: str, terminal: reg.Terminal | None,
+                         channel: dict | None, *, conversation: dict,
+                         lead: dict) -> None:
+    """Manda o vCard do vendedor logo depois do corpo do handoff. Fail-soft.
+
+    Depois, e não antes: o corpo é que explica o cartão ("já chamei o João Brás
+    aqui"), e a ordem inversa entregaria um contato sem contexto. Mesma ordem de
+    `agent/tools.py:944` e de `runner.py:513`, os dois caminhos de handoff que já
+    rodam em produção.
+
+    Fail-soft e por último no turno de propósito: os efeitos de CRM já foram
+    aplicados e o corpo já saiu. Uma exceção aqui desfaria o turno inteiro — o
+    estado não avançaria e o lead receberia o mesmo handoff de novo no próximo
+    toque, com segundo carimbo e segundo movimento de card.
+    """
+    cartao = _cartao_do_terminal(terminal, channel)
+    if cartao is None:
+        return
+    nome, telefone = cartao
+    try:
+        await provider.send_contact(destino, contact_name=nome, contact_phone=telefone)
+    except Exception as exc:
+        # WARNING, não ERROR: o handoff aconteceu e está registrado no CRM; o que
+        # se perdeu é o atalho até o vendedor.
+        logger.warning("%s cartão de %s não enviado conv=%s: %s", _LOG, nome,
+                       conversation.get("id"), exc)
+        return
+    try:
+        await asyncio.to_thread(
+            save_message, conversation.get("id"), lead.get("id"), "system",
+            f"[valeria_botoes] cartão de contato de {nome} enviado",
+            conversation.get("stage"), sent_by="valeria_botoes",
+        )
+    except Exception as exc:
+        logger.warning("%s cartão enviado mas não registrado conv=%s: %s", _LOG,
+                       conversation.get("id"), exc)
 
 
 async def _persistir_mensagem(conversation: dict, lead: dict, mensagem, contexto,
@@ -567,7 +690,8 @@ async def _executar_turno(
         return
 
     evento = _montar_evento(texto, message_type, metadata)
-    nos, terminais, corpo_nudge = await asyncio.to_thread(_carregar_conteudo)
+    nos, terminais, corpo_nudge, rotulo_lista = await asyncio.to_thread(
+        _carregar_conteudo)
     no = no_atual(estado)
     decisao = _decidir(no, evento, estado, nos, terminais, corpo_nudge)
 
@@ -580,6 +704,11 @@ async def _executar_turno(
         effects.aplicar, decisao.efeitos, lead=lead,
         conversation_id=conversation_id,
         evidencia=_evidencia_do_turno(evento, texto, wamid),
+        # Quem lê as notas que `effects` escreve é o vendedor, antes de abordar o
+        # lead. O default de `aplicar` é a Recuperação, e deixá-lo passar aqui
+        # carimbaria "bot de recuperação" num lead que nunca esteve numa onda de
+        # recuperação — mentira de auditoria no card mais valioso do funil.
+        fluxo=effects.FLUXO_VALERIA,
     )
     if not avancar:
         # Só o opt-out devolve False. Confirmar "não te mando mais nada" sem ter
@@ -590,9 +719,9 @@ async def _executar_turno(
                      conversation_id, lead_id)
         return
 
-    await _enviar(decisao, lead=lead, conversation=conversation,
-                  provider=provider, nos=nos, terminais=terminais)
-    await _anotar_vendedor(decisao, terminais, lead_id, conversation_id)
+    await _enviar(decisao, lead=lead, conversation=conversation, channel=channel,
+                  provider=provider, nos=nos, terminais=terminais,
+                  rotulo_lista=rotulo_lista)
     await aplicar_criterios(lead_id, decisao.criterios,
                             rotulo=_rotulo_clicado(evento))
 
@@ -632,28 +761,14 @@ def _evidencia_do_turno(evento, texto: str, wamid: str | None) -> dict:
     return dados
 
 
-async def _anotar_vendedor(decisao: motor.Decisao, terminais: dict,
-                           lead_id: str | None, conversation_id: str | None) -> None:
-    """Deixa no CRM QUEM recebeu o lead, quando não é o vendedor padrão.
-
-    `effects._aplicar_handoff` carimba sempre `agent.tools.SUPERVISOR_NAME` (o
-    João) — porque foi escrito para a Recuperação, onde só existe um vendedor.
-    Aqui o ramo de exportação entrega ao Arthur (`reg.VENDEDOR_EXPORTACAO`), e
-    sem esta nota o card do lead do Arthur ficaria indistinguível dos do João no
-    Kanban. A nota é o remendo legível; o conserto de raiz é `Efeitos` ganhar um
-    campo `vendedor` — está reportado ao orquestrador, não é desta task.
-    """
-    if not decisao.efeitos.handoff or not lead_id:
-        return
-    terminal = terminais.get(decisao.proximo_no)
-    vendedor = getattr(terminal, "vendedor", None)
-    if not vendedor or vendedor == reg.VENDEDOR_ATACADO:
-        return
-    await asyncio.to_thread(
-        effects.anotar, lead_id, conversation_id,
-        f"➡️ [VALERIA BOTÕES] Lead encaminhado a {vendedor} "
-        f"(ramo de exportação), não ao vendedor padrão.",
-    )
+# A nota "Lead encaminhado a <vendedor>, não ao vendedor padrão" que existia aqui
+# FOI REMOVIDA, e não por limpeza: ela era o remendo de um defeito que agora tem
+# conserto de raiz. `Efeitos.vendedor` (engine.py) leva o vendedor do terminal até
+# `effects._aplicar_handoff`, que já grava o nome certo nos TRÊS registros do
+# handoff (marcador do dashboard, `metadata.handoff` e a própria nota de
+# transbordo). Mantê-la escreveria uma segunda nota e uma segunda system message
+# dizendo o que a primeira já diz — ruído em cima da conversa mais valiosa do
+# funil, que é exatamente o que `_notificar_sem_rodar` documenta não querer.
 
 
 async def _notificar_sem_rodar(lead: dict, conversation: dict, estado,

@@ -199,6 +199,28 @@ def validar(node_id: str, payload: dict) -> str | None:
             return "o corpo do nudge não pode ficar vazio"
         return None
 
+    if node_id == reg.CHAVE_ROTULO_LISTA:
+        # A segunda chave reservada (ver `reg.CHAVE_ROTULO_LISTA`): o rótulo do
+        # botão que abre a folha de opções. Guardado em `corpo` e não em `rotulos`
+        # porque `rotulos` é um mapa `botao_id -> texto` e este botão não é de nó
+        # nenhum — não tem id para ser chave.
+        #
+        # É o único override com LIMITE DE TAMANHO fora dos nós, e o limite é o que
+        # torna a validação obrigatória aqui: 20 caracteres é teto da Meta, e um
+        # rótulo acima dele faz a Meta RECUSAR a mensagem inteira — a ValerIA fica
+        # muda em N0 e E1, as duas telas de lista, depois de o operador achar que
+        # salvou. Branco tem o mesmo efeito (folha sem botão de abrir).
+        rotulo = payload.get("corpo")
+        if rotulo is not None:
+            if not rotulo.strip():
+                return "o rótulo do botão de lista não pode ficar vazio"
+            if len(rotulo) > reg.LIMITE_ROTULO_BOTAO:
+                return (
+                    f"o rótulo do botão de lista tem {len(rotulo)} caracteres, "
+                    f"o limite é {reg.LIMITE_ROTULO_BOTAO}"
+                )
+        return None
+
     no = reg.NOS.get(node_id)
     if no is not None:
         corpo = payload.get("corpo")

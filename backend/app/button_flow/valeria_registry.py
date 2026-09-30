@@ -171,6 +171,20 @@ CHAVE_NUDGE = "__nudge__"
 
 CORPO_NUDGE = "pra eu te passar o valor certo, é só tocar numa das opções 👇"
 
+# ── O rótulo do botão que ABRE a folha de opções numa tela de lista ─────────
+# Mesma situação do nudge, e por isso a MESMA solução: é texto que o lead LÊ (nas
+# duas listas do fluxo, N0 e E1), não pertence a nó nenhum — é o mesmo para as
+# duas — e `valeria_flow_content` é chaveada por `node_id`. Sem chave reservada
+# nenhuma linha da tabela o alcança: ele morava no runner e era o único texto
+# visível ao lead que a tela não conseguia editar.
+#
+# Limite de 20 caracteres é da Meta (`LIMITE_ROTULO_BOTAO`), não preferência:
+# acima dele o envio da lista é RECUSADO e a ValerIA fica muda na tela de
+# entrada. `valeria_content.validar` é quem fecha esse portão na gravação.
+CHAVE_ROTULO_LISTA = "__rotulo_lista__"
+
+ROTULO_BOTAO_LISTA = "Ver opções"
+
 # Teto de reenvios por ATENDIMENTO, nao por no. Por no, 17 nos dariam 51 nudges:
 # o desperdicio maximo por lead passaria de 3 para 51 mensagens faturadas.
 TETO_NUDGES = 3

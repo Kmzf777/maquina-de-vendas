@@ -28,16 +28,38 @@ from app.leads.service import (
 
 logger = logging.getLogger(__name__)
 
-# Motivo do handoff em um lugar só: ele vai para o carimbo `metadata.handoff` E para
-# o marcador de sistema, e os dois divergirem tornaria a auditoria confusa.
+# ── Qual bot escreveu a nota ────────────────────────────────────────────────
+# Este módulo serve DOIS fluxos de botões (a Recuperação e a ValerIA), e quem lê
+# tudo que ele grava é o vendedor, na hora de abordar o lead. "bot de recuperação"
+# num lead que chegou pela ValerIA descreve uma onda de recuperação que nunca
+# existiu — a mesma classe de mentira de auditoria que o relabel de 09/09 corrigiu
+# nos rótulos (ver `ROTULOS_APOSENTADOS` em
+# tests/test_button_flow_effects_2026_08_20.py).
 #
-# Genérico de propósito. O texto antigo citava o rótulo "Quero comprar agora", que
-# deixou de existir no relabel de 09/09 (flows.py) — e o handoff hoje tem TRÊS
-# origens: o botão "Preciso repor"/"Retomar o pedido", a classe QUENTE da camada 2
-# (texto livre: "me manda a tabela") e o botão "Atualizar dados" da trilha C, que
-# não é venda nenhuma. Citar um rótulo específico voltaria a mentir na auditoria no
-# dia seguinte ao próximo relabel.
-_MOTIVO_HANDOFF = "bot de recuperação: lead pediu atendimento do vendedor"
+# O rótulo é do CHAMADOR porque só ele sabe qual bot está rodando: `aplicar` recebe
+# `Efeitos`, que é a mesma dataclass nos dois fluxos. O DEFAULT é a Recuperação,
+# então o fluxo em produção grava texto byte-idêntico ao de antes desta mudança.
+#
+# Substantivo masculino de propósito: o rótulo entra em prosa já pronta ("no {…}",
+# "via {…}"), e um nome como "ValerIA de botões" produziria "no ValerIA".
+FLUXO_RECUPERACAO = "bot de recuperação"
+FLUXO_VALERIA = "bot de botões da ValerIA"
+
+
+def _motivo_handoff(fluxo: str) -> str:
+    """Motivo do handoff em um lugar só: ele vai para o carimbo `metadata.handoff`
+    E para o marcador de sistema, e os dois divergirem tornaria a auditoria confusa.
+
+    Genérico de propósito. O texto antigo citava o rótulo "Quero comprar agora", que
+    deixou de existir no relabel de 09/09 (flows.py) — e o handoff hoje tem TRÊS
+    origens na Recuperação: o botão "Preciso repor"/"Retomar o pedido", a classe
+    QUENTE da camada 2 (texto livre: "me manda a tabela") e o botão "Atualizar
+    dados" da trilha C, que não é venda nenhuma; na ValerIA são quatro botões em
+    três ramos. Citar um rótulo específico voltaria a mentir na auditoria no dia
+    seguinte ao próximo relabel.
+    """
+    return f"{fluxo}: lead pediu atendimento do vendedor"
+
 
 # ── Funil "Reativação Bling" e suas 3 etapas de DESFECHO ────────────────────
 # Mesmo uuid de scripts/reativacao/lote_completo.py:32 (onde os 1.208 cards
@@ -60,13 +82,18 @@ CANAL_TEXTO = "whatsapp_texto"
 
 def aplicar(
     efeitos: Efeitos, *, lead: dict, conversation_id: str,
-    evidencia: dict | None = None,
+    evidencia: dict | None = None, fluxo: str = FLUXO_RECUPERACAO,
 ) -> bool:
     """Aplica os efeitos da decisão. Retorna False se o fluxo NÃO deve avançar.
 
     Só o opt-out bloqueia: se não conseguimos gravar `opt_out=true`, avançar o nó
     encerraria o fluxo com o lead ainda elegível a disparos — exatamente o que ele
     acabou de pedir para não acontecer. O nó fica onde está e o próximo clique retenta.
+
+    `fluxo` é o nome do bot que está rodando, e ele entra em TODA nota que este
+    módulo escreve (ver `FLUXO_RECUPERACAO`): a nota é o que o vendedor lê antes de
+    abordar o lead, e ela não pode citar o fluxo errado. Default = Recuperação, para
+    o chamador em produção não mudar de comportamento.
 
     `evidencia` é o registro cru do turno que originou o opt-out (só é lida quando
     `efeitos.optout`); o contrato está em `_campos_de_evidencia`. Ela alimenta
@@ -88,7 +115,8 @@ def aplicar(
             logger.warning("[BUTTON FLOW] tags %s falharam p/ lead %s: %s",
                            efeitos.tags, lead_id, exc)
 
-    if efeitos.optout and not _aplicar_optout(lead, conversation_id, evidencia):
+    if efeitos.optout and not _aplicar_optout(lead, conversation_id, evidencia,
+                                              fluxo=fluxo):
         return False
 
     # ANTES do handoff de propósito: os dois escrevem `leads.metadata` a partir da
@@ -101,18 +129,19 @@ def aplicar(
         _marcar_pretexto_contestado(lead, conversation_id)
 
     if efeitos.silenciar_ia:
-        _silenciar_ia(lead, conversation_id)
+        _silenciar_ia(lead, conversation_id, fluxo=fluxo)
 
     if efeitos.handoff:
-        _aplicar_handoff(lead, conversation_id)
+        _aplicar_handoff(lead, conversation_id, vendedor=efeitos.vendedor, fluxo=fluxo)
 
     if efeitos.recontato_dias:
-        _agendar_recontato(lead, efeitos.recontato_dias, conversation_id)
+        _agendar_recontato(lead, efeitos.recontato_dias, conversation_id, fluxo=fluxo)
 
     return True
 
 
-def _aplicar_optout(lead: dict, conversation_id: str, evidencia: dict | None = None) -> bool:
+def _aplicar_optout(lead: dict, conversation_id: str, evidencia: dict | None = None,
+                    *, fluxo: str = FLUXO_RECUPERACAO) -> bool:
     """Honra o opt-out e registra a PROVA de que ele foi pedido. Ver `aplicar`.
 
     Duas gravações, em ordem: a completa (booleano + evidência) e, se ela falhar, a
@@ -163,7 +192,7 @@ def _aplicar_optout(lead: dict, conversation_id: str, evidencia: dict | None = N
     # existem hoje em produção nasceram de um clique que ninguém registrou — a nota
     # tem que ser a evidência legível de que este foi registrado.
     anotar(lead_id, conversation_id,
-           "🚫 [OPT-OUT] Lead pediu para parar de receber mensagens no bot de recuperação.")
+           f"🚫 [OPT-OUT] Lead pediu para parar de receber mensagens no {fluxo}.")
     return True
 
 
@@ -283,7 +312,8 @@ def _marcar_pretexto_contestado(lead: dict, conversation_id: str) -> None:
            "pedido / não conhecer a compra). NÃO reenviar campanha para este contato.")
 
 
-def _silenciar_ia(lead: dict, conversation_id: str) -> None:
+def _silenciar_ia(lead: dict, conversation_id: str, *,
+                  fluxo: str = FLUXO_RECUPERACAO) -> None:
     """Entrega a conversa ao vendedor sem carimbar handoff.
 
     Encerrar o nó só tira o BOT do caminho — no número da ValerIA o LLM assumiria em
@@ -298,11 +328,13 @@ def _silenciar_ia(lead: dict, conversation_id: str) -> None:
         logger.warning("[BUTTON FLOW] falha ao silenciar IA do lead %s: %s", lead_id, exc)
         return
     anotar(lead_id, conversation_id,
-           "🙋 [ATENDIMENTO HUMANO] Lead insistiu em texto livre no bot de recuperação; "
+           f"🙋 [ATENDIMENTO HUMANO] Lead insistiu em texto livre no {fluxo}; "
            "IA desligada, conversa entregue ao vendedor.")
 
 
-def _aplicar_handoff(lead: dict, conversation_id: str) -> None:
+def _aplicar_handoff(lead: dict, conversation_id: str, *,
+                     vendedor: str | None = None,
+                     fluxo: str = FLUXO_RECUPERACAO) -> None:
     """Handoff enxuto: sem resumo por LLM (não houve conversa) e sem rescue job.
 
     Dois registros do MESMO handoff, porque quem os lê é diferente:
@@ -318,8 +350,17 @@ def _aplicar_handoff(lead: dict, conversation_id: str) -> None:
     `conversion_event='qualified'`, então cada entrada nela vira uma linha
     deduplicada em `conversion_events` (automation/triggers.py), que é a métrica do
     agente sem escrever uma linha de código para isso.
+
+    `vendedor` é QUEM recebe o lead, e os três registros têm de dizer o mesmo nome.
+    Ausente = `SUPERVISOR_NAME`, que é o único vendedor da Recuperação; era
+    hardcoded, e por isso os handoffs de exportação da ValerIA (ramo do Arthur,
+    `reg.TERMINAIS['T_HANDOFF_ARTHUR'].vendedor`) eram TODOS atribuídos ao João —
+    no KPI do dashboard e no `metadata.handoff`, ou seja, em tudo que alguém
+    consulta depois para saber quem atendeu.
     """
     lead_id = lead["id"]
+    vendedor = vendedor or SUPERVISOR_NAME
+    motivo = _motivo_handoff(fluxo)
     try:
         update_lead(lead_id, ai_enabled=False)
     except Exception as exc:
@@ -334,26 +375,27 @@ def _aplicar_handoff(lead: dict, conversation_id: str) -> None:
         # vendedor e mesmo assim some do KPI: um disparo de 1.208 leads mostraria
         # dezenas de quentes com zero transbordos.
         save_message(lead_id, "system",
-                     handoff_system_marker(SUPERVISOR_NAME, _MOTIVO_HANDOFF),
+                     handoff_system_marker(vendedor, motivo),
                      conversation_id=conversation_id)
     except Exception as exc:
         logger.warning("[BUTTON FLOW] marcador de handoff não gravado p/ conv %s: %s",
                        conversation_id, exc)
     atualizar_metadata(lead, {
         "handoff": {
-            "vendedor": SUPERVISOR_NAME,
-            "motivo": _MOTIVO_HANDOFF,
+            "vendedor": vendedor,
+            "motivo": motivo,
             "at": datetime.now(timezone.utc).isoformat(),
             "origem": "button_flow",
         },
     }, rotulo="metadata.handoff")
     _mover_deal(lead_id, *STAGE_QUER_REPOR)
     anotar(lead_id, conversation_id,
-           f"➡️ [TRANSBORDO p/ {SUPERVISOR_NAME}] {_MOTIVO_HANDOFF}. "
+           f"➡️ [TRANSBORDO p/ {vendedor}] {motivo}. "
            f"Nenhuma qualificação por conversa — abordar direto.")
 
 
-def _agendar_recontato(lead: dict, dias: int, conversation_id: str) -> None:
+def _agendar_recontato(lead: dict, dias: int, conversation_id: str, *,
+                       fluxo: str = FLUXO_RECUPERACAO) -> None:
     """Agenda o recontato em DIAS corridos.
 
     Era em meses e multiplicava por 30. Virou dias no relabel de 09/09 porque o nível
@@ -374,7 +416,7 @@ def _agendar_recontato(lead: dict, dias: int, conversation_id: str) -> None:
     _mover_deal(lead_id, *STAGE_RECONTATO)
     anotar(lead_id, conversation_id,
            f"⏰ [RECONTATO] Lead pediu contato em ~{dias} dias "
-           f"({quando.date().isoformat()}), via bot de recuperação.")
+           f"({quando.date().isoformat()}), via {fluxo}.")
 
 
 def atualizar_metadata(lead: dict, campos: dict, *, rotulo: str) -> bool:

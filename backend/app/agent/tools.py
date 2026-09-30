@@ -284,6 +284,20 @@ SUPERVISOR_NAME = "João - Café Canastra"
 SUPERVISOR_PHONE = "553491461669"
 _SUPERVISOR_NAME = SUPERVISOR_NAME
 _SUPERVISOR_PHONE = SUPERVISOR_PHONE
+# Segundo destino de transbordo: o Arthur, responsável de EXPORTAÇÃO. É o vendedor do
+# ramo E da ValerIA de botões (`valeria_registry.VENDEDOR_EXPORTACAO`), que o LLM não
+# conhece — nenhuma tool daqui o usa hoje; quem manda o cartão dele é
+# `valeria_runner`. Mora AQUI, e não no registry do fluxo, porque o registry é dado
+# puro da TELA e o número do vendedor é o mesmo tipo de contrato de produção que o
+# do João: dois donos para "onde está o vendedor" é a divergência que
+# campaigns/node_registry.py documenta.
+#
+# Número FORNECIDO PELO DONO em 30/09/2026: +55 34 3226-2600, normalizado para só
+# dígitos como a Meta exige. É prefixo de FIXO em WhatsApp Business (linha fixa não
+# tem o 9 do celular) — é por isso que tem a mesma contagem de dígitos do número do
+# João mesmo sendo outro tipo de linha, e não é um dígito faltando.
+EXPORTACAO_NAME = "Arthur - Café Canastra"
+EXPORTACAO_PHONE = "553432262600"
 # Teto de segurança para a mensagem de despedida escrita pela IA (usabilidade WhatsApp).
 _MAX_DESPEDIDA_LEN = 600
 
