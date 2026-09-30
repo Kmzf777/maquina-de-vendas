@@ -30,6 +30,17 @@ presente na tabela sem distinguir namespace, então terminal usa a MESMA linha
 que nó — só o `aplicar` correspondente muda, porque `Terminal` não tem
 `botoes`: é `aplicar_terminais`, não uma chave nova em `aplicar`.
 
+── A terceira leitura: `historico_de_rotulos` ───────────────────────────────
+`aplicar` e `aplicar_terminais` respondem "qual texto o lead VÊ". Falta a
+pergunta oposta, e ela vale uma mensagem faturada: "o lead tocou num rótulo que
+JÁ SAIU DO AR — que botão era?". Quem responde é `valeria_engine._casar`, lendo
+`{node_id: {rotulo: botao_id}}`; quem guarda é a coluna
+`valeria_flow_content.rotulos_antigos`, na forma `[{botao_id, rotulo, em}]`. O
+meio — a conversão de uma forma na outra — é `historico_de_rotulos`, e ele mora
+aqui porque este módulo é o dono da forma da tabela. Sem ele a rede de segurança
+ficava GRAVADA e nunca LIDA: o clique de quem recebeu a tela antiga não casava
+com botão nenhum e caía no nudge.
+
 Blindagem herdada, e reforçada: terminal carrega EFEITO (`vendedor`, `tags`,
 `handoff`, `optout`, `silenciar_ia`, `prazos`) que `Botao.grava` nem sonha em
 ter — errar aqui não rebaixa um score, troca de vendedor ou desliga um
@@ -163,6 +174,66 @@ def aplicar_terminais(terminais: dict, overrides: dict) -> dict:
             resultado[terminal_id] = replace(terminal, corpo=corpo)
 
     return resultado
+
+
+def historico_de_rotulos(overrides: dict) -> dict:
+    """Converte os `rotulos_antigos` dos overrides no mapa que o MOTOR indexa. Pura.
+
+    Da forma da COLUNA — `[{botao_id, rotulo, em}]` por linha — para a forma de
+    `valeria_engine._casar`: `{node_id: {rotulo: botao_id}}`. As duas formas são
+    diferentes de propósito e nenhuma muda:
+
+      • a coluna é LISTA porque é assim que ela acumula (`_versionar` appenda, nunca
+        sobrescreve), porque a lista casa com o default `'[]'::jsonb` da migration
+        20260929 e porque ela sobrevive a dois botões que um dia compartilhem
+        rótulo — um dict não sobreviveria;
+      • o mapa é a estrutura de BUSCA: `_casar` recebe um rótulo e precisa do id do
+        botão, então a chave tem de ser o rótulo.
+
+    Sem esta conversão, `_casar` não encontra nada (`estado.get("rotulos_antigos")`
+    volta None), o lead que recebeu a tela ANTIGA e tocou nela cai no nudge e a
+    edição de um rótulo na tela passa a custar uma mensagem faturada por lead —
+    exatamente o acidente que a coluna existe para impedir.
+
+    Rótulo REPETIDO fica com a entrada MAIS RECENTE: `_versionar` appenda, então a
+    última da lista descreve a tela mais parecida com a que o lead tem na mão.
+
+    Não exige `corpo` nem `rotulos` na linha, e isso é contrato: a linha que
+    `DELETE /api/valeria-flow/{node_id}` deixa para trás tem os dois NULOS e o
+    histórico intacto — é o instante em que o rótulo editado acaba de sair do ar e
+    em que o histórico mais importa.
+
+    Nó sem histórico NÃO entra no mapa (em vez de entrar com `{}`): manter a
+    diferença observável entre "não há histórico" e "há histórico vazio" é o que
+    deixa o runner não tocar no `flow_state` de quem nunca teve rótulo editado.
+
+    Tolera qualquer forma: `jsonb` aceita escalar, array e tipo errado em qualquer
+    campo, e este valor chega do banco sem esquema. Uma entrada torta é descartada
+    sozinha, sem levar as boas — nada no caminho do inbound pode estourar por isso.
+    """
+    if not isinstance(overrides, dict):
+        return {}
+    mapa: dict[str, dict[str, str]] = {}
+    for node_id, override in overrides.items():
+        if not isinstance(node_id, str) or not isinstance(override, dict):
+            continue
+        entradas = override.get("rotulos_antigos")
+        if not isinstance(entradas, list):
+            continue
+        por_rotulo: dict[str, str] = {}
+        for entrada in entradas:
+            if not isinstance(entrada, dict):
+                continue
+            rotulo = entrada.get("rotulo")
+            botao_id = entrada.get("botao_id")
+            if not isinstance(rotulo, str) or not rotulo.strip():
+                continue
+            if not isinstance(botao_id, str) or not botao_id:
+                continue
+            por_rotulo[rotulo] = botao_id
+        if por_rotulo:
+            mapa[node_id] = por_rotulo
+    return mapa
 
 
 def _limite_de_rotulo(no: reg.No) -> int:

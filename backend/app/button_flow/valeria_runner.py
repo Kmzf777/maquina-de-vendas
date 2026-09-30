@@ -4,13 +4,15 @@ Irmão de `button_flow/runner.py` (o runner da Recuperação) e com a mesma divi
 guardas -> evento -> decisão -> efeitos -> envio -> estado. `valeria_engine.decidir`
 é puro e `valeria_registry` é só dado; aqui ficam o banco, a Meta e o CRM.
 
-O que é REUSADO do irmão, e por quê: `_montar_evento`, `_reler_estado` e
-`_motivo_para_nao_rodar` não têm nada de Recuperação dentro — são,
-respectivamente, "clique ou texto?", "relê `flow_state` depois do lock" e "um
-humano já assumiu?". Duas cópias divergiriam no primeiro webhook fora do padrão,
-que é a classe de bug que `campaigns/node_registry.py` documenta. O que NÃO é
-reusado é `_envelhecer` (amarrado a `flows.NO_INTERESSE` e à janela de retomada da
-Recuperação) nem `_notificar_sem_rodar` (o texto diz "[RECUPERAÇÃO]").
+O que é REUSADO do irmão, e por quê: `_montar_evento`, `_reler_estado`,
+`_motivo_para_nao_rodar`, `_historico` e `_e_autoresponder` não têm nada de
+Recuperação dentro — são, respectivamente, "clique ou texto?", "relê `flow_state`
+depois do lock", "um humano já assumiu?", "as 6 últimas linhas da conversa" e "este
+texto é o robô de saudação do lead?". Duas cópias divergiriam no primeiro webhook
+fora do padrão, que é a classe de bug que `campaigns/node_registry.py` documenta —
+e duas cópias de "isto é um robô?" divergiriam na primeira mensagem estranha. O que
+NÃO é reusado é `_envelhecer` (amarrado a `flows.NO_INTERESSE` e à janela de
+retomada da Recuperação) nem `_notificar_sem_rodar` (o texto diz "[RECUPERAÇÃO]").
 
 Zero IA, e isso é contrato: nenhuma linha aqui chama classificador, orchestrator
 ou LLM. O fluxo inteiro é máquina de estados sobre `valeria_registry`.
@@ -45,6 +47,28 @@ ou LLM. O fluxo inteiro é máquina de estados sobre `valeria_registry`.
    Aqui o estado nasce do próprio lead falando, e a spec não declara janela
    nenhuma: inventar uma seria comportamento não especificado. Um clique muito
    antigo retoma o nó, como o registry declara.
+
+── As duas lacunas fechadas em 30/09/2026 ───────────────────────────────────
+4. DETECTOR DE AUTORESPONDER PRÓPRIO (`_e_robo_do_lead`). O gate de
+   `buffer/processor.py` dá `return` INCONDICIONAL quando um fluxo de botões
+   assume a conversa, e o gate determinístico de autoresponder do processor
+   (`_handle_autoresponder`, caso Letícia/Duo Gelatto) mora DEPOIS desse return —
+   então este fluxo NUNCA passava por ele. ~28% das "respostas" da base são a
+   saudação automática do WhatsApp Business do PRÓPRIO cliente (17 de 36 textos
+   livres do broadcast `utilidade_geral_produto_v1`, 494 entregues). Sem detector,
+   cada uma chegava como texto livre, o motor reoferecia os botões e o lead podia
+   gastar os 3 nudges inteiros — 3 mensagens faturadas desde que a Meta passou a
+   cobrar por mensagem enviada (01/10/2026) — discutindo com um robô que nunca vai
+   tocar em botão nenhum. O detector é o do irmão (`runner._e_autoresponder` ->
+   `autoreply.parece_autoresponder`), reusado e não recopiado.
+5. O HISTÓRICO DE RÓTULOS CHEGA AO MOTOR. `valeria_engine._casar` lê
+   `estado["rotulos_antigos"]` e a rota `PUT /api/valeria-flow/{node_id}` grava a
+   coluna `valeria_flow_content.rotulos_antigos` — e ninguém ligava as duas pontas:
+   `_carregar_conteudo` não repassava a coluna e nenhuma linha de `app/` escrevia
+   aquela chave. A promessa de "renomear botão na tela não quebra o lead que já
+   recebeu a tela antiga" estava GRAVADA e nunca LIDA. Agora `_carregar_conteudo`
+   devolve o mapa (`valeria_content.historico_de_rotulos`) e `_com_historico` o
+   sobrepõe ao estado que vai ao motor — como OVERLAY de leitura, nunca persistido.
 """
 from __future__ import annotations
 
@@ -65,6 +89,8 @@ from app.button_flow import valeria_engine as motor
 from app.button_flow import flows
 from app.button_flow.engine import Clique, Mensagem, Texto, normalizar
 from app.button_flow.runner import (
+    _e_autoresponder,
+    _historico,
     _montar_evento,
     _motivo_para_nao_rodar,
     _reler_estado,
@@ -333,9 +359,16 @@ def _nudges(estado) -> int:
 def proximo_estado(estado, node: str, marcar_nudge: bool = False) -> dict:
     """Estado do turno seguinte. Pura — o `updated_at` é do persistidor.
 
-    Merge, e não substituição: o `flow_state` pode carregar chaves de outro dono
-    (`rotulos_antigos`, que o motor usa para casar clique em tela editada) e
-    sobrescrever o estado inteiro aqui as apagaria em silêncio.
+    Merge, e não substituição: o `flow_state` carrega chaves de outro dono
+    (`notificado_humano`, gravado por `_notificar_sem_rodar`; `deal_stage_id`, a
+    referência do guarda "o vendedor já mexeu no card") e sobrescrever o estado
+    inteiro aqui as apagaria em silêncio.
+
+    O `rotulos_antigos` que `valeria_engine._casar` lê NÃO está entre elas, e a
+    ausência é deliberada: ele é um OVERLAY de leitura montado a cada turno a partir
+    da coluna `valeria_flow_content.rotulos_antigos` (ver `_com_historico`), e o
+    estado que chega aqui é o de ANTES do overlay — justamente para o mapa não ser
+    persistido. Se um dia ele aparecer num `flow_state` gravado, é bug de wiring.
 
     O nudge conta por ATENDIMENTO, não por nó: por nó, 17 nós dariam 51
     reofertas, e o desperdício máximo por lead passaria de 3 para 51 mensagens
@@ -422,8 +455,8 @@ async def processar_inbound(
                      exc_info=True)
 
 
-def _carregar_conteudo() -> tuple[dict, dict, str | None, str | None]:
-    """(nós, terminais, corpo do nudge, rótulo da lista) com os overrides da tela.
+def _carregar_conteudo() -> tuple[dict, dict, str | None, str | None, dict]:
+    """(nós, terminais, nudge, rótulo da lista, histórico de rótulos) com os overrides.
 
     `valeria_content.carregar` é fail-open (devolve `{}` em qualquer erro), então
     migration pendente ou PostgREST fora produz exatamente os defaults do
@@ -438,6 +471,17 @@ def _carregar_conteudo() -> tuple[dict, dict, str | None, str | None]:
     As duas chaves RESERVADAS (nudge e rótulo da lista) saem à parte porque não
     são nó: `valeria_flow_content` é chaveada por `node_id` e elas não têm nó
     nenhum a que pertencer.
+
+    O QUINTO elemento é o HISTÓRICO DE RÓTULOS, e ele é a metade que faltava da
+    rede de segurança da edição de copy. A coluna `rotulos_antigos` já era gravada
+    pela rota do PUT e já era lida por `valeria_engine._casar` — mas por uma FORMA
+    (`{node_id: {rotulo: botao_id}}`) que ninguém montava, e esta função não
+    repassava a coluna. Resultado: o lead que recebeu a tela ANTIGA e tocou nela não
+    casava com botão nenhum, caía no nudge e queimava uma mensagem faturada. A
+    conversão entre as duas formas é de `valeria_content`, que é o dono da forma da
+    tabela; aqui ela só entra no mesmo pacote que o resto do conteúdo do turno,
+    porque sai da MESMA leitura — uma segunda consulta para buscá-la seria uma ida
+    ao banco a mais por inbound.
     """
     try:
         overrides = valeria_content.carregar(reg.FLOW_ID)
@@ -451,7 +495,30 @@ def _carregar_conteudo() -> tuple[dict, dict, str | None, str | None]:
         valeria_content.aplicar_terminais(reg.TERMINAIS, overrides),
         nudge or None,
         rotulo_lista or None,
+        valeria_content.historico_de_rotulos(overrides),
     )
+
+
+def _com_historico(estado, rotulos_antigos: dict):
+    """Estado que vai ao MOTOR, com o histórico de rótulos sobreposto.
+
+    CÓPIA, e nunca o próprio estado, por um motivo mensurável: `proximo_estado` faz
+    merge do estado recebido no que vai ser PERSISTIDO, então sobrepor no objeto
+    original gravaria o mapa inteiro dentro de `conversations.flow_state` — um
+    espelho do banco por conversa, que envelhece na primeira edição de rótulo
+    seguinte e engorda o jsonb de TODO turno com dados que já estão em
+    `valeria_flow_content`. A coluna é a fonte e é lida a cada turno
+    (`_carregar_conteudo`); o `flow_state` é a conversa, não um cache de conteúdo.
+
+    Sem histórico devolve o estado INTACTO (não uma cópia com a chave vazia): é o
+    que garante que o lead de um fluxo sem nenhum override se comporte exatamente
+    como antes desta mudança, inclusive na forma do `flow_state` gravado.
+    """
+    if not rotulos_antigos:
+        return estado
+    base = dict(estado) if isinstance(estado, dict) else {}
+    base["rotulos_antigos"] = rotulos_antigos
+    return base
 
 
 def _e_pedido_de_saida(evento) -> bool:
@@ -464,6 +531,67 @@ def _e_pedido_de_saida(evento) -> bool:
     """
     return (isinstance(evento, Texto)
             and normalizar(evento.conteudo) in motor.FRASES_OPTOUT)
+
+
+async def _e_robo_do_lead(lead: dict, conversation_id: str, evento) -> bool:
+    """True quando este turno é a saudação automática do WhatsApp Business do LEAD.
+
+    POR QUE ESTE FLUXO PRECISA DO SEU PRÓPRIO: `buffer/processor.py` dá `return`
+    INCONDICIONAL quando um fluxo de botões assume a conversa (é esse return que faz
+    de "zero IA" um fato), e o gate determinístico de autoresponder do processor
+    (`_handle_autoresponder`) mora DEPOIS dele. Então a ValerIA de botões nunca
+    passava por gate nenhum — ao contrário do irmão, que tem detector próprio desde
+    o começo exatamente por isso.
+
+    O PREÇO DE NÃO TER: ~28% de todas as "respostas" da base são o robô do próprio
+    cliente (17 de 36 textos livres do broadcast `utilidade_geral_produto_v1`, 494
+    entregues). Cada uma chegava aqui como texto livre, o motor reoferecia os botões
+    e o robô respondia de novo — até os 3 nudges acabarem e o lead ser entregue ao
+    vendedor sem que nenhum humano tivesse lido uma linha. Desde 01/10/2026 a Meta
+    cobra por mensagem enviada, inclusive na janela de 24h: são 3 mensagens
+    faturadas por lead, em 28% dos leads, garantidas e recorrentes.
+
+    NÃO GASTA NUDGE, e é o ponto todo. O orçamento de nudges existe para LIMITAR
+    desperdício (3 por atendimento, não por nó, justamente para o teto não virar
+    51); gastá-lo com um robô é o oposto da função dele, e ainda cobra do lead a
+    reoferta que só um humano consegue usar. O turno também não manda mensagem, não
+    avança o nó e não toca no `flow_state`: para o fluxo, este turno não aconteceu —
+    o lead continua onde estava, com o orçamento intacto, para quando a PESSOA ler.
+
+    SÓ TEXTO LIVRE. Clique é toque humano por definição, e consultar o histórico num
+    clique seria uma ida ao banco a mais em 100% dos toques para perguntar algo que
+    já se sabe.
+
+    O PEDIDO DE SAÍDA VENCE O DETECTOR. `autoreply.py` declara no cabeçalho que
+    falso positivo é muito pior que falso negativo porque "para de me mandar isso"
+    silenciado é opt-out não honrado — e há 52 desses em produção. Aqui o opt-out é
+    por IGUALDADE normalizada (zero IA), então nenhuma frase da lista carrega sinal
+    de autoresponder; esta guarda é a última linha da defesa, não a única.
+
+    Fail-soft na MARCA: o `auto_reply` no metadata é medição (é como o CRM sabe que
+    aquele turno foi um robô). Uma falha ao gravá-la não pode transformar um turno
+    corretamente silenciado em turno com erro.
+    """
+    if not isinstance(evento, Texto):
+        return False
+    if _e_pedido_de_saida(evento):
+        return False
+    agora = datetime.now(timezone.utc)
+    historico = await asyncio.to_thread(_historico, conversation_id)
+    if not await _e_autoresponder(evento.conteudo, historico, agora):
+        return False
+    logger.info("%s autoresponder do lead — sem resposta, sem nudge e sem avanço "
+                "conv=%s", _LOG, conversation_id)
+    try:
+        await asyncio.to_thread(
+            effects.atualizar_metadata, lead,
+            {"auto_reply": {"at": agora.isoformat(), "origem": "valeria_botoes"}},
+            rotulo="auto_reply",
+        )
+    except Exception as exc:
+        logger.warning("%s marca auto_reply não gravada p/ lead %s: %s",
+                       _LOG, lead.get("id"), exc)
+    return True
 
 
 def _decidir(no: str | None, evento, estado, nos: dict, terminais: dict,
@@ -690,10 +818,21 @@ async def _executar_turno(
         return
 
     evento = _montar_evento(texto, message_type, metadata)
-    nos, terminais, corpo_nudge, rotulo_lista = await asyncio.to_thread(
-        _carregar_conteudo)
+
+    # ANTES de `_carregar_conteudo` de propósito: ~28% dos textos livres são o robô
+    # do cliente, e para eles este turno acaba aqui — sem a leitura de overrides,
+    # sem envio, sem nudge e sem escrita de estado. Ver `_e_robo_do_lead`.
+    if await _e_robo_do_lead(lead, conversation_id, evento):
+        return
+
+    nos, terminais, corpo_nudge, rotulo_lista, rotulos_antigos = (
+        await asyncio.to_thread(_carregar_conteudo))
     no = no_atual(estado)
-    decisao = _decidir(no, evento, estado, nos, terminais, corpo_nudge)
+    # O motor recebe o estado com o histórico de rótulos SOBREPOSTO; `proximo_estado`
+    # (abaixo) recebe o estado ORIGINAL, para o histórico não ser espelhado dentro do
+    # `flow_state`. Ver `_com_historico`.
+    decisao = _decidir(no, evento, _com_historico(estado, rotulos_antigos),
+                       nos, terminais, corpo_nudge)
 
     if decisao.ignorar:
         logger.info("%s evento ignorado (nó=%s) conv=%s wamid=%s", _LOG,
